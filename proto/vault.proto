@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package idtty.vault;
+
+option go_package = "github.com/EstebanForge/idtty/proto/vault";
+
+// Envelope maps to uniform size buckets (1KB, 8KB, 64KB, 1MB)
+message VaultEntry {
+  string uuid = 1;
+  string title = 2;
+  string username = 3;
+  string password = 4;
+  string url = 5;
+  string notes = 6;
+  string totp_uri = 7;
+  repeated CustomField custom_fields = 8;
+}
+
+message CustomField {
+  string name = 1;
+  string value = 2;
+  bool is_hidden = 3;
+}

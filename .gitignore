@@ -1,0 +1,76 @@
+# ── OS / System ──
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# ── IDEs ──
+.idea/
+.vscode/
+*.iml
+*.sublime-*
+.gradle/
+.kotlin/
+
+# ── Rust ──
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# ── Go ──
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/core/core
+/cli/cli
+/tmp/pm-vault.sock
+/pm-vault.sock
+
+# ── Kotlin Multiplatform / Gradle ──
+/build/
+**/build/
+.gradle/
+local.properties
+.cxx/
+*.apk
+*.aab
+*.ipa
+*.framework
+
+# ── SolidJS Tauri Desktop ──
+/desktop/node_modules/
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+
+# ── Browser Extension ──
+/extension/node_modules/
+/extension/dist/
+
+# ── top-level Node ──
+node_modules/
+.npm/
+
+# ── Secrets / Local Configurations ──
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+idtty-vault/
+
+# ── Build & Store Artifacts ──
+*.dmg
+*.msi
+*.AppImage
+*.crx
+*.xpi
+docs/reviews/

@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package idtty.auth;
+
+option go_package = "github.com/EstebanForge/idtty/proto/auth";
+
+message DeviceIdentityEscrow {
+  string device_id = 1;
+  string encrypted_private_key = 2; // Device's X25519 private key symmetrically wrapped with Master Password KEK
+  string signature_public_key = 3;  // Ed25519 public key
+}
+
+message GatewayRequest {
+  string action = 1;
+  string payload = 2;
+}
+
+message GatewayResponse {
+  bool success = 1;
+  string error_message = 2;
+  string payload = 3;
+}

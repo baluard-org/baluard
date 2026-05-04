@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package idtty.space;
+
+option go_package = "github.com/EstebanForge/idtty/proto/space";
+
+message AccessList {
+  repeated Member members = 1;
+}
+
+message Member {
+  string email = 1;
+  string device_id = 2;
+  string public_key = 3;         // X25519 public key in HEX
+  string wrapped_group_key = 4;   // HPKE encrypted Space Group Key in HEX
+}
+
+message SpaceIndex {
+  repeated EntryLookup lookup = 1;
+}
+
+message EntryLookup {
+  string file_hash = 1;          // Random UUID hash matching filename in entries/
+  string title = 2;              // Decrypted for fast lookup in memguard
+  string url = 3;                // Decrypted for fast matching
+}

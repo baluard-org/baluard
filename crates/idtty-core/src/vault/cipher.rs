@@ -1,0 +1,227 @@
+//! Cipher file operations: create, read, update, delete.
+//!
+//! D6: Filenames = truth for ciphers ({uuid}.enc).
+//! D7: Folder assignment inside each cipher file.
+//! D8: Tiered uniform padding.
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::crypto::aead;
+use crate::error::{IdttyError, VaultError};
+use crate::keys::hierarchy::ItemKey;
+use crate::types::{
+    Cipher, CipherId, CipherInput, EnvelopeHeader, ObjectType, Tier,
+};
+use crate::vault::envelope;
+use crate::vault::padding;
+use crate::{ALG_AES_256_GCM, IDTTY_VERSION};
+
+/// Encrypted cipher file data: envelope + metadata for storage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CipherFile {
+    /// The cipher UUID (= filename without .enc).
+    pub id: CipherId,
+    /// The serialized AEAD envelope.
+    pub envelope_bytes: Vec<u8>,
+}
+
+/// Encrypt a cipher input into a padded, encrypted envelope.
+///
+/// Steps:
+/// 1. Serialize cipher data to JSON
+/// 2. Select tier based on content size
+/// 3. Apply tiered padding
+/// 4. Encrypt with Item Key using AES-256-GCM + AAD
+pub fn encrypt_cipher(
+    vault_id: Uuid,
+    cipher_id: CipherId,
+    input: &CipherInput,
+    item_key: &ItemKey,
+    key_epoch: u64,
+    update_seq: u64,
+    nonce_counter: u64,
+) -> Result<CipherFile, IdttyError> {
+    // Serialize cipher data
+    let cipher_data = CipherData::from_input(input);
+    let json = serde_json::to_vec(&cipher_data)
+        .map_err(|e| VaultError::Metadata(format!("cipher serialization: {e}")))?;
+
+    // Tier selection
+    let tier = Tier::fit(json.len()).ok_or_else(|| {
+        VaultError::InvalidTier(format!("content too large for any tier: {} bytes", json.len()))
+    })?;
+
+    // Pad
+    let padded = padding::pad(&json, tier)?;
+
+    // Build AAD
+    let aad = aead::build_aad(
+        vault_id,
+        ObjectType::Cipher,
+        cipher_id,
+        Some(tier),
+        ALG_AES_256_GCM,
+        key_epoch,
+        update_seq,
+    );
+
+    // Build nonce
+    let nonce = aead::build_nonce(nonce_counter, cipher_id);
+
+    // Build header
+    let header = EnvelopeHeader {
+        version: IDTTY_VERSION,
+        alg_id: ALG_AES_256_GCM,
+        key_epoch,
+        nonce_counter,
+        update_seq,
+        tier: Some(tier),
+    };
+
+    // Encrypt
+    let enc_envelope = aead::encrypt(item_key.as_bytes(), &padded, &aad, &nonce, header)?;
+
+    // Serialize envelope to binary
+    let envelope_bytes = envelope::serialize(&enc_envelope)?;
+
+    Ok(CipherFile {
+        id: cipher_id,
+        envelope_bytes,
+    })
+}
+
+/// Decrypt a cipher file envelope back into a Cipher struct.
+pub fn decrypt_cipher(
+    _vault_id: Uuid,
+    cipher_id: CipherId,
+    file: &CipherFile,
+    item_key: &ItemKey,
+) -> Result<Cipher, IdttyError> {
+    // Deserialize envelope
+    let enc_envelope = envelope::deserialize(&file.envelope_bytes)?;
+
+    // Decrypt
+    let padded = aead::decrypt(item_key.as_bytes(), &enc_envelope)?;
+
+    // Unpad
+    let json = padding::unpad(&padded)?;
+
+    // Deserialize cipher data
+    let data: CipherData = serde_json::from_slice(&json)
+        .map_err(|e| VaultError::Corrupt(format!("cipher deserialization: {e}")))?;
+
+    Ok(Cipher {
+        id: cipher_id,
+        name: data.name,
+        folder_id: data.folder_id,
+        username: data.username,
+        password: data.password,
+        uris: data.uris,
+        notes: data.notes,
+        totp_uri: data.totp_uri,
+        custom_fields: data.custom_fields,
+        key_epoch: enc_envelope.header.key_epoch,
+        update_seq: enc_envelope.header.update_seq,
+        tier: enc_envelope.header.tier.ok_or_else(|| {
+            VaultError::Corrupt("cipher envelope missing tier".into())
+        })?,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+    })
+}
+
+/// Internal cipher data for JSON serialization (within the encrypted envelope).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CipherData {
+    pub name: String,
+    pub folder_id: Option<Uuid>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub uris: Vec<String>,
+    pub notes: Option<String>,
+    pub totp_uri: Option<String>,
+    pub custom_fields: Vec<crate::types::CustomField>,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+impl CipherData {
+    fn from_input(input: &CipherInput) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Self {
+            name: input.name.clone(),
+            folder_id: input.folder_id,
+            username: input.username.clone(),
+            password: input.password.clone(),
+            uris: input.uris.clone(),
+            notes: input.notes.clone(),
+            totp_uri: input.totp_uri.clone(),
+            custom_fields: input.custom_fields.clone(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::CipherInput;
+
+    #[test]
+    fn encrypt_decrypt_cipher_roundtrip() {
+        let vault_id = Uuid::new_v4();
+        let cipher_id = Uuid::new_v4();
+        let item_key = ItemKey::generate();
+
+        let input = CipherInput {
+            name: "GitHub".into(),
+            folder_id: None,
+            username: Some("user@example.com".into()),
+            password: Some("s3cret!".into()),
+            uris: vec!["https://github.com".into()],
+            notes: None,
+            totp_uri: None,
+            custom_fields: vec![],
+        };
+
+        let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
+
+        // Verify envelope is properly formed
+        assert_eq!(file.id, cipher_id);
+
+        let cipher = decrypt_cipher(vault_id, cipher_id, &file, &item_key).unwrap();
+        assert_eq!(cipher.name, "GitHub");
+        assert_eq!(cipher.username.as_deref(), Some("user@example.com"));
+        assert_eq!(cipher.password.as_deref(), Some("s3cret!"));
+        assert_eq!(cipher.uris, vec!["https://github.com"]);
+        assert_eq!(cipher.key_epoch, 1);
+        assert_eq!(cipher.update_seq, 1);
+    }
+
+    #[test]
+    fn wrong_item_key_fails() {
+        let vault_id = Uuid::new_v4();
+        let cipher_id = Uuid::new_v4();
+        let item_key = ItemKey::generate();
+        let wrong_key = ItemKey::generate();
+
+        let input = CipherInput {
+            name: "test".into(),
+            folder_id: None,
+            username: None,
+            password: Some("secret".into()),
+            uris: vec![],
+            notes: None,
+            totp_uri: None,
+            custom_fields: vec![],
+        };
+
+        let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
+        assert!(decrypt_cipher(vault_id, cipher_id, &file, &wrong_key).is_err());
+    }
+}

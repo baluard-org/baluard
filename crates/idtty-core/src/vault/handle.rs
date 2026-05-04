@@ -1,0 +1,736 @@
+//! Vault handle: locked/unlocked session state.
+//!
+//! The VaultHandle is the primary interface for vault operations.
+//! Locked: can list cipher metadata (filenames, envelope headers).
+//! Unlocked: can decrypt ciphers, add/update/delete with proper key material.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use uuid::Uuid;
+
+use crate::crypto::hpke_wrap;
+use crate::crypto::kdf;
+use crate::crypto::hkdf_derive;
+use crate::devices::DeviceRegistry;
+use crate::error::{IdttyError, VaultError};
+use crate::keys::hierarchy::{ItemKey, RootKey};
+use crate::types::{Cipher, CipherInput, KdfParams, Tier};
+use crate::vault::cipher;
+
+/// Vault session state.
+pub struct VaultHandle {
+    /// Path to the vault directory on disk.
+    pub path: PathBuf,
+    /// Vault ID (set at creation, loaded from metadata).
+    pub vault_id: Uuid,
+    /// KDF parameters (loaded from meta/kdf-params.json).
+    pub kdf_params: KdfParams,
+    /// Device registry (loaded from meta/devices.json).
+    pub registry: DeviceRegistry,
+    /// Current device ID.
+    pub device_id: Uuid,
+    /// Session state.
+    pub state: VaultState,
+}
+
+/// Vault lock state with key material.
+pub enum VaultState {
+    /// Vault is locked. No key material in memory.
+    Locked,
+    /// Vault is unlocked. Root Key and session keys available.
+    Unlocked(UnlockedState),
+}
+
+/// Key material held while vault is unlocked.
+pub struct UnlockedState {
+    /// Root Key (512-bit, per-epoch).
+    pub root_key: RootKey,
+    /// Session Key (for local cache encryption).
+    pub session_key: [u8; 32],
+    /// Sync-Only Key (for locked background sync).
+    pub sync_key: [u8; 32],
+    /// Cached Item Keys: cipher_id → ItemKey.
+    /// Loaded on-demand, cached for performance.
+    pub item_keys: HashMap<Uuid, ItemKey>,
+    /// Current key epoch (read from RK canary or envelope).
+    pub current_epoch: u64,
+}
+
+impl VaultHandle {
+    /// Open a vault from disk (locked state).
+    /// Reads metadata files but does NOT decrypt anything.
+    pub fn open(path: &Path) -> Result<Self, IdttyError> {
+        let kdf_path = path.join("meta/kdf-params.json");
+        if !kdf_path.exists() {
+            return Err(VaultError::NotInitialized.into());
+        }
+
+        let kdf_json = std::fs::read_to_string(&kdf_path)
+            .map_err(|e| VaultError::Metadata(format!("reading kdf params: {e}")))?;
+        let kdf_params: KdfParams = serde_json::from_str(&kdf_json)
+            .map_err(|e| VaultError::Corrupt(format!("kdf params: {e}")))?;
+
+        let registry_path = path.join("meta/devices.json");
+        let registry = if registry_path.exists() {
+            let reg_json = std::fs::read_to_string(&registry_path)
+                .map_err(|e| VaultError::Metadata(format!("reading devices: {e}")))?;
+            serde_json::from_str(&reg_json)
+                .map_err(|e| VaultError::Corrupt(format!("devices: {e}")))?
+        } else {
+            DeviceRegistry::new()
+        };
+
+        // Find our device ID from the keywrap files
+        let device_id = Self::find_device_id(path)?;
+
+        // Derive vault_id from KDF salt (stable, unique per vault)
+        // TODO: store vault_id explicitly in a meta file during creation
+        let vault_id = Self::derive_vault_id(&kdf_params);
+
+        Ok(VaultHandle {
+            path: path.to_path_buf(),
+            vault_id,
+            kdf_params,
+            registry,
+            device_id,
+            state: VaultState::Locked,
+        })
+    }
+
+    /// Unlock the vault with the master password.
+    ///
+    /// Flow:
+    /// 1. Derive KEK from password + KDF params
+    /// 2. Read our device's keywrap file
+    /// 3. HPKE-decapsulate Root Key using device X25519 private key
+    ///
+    /// Note: In CLI mode, the device X25519 private key is stored in the
+    /// keywrap JSON for simplicity. In production, this lives in OS keystore.
+    pub fn unlock(&mut self, master_password: &str) -> Result<(), IdttyError> {
+        // Step 0: Rate limit check
+        self.check_attempt_rate_limit()?;
+
+        // Step 1: Derive KEK
+        let kek = kdf::derive_kek(master_password, &self.kdf_params)?;
+
+        // Step 2: Derive session + sync keys
+        let session_key = hkdf_derive::derive_session_key(&kek)?;
+        let sync_key = hkdf_derive::derive_sync_key(&kek)?;
+
+        // Step 3: Read keywrap file
+        let keywrap_path = self.path.join(format!("meta/keywrap/{}.json", self.device_id));
+        if !keywrap_path.exists() {
+            return Err(VaultError::NotFound(format!(
+                "keywrap file for device {}", self.device_id
+            )).into());
+        }
+
+        let keywrap_json = std::fs::read_to_string(&keywrap_path)
+            .map_err(|e| VaultError::Metadata(format!("reading keywrap: {e}")))?;
+        let keywrap: serde_json::Value = serde_json::from_str(&keywrap_json)
+            .map_err(|e| VaultError::Corrupt(format!("keywrap json: {e}")))?;
+
+        let eph_pub = hex::decode(keywrap["ephemeral_public"].as_str().unwrap_or(""))
+            .map_err(|e| VaultError::Corrupt(format!("ephemeral_public hex: {e}")))?;
+        if eph_pub.len() != 32 {
+            return Err(VaultError::Corrupt(format!("ephemeral_public: expected 32 bytes, got {}", eph_pub.len())).into());
+        }
+        let ct = hex::decode(keywrap["encrypted_key"].as_str().unwrap_or(""))
+            .map_err(|e| VaultError::Corrupt(format!("encrypted_key hex: {e}")))?;
+        if ct.len() < 32 {
+            return Err(VaultError::Corrupt(format!("encrypted_key: too short ({} bytes)", ct.len())).into());
+        }
+        let tag_hex = keywrap["tag"].as_str().unwrap_or("");
+        let mut tag = [0u8; 16];
+        let tag_bytes = hex::decode(tag_hex)
+            .map_err(|e| VaultError::Corrupt(format!("tag hex: {e}")))?;
+        if tag_bytes.len() != 16 {
+            return Err(VaultError::Corrupt("invalid tag length".into()).into());
+        }
+        tag.copy_from_slice(&tag_bytes);
+
+        // Step 4: Verify KEK is correct by decrypting the KEK canary
+        // Canary plaintext MUST equal b"idtty-kek-ok" — this catches wrong passwords
+        // even when AES-GCM doesn't fail (cosmically unlikely but defense-in-depth).
+        if self.path.join("meta/kek-canary.enc").exists() {
+            let canary_data = std::fs::read(self.path.join("meta/kek-canary.enc"))
+                .map_err(|e| VaultError::Metadata(format!("reading kek canary: {e}")))?;
+            let canary_envelope = crate::vault::envelope::deserialize(&canary_data)?;
+            let canary_pt = crate::crypto::aead::decrypt(&session_key, &canary_envelope)
+                .map_err(|_| {
+                    let _ = self.record_failed_attempt();
+                    VaultError::Corrupt("master password incorrect".into())
+                })?;
+            if canary_pt != b"idtty-kek-ok" {
+                let _ = self.record_failed_attempt();
+                return Err(VaultError::Corrupt(
+                    "master password incorrect (KEK canary plaintext mismatch)".into()
+                ).into());
+            }
+        }
+
+        // Step 5: HPKE-decapsulate Root Key
+        // CLI mode: stored in meta/device-privkey.json (NOT for production!)
+        let privkey_path = self.path.join("meta/device-privkey.json");
+        let root_key = if privkey_path.exists() {
+            let pk_json = std::fs::read_to_string(&privkey_path)
+                .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
+            let pk_data: serde_json::Value = serde_json::from_str(&pk_json)
+                .map_err(|e| VaultError::Corrupt(format!("privkey json: {e}")))?;
+            let priv_bytes = hex::decode(pk_data["x25519_private"].as_str().unwrap_or(""))
+                .map_err(|e| VaultError::Corrupt(format!("privkey hex: {e}")))?;
+            let priv_arr: [u8; 32] = priv_bytes.try_into()
+                .map_err(|_| VaultError::Corrupt("invalid private key length".into()))?;
+            let priv_key = x25519_dalek::StaticSecret::from(priv_arr);
+
+            let unwrapped = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &priv_key)?;
+            let rk_bytes: [u8; 64] = unwrapped.try_into()
+                .map_err(|_| VaultError::Corrupt("unwrapped root key not 64 bytes".into()))?;
+            RootKey::from_bytes(rk_bytes)
+        } else {
+            return Err(VaultError::NotFound(
+                "device private key not found (CLI mode requires meta/device-privkey.json)".into()
+            ).into());
+        };
+
+        // Step 6: Verify root key with RK canary
+        if let Err(e) = self.verify_root_key(&root_key) {
+            self.record_failed_attempt()?;
+            return Err(e);
+        }
+
+        // Step 7: Clear attempt counter on success
+        self.clear_failed_attempts()?;
+
+        // Step 8: Determine current epoch from any existing cipher or RK canary
+        let current_epoch = self.determine_current_epoch();
+
+        self.state = VaultState::Unlocked(UnlockedState {
+            root_key,
+            session_key,
+            sync_key,
+            item_keys: HashMap::new(),
+            current_epoch,
+        });
+
+        Ok(())
+    }
+
+    /// Lock the vault: zeroize all key material.
+    pub fn lock(&mut self) {
+        self.state = VaultState::Locked;
+    }
+
+    /// Check if vault is unlocked.
+    pub fn is_unlocked(&self) -> bool {
+        matches!(self.state, VaultState::Unlocked(_))
+    }
+
+    /// Get a reference to the unlocked state (panics if locked).
+    pub fn unlocked(&self) -> &UnlockedState {
+        match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => panic!("vault is locked"),
+        }
+    }
+
+    /// Get a mutable reference to the unlocked state (panics if locked).
+    pub fn unlocked_mut(&mut self) -> &mut UnlockedState {
+        match &mut self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => panic!("vault is locked"),
+        }
+    }
+
+    /// List cipher IDs from filenames in ciphers/ directory.
+    pub fn list_cipher_ids(&self) -> Result<Vec<Uuid>, IdttyError> {
+        let ciphers_dir = self.path.join("ciphers");
+        if !ciphers_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut ids = Vec::new();
+        for entry in std::fs::read_dir(&ciphers_dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(id_str) = name.strip_suffix(".enc") {
+                if let Ok(id) = Uuid::parse_str(id_str) {
+                    ids.push(id);
+                }
+            }
+        }
+        Ok(ids)
+    }
+
+    /// Verify root key by decrypting the Root Key canary.
+    /// The canary is stored at vault creation as AES-256-GCM("idtty-rk-ok")
+    /// encrypted with a key derived from Root Key.
+    fn verify_root_key(&self, root_key: &RootKey) -> Result<(), IdttyError> {
+        let canary_path = self.path.join("meta/rk-canary.enc");
+        if !canary_path.exists() {
+            // No canary (legacy vault). Fall back to first-cipher check.
+            return self.verify_root_key_fallback(root_key);
+        }
+
+        // Derive a canary-specific key from Root Key
+        let canary_key = Self::derive_root_key_canary_key(root_key);
+
+        let canary_data = std::fs::read(&canary_path)
+            .map_err(|e| VaultError::Metadata(format!("reading rk canary: {e}")))?;
+        let canary_envelope = crate::vault::envelope::deserialize(&canary_data)?;
+        let canary_pt = crate::crypto::aead::decrypt(&canary_key, &canary_envelope)
+            .map_err(|_| VaultError::Corrupt(
+                "root key verification failed".into()
+            ))?;
+        if canary_pt != b"idtty-rk-ok" {
+            return Err(VaultError::Corrupt(
+                "root key verification failed (plaintext mismatch)".into()
+            ).into());
+        }
+        Ok(())
+    }
+
+    /// Fallback: verify root key by decrypting the first existing cipher.
+    /// Only used for legacy vaults without `meta/rk-canary.enc`.
+    fn verify_root_key_fallback(&self, root_key: &RootKey) -> Result<(), IdttyError> {
+        let cipher_ids = self.list_cipher_ids()?;
+        if cipher_ids.is_empty() {
+            // Empty vault with no RK canary: cannot verify root key.
+            // Refuse unlock rather than accept any key silently.
+            return Err(VaultError::Corrupt(
+                "vault has no ciphers and no root key canary. Re-initialize vault.".into()
+            ).into());
+        }
+
+        let canary_id = cipher_ids[0];
+        let file_path = self.path.join(format!("ciphers/{}.enc", canary_id));
+        let envelope_bytes = std::fs::read(&file_path)?;
+        let file = crate::vault::cipher::CipherFile {
+            id: canary_id,
+            envelope_bytes,
+        };
+
+        match self.try_decrypt_cipher_with_root_key(root_key, &file) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(VaultError::Corrupt(
+                "master password incorrect (root key verification failed)".into()
+            ).into()),
+        }
+    }
+
+    /// Try to decrypt a cipher using the Root Key (derives Item Key).
+    fn try_decrypt_cipher_with_root_key(
+        &self,
+        root_key: &RootKey,
+        file: &crate::vault::cipher::CipherFile,
+    ) -> Result<Cipher, IdttyError> {
+        let item_key = {
+            let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
+            Self::derive_item_key_static(root_key, file.id, envelope.header.key_epoch)
+        };
+        crate::vault::cipher::decrypt_cipher(self.vault_id, file.id, file, &item_key)
+    }
+
+    /// Derive a key specifically for the Root Key canary.
+    /// Separate from Item Key derivation to maintain key separation.
+    fn derive_root_key_canary_key(root_key: &RootKey) -> [u8; 32] {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+
+        let hkdf = Hkdf::<Sha256>::new(None, root_key.as_bytes());
+        let mut key = [0u8; 32];
+        hkdf.expand(b"idtty-rk-canary-v1", &mut key)
+            .expect("32 bytes is valid for HKDF-SHA256");
+        key
+    }
+
+    /// Static version for borrow-friendly calls.
+    fn derive_item_key_static(root_key: &RootKey, cipher_id: Uuid, epoch: u64) -> ItemKey {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+
+        let mut info = Vec::with_capacity(32 + 8 + 16);
+        info.extend_from_slice(b"idtty-item-v1");
+        info.extend_from_slice(&epoch.to_le_bytes());
+        info.extend_from_slice(cipher_id.as_bytes());
+
+        let hkdf = Hkdf::<Sha256>::new(None, root_key.as_bytes());
+        let mut key = [0u8; 32];
+        hkdf.expand(&info, &mut key)
+            .expect("32 bytes is valid output length for HKDF-SHA256");
+
+        ItemKey::from_bytes(key)
+    }
+
+    /// Get a cipher (decrypts if unlocked, returns metadata only if locked).
+    pub fn get_cipher(&self, cipher_id: Uuid) -> Result<CipherRead, IdttyError> {
+        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
+        if !file_path.exists() {
+            return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
+        }
+
+        let envelope_bytes = std::fs::read(&file_path)?;
+        let file = crate::vault::cipher::CipherFile {
+            id: cipher_id,
+            envelope_bytes,
+        };
+
+        match &self.state {
+            VaultState::Unlocked(unlocked) => {
+                // Read epoch from envelope header for correct Item Key derivation
+                let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
+                let item_key = Self::derive_item_key_static(&unlocked.root_key, cipher_id, envelope.header.key_epoch);
+                let cipher = crate::vault::cipher::decrypt_cipher(
+                    self.vault_id, cipher_id, &file, &item_key,
+                )?;
+                Ok(CipherRead::Decrypted(cipher))
+            }
+            VaultState::Locked => {
+                let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
+                Ok(CipherRead::Locked(LockedCipherInfo {
+                    id: cipher_id,
+                    key_epoch: envelope.header.key_epoch,
+                    update_seq: envelope.header.update_seq,
+                    tier: envelope.header.tier,
+                    ciphertext_len: envelope.ciphertext.len(),
+                }))
+            }
+        }
+    }
+
+    /// Add a cipher (requires unlocked vault).
+    pub fn add_cipher(&mut self, input: &CipherInput) -> Result<Uuid, IdttyError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+
+        let cipher_id = Uuid::new_v4();
+        let item_key = Self::derive_item_key_static(&unlocked.root_key, cipher_id, unlocked.current_epoch);
+
+        let file = cipher::encrypt_cipher(
+            self.vault_id,
+            cipher_id,
+            input,
+            &item_key,
+            1, // epoch
+            1, // update_seq
+            0, // nonce_counter
+        )?;
+
+        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
+        std::fs::write(&file_path, &file.envelope_bytes)?;
+
+        Ok(cipher_id)
+    }
+
+    /// Delete a cipher by ID.
+    pub fn delete_cipher(&self, cipher_id: Uuid) -> Result<(), IdttyError> {
+        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
+        if !file_path.exists() {
+            return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
+        }
+        std::fs::remove_file(&file_path)?;
+        Ok(())
+    }
+
+    fn find_device_id(path: &Path) -> Result<Uuid, IdttyError> {
+        let keywrap_dir = path.join("meta/keywrap");
+        if !keywrap_dir.exists() {
+            return Err(VaultError::NotInitialized.into());
+        }
+
+        for entry in std::fs::read_dir(&keywrap_dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(id_str) = name.strip_suffix(".json") {
+                if let Ok(id) = Uuid::parse_str(id_str) {
+                    return Ok(id);
+                }
+            }
+        }
+
+        Err(VaultError::NotFound("no keywrap files found".into()).into())
+    }
+
+    fn derive_vault_id(kdf_params: &KdfParams) -> Uuid {
+        // Derive a stable UUID from the KDF salt
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"idtty-vault-id-v1");
+        hasher.update(&kdf_params.salt);
+        let hash = hasher.finalize();
+        Uuid::from_bytes(hash[..16].try_into().unwrap())
+    }
+
+    // ── Rate limiting ──
+
+    /// Check if too many failed unlock attempts have occurred.
+    /// Exponential backoff: after N failures, wait 2^(N-5) seconds.
+    /// First 5 attempts: no delay. After that: 1s, 2s, 4s, 8s, ...
+    ///
+    /// **Note**: This is a soft deterrent, not hard brute-force protection.
+    /// The counter is stored in `meta/kdf-attempts.json` which can be deleted
+    /// by any process with write access. Argon2id provides the real defense.
+    fn check_attempt_rate_limit(&self) -> Result<(), IdttyError> {
+        let path = self.path.join("meta/kdf-attempts.json");
+        if !path.exists() { return Ok(()); }
+
+        let data = std::fs::read_to_string(&path)
+            .map_err(|e| VaultError::Metadata(format!("reading attempts: {e}")))?;
+        let info: serde_json::Value = serde_json::from_str(&data)
+            .map_err(|e| VaultError::Corrupt(format!("attempts json: {e}")))?;
+        let count = info["failed_count"].as_u64().unwrap_or(0);
+        let last_ts = info["last_failed_at"].as_u64().unwrap_or(0);
+
+        if count > 5 {
+            let delay_secs = 1u64 << (count - 5).min(10); // cap at 2^10 = 1024s
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if now.saturating_sub(last_ts) < delay_secs {
+                return Err(VaultError::Corrupt(format!(
+                    "too many failed attempts, wait {} seconds",
+                    delay_secs - (now - last_ts)
+                )).into());
+            }
+        }
+        Ok(())
+    }
+
+    fn record_failed_attempt(&self) -> Result<(), IdttyError> {
+        let path = self.path.join("meta/kdf-attempts.json");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let (count, _) = if path.exists() {
+            let data = std::fs::read_to_string(&path)
+                .map_err(|e| VaultError::Metadata(format!("reading attempts: {e}")))?;
+            let info: serde_json::Value = serde_json::from_str(&data).unwrap_or_default();
+            (info["failed_count"].as_u64().unwrap_or(0), 0u64)
+        } else {
+            (0, 0)
+        };
+
+        let record = serde_json::json!({
+            "failed_count": count + 1,
+            "last_failed_at": now,
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&record)
+            .map_err(|e| VaultError::Corrupt(format!("attempts serialize: {e}")))?)?;
+        Ok(())
+    }
+
+    fn clear_failed_attempts(&self) -> Result<(), IdttyError> {
+        let path = self.path.join("meta/kdf-attempts.json");
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        Ok(())
+    }
+
+    /// Determine the current key epoch from existing vault data.
+    fn determine_current_epoch(&self) -> u64 {
+        // Try RK canary first (has key_epoch)
+        let rk_path = self.path.join("meta/rk-canary.enc");
+        if rk_path.exists() {
+            if let Ok(data) = std::fs::read(&rk_path) {
+                if let Ok(envelope) = crate::vault::envelope::deserialize(&data) {
+                    return envelope.header.key_epoch;
+                }
+            }
+        }
+        // Try first cipher envelope
+        if let Ok(ids) = self.list_cipher_ids() {
+            if let Some(first_id) = ids.first() {
+                let file_path = self.path.join(format!("ciphers/{}.enc", first_id));
+                if let Ok(data) = std::fs::read(&file_path) {
+                    if let Ok(envelope) = crate::vault::envelope::deserialize(&data) {
+                        return envelope.header.key_epoch;
+                    }
+                }
+            }
+        }
+        // Default: epoch 1
+        1
+    }
+}
+
+/// Result of reading a cipher: either decrypted content or locked metadata.
+pub enum CipherRead {
+    Decrypted(Cipher),
+    Locked(LockedCipherInfo),
+}
+
+/// Cipher metadata available when vault is locked.
+pub struct LockedCipherInfo {
+    pub id: Uuid,
+    pub key_epoch: u64,
+    pub update_seq: u64,
+    pub tier: Option<Tier>,
+    pub ciphertext_len: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vault::creation;
+    use crate::types::KdfProfile;
+
+    fn create_test_vault() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let password = "test-password-unlock-flow";
+
+        let result = creation::create_vault_ceremony(password, KdfProfile::MobileLow).unwrap();
+
+        let path = dir.path();
+
+        // Write vault structure
+        std::fs::create_dir_all(path.join("ciphers")).unwrap();
+        std::fs::create_dir_all(path.join("meta/keywrap")).unwrap();
+
+        // KDF params
+        std::fs::write(
+            path.join("meta/kdf-params.json"),
+            serde_json::to_string_pretty(&result.kdf_params).unwrap(),
+        ).unwrap();
+
+        // Device registry
+        let mut registry = DeviceRegistry::new();
+        let pub_enc = x25519_dalek::PublicKey::from(&result.device_x25519_secret);
+        let verifying = result.device_ed25519_signing.verifying_key();
+        registry.enroll(
+            "this-device".into(),
+            pub_enc.to_bytes(),
+            verifying.to_bytes(),
+        ).unwrap();
+        std::fs::write(
+            path.join("meta/devices.json"),
+            serde_json::to_string_pretty(&registry).unwrap(),
+        ).unwrap();
+
+        // Keywrap
+        let (eph_pub, ct, tag) = &result.wrapped_root_key;
+        let keywrap_data = serde_json::json!({
+            "device_id": result.device_id.to_string(),
+            "ephemeral_public": hex::encode(eph_pub),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        std::fs::write(
+            path.join(format!("meta/keywrap/{}.json", result.device_id)),
+            serde_json::to_string_pretty(&keywrap_data).unwrap(),
+        ).unwrap();
+
+        // CLI mode: store device private key (NOT for production!)
+        let privkey_data = serde_json::json!({
+            "x25519_private": hex::encode(result.device_x25519_secret.to_bytes()),
+        });
+        std::fs::write(
+            path.join("meta/device-privkey.json"),
+            serde_json::to_string_pretty(&privkey_data).unwrap(),
+        ).unwrap();
+
+        // KEK canary (for password verification)
+        std::fs::write(
+            path.join("meta/kek-canary.enc"),
+            &result.kek_canary,
+        ).unwrap();
+
+        // Root Key canary (for RK verification)
+        std::fs::write(
+            path.join("meta/rk-canary.enc"),
+            &result.rk_canary,
+        ).unwrap();
+
+        (dir, password.to_string())
+    }
+
+    #[test]
+    fn open_and_unlock_roundtrip() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        assert!(!handle.is_unlocked());
+
+        handle.unlock(&password).unwrap();
+        assert!(handle.is_unlocked());
+
+        handle.lock();
+        assert!(!handle.is_unlocked());
+    }
+
+    #[test]
+    fn wrong_password_fails() {
+        let (dir, _password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        assert!(handle.unlock("wrong-password").is_err());
+    }
+
+    #[test]
+    fn add_and_decrypt_cipher() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let input = CipherInput {
+            name: "GitHub".into(),
+            folder_id: None,
+            username: Some("user@example.com".into()),
+            password: Some("s3cret!".into()),
+            uris: vec!["https://github.com".into()],
+            notes: None,
+            totp_uri: None,
+            custom_fields: vec![],
+        };
+
+        let cipher_id = handle.add_cipher(&input).unwrap();
+
+        // Re-open and unlock to verify persistence
+        let mut handle2 = VaultHandle::open(dir.path()).unwrap();
+        handle2.unlock(&password).unwrap();
+
+        let result = handle2.get_cipher(cipher_id).unwrap();
+        match result {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.name, "GitHub");
+                assert_eq!(c.username.as_deref(), Some("user@example.com"));
+                assert_eq!(c.password.as_deref(), Some("s3cret!"));
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted cipher"),
+        }
+    }
+
+    #[test]
+    fn locked_vault_returns_metadata_only() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let input = CipherInput {
+            name: "Test".into(),
+            folder_id: None,
+            username: None,
+            password: Some("pw".into()),
+            uris: vec![],
+            notes: None,
+            totp_uri: None,
+            custom_fields: vec![],
+        };
+
+        let cipher_id = handle.add_cipher(&input).unwrap();
+        handle.lock();
+
+        let result = handle.get_cipher(cipher_id).unwrap();
+        match result {
+            CipherRead::Locked(info) => {
+                assert_eq!(info.id, cipher_id);
+                assert_eq!(info.key_epoch, 1);
+            }
+            CipherRead::Decrypted(_) => panic!("expected locked metadata"),
+        }
+    }
+}

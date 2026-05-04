@@ -1,0 +1,18 @@
+[package]
+name = "idtty-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "IDtty background IPC daemon (Unix socket / Named Pipes server)"
+
+[dependencies]
+idtty-core = { path = "../idtty-core" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+tokio = { version = "1", features = ["net"] }
