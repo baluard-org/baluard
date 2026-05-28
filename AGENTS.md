@@ -9,7 +9,7 @@ License: MIT
 
 Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets. Mobile apps will bind directly to the Rust core via UniFFI-generated Kotlin/Swift bindings.
 
-**Supported platforms**: Windows, Linux, macOS (desktop + CLI), Android, iOS (mobile). CLI works across bash, zsh, and PowerShell.
+**Supported platforms**: Windows, Linux (deb/rpm), macOS, Android, iOS. CLI: bash, zsh, PowerShell.
 
 ## STRUCTURE
 ```
