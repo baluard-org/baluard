@@ -5,7 +5,7 @@ description = "IDtty desktop app"
 authors = ["EstebanForge"]
 license = "MIT"
 repository = "https://github.com/EstebanForge/IDtty"
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "idtty_desktop_lib"
