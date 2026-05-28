@@ -5,13 +5,11 @@
 //! from CLI, Tauri webview, and browser extension clients.
 
 mod handler;
-mod proto {
+pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/idtty.auth.rs"));
     include!(concat!(env!("OUT_DIR"), "/idtty.vault.rs"));
     include!(concat!(env!("OUT_DIR"), "/idtty.space.rs"));
 }
-
-use proto::{GatewayRequest, GatewayResponse};
 
 use anyhow::Result;
 use std::path::Path;

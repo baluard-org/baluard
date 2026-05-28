@@ -6,17 +6,13 @@
 //! Wire protocol: length-delimited Protobuf (varint prefix).
 
 use anyhow::Result;
-use bytes::{Buf, BytesMut};
+use bytes::{BytesMut, Buf};
 use prost::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 
-// Generated Protobuf types
-mod proto {
-    pub(super) use super::super::proto::{GatewayRequest, GatewayResponse};
-}
-
-use proto::{GatewayRequest, GatewayResponse};
+// Re-export generated types from parent module
+use crate::proto::{GatewayRequest, GatewayResponse};
 
 /// Maximum frame size: 4MB (largest bucket is 1MB, leave headroom)
 const MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
@@ -27,22 +23,37 @@ pub async fn handle_connection(mut stream: UnixStream) -> Result<()> {
     let mut buf = BytesMut::with_capacity(4096);
 
     loop {
-        // Read varint length prefix
-        let frame_len = read_varint_frame(&mut reader, &mut buf).await?;
-
-        if frame_len == 0 {
-            // Client closed connection
-            return Ok(());
-        }
+        // Read enough bytes to decode a varint
+        let frame_len = match read_length(&mut reader, &mut buf).await {
+            Ok(Some(len)) => len,
+            Ok(None) => return Ok(()), // EOF, client disconnected
+            Err(e) => {
+                let resp = error_response(format!("Read error: {e}"));
+                let _ = write_frame(&mut writer, &resp).await;
+                return Err(e);
+            }
+        };
 
         if frame_len > MAX_FRAME_SIZE {
             let resp = error_response(format!("Frame too large: {frame_len} bytes"));
             write_frame(&mut writer, &resp).await?;
+            // Discard the oversized frame data if any
+            buf.clear();
             continue;
         }
 
-        // Decode the frame bytes into a GatewayRequest
+        // Read the frame body
+        while buf.len() < frame_len {
+            let read = reader.read_buf(&mut buf).await?;
+            if read == 0 {
+                return Ok(()); // Connection closed mid-frame
+            }
+        }
+
+        // Split off exactly the frame bytes
         let frame_data = buf.split_to(frame_len);
+
+        // Decode into GatewayRequest
         let request = match GatewayRequest::decode(frame_data) {
             Ok(req) => req,
             Err(e) => {
@@ -59,86 +70,63 @@ pub async fn handle_connection(mut stream: UnixStream) -> Result<()> {
     }
 }
 
-/// Read a varint-length-prefixed frame from the stream.
-async fn read_varint_frame(
-    reader: &mut tokio::io::ReadHalf<'_>,
+/// Read bytes until we can decode a varint length, returns the frame length.
+/// Returns Ok(None) on clean EOF.
+async fn read_length(
+    reader: &mut (impl AsyncReadExt + Unpin),
     buf: &mut BytesMut,
-) -> Result<usize> {
-    // Read until we have enough bytes for the varint
+) -> Result<Option<usize>> {
     loop {
-        // Try to decode varint from current buffer
-        let mut tmp = buf.chunk();
-        let mut varint_buf = [0u8; 10];
-        let mut i = 0;
+        // Try to decode a varint from what we have
+        let mut tmp = buf.chunk().iter();
+        let mut len = 0u64;
+        let mut shift = 0u32;
+        let mut bytes_consumed = 0;
 
-        while i < 10 && !tmp.is_empty() {
-            varint_buf[i] = tmp[0];
-            i += 1;
-            tmp = &tmp[1..];
-
-            // Check if this byte has the continuation bit cleared
-            if varint_buf[i - 1] & 0x80 == 0 {
-                // We have a complete varint
-                let len = decode_varint(&varint_buf[..i]) as usize;
-
-                // Consume the varint bytes from buf
-                buf.advance(i);
-
-                // Read the frame body
-                while buf.len() < len {
-                    let read = reader.read_buf(buf).await?;
-                    if read == 0 {
-                        return Ok(0); // Connection closed
-                    }
-                }
-
-                return Ok(len);
+        while let Some(&byte) = tmp.next() {
+            bytes_consumed += 1;
+            len |= ((byte & 0x7F) as u64) << shift;
+            shift += 7;
+            if byte & 0x80 == 0 {
+                // Complete varint
+                buf.advance(bytes_consumed);
+                return Ok(Some(len as usize));
+            }
+            if shift >= 70 {
+                anyhow::bail!("Varint too long");
             }
         }
 
-        // Need more data for varint
+        // Need more data
         let read = reader.read_buf(buf).await?;
         if read == 0 {
-            return Ok(0); // Connection closed
+            if buf.is_empty() {
+                return Ok(None); // Clean EOF
+            }
+            anyhow::bail!("Connection closed mid-varint");
         }
     }
-}
-
-/// Decode a varint from bytes.
-fn decode_varint(buf: &[u8]) -> u64 {
-    let mut value: u64 = 0;
-    let mut shift: u32 = 0;
-    for &byte in buf {
-        value |= ((byte & 0x7F) as u64) << shift;
-        if byte & 0x80 == 0 {
-            break;
-        }
-        shift += 7;
-    }
-    value
 }
 
 /// Write a varint-length-prefixed frame.
 async fn write_frame(
-    writer: &mut tokio::io::WriteHalf<'_>,
+    writer: &mut (impl AsyncWriteExt + Unpin),
     data: &[u8],
 ) -> Result<()> {
-    let len = data.len() as u64;
-    let mut varint_buf = Vec::with_capacity(10);
-    encode_varint(len, &mut varint_buf);
-    writer.write_all(&varint_buf).await?;
+    let mut header = Vec::with_capacity(10);
+    encode_varint(data.len() as u64, &mut header);
+    writer.write_all(&header).await?;
     writer.write_all(data).await?;
     writer.flush().await?;
     Ok(())
 }
 
 /// Encode a varint to a buffer.
-fn encode_varint(value: u64, buf: &mut Vec<u8>) {
-    let mut v = value;
+fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {
     loop {
-        let byte = (v & 0x7F) as u8;
-        v >>= 7;
-        if v == 0 {
+        let byte = (value & 0x7F) as u8;
+        value >>= 7;
+        if value == 0 {
             buf.push(byte);
             break;
         }
@@ -147,13 +135,13 @@ fn encode_varint(value: u64, buf: &mut Vec<u8>) {
 }
 
 /// Build an error GatewayResponse.
-fn error_response(msg: String) -> Vec<u8> {
-    let resp = GatewayResponse {
+fn error_response(msg: impl Into<String>) -> Vec<u8> {
+    GatewayResponse {
         success: false,
-        error_message: msg,
+        error_message: msg.into(),
         payload: String::new(),
-    };
-    resp.encode_to_vec()
+    }
+    .encode_to_vec()
 }
 
 /// Route a GatewayRequest to the appropriate idtty-core function.
