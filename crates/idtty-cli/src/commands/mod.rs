@@ -441,131 +441,194 @@ pub fn handle_devices(vault_path: &str) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-// ── Sync (direct only, not yet routed through daemon) ──
+// ── Sync (daemon-first with direct fallback) ──
 
-pub fn handle_sync_init(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(feature = "git-sync")]
-    {
-        let path = Path::new(vault_path);
-        let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
-        let repo = engine.init_repo()?;
-        println!("Git repo initialized at {}", path.display());
-        let log = engine.log(&repo, 1)?;
-        if let Some(c) = log.first() {
-            println!("Initial commit: {}", &c.id[..7]);
+pub fn handle_sync_init(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("sync.init", "", socket)?;
+            if !resp.success { return Err(resp.error_message.into()); }
+            println!("{}", resp.payload);
+            Ok(())
         }
-        Ok(())
+        ConnectMode::Direct => sync_init_direct(vault_path),
     }
-    #[cfg(not(feature = "git-sync"))]
-    { eprintln!("error: git-sync feature not enabled"); std::process::exit(1); }
 }
 
-pub fn handle_sync_remote(vault_path: &str, url: &str) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(feature = "git-sync")]
-    {
-        let path = Path::new(vault_path);
-        let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
-        let repo = engine.open_repo()?;
-        engine.add_remote(&repo, "origin", url)?;
-        println!("Remote 'origin' set to: {url}");
-        Ok(())
+pub fn handle_sync_remote(mode: ConnectMode, vault_path: &str, socket: Option<&str>, url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("sync.remote", url, socket)?;
+            if !resp.success { return Err(resp.error_message.into()); }
+            println!("{}", resp.payload);
+            Ok(())
+        }
+        ConnectMode::Direct => sync_remote_direct(vault_path, url),
     }
-    #[cfg(not(feature = "git-sync"))]
-    { let _ = url; eprintln!("error: git-sync feature not enabled"); std::process::exit(1); }
 }
 
-pub fn handle_sync_push(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(feature = "git-sync")]
-    {
-        let path = Path::new(vault_path);
-        let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
-        let repo = engine.open_repo()?;
-        let status = engine.status(&repo)?;
-        if status.is_dirty() {
-            engine.commit_all(&repo, "")?;
-            println!("Committed pending changes.");
+pub fn handle_sync_push(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("sync.push", "", socket)?;
+            if !resp.success { return Err(resp.error_message.into()); }
+            println!("{}", resp.payload);
+            Ok(())
         }
-        engine.push(&repo, "origin")?;
-        println!("Pushed to origin.");
-        Ok(())
+        ConnectMode::Direct => sync_push_direct(vault_path),
     }
-    #[cfg(not(feature = "git-sync"))]
-    { eprintln!("error: git-sync feature not enabled"); std::process::exit(1); }
 }
 
-pub fn handle_sync_pull(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(feature = "git-sync")]
-    {
-        let path = Path::new(vault_path);
-        let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
-        let repo = engine.open_repo()?;
-        let result = engine.pull(&repo, "origin")?;
-        match result {
-            idtty_core::sync::engine::PullResult::AlreadyUpToDate => println!("Already up to date."),
-            idtty_core::sync::engine::PullResult::FastForward => println!("Fast-forwarded to latest."),
-            idtty_core::sync::engine::PullResult::Merged => println!("Merged remote changes."),
-            idtty_core::sync::engine::PullResult::Conflict => {
-                eprintln!("error: merge conflict detected. Manual resolution required.");
-                std::process::exit(1);
-            }
+pub fn handle_sync_pull(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("sync.pull", "", socket)?;
+            if !resp.success { return Err(resp.error_message.into()); }
+            println!("{}", resp.payload);
+            Ok(())
         }
-        Ok(())
+        ConnectMode::Direct => sync_pull_direct(vault_path),
     }
-    #[cfg(not(feature = "git-sync"))]
-    { eprintln!("error: git-sync feature not enabled"); std::process::exit(1); }
 }
 
-pub fn handle_sync_status(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(feature = "git-sync")]
-    {
-        let path = Path::new(vault_path);
-        let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
-        let repo = engine.open_repo()?;
-        let status = engine.status(&repo)?;
-        if status.is_dirty() {
-            println!("Working tree: dirty ({} staged, {} unstaged)", status.staged, status.unstaged);
-        } else {
-            println!("Working tree: clean");
+pub fn handle_sync_status(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("sync.status", "", socket)?;
+            if !resp.success { return Err(resp.error_message.into()); }
+            println!("{}", resp.payload);
+            Ok(())
         }
-        let log = engine.log(&repo, 5)?;
-        if !log.is_empty() {
-            println!("\nRecent commits:");
-            for c in &log {
-                let ts = chrono::DateTime::from_timestamp(c.time, 0)
-                    .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
-                    .unwrap_or_default();
-                println!("  {} {} <{}>", &c.id[..7.min(c.id.len())], c.message.trim(), ts);
-            }
-        }
-        Ok(())
+        ConnectMode::Direct => sync_status_direct(vault_path),
     }
-    #[cfg(not(feature = "git-sync"))]
-    { eprintln!("error: git-sync feature not enabled"); std::process::exit(1); }
 }
 
-pub fn handle_sync_log(vault_path: &str, limit: usize) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(feature = "git-sync")]
-    {
-        let path = Path::new(vault_path);
-        let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
-        let repo = engine.open_repo()?;
-        let log = engine.log(&repo, limit)?;
-        if log.is_empty() {
-            println!("No commits.");
-            return Ok(());
+pub fn handle_sync_log(mode: ConnectMode, vault_path: &str, socket: Option<&str>, limit: usize) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("sync.log", &limit.to_string(), socket)?;
+            if !resp.success { return Err(resp.error_message.into()); }
+            println!("{}", resp.payload);
+            Ok(())
         }
+        ConnectMode::Direct => sync_log_direct(vault_path, limit),
+    }
+}
+
+// ── Sync direct implementations ──
+
+#[cfg(feature = "git-sync")]
+fn sync_init_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let path = Path::new(vault_path);
+    let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let repo = engine.init_repo()?;
+    println!("Git repo initialized at {}", path.display());
+    let log = engine.log(&repo, 1)?;
+    if let Some(c) = log.first() {
+        println!("Initial commit: {}", &c.id[..7]);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_remote_direct(vault_path: &str, url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let path = Path::new(vault_path);
+    let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let repo = engine.open_repo()?;
+    engine.add_remote(&repo, "origin", url)?;
+    println!("Remote 'origin' set to: {url}");
+    Ok(())
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_push_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let path = Path::new(vault_path);
+    let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let repo = engine.open_repo()?;
+    let status = engine.status(&repo)?;
+    if status.is_dirty() {
+        engine.commit_all(&repo, "")?;
+        println!("Committed pending changes.");
+    }
+    engine.push(&repo, "origin")?;
+    println!("Pushed to origin.");
+    Ok(())
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_pull_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let path = Path::new(vault_path);
+    let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let repo = engine.open_repo()?;
+    let result = engine.pull(&repo, "origin")?;
+    match result {
+        idtty_core::sync::engine::PullResult::AlreadyUpToDate => println!("Already up to date."),
+        idtty_core::sync::engine::PullResult::FastForward => println!("Fast-forwarded to latest."),
+        idtty_core::sync::engine::PullResult::Merged => println!("Merged remote changes."),
+        idtty_core::sync::engine::PullResult::Conflict => {
+            return Err("merge conflict detected. Manual resolution required.".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_status_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let path = Path::new(vault_path);
+    let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let repo = engine.open_repo()?;
+    let status = engine.status(&repo)?;
+    if status.is_dirty() {
+        println!("Working tree: dirty ({} staged, {} unstaged)", status.staged, status.unstaged);
+    } else {
+        println!("Working tree: clean");
+    }
+    let log = engine.log(&repo, 5)?;
+    if !log.is_empty() {
+        println!("\nRecent commits:");
         for c in &log {
             let ts = chrono::DateTime::from_timestamp(c.time, 0)
                 .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
                 .unwrap_or_default();
-            println!("{} {} {}", &c.id[..7.min(c.id.len())], ts, c.message.trim());
+            println!("  {} {} <{}>", &c.id[..7.min(c.id.len())], c.message.trim(), ts);
         }
-        println!("\n{} commit(s)", log.len());
-        Ok(())
     }
-    #[cfg(not(feature = "git-sync"))]
-    { let _ = limit; eprintln!("error: git-sync feature not enabled"); std::process::exit(1); }
+    Ok(())
 }
+
+#[cfg(feature = "git-sync")]
+fn sync_log_direct(vault_path: &str, limit: usize) -> Result<(), Box<dyn std::error::Error>> {
+    let path = Path::new(vault_path);
+    let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let repo = engine.open_repo()?;
+    let log = engine.log(&repo, limit)?;
+    if log.is_empty() {
+        println!("No commits.");
+        return Ok(());
+    }
+    for c in &log {
+        let ts = chrono::DateTime::from_timestamp(c.time, 0)
+            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_default();
+        println!("{} {} {}", &c.id[..7.min(c.id.len())], ts, c.message.trim());
+    }
+    println!("\n{} commit(s)", log.len());
+    Ok(())
+}
+
+// Fallbacks when git-sync feature is disabled
+#[cfg(not(feature = "git-sync"))]
+fn sync_init_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
+#[cfg(not(feature = "git-sync"))]
+fn sync_remote_direct(_: &str, _u: &str) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
+#[cfg(not(feature = "git-sync"))]
+fn sync_push_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
+#[cfg(not(feature = "git-sync"))]
+fn sync_pull_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
+#[cfg(not(feature = "git-sync"))]
+fn sync_status_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
+#[cfg(not(feature = "git-sync"))]
+fn sync_log_direct(_: &str, _n: usize) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
 
 // ── Helpers ──
 

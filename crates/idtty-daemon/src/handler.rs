@@ -233,9 +233,46 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
-        // ── Sync (not yet routed) ──
-        "sync.push" | "sync.pull" | "sync.status" | "sync.log" => {
-            err_response(format!("{} not yet routed through daemon.", req.action))
+        // ── Sync ──
+        "sync.init" => {
+            match sync_init(&state.vault_path) {
+                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Err(e) => err_response(e),
+            }
+        }
+        "sync.remote" => {
+            if req.payload.is_empty() {
+                return err_response("Missing remote URL in payload");
+            }
+            match sync_remote(&state.vault_path, &req.payload) {
+                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Err(e) => err_response(e),
+            }
+        }
+        "sync.push" => {
+            match sync_push(&state.vault_path) {
+                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Err(e) => err_response(e),
+            }
+        }
+        "sync.pull" => {
+            match sync_pull(&state.vault_path) {
+                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Err(e) => err_response(e),
+            }
+        }
+        "sync.status" => {
+            match sync_status(&state.vault_path) {
+                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Err(e) => err_response(e),
+            }
+        }
+        "sync.log" => {
+            let limit: usize = if req.payload.is_empty() { 10 } else { req.payload.parse().unwrap_or(10) };
+            match sync_log(&state.vault_path, limit) {
+                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Err(e) => err_response(e),
+            }
         }
 
         _ => err_response(format!("Unknown action: {}", req.action)),
@@ -246,3 +283,125 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
     resp
 }
+
+// ── Sync helpers (git2-rs, CPU-bound) ──
+
+#[cfg(feature = "git-sync")]
+fn device_name(vault_path: &std::path::Path) -> String {
+    let reg_path = vault_path.join("meta/devices.json");
+    if reg_path.exists() {
+        if let Ok(data) = std::fs::read_to_string(&reg_path) {
+            let reg: Result<idtty_core::devices::DeviceRegistry, _> = serde_json::from_str(&data);
+            if let Ok(reg) = reg {
+                if let Some(entry) = reg.devices.values().next() {
+                    return entry.name.clone();
+                }
+            }
+        }
+    }
+    "idtty-device".into()
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_init(vault_path: &std::path::Path) -> Result<String, String> {
+    let engine = idtty_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let repo = engine.init_repo().map_err(|e| format!("{e}"))?;
+    let log = engine.log(&repo, 1).map_err(|e| format!("{e}"))?;
+    let commit_info = log.first()
+        .map(|c| format!("Initial commit: {}", &c.id[..7.min(c.id.len())]))
+        .unwrap_or_else(|| "Repo initialized".into());
+    Ok(format!("Git repo initialized. {}", commit_info))
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_remote(vault_path: &std::path::Path, url: &str) -> Result<String, String> {
+    let engine = idtty_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
+    engine.add_remote(&repo, "origin", url).map_err(|e| format!("{e}"))?;
+    Ok(format!("Remote 'origin' set to: {url}"))
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_push(vault_path: &std::path::Path) -> Result<String, String> {
+    let engine = idtty_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
+    let status = engine.status(&repo).map_err(|e| format!("{e}"))?;
+    let mut committed = false;
+    if status.is_dirty() {
+        engine.commit_all(&repo, "").map_err(|e| format!("{e}"))?;
+        committed = true;
+    }
+    engine.push(&repo, "origin").map_err(|e| format!("{e}"))?;
+    let msg = if committed { "Committed pending changes and pushed to origin." } else { "Pushed to origin." };
+    Ok(msg.into())
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_pull(vault_path: &std::path::Path) -> Result<String, String> {
+    let engine = idtty_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
+    let result = engine.pull(&repo, "origin").map_err(|e| format!("{e}"))?;
+    Ok(match result {
+        idtty_core::sync::engine::PullResult::AlreadyUpToDate => "Already up to date.".
+into(),
+        idtty_core::sync::engine::PullResult::FastForward => "Fast-forwarded to latest.".into(),
+        idtty_core::sync::engine::PullResult::Merged => "Merged remote changes.".into(),
+        idtty_core::sync::engine::PullResult::Conflict => return Err("Merge conflict detected. Manual resolution required.".into()),
+    })
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_status(vault_path: &std::path::Path) -> Result<String, String> {
+    let engine = idtty_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
+    let status = engine.status(&repo).map_err(|e| format!("{e}"))?;
+    let work_tree = if status.is_dirty() {
+        format!("dirty ({} staged, {} unstaged)", status.staged, status.unstaged)
+    } else {
+        "clean".into()
+    };
+    let log = engine.log(&repo, 5).map_err(|e| format!("{e}"))?;
+    let mut result = format!("Working tree: {}", work_tree);
+    if !log.is_empty() {
+        result.push_str("\nRecent commits:");
+        for c in &log {
+            let ts = chrono::DateTime::from_timestamp(c.time, 0)
+                .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_default();
+            result.push_str(&format!("\n  {} {} <{}>", &c.id[..7.min(c.id.len())], c.message.trim(), ts));
+        }
+    }
+    Ok(result)
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_log(vault_path: &std::path::Path, limit: usize) -> Result<String, String> {
+    let engine = idtty_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
+    let log = engine.log(&repo, limit).map_err(|e| format!("{e}"))?;
+    if log.is_empty() {
+        return Ok("No commits.".into());
+    }
+    let mut result = String::new();
+    for c in &log {
+        let ts = chrono::DateTime::from_timestamp(c.time, 0)
+            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_default();
+        result.push_str(&format!("{} {} {}\n", &c.id[..7.min(c.id.len())], ts, c.message.trim()));
+    }
+    result.push_str(&format!("\n{} commit(s)", log.len()));
+    Ok(result)
+}
+
+#[cfg(not(feature = "git-sync"))]
+fn sync_init(_p: &std::path::Path) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+#[cfg(not(feature = "git-sync"))]
+fn sync_remote(_p: &std::path::Path, _u: &str) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+#[cfg(not(feature = "git-sync"))]
+fn sync_push(_p: &std::path::Path) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+#[cfg(not(feature = "git-sync"))]
+fn sync_pull(_p: &std::path::Path) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+#[cfg(not(feature = "git-sync"))]
+fn sync_status(_p: &std::path::Path) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+#[cfg(not(feature = "git-sync"))]
+fn sync_log(_p: &std::path::Path, _n: usize) -> Result<String, String> { Err("git-sync feature not enabled".into()) }

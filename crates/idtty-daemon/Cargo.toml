@@ -7,7 +7,7 @@ rust-version.workspace = true
 description = "IDtty background IPC daemon (Unix socket / Named Pipes server)"
 
 [dependencies]
-idtty-core = { path = "../idtty-core" }
+idtty-core = { path = "../idtty-core", features = ["git-sync"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
@@ -17,9 +17,14 @@ bytes = { workspace = true }
 uuid = { workspace = true }
 clap = { workspace = true }
 zeroize = { workspace = true }
+chrono = "0.4"
 
 [build-dependencies]
 prost-build = "0.13"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[features]
+default = ["git-sync"]
+git-sync = ["idtty-core/git-sync"]

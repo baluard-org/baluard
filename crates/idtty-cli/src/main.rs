@@ -150,14 +150,14 @@ fn main() {
         Commands::Unlock => commands::handle_unlock(mode, &cli.vault_path, cli.socket.as_deref()),
         Commands::Lock => commands::handle_lock(mode, cli.socket.as_deref()),
 
-        // Sync always direct (not yet routed through daemon)
+        // Sync: daemon-first with direct fallback
         Commands::Sync { action } => match action {
-            SyncAction::Init => commands::handle_sync_init(&cli.vault_path),
-            SyncAction::Remote { url } => commands::handle_sync_remote(&cli.vault_path, &url),
-            SyncAction::Push => commands::handle_sync_push(&cli.vault_path),
-            SyncAction::Pull => commands::handle_sync_pull(&cli.vault_path),
-            SyncAction::Status => commands::handle_sync_status(&cli.vault_path),
-            SyncAction::Log { limit } => commands::handle_sync_log(&cli.vault_path, limit),
+            SyncAction::Init => commands::handle_sync_init(mode, &cli.vault_path, cli.socket.as_deref()),
+            SyncAction::Remote { url } => commands::handle_sync_remote(mode, &cli.vault_path, cli.socket.as_deref(), &url),
+            SyncAction::Push => commands::handle_sync_push(mode, &cli.vault_path, cli.socket.as_deref()),
+            SyncAction::Pull => commands::handle_sync_pull(mode, &cli.vault_path, cli.socket.as_deref()),
+            SyncAction::Status => commands::handle_sync_status(mode, &cli.vault_path, cli.socket.as_deref()),
+            SyncAction::Log { limit } => commands::handle_sync_log(mode, &cli.vault_path, cli.socket.as_deref(), limit),
         },
 
         // Cipher CRUD: daemon-first with direct fallback
