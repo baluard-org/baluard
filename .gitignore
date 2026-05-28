@@ -6,9 +6,10 @@ desktop.ini
 *.swo
 *~
 
-# ── IDEs ──
+# ── IDEs / Agent tools ──
 .idea/
 .vscode/
+.pi/
 *.iml
 *.sublime-*
 .gradle/
