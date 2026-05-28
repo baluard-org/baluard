@@ -77,7 +77,7 @@
 | `cli/socket-client` | Done | `client.rs`: Protobuf socket client. Bounds-checked varint decode. `request_to(action, payload, socket_path)`. `is_daemon_running()`. |
 | `cli/dual-mode` | Done | All vault commands (unlock, lock, add, get, list, delete) route through daemon by default. `--direct` flag falls back to idtty-core. `--socket <path>` for custom daemon socket. `ensure_unlocked_daemon()` auto-prompts master password. |
 | `cli/init` | Done | Always direct. Writes vault .gitignore excluding meta/device-privkey.json. |
-| `cli/sync` | Done | Direct-only (not yet routed through daemon). Feature-gated behind `git-sync`. |
+| `cli/sync` | Done | Daemon-first with --direct fallback. All 6 actions: init, remote, push, pull, status, log. Feature-gated behind `git-sync`. |
 | `cli/devices` | Done | Direct-only (not yet routed through daemon). |
 
 ### Phase 4: Desktop UI & Open-Source Launch
@@ -141,7 +141,7 @@
 2. **Metadata Leakage via Bucket Sizes**: Standard logins mapped to 1KB, notes to 8KB, attachments to 64KB/1MB. Provider can infer entry counts per class.
 3. **JIT Sync Latency on Mobile**: JIT `git fetch` adds sub-second network latency before biometric prompt on slow connections.
 4. **Offline Sharing Limitation**: Invites and revokes require committing wrapped keys to `metadata/access_list.json` and pushing to remote git hosts.
-5. **Sync not routed through daemon**: sync.init/push/pull/status/log remain direct-only. Daemon returns error for these actions.
+5. **Sync routed through daemon**: sync.init/remote/push/pull/status/log all route through daemon by default with --direct fallback.
 
 ---
 
@@ -156,7 +156,7 @@
 | `get <id> --decrypt` | Daemon/Direct | Get cipher by UUID |
 | `list` | Daemon/Direct | List all cipher UUIDs |
 | `delete <id>` | Daemon/Direct | Delete cipher by UUID |
-| `sync {init\|push\|pull\|...}` | Direct | Git sync operations |
+| `sync {init\|remote\|push\|pull\|...}` | Daemon/Direct | Git sync operations |
 | `devices list` | Direct | List enrolled devices |
 | `ping` | Daemon | Check daemon connectivity |
 

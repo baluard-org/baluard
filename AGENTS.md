@@ -92,7 +92,7 @@ idtty/
 ## NOTES
 * **Single Rust core**: All crypto, vault format, padding, key lifecycle, and git sync live in `idtty-core`. No duplicate implementations.
 * **CLI dual-mode (daemon-first)**: All vault commands (unlock, lock, add, get, list, delete) route through the daemon via Protobuf over Unix socket by default. `--direct` flag falls back to idtty-core in-process. `--socket <path>` accepts custom daemon socket. `ensure_unlocked_daemon()` auto-prompts master password if vault is locked.
-* **Daemon holds vault state**: `idtty-daemon` runs a tokio Unix socket server with vault CRUD via Protobuf gateway. Supports open, unlock, lock, info, list, get, add, delete. Accepts `--vault-path` and `--socket` args. Locks vault (zeroizes keys) on SIGTERM.
+* **Daemon holds vault state**: `idtty-daemon` runs a tokio Unix socket server with vault CRUD and sync via Protobuf gateway. Vault actions: open, unlock, lock, info, list, get, add, delete. Sync actions: init, remote, push, pull, status, log. Accepts `--vault-path` and `--socket` args. Locks vault (zeroizes keys) on SIGTERM. All passwords zeroized via `zeroize` crate.
 * **Protobuf schemas compiled**: `proto/*.proto` define the IPC message formats. Rust codegen via prost-build in idtty-daemon's build.rs. Generated types: GatewayRequest, GatewayResponse, VaultEntry, AccessList, DeviceIdentityEscrow.
 * **Mobile via UniFFI (planned)**: `idtty-core` will export its public API via `#[uniffi::export]` proc-macros. UniFFI will generate native Kotlin (Android) and Swift (iOS) bindings at build time. No cgo, no gomobile, no Go. Not yet annotated.
 * **Feature flags control sync**: `git-sync` feature gate; CLI enables it by default.
