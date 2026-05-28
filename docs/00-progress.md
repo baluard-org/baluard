@@ -85,7 +85,9 @@
 |--------|--------|------------------------------|
 | `desktop` | Done | SolidJS/Tailwind v4 webview in Tauri v2. Login screen + vault view (cipher list, add, get, delete). Dark theme. Scaffolded via `tauri init`. |
 | `desktop/tauri` | Done | Rust backend (edition 2024): daemon_request Tauri command proxies to idtty-daemon via Protobuf. System tray with Show/Quit. All platform icons via `tauri icon`. |
-| `desktop/tray` | Done | Tauri v2 TrayIconBuilder with Show/Quit menu. |
+| `desktop/tray` | Done | Tauri v2 TrayIconBuilder with Show/Quit menu. Left-click shows window. Close hides to tray. |
+| `desktop/daemon` | Done | Tauri spawns idtty-daemon on launch. SIGTERM + wait on app exit. |
+| `ci-cd` | Done | GitHub Actions: test.yml (cargo test/fmt/clippy), build-desktop.yml (tauri-action matrix for Linux/macOS/Windows, draft release on tag). |
 | `ci-cd` | Planned | GitHub Actions matrix for multi-platform compilation. |
 
 ### Phase 5: Mobile & Extension
