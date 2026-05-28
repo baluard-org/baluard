@@ -4,7 +4,7 @@
 
 ## OVERVIEW
 Project: **IDtty** (Git-native password manager / Space Manager)
-Stack: Rust (core crypto + CLI + daemon), SolidJS/Tailwind/Tauri v2 (desktop), Kotlin Multiplatform via UniFFI (mobile, planned), SolidJS (browser extension, planned), Protobuf (IPC schema, planned)
+Stack: Rust (core crypto + CLI + daemon), SolidJS/Tailwind/Tauri v2 (desktop, planned), Kotlin Multiplatform via UniFFI (mobile, planned), SolidJS (browser extension, planned), Protobuf (IPC schema, wired)
 License: MIT
 
 Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets. Mobile apps will bind directly to the Rust core via UniFFI-generated Kotlin/Swift bindings.
@@ -29,14 +29,16 @@ idtty/
 │   │       ├── recovery.rs     # BIP-39 recovery phrase
 │   │       ├── types.rs        # Shared types (CipherInput, KdfProfile, etc.)
 │   │       └── error.rs        # IdttyError enum
-│   ├── idtty-cli/              # CLI binary (clap) - currently links idtty-core directly
+│   ├── idtty-cli/              # CLI binary (clap) - daemon-first with --direct fallback
 │   │   └── src/
-│   │       ├── main.rs         # Command dispatch (init/unlock/add/get/list/delete/sync/devices)
-│   │       └── commands/       # Direct idtty-core calls (will become socket client)
+│   │       ├── main.rs         # Command dispatch, --direct/--socket flags
+│   │       ├── client.rs       # Protobuf socket client (request_to)
+│   │       └── commands/       # Dual-mode handlers (daemon + direct)
 │   └── idtty-daemon/           # Background IPC daemon (vault state + Protobuf gateway)
 │       └── src/
-│           ├── main.rs         # Socket listener, SIGINT/SIGTERM handling, 0600 perms
-│           └── handler.rs      # JSON echo stub (Protobuf wiring pending)
+│           ├── main.rs         # Socket listener, SIGINT/SIGTERM, 0600 perms
+│           ├── handler.rs      # Protobuf routing, password zeroize, varint framing
+│           └── state.rs        # VaultState (Arc<RwLock<Option<VaultHandle>>>)
 ├── desktop/                    # Tauri v2 desktop app [PLACEHOLDER]
 │   └── package.json            # vite, solid-js, @tauri-apps/cli
 ├── mobile/                     # Kotlin Multiplatform mobile app [PLACEHOLDER]
@@ -80,20 +82,22 @@ idtty/
 * **Key hierarchy & lifecycle**: `crates/idtty-core/src/keys/`
 * **Vault CRUD & format**: `crates/idtty-core/src/vault/`
 * **Git sync engine**: `crates/idtty-core/src/sync/`
-* **CLI commands**: `crates/idtty-cli/src/commands/mod.rs`
+* **CLI commands**: `crates/idtty-cli/src/commands/mod.rs` (dual-mode: daemon + direct)
+* **CLI socket client**: `crates/idtty-cli/src/client.rs`
 * **Daemon IPC handler**: `crates/idtty-daemon/src/handler.rs`
+* **Daemon vault state**: `crates/idtty-daemon/src/state.rs`
 * **Design docs**: `docs/01-architecture-decisions.md` (authoritative for all decisions)
-* **Protobuf schemas**: `proto/` (schemas only, no codegen yet)
+* **Protobuf schemas**: `proto/` (compiled by prost-build in daemon + CLI)
 
 ## NOTES
 * **Single Rust core**: All crypto, vault format, padding, key lifecycle, and git sync live in `idtty-core`. No duplicate implementations.
-* **CLI currently links core directly**: `idtty-cli` calls `idtty-core` functions in-process. Each command prompts for master password. Phase 3 will convert CLI to a socket client that talks to the daemon, eliminating repeated password prompts.
+* **CLI dual-mode (daemon-first)**: All vault commands (unlock, lock, add, get, list, delete) route through the daemon via Protobuf over Unix socket by default. `--direct` flag falls back to idtty-core in-process. `--socket <path>` accepts custom daemon socket. `ensure_unlocked_daemon()` auto-prompts master password if vault is locked.
 * **Daemon holds vault state**: `idtty-daemon` runs a tokio Unix socket server with vault CRUD via Protobuf gateway. Supports open, unlock, lock, info, list, get, add, delete. Accepts `--vault-path` and `--socket` args. Locks vault (zeroizes keys) on SIGTERM.
 * **Protobuf schemas compiled**: `proto/*.proto` define the IPC message formats. Rust codegen via prost-build in idtty-daemon's build.rs. Generated types: GatewayRequest, GatewayResponse, VaultEntry, AccessList, DeviceIdentityEscrow.
 * **Mobile via UniFFI (planned)**: `idtty-core` will export its public API via `#[uniffi::export]` proc-macros. UniFFI will generate native Kotlin (Android) and Swift (iOS) bindings at build time. No cgo, no gomobile, no Go. Not yet annotated.
 * **Feature flags control sync**: `git-sync` feature gate; CLI enables it by default.
 * **Padded buckets**: All vault entries are padded to uniform sizes (1KB/8KB/64KB/1MB) to prevent metadata leakage.
-* **IPC via Unix sockets (target)**: Daemon will listen on `/tmp/idtty.sock` with 0600 perms. All UI layers will communicate through the Protobuf gateway. Socket is born with 0600 via umask (no TOCTOU race).
+* **IPC via Unix sockets**: Daemon listens on `/tmp/idtty.sock` with 0600 perms. Socket born with 0600 via umask (no TOCTOU). CLI connects via `client::request_to()`. All UI layers will communicate through the Protobuf gateway.
 * **MOCK_BACKEND build flag (planned)**: Desktop and mobile UIs will support `MOCK_BACKEND=true` for frontend-only development.
 * **Key hierarchy**: Master Password -> KEK (Argon2id) -> Device Private Key (escrowed) -> Space Group Key -> Item Keys.
 * **BIP-39 recovery**: Vault creation generates a recovery phrase for key recovery.
@@ -104,9 +108,9 @@ idtty/
 |-----------|--------|
 | `idtty-core` crypto/keys/vault | Built, tested, security-reviewed (2 rounds) |
 | `idtty-core` sync engine | Built, tested |
-| `idtty-cli` (direct core) | Functional, links core in-process |
-| `idtty-daemon` socket server | Protobuf wire, vault CRUD working |
-| Protobuf codegen | Compiled via prost in daemon build.rs |
+| `idtty-cli` (dual-mode) | Daemon-first + `--direct` fallback. All CRUD working. |
+| `idtty-daemon` socket server | Protobuf wire, VaultState, full CRUD. SIGTERM safe. |
+| Protobuf codegen | Compiled via prost in daemon + CLI build.rs |
 | UniFFI annotations | Not yet applied to idtty-core |
 | Desktop Tauri app | Placeholder |
 | Mobile KMP app | Placeholder |
