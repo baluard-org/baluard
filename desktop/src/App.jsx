@@ -2,7 +2,7 @@ import { createSignal, onMount, Show, For } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 
 // ── State ──
-const [status, setStatus] = createSignal("locked"); // locked | unlocking | unlocked
+const [status, setStatus] = createSignal("locked");
 const [ciphers, setCiphers] = createSignal([]);
 const [error, setError] = createSignal("");
 const [vaultInfo, setVaultInfo] = createSignal(null);
@@ -12,27 +12,30 @@ const [newCipher, setNewCipher] = createSignal({
   name: "", username: "", password: "", uri: "", notes: "",
 });
 
-// ── API via Tauri IPC (daemon commands) ──
+// ── Daemon proxy ──
 async function daemon(action, payload = "") {
-  return invoke("daemon_request", { action, payload });
+  const res = await invoke("daemon_request", { action, payload });
+  if (!res.success) throw new Error(res.error);
+  return res.payload;
 }
 
 // ── Actions ──
 async function unlock() {
-  const password = document.getElementById("master-password")?.value;
+  const el = document.getElementById("master-password");
+  const password = el?.value;
   if (!password) return;
   setStatus("unlocking");
   setError("");
   try {
     await daemon("vault.open");
     await daemon("vault.unlock", password);
-    document.getElementById("master-password").value = "";
+    el.value = "";
     setStatus("unlocked");
     await refreshCiphers();
-    const info = await daemon("vault.info");
-    setVaultInfo(JSON.parse(info));
+    const info = JSON.parse(await daemon("vault.info"));
+    setVaultInfo(info);
   } catch (e) {
-    setError(e.toString());
+    setError(e.message);
     setStatus("locked");
   }
 }
@@ -46,7 +49,7 @@ async function lock() {
     setViewCipher(null);
     setShowAdd(false);
   } catch (e) {
-    setError(e.toString());
+    setError(e.message);
   }
 }
 
@@ -55,7 +58,7 @@ async function refreshCiphers() {
     const data = JSON.parse(await daemon("vault.list"));
     setCiphers(data.cipher_ids || []);
   } catch (e) {
-    setError(e.toString());
+    setError(e.message);
   }
 }
 
@@ -76,7 +79,7 @@ async function addCipher() {
     setShowAdd(false);
     await refreshCiphers();
   } catch (e) {
-    setError(e.toString());
+    setError(e.message);
   }
 }
 
@@ -85,7 +88,7 @@ async function getCipher(id) {
     const data = JSON.parse(await daemon("vault.get", JSON.stringify({ id, decrypt: true })));
     setViewCipher(data);
   } catch (e) {
-    setError(e.toString());
+    setError(e.message);
   }
 }
 
@@ -95,7 +98,7 @@ async function deleteCipher(id) {
     setViewCipher(null);
     await refreshCiphers();
   } catch (e) {
-    setError(e.toString());
+    setError(e.message);
   }
 }
 
@@ -271,7 +274,6 @@ function VaultView() {
 // ── Root App ──
 export default function App() {
   onMount(async () => {
-    // Try auto-opening vault on startup
     try { await daemon("vault.open"); } catch {}
     try {
       const info = JSON.parse(await daemon("vault.info"));
@@ -284,10 +286,7 @@ export default function App() {
   });
 
   return (
-    <Show
-      when={status() === "unlocked"}
-      fallback={<LoginScreen />}
-    >
+    <Show when={status() === "unlocked"} fallback={<LoginScreen />}>
       <VaultView />
     </Show>
   );

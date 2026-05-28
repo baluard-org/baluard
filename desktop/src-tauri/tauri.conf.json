@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "IDtty",
   "version": "0.1.0",
   "identifier": "xyz.actitud.idtty",
@@ -10,7 +10,6 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "withGlobalTauri": true,
     "windows": [
       {
         "title": "IDtty",
@@ -19,13 +18,11 @@
         "minWidth": 700,
         "minHeight": 400,
         "resizable": true,
-        "fullscreen": false,
-        "decorations": true
+        "fullscreen": false
       }
     ],
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true
+    "security": {
+      "csp": null
     }
   },
   "bundle": {
@@ -37,6 +34,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
+    }
   }
 }

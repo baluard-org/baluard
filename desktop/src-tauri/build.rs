@@ -1,5 +1,4 @@
 fn main() {
-    // Resolve proto dir relative to workspace root
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let proto_dir = format!("{manifest_dir}/../../proto");
     let proto_file = format!("{proto_dir}/auth.proto");

@@ -3,6 +3,8 @@ name = "idtty-desktop"
 version = "0.1.0"
 description = "IDtty desktop app"
 authors = ["EstebanForge"]
+license = "MIT"
+repository = "https://github.com/EstebanForge/IDtty"
 edition = "2021"
 
 [lib]
@@ -10,14 +12,15 @@ name = "idtty_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2" }
 prost-build = "0.13"
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-shell = "2"
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-log = "2"
 prost = "0.13"
 bytes = "1"
 anyhow = "1"
