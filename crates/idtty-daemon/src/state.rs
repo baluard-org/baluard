@@ -202,8 +202,12 @@ impl VaultState {
             serde_json::json!({
                 "name": entry.name,
                 "device_id": entry.device_id,
-                "encryption_key": format!("{}...{}", &entry.encryption_public_key[..8], &entry.encryption_public_key[56..]),
-                "signing_key": format!("{}...{}", &entry.signing_public_key[..8], &entry.signing_public_key[56..]),
+                "encryption_key": format!("{}...{}",
+                    entry.encryption_public_key.get(..8).unwrap_or(&entry.encryption_public_key),
+                    entry.encryption_public_key.get(56..).unwrap_or("")),
+                "signing_key": format!("{}...{}",
+                    entry.signing_public_key.get(..8).unwrap_or(&entry.signing_public_key),
+                    entry.signing_public_key.get(56..).unwrap_or("")),
                 "enrolled_at": entry.enrolled_at,
             })
         }).collect();

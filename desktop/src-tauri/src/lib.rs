@@ -7,12 +7,15 @@
 use prost::Message;
 use serde::Serialize;
 use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, WindowEvent};
+
+/// Maximum response size (5MB — daemon caps at 4MB, plus headroom)
+const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
 
 /// Generated Protobuf types
 mod proto {
@@ -22,21 +25,39 @@ mod proto {
 
 use proto::{GatewayRequest, GatewayResponse};
 
-// ── Daemon child process (shared across setup + on_window_event) ──
+// ── Daemon child process ──
 
 struct Daemon(std::process::Child);
 impl Drop for Daemon {
     fn drop(&mut self) {
-        // SIGTERM the daemon; let it clean up gracefully
-        if let Err(e) = self.0.kill() {
-            log::warn!("Failed to kill daemon: {e}");
+        // Send SIGTERM for graceful shutdown (daemon handles SIGTERM for key zeroization)
+        #[cfg(unix)]
+        {
+            let pid = self.0.id() as i32;
+            unsafe {
+                libc::kill(pid, libc::SIGTERM);
+            }
+            // Wait up to 3s for graceful cleanup
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            loop {
+                if self.0.try_wait().ok().flatten().is_some() {
+                    return;
+                }
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
+        // Escalate to SIGKILL if still alive
+        let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
 
 // ── Socket path ──
 
+#[cfg(unix)]
 fn default_socket_path() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
@@ -63,6 +84,11 @@ fn default_socket_path() -> PathBuf {
     {
         PathBuf::from("/tmp/idtty.sock")
     }
+}
+
+#[cfg(not(unix))]
+fn default_socket_path() -> PathBuf {
+    PathBuf::from("idtty.sock")
 }
 
 // ── Wire protocol ──
@@ -98,10 +124,21 @@ fn decode_varint(data: &[u8]) -> Result<(u64, usize), String> {
     Err("Incomplete varint".into())
 }
 
+#[cfg(unix)]
 fn send_request(action: &str, payload: &str) -> Result<String, String> {
+    use std::os::unix::net::UnixStream;
+
     let socket = default_socket_path();
     let mut stream = UnixStream::connect(&socket)
         .map_err(|e| format!("Cannot connect to daemon at {}: {}", socket.display(), e))?;
+
+    // I/O timeouts to prevent UI freeze
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .map_err(|e| format!("Set timeout: {e}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| format!("Set timeout: {e}"))?;
 
     let req = GatewayRequest {
         action: action.to_string(),
@@ -118,12 +155,17 @@ fn send_request(action: &str, payload: &str) -> Result<String, String> {
         .shutdown(std::net::Shutdown::Write)
         .map_err(|e| format!("Shutdown: {e}"))?;
 
+    // Bounded read to prevent memory exhaustion
     let mut buf = Vec::with_capacity(4096);
     stream
+        .take(MAX_RESPONSE_SIZE)
         .read_to_end(&mut buf)
         .map_err(|e| format!("Read: {e}"))?;
     if buf.is_empty() {
         return Err("Daemon closed connection".into());
+    }
+    if buf.len() as u64 >= MAX_RESPONSE_SIZE {
+        return Err("Response exceeds maximum frame size".into());
     }
 
     let (resp_len, offset) = decode_varint(&buf)?;
@@ -138,6 +180,11 @@ fn send_request(action: &str, payload: &str) -> Result<String, String> {
     } else {
         Err(resp.error_message)
     }
+}
+
+#[cfg(not(unix))]
+fn send_request(_action: &str, _payload: &str) -> Result<String, String> {
+    Err("IPC not yet implemented on this platform".into())
 }
 
 // ── Tauri commands ──
@@ -165,11 +212,13 @@ fn daemon_request(action: String, payload: String) -> DaemonResponse {
     }
 }
 
-/// Check if daemon is reachable (for UI status display)
+/// Check if daemon is reachable via ping (avoids phantom connections)
 #[tauri::command]
 fn daemon_status() -> bool {
-    let socket = default_socket_path();
-    UnixStream::connect(&socket).is_ok()
+    match send_request("ping", "") {
+        Ok(_) => true,
+        Err(_) => false,
+    }
 }
 
 // ── App entry ──
@@ -182,23 +231,44 @@ pub fn run() {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
-                    .level(log::LevelFilter::Info)
-                    .build(),
+                        .level(log::LevelFilter::Info)
+                        .build(),
                 )?;
             }
 
             // Start daemon if not already running
-            let socket = default_socket_path();
-            let daemon_running = socket.exists() && UnixStream::connect(&socket).is_ok();
-            if !daemon_running {
-                let child = std::process::Command::new("idtty-daemon")
-                    .spawn()
-                    .map_err(|e| format!("Failed to start daemon: {e}"))?;
-                let state = app.state::<Mutex<Option<Daemon>>>();
-                *state.lock().unwrap() = Some(Daemon(child));
-                log::info!("Daemon started");
-            } else {
-                log::info!("Daemon already running");
+            #[cfg(unix)]
+            {
+                let socket = default_socket_path();
+                let daemon_running =
+                    socket.exists() && std::os::unix::net::UnixStream::connect(&socket).is_ok();
+
+                if !daemon_running {
+                    // TODO: Use tauri-plugin-shell sidecar once daemon is bundled
+                    let child = std::process::Command::new("idtty-daemon")
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                        .map_err(|e| format!("Failed to start daemon: {e}"))?;
+
+                    let state = app.state::<Mutex<Option<Daemon>>>();
+                    *state.lock().unwrap() = Some(Daemon(child));
+                    log::info!("Daemon started");
+
+                    // Wait for socket readiness (up to 2s)
+                    for attempt in 0..20 {
+                        if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+                            log::info!("Daemon ready after {}ms", attempt * 100);
+                            break;
+                        }
+                        if attempt == 19 {
+                            return Err("Daemon failed to start within 2s".into());
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                } else {
+                    log::info!("Daemon already running");
+                }
             }
 
             // System tray

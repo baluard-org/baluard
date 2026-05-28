@@ -22,8 +22,8 @@ log = "0.4"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 prost = "0.13"
-bytes = "1"
 anyhow = "1"
+libc = "0.2"
 
 [profile.release]
 panic = "abort"

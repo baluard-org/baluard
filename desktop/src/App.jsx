@@ -15,7 +15,13 @@ const [newCipher, setNewCipher] = createSignal({
 // ── Daemon proxy ──
 async function daemon(action, payload = "") {
   const res = await invoke("daemon_request", { action, payload });
-  if (!res.success) throw new Error(res.error);
+  if (!res.success) {
+    const msg = res.error.includes("Cannot connect") ? "Daemon is not running" :
+                res.error.includes("Vault not") ? "Vault is not unlocked" :
+                res.error.includes("timeout") ? "Request timed out" :
+                res.error.length > 100 ? res.error.slice(0, 100) + "..." : res.error;
+    throw new Error(msg);
+  }
   return res.payload;
 }
 
