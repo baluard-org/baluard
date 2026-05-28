@@ -55,3 +55,7 @@ bytes = "1"
 # Hex / Base64
 hex = "0.4"
 base64 = "0.22"
+
+# Protobuf
+prost = "0.13"
+prost-types = "0.13"

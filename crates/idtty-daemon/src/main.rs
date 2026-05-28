@@ -5,6 +5,13 @@
 //! from CLI, Tauri webview, and browser extension clients.
 
 mod handler;
+mod proto {
+    include!(concat!(env!("OUT_DIR"), "/idtty.auth.rs"));
+    include!(concat!(env!("OUT_DIR"), "/idtty.vault.rs"));
+    include!(concat!(env!("OUT_DIR"), "/idtty.space.rs"));
+}
+
+use proto::{GatewayRequest, GatewayResponse};
 
 use anyhow::Result;
 use std::path::Path;
@@ -29,13 +36,9 @@ async fn run(socket_path: Option<&str>) -> Result<()> {
     }
 
     // Set restrictive umask BEFORE bind so socket is born with 0600.
-    // This eliminates the TOCTOU race between bind() and chmod().
     #[cfg(unix)]
     {
-        let prev = unsafe { libc::umask(0o177) };
-        // umask persists for the process; restore is not needed since
-        // we want all subsequent file creates restricted too.
-        let _ = prev;
+        let _prev = unsafe { libc::umask(0o177) };
     }
 
     let listener = UnixListener::bind(path)?;

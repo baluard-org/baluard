@@ -2,7 +2,6 @@ syntax = "proto3";
 
 package idtty.space;
 
-option go_package = "github.com/EstebanForge/idtty/proto/space";
 
 message AccessList {
   repeated Member members = 1;

@@ -2,7 +2,6 @@ syntax = "proto3";
 
 package idtty.auth;
 
-option go_package = "github.com/EstebanForge/idtty/proto/auth";
 
 message DeviceIdentityEscrow {
   string device_id = 1;

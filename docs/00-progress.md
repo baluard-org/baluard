@@ -9,6 +9,7 @@
 
 **What**: Git-backed password manager. Encrypted vault stored as a git repo. No server.
 **Stack**: Rust Core Engine (`idtty-core` crypto/keys/vault/sync + `idtty-daemon` IPC socket server + `idtty-cli` terminal client) + Tauri v2 Desktop (SolidJS/Tailwind) + Kotlin Multiplatform via UniFFI (Mobile) + SolidJS Browser Extension + Single-String Protobuf Gateway.
+**Platforms**: Windows, Linux, macOS (desktop + CLI), Android, iOS (mobile). CLI: bash, zsh, PowerShell.
 **Terminology Translations (Consumer-Facing)**:
 - Git Repository -> **Space**
 - Git Clone/SSH/PAT -> **Sign in with GitHub** (OAuth background setup)
