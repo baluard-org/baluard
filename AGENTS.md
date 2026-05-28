@@ -97,7 +97,7 @@ idtty/
 * **Mobile via UniFFI (planned)**: `idtty-core` will export its public API via `#[uniffi::export]` proc-macros. UniFFI will generate native Kotlin (Android) and Swift (iOS) bindings at build time. No cgo, no gomobile, no Go. Not yet annotated.
 * **Feature flags control sync**: `git-sync` feature gate; CLI enables it by default.
 * **Padded buckets**: All vault entries are padded to uniform sizes (1KB/8KB/64KB/1MB) to prevent metadata leakage.
-* **IPC via Unix sockets**: Daemon listens on `/tmp/idtty.sock` with 0600 perms. Socket born with 0600 via umask (no TOCTOU). CLI connects via `client::request_to()`. All UI layers will communicate through the Protobuf gateway.
+* **IPC via Unix sockets**: Daemon listens on platform-aware socket path (Linux: `$XDG_RUNTIME_DIR/idtty.sock`, macOS: `~/Library/Application Support/idtty/idtty.sock`, fallback: `/tmp/idtty.sock`). Socket born with 0600 via umask. Peer credential verification (SO_PEERCRED on Linux, getpeereid on macOS) rejects connections from other UIDs. `--socket` overrides default.
 * **MOCK_BACKEND build flag (planned)**: Desktop and mobile UIs will support `MOCK_BACKEND=true` for frontend-only development.
 * **Key hierarchy**: Master Password -> KEK (Argon2id) -> Device Private Key (escrowed) -> Space Group Key -> Item Keys.
 * **BIP-39 recovery**: Vault creation generates a recovery phrase for key recovery.

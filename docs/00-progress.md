@@ -78,7 +78,7 @@
 | `cli/dual-mode` | Done | All vault commands (unlock, lock, add, get, list, delete) route through daemon by default. `--direct` flag falls back to idtty-core. `--socket <path>` for custom daemon socket. `ensure_unlocked_daemon()` auto-prompts master password. |
 | `cli/init` | Done | Always direct. Writes vault .gitignore excluding meta/device-privkey.json. |
 | `cli/sync` | Done | Daemon-first with --direct fallback. All 6 actions: init, remote, push, pull, status, log. Feature-gated behind `git-sync`. |
-| `cli/devices` | Done | Direct-only (not yet routed through daemon). |
+| `cli/devices` | Done | Daemon-first with --direct fallback. Returns device list via vault.devices route. |
 
 ### Phase 4: Desktop UI & Open-Source Launch
 | Module | Status | What's Planned / Implemented |
