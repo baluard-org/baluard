@@ -1,5 +1,6 @@
 //! IDtty CLI: command-line interface for the git-native password manager.
 
+mod client;
 mod commands;
 
 use clap::{Parser, Subcommand};
@@ -78,6 +79,9 @@ enum Commands {
         #[command(subcommand)]
         action: DeviceCommands,
     },
+
+    /// Ping the daemon to check connectivity.
+    Ping,
 }
 
 #[derive(Subcommand)]
@@ -131,6 +135,25 @@ fn main() {
         Commands::Delete { id } => commands::handle_delete(&cli.vault_path, &id),
         Commands::Devices { action } => match action {
             DeviceCommands::List => commands::handle_devices(&cli.vault_path),
+        },
+        Commands::Ping => {
+            match client::request("ping", "") {
+                Ok(resp) => {
+                    if resp.success {
+                        println!("{}
+Daemon is reachable.", resp.payload);
+                    } else {
+                        eprintln!("Daemon error: {}", resp.error_message);
+                        std::process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Cannot reach daemon: {e}");
+                    eprintln!("Start it with: cargo run -p idtty-daemon");
+                    std::process::exit(1);
+                }
+            }
+            Ok(())
         },
     };
 
