@@ -83,8 +83,9 @@
 ### Phase 4: Desktop UI & Open-Source Launch
 | Module | Status | What's Planned / Implemented |
 |--------|--------|------------------------------|
-| `desktop` | Planned | SolidJS/Tailwind desktop views inside Tauri v2. |
-| `desktop/tray` | Planned | Tauri v2 tray hooks and Rust lifecycle wrappers to prevent close and keep daemon alive. |
+| `desktop` | Scaffolded | SolidJS/Tailwind webview in Tauri v2. Login screen + vault view (cipher list, add, get, delete). Dark theme. |
+| `desktop/tauri` | Scaffolded | Rust backend: daemon_request Tauri command proxies to idtty-daemon via Protobuf. System tray with Show/Quit. |
+| `desktop/tray` | Done | Tauri v2 TrayIconBuilder with Show/Quit menu. |
 | `ci-cd` | Planned | GitHub Actions matrix for multi-platform compilation. |
 
 ### Phase 5: Mobile & Extension
