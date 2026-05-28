@@ -111,7 +111,7 @@
 ### Round 2 (peer review Review)
 10 findings (3 critical, 4 important, 3 minor). All fixed:
 - **C1**: Frame-too-large desynced protocol -> Fixed: Close connection on oversized frames
-- **C2**: Master password not zeroized at IPC layer -> Fixed: `zeroize_string()` on req.payload
+- **C2**: Master password not zeroized at IPC layer -> Fixed: `zeroize` crate (`write_volatile` + `compiler_fence`) on both daemon and client side
 - **C3**: Client decode_varint panics on malformed response -> Fixed: Bounds-checked `decode_varint_checked()`
 - **I1**: delete_cipher used read lock for mutation -> Fixed: Upgraded to write lock
 - **I2**: TOCTOU in unlock (read check -> write acquire gap) -> Fixed: Double-check under single write lock
@@ -120,6 +120,18 @@
 - **M1**: Dead `ok_response` function -> Fixed: Removed
 - **M2**: `--direct` flag referenced but didn't exist -> Fixed: Flag now implemented
 - **M3**: Unused prost-types dep -> Fixed: Removed from daemon Cargo.toml
+
+### Round 3 (peer review Review)
+9 findings (1 critical, 2 security, 2 correctness, 4 minor). All fixed:
+- **C1**: `zeroize_string()` used `write_bytes` (LLVM dead-store elimination can remove it) -> Fixed: Replaced with `zeroize` crate (`write_volatile` + `compiler_fence`)
+- **S1**: Client-side password copies never zeroized (CLI heap readable via /proc/pid/mem) -> Fixed: `password.zeroize()` in unlock_daemon, ensure_unlocked_daemon; wire bytes + payload zeroized in client.rs
+- **S2**: `handle_get` forced unlock for metadata-only reads (password prompt when not needed) -> Fixed: Skip `ensure_unlocked_daemon` when `--decrypt=false`
+- **CO1**: Vault opened twice on first unlock (open_inner + fresh VaultHandle::open) -> Fixed: Single open + unlock + swap pattern, removed `open_inner`
+- **CO2**: `ensure_unlocked_daemon` called redundant `vault.open` when vault already open but locked -> Fixed: Skip `vault.open` when `vault.info` succeeds (vault already open)
+- **M1**: `open_inner()` was a pointless wrapper -> Fixed: Removed
+- **M2**: `is_daemon_running` was dead code -> Fixed: Removed
+- **M3**: `handle_list` silently fell back to direct mode; other commands returned Err -> Fixed: Consistent Err return
+- **M4**: `handle_lock` Direct arm used `process::exit(1)` -> Fixed: Returns `Err` for standard error path
 
 ---
 
