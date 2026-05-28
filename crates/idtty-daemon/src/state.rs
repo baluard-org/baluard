@@ -96,6 +96,7 @@ impl VaultState {
     }
 
     /// Check if vault is currently unlocked.
+    #[allow(dead_code)]
     pub async fn is_unlocked(&self) -> bool {
         let guard = self.inner.read().await;
         guard.as_ref().map_or(false, |h| h.is_unlocked())

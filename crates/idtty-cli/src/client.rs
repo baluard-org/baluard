@@ -19,11 +19,6 @@ mod proto {
 
 use proto::{GatewayRequest, GatewayResponse};
 
-/// Send a request to the daemon and return the response.
-pub fn request(action: &str, payload: &str) -> Result<GatewayResponse> {
-    request_to(action, payload, None)
-}
-
 /// Send a request to the daemon at a specific socket path.
 pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Result<GatewayResponse> {
     let socket = socket_path.unwrap_or(DEFAULT_SOCKET_PATH);
@@ -72,6 +67,7 @@ pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Res
 }
 
 /// Check if the daemon is running and reachable.
+#[allow(dead_code)]
 pub fn is_daemon_running(socket_path: Option<&str>) -> bool {
     let socket = socket_path.unwrap_or(DEFAULT_SOCKET_PATH);
     Path::new(socket).exists() && UnixStream::connect(socket).is_ok()
