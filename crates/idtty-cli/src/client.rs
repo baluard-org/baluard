@@ -14,6 +14,7 @@ const DEFAULT_SOCKET_PATH: &str = "/tmp/idtty.sock";
 
 /// Generated Protobuf types
 mod proto {
+    #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/idtty.auth.rs"));
 }
 

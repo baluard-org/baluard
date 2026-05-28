@@ -7,6 +7,7 @@
 mod handler;
 mod state;
 pub mod proto {
+    #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/idtty.auth.rs"));
     include!(concat!(env!("OUT_DIR"), "/idtty.vault.rs"));
     include!(concat!(env!("OUT_DIR"), "/idtty.space.rs"));
