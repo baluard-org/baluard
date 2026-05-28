@@ -102,7 +102,7 @@
 
 ## Security Review History
 
-### Round 1 (peer review Review)
+### Round 1 (Independent Review)
 6 findings across critical/important/minor categories:
 1. Socket TOCTOU -> Fixed: umask(0177) before bind()
 2. Missing SIGTERM handler -> Fixed: tokio::signal::unix with graceful vault lock
@@ -111,7 +111,7 @@
 5. Ghost paths in docs -> Fixed: Removed references to unbuilt directories
 6. Duplicate tokio dep -> Fixed: Consolidated workspace dep
 
-### Round 2 (peer review Review)
+### Round 2 (Independent Review)
 10 findings (3 critical, 4 important, 3 minor). All fixed:
 - **C1**: Frame-too-large desynced protocol -> Fixed: Close connection on oversized frames
 - **C2**: Master password not zeroized at IPC layer -> Fixed: `zeroize` crate (`write_volatile` + `compiler_fence`) on both daemon and client side
@@ -124,7 +124,7 @@
 - **M2**: `--direct` flag referenced but didn't exist -> Fixed: Flag now implemented
 - **M3**: Unused prost-types dep -> Fixed: Removed from daemon Cargo.toml
 
-### Round 3 (peer review Review)
+### Round 3 (Independent Review)
 9 findings (1 critical, 2 security, 2 correctness, 4 minor). All fixed:
 - **C1**: `zeroize_string()` used `write_bytes` (LLVM dead-store elimination can remove it) -> Fixed: Replaced with `zeroize` crate (`write_volatile` + `compiler_fence`)
 - **S1**: Client-side password copies never zeroized (CLI heap readable via /proc/pid/mem) -> Fixed: `password.zeroize()` in unlock_daemon, ensure_unlocked_daemon; wire bytes + payload zeroized in client.rs
@@ -135,6 +135,30 @@
 - **M2**: `is_daemon_running` was dead code -> Fixed: Removed
 - **M3**: `handle_list` silently fell back to direct mode; other commands returned Err -> Fixed: Consistent Err return
 - **M4**: `handle_lock` Direct arm used `process::exit(1)` -> Fixed: Returns `Err` for standard error path
+
+### Round 4 (Independent Review — Phase 4 Desktop)
+15 findings (3 security, 7 correctness, 5 minor). 10 fixed, 3 deferred, 2 partial:
+- **S1**: CSP was `null` (XSS reads master password from DOM) -> Fixed: Strict CSP with `ipc:` + `http://ipc.localhost` for Tauri v2
+- **S2**: `Daemon::drop` used `kill()` (SIGKILL, no cleanup) -> Fixed: `libc::kill(SIGTERM)` + 3s grace + SIGKILL fallback
+- **S3**: Unbounded `read_to_end` (memory exhaustion) -> Fixed: `Read::take(5MB)` + size check
+- **CO1**: `std::os::unix` import breaks Windows compile -> Fixed: `#[cfg(unix)]` gates + stubs
+- **CO2**: Daemon binary not bundle-relative (fails packaged) -> Deferred: TODO for tauri-plugin-shell sidecar
+- **CO3**: No socket readiness poll after spawn -> Fixed: 20x100ms ping-based readiness check
+- **CO4**: No I/O timeout (UI freeze if daemon stalls) -> Fixed: 30s read, 5s write timeouts
+- **CO5**: Panic on short device key strings (hard `[]` index) -> Fixed: `.get()` with `unwrap_or` fallback
+- **CO6**: Draft releases created on every PR -> Fixed: Removed PR trigger, now `workflow_dispatch` only
+- **CO7**: No vault creation flow in desktop -> Deferred: Needs daemon `vault.create` route
+- **M1**: `daemon_status()` phantom connect -> Fixed: Ping-based liveness check
+- **M2**: Daemon inherits stdout/stderr -> Fixed: `Stdio::null()`
+- **M3**: Unused `bytes` crate -> Fixed: Removed
+- **M4**: Module-scope SolidJS signals -> Deferred: Acceptable for single-window app
+- **M5**: Raw daemon errors surfaced to UI -> Partial: Known patterns sanitized, unknowns truncated at 100 chars
+
+### Round 5 (Follow-Up Review)
+3 new findings (2 correctness, 1 style). All fixed:
+- **CO-NEW-1**: Startup probe used phantom connect instead of ping -> Fixed
+- **CO-NEW-2**: Readiness poll used phantom connect instead of ping -> Fixed
+- **M-NEW-1**: `daemon_status` verbose match instead of `.is_ok()` -> Fixed
 
 ---
 
