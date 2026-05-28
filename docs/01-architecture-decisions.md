@@ -85,7 +85,7 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 
 **Decision: Unification via `HandleRequest(action, payload)`**
 
-**Current state**: Protobuf schemas exist in `proto/` but are not yet compiled into Rust. The daemon has a JSON echo stub. The CLI links idtty-core directly.
+**Current state**: Protobuf wire protocol fully implemented. Daemon compiles all 3 protos via prost-build. CLI compiles auth.proto. Length-delimited framing (varint prefix) on Unix sockets. 16 daemon routes operational.
 
 **Target**: All layers will communicate with idtty-core through a unified, serialized gateway interface:
 - **Input**: A single Protobuf serialized string containing the action command and its parameters.
@@ -98,9 +98,9 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 
 **Decision: Rust Daemon (Server) + CLI Client (socket) + Tauri v2 (SolidJS/Tailwind UI)**
 
-- **Rust Daemon (`idtty-daemon`)**: Started on boot by Tauri. Unlocks the vault into `zeroize`-protected memory. Listens on a local domain socket (`/tmp/idtty.sock` set to `0600` permissions via umask before bind) or Named Pipes on Windows. Built on tokio for async I/O. Handles both SIGINT and SIGTERM for graceful shutdown. **Current state: JSON echo stub with no vault state management.**
-- **CLI (`idtty-cli`)**: **Target**: lightweight socket client that serializes flags into Protobuf, transmits to daemon, prints response. **Current state**: links idtty-core directly and calls vault/crypto functions in-process. Each command prompts for master password. Socket client conversion is a Phase 3 milestone.
-- **Tauri v2 UI**: Lightweight SolidJS/Tailwind webview that communicates with the daemon. Intercepts close events (`api.prevent_close()`) to minimize to system tray and preserve memory-unlocked states for browser extension autofill. **Current state: placeholder.**
+- **Rust Daemon (`idtty-daemon`)**: Started on boot by Tauri. Unlocks the vault into `zeroize`-protected memory. Listens on a platform-aware domain socket (Linux: `$XDG_RUNTIME_DIR/idtty.sock`, macOS: `~/Library/Application Support/idtty/idtty.sock`, Windows: Named Pipes) with `0600` permissions via umask before bind. Built on tokio for async I/O. Handles both SIGINT and SIGTERM for graceful shutdown. SO_PEERCRED peer UID verification on Linux. **Current state: fully implemented with 16 routes, vault state, sync, devices.**
+- **CLI (`idtty-cli`)**: Dual-mode socket client. Default: serializes flags into Protobuf, transmits to daemon via Unix socket, prints response. `--direct` fallback links idtty-core in-process. `--socket <path>` for custom daemon socket. All vault, sync, and devices commands implemented.
+- **Tauri v2 UI**: SolidJS/Tailwind v4 webview scaffolded via `tauri init`. Communicates with the daemon via a `daemon_request` Tauri command that proxies Protobuf over Unix sockets. System tray with Show/Quit menu. Login screen + vault view (cipher list, add, get, delete). Dark theme. All platform icons via `tauri icon`. Rust edition 2024.**
 
 ---
 

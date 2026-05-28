@@ -33,9 +33,11 @@ idtty/
 │   └── idtty-daemon/           # Background IPC Daemon [STUB]
 │       └── src/
 │           ├── main.rs         # tokio Unix socket listener, SIGINT/SIGTERM, umask(0177)
-│           └── handler.rs      # JSON echo stub, Protobuf routing pending
-├── desktop/                    # Tauri v2 Desktop App [PLACEHOLDER]
-│   └── package.json
+│           └── handler.rs      # Protobuf routing, 16 routes, SO_PEERCRED verification
+├── desktop/                    # Tauri v2 Desktop App (scaffolded)
+│   ├── src-tauri/              # Rust backend: daemon proxy, tray, proto codegen
+│   ├── src/                    # SolidJS webview: login, vault, cipher CRUD
+│   └── package.json            # SolidJS, Tailwind v4, Tauri API v2
 ├── mobile/                     # Kotlin Multiplatform Mobile App [PLACEHOLDER]
 │   └── build.gradle.kts        # KMP targets: Android, iOS
 ├── extension/                  # MV3 Browser Extension [PLACEHOLDER]
@@ -47,7 +49,7 @@ idtty/
 
 ## 2. Unification: Single-String Protobuf Gateway (Planned)
 
-**Current state**: CLI links idtty-core directly. Daemon has a JSON echo handler. No Protobuf codegen wired.
+**Current state**: Protobuf gateway fully wired. CLI has dual-mode (daemon-first + `--direct` fallback). Daemon has 16 routes (vault, sync, devices). Tauri desktop scaffolded via `tauri init` with daemon proxy command.
 
 **Target state**: All application tiers (Tauri Webview, CLI, KMP Mobile, Browser Extension) communicate with idtty-core through a serialized Single-String Protocol Buffer Gateway:
 
@@ -82,12 +84,12 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 
 ### 3.1 Desktop Tier (B2C/B2B)
 
-**Current state**: CLI links core directly. Daemon is a JSON stub. Tauri is a placeholder.
+**Current state**: CLI dual-mode (daemon-first via socket + `--direct` fallback). Daemon fully implemented with vault state, sync, devices. Tauri desktop scaffolded with daemon proxy and system tray.
 
-**Target architecture**:
-- **Rust Daemon (`idtty-daemon`)**: Started by the Tauri tray wrapper on boot. Unlocks the vault directly in `zeroize`-protected memory. Opens a Unix domain socket at `/tmp/idtty.sock` with 0600 permissions (set via umask before bind to avoid TOCTOU race). Listens for serialized Protobuf gateway requests via tokio async I/O.
-- **CLI (`idtty-cli`)**: Will become a compiled socket client binary. Contains no crypto or vault logic. Parses command-line flags, packages them into a Protobuf request, transmits over the local socket, and outputs the daemon's response. **Currently links idtty-core directly and calls core functions in-process.**
-- **Tauri v2 UI**: A lightweight SolidJS/Tailwind webview that renders user inputs and forwards commands to the local socket daemon. Intercepts window close actions (`api.prevent_close()`) to hide to the system tray, keeping the memory-unlocked daemon running for browser extension autofill.
+**Implemented**:
+- **Rust Daemon (`idtty-daemon`)**: Started by the Tauri tray wrapper on boot. Unlocks the vault directly in `zeroize`-protected memory. Opens a platform-aware Unix domain socket (Linux: `$XDG_RUNTIME_DIR/idtty.sock`, macOS: `~/Library/Application Support/idtty/idtty.sock`) with 0600 permissions (set via umask before bind to avoid TOCTOU race). Listens for length-delimited Protobuf requests via tokio async I/O. SO_PEERCRED peer UID verification on Linux.
+- **CLI (`idtty-cli`)**: Dual-mode binary. Default: compiles flags into Protobuf, transmits over socket, prints response. `--direct` fallback links idtty-core in-process. `--socket <path>` for custom daemon path.
+- **Tauri v2 UI**: SolidJS/Tailwind v4 webview scaffolded via `tauri init`. `daemon_request` Tauri command proxies to daemon via Protobuf over Unix socket. System tray with Show/Quit menu. Login screen + vault view with cipher CRUD. Dark theme. Rust edition 2024.
 
 ### 3.2 Mobile Tier (B2C)
 
@@ -121,5 +123,4 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 - **FFI security boundary (planned)**: UniFFI's serialization approach provides a clean memory boundary. Rust heap allocations for secrets never share pointers with foreign code.
 - **Socket permissions**: Socket born with 0600 via `umask(0177)` before `bind()` (no TOCTOU race between bind and chmod).
 - **Graceful shutdown**: Daemon handles both SIGINT and SIGTERM for clean socket removal and vault zeroization.
-- **Zeroize on drop**: All key material and decrypted entries implement `Zeroize` to scrub memory on release. (Not yet wired into daemon vault state.)
-- **No plaintext on heap**: Decrypted secrets held in `Zeroize`-wrapped buffers, never in standard `String` or `Vec<u8>`.
+- **Zeroize**: All passwords zeroized server-side (handler) and client-side (CLI unlock, Tauri proxy). `zeroize` crate with `derive` feature for guaranteed memory scrubbing via `write_volatile` + `compiler_fence`.

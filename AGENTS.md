@@ -4,7 +4,7 @@
 
 ## OVERVIEW
 Project: **IDtty** (Git-native password manager / Space Manager)
-Stack: Rust (core crypto + CLI + daemon), SolidJS/Tailwind/Tauri v2 (desktop, planned), Kotlin Multiplatform via UniFFI (mobile, planned), SolidJS (browser extension, planned), Protobuf (IPC schema, wired)
+Stack: Rust (core crypto + CLI + daemon), SolidJS/Tailwind/Tauri v2 (desktop, scaffolded), Kotlin Multiplatform via UniFFI (mobile, planned), SolidJS (browser extension, planned), Protobuf (IPC schema, wired)
 License: MIT
 
 Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets. Mobile apps will bind directly to the Rust core via UniFFI-generated Kotlin/Swift bindings.
@@ -39,7 +39,7 @@ idtty/
 │           ├── main.rs         # Socket listener, SIGINT/SIGTERM, 0600 perms
 │           ├── handler.rs      # Protobuf routing, password zeroize, varint framing
 │           └── state.rs        # VaultState (Arc<RwLock<Option<VaultHandle>>>)
-├── desktop/                    # Tauri v2 desktop app [PLACEHOLDER]
+├── desktop/                    # Tauri v2 desktop app (scaffolded: daemon proxy, tray, SolidJS webview)
 │   └── package.json            # vite, solid-js, @tauri-apps/cli
 ├── mobile/                     # Kotlin Multiplatform mobile app [PLACEHOLDER]
 │   └── build.gradle.kts        # KMP targets: Android, iOS (x64/arm64/sim)

@@ -27,7 +27,7 @@
 - `/crates/idtty-core` - Rust core engine: crypto, keys, vault, padding, git sync
 - `/crates/idtty-cli` - Terminal CLI client (clap, daemon-first with `--direct` fallback)
 - `/crates/idtty-daemon` - Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state)
-- `/desktop` - SolidJS/Tailwind Tauri v2 Webviews (placeholder)
+- `/desktop` - SolidJS/Tailwind Tauri v2 desktop app (scaffolded: daemon proxy, tray, cipher CRUD)
 - `/extension` - Browser UI thin client (MV3, placeholder)
 - `/mobile` - Kotlin Multiplatform (KMP) UI via UniFFI bindings (placeholder)
 
@@ -83,8 +83,8 @@
 ### Phase 4: Desktop UI & Open-Source Launch
 | Module | Status | What's Planned / Implemented |
 |--------|--------|------------------------------|
-| `desktop` | Scaffolded | SolidJS/Tailwind webview in Tauri v2. Login screen + vault view (cipher list, add, get, delete). Dark theme. |
-| `desktop/tauri` | Scaffolded | Rust backend: daemon_request Tauri command proxies to idtty-daemon via Protobuf. System tray with Show/Quit. |
+| `desktop` | Done | SolidJS/Tailwind v4 webview in Tauri v2. Login screen + vault view (cipher list, add, get, delete). Dark theme. Scaffolded via `tauri init`. |
+| `desktop/tauri` | Done | Rust backend (edition 2024): daemon_request Tauri command proxies to idtty-daemon via Protobuf. System tray with Show/Quit. All platform icons via `tauri icon`. |
 | `desktop/tray` | Done | Tauri v2 TrayIconBuilder with Show/Quit menu. |
 | `ci-cd` | Planned | GitHub Actions matrix for multi-platform compilation. |
 
@@ -174,7 +174,7 @@ idtty/
 │   ├── idtty-core/               # Rust Core: crypto, keys, vault, padding, sync
 │   ├── idtty-cli/                # Terminal CLI (daemon-first + --direct fallback)
 │   └── idtty-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState)
-├── desktop/                      # Tauri v2 Desktop app (placeholder)
+├── desktop/                      # Tauri v2 Desktop app (scaffolded)
 ├── extension/                    # Browser extension (placeholder)
 ├── mobile/                       # Kotlin Multiplatform (KMP) Mobile App (placeholder)
 └── docs/                         # Architecture Blueprint Docs
