@@ -42,7 +42,7 @@
 | `proto/schemas` | Done | Drafted `vault.proto`, `space.proto`, and `auth.proto` schemas. |
 | `crates/idtty-core` | Done | Full crypto, keys, vault, padding, git sync engine. 3,673 lines. |
 | `crates/idtty-cli` | Done | clap CLI with command dispatch. |
-| `crates/idtty-daemon` | Stub | tokio Unix socket listener (0600 via umask), JSON echo handler. No vault state. Protobuf wiring pending. |
+| `crates/idtty-daemon` | Done | tokio socket + Protobuf gateway + vault state. CRUD: open/unlock/lock/list/get/add/delete. |
 
 ### Phase 1: Cryptographic Core & Padding Engine (Rust)
 | Module | Status | What's Planned / Implemented |
@@ -71,7 +71,7 @@
 | Module | Status | What's Planned / Implemented |
 |--------|--------|------------------------------|
 | `daemon/socket` | Done | Unix socket listener (0600 via umask, SIGINT/SIGTERM handling). |
-| `daemon/handler` | Stub | Protobuf (prost) length-delimited wire protocol. Ping/pong verified. Vault/sync action routing pending vault state. |
+| `daemon/handler` | Done | Protobuf (prost) gateway. Routes vault CRUD actions to idtty-core via VaultState. |
 | `cli/commands` | Done | Command handlers calling idtty-core directly (init, unlock, add, get, list, delete, sync, devices). Socket client conversion is Phase 3. |
 
 ### Phase 4: Desktop UI & Open-Source Launch

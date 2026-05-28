@@ -33,7 +33,7 @@ idtty/
 │   │   └── src/
 │   │       ├── main.rs         # Command dispatch (init/unlock/add/get/list/delete/sync/devices)
 │   │       └── commands/       # Direct idtty-core calls (will become socket client)
-│   └── idtty-daemon/           # Background IPC daemon (tokio Unix socket server) [STUB]
+│   └── idtty-daemon/           # Background IPC daemon (vault state + Protobuf gateway)
 │       └── src/
 │           ├── main.rs         # Socket listener, SIGINT/SIGTERM handling, 0600 perms
 │           └── handler.rs      # JSON echo stub (Protobuf wiring pending)
@@ -88,7 +88,7 @@ idtty/
 ## NOTES
 * **Single Rust core**: All crypto, vault format, padding, key lifecycle, and git sync live in `idtty-core`. No duplicate implementations.
 * **CLI currently links core directly**: `idtty-cli` calls `idtty-core` functions in-process. Each command prompts for master password. Phase 3 will convert CLI to a socket client that talks to the daemon, eliminating repeated password prompts.
-* **Daemon is a stub**: `idtty-daemon` runs a tokio Unix socket server with JSON echo routing. Protobuf gateway wiring and vault state management are pending.
+* **Daemon holds vault state**: `idtty-daemon` runs a tokio Unix socket server with vault CRUD via Protobuf gateway. Supports open, unlock, lock, info, list, get, add, delete. Accepts `--vault-path` and `--socket` args. Locks vault (zeroizes keys) on SIGTERM.
 * **Protobuf schemas compiled**: `proto/*.proto` define the IPC message formats. Rust codegen via prost-build in idtty-daemon's build.rs. Generated types: GatewayRequest, GatewayResponse, VaultEntry, AccessList, DeviceIdentityEscrow.
 * **Mobile via UniFFI (planned)**: `idtty-core` will export its public API via `#[uniffi::export]` proc-macros. UniFFI will generate native Kotlin (Android) and Swift (iOS) bindings at build time. No cgo, no gomobile, no Go. Not yet annotated.
 * **Feature flags control sync**: `git-sync` feature gate; CLI enables it by default.
@@ -105,7 +105,7 @@ idtty/
 | `idtty-core` crypto/keys/vault | Built, tested, security-reviewed (2 rounds) |
 | `idtty-core` sync engine | Built, tested |
 | `idtty-cli` (direct core) | Functional, links core in-process |
-| `idtty-daemon` socket server | Protobuf wire, ping/pong works |
+| `idtty-daemon` socket server | Protobuf wire, vault CRUD working |
 | Protobuf codegen | Compiled via prost in daemon build.rs |
 | UniFFI annotations | Not yet applied to idtty-core |
 | Desktop Tauri app | Placeholder |
