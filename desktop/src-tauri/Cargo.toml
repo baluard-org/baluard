@@ -3,7 +3,7 @@ name = "idtty-desktop"
 version = "0.1.0"
 description = "IDtty desktop app"
 authors = ["EstebanForge"]
-license = "MIT"
+license = "GPL-3.0"
 repository = "https://github.com/EstebanForge/IDtty"
 edition = "2024"
 

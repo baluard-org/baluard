@@ -5,7 +5,7 @@
 ## OVERVIEW
 Project: **IDtty** (Git-native password manager / Space Manager)
 Stack: Rust (core crypto + CLI + daemon), SolidJS/Tailwind/Tauri v2 (desktop, scaffolded), Kotlin Multiplatform via UniFFI (mobile, planned), SolidJS (browser extension, planned), Protobuf (IPC schema, wired)
-License: MIT
+License: GPL-3.0
 
 Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets. Mobile apps will bind directly to the Rust core via UniFFI-generated Kotlin/Swift bindings.
 

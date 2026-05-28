@@ -146,5 +146,5 @@ To optimize accessibility and eliminate user-facing cryptographic jargon:
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust idtty-core (crypto, keys, vault, padding). Protobuf schemas. DONE.
 - **Phase 2: Git Sync Engine**: git2-rs sync, conflict auto-healing, state machine. DONE.
 - **Phase 3: IPC Daemon & CLI**: idtty-daemon (tokio Unix socket server), idtty-cli (socket client), Protobuf gateway handler.
-- **Phase 4: Desktop UI & Open-Source Launch**: SolidJS/Tailwind Tauri v2 app, system tray, MIT license.
+- **Phase 4: Desktop UI & Open-Source Launch**: SolidJS/Tailwind Tauri v2 app, system tray, GPL-3.0 license.
 - **Phase 5: Mobile & Extension**: UniFFI Kotlin/Swift bindings, KMP mobile app, MV3 browser extension with native messaging.

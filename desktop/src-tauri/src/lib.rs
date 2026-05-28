@@ -1,15 +1,18 @@
 //! IDtty desktop Tauri backend.
 //!
-//! Proxies vault operations to idtty-daemon via Protobuf-over-Unix-socket.
+//! - Starts idtty-daemon on launch, stops on quit
+//! - Window close hides to system tray
+//! - Proxies vault operations via Protobuf-over-Unix-socket
 
 use prost::Message;
 use serde::Serialize;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tauri::menu::MenuBuilder;
-use tauri::tray::TrayIconBuilder;
-use tauri::Manager;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, WindowEvent};
 
 /// Generated Protobuf types
 mod proto {
@@ -18,6 +21,19 @@ mod proto {
 }
 
 use proto::{GatewayRequest, GatewayResponse};
+
+// ── Daemon child process (shared across setup + on_window_event) ──
+
+struct Daemon(std::process::Child);
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        // SIGTERM the daemon; let it clean up gracefully
+        if let Err(e) = self.0.kill() {
+            log::warn!("Failed to kill daemon: {e}");
+        }
+        let _ = self.0.wait();
+    }
+}
 
 // ── Socket path ──
 
@@ -149,21 +165,43 @@ fn daemon_request(action: String, payload: String) -> DaemonResponse {
     }
 }
 
+/// Check if daemon is reachable (for UI status display)
+#[tauri::command]
+fn daemon_status() -> bool {
+    let socket = default_socket_path();
+    UnixStream::connect(&socket).is_ok()
+}
+
 // ── App entry ──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(Mutex::new(None::<Daemon>))
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
+                    .level(log::LevelFilter::Info)
+                    .build(),
                 )?;
             }
 
-            // System tray with Show/Quit
+            // Start daemon if not already running
+            let socket = default_socket_path();
+            let daemon_running = socket.exists() && UnixStream::connect(&socket).is_ok();
+            if !daemon_running {
+                let child = std::process::Command::new("idtty-daemon")
+                    .spawn()
+                    .map_err(|e| format!("Failed to start daemon: {e}"))?;
+                let state = app.state::<Mutex<Option<Daemon>>>();
+                *state.lock().unwrap() = Some(Daemon(child));
+                log::info!("Daemon started");
+            } else {
+                log::info!("Daemon already running");
+            }
+
+            // System tray
             let show = tauri::menu::MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = MenuBuilder::new(app)
@@ -176,7 +214,7 @@ pub fn run() {
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("IDtty")
                 .menu(&menu)
-                .show_menu_on_left_click(true)
+                .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         if let Some(w) = app.get_webview_window("main") {
@@ -187,11 +225,32 @@ pub fn run() {
                     "quit" => app.exit(0),
                     _ => {}
                 })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
                 .build(app)?;
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![daemon_request])
+        // Close → hide to tray instead of quitting
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .invoke_handler(tauri::generate_handler![daemon_request, daemon_status])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
