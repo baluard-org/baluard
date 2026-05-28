@@ -170,9 +170,9 @@ fn main() {
         Commands::List => commands::handle_list(mode, &cli.vault_path, cli.socket.as_deref()),
         Commands::Delete { id } => commands::handle_delete(mode, &cli.vault_path, cli.socket.as_deref(), &id),
 
-        // Devices: direct for now (daemon doesn't route devices yet)
+        // Devices
         Commands::Devices { action } => match action {
-            DeviceCommands::List => commands::handle_devices(&cli.vault_path),
+            DeviceCommands::List => commands::handle_devices(mode, &cli.vault_path, cli.socket.as_deref()),
         },
 
         Commands::Ping => {

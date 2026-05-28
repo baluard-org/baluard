@@ -425,20 +425,48 @@ pub fn handle_delete(mode: ConnectMode, vault_path: &str, socket: Option<&str>, 
 
 // ── Devices (direct only, not yet routed through daemon) ──
 
-pub fn handle_devices(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let path = Path::new(vault_path);
-    let handle = VaultHandle::open(path)?;
-
-    println!("Enrolled devices:");
-    for entry in handle.registry.devices.values() {
-        println!("  {} ({})", entry.name, entry.device_id);
-        println!("    Encryption key: {}...{}", &entry.encryption_public_key[..8], &entry.encryption_public_key[56..]);
-        println!("    Signing key:    {}...{}", &entry.signing_public_key[..8], &entry.signing_public_key[56..]);
-        println!("    Enrolled at:    {}", entry.enrolled_at);
+pub fn handle_devices(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            // Open vault in daemon first if needed
+            let open_resp = client::request_to("vault.open", "", socket)?;
+            if !open_resp.success {
+                return Err(open_resp.error_message.into());
+            }
+            let resp = client::request_to("vault.devices", "", socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
+            let devices = data["devices"].as_array()
+                .cloned()
+                .unwrap_or_default();
+            println!("Enrolled devices:");
+            for d in &devices {
+                println!("  {} ({})", d["name"], d["device_id"]);
+                println!("    Encryption key: {}", d["encryption_key"]);
+                println!("    Signing key:    {}", d["signing_key"]);
+                println!("    Enrolled at:    {}", d["enrolled_at"]);
+            }
+            println!();
+            println!("Total: {} device(s)", data["total"]);
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            let path = Path::new(vault_path);
+            let handle = VaultHandle::open(path)?;
+            println!("Enrolled devices:");
+            for entry in handle.registry.devices.values() {
+                println!("  {} ({})", entry.name, entry.device_id);
+                println!("    Encryption key: {}...{}", &entry.encryption_public_key[..8], &entry.encryption_public_key[56..]);
+                println!("    Signing key:    {}...{}", &entry.signing_public_key[..8], &entry.signing_public_key[56..]);
+                println!("    Enrolled at:    {}", entry.enrolled_at);
+            }
+            println!();
+            println!("Total: {} device(s)", handle.registry.count());
+            Ok(())
+        }
     }
-    println!();
-    println!("Total: {} device(s)", handle.registry.count());
-    Ok(())
 }
 
 // ── Sync (daemon-first with direct fallback) ──

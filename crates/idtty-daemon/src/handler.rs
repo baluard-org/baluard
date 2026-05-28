@@ -233,6 +233,13 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
+        "vault.devices" => {
+            match state.devices().await {
+                Ok(json) => GatewayResponse { success: true, error_message: String::new(), payload: json },
+                Err(e) => err_response(e),
+            }
+        }
+
         // ── Sync ──
         "sync.init" => {
             match sync_init(&state.vault_path) {

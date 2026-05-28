@@ -191,6 +191,29 @@ impl VaultState {
         });
         Ok(json.to_string())
     }
+
+    /// List enrolled devices.
+    pub async fn devices(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref()
+            .ok_or("Vault not opened".to_string())?;
+
+        let devices: Vec<serde_json::Value> = handle.registry.devices.values().map(|entry| {
+            serde_json::json!({
+                "name": entry.name,
+                "device_id": entry.device_id,
+                "encryption_key": format!("{}...{}", &entry.encryption_public_key[..8], &entry.encryption_public_key[56..]),
+                "signing_key": format!("{}...{}", &entry.signing_public_key[..8], &entry.signing_public_key[56..]),
+                "enrolled_at": entry.enrolled_at,
+            })
+        }).collect();
+
+        let json = serde_json::json!({
+            "devices": devices,
+            "total": handle.registry.count(),
+        });
+        Ok(json.to_string())
+    }
 }
 
 /// Shared vault state type.
