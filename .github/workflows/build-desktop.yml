@@ -1,9 +1,7 @@
 name: Build Desktop
 
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
   build:
