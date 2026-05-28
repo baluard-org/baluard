@@ -215,10 +215,7 @@ fn daemon_request(action: String, payload: String) -> DaemonResponse {
 /// Check if daemon is reachable via ping (avoids phantom connections)
 #[tauri::command]
 fn daemon_status() -> bool {
-    match send_request("ping", "") {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+    send_request("ping", "").is_ok()
 }
 
 // ── App entry ──
@@ -239,9 +236,7 @@ pub fn run() {
             // Start daemon if not already running
             #[cfg(unix)]
             {
-                let socket = default_socket_path();
-                let daemon_running =
-                    socket.exists() && std::os::unix::net::UnixStream::connect(&socket).is_ok();
+                let daemon_running = send_request("ping", "").is_ok();
 
                 if !daemon_running {
                     // TODO: Use tauri-plugin-shell sidecar once daemon is bundled
@@ -255,9 +250,9 @@ pub fn run() {
                     *state.lock().unwrap() = Some(Daemon(child));
                     log::info!("Daemon started");
 
-                    // Wait for socket readiness (up to 2s)
+                    // Wait for daemon readiness (up to 2s)
                     for attempt in 0..20 {
-                        if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+                        if send_request("ping", "").is_ok() {
                             log::info!("Daemon ready after {}ms", attempt * 100);
                             break;
                         }
