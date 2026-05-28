@@ -1,0 +1,183 @@
+//! Vault state management for the daemon.
+//!
+//! Holds an unlocked VaultHandle in memory behind a shared lock.
+//! The daemon routes gateway actions through this state.
+
+use anyhow::Result;
+use idtty_core::vault::handle::VaultHandle;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+/// Shared vault state accessible from all connection handlers.
+pub struct VaultState {
+    /// Path to the vault directory on disk.
+    pub vault_path: PathBuf,
+    /// The vault handle. None = not opened or locked.
+    inner: RwLock<Option<VaultHandle>>,
+}
+
+impl VaultState {
+    /// Create a new empty state pointing at a vault directory.
+    pub fn new(vault_path: PathBuf) -> Self {
+        Self {
+            vault_path,
+            inner: RwLock::new(None),
+        }
+    }
+
+    /// Open a vault from disk (locked state).
+    pub async fn open(&self) -> Result<(), String> {
+        let handle = VaultHandle::open(&self.vault_path)
+            .map_err(|e| format!("Failed to open vault: {e}"))?;
+        let mut guard = self.inner.write().await;
+        *guard = Some(handle);
+        Ok(())
+    }
+
+    /// Unlock the vault with the master password.
+    pub async fn unlock(&self, master_password: &str) -> Result<(), String> {
+        // Open if not already open
+        {
+            let guard = self.inner.read().await;
+            if guard.is_none() {
+                drop(guard);
+                self.open().await?;
+            }
+        }
+
+        let mut guard = self.inner.write().await;
+        if let Some(ref mut handle) = *guard {
+            if handle.is_unlocked() {
+                return Ok(()); // Already unlocked
+            }
+            handle.unlock(master_password)
+                .map_err(|e| format!("Unlock failed: {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Lock the vault, zeroizing keys in memory.
+    pub async fn lock(&self) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        if let Some(ref mut handle) = *guard {
+            handle.lock();
+        }
+        Ok(())
+    }
+
+    /// Check if vault is currently unlocked.
+    pub async fn is_unlocked(&self) -> bool {
+        let guard = self.inner.read().await;
+        guard.as_ref().map_or(false, |h| h.is_unlocked())
+    }
+
+    /// List all cipher IDs (works locked or unlocked).
+    pub async fn list_cipher_ids(&self) -> Result<Vec<String>, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref()
+            .ok_or("Vault not opened".to_string())?;
+        let ids = handle.list_cipher_ids()
+            .map_err(|e| format!("{e}"))?;
+        Ok(ids.iter().map(|id| id.to_string()).collect())
+    }
+
+    /// Get a cipher by ID. Requires vault to be unlocked for decryption.
+    pub async fn get_cipher(&self, id_str: &str, decrypt: bool) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref()
+            .ok_or("Vault not opened".to_string())?;
+
+        let cipher_id = uuid::Uuid::parse_str(id_str)
+            .map_err(|e| format!("Invalid UUID: {e}"))?;
+
+        let result = handle.get_cipher(cipher_id)
+            .map_err(|e| format!("{e}"))?;
+
+        match result {
+            idtty_core::vault::handle::CipherRead::Decrypted(c) => {
+                let json = serde_json::json!({
+                    "id": c.id.to_string(),
+                    "name": c.name,
+                    "username": c.username,
+                    "password": c.password,
+                    "uris": c.uris,
+                    "notes": c.notes,
+                    "totp": c.totp_uri,
+                    "tier": format!("{:?}", c.tier),
+                    "epoch": c.key_epoch,
+                    "seq": c.update_seq,
+                });
+                Ok(json.to_string())
+            }
+            idtty_core::vault::handle::CipherRead::Locked(info) => {
+                if decrypt {
+                    Err("Vault is locked. Unlock first.".to_string())
+                } else {
+                    let json = serde_json::json!({
+                        "id": info.id.to_string(),
+                        "epoch": info.key_epoch,
+                        "seq": info.update_seq,
+                        "tier": format!("{:?}", info.tier),
+                        "ciphertext_len": info.ciphertext_len,
+                    });
+                    Ok(json.to_string())
+                }
+            }
+        }
+    }
+
+    /// Add a new cipher. Requires vault to be unlocked.
+    pub async fn add_cipher(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut()
+            .ok_or("Vault not opened".to_string())?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+
+        let input: idtty_core::types::CipherInput = serde_json::from_str(payload)
+            .map_err(|e| format!("Invalid cipher input: {e}"))?;
+
+        let cipher_id = handle.add_cipher(&input)
+            .map_err(|e| format!("{e}"))?;
+
+        Ok(cipher_id.to_string())
+    }
+
+    /// Delete a cipher by ID.
+    pub async fn delete_cipher(&self, id_str: &str) -> Result<(), String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref()
+            .ok_or("Vault not opened".to_string())?;
+
+        let cipher_id = uuid::Uuid::parse_str(id_str)
+            .map_err(|e| format!("Invalid UUID: {e}"))?;
+
+        handle.delete_cipher(cipher_id)
+            .map_err(|e| format!("{e}"))
+    }
+
+    /// Get vault info (ID, device, state).
+    pub async fn info(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref()
+            .ok_or("Vault not opened".to_string())?;
+
+        let cipher_count = handle.list_cipher_ids()
+            .map(|ids| ids.len())
+            .unwrap_or(0);
+
+        let json = serde_json::json!({
+            "vault_id": handle.vault_id.to_string(),
+            "device_id": handle.device_id.to_string(),
+            "unlocked": handle.is_unlocked(),
+            "cipher_count": cipher_count,
+        });
+        Ok(json.to_string())
+    }
+}
+
+/// Shared vault state type.
+pub type SharedVaultState = Arc<VaultState>;

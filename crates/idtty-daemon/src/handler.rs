@@ -1,32 +1,31 @@
 //! Protobuf gateway handler.
 //!
-//! Deserializes incoming Protobuf GatewayRequest, routes to idtty-core,
-//! serializes GatewayResponse back.
+//! Deserializes incoming Protobuf GatewayRequest, routes to idtty-core
+//! via the shared VaultState, serializes GatewayResponse back.
 //!
 //! Wire protocol: length-delimited Protobuf (varint prefix).
 
+use crate::proto::{GatewayRequest, GatewayResponse};
+use crate::state::SharedVaultState;
+
 use anyhow::Result;
-use bytes::{BytesMut, Buf};
+use bytes::{Buf, BytesMut};
 use prost::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
-
-// Re-export generated types from parent module
-use crate::proto::{GatewayRequest, GatewayResponse};
 
 /// Maximum frame size: 4MB (largest bucket is 1MB, leave headroom)
 const MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
 
 /// Handle a single client connection (length-delimited Protobuf frames).
-pub async fn handle_connection(mut stream: UnixStream) -> Result<()> {
+pub async fn handle_connection(mut stream: UnixStream, state: SharedVaultState) -> Result<()> {
     let (mut reader, mut writer) = stream.split();
     let mut buf = BytesMut::with_capacity(4096);
 
     loop {
-        // Read enough bytes to decode a varint
         let frame_len = match read_length(&mut reader, &mut buf).await {
             Ok(Some(len)) => len,
-            Ok(None) => return Ok(()), // EOF, client disconnected
+            Ok(None) => return Ok(()),
             Err(e) => {
                 let resp = error_response(format!("Read error: {e}"));
                 let _ = write_frame(&mut writer, &resp).await;
@@ -37,23 +36,16 @@ pub async fn handle_connection(mut stream: UnixStream) -> Result<()> {
         if frame_len > MAX_FRAME_SIZE {
             let resp = error_response(format!("Frame too large: {frame_len} bytes"));
             write_frame(&mut writer, &resp).await?;
-            // Discard the oversized frame data if any
             buf.clear();
             continue;
         }
 
-        // Read the frame body
         while buf.len() < frame_len {
             let read = reader.read_buf(&mut buf).await?;
-            if read == 0 {
-                return Ok(()); // Connection closed mid-frame
-            }
+            if read == 0 { return Ok(()); }
         }
 
-        // Split off exactly the frame bytes
         let frame_data = buf.split_to(frame_len);
-
-        // Decode into GatewayRequest
         let request = match GatewayRequest::decode(frame_data) {
             Ok(req) => req,
             Err(e) => {
@@ -63,21 +55,18 @@ pub async fn handle_connection(mut stream: UnixStream) -> Result<()> {
             }
         };
 
-        // Route and handle
-        let response = route_request(request).await;
+        let response = route_request(request, &state).await;
         let resp_bytes = response.encode_to_vec();
         write_frame(&mut writer, &resp_bytes).await?;
     }
 }
 
-/// Read bytes until we can decode a varint length, returns the frame length.
-/// Returns Ok(None) on clean EOF.
+/// Read bytes until we can decode a varint length.
 async fn read_length(
     reader: &mut (impl AsyncReadExt + Unpin),
     buf: &mut BytesMut,
 ) -> Result<Option<usize>> {
     loop {
-        // Try to decode a varint from what we have
         let mut tmp = buf.chunk().iter();
         let mut len = 0u64;
         let mut shift = 0u32;
@@ -88,7 +77,6 @@ async fn read_length(
             len |= ((byte & 0x7F) as u64) << shift;
             shift += 7;
             if byte & 0x80 == 0 {
-                // Complete varint
                 buf.advance(bytes_consumed);
                 return Ok(Some(len as usize));
             }
@@ -97,13 +85,9 @@ async fn read_length(
             }
         }
 
-        // Need more data
         let read = reader.read_buf(buf).await?;
         if read == 0 {
-            if buf.is_empty() {
-                return Ok(None); // Clean EOF
-            }
-            anyhow::bail!("Connection closed mid-varint");
+            return if buf.is_empty() { Ok(None) } else { Err(anyhow::anyhow!("Connection closed mid-varint")) };
         }
     }
 }
@@ -121,20 +105,15 @@ async fn write_frame(
     Ok(())
 }
 
-/// Encode a varint to a buffer.
 fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {
     loop {
         let byte = (value & 0x7F) as u8;
         value >>= 7;
-        if value == 0 {
-            buf.push(byte);
-            break;
-        }
+        if value == 0 { buf.push(byte); break; }
         buf.push(byte | 0x80);
     }
 }
 
-/// Build an error GatewayResponse.
 fn error_response(msg: impl Into<String>) -> Vec<u8> {
     GatewayResponse {
         success: false,
@@ -144,8 +123,25 @@ fn error_response(msg: impl Into<String>) -> Vec<u8> {
     .encode_to_vec()
 }
 
+fn ok_response(payload: impl Into<String>) -> Vec<u8> {
+    GatewayResponse {
+        success: true,
+        error_message: String::new(),
+        payload: payload.into(),
+    }
+    .encode_to_vec()
+}
+
+fn err_response(msg: impl Into<String>) -> GatewayResponse {
+    GatewayResponse {
+        success: false,
+        error_message: msg.into(),
+        payload: String::new(),
+    }
+}
+
 /// Route a GatewayRequest to the appropriate idtty-core function.
-async fn route_request(req: GatewayRequest) -> GatewayResponse {
+async fn route_request(req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
     match req.action.as_str() {
         "ping" => GatewayResponse {
             success: true,
@@ -153,22 +149,101 @@ async fn route_request(req: GatewayRequest) -> GatewayResponse {
             payload: "pong".into(),
         },
 
-        // TODO: Wire these to idtty-core once vault state is held in daemon
-        // "vault.init"    => { ... }
-        // "vault.unlock"  => { ... }
-        // "vault.lock"    => { ... }
-        // "vault.list"    => { ... }
-        // "vault.get"     => { ... }
-        // "vault.add"     => { ... }
-        // "vault.delete"  => { ... }
-        // "sync.push"     => { ... }
-        // "sync.pull"     => { ... }
-        // "sync.status"   => { ... }
+        // ── Vault lifecycle ──
 
-        _ => GatewayResponse {
-            success: false,
-            error_message: format!("Unknown action: {}", req.action),
-            payload: String::new(),
-        },
+        "vault.open" => {
+            match state.open().await {
+                Ok(()) => match state.info().await {
+                    Ok(info) => GatewayResponse { success: true, error_message: String::new(), payload: info },
+                    Err(e) => err_response(e),
+                },
+                Err(e) => err_response(e),
+            }
+        }
+
+        "vault.unlock" => {
+            if req.payload.is_empty() {
+                return err_response("Missing master password in payload");
+            }
+            match state.unlock(&req.payload).await {
+                Ok(()) => match state.info().await {
+                    Ok(info) => GatewayResponse { success: true, error_message: String::new(), payload: info },
+                    Err(e) => err_response(e),
+                },
+                Err(e) => err_response(e),
+            }
+        }
+
+        "vault.lock" => {
+            match state.lock().await {
+                Ok(()) => GatewayResponse { success: true, error_message: String::new(), payload: "locked".into() },
+                Err(e) => err_response(e),
+            }
+        }
+
+        "vault.info" => {
+            match state.info().await {
+                Ok(info) => GatewayResponse { success: true, error_message: String::new(), payload: info },
+                Err(e) => err_response(e),
+            }
+        }
+
+        // ── Cipher CRUD ──
+
+        "vault.list" => {
+            match state.list_cipher_ids().await {
+                Ok(ids) => {
+                    let json = serde_json::json!({"cipher_ids": ids});
+                    GatewayResponse { success: true, error_message: String::new(), payload: json.to_string() }
+                }
+                Err(e) => err_response(e),
+            }
+        }
+
+        "vault.get" => {
+            if req.payload.is_empty() {
+                return err_response("Missing cipher UUID in payload");
+            }
+            // payload = JSON {"id": "...", "decrypt": true/false}
+            let (id, decrypt) = match serde_json::from_str::<serde_json::Value>(&req.payload) {
+                Ok(v) => (
+                    v["id"].as_str().unwrap_or("").to_string(),
+                    v["decrypt"].as_bool().unwrap_or(false),
+                ),
+                Err(_) => (req.payload.clone(), false),
+            };
+            match state.get_cipher(&id, decrypt).await {
+                Ok(json) => GatewayResponse { success: true, error_message: String::new(), payload: json },
+                Err(e) => err_response(e),
+            }
+        }
+
+        "vault.add" => {
+            if req.payload.is_empty() {
+                return err_response("Missing cipher JSON in payload");
+            }
+            match state.add_cipher(&req.payload).await {
+                Ok(id) => GatewayResponse { success: true, error_message: String::new(), payload: id },
+                Err(e) => err_response(e),
+            }
+        }
+
+        "vault.delete" => {
+            if req.payload.is_empty() {
+                return err_response("Missing cipher UUID in payload");
+            }
+            match state.delete_cipher(&req.payload).await {
+                Ok(()) => GatewayResponse { success: true, error_message: String::new(), payload: "deleted".into() },
+                Err(e) => err_response(e),
+            }
+        }
+
+        // ── Sync ──
+        // TODO: Wire sync actions through vault state once sync is daemon-integrated
+        "sync.push" | "sync.pull" | "sync.status" | "sync.log" => {
+            err_response(format!("{} not yet routed through daemon. Use CLI with --direct.", req.action))
+        }
+
+        _ => err_response(format!("Unknown action: {}", req.action)),
     }
 }
