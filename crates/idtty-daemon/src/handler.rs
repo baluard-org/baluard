@@ -2,6 +2,8 @@
 //!
 //! Deserializes incoming Protobuf requests, routes them to idtty-core,
 //! and serializes responses back.
+//!
+//! Current state: line-delimited JSON stub. Protobuf wiring pending.
 
 use anyhow::Result;
 use idtty_core::IdttyError;
@@ -15,7 +17,9 @@ pub async fn handle_connection(mut stream: UnixStream) -> Result<()> {
 
     while let Some(line) = lines.next_line().await? {
         let response = route_request(&line).unwrap_or_else(|e| {
-            format!(r#"{{"error": "{}"}}"#, e)
+            // Escape error message to prevent JSON injection
+            let escaped = e.to_string().replace('\\', "\\\\").replace('"', "\\\"");
+            format!(r#"{{"error": "{escaped}"}}"#)
         });
         writer.write_all(response.as_bytes()).await?;
         writer.write_all(b"\n").await?;
@@ -30,7 +34,7 @@ pub async fn handle_connection(mut stream: UnixStream) -> Result<()> {
 /// TODO: Replace JSON stub with actual Protobuf deserialization
 /// once proto/ schemas are compiled into Rust types.
 fn route_request(payload: &str) -> Result<String, IdttyError> {
-    // Stub: parse action from JSON until Protobuf is wired
+    // Stub: echo back the payload until Protobuf is wired
     // Real implementation:
     //   let req = protobuf::parse_from_bytes(payload)?;
     //   match req.action {
@@ -39,5 +43,6 @@ fn route_request(payload: &str) -> Result<String, IdttyError> {
     //       "vault.add"  => ...,
     //       _ => Err(IdttyError::UnknownAction),
     //   }
-    Ok(format!(r#"{{"status": "ok", "echo": "{}"}}"#, payload))
+    let escaped = payload.replace('\\', "\\\\").replace('"', "\\\"");
+    Ok(format!(r#"{{"status": "ok", "echo": "{escaped}"}}"#))
 }

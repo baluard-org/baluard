@@ -85,7 +85,9 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 
 **Decision: Unification via `HandleRequest(action, payload)`**
 
-All layers communicate with idtty-core through a unified, serialized gateway interface:
+**Current state**: Protobuf schemas exist in `proto/` but are not yet compiled into Rust. The daemon has a JSON echo stub. The CLI links idtty-core directly.
+
+**Target**: All layers will communicate with idtty-core through a unified, serialized gateway interface:
 - **Input**: A single Protobuf serialized string containing the action command and its parameters.
 - **Output**: A serialized response string.
 - This decoupling allows front-end tiers to compile with `MOCK_BACKEND=true` to skip native builds during UI development, feeding hardcoded mock Protobuf payloads directly to components.
@@ -94,23 +96,24 @@ All layers communicate with idtty-core through a unified, serialized gateway int
 
 ### D7. Desktop Tier: Client-Server IPC Socket
 
-**Decision: Rust Daemon (Server) + CLI Client + Tauri v2 (SolidJS/Tailwind UI)**
+**Decision: Rust Daemon (Server) + CLI Client (socket) + Tauri v2 (SolidJS/Tailwind UI)**
 
-- **Rust Daemon (`idtty-daemon`)**: Started on boot by Tauri. Unlocks the vault into `zeroize`-protected memory. Listens on a local domain socket (`/tmp/idtty.sock` set to `0600` permissions on macOS/Linux) or Named Pipes on Windows. Built on tokio for async I/O.
-- **CLI (`idtty-cli`)**: A lightweight client binary that does not decrypt files. It serializes terminal flags into a Protobuf string, transmits it to the local Unix socket, and prints the daemon's response.
-- **Tauri v2 UI**: Lightweight SolidJS/Tailwind webview that communicates with the daemon. Intercepts close events (`api.prevent_close()`) to minimize to system tray and preserve memory-unlocked states for browser extension autofill.
+- **Rust Daemon (`idtty-daemon`)**: Started on boot by Tauri. Unlocks the vault into `zeroize`-protected memory. Listens on a local domain socket (`/tmp/idtty.sock` set to `0600` permissions via umask before bind) or Named Pipes on Windows. Built on tokio for async I/O. Handles both SIGINT and SIGTERM for graceful shutdown. **Current state: JSON echo stub with no vault state management.**
+- **CLI (`idtty-cli`)**: **Target**: lightweight socket client that serializes flags into Protobuf, transmits to daemon, prints response. **Current state**: links idtty-core directly and calls vault/crypto functions in-process. Each command prompts for master password. Socket client conversion is a Phase 3 milestone.
+- **Tauri v2 UI**: Lightweight SolidJS/Tailwind webview that communicates with the daemon. Intercepts close events (`api.prevent_close()`) to minimize to system tray and preserve memory-unlocked states for browser extension autofill. **Current state: placeholder.**
 
 ---
 
-### D8. Mobile Tier: UniFFI Bindings
+### D8. Mobile Tier: UniFFI Bindings (Planned)
 
 **Decision: Mozilla UniFFI for Rust-to-Kotlin/Swift bridge**
 
-Mobile apps bind directly to idtty-core via UniFFI-generated native bindings:
+Mobile apps will bind directly to idtty-core via UniFFI-generated native bindings:
 - **Kotlin (Android)**: UniFFI generates Kotlin data classes and function bindings from `#[uniffi::export]` proc-macros on idtty-core's public API. Compiled into the KMP project as a static library.
 - **Swift (iOS)**: UniFFI generates Swift bindings compiled into an xcframework.
 - **No intermediate language**: The Rust core is the single source of truth. No Go, no cgo, no gomobile. UniFFI's serialization-based FFI provides a clean security boundary between Rust memory and foreign memory.
-- **JIT Autofill**: The UniFFI-exposed `sync::fetch_and_decrypt()` method is called directly from the Kotlin/Swift autofill adapter before biometric prompt.
+- **JIT Autofill**: The UniFFI-exposed `sync::fetch_and_decrypt()` method will be called directly from the Kotlin/Swift autofill adapter before biometric prompt.
+- **Current state**: idtty-core has no `#[uniffi::export]` annotations yet. Mobile app is a placeholder scaffold.
 
 ---
 

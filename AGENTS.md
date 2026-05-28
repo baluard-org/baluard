@@ -4,10 +4,10 @@
 
 ## OVERVIEW
 Project: **IDtty** (Git-native password manager / Space Manager)
-Stack: Rust (core crypto + daemon + CLI), SolidJS/Tailwind/Tauri v2 (desktop), Kotlin Multiplatform via UniFFI (mobile), SolidJS (browser extension), Protobuf (IPC schema)
+Stack: Rust (core crypto + CLI + daemon), SolidJS/Tailwind/Tauri v2 (desktop), Kotlin Multiplatform via UniFFI (mobile, planned), SolidJS (browser extension, planned), Protobuf (IPC schema, planned)
 License: MIT
 
-Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets. Mobile apps bind directly to the Rust core via UniFFI-generated Kotlin/Swift bindings.
+Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets. Mobile apps will bind directly to the Rust core via UniFFI-generated Kotlin/Swift bindings.
 
 ## STRUCTURE
 ```
@@ -27,25 +27,23 @@ idtty/
 │   │       ├── recovery.rs     # BIP-39 recovery phrase
 │   │       ├── types.rs        # Shared types (CipherInput, KdfProfile, etc.)
 │   │       └── error.rs        # IdttyError enum
-│   ├── idtty-cli/              # CLI binary (clap) - socket client, no crypto logic
+│   ├── idtty-cli/              # CLI binary (clap) - currently links idtty-core directly
 │   │   └── src/
 │   │       ├── main.rs         # Command dispatch (init/unlock/add/get/list/delete/sync/devices)
-│   │       └── commands/       # Command handler implementations
-│   └── idtty-daemon/           # Background IPC daemon (tokio Unix socket server)
+│   │       └── commands/       # Direct idtty-core calls (will become socket client)
+│   └── idtty-daemon/           # Background IPC daemon (tokio Unix socket server) [STUB]
 │       └── src/
-│           ├── main.rs         # Socket listener, signal handling, graceful shutdown
-│           └── handler.rs      # Protobuf gateway: deserializes request, routes to idtty-core
-├── desktop/                    # Tauri v2 desktop app (SolidJS + Tailwind webview)
+│           ├── main.rs         # Socket listener, SIGINT/SIGTERM handling, 0600 perms
+│           └── handler.rs      # JSON echo stub (Protobuf wiring pending)
+├── desktop/                    # Tauri v2 desktop app (SolidJS + Tailwind webview) [PLACEHOLDER]
 │   ├── package.json            # vite, solid-js, @tauri-apps/cli
 │   ├── src/                    # SolidJS frontend
-│   └── src-tauri/              # Rust native: system tray, spawns daemon on boot
-├── mobile/                     # Kotlin Multiplatform mobile app (UniFFI bindings)
-│   ├── build.gradle.kts        # KMP targets: Android, iOS (x64/arm64/sim)
-│   ├── sharedLogic/            # UniFFI-generated Kotlin + biometric expect/actual gates
-│   └── sharedUI/               # Compose Multiplatform UI (shared Android/iOS)
-├── extension/                  # MV3 browser extension (SolidJS thin client)
+│   └── src-tauri/              # Rust native: system tray, spawns daemon on boot [PLANNED]
+├── mobile/                     # Kotlin Multiplatform mobile app [PLACEHOLDER]
+│   └── build.gradle.kts        # KMP targets: Android, iOS (x64/arm64/sim)
+├── extension/                  # MV3 browser extension (SolidJS thin client) [PLACEHOLDER]
 │   └── package.json            # vite, solid-js
-├── proto/                      # Shared Protobuf schemas
+├── proto/                      # Shared Protobuf schemas (not yet compiled into Rust)
 │   ├── vault.proto             # VaultEntry, CustomField
 │   ├── space.proto
 │   └── auth.proto
@@ -69,15 +67,13 @@ idtty/
 | Install desktop deps | `cd desktop && npm install` |
 | Dev desktop | `cd desktop && npm run tauri dev` |
 | Build extension | `cd extension && npm run build` |
-| Generate UniFFI Kotlin bindings | `cargo run -p idtty-core --features uniffi -- uniffi-bindgen generate --library --language kotlin` |
-| Generate UniFFI Swift bindings | `cargo run -p idtty-core --features uniffi -- uniffi-bindgen generate --library --language swift` |
 
 ## CODING STANDARDS
 * **Rust**: Edition 2024, MSRV 1.85. Workspace deps in root `Cargo.toml`. Feature flags: `git-sync`, `org`, `emergency`. `thiserror` for library errors, `anyhow` for CLI. `proptest` for property-based tests.
 * **JS/TS**: ES modules, SolidJS, Vite. Tailwind utility classes for layout.
 * **Kotlin**: KMP 1.9.20, Android compileSdk 34, iOS multi-target. Compose Multiplatform for shared UI.
-* **Protobuf**: proto3 syntax, `idtty.vault` package.
-* **Security**: AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket permissions 0600. Zero-copy avoided at FFI boundary (UniFFI serialization).
+* **Protobuf**: proto3 syntax, `idtty.vault` package. Not yet compiled into Rust types.
+* **Security**: AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket permissions 0600 (umask before bind). Zeroize on drop for key material.
 
 ## WHERE TO LOOK
 * **Rust crypto primitives**: `crates/idtty-core/src/crypto/`
@@ -87,17 +83,31 @@ idtty/
 * **CLI commands**: `crates/idtty-cli/src/commands/mod.rs`
 * **Daemon IPC handler**: `crates/idtty-daemon/src/handler.rs`
 * **Design docs**: `docs/01-architecture-decisions.md` (authoritative for all decisions)
-* **Protobuf schemas**: `proto/`
-* **UniFFI bindings**: Generated at build time from `idtty-core` proc-macros
+* **Protobuf schemas**: `proto/` (schemas only, no codegen yet)
 
 ## NOTES
 * **Single Rust core**: All crypto, vault format, padding, key lifecycle, and git sync live in `idtty-core`. No duplicate implementations.
-* **Daemon architecture**: `idtty-daemon` is a tokio-based Unix socket server (or Windows Named Pipes). Started by Tauri on boot. Holds unlocked vault in `zeroize`-protected memory. CLI and browser extension talk to it over the socket.
-* **Mobile via UniFFI**: `idtty-core` exports its public API via `#[uniffi::export]` proc-macros. UniFFI generates native Kotlin (Android) and Swift (iOS) bindings at build time. No cgo, no gomobile, no Go.
-* **Feature flags control sync**: `git-sync` feature gate; CLI and daemon enable it by default.
+* **CLI currently links core directly**: `idtty-cli` calls `idtty-core` functions in-process. Each command prompts for master password. Phase 3 will convert CLI to a socket client that talks to the daemon, eliminating repeated password prompts.
+* **Daemon is a stub**: `idtty-daemon` runs a tokio Unix socket server with JSON echo routing. Protobuf gateway wiring and vault state management are pending.
+* **Protobuf schemas exist but are not compiled**: `proto/*.proto` define the IPC message formats. Rust codegen (prost) is not yet wired into the build.
+* **Mobile via UniFFI (planned)**: `idtty-core` will export its public API via `#[uniffi::export]` proc-macros. UniFFI will generate native Kotlin (Android) and Swift (iOS) bindings at build time. No cgo, no gomobile, no Go. Not yet annotated.
+* **Feature flags control sync**: `git-sync` feature gate; CLI enables it by default.
 * **Padded buckets**: All vault entries are padded to uniform sizes (1KB/8KB/64KB/1MB) to prevent metadata leakage.
-* **IPC via Unix sockets**: Daemon listens on `/tmp/idtty.sock` with 0600 perms. All UI layers communicate through the Protobuf gateway.
-* **MOCK_BACKEND build flag**: Desktop and mobile UIs support `MOCK_BACKEND=true` for frontend-only development.
+* **IPC via Unix sockets (target)**: Daemon will listen on `/tmp/idtty.sock` with 0600 perms. All UI layers will communicate through the Protobuf gateway. Socket is born with 0600 via umask (no TOCTOU race).
+* **MOCK_BACKEND build flag (planned)**: Desktop and mobile UIs will support `MOCK_BACKEND=true` for frontend-only development.
 * **Key hierarchy**: Master Password -> KEK (Argon2id) -> Device Private Key (escrowed) -> Space Group Key -> Item Keys.
 * **BIP-39 recovery**: Vault creation generates a recovery phrase for key recovery.
 * **CodeGraph available**: `.codegraph/` index exists for codebase navigation.
+
+## IMPLEMENTATION STATUS
+| Component | Status |
+|-----------|--------|
+| `idtty-core` crypto/keys/vault | Built, tested, security-reviewed (2 rounds) |
+| `idtty-core` sync engine | Built, tested |
+| `idtty-cli` (direct core) | Functional, links core in-process |
+| `idtty-daemon` socket server | Stub (JSON echo, no vault state) |
+| Protobuf codegen | Schemas only, no Rust compilation |
+| UniFFI annotations | Not yet applied to idtty-core |
+| Desktop Tauri app | Placeholder |
+| Mobile KMP app | Placeholder |
+| Browser extension | Placeholder |

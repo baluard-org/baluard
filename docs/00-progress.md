@@ -24,7 +24,7 @@
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
 - `/crates/idtty-core` - Rust core engine: crypto, keys, vault, padding, git sync
-- `/crates/idtty-cli` - Terminal CLI client (clap, talks to daemon socket)
+- `/crates/idtty-cli` - Terminal CLI client (clap, links idtty-core directly; socket client is Phase 3 target)
 - `/crates/idtty-daemon` - Background IPC daemon (tokio Unix socket server)
 - `/desktop` - SolidJS/Tailwind Tauri v2 Webviews
 - `/extension` - Browser UI thin client (MV3)
@@ -41,7 +41,7 @@
 | `proto/schemas` | Done | Drafted `vault.proto`, `space.proto`, and `auth.proto` schemas. |
 | `crates/idtty-core` | Done | Full crypto, keys, vault, padding, git sync engine. 3,673 lines. |
 | `crates/idtty-cli` | Done | clap CLI with command dispatch. |
-| `crates/idtty-daemon` | Stub | tokio Unix socket listener with JSON stub handler. Protobuf wiring pending. |
+| `crates/idtty-daemon` | Stub | tokio Unix socket listener (0600 via umask), JSON echo handler. No vault state. Protobuf wiring pending. |
 
 ### Phase 1: Cryptographic Core & Padding Engine (Rust)
 | Module | Status | What's Planned / Implemented |
@@ -69,9 +69,9 @@
 ### Phase 3: IPC Daemon & CLI Gateway
 | Module | Status | What's Planned / Implemented |
 |--------|--------|------------------------------|
-| `daemon/socket` | Stub | Unix socket listener (0600 perms), JSON echo handler. |
-| `daemon/handler` | Stub | Request router. Needs Protobuf deserialization wiring. |
-| `cli/commands` | Done | Command handlers that serialize to Protobuf and call socket. |
+| `daemon/socket` | Stub | Unix socket listener (0600 via umask, SIGINT/SIGTERM handling), JSON echo handler.
+| `daemon/handler` | Stub | JSON echo router. Needs Protobuf codegen (prost) and idtty-core wiring.
+| `cli/commands` | Done | Command handlers calling idtty-core directly (init, unlock, add, get, list, delete, sync, devices). Socket client conversion is Phase 3. |
 
 ### Phase 4: Desktop UI & Open-Source Launch
 | Module | Status | What's Planned / Implemented |
