@@ -19,18 +19,13 @@ desktop.ini
 **/*.rs.bk
 Cargo.lock
 
-# ── Go ──
+# ── Compiled binaries ──
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-*.test
-*.out
-/core/core
-/cli/cli
-/tmp/pm-vault.sock
-/pm-vault.sock
+/tmp/idtty.sock
 
 # ── Kotlin Multiplatform / Gradle ──
 /build/

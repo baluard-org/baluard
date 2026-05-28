@@ -35,10 +35,8 @@ idtty/
 │       └── src/
 │           ├── main.rs         # Socket listener, SIGINT/SIGTERM handling, 0600 perms
 │           └── handler.rs      # JSON echo stub (Protobuf wiring pending)
-├── desktop/                    # Tauri v2 desktop app (SolidJS + Tailwind webview) [PLACEHOLDER]
-│   ├── package.json            # vite, solid-js, @tauri-apps/cli
-│   ├── src/                    # SolidJS frontend
-│   └── src-tauri/              # Rust native: system tray, spawns daemon on boot [PLANNED]
+├── desktop/                    # Tauri v2 desktop app [PLACEHOLDER]
+│   └── package.json            # vite, solid-js, @tauri-apps/cli
 ├── mobile/                     # Kotlin Multiplatform mobile app [PLACEHOLDER]
 │   └── build.gradle.kts        # KMP targets: Android, iOS (x64/arm64/sim)
 ├── extension/                  # MV3 browser extension (SolidJS thin client) [PLACEHOLDER]

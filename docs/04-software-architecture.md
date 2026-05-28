@@ -26,17 +26,16 @@ idtty/
 │   │       ├── recovery.rs     # BIP-39 recovery
 │   │       ├── types.rs        # Shared types
 │   │       └── error.rs        # IdttyError enum
-│   ├── idtty-cli/              # CLI Client (clap) - currently links idtty-core directly
-│   │   └── src/
-│   │       ├── main.rs         # Command dispatch
-│   │       └── commands/       # Direct idtty-core function calls
+│   └── idtty-cli/              # CLI Client (clap) - currently links idtty-core directly
+│       └── src/
+│           ├── main.rs         # Command dispatch
+│           └── commands/       # Direct idtty-core function calls
 │   └── idtty-daemon/           # Background IPC Daemon [STUB]
 │       └── src/
 │           ├── main.rs         # tokio Unix socket listener, SIGINT/SIGTERM, umask(0177)
 │           └── handler.rs      # JSON echo stub, Protobuf routing pending
 ├── desktop/                    # Tauri v2 Desktop App [PLACEHOLDER]
-│   ├── src/                    # SolidJS/Tailwind Webview Frontend
-│   └── src-tauri/              # Rust Native: system tray, daemon lifecycle [PLANNED]
+│   └── package.json
 ├── mobile/                     # Kotlin Multiplatform Mobile App [PLACEHOLDER]
 │   └── build.gradle.kts        # KMP targets: Android, iOS
 ├── extension/                  # MV3 Browser Extension [PLACEHOLDER]

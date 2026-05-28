@@ -125,12 +125,11 @@ idtty/
 ├── proto/                        # Shared Protobuf Schemas (vault, space, auth)
 ├── crates/
 │   ├── idtty-core/               # Rust Core: crypto, keys, vault, padding, sync
-│   ├── idtty-cli/                # Terminal CLI client (clap)
-│   └── idtty-daemon/             # Background IPC daemon (tokio socket server)
-├── desktop/                      # Tauri v2 Desktop app (SolidJS/Tailwind Webview)
-├── extension/                    # Browser extension popup
-├── mobile/                       # Kotlin Multiplatform (KMP) Mobile App via UniFFI
+│   ├── idtty-cli/                # Terminal CLI client (clap, links core directly)
+│   └── idtty-daemon/             # Background IPC daemon (tokio socket server, stub)
+├── desktop/                      # Tauri v2 Desktop app (placeholder)
+├── extension/                    # Browser extension (placeholder)
+├── mobile/                       # Kotlin Multiplatform (KMP) Mobile App (placeholder)
 ├── docs/                         # Architecture Blueprint Docs
-└── .github/
-    └── workflows/                # CI: multi-platform builds
+└── docs/                         # Architecture Blueprint Docs
 ```
