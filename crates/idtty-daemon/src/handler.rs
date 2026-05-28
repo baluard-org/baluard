@@ -19,7 +19,11 @@ use zeroize::Zeroize;
 const MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
 
 /// Handle a single client connection (length-delimited Protobuf frames).
+/// Verifies peer UID matches daemon UID on Linux (SO_PEERCRED).
 pub async fn handle_connection(mut stream: UnixStream, state: SharedVaultState) -> Result<()> {
+    // Peer credential check: reject connections from different UIDs
+    verify_peer_uid(&stream)?;
+
     let (mut reader, mut writer) = stream.split();
     let mut buf = BytesMut::with_capacity(4096);
 
@@ -412,3 +416,68 @@ fn sync_pull(_p: &std::path::Path) -> Result<String, String> { Err("git-sync fea
 fn sync_status(_p: &std::path::Path) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
 #[cfg(not(feature = "git-sync"))]
 fn sync_log(_p: &std::path::Path, _n: usize) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+
+// ── Peer credential verification ──
+
+/// Verify the connecting process runs as the same UID as the daemon.
+/// Prevents other local users from connecting to the Unix socket.
+#[cfg(target_os = "linux")]
+fn verify_peer_uid(stream: &UnixStream) -> Result<()> {
+    use std::os::unix::io::AsRawFd;
+
+    let fd = stream.as_raw_fd();
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut cred_len: libc::socklen_t = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+
+    let ret = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut cred as *mut _ as *mut _,
+            &mut cred_len,
+        )
+    };
+
+    if ret != 0 {
+        anyhow::bail!("Failed to get peer credentials: SO_PEERCRED failed");
+    }
+
+    let my_uid = unsafe { libc::geteuid() };
+    if cred.uid != my_uid {
+        anyhow::bail!(
+            "Peer UID {} does not match daemon UID {}. Connection rejected.",
+            cred.uid, my_uid
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn verify_peer_uid(stream: &UnixStream) -> Result<()> {
+    use std::os::unix::io::AsRawFd;
+    use libc::{getpeereid, geteuid};
+
+    let fd = stream.as_raw_fd();
+    let mut uid: libc::uid_t = 0;
+    let mut gid: libc::gid_t = 0;
+
+    let ret = unsafe { getpeereid(fd, &mut uid, &mut gid) };
+    if ret != 0 {
+        anyhow::bail!("Failed to get peer credentials");
+    }
+
+    let my_uid = unsafe { geteuid() };
+    if uid != my_uid {
+        anyhow::bail!("Peer UID {} does not match daemon UID {}. Connection rejected.", uid, my_uid);
+    }
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn verify_peer_uid(_stream: &UnixStream) -> Result<()> {
+    // Windows Named Pipes have their own ACL-based security
+    Ok(())
+}
