@@ -70,8 +70,8 @@
 ### Phase 3: IPC Daemon & CLI Gateway
 | Module | Status | What's Planned / Implemented |
 |--------|--------|------------------------------|
-| `daemon/socket` | Stub | Unix socket listener (0600 via umask, SIGINT/SIGTERM handling), JSON echo handler.
-| `daemon/handler` | Stub | JSON echo router. Needs Protobuf codegen (prost) and idtty-core wiring.
+| `daemon/socket` | Done | Unix socket listener (0600 via umask, SIGINT/SIGTERM handling). |
+| `daemon/handler` | Stub | Protobuf (prost) length-delimited wire protocol. Ping/pong verified. Vault/sync action routing pending vault state. |
 | `cli/commands` | Done | Command handlers calling idtty-core directly (init, unlock, add, get, list, delete, sync, devices). Socket client conversion is Phase 3. |
 
 ### Phase 4: Desktop UI & Open-Source Launch

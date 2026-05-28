@@ -43,7 +43,7 @@ idtty/
 │   └── build.gradle.kts        # KMP targets: Android, iOS (x64/arm64/sim)
 ├── extension/                  # MV3 browser extension (SolidJS thin client) [PLACEHOLDER]
 │   └── package.json            # vite, solid-js
-├── proto/                      # Shared Protobuf schemas (not yet compiled into Rust)
+├── proto/                      # Shared Protobuf schemas (compiled into Rust via prost)
 │   ├── vault.proto             # VaultEntry, CustomField
 │   ├── space.proto
 │   └── auth.proto
@@ -72,7 +72,7 @@ idtty/
 * **Rust**: Edition 2024, MSRV 1.85. Workspace deps in root `Cargo.toml`. Feature flags: `git-sync`, `org`, `emergency`. `thiserror` for library errors, `anyhow` for CLI. `proptest` for property-based tests.
 * **JS/TS**: ES modules, SolidJS, Vite. Tailwind utility classes for layout.
 * **Kotlin**: KMP 1.9.20, Android compileSdk 34, iOS multi-target. Compose Multiplatform for shared UI.
-* **Protobuf**: proto3 syntax, `idtty.vault` package. Not yet compiled into Rust types.
+* **Protobuf**: proto3 syntax, `idtty.vault` package. Compiled into Rust types via prost in idtty-daemon.
 * **Security**: AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket permissions 0600 (umask before bind). Zeroize on drop for key material.
 
 ## WHERE TO LOOK
@@ -89,7 +89,7 @@ idtty/
 * **Single Rust core**: All crypto, vault format, padding, key lifecycle, and git sync live in `idtty-core`. No duplicate implementations.
 * **CLI currently links core directly**: `idtty-cli` calls `idtty-core` functions in-process. Each command prompts for master password. Phase 3 will convert CLI to a socket client that talks to the daemon, eliminating repeated password prompts.
 * **Daemon is a stub**: `idtty-daemon` runs a tokio Unix socket server with JSON echo routing. Protobuf gateway wiring and vault state management are pending.
-* **Protobuf schemas exist but are not compiled**: `proto/*.proto` define the IPC message formats. Rust codegen (prost) is not yet wired into the build.
+* **Protobuf schemas compiled**: `proto/*.proto` define the IPC message formats. Rust codegen via prost-build in idtty-daemon's build.rs. Generated types: GatewayRequest, GatewayResponse, VaultEntry, AccessList, DeviceIdentityEscrow.
 * **Mobile via UniFFI (planned)**: `idtty-core` will export its public API via `#[uniffi::export]` proc-macros. UniFFI will generate native Kotlin (Android) and Swift (iOS) bindings at build time. No cgo, no gomobile, no Go. Not yet annotated.
 * **Feature flags control sync**: `git-sync` feature gate; CLI enables it by default.
 * **Padded buckets**: All vault entries are padded to uniform sizes (1KB/8KB/64KB/1MB) to prevent metadata leakage.
@@ -105,8 +105,8 @@ idtty/
 | `idtty-core` crypto/keys/vault | Built, tested, security-reviewed (2 rounds) |
 | `idtty-core` sync engine | Built, tested |
 | `idtty-cli` (direct core) | Functional, links core in-process |
-| `idtty-daemon` socket server | Stub (JSON echo, no vault state) |
-| Protobuf codegen | Schemas only, no Rust compilation |
+| `idtty-daemon` socket server | Protobuf wire, ping/pong works |
+| Protobuf codegen | Compiled via prost in daemon build.rs |
 | UniFFI annotations | Not yet applied to idtty-core |
 | Desktop Tauri app | Placeholder |
 | Mobile KMP app | Placeholder |
