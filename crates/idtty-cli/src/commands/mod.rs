@@ -12,6 +12,7 @@ use std::path::Path;
 use idtty_core::types::{CipherInput, KdfProfile};
 use idtty_core::vault::handle::{CipherRead, VaultHandle};
 use idtty_core::vault::creation;
+use zeroize::Zeroize;
 
 // ── Init (always direct) ──
 
@@ -117,8 +118,9 @@ fn unlock_daemon(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>>
     }
 
     // Prompt and unlock
-    let password = prompt_password("Master password: ")?;
+    let mut password = prompt_password("Master password: ")?;
     let resp = client::request_to("vault.unlock", &password, socket)?;
+    password.zeroize();
     if !resp.success {
         return Err(resp.error_message.into());
     }
@@ -140,8 +142,9 @@ fn unlock_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let password = prompt_password("Master password: ")?;
+    let mut password = prompt_password("Master password: ")?;
     handle.unlock(&password)?;
+    password.zeroize();
 
     println!("Vault unlocked (direct).");
     println!("  Vault ID:  {}", handle.vault_id);
@@ -165,8 +168,7 @@ pub fn handle_lock(mode: ConnectMode, socket: Option<&str>) -> Result<(), Box<dy
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("error: lock requires daemon mode (no vault held in memory in direct mode)");
-            std::process::exit(1);
+            return Err("lock requires daemon mode (no vault held in memory in direct mode)".into());
         }
     }
 }
@@ -204,7 +206,6 @@ pub fn handle_add(
 
     match mode {
         ConnectMode::Daemon => {
-            // Ensure vault is unlocked in daemon
             ensure_unlocked_daemon(socket)?;
             let payload = serde_json::to_string(&input)?;
             let resp = client::request_to("vault.add", &payload, socket)?;
@@ -246,7 +247,10 @@ pub fn handle_get(
 
     match mode {
         ConnectMode::Daemon => {
-            ensure_unlocked_daemon(socket)?;
+            // Only unlock if decryption is needed (metadata reads work on locked vaults)
+            if decrypt {
+                ensure_unlocked_daemon(socket)?;
+            }
             let payload = serde_json::json!({"id": cipher_id.to_string(), "decrypt": decrypt}).to_string();
             let resp = client::request_to("vault.get", &payload, socket)?;
             if !resp.success {
@@ -358,25 +362,22 @@ pub fn handle_get(
 pub fn handle_list(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
-            // Try daemon first — list works on locked vaults too
             let resp = client::request_to("vault.list", "", socket)?;
-            if resp.success {
-                let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
-                let ids = data["cipher_ids"].as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
-                    .unwrap_or_default();
-                if ids.is_empty() {
-                    println!("No ciphers found.");
-                } else {
-                    for id in &ids { println!("{id}"); }
-                    println!();
-                    println!("{} cipher(s)", ids.len());
-                }
-                return Ok(());
+            if !resp.success {
+                return Err(resp.error_message.into());
             }
-            // Daemon returned error (vault not opened) — fall through to direct
-            eprintln!("Daemon: {}. Falling back to direct.", resp.error_message);
-            list_direct(vault_path)
+            let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
+            let ids = data["cipher_ids"].as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+                .unwrap_or_default();
+            if ids.is_empty() {
+                println!("No ciphers found.");
+            } else {
+                for id in &ids { println!("{id}"); }
+                println!();
+                println!("{} cipher(s)", ids.len());
+            }
+            Ok(())
         }
         ConnectMode::Direct => list_direct(vault_path),
     }
@@ -569,7 +570,7 @@ pub fn handle_sync_log(vault_path: &str, limit: usize) -> Result<(), Box<dyn std
 // ── Helpers ──
 
 /// Ensure vault is opened and unlocked in the daemon.
-/// Prompts for master password if needed.
+/// Prompts for master password if needed. Zeroizes password after use.
 fn ensure_unlocked_daemon(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     // Check current state
     let info_resp = client::request_to("vault.info", "", socket)?;
@@ -578,16 +579,18 @@ fn ensure_unlocked_daemon(socket: Option<&str>) -> Result<(), Box<dyn std::error
         if info["unlocked"].as_bool().unwrap_or(false) {
             return Ok(()); // Already unlocked
         }
+        // Vault is open but locked — skip redundant vault.open
+    } else {
+        // Vault not opened yet
+        let open_resp = client::request_to("vault.open", "", socket)?;
+        if !open_resp.success {
+            return Err(format!("Failed to open vault: {}", open_resp.error_message).into());
+        }
     }
 
-    // Need to open + unlock
-    let open_resp = client::request_to("vault.open", "", socket)?;
-    if !open_resp.success {
-        return Err(format!("Failed to open vault: {}", open_resp.error_message).into());
-    }
-
-    let password = prompt_password("Master password: ")?;
+    let mut password = prompt_password("Master password: ")?;
     let unlock_resp = client::request_to("vault.unlock", &password, socket)?;
+    password.zeroize();
     if !unlock_resp.success {
         return Err(format!("Unlock failed: {}", unlock_resp.error_message).into());
     }

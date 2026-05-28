@@ -34,32 +34,13 @@ impl VaultState {
         Ok(())
     }
 
-    /// Open a vault from disk (internal, used by unlock).
-    async fn open_inner(&self) -> Result<(), String> {
-        self.open().await
-    }
-
     /// Unlock the vault with the master password.
     ///
     /// KDF derivation (Argon2id) runs OUTSIDE the write lock to avoid
     /// blocking all reads during the expensive derivation (~300ms-1s).
+    /// Opens the vault once, unlocks it, then swaps it in.
     pub async fn unlock(&self, master_password: &str) -> Result<(), String> {
-        // Phase 1: ensure vault is opened (single write lock, short hold)
-        {
-            let guard = self.inner.read().await;
-            if guard.is_none() {
-                drop(guard);
-                self.open_inner().await?;
-            }
-        }
-
-        // Phase 2: derive KEK outside the lock (expensive Argon2id)
-        // We open a fresh handle, unlock it, then swap it in.
-        // This avoids holding the write lock during KDF.
-        let mut new_handle = VaultHandle::open(&self.vault_path)
-            .map_err(|e| format!("Failed to open vault for unlock: {e}"))?;
-
-        // Check if already unlocked (another thread may have completed)
+        // Quick check: already unlocked?
         {
             let guard = self.inner.read().await;
             if let Some(ref handle) = *guard {
@@ -69,11 +50,14 @@ impl VaultState {
             }
         }
 
-        // Perform expensive KDF derivation on the new handle
+        // Open a fresh handle and derive KEK outside any lock (expensive Argon2id)
+        let mut new_handle = VaultHandle::open(&self.vault_path)
+            .map_err(|e| format!("Failed to open vault for unlock: {e}"))?;
+
         new_handle.unlock(master_password)
             .map_err(|e| format!("Unlock failed: {e}"))?;
 
-        // Phase 3: swap in the unlocked handle under write lock
+        // Swap in the unlocked handle under write lock
         let mut guard = self.inner.write().await;
         // Double-check: another thread may have unlocked while we waited
         if let Some(ref handle) = *guard {

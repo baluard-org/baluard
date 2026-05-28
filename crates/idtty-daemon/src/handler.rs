@@ -13,6 +13,7 @@ use bytes::{Buf, BytesMut};
 use prost::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
+use zeroize::Zeroize;
 
 /// Maximum frame size: 4MB (largest bucket is 1MB, leave headroom)
 const MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
@@ -132,20 +133,6 @@ fn err_response(msg: impl Into<String>) -> GatewayResponse {
     }
 }
 
-/// Zeroize a String by overwriting its heap bytes.
-/// Safety: we are writing to the String's heap buffer which we have
-/// exclusive access to. This prevents the master password from lingering
-/// on the heap after the request is processed.
-fn zeroize_string(s: &mut String) {
-    if s.is_empty() { return; }
-    unsafe {
-        let ptr = s.as_mut_ptr();
-        let len = s.len();
-        std::ptr::write_bytes(ptr, 0u8, len);
-    }
-    s.clear();
-}
-
 /// Route a GatewayRequest to the appropriate idtty-core function.
 async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
     let resp = match req.action.as_str() {
@@ -173,7 +160,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
             let result = state.unlock(&req.payload).await;
             // Zeroize the password from the request immediately after use
-            zeroize_string(&mut req.payload);
+            req.payload.zeroize();
             match result {
                 Ok(()) => match state.info().await {
                     Ok(info) => GatewayResponse { success: true, error_message: String::new(), payload: info },
@@ -255,7 +242,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
     };
 
     // Zeroize any remaining sensitive data in the request
-    zeroize_string(&mut req.payload);
+    req.payload.zeroize();
 
     resp
 }

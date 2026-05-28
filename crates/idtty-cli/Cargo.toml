@@ -17,6 +17,7 @@ x25519-dalek.workspace = true
 rpassword = "7"
 chrono = "0.4"
 prost = { workspace = true }
+zeroize = { workspace = true }
 
 [build-dependencies]
 prost-build = "0.13"

@@ -16,6 +16,7 @@ prost = { workspace = true }
 bytes = { workspace = true }
 uuid = { workspace = true }
 clap = { workspace = true }
+zeroize = { workspace = true }
 
 [build-dependencies]
 prost-build = "0.13"

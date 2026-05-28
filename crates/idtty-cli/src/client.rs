@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use prost::Message;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use zeroize::Zeroize;
 
 const DEFAULT_SOCKET_PATH: &str = "/tmp/idtty.sock";
 
@@ -20,16 +20,17 @@ mod proto {
 use proto::{GatewayRequest, GatewayResponse};
 
 /// Send a request to the daemon at a specific socket path.
+/// Zeroizes the payload and wire bytes after the response is received.
 pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Result<GatewayResponse> {
     let socket = socket_path.unwrap_or(DEFAULT_SOCKET_PATH);
     let mut stream = UnixStream::connect(socket)
         .with_context(|| format!("Cannot connect to daemon at {socket}"))?;
 
-    let req = GatewayRequest {
+    let mut req = GatewayRequest {
         action: action.to_string(),
         payload: payload.to_string(),
     };
-    let body = req.encode_to_vec();
+    let mut body = req.encode_to_vec();
 
     // Write varint-length-prefixed frame
     let mut header = Vec::with_capacity(10);
@@ -40,6 +41,10 @@ pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Res
 
     // Shutdown write side so daemon sees EOF on its read
     stream.shutdown(std::net::Shutdown::Write)?;
+
+    // Zeroize wire bytes and request payload (password may be in payload)
+    body.zeroize();
+    req.payload.zeroize();
 
     // Read full response
     let mut buf = Vec::with_capacity(4096);
@@ -64,13 +69,6 @@ pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Res
         .context("Failed to decode daemon response")?;
 
     Ok(response)
-}
-
-/// Check if the daemon is running and reachable.
-#[allow(dead_code)]
-pub fn is_daemon_running(socket_path: Option<&str>) -> bool {
-    let socket = socket_path.unwrap_or(DEFAULT_SOCKET_PATH);
-    Path::new(socket).exists() && UnixStream::connect(socket).is_ok()
 }
 
 fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {

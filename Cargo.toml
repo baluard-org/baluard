@@ -56,6 +56,9 @@ bytes = "1"
 hex = "0.4"
 base64 = "0.22"
 
+# Secure memory
+zeroize = { version = "1", features = ["derive"] }
+
 # Protobuf
 prost = "0.13"
 prost-types = "0.13"
