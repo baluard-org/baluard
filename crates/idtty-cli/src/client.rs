@@ -21,9 +21,14 @@ use proto::{GatewayRequest, GatewayResponse};
 
 /// Send a request to the daemon and return the response.
 pub fn request(action: &str, payload: &str) -> Result<GatewayResponse> {
-    let socket_path = discover_socket()?;
-    let mut stream = UnixStream::connect(&socket_path)
-        .with_context(|| format!("Cannot connect to daemon at {}", socket_path))?;
+    request_to(action, payload, None)
+}
+
+/// Send a request to the daemon at a specific socket path.
+pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Result<GatewayResponse> {
+    let socket = socket_path.unwrap_or(DEFAULT_SOCKET_PATH);
+    let mut stream = UnixStream::connect(socket)
+        .with_context(|| format!("Cannot connect to daemon at {socket}"))?;
 
     let req = GatewayRequest {
         action: action.to_string(),
@@ -67,14 +72,9 @@ pub fn request(action: &str, payload: &str) -> Result<GatewayResponse> {
 }
 
 /// Check if the daemon is running and reachable.
-pub fn is_daemon_running() -> bool {
-    let socket_path = discover_socket().unwrap_or(DEFAULT_SOCKET_PATH.to_string());
-    Path::new(&socket_path).exists() && UnixStream::connect(&socket_path).is_ok()
-}
-
-fn discover_socket() -> Result<String> {
-    // TODO: Check XDG_RUNTIME_DIR first, --socket flag
-    Ok(DEFAULT_SOCKET_PATH.to_string())
+pub fn is_daemon_running(socket_path: Option<&str>) -> bool {
+    let socket = socket_path.unwrap_or(DEFAULT_SOCKET_PATH);
+    Path::new(socket).exists() && UnixStream::connect(socket).is_ok()
 }
 
 fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {
@@ -90,7 +90,6 @@ fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {
 }
 
 /// Decode a varint with overflow and bounds checking.
-/// Returns (value, bytes_consumed) or an error string.
 fn decode_varint_checked(data: &[u8]) -> Result<(u64, usize)> {
     let mut value: u64 = 0;
     let mut shift: u32 = 0;

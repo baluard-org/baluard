@@ -5,12 +5,29 @@ mod commands;
 
 use clap::{Parser, Subcommand};
 
+/// How to connect to the vault.
+#[derive(Clone, Copy, Debug)]
+pub enum ConnectMode {
+    /// Route through idtty-daemon over Unix socket.
+    Daemon,
+    /// Call idtty-core directly (no daemon).
+    Direct,
+}
+
 #[derive(Parser)]
 #[command(name = "idtty", version, about = "Git-native password manager")]
 struct Cli {
     /// Vault path (defaults to current directory).
     #[arg(long, global = true, default_value = ".")]
     vault_path: String,
+
+    /// Use idtty-core directly instead of the daemon.
+    #[arg(long, global = true)]
+    direct: bool,
+
+    /// Daemon socket path (default: /tmp/idtty.sock).
+    #[arg(long, global = true)]
+    socket: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -25,8 +42,11 @@ enum Commands {
         profile: String,
     },
 
-    /// Unlock vault (verify master password, test decryption).
+    /// Unlock vault in the daemon (verifies master password).
     Unlock,
+
+    /// Lock vault in the daemon (zeroizes keys).
+    Lock,
 
     /// Sync vault with remote.
     Sync {
@@ -116,9 +136,21 @@ enum SyncAction {
 fn main() {
     let cli = Cli::parse();
 
+    let mode = if cli.direct {
+        ConnectMode::Direct
+    } else {
+        ConnectMode::Daemon
+    };
+
     let result = match cli.command {
+        // Init always direct (creates vault on disk)
         Commands::Init { profile } => commands::handle_init(&cli.vault_path, &profile),
-        Commands::Unlock => commands::handle_unlock(&cli.vault_path),
+
+        // Vault lifecycle
+        Commands::Unlock => commands::handle_unlock(mode, &cli.vault_path, cli.socket.as_deref()),
+        Commands::Lock => commands::handle_lock(mode, cli.socket.as_deref()),
+
+        // Sync always direct (not yet routed through daemon)
         Commands::Sync { action } => match action {
             SyncAction::Init => commands::handle_sync_init(&cli.vault_path),
             SyncAction::Remote { url } => commands::handle_sync_remote(&cli.vault_path, &url),
@@ -127,21 +159,28 @@ fn main() {
             SyncAction::Status => commands::handle_sync_status(&cli.vault_path),
             SyncAction::Log { limit } => commands::handle_sync_log(&cli.vault_path, limit),
         },
+
+        // Cipher CRUD: daemon-first with direct fallback
         Commands::Add { name, username, password, uri, notes } => {
-            commands::handle_add(&cli.vault_path, name, username, password, uri, notes)
+            commands::handle_add(mode, &cli.vault_path, cli.socket.as_deref(), name, username, password, uri, notes)
         }
-        Commands::Get { id, decrypt, output } => commands::handle_get(&cli.vault_path, &id, decrypt, &output),
-        Commands::List => commands::handle_list(&cli.vault_path),
-        Commands::Delete { id } => commands::handle_delete(&cli.vault_path, &id),
+        Commands::Get { id, decrypt, output } => {
+            commands::handle_get(mode, &cli.vault_path, cli.socket.as_deref(), &id, decrypt, &output)
+        }
+        Commands::List => commands::handle_list(mode, &cli.vault_path, cli.socket.as_deref()),
+        Commands::Delete { id } => commands::handle_delete(mode, &cli.vault_path, cli.socket.as_deref(), &id),
+
+        // Devices: direct for now (daemon doesn't route devices yet)
         Commands::Devices { action } => match action {
             DeviceCommands::List => commands::handle_devices(&cli.vault_path),
         },
+
         Commands::Ping => {
-            match client::request("ping", "") {
+            match client::request_to("ping", "", cli.socket.as_deref()) {
                 Ok(resp) => {
                     if resp.success {
-                        println!("{}
-Daemon is reachable.", resp.payload);
+                        println!("{}", resp.payload);
+                        println!("Daemon is reachable.");
                     } else {
                         eprintln!("Daemon error: {}", resp.error_message);
                         std::process::exit(1);
