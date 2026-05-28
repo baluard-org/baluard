@@ -6,6 +6,7 @@
 
 mod handler;
 mod state;
+pub mod socket_path;
 pub mod proto {
     #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/idtty.auth.rs"));
@@ -23,7 +24,6 @@ use tokio::net::UnixListener;
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
 
-const DEFAULT_SOCKET_PATH: &str = "/tmp/idtty.sock";
 const DEFAULT_VAULT_PATH: &str = ".";
 
 fn main() -> anyhow::Result<()> {
@@ -32,48 +32,47 @@ fn main() -> anyhow::Result<()> {
             clap::Arg::new("vault-path")
                 .long("vault-path")
                 .short('v')
-                .default_value(".")
+                .default_value(DEFAULT_VAULT_PATH)
                 .help("Path to the vault directory"),
         )
         .arg(
             clap::Arg::new("socket")
                 .long("socket")
                 .short('s')
-                .default_value(DEFAULT_SOCKET_PATH)
-                .help("Unix socket path"),
+                .help("Unix socket path (default: platform-specific)"),
         )
         .get_matches();
 
-    let vault = matches.get_one::<String>("vault-path").unwrap();
-    let sock = matches.get_one::<String>("socket").unwrap();
+    let vault = matches.get_one::<String>("vault-path").unwrap().clone();
+    let sock = matches.get_one::<String>("socket")
+        .cloned()
+        .unwrap_or_else(|| socket_path::default_socket_path().to_string_lossy().into_owned());
 
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async { run(Some(sock), Some(vault)).await })
+    rt.block_on(async { run(&sock, &vault).await })
 }
 
-async fn run(socket_path: Option<&str>, vault_path: Option<&str>) -> Result<()> {
-    let sock = socket_path.unwrap_or(DEFAULT_SOCKET_PATH);
-    let vault = vault_path.unwrap_or(DEFAULT_VAULT_PATH);
+async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
 
     let vault_state: SharedVaultState = Arc::new(
-        VaultState::new(PathBuf::from(vault))
+        VaultState::new(PathBuf::from(vault_path))
     );
 
     // Clean stale socket
-    if std::path::Path::new(sock).exists() {
-        std::fs::remove_file(sock)?;
+    if std::path::Path::new(socket_path).exists() {
+        std::fs::remove_file(socket_path)?;
     }
 
     // Set restrictive umask BEFORE bind so socket is born with 0600.
     #[cfg(unix)]
     {
-        let _prev = unsafe { libc::umask(0o177) };
+        let _prev = unsafe { libc::umask(0o177) }; // lgtm[cpp/overflow]
     }
 
-    let listener = UnixListener::bind(sock)?;
+    let listener = UnixListener::bind(socket_path)?;
 
-    eprintln!("idtty-daemon listening on {sock} (0600)");
-    eprintln!("Vault path: {vault}");
+    eprintln!("idtty-daemon listening on {socket_path} (0600)");
+    eprintln!("Vault path: {vault_path}");
 
     // Graceful shutdown on SIGINT or SIGTERM
     #[cfg(unix)]
@@ -101,7 +100,7 @@ async fn run(socket_path: Option<&str>, vault_path: Option<&str>) -> Result<()> 
 
     // Lock vault before exit (zeroizes keys)
     let _ = vault_state.lock().await;
-    let _ = std::fs::remove_file(sock);
+    let _ = std::fs::remove_file(socket_path);
     Ok(())
 }
 

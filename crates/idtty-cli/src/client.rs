@@ -8,9 +8,44 @@ use anyhow::{Context, Result, bail};
 use prost::Message;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use zeroize::Zeroize;
 
-const DEFAULT_SOCKET_PATH: &str = "/tmp/idtty.sock";
+/// Default socket filename.
+const SOCKET_NAME: &str = "idtty.sock";
+
+/// Get the default socket path for this platform.
+fn default_socket_path() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
+            let dir = PathBuf::from(xdg);
+            if dir.is_dir() {
+                return dir.join(SOCKET_NAME);
+            }
+        }
+        PathBuf::from("/tmp").join(SOCKET_NAME)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("idtty")
+                .join(SOCKET_NAME);
+        }
+        PathBuf::from("/tmp").join(SOCKET_NAME)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        PathBuf::from(r"\\.\pipe\idtty")
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        PathBuf::from("/tmp").join(SOCKET_NAME)
+    }
+}
 
 /// Generated Protobuf types
 mod proto {
@@ -23,9 +58,11 @@ use proto::{GatewayRequest, GatewayResponse};
 /// Send a request to the daemon at a specific socket path.
 /// Zeroizes the payload and wire bytes after the response is received.
 pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Result<GatewayResponse> {
-    let socket = socket_path.unwrap_or(DEFAULT_SOCKET_PATH);
-    let mut stream = UnixStream::connect(socket)
-        .with_context(|| format!("Cannot connect to daemon at {socket}"))?;
+    let socket = socket_path
+        .map(PathBuf::from)
+        .unwrap_or_else(default_socket_path);
+    let mut stream = UnixStream::connect(&socket)
+        .with_context(|| format!("Cannot connect to daemon at {}", socket.display()))?;
 
     let mut req = GatewayRequest {
         action: action.to_string(),
