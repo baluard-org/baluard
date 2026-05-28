@@ -3,7 +3,6 @@
 //! Holds an unlocked VaultHandle in memory behind a shared lock.
 //! The daemon routes gateway actions through this state.
 
-use anyhow::Result;
 use idtty_core::vault::handle::VaultHandle;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -35,25 +34,55 @@ impl VaultState {
         Ok(())
     }
 
+    /// Open a vault from disk (internal, used by unlock).
+    async fn open_inner(&self) -> Result<(), String> {
+        self.open().await
+    }
+
     /// Unlock the vault with the master password.
+    ///
+    /// KDF derivation (Argon2id) runs OUTSIDE the write lock to avoid
+    /// blocking all reads during the expensive derivation (~300ms-1s).
     pub async fn unlock(&self, master_password: &str) -> Result<(), String> {
-        // Open if not already open
+        // Phase 1: ensure vault is opened (single write lock, short hold)
         {
             let guard = self.inner.read().await;
             if guard.is_none() {
                 drop(guard);
-                self.open().await?;
+                self.open_inner().await?;
             }
         }
 
-        let mut guard = self.inner.write().await;
-        if let Some(ref mut handle) = *guard {
-            if handle.is_unlocked() {
-                return Ok(()); // Already unlocked
+        // Phase 2: derive KEK outside the lock (expensive Argon2id)
+        // We open a fresh handle, unlock it, then swap it in.
+        // This avoids holding the write lock during KDF.
+        let mut new_handle = VaultHandle::open(&self.vault_path)
+            .map_err(|e| format!("Failed to open vault for unlock: {e}"))?;
+
+        // Check if already unlocked (another thread may have completed)
+        {
+            let guard = self.inner.read().await;
+            if let Some(ref handle) = *guard {
+                if handle.is_unlocked() {
+                    return Ok(());
+                }
             }
-            handle.unlock(master_password)
-                .map_err(|e| format!("Unlock failed: {e}"))?;
         }
+
+        // Perform expensive KDF derivation on the new handle
+        new_handle.unlock(master_password)
+            .map_err(|e| format!("Unlock failed: {e}"))?;
+
+        // Phase 3: swap in the unlocked handle under write lock
+        let mut guard = self.inner.write().await;
+        // Double-check: another thread may have unlocked while we waited
+        if let Some(ref handle) = *guard {
+            if handle.is_unlocked() {
+                // Another thread won the race. Discard our handle (keys zeroize on drop).
+                return Ok(());
+            }
+        }
+        *guard = Some(new_handle);
         Ok(())
     }
 
@@ -146,10 +175,10 @@ impl VaultState {
         Ok(cipher_id.to_string())
     }
 
-    /// Delete a cipher by ID.
+    /// Delete a cipher by ID. Uses write lock for filesystem mutation.
     pub async fn delete_cipher(&self, id_str: &str) -> Result<(), String> {
-        let guard = self.inner.read().await;
-        let handle = guard.as_ref()
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut()
             .ok_or("Vault not opened".to_string())?;
 
         let cipher_id = uuid::Uuid::parse_str(id_str)

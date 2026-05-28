@@ -34,10 +34,11 @@ pub async fn handle_connection(mut stream: UnixStream, state: SharedVaultState) 
         };
 
         if frame_len > MAX_FRAME_SIZE {
+            // Close connection on oversized frames — draining the body
+            // is complex and a legitimate client should never send >4MB.
             let resp = error_response(format!("Frame too large: {frame_len} bytes"));
-            write_frame(&mut writer, &resp).await?;
-            buf.clear();
-            continue;
+            let _ = write_frame(&mut writer, &resp).await;
+            return Err(anyhow::anyhow!("Frame too large: {frame_len} bytes"));
         }
 
         while buf.len() < frame_len {
@@ -123,15 +124,6 @@ fn error_response(msg: impl Into<String>) -> Vec<u8> {
     .encode_to_vec()
 }
 
-fn ok_response(payload: impl Into<String>) -> Vec<u8> {
-    GatewayResponse {
-        success: true,
-        error_message: String::new(),
-        payload: payload.into(),
-    }
-    .encode_to_vec()
-}
-
 fn err_response(msg: impl Into<String>) -> GatewayResponse {
     GatewayResponse {
         success: false,
@@ -140,9 +132,23 @@ fn err_response(msg: impl Into<String>) -> GatewayResponse {
     }
 }
 
+/// Zeroize a String by overwriting its heap bytes.
+/// Safety: we are writing to the String's heap buffer which we have
+/// exclusive access to. This prevents the master password from lingering
+/// on the heap after the request is processed.
+fn zeroize_string(s: &mut String) {
+    if s.is_empty() { return; }
+    unsafe {
+        let ptr = s.as_mut_ptr();
+        let len = s.len();
+        std::ptr::write_bytes(ptr, 0u8, len);
+    }
+    s.clear();
+}
+
 /// Route a GatewayRequest to the appropriate idtty-core function.
-async fn route_request(req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
-    match req.action.as_str() {
+async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
+    let resp = match req.action.as_str() {
         "ping" => GatewayResponse {
             success: true,
             error_message: String::new(),
@@ -165,7 +171,10 @@ async fn route_request(req: GatewayRequest, state: &SharedVaultState) -> Gateway
             if req.payload.is_empty() {
                 return err_response("Missing master password in payload");
             }
-            match state.unlock(&req.payload).await {
+            let result = state.unlock(&req.payload).await;
+            // Zeroize the password from the request immediately after use
+            zeroize_string(&mut req.payload);
+            match result {
                 Ok(()) => match state.info().await {
                     Ok(info) => GatewayResponse { success: true, error_message: String::new(), payload: info },
                     Err(e) => err_response(e),
@@ -204,7 +213,6 @@ async fn route_request(req: GatewayRequest, state: &SharedVaultState) -> Gateway
             if req.payload.is_empty() {
                 return err_response("Missing cipher UUID in payload");
             }
-            // payload = JSON {"id": "...", "decrypt": true/false}
             let (id, decrypt) = match serde_json::from_str::<serde_json::Value>(&req.payload) {
                 Ok(v) => (
                     v["id"].as_str().unwrap_or("").to_string(),
@@ -238,12 +246,16 @@ async fn route_request(req: GatewayRequest, state: &SharedVaultState) -> Gateway
             }
         }
 
-        // ── Sync ──
-        // TODO: Wire sync actions through vault state once sync is daemon-integrated
+        // ── Sync (not yet routed) ──
         "sync.push" | "sync.pull" | "sync.status" | "sync.log" => {
-            err_response(format!("{} not yet routed through daemon. Use CLI with --direct.", req.action))
+            err_response(format!("{} not yet routed through daemon.", req.action))
         }
 
         _ => err_response(format!("Unknown action: {}", req.action)),
-    }
+    };
+
+    // Zeroize any remaining sensitive data in the request
+    zeroize_string(&mut req.payload);
+
+    resp
 }

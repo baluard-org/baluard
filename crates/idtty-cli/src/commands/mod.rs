@@ -75,6 +75,12 @@ pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn st
     });
     std::fs::write(path.join("meta/device-privkey.json"), serde_json::to_string_pretty(&privkey_data)?)?;
 
+    // Vault .gitignore: exclude secrets that must never be pushed
+    std::fs::write(
+        path.join(".gitignore"),
+        "# Secrets - never push these\nmeta/device-privkey.json\n",
+    )?;
+
     // KEK canary (for password verification on unlock)
     std::fs::write(path.join("meta/kek-canary.enc"), &result.kek_canary)?;
 

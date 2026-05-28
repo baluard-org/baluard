@@ -4,7 +4,7 @@
 //! deserializes GatewayResponse. Length-delimited wire protocol
 //! matching the daemon's handler.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use prost::Message;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -46,13 +46,20 @@ pub fn request(action: &str, payload: &str) -> Result<GatewayResponse> {
     stream.read_to_end(&mut buf)?;
 
     if buf.is_empty() {
-        anyhow::bail!("Daemon closed connection without response");
+        bail!("Daemon closed connection without response");
     }
 
-    // Decode varint length
-    let (resp_len, offset) = decode_varint(&buf);
-    let resp_data = &buf[offset..offset + resp_len as usize];
+    // Decode varint length with bounds checking
+    let (resp_len, offset) = decode_varint_checked(&buf)
+        .context("Invalid response varint")?;
 
+    let resp_end = offset + resp_len as usize;
+    if resp_end > buf.len() {
+        bail!("Response frame truncated: declared {} bytes but only {} available",
+              resp_len, buf.len() - offset);
+    }
+
+    let resp_data = &buf[offset..resp_end];
     let response = GatewayResponse::decode(resp_data)
         .context("Failed to decode daemon response")?;
 
@@ -82,7 +89,9 @@ fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {
     }
 }
 
-fn decode_varint(data: &[u8]) -> (u64, usize) {
+/// Decode a varint with overflow and bounds checking.
+/// Returns (value, bytes_consumed) or an error string.
+fn decode_varint_checked(data: &[u8]) -> Result<(u64, usize)> {
     let mut value: u64 = 0;
     let mut shift: u32 = 0;
     let mut i = 0;
@@ -91,9 +100,12 @@ fn decode_varint(data: &[u8]) -> (u64, usize) {
         value |= ((byte & 0x7F) as u64) << shift;
         i += 1;
         if byte & 0x80 == 0 {
-            break;
+            return Ok((value, i));
         }
         shift += 7;
+        if shift >= 70 {
+            bail!("Varint overflow in response");
+        }
     }
-    (value, i)
+    bail!("Incomplete varint in response (truncated)");
 }
