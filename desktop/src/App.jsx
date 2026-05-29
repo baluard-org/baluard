@@ -1,138 +1,198 @@
-import { createSignal, onMount, Show, For } from "solid-js";
+import { createSignal, onMount, Show, For, createContext, useContext, createMemo } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 
-// ── State ──
-const [status, setStatus] = createSignal("locked");
-const [ciphers, setCiphers] = createSignal([]);
-const [error, setError] = createSignal("");
-const [vaultInfo, setVaultInfo] = createSignal(null);
-const [showAdd, setShowAdd] = createSignal(false);
-const [viewCipher, setViewCipher] = createSignal(null);
-const [newCipher, setNewCipher] = createSignal({
-  name: "", username: "", password: "", uri: "", notes: "",
-});
-const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
-const [createPassword, setCreatePassword] = createSignal("");
+// ── Error sanitization (M5) ──
+// Maps raw daemon errors to user-friendly messages.
+// Unknown patterns are fully redacted (no partial leakage).
+const ERROR_MAP = [
+  { pattern: /Cannot connect/i, message: "Daemon is not running" },
+  { pattern: /Vault not/i, message: "Vault is not unlocked" },
+  { pattern: /timeout/i, message: "Request timed out" },
+  { pattern: /Frame too large/i, message: "Response too large" },
+  { pattern: /Invalid session token/i, message: "Session expired. Please unlock again." },
+  { pattern: /identity mismatch/i, message: "Data integrity check failed" },
+  { pattern: /corrupt/i, message: "Vault data is corrupted" },
+  { pattern: /already exists/i, message: "Vault already exists at this location" },
+];
+
+function sanitizeError(raw) {
+  for (const { pattern, message } of ERROR_MAP) {
+    if (pattern.test(raw)) return message;
+  }
+  // Unknown error: fully redact, never surface raw daemon output
+  return "An unexpected error occurred";
+}
+
+// ── App-wide state context (M4) ──
+// All signals live in a context provider, not at module scope.
+// This makes the app safe for multi-window and testable.
+
+const AppContext = createContext();
+
+function AppProvider(props) {
+  const [status, setStatus] = createSignal("locked");
+  const [ciphers, setCiphers] = createSignal([]);
+  const [error, setError] = createSignal("");
+  const [vaultInfo, setVaultInfo] = createSignal(null);
+  const [showAdd, setShowAdd] = createSignal(false);
+  const [viewCipher, setViewCipher] = createSignal(null);
+  const [newCipher, setNewCipher] = createSignal({
+    name: "", username: "", password: "", uri: "", notes: "",
+  });
+  const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
+  const [createPassword, setCreatePassword] = createSignal("");
+
+  const store = {
+    status, setStatus,
+    ciphers, setCiphers,
+    error, setError,
+    vaultInfo, setVaultInfo,
+    showAdd, setShowAdd,
+    viewCipher, setViewCipher,
+    newCipher, setNewCipher,
+    recoveryPhrase, setRecoveryPhrase,
+    createPassword, setCreatePassword,
+  };
+
+  return (
+    <AppContext.Provider value={store}>
+      {props.children}
+    </AppContext.Provider>
+  );
+}
+
+function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error("useApp must be used within AppProvider");
+  return ctx;
+}
 
 // ── Daemon proxy ──
 async function daemon(action, payload = "") {
   const res = await invoke("daemon_request", { action, payload });
   if (!res.success) {
-    const msg = res.error.includes("Cannot connect") ? "Daemon is not running" :
-                res.error.includes("Vault not") ? "Vault is not unlocked" :
-                res.error.includes("timeout") ? "Request timed out" :
-                res.error.length > 100 ? res.error.slice(0, 100) + "..." : res.error;
-    throw new Error(msg);
+    throw new Error(sanitizeError(res.error));
   }
   return res.payload;
 }
 
 // ── Actions ──
-let loginPasswordRef;
-async function unlock() {
-  const password = loginPasswordRef?.value;
-  if (!password) return;
-  setStatus("unlocking");
-  setError("");
-  try {
-    await daemon("vault.open");
-    await daemon("vault.unlock", password);
-    if (loginPasswordRef) loginPasswordRef.value = "";
-    setStatus("unlocked");
-    await refreshCiphers();
-    const info = JSON.parse(await daemon("vault.info"));
-    setVaultInfo(info);
-  } catch (e) {
-    setError(e.message);
-    setStatus("locked");
+function useActions() {
+  const app = useApp();
+
+  let loginPasswordRef;
+
+  async function unlock() {
+    const password = loginPasswordRef?.value;
+    if (!password) return;
+    app.setStatus("unlocking");
+    app.setError("");
+    try {
+      await daemon("vault.open");
+      await daemon("vault.unlock", password);
+      if (loginPasswordRef) loginPasswordRef.value = "";
+      app.setStatus("unlocked");
+      await refreshCiphers();
+      const info = JSON.parse(await daemon("vault.info"));
+      app.setVaultInfo(info);
+    } catch (e) {
+      app.setError(e.message);
+      app.setStatus("locked");
+    }
   }
+
+  async function lock() {
+    try {
+      await daemon("vault.lock");
+      app.setStatus("locked");
+      app.setCiphers([]);
+      app.setVaultInfo(null);
+      app.setViewCipher(null);
+      app.setShowAdd(false);
+    } catch (e) {
+      app.setError(e.message);
+    }
+  }
+
+  async function createVault() {
+    const pw = app.createPassword();
+    const confirm = document.getElementById("create-confirm")?.value;
+    if (!pw || pw.length < 8) { app.setError("Password must be at least 8 characters"); return; }
+    if (pw !== confirm) { app.setError("Passwords do not match"); return; }
+    app.setStatus("creating");
+    app.setError("");
+    try {
+      const result = JSON.parse(await daemon("vault.create", JSON.stringify({
+        password: pw, profile: "desktop_std",
+      })));
+      app.setRecoveryPhrase(result.recovery_phrase);
+      app.setStatus("recovery");
+    } catch (e) {
+      app.setError(e.message);
+      app.setStatus("init");
+    }
+  }
+
+  async function refreshCiphers() {
+    try {
+      const data = JSON.parse(await daemon("vault.list"));
+      app.setCiphers(data.cipher_ids || []);
+    } catch (e) {
+      app.setError(e.message);
+    }
+  }
+
+  async function addCipher() {
+    const c = app.newCipher();
+    try {
+      await daemon("vault.add", JSON.stringify({
+        name: c.name,
+        username: c.username || null,
+        password: c.password || null,
+        uris: c.uri ? [c.uri] : [],
+        notes: c.notes || null,
+        totp_uri: null,
+        folder_id: null,
+        custom_fields: [],
+      }));
+      app.setNewCipher({ name: "", username: "", password: "", uri: "", notes: "" });
+      app.setShowAdd(false);
+      await refreshCiphers();
+    } catch (e) {
+      app.setError(e.message);
+    }
+  }
+
+  async function getCipher(id) {
+    try {
+      const data = JSON.parse(await daemon("vault.get", JSON.stringify({ id, decrypt: true })));
+      app.setViewCipher(data);
+    } catch (e) {
+      app.setError(e.message);
+    }
+  }
+
+  async function deleteCipher(id) {
+    try {
+      await daemon("vault.delete", id);
+      app.setViewCipher(null);
+      await refreshCiphers();
+    } catch (e) {
+      app.setError(e.message);
+    }
+  }
+
+  function onKeyUnlock(e) {
+    if (e.key === "Enter") unlock();
+  }
+
+  return { loginPasswordRef, setLoginPasswordRef: (r) => { loginPasswordRef = r; }, unlock, lock, createVault, refreshCiphers, addCipher, getCipher, deleteCipher, onKeyUnlock };
 }
 
-async function lock() {
-  try {
-    await daemon("vault.lock");
-    setStatus("locked");
-    setCiphers([]);
-    setVaultInfo(null);
-    setViewCipher(null);
-    setShowAdd(false);
-  } catch (e) {
-    setError(e.message);
-  }
-}
-
-async function createVault() {
-  const pw = createPassword();
-  const confirm = document.getElementById("create-confirm")?.value;
-  if (!pw || pw.length < 8) { setError("Password must be at least 8 characters"); return; }
-  if (pw !== confirm) { setError("Passwords do not match"); return; }
-  setStatus("creating");
-  setError("");
-  try {
-    const result = JSON.parse(await daemon("vault.create", JSON.stringify({
-      password: pw, profile: "desktop_std",
-    })));
-    setRecoveryPhrase(result.recovery_phrase);
-    setStatus("recovery");
-  } catch (e) {
-    setError(e.message);
-    setStatus("init");
-  }
-}
-
-async function refreshCiphers() {
-  try {
-    const data = JSON.parse(await daemon("vault.list"));
-    setCiphers(data.cipher_ids || []);
-  } catch (e) {
-    setError(e.message);
-  }
-}
-
-async function addCipher() {
-  const c = newCipher();
-  try {
-    await daemon("vault.add", JSON.stringify({
-      name: c.name,
-      username: c.username || null,
-      password: c.password || null,
-      uris: c.uri ? [c.uri] : [],
-      notes: c.notes || null,
-      totp_uri: null,
-      folder_id: null,
-      custom_fields: [],
-    }));
-    setNewCipher({ name: "", username: "", password: "", uri: "", notes: "" });
-    setShowAdd(false);
-    await refreshCiphers();
-  } catch (e) {
-    setError(e.message);
-  }
-}
-
-async function getCipher(id) {
-  try {
-    const data = JSON.parse(await daemon("vault.get", JSON.stringify({ id, decrypt: true })));
-    setViewCipher(data);
-  } catch (e) {
-    setError(e.message);
-  }
-}
-
-async function deleteCipher(id) {
-  try {
-    await daemon("vault.delete", id);
-    setViewCipher(null);
-    await refreshCiphers();
-  } catch (e) {
-    setError(e.message);
-  }
-}
-
-function onKeyUnlock(e) {
-  if (e.key === "Enter") unlock();
-}// ── Views ──
+// ── Views ──
 function LoginScreen() {
+  const { error, status } = useApp();
+  const { onKeyUnlock, unlock, setLoginPasswordRef } = useActions();
   return (
     <div class="flex items-center justify-center h-full">
       <div class="w-80 p-6 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
@@ -145,7 +205,7 @@ function LoginScreen() {
           <div class="mb-3 p-2 rounded bg-red-900/30 text-red-400 text-sm">{error()}</div>
         </Show>
         <input
-          ref={loginPasswordRef}
+          ref={setLoginPasswordRef}
           type="password"
           placeholder="Master password"
           class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3"
@@ -160,7 +220,7 @@ function LoginScreen() {
           {status() === "unlocking" ? "Unlocking..." : "Unlock"}
         </button>
         <button
-          onClick={() => setStatus("init")}
+          onClick={() => useApp().setStatus("init")}
           class="w-full mt-2 p-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors"
         >
           Create new vault
@@ -171,6 +231,7 @@ function LoginScreen() {
 }
 
 function CipherRow(props) {
+  const { getCipher } = useActions();
   return (
     <div
       class="flex items-center justify-between p-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] cursor-pointer hover:border-[var(--color-primary)] transition-colors"
@@ -185,6 +246,8 @@ function CipherRow(props) {
 }
 
 function CipherDetail() {
+  const { viewCipher, setViewCipher } = useApp();
+  const { deleteCipher } = useActions();
   const c = viewCipher();
   return (
     <div class="p-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
@@ -214,6 +277,8 @@ function CipherDetail() {
 }
 
 function AddCipherForm() {
+  const { newCipher, setNewCipher, setShowAdd } = useApp();
+  const { addCipher } = useActions();
   return (
     <div class="p-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
       <div class="flex items-center justify-between mb-4">
@@ -243,6 +308,8 @@ function AddCipherForm() {
 }
 
 function VaultView() {
+  const { ciphers, vaultInfo, error, showAdd, viewCipher } = useApp();
+  const { lock } = useActions();
   return (
     <div class="flex h-full">
       {/* Sidebar */}
@@ -267,7 +334,7 @@ function VaultView() {
 
         <div class="p-3 border-t border-[var(--color-border)] space-y-2">
           <button
-            onClick={() => setShowAdd(true)}
+            onClick={() => useApp().setShowAdd(true)}
             class="w-full p-2 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-sm font-medium transition-colors"
           >
             + Add Cipher
@@ -305,6 +372,8 @@ function VaultView() {
 // ── Create / Recovery Views ──
 
 function CreateVaultScreen() {
+  const { error, status, setStatus, setCreatePassword } = useApp();
+  const { createVault } = useActions();
   return (
     <div class="flex items-center justify-center h-full">
       <div class="w-96 p-6 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
@@ -335,6 +404,8 @@ function CreateVaultScreen() {
 }
 
 function RecoveryScreen() {
+  const { recoveryPhrase, createPassword, setStatus, setError, setCreatePassword } = useApp();
+  const { refreshCiphers } = useActions();
   return (
     <div class="flex items-center justify-center h-full">
       <div class="w-96 p-6 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
@@ -368,14 +439,24 @@ function RecoveryScreen() {
 
 // ── Root App ──
 export default function App() {
+  return (
+    <AppProvider>
+      <AppInner />
+    </AppProvider>
+  );
+}
+
+function AppInner() {
+  const { setStatus, setError, setVaultInfo, status } = useApp();
+  const { refreshCiphers } = useActions();
+
   onMount(async () => {
     try {
       await daemon("vault.open");
     } catch (e) {
-      // Vault not initialized? Offer creation
-      if (e.message.includes("not running") || e.message.includes("connect")) {
+      if (e.message.includes("not running") || e.message.includes("Daemon")) {
         setError("");
-        return; // daemon down, just show login
+        return;
       }
       setStatus("init");
       return;

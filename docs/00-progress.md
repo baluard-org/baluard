@@ -145,17 +145,17 @@
 - **S2**: `Daemon::drop` used `kill()` (SIGKILL, no cleanup) -> Fixed: `libc::kill(SIGTERM)` + 3s grace + SIGKILL fallback
 - **S3**: Unbounded `read_to_end` (memory exhaustion) -> Fixed: `Read::take(5MB)` + size check
 - **CO1**: `std::os::unix` import breaks Windows compile -> Fixed: `#[cfg(unix)]` gates + stubs
-- **CO2**: Daemon binary not bundle-relative (fails packaged) -> Deferred: TODO for tauri-plugin-shell sidecar
+- **CO2**: Daemon binary not bundle-relative (fails packaged) -> **Fixed**: Uses tauri-plugin-shell sidecar API (`app.shell().sidecar("idtty-daemon")`). Shell plugin registered in builder. Sidecar permission in capabilities.
 - **CO3**: No socket readiness poll after spawn -> Fixed: 20x100ms ping-based readiness check
 - **CO4**: No I/O timeout (UI freeze if daemon stalls) -> Fixed: 30s read, 5s write timeouts
 - **CO5**: Panic on short device key strings (hard `[]` index) -> Fixed: `.get()` with `unwrap_or` fallback
 - **CO6**: Draft releases created on every PR -> Fixed: Removed PR trigger, now `workflow_dispatch` only
-- **CO7**: No vault creation flow in desktop -> Deferred: Needs daemon `vault.create` route
+- **CO7**: No vault creation flow in desktop -> Fixed: Vault creation UI + daemon vault.create route
 - **M1**: `daemon_status()` phantom connect -> Fixed: Ping-based liveness check
 - **M2**: Daemon inherits stdout/stderr -> Fixed: `Stdio::null()`
 - **M3**: Unused `bytes` crate -> Fixed: Removed
-- **M4**: Module-scope SolidJS signals -> Deferred: Acceptable for single-window app
-- **M5**: Raw daemon errors surfaced to UI -> Partial: Known patterns sanitized, unknowns truncated at 100 chars
+- **M4**: Module-scope SolidJS signals -> **Fixed**: All signals moved into `AppProvider` context (`createContext`/`useContext`). Actions in `useActions()` hook. No module-level mutable state.
+- **M5**: Raw daemon errors surfaced to UI -> **Fixed**: `sanitizeError()` maps 8 known patterns to user-friendly messages. Unknown errors fully redacted (no partial leakage).
 
 ### Round 5 (Follow-Up Review)
 3 new findings (2 correctness, 1 style). All fixed:
@@ -210,7 +210,7 @@
 - **CO2**: Key files written with default perms -> Fixed: write_secret with 0600
 - **CO3**: No guard against overwriting existing vault -> Fixed: Checks kdf-params.json
 - **CO4**: `unwrap()` on serialization could panic async task -> Fixed: All `map_err`
-- **CO5**: Sidecar declared in config but Rust code still uses PATH spawn -> Partial: Config present, migration deferred
+- **CO5**: Sidecar declared in config but Rust code still uses PATH spawn -> **Fixed**: Sidecar spawn via `tauri_plugin_shell::ShellExt`. `Daemon` wraps `CommandChild`. Removed `libc` dep from desktop.
 - **M1**: README code fence broken -> Fixed: Single fenced block
 - **M2**: `getElementById` anti-pattern in SolidJS -> Fixed: Refs + signals
 

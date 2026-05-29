@@ -6,6 +6,16 @@
     "main"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "idtty-daemon",
+          "sidecar": true
+        }
+      ]
+    },
+    "shell:allow-kill"
   ]
 }

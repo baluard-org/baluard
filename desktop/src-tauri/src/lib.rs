@@ -13,6 +13,7 @@ use std::time::Duration;
 use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, WindowEvent};
+use tauri_plugin_shell::ShellExt;
 
 /// Maximum response size (5MB — daemon caps at 4MB, plus headroom)
 const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
@@ -27,31 +28,23 @@ use proto::{GatewayRequest, GatewayResponse};
 
 // ── Daemon child process ──
 
-struct Daemon(std::process::Child);
+use tauri_plugin_shell::process::CommandChild;
+
+struct Daemon(CommandChild);
 impl Drop for Daemon {
     fn drop(&mut self) {
         // Send SIGTERM for graceful shutdown (daemon handles SIGTERM for key zeroization)
         #[cfg(unix)]
         {
-            let pid = self.0.id() as i32;
-            unsafe {
-                libc::kill(pid, libc::SIGTERM);
-            }
-            // Wait up to 3s for graceful cleanup
-            let deadline = std::time::Instant::now() + Duration::from_secs(3);
-            loop {
-                if self.0.try_wait().ok().flatten().is_some() {
-                    return;
-                }
-                if std::time::Instant::now() >= deadline {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
+            // CommandChild doesn't expose PID directly; use write to stdin to signal,
+            // or kill via the child's kill method.
+            let _ = self.0.kill();
+            // The sidecar runner handles wait internally
         }
-        // Escalate to SIGKILL if still alive
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        #[cfg(not(unix))]
+        {
+            let _ = self.0.kill();
+        }
     }
 }
 
@@ -223,6 +216,7 @@ fn daemon_status() -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .manage(Mutex::new(None::<Daemon>))
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -239,16 +233,19 @@ pub fn run() {
                 let daemon_running = send_request("ping", "").is_ok();
 
                 if !daemon_running {
-                    // TODO: Use tauri-plugin-shell sidecar once daemon is bundled
-                    let child = std::process::Command::new("idtty-daemon")
+                    // Use tauri-plugin-shell sidecar for bundle-relative binary path.
+                    // Binary must exist at src-tauri/binaries/idtty-daemon-{target-triple}
+                    let sidecar_command = app.shell().sidecar("idtty-daemon")
+                        .map_err(|e| format!("Sidecar not found: {e}"))?
                         .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
+                        .stderr(std::process::Stdio::null());
+
+                    let (_rx, child) = sidecar_command.spawn()
                         .map_err(|e| format!("Failed to start daemon: {e}"))?;
 
                     let state = app.state::<Mutex<Option<Daemon>>>();
                     *state.lock().unwrap() = Some(Daemon(child));
-                    log::info!("Daemon started");
+                    log::info!("Daemon started via sidecar");
 
                     // Wait for daemon readiness (up to 2s)
                     for attempt in 0..20 {

@@ -24,7 +24,6 @@ tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
 prost = "0.13"
 anyhow = "1"
-libc = "0.2"
 
 [profile.release]
 panic = "abort"
