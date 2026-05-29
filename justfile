@@ -104,16 +104,26 @@ check: fmt-check lint test build
 
 # ── Desktop (Tauri) ────────────────────────────────────────────────────────
 
+# Build daemon sidecar for current platform (Tauri needs target-triple suffix)
+_sidecar:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
+	mkdir -p desktop/src-tauri/binaries
+	{{ linuxbrew_env }} cargo build --release -p idtty-daemon
+	cp target/release/idtty-daemon desktop/src-tauri/binaries/idtty-daemon-"$TRIPLE"
+	echo "Sidecar: desktop/src-tauri/binaries/idtty-daemon-$TRIPLE"
+
 # Install desktop npm dependencies
 desktop-deps:
 	cd desktop && npm install
 
 # Run desktop app in dev mode
-desktop-dev: desktop-deps
+desktop-dev: _sidecar desktop-deps
 	cd desktop && npm run tauri dev
 
 # Build desktop app (production bundle)
-desktop-build: desktop-deps
+desktop-build: _sidecar desktop-deps
 	cd desktop && npm run tauri build
 
 # ── E2E Smoke Test ─────────────────────────────────────────────────────────

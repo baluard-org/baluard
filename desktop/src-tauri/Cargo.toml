@@ -12,7 +12,7 @@ name = "idtty_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2" }
+tauri-build = { version = "2", features = [] }
 prost-build = "0.13"
 
 [dependencies]
