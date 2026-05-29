@@ -11,7 +11,7 @@ const ERROR_MAP = [
   { pattern: /Frame too large/i, message: "Response too large" },
   { pattern: /Invalid session token/i, message: "Session expired. Please unlock again." },
   { pattern: /identity mismatch/i, message: "Data integrity check failed" },
-  { pattern: /corrupt/i, message: "Vault data is corrupted" },
+  { pattern: /corrupt(ed|ion)?/i, message: "Vault data is corrupted" },
   { pattern: /already exists/i, message: "Vault already exists at this location" },
 ];
 
@@ -248,11 +248,10 @@ function CipherRow(props) {
 function CipherDetail() {
   const { viewCipher, setViewCipher } = useApp();
   const { deleteCipher } = useActions();
-  const c = viewCipher();
   return (
     <div class="p-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
       <div class="flex items-center justify-between mb-4">
-        <h3 class="text-lg font-semibold">{c.name || "Cipher"}</h3>
+        <h3 class="text-lg font-semibold">{viewCipher()?.name || "Cipher"}</h3>
         <button
           onClick={() => setViewCipher(null)}
           class="text-[var(--color-muted)] hover:text-[var(--color-text)] text-xl"
@@ -261,10 +260,10 @@ function CipherDetail() {
         </button>
       </div>
       <div class="space-y-2 text-sm">
-        <Show when={c.username}><div><span class="text-[var(--color-muted)]">User:</span> {c.username}</div></Show>
-        <Show when={c.password}><div><span class="text-[var(--color-muted)]">Pass:</span> {c.password}</div></Show>
-        <Show when={c.uris?.length}><div><span class="text-[var(--color-muted)]">URI:</span> {c.uris[0]}</div></Show>
-        <Show when={c.notes}><div><span class="text-[var(--color-muted)]">Notes:</span> {c.notes}</div></Show>
+        <Show when={viewCipher()?.username}><div><span class="text-[var(--color-muted)]">User:</span> {viewCipher().username}</div></Show>
+        <Show when={viewCipher()?.password}><div><span class="text-[var(--color-muted)]">Pass:</span> {viewCipher().password}</div></Show>
+        <Show when={viewCipher()?.uris?.length}><div><span class="text-[var(--color-muted)]">URI:</span> {viewCipher().uris[0]}</div></Show>
+        <Show when={viewCipher()?.notes}><div><span class="text-[var(--color-muted)]">Notes:</span> {viewCipher().notes}</div></Show>
       </div>
       <button
         onClick={() => deleteCipher(viewCipher().id)}
@@ -454,7 +453,7 @@ function AppInner() {
     try {
       await daemon("vault.open");
     } catch (e) {
-      if (e.message.includes("not running") || e.message.includes("Daemon")) {
+      if (e.message.includes("not running")) {
         setError("");
         return;
       }

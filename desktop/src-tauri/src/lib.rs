@@ -33,18 +33,19 @@ use tauri_plugin_shell::process::CommandChild;
 struct Daemon(CommandChild);
 impl Drop for Daemon {
     fn drop(&mut self) {
-        // Send SIGTERM for graceful shutdown (daemon handles SIGTERM for key zeroization)
+        // Send SIGTERM first so daemon can zeroize keys gracefully.
+        // CommandChild::kill() sends SIGKILL which bypasses signal handlers.
         #[cfg(unix)]
         {
-            // CommandChild doesn't expose PID directly; use write to stdin to signal,
-            // or kill via the child's kill method.
-            let _ = self.0.kill();
-            // The sidecar runner handles wait internally
+            let pid = self.0.pid() as i32;
+            unsafe {
+                libc::kill(pid, libc::SIGTERM);
+            }
+            // Give daemon 200ms to zeroize keys before forcing kill
+            std::thread::sleep(Duration::from_millis(200));
         }
-        #[cfg(not(unix))]
-        {
-            let _ = self.0.kill();
-        }
+        // SIGKILL fallback (or primary on non-Unix)
+        let _ = self.0.kill();
     }
 }
 
