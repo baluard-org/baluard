@@ -387,7 +387,7 @@ function DeleteConfirmModal() {
 // ── Views ──
 
 function LoginScreen() {
-  const { error, status } = useApp();
+  const app = useApp();
   const { unlock, setLoginPasswordRef } = useActions();
   const { t } = useI18n();
   return (
@@ -409,10 +409,10 @@ function LoginScreen() {
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("login.subtitle")}</p>
         </div>
 
-        <Show when={error()}>
+        <Show when={error => app.error()}>
           <div class="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300 text-sm flex items-center gap-2">
             <svg class="w-5 h-5 shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-            {error()}
+            {app.error()}
           </div>
         </Show>
 
@@ -429,16 +429,16 @@ function LoginScreen() {
 
           <button
             type="submit"
-            disabled={status() === "unlocking"}
+            disabled={app.status() === "unlocking"}
             class="w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all shadow-lg shadow-black/10 active:scale-[0.99] disabled:opacity-50 cursor-pointer"
           >
-            {status() === "unlocking" ? t("login.unlocking") : t("login.unlock")}
+            {app.status() === "unlocking" ? t("login.unlocking") : t("login.unlock")}
           </button>
         </form>
 
         <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4">
           <button
-            onClick={() => useApp().setStatus("init")}
+            onClick={() => app.setStatus("init")}
             class="text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
           >
             {t("login.createNew")}
@@ -1106,10 +1106,10 @@ function VaultView() {
 
       {/* ── Column 3: Main Details / Edit Panel ── */}
       <div class="flex-1 bg-[var(--color-detail)] flex flex-col min-w-0">
-        <Show when={error()}>
+        <Show when={app.error()}>
           <div class="m-6 p-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300 text-sm shrink-0 flex items-center gap-2">
             <svg class="w-5 h-5 shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-            {error()}
+            {app.error()}
           </div>
         </Show>
 
@@ -1141,7 +1141,7 @@ function VaultView() {
 // ── Create / Recovery Views ──
 
 function CreateVaultScreen() {
-  const { error, status, setStatus, setCreatePassword } = useApp();
+  const app = useApp();
   const { createVault } = useActions();
   const { t } = useI18n();
   return (
@@ -1157,10 +1157,10 @@ function CreateVaultScreen() {
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("create.subtitle")}</p>
         </div>
 
-        <Show when={error()}>
+        <Show when={error => app.error()}>
           <div class="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300 text-sm flex items-center gap-2">
             <svg class="w-5 h-5 shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-            {error()}
+            {app.error()}
           </div>
         </Show>
 
@@ -1169,7 +1169,7 @@ function CreateVaultScreen() {
             id="create-password"
             type="password"
             placeholder={t("create.passwordPlaceholder")}
-            onInput={e => setCreatePassword(e.target.value)}
+            onInput={e => app.setCreatePassword(e.target.value)}
             class="w-full px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
           />
           <input
@@ -1180,16 +1180,16 @@ function CreateVaultScreen() {
           />
           <button
             type="submit"
-            disabled={status() === "creating"}
+            disabled={app.status() === "creating"}
             class="w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all shadow-lg active:scale-[0.99] disabled:opacity-50 cursor-pointer"
           >
-            {status() === "creating" ? t("create.creating") : t("create.submit")}
+            {app.status() === "creating" ? t("create.creating") : t("create.submit")}
           </button>
         </form>
 
         <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4">
           <button
-            onClick={() => setStatus("locked")}
+            onClick={() => app.setStatus("locked")}
             class="text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
           >
             {t("create.alreadyHaveVault")}
@@ -1201,7 +1201,7 @@ function CreateVaultScreen() {
 }
 
 function RecoveryScreen() {
-  const { recoveryPhrase, createPassword, setStatus, setError, setCreatePassword } = useApp();
+  const app = useApp();
   const { refreshCiphers } = useActions();
   const { t } = useI18n();
   return (
@@ -1218,21 +1218,21 @@ function RecoveryScreen() {
         </div>
 
         <div class="p-5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm leading-relaxed text-[var(--color-text)] break-words select-all mb-6 text-center select-all shadow-inner">
-          {recoveryPhrase()}
+          {app.recoveryPhrase()}
         </div>
 
         <form onSubmit={async (e) => {
           e.preventDefault();
-          setStatus("unlocking");
-          const pw = createPassword();
+          app.setStatus("unlocking");
+          const pw = app.createPassword();
           if (pw) {
             try {
               await daemon("vault.unlock", pw);
-              setStatus("unlocked");
-              setCreatePassword("");
+              app.setStatus("unlocked");
+              app.setCreatePassword("");
               await refreshCiphers();
-            } catch (e) { setError(sanitizeError(e.message, t)); setStatus("locked"); }
-          } else { setStatus("locked"); }
+            } catch (err) { app.setError(sanitizeError(err.message, t)); app.setStatus("locked"); }
+          } else { app.setStatus("locked"); }
         }} class="space-y-4">
           <button
             type="submit"
