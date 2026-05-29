@@ -59,16 +59,24 @@ idtty/
 
 ## COMMANDS
 | Action | Command |
-|--------|---------|
-| Build entire workspace | `cargo build` |
-| Test core library | `cargo test -p idtty-core` |
-| Test all crates | `cargo test` |
-| Test (release) | `cargo test --release` |
-| Run CLI command | `cargo run -p idtty-cli -- <command>` |
-| Run daemon | `cargo run -p idtty-daemon` |
-| Install desktop deps | `cd desktop && npm install` |
-| Dev desktop | `cd desktop && npm run tauri dev` |
-| Build extension | `cd extension && npm run build` |
+|--------|--------|
+| List all targets | `just` |
+| Build entire workspace (debug) | `just build` |
+| Build release | `just build-release` |
+| Build + codesign | `just build-signed` |
+| Run all tests | `just test` |
+| Run core tests only | `just test-core` |
+| E2E smoke test | `just e2e` |
+| Full CI check | `just check` |
+| Format | `just fmt` |
+| Lint (clippy) | `just lint` |
+| Install to ~/.local/bin | `just install-local` |
+| Install to /usr/local/bin | `just install` |
+| Desktop dev server | `just desktop-dev` |
+| Desktop production build | `just desktop-build` |
+| Release archives | `just release` |
+| Clean | `just clean` |
+| Show version | `just version` |
 
 ## CODING STANDARDS
 * **Rust**: Edition 2024, MSRV 1.85. Workspace deps in root `Cargo.toml`. Feature flags: `git-sync`, `org`, `emergency`. `thiserror` for library errors, `anyhow` for CLI. `proptest` for property-based tests.

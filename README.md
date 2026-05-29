@@ -17,13 +17,18 @@ All UI layers communicate with `idtty-core` through a single Protobuf-over-Unix-
 
 ## Build
 
-```bash
-# Rust workspace (core + daemon + CLI)
-cargo build
-cargo test
+Uses [`just`](https://github.com/casey/just) (install: `cargo install just`). Run `just` to see all targets.
 
-# Desktop app
-cd desktop && npm install && npm run tauri dev
+```bash
+just build              # Debug build (all Rust crates)
+just build-release      # Optimized release build
+just build-signed       # Release + codesign (macOS)
+just test               # Run all tests
+just e2e                # End-to-end smoke test
+just check              # Full CI parity (fmt + clippy + test + build)
+just install-local      # Install CLI + daemon to ~/.local/bin
+just desktop-dev        # Run Tauri desktop app (needs WebKitGTK on Linux)
+just release            # Build tar.gz + checksums
 ```
 
 Requires Rust 1.85+ (edition 2024). Desktop uses the system's native webview (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux):
