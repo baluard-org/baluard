@@ -1,0 +1,35 @@
+{
+  "theme": {
+    "dark": {
+      "background": "#091315",
+      "sidebar": "#0f2022",
+      "list_panel": "#14292c",
+      "detail_panel": "#193236",
+      "card_bg": "#0b1517",
+      "border": "#1d3a3d",
+      "accent_lime": "#b3e55c",
+      "accent_lavender": "#cfc6f9",
+      "text_primary": "#f3f4f6",
+      "text_muted": "#8fa3a6",
+      "danger": "#ef4444",
+      "success": "#10b981"
+    },
+    "light": {
+      "background": "#f4f6f6",
+      "sidebar": "#e9ecec",
+      "list_panel": "#ffffff",
+      "detail_panel": "#f8fafc",
+      "card_bg": "#ffffff",
+      "border": "#d1dbdb",
+      "accent_teal": "#102427",
+      "accent_purple": "#7c3aed",
+      "text_primary": "#102427",
+      "text_muted": "#5e7275",
+      "danger": "#ef4444",
+      "success": "#10b981"
+    }
+  },
+  "typography": {
+    "font_family": "ui-sans-serif, system-ui, sans-serif"
+  }
+}
