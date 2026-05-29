@@ -294,14 +294,12 @@ function getCuratedColor(name) {
   return colors[charCodeSum % colors.length];
 }
 
-// Monogram generator
 function getDomainInitials(name) {
   if (!name) return "?";
   let cleanName = name.replace(/^(https?:\/\/)?(www\.)?/, "");
   return cleanName.charAt(0).toUpperCase();
 }
 
-// Theme Selector
 function ThemeToggleFloating() {
   const { theme, setTheme } = useApp();
   return (
@@ -321,7 +319,6 @@ function ThemeToggleFloating() {
   );
 }
 
-// Keyboard accessible Delete Confirmation Modal
 function DeleteConfirmModal() {
   const { viewCipher, setShowDeleteConfirm, showDeleteConfirm } = useApp();
   const { deleteCipher } = useActions();
@@ -330,14 +327,12 @@ function DeleteConfirmModal() {
   let cancelBtnRef;
   let deleteBtnRef;
 
-  // Auto focus cancel button on open (prevention)
   createEffect(() => {
     if (showDeleteConfirm()) {
       setTimeout(() => cancelBtnRef?.focus(), 50);
     }
   });
 
-  // Modal navigation via Left/Right Arrow or Tab
   function handleKeyDown(e) {
     if (e.key === "Escape") {
       setShowDeleteConfirm(false);
@@ -393,7 +388,7 @@ function DeleteConfirmModal() {
 
 function LoginScreen() {
   const { error, status } = useApp();
-  const { onKeyUnlock, unlock, setLoginPasswordRef } = useActions();
+  const { unlock, setLoginPasswordRef } = useActions();
   const { t } = useI18n();
   return (
     <div class="flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 relative">
@@ -421,26 +416,25 @@ function LoginScreen() {
           </div>
         </Show>
 
-        <div class="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); unlock(t); }} class="space-y-4">
           <div>
             <input
               ref={setLoginPasswordRef}
               type="password"
               placeholder={t("login.passwordPlaceholder")}
-              class="w-full px-4 py-3.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all-fast"
-              onKeyDown={(e) => onKeyUnlock(e)}
+              class="w-full px-4 py-3.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)] transition-all-fast"
               autofocus
             />
           </div>
 
           <button
-            onClick={() => unlock(t)}
+            type="submit"
             disabled={status() === "unlocking"}
             class="w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all shadow-lg shadow-black/10 active:scale-[0.99] disabled:opacity-50 cursor-pointer"
           >
             {status() === "unlocking" ? t("login.unlocking") : t("login.unlock")}
           </button>
-        </div>
+        </form>
 
         <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4">
           <button
@@ -1170,7 +1164,7 @@ function CreateVaultScreen() {
           </div>
         </Show>
 
-        <div class="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); createVault(t); }} class="space-y-4">
           <input
             id="create-password"
             type="password"
@@ -1185,13 +1179,13 @@ function CreateVaultScreen() {
             class="w-full px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
           />
           <button
-            onClick={() => createVault(t)}
+            type="submit"
             disabled={status() === "creating"}
             class="w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all shadow-lg active:scale-[0.99] disabled:opacity-50 cursor-pointer"
           >
             {status() === "creating" ? t("create.creating") : t("create.submit")}
           </button>
-        </div>
+        </form>
 
         <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4">
           <button
@@ -1227,23 +1221,26 @@ function RecoveryScreen() {
           {recoveryPhrase()}
         </div>
 
-        <button
-          onClick={async () => {
-            setStatus("unlocking");
-            const pw = createPassword();
-            if (pw) {
-              try {
-                await daemon("vault.unlock", pw);
-                setStatus("unlocked");
-                setCreatePassword("");
-                await refreshCiphers();
-              } catch (e) { setError(sanitizeError(e.message, t)); setStatus("locked"); }
-            } else { setStatus("locked"); }
-          }}
-          class="w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all shadow-lg cursor-pointer"
-        >
-          {t("recovery.confirm")}
-        </button>
+        <form onSubmit={async (e) => {
+          e.preventDefault();
+          setStatus("unlocking");
+          const pw = createPassword();
+          if (pw) {
+            try {
+              await daemon("vault.unlock", pw);
+              setStatus("unlocked");
+              setCreatePassword("");
+              await refreshCiphers();
+            } catch (e) { setError(sanitizeError(e.message, t)); setStatus("locked"); }
+          } else { setStatus("locked"); }
+        }} class="space-y-4">
+          <button
+            type="submit"
+            class="w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all shadow-lg cursor-pointer"
+          >
+            {t("recovery.confirm")}
+          </button>
+        </form>
       </div>
     </div>
   );
