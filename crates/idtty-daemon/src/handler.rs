@@ -125,6 +125,7 @@ fn error_response(msg: impl Into<String>) -> Vec<u8> {
         success: false,
         error_message: msg.into(),
         payload: String::new(),
+        session_token: String::new(),
     }
     .encode_to_vec()
 }
@@ -134,24 +135,61 @@ fn err_response(msg: impl Into<String>) -> GatewayResponse {
         success: false,
         error_message: msg.into(),
         payload: String::new(),
+        session_token: String::new(),
+    }
+}
+
+/// Actions that require a valid session token (post-unlock operations).
+/// vault.info is intentionally EXCLUDED: it reveals no secret data (just vault ID,
+/// device ID, lock state, cipher count) and is used as a pre-flight check by
+/// ensure_unlocked_daemon() which runs before the token is available.
+const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
+    "vault.list",
+    "vault.get",
+    "vault.add",
+    "vault.delete",
+    "vault.devices",
+    "sync.init",
+    "sync.remote",
+    "sync.push",
+    "sync.pull",
+    "sync.status",
+    "sync.log",
+];
+
+/// Build a success GatewayResponse. Attaches session token if available.
+fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
+    GatewayResponse {
+        success: true,
+        error_message: String::new(),
+        payload: payload.into(),
+        session_token: token.unwrap_or("").to_string(),
     }
 }
 
 /// Route a GatewayRequest to the appropriate idtty-core function.
+///
+/// R7-2: Protected actions require a valid session token obtained at unlock.
 async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
-    let resp = match req.action.as_str() {
-        "ping" => GatewayResponse {
-            success: true,
-            error_message: String::new(),
-            payload: "pong".into(),
-        },
+    // R7-2: Enforce session token on protected actions
+    if TOKEN_REQUIRED_ACTIONS.contains(&req.action.as_str()) {
+        if let Err(e) = state.verify_session_token(&req.session_token).await {
+            return err_response(e);
+        }
+    }
 
-        // ── Vault lifecycle ──
+    let token = state.get_session_token().await;
+    let token_str = token.as_deref();
+
+    let resp = match req.action.as_str() {
+        "ping" => ok_resp("pong", None),
+
+        // ── Vault lifecycle (no token required) ──
 
         "vault.open" => {
             match state.open().await {
                 Ok(()) => match state.info().await {
-                    Ok(info) => GatewayResponse { success: true, error_message: String::new(), payload: info },
+                    Ok(info) => ok_resp(info, token_str),
                     Err(e) => err_response(e),
                 },
                 Err(e) => err_response(e),
@@ -166,35 +204,40 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             // Zeroize the password from the request immediately after use
             req.payload.zeroize();
             match result {
-                Ok(()) => match state.info().await {
-                    Ok(info) => GatewayResponse { success: true, error_message: String::new(), payload: info },
-                    Err(e) => err_response(e),
-                },
+                Ok(()) => {
+                    // Token was just generated inside unlock(). Fetch it.
+                    let token = state.get_session_token().await;
+                    match state.info().await {
+                        Ok(info) => ok_resp(info, token.as_deref()),
+                        Err(e) => err_response(e),
+                    }
+                }
                 Err(e) => err_response(e),
             }
         }
 
         "vault.lock" => {
             match state.lock().await {
-                Ok(()) => GatewayResponse { success: true, error_message: String::new(), payload: "locked".into() },
+                Ok(()) => ok_resp("locked", None),
                 Err(e) => err_response(e),
             }
         }
 
+        // vault.info: token NOT required (no secret data, used as pre-flight by CLI)
         "vault.info" => {
             match state.info().await {
-                Ok(info) => GatewayResponse { success: true, error_message: String::new(), payload: info },
+                Ok(info) => ok_resp(info, token_str),
                 Err(e) => err_response(e),
             }
         }
 
-        // ── Cipher CRUD ──
+        // ── Cipher CRUD (token required, enforced above) ──
 
         "vault.list" => {
             match state.list_cipher_ids().await {
                 Ok(ids) => {
                     let json = serde_json::json!({"cipher_ids": ids});
-                    GatewayResponse { success: true, error_message: String::new(), payload: json.to_string() }
+                    ok_resp(json.to_string(), token_str)
                 }
                 Err(e) => err_response(e),
             }
@@ -212,7 +255,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(_) => (req.payload.clone(), false),
             };
             match state.get_cipher(&id, decrypt).await {
-                Ok(json) => GatewayResponse { success: true, error_message: String::new(), payload: json },
+                Ok(json) => ok_resp(json, token_str),
                 Err(e) => err_response(e),
             }
         }
@@ -222,7 +265,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 return err_response("Missing cipher JSON in payload");
             }
             match state.add_cipher(&req.payload).await {
-                Ok(id) => GatewayResponse { success: true, error_message: String::new(), payload: id },
+                Ok(id) => ok_resp(id, token_str),
                 Err(e) => err_response(e),
             }
         }
@@ -232,14 +275,14 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 return err_response("Missing cipher UUID in payload");
             }
             match state.delete_cipher(&req.payload).await {
-                Ok(()) => GatewayResponse { success: true, error_message: String::new(), payload: "deleted".into() },
+                Ok(()) => ok_resp("deleted", token_str),
                 Err(e) => err_response(e),
             }
         }
 
         "vault.devices" => {
             match state.devices().await {
-                Ok(json) => GatewayResponse { success: true, error_message: String::new(), payload: json },
+                Ok(json) => ok_resp(json, token_str),
                 Err(e) => err_response(e),
             }
         }
@@ -249,15 +292,19 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 return err_response("Missing vault creation JSON in payload");
             }
             match state.create_vault(&req.payload).await {
-                Ok(json) => GatewayResponse { success: true, error_message: String::new(), payload: json },
+                Ok(json) => {
+                    // R7-2 fix: token is embedded in response JSON by create_vault,
+                    // but we also need it in the proto field for CLI extraction.
+                    ok_resp(json, state.get_session_token().await.as_deref())
+                }
                 Err(e) => err_response(e),
             }
         }
 
-        // ── Sync ──
+        // ── Sync (token required, enforced above) ──
         "sync.init" => {
             match sync_init(&state.vault_path) {
-                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Ok(msg) => ok_resp(msg, token_str),
                 Err(e) => err_response(e),
             }
         }
@@ -266,32 +313,32 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 return err_response("Missing remote URL in payload");
             }
             match sync_remote(&state.vault_path, &req.payload) {
-                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Ok(msg) => ok_resp(msg, token_str),
                 Err(e) => err_response(e),
             }
         }
         "sync.push" => {
             match sync_push(&state.vault_path) {
-                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Ok(msg) => ok_resp(msg, token_str),
                 Err(e) => err_response(e),
             }
         }
         "sync.pull" => {
             match sync_pull(&state.vault_path) {
-                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Ok(msg) => ok_resp(msg, token_str),
                 Err(e) => err_response(e),
             }
         }
         "sync.status" => {
             match sync_status(&state.vault_path) {
-                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Ok(msg) => ok_resp(msg, token_str),
                 Err(e) => err_response(e),
             }
         }
         "sync.log" => {
             let limit: usize = if req.payload.is_empty() { 10 } else { req.payload.parse().unwrap_or(10) };
             match sync_log(&state.vault_path, limit) {
-                Ok(msg) => GatewayResponse { success: true, error_message: String::new(), payload: msg },
+                Ok(msg) => ok_resp(msg, token_str),
                 Err(e) => err_response(e),
             }
         }

@@ -14,6 +14,10 @@ pub struct VaultState {
     pub vault_path: PathBuf,
     /// The vault handle. None = not opened or locked.
     inner: RwLock<Option<VaultHandle>>,
+    /// R7-2: Session authorization token. Generated on unlock.
+    /// Any same-UID process connecting after unlock must present this token
+    /// to access cipher data. Prevents the daemon from being a full-vault oracle.
+    session_token: RwLock<Option<String>>,
 }
 
 impl VaultState {
@@ -22,6 +26,7 @@ impl VaultState {
         Self {
             vault_path,
             inner: RwLock::new(None),
+            session_token: RwLock::new(None),
         }
     }
 
@@ -67,15 +72,23 @@ impl VaultState {
             }
         }
         *guard = Some(new_handle);
+
+        // R7-2: Generate session token on unlock
+        let mut token_guard = self.session_token.write().await;
+        *token_guard = Some(generate_session_token());
+
         Ok(())
     }
 
-    /// Lock the vault, zeroizing keys in memory.
+    /// Lock the vault, zeroizing keys in memory. Clears the session token.
     pub async fn lock(&self) -> Result<(), String> {
         let mut guard = self.inner.write().await;
         if let Some(ref mut handle) = *guard {
             handle.lock();
         }
+        // R7-2: Invalidate session token on lock
+        let mut token_guard = self.session_token.write().await;
+        *token_guard = None;
         Ok(())
     }
 
@@ -330,15 +343,46 @@ impl VaultState {
         let mut guard = self.inner.write().await;
         *guard = Some(handle);
 
+        // R7-2: Generate session token for newly created vault
+        let token = generate_session_token();
+        let mut token_guard = self.session_token.write().await;
+        *token_guard = Some(token.clone());
         let response = serde_json::json!({
             "vault_id": result.vault_id.to_string(),
             "device_id": result.device_id.to_string(),
             "recovery_phrase": result.recovery_phrase.phrase(),
             "trust_fingerprint": hex::encode(result.trust_fingerprint),
+            "session_token": token,
         });
         Ok(response.to_string())
+    }
+
+    // ── R7-2: Session token management ──
+
+    /// Verify a client-provided session token against the stored one.
+    /// Uses constant-time comparison to prevent timing side channels.
+    pub async fn verify_session_token(&self, provided: &str) -> Result<(), String> {
+        let guard = self.session_token.read().await;
+        match *guard {
+            Some(ref stored) if crate::crypto::constant_time_eq(provided.as_bytes(), stored.as_bytes()) => Ok(()),
+            Some(_) => Err("Invalid session token. Re-unlock the vault.".into()),
+            None => Err("Vault is locked. Unlock first.".into()),
+        }
+    }
+
+    /// Get the current session token (for embedding in unlock/create responses).
+    pub async fn get_session_token(&self) -> Option<String> {
+        self.session_token.read().await.clone()
     }
 }
 
 /// Shared vault state type.
 pub type SharedVaultState = Arc<VaultState>;
+
+/// R7-2: Generate a cryptographically random session token (32 bytes hex = 64 chars).
+fn generate_session_token() -> String {
+    use rand::RngCore;
+    let mut buf = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut buf);
+    hex::encode(buf)
+}

@@ -4,6 +4,7 @@
 //! an unlocked vault in memory and responds to Protobuf gateway requests
 //! from CLI, Tauri webview, and browser extension clients.
 
+mod crypto;
 mod handler;
 mod state;
 pub mod socket_path;

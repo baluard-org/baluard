@@ -164,6 +164,7 @@ pub fn handle_lock(mode: ConnectMode, socket: Option<&str>) -> Result<(), Box<dy
             if !resp.success {
                 return Err(resp.error_message.into());
             }
+            client::clear_session_token();
             println!("Vault locked. Keys zeroized.");
             Ok(())
         }

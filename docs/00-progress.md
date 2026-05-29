@@ -163,6 +163,44 @@
 - **CO-NEW-2**: Readiness poll used phantom connect instead of ping -> Fixed
 - **M-NEW-1**: `daemon_status` verbose match instead of `.is_ok()` -> Fixed
 
+### Round 7 (Pass Analysis — Independent Peer Review via peer review)
+
+**Source**: Full analysis of `pass` (password-store v1.7.4) by zx2c4. Peer review of findings delegated to peer review (via peer). peer review read IDtty source (`vault/envelope.rs`, `vault/cipher.rs`, `crypto/aead.rs`, `keys/hierarchy.rs`) before responding.
+
+**Pass CVEs studied**: CVE-2018-12356 (GPG regex parsing), CVE-2020-28086 (filename swap attack), plus rot256.dev security critique on active-adversary weaknesses.
+
+#### Findings
+
+| # | Severity | Finding | Status |
+|---|----------|---------|--------|
+| R7-1 | **Critical** | AAD verification gap in `decrypt_cipher`. AAD binds `cipher_id` into the GCM tag at encrypt time, but `decrypt_cipher` never re-computes expected AAD from caller params and compares it to stored AAD before decryption. A file-swap/renamed entry attack succeeds: GCM auth tag validates against the original AAD, caller receives wrong plaintext. | **Fixed** |
+| R7-2 | **High** | Daemon socket is a full-vault oracle for any same-UID process. After unlock, any process owned by the same user can connect to the Unix socket and call `GetCipher` with arbitrary IDs to extract all secrets without knowing the master password. Peer credential check only blocks other UIDs. | **Fixed** |
+| R7-3 | **Medium** | Key buffers not `mlock`ed. OOM kill, `kill -9`, or panic bypasses `zeroize` on drop. Key material may persist in RAM pages until overwritten, or page to swap/hibernation. `mlock`/`mlockall` prevents kernel paging. | **Fixed** |
+| R7-4 | **Low** | `docs/02-threat-model.md` does not explicitly model the git remote as adversarially writable. Pass's author admitted "focus on secrecy without authenticity." IDtty defends against this but the threat model doesn't state it. | **Fixed** |
+
+#### Rejected Proposals (with rationale)
+
+| Proposal | From | Ruling | Rationale |
+|----------|------|--------|----------|
+| Add Ed25519 signatures on every envelope | TARS (pass analysis) | **Rejected** by peer review | AES-256-GCM auth tag IS the signature. The AAD gap (R7-1) is the real bug, not missing signatures. Only add signatures if non-repudiation for org audit trails is needed later. |
+| Blinded search index | TARS (pass analysis) | **Rejected** by peer review | Decrypt-on-search is acceptable for a local manager. Blinded indexes (Bloom over HMAC n-grams) add complexity with only exact-match capability. Document the tradeoff instead. |
+| Hash entry path as identity | TARS (pass analysis) | **Rejected** by peer review | Paths are mutable (rename forces re-encrypt). Random UUID at creation is already correct and already implemented. |
+
+#### Pass Design Patterns Worth Preserving
+
+1. **Git log as audit trail**: Pass's commit history is an implicit tamper-evident log. IDtty has this. Surface it explicitly in UI.
+2. **Aggressive clipboard timeout**: Pass defaults 45s. IDtty's 15s default is correct. Never restore previous clipboard content.
+3. **Explicit threat scope**: Pass documents what it doesn't defend against. IDtty should state "git remote is adversarially writable" in threat model.
+
+#### Action Items
+
+- [x] **R7-1**: Add AAD verification to `decrypt_cipher` in `crates/idtty-core/src/vault/cipher.rs`. Before `aead::decrypt`, recompute expected AAD from `(vault_id, ObjectType::Cipher, cipher_id, tier, alg_id, key_epoch, update_seq)` and assert equality with `enc_envelope.aad`. Return `VaultError::Corrupt("cipher identity mismatch")` on mismatch. Fail fast, no decryption oracle. **Done.** Added swap attack test. **peer review: PASS.**
+- [x] **R7-2**: Add per-request session authorization token. Daemon generates 256-bit random token on unlock, returns it in `GatewayResponse.session_token`. CLI stores in thread-local, sends with every request via `GatewayRequest.session_token`. Daemon verifies with constant-time comparison. Token cleared on lock. Proto updated. **Done.** **peer review: 2 bugs found and fixed:** (1) `vault.info` removed from `TOKEN_REQUIRED_ACTIONS` (tokenless: reveals no secrets, used as pre-flight by CLI). (2) `vault.create` now returns token via proto field, not just JSON payload.
+- [x] **R7-3**: Add `mlock` on key material buffers in `keys/hierarchy.rs` (RootKey, ItemKey). Use `libc::mlock` on creation, `munlock` on drop. Best-effort (silent on failure). Prevents key material from paging to swap. **Done.** **peer review: 2 gaps found and fixed:** (1) `derive(Clone)` replaced with manual `Clone` impl that calls `from_bytes` (which mlocks the new copy). (2) Stack-allocated arrays replaced with `Box<[u8; N]>` for stable heap addresses across moves. Custom `Debug` impl redacts key bytes.
+- [x] **R7-4**: Update `docs/02-threat-model.md` to explicitly model the git remote as adversarially writable. Added T5 (Active Git Remote Adversary) and T6 (Key Material Paged to Swap). Updated adversary table with classes C, E, G. **Done.** **peer review: PASS.**
+
+---
+
 ### Round 6 (Independent Review — Vault Creation)
 10 findings (1 critical, 2 security, 5 correctness, 2 minor). All fixed except CO5:
 - **C1**: Vault files written with 0644 permissions -> Fixed: `write_secret` helper sets 0600 on all sensitive files

@@ -92,14 +92,36 @@ pub fn encrypt_cipher(
 }
 
 /// Decrypt a cipher file envelope back into a Cipher struct.
+///
+/// Verifies that the AAD bound into the envelope matches the caller's expected
+/// identity (vault_id + cipher_id + tier + epoch + seq) BEFORE decryption.
+/// This blocks swap/rename attacks (CVE-2020-28086 class).
 pub fn decrypt_cipher(
-    _vault_id: Uuid,
+    vault_id: Uuid,
     cipher_id: CipherId,
     file: &CipherFile,
     item_key: &ItemKey,
 ) -> Result<Cipher, IdttyError> {
     // Deserialize envelope
     let enc_envelope = envelope::deserialize(&file.envelope_bytes)?;
+
+    // R7-1: Verify AAD identity binding before decryption.
+    // Recompute expected AAD from caller params and compare to stored AAD.
+    // Fail fast: no decryption oracle on mismatch.
+    let expected_aad = aead::build_aad(
+        vault_id,
+        ObjectType::Cipher,
+        cipher_id,
+        enc_envelope.header.tier,
+        enc_envelope.header.alg_id,
+        enc_envelope.header.key_epoch,
+        enc_envelope.header.update_seq,
+    );
+    if enc_envelope.aad != expected_aad {
+        return Err(IdttyError::Vault(VaultError::Corrupt(
+            "cipher identity mismatch: AAD does not match expected vault/cipher binding".into(),
+        )));
+    }
 
     // Decrypt
     let padded = aead::decrypt(item_key.as_bytes(), &enc_envelope)?;
@@ -223,5 +245,46 @@ mod tests {
 
         let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
         assert!(decrypt_cipher(vault_id, cipher_id, &file, &wrong_key).is_err());
+    }
+
+    /// R7-1: Verify swap/renamed entry attack is blocked.
+    /// Encrypt for cipher_id A, then try to decrypt pretending it's cipher_id B.
+    /// Must fail with identity mismatch, not return wrong plaintext.
+    #[test]
+    fn swap_attack_blocked_by_aad_verification() {
+        let vault_id = Uuid::new_v4();
+        let cipher_id_a = Uuid::new_v4();
+        let cipher_id_b = Uuid::new_v4();
+        let item_key = ItemKey::generate();
+
+        let input = CipherInput {
+            name: "secret-entry".into(),
+            folder_id: None,
+            username: None,
+            password: Some("password-for-A".into()),
+            uris: vec![],
+            notes: None,
+            totp_uri: None,
+            custom_fields: vec![],
+        };
+
+        // Encrypt for cipher A
+        let file_a =
+            encrypt_cipher(vault_id, cipher_id_a, &input, &item_key, 1, 1, 0).unwrap();
+
+        // Build a fake CipherFile that looks like B but contains A's envelope
+        let swapped_file = CipherFile {
+            id: cipher_id_b,
+            envelope_bytes: file_a.envelope_bytes.clone(),
+        };
+
+        // Try to decrypt as B: must fail with identity mismatch
+        let err = decrypt_cipher(vault_id, cipher_id_b, &swapped_file, &item_key);
+        assert!(err.is_err());
+        let err_str = format!("{err:?}");
+        assert!(
+            err_str.contains("identity mismatch"),
+            "expected identity mismatch error, got: {err_str}"
+        );
     }
 }

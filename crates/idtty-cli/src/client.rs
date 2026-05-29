@@ -55,6 +55,28 @@ mod proto {
 
 use proto::{GatewayRequest, GatewayResponse};
 
+// R7-2: Session token received from daemon after unlock.
+// Stored in thread-local so all subsequent requests in this process
+// automatically include it.
+thread_local! {
+    static SESSION_TOKEN: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Set the session token (called after successful unlock/create).
+pub fn set_session_token(token: &str) {
+    SESSION_TOKEN.with(|t| *t.borrow_mut() = Some(token.to_string()));
+}
+
+/// Get the current session token.
+pub fn get_session_token() -> Option<String> {
+    SESSION_TOKEN.with(|t| t.borrow().clone())
+}
+
+/// Clear the session token (called after lock).
+pub fn clear_session_token() {
+    SESSION_TOKEN.with(|t| *t.borrow_mut() = None);
+}
+
 /// Send a request to the daemon at a specific socket path.
 /// Zeroizes the payload and wire bytes after the response is received.
 pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Result<GatewayResponse> {
@@ -67,6 +89,7 @@ pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Res
     let mut req = GatewayRequest {
         action: action.to_string(),
         payload: payload.to_string(),
+        session_token: get_session_token().unwrap_or_default(),
     };
     let mut body = req.encode_to_vec();
 
@@ -105,6 +128,11 @@ pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Res
     let resp_data = &buf[offset..resp_end];
     let response = GatewayResponse::decode(resp_data)
         .context("Failed to decode daemon response")?;
+
+    // R7-2: Store session token from daemon if present
+    if !response.session_token.is_empty() {
+        set_session_token(&response.session_token);
+    }
 
     Ok(response)
 }

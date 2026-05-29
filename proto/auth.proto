@@ -12,10 +12,12 @@ message DeviceIdentityEscrow {
 message GatewayRequest {
   string action = 1;
   string payload = 2;
+  string session_token = 4;  // R7-2: per-session auth token (set after unlock)
 }
 
 message GatewayResponse {
   bool success = 1;
   string error_message = 2;
   string payload = 3;
+  string session_token = 4;  // R7-2: returned on unlock, must be sent back with every subsequent request
 }
