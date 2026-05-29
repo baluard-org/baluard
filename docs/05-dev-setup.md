@@ -158,6 +158,43 @@ rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
 just cross-compile
 ```
 
+## CLI Usage
+
+```bash
+# Create a vault
+just install-local
+idtty init --vault-path ~/.idtty
+
+# Unlock and add a credential
+idtty unlock
+idtty add --name "GitHub" --username "user" --password "secret"
+
+# List and retrieve
+idtty list
+idtty get <uuid>
+
+# Sync
+idtty sync init
+idtty sync remote <git-url>
+idtty sync push
+
+# Daemon mode (background)
+idtty-daemon --vault-path ~/.idtty
+```
+
+All commands route through the daemon by default. Use `--direct` to run in-process (no daemon needed).
+
+## Key Features
+
+- **AES-256-GCM** encryption with Argon2id key derivation
+- **Padded buckets** (1KB/8KB/64KB/1MB) prevent metadata leakage
+- **BIP-39 recovery phrase** for key recovery
+- **HPKE key wrapping** (X25519 + Ed25519 device identity)
+- **Git-native sync** - vault is a git repository
+- **SO_PEERCRED** peer UID verification on Unix sockets
+- **Zeroize** all sensitive memory after use
+- **CSP-enforced** webview security
+
 ## Common Issues
 
 ### `cargo build` fails with `libgit2 not found`

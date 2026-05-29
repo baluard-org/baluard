@@ -13,72 +13,32 @@ mobile/       → Kotlin Multiplatform via UniFFI (planned)
 extension/    → MV3 browser extension (planned)
 ```
 
-All UI layers communicate with `idtty-core` through a single Protobuf-over-Unix-socket gateway. The daemon holds the vault unlocked in `zeroize`-protected memory.
-
-## Build
-
-Uses [`just`](https://github.com/casey/just) (install: `cargo install just`). Run `just` to see all targets.
+## Quick Start
 
 ```bash
-just build              # Debug build (all Rust crates)
-just build-release      # Optimized release build
-just build-signed       # Release + codesign (macOS)
-just test               # Run all tests
-just e2e                # End-to-end smoke test
-just check              # Full CI parity (fmt + clippy + test + build)
-just install-local      # Install CLI + daemon to ~/.local/bin
-just desktop-dev        # Run Tauri desktop app (needs WebKitGTK on Linux)
-just release            # Build tar.gz + checksums
+cargo install just      # Build runner
+git clone https://github.com/EstebanForge/IDtty.git
+cd IDtty
+just build
+just test
 ```
 
-Requires Rust 1.85+ (edition 2024). Desktop uses the system's native webview (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux):
+See **[docs/05-dev-setup.md](docs/05-dev-setup.md)** for prerequisites, platform setup, and all build commands.
 
-```bash
-# Linux (Debian/Ubuntu) — install WebKitGTK dev packages
-sudo apt install libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev
+## Documentation
 
-# macOS — no extra packages needed (uses system WebKit)
-# Windows — no extra packages needed (WebView2 pre-installed on Win11, Tauri installer handles Win10)
-```
+| Doc | Description |
+|-----|-------------|
+| [Dev Setup & Workflow](docs/05-dev-setup.md) | Prerequisites, build commands, architecture, testing, troubleshooting |
+| [Architecture Decisions](docs/01-architecture-decisions.md) | Design rationale and tradeoffs |
+| [Threat Model](docs/02-threat-model.md) | Adversaries, attack surfaces, mitigations |
+| [Key Lifecycle](docs/03-key-lifecycle.md) | Key hierarchy, derivation, rotation |
+| [Software Architecture](docs/04-software-architecture.md) | Component diagram, data flows, IPC protocol |
+| [Progress](docs/00-progress.md) | Implementation status and review history |
 
-## CLI Usage
+## Contributing
 
-```bash
-# Create a vault
-cargo run -p idtty-cli -- init --vault-path ~/.idtty
-
-# Or after `cargo install --path crates/idtty-cli`:
-# idtty init --vault-path ~/.idtty
-
-# Unlock and add a credential
-cargo run -p idtty-cli -- unlock
-cargo run -p idtty-cli -- add --name "GitHub" --username "user" --password "secret"
-
-# List and retrieve
-cargo run -p idtty-cli -- list
-cargo run -p idtty-cli -- get <uuid>
-
-# Sync
-cargo run -p idtty-cli -- sync init
-cargo run -p idtty-cli -- sync remote <git-url>
-cargo run -p idtty-cli -- sync push
-
-# Daemon mode (background)
-cargo run -p idtty-daemon
-```
-
-All commands route through the daemon by default. Use `--direct` to run in-process (no daemon needed).
-
-## Key Features
-
-- **AES-256-GCM** encryption with Argon2id key derivation
-- **Padded buckets** (1KB/8KB/64KB/1MB) prevent metadata leakage
-- **BIP-39 recovery phrase** for key recovery
-- **HPKE key wrapping** (X25519 + Ed25519 device identity)
-- **Git-native sync** — vault is a git repository
-- **SO_PEERCRED** peer UID verification on Unix sockets
-- **Zeroize** all sensitive memory after use
-- **CSP-enforced** webview security
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Start with `just check` before pushing.
 
 ## License
 
