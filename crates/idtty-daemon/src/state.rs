@@ -220,14 +220,23 @@ impl VaultState {
     }
 
     /// Create a new vault at the configured vault_path.
-    /// Input JSON: {"password": "...", "profile": "mobile_low"}
+    /// Input JSON: {"password": "...", "profile": "desktop_std"}
     /// Returns JSON with vault_id, device_id, recovery_phrase.
     pub async fn create_vault(&self, payload_json: &str) -> Result<String, String> {
+        // Guard: refuse to overwrite an existing vault
+        if self.vault_path.join("meta/kdf-params.json").exists() {
+            return Err("Vault already exists at this path. Delete it first if you want to recreate.".into());
+        }
+
         let v: serde_json::Value = serde_json::from_str(payload_json)
             .map_err(|e| format!("Invalid JSON: {e}"))?;
+        // Extract password into zeroizing wrapper
         let password = v["password"].as_str()
-            .ok_or("Missing 'password' field")?;
-        let profile_str = v["profile"].as_str().unwrap_or("mobile_low");
+            .ok_or("Missing 'password' field")?
+            .to_string();
+        let mut password = zeroize::Zeroizing::new(password);
+
+        let profile_str = v["profile"].as_str().unwrap_or("desktop_std");
         let profile = match profile_str {
             "mobile_low" => idtty_core::types::KdfProfile::MobileLow,
             "desktop_std" => idtty_core::types::KdfProfile::DesktopStd,
@@ -236,8 +245,11 @@ impl VaultState {
         };
 
         // Run creation ceremony (CPU-heavy, no lock needed)
-        let result = idtty_core::vault::creation::create_vault_ceremony(password, profile)
+        let result = idtty_core::vault::creation::create_vault_ceremony(&password, profile)
             .map_err(|e| format!("Vault creation failed: {e}"))?;
+
+        // Zeroize password as soon as ceremony completes
+        zeroize::Zeroize::zeroize(&mut *password);
 
         let path = &self.vault_path;
         std::fs::create_dir_all(path.join("ciphers"))
@@ -246,6 +258,19 @@ impl VaultState {
             .map_err(|e| format!("mkdir keywrap: {e}"))?;
         std::fs::create_dir_all(path.join("meta/sequences"))
             .map_err(|e| format!("mkdir sequences: {e}"))?;
+
+        // Helper: write file with restrictive permissions for sensitive data
+        let write_secret = |file_path: std::path::PathBuf, data: &[u8]| -> Result<(), String> {
+            std::fs::write(&file_path, data)
+                .map_err(|e| format!("Write {}: {e}", file_path.display()))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| format!("chmod {}: {e}", file_path.display()))?;
+            }
+            Ok(())
+        };
 
         // Device registry
         let mut registry = idtty_core::devices::DeviceRegistry::new();
@@ -256,12 +281,16 @@ impl VaultState {
             pub_enc.to_bytes(),
             verifying.to_bytes(),
         ).map_err(|e| format!("Device enrollment: {e}"))?;
-        std::fs::write(path.join("meta/devices.json"), serde_json::to_string_pretty(&registry).unwrap())
-            .map_err(|e| format!("Write devices: {e}"))?;
+        write_secret(
+            path.join("meta/devices.json"),
+            serde_json::to_string_pretty(&registry).map_err(|e| format!("Serialize devices: {e}"))?.as_bytes(),
+        )?;
 
         // KDF params
-        std::fs::write(path.join("meta/kdf-params.json"), serde_json::to_string_pretty(&result.kdf_params).unwrap())
-            .map_err(|e| format!("Write kdf-params: {e}"))?;
+        write_secret(
+            path.join("meta/kdf-params.json"),
+            serde_json::to_string_pretty(&result.kdf_params).map_err(|e| format!("Serialize kdf: {e}"))?.as_bytes(),
+        )?;
 
         // Keywrap
         let (eph_pub, ct, tag) = &result.wrapped_root_key;
@@ -271,17 +300,19 @@ impl VaultState {
             "encrypted_key": hex::encode(ct),
             "tag": hex::encode(tag),
         });
-        std::fs::write(
+        write_secret(
             path.join(format!("meta/keywrap/{}.json", result.device_id)),
-            serde_json::to_string_pretty(&keywrap_data).unwrap(),
-        ).map_err(|e| format!("Write keywrap: {e}"))?;
+            serde_json::to_string_pretty(&keywrap_data).map_err(|e| format!("Serialize keywrap: {e}"))?.as_bytes(),
+        )?;
 
-        // Device private key
+        // Device private key (TODO: encrypt at rest with platform keystore)
         let privkey_data = serde_json::json!({
             "x25519_private": hex::encode(result.device_x25519_secret.to_bytes()),
         });
-        std::fs::write(path.join("meta/device-privkey.json"), serde_json::to_string_pretty(&privkey_data).unwrap())
-            .map_err(|e| format!("Write privkey: {e}"))?;
+        write_secret(
+            path.join("meta/device-privkey.json"),
+            serde_json::to_string_pretty(&privkey_data).map_err(|e| format!("Serialize privkey: {e}"))?.as_bytes(),
+        )?;
 
         // .gitignore
         std::fs::write(
@@ -290,10 +321,8 @@ impl VaultState {
         ).map_err(|e| format!("Write gitignore: {e}"))?;
 
         // Canaries
-        std::fs::write(path.join("meta/kek-canary.enc"), &result.kek_canary)
-            .map_err(|e| format!("Write kek-canary: {e}"))?;
-        std::fs::write(path.join("meta/rk-canary.enc"), &result.rk_canary)
-            .map_err(|e| format!("Write rk-canary: {e}"))?;
+        write_secret(path.join("meta/kek-canary.enc"), &result.kek_canary)?;
+        write_secret(path.join("meta/rk-canary.enc"), &result.rk_canary)?;
 
         // Now open the vault so it's ready for use
         let handle = VaultHandle::open(path)

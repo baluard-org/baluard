@@ -44,7 +44,6 @@ cargo run -p idtty-cli -- init --vault-path ~/.idtty
 
 # Or after `cargo install --path crates/idtty-cli`:
 # idtty init --vault-path ~/.idtty
-```
 
 # Unlock and add a credential
 cargo run -p idtty-cli -- unlock

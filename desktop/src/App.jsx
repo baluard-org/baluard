@@ -12,6 +12,7 @@ const [newCipher, setNewCipher] = createSignal({
   name: "", username: "", password: "", uri: "", notes: "",
 });
 const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
+const [createPassword, setCreatePassword] = createSignal("");
 
 // ── Daemon proxy ──
 async function daemon(action, payload = "") {
@@ -27,16 +28,16 @@ async function daemon(action, payload = "") {
 }
 
 // ── Actions ──
+let loginPasswordRef;
 async function unlock() {
-  const el = document.getElementById("master-password");
-  const password = el?.value;
+  const password = loginPasswordRef?.value;
   if (!password) return;
   setStatus("unlocking");
   setError("");
   try {
     await daemon("vault.open");
     await daemon("vault.unlock", password);
-    el.value = "";
+    if (loginPasswordRef) loginPasswordRef.value = "";
     setStatus("unlocked");
     await refreshCiphers();
     const info = JSON.parse(await daemon("vault.info"));
@@ -61,7 +62,7 @@ async function lock() {
 }
 
 async function createVault() {
-  const pw = document.getElementById("create-password")?.value;
+  const pw = createPassword();
   const confirm = document.getElementById("create-confirm")?.value;
   if (!pw || pw.length < 8) { setError("Password must be at least 8 characters"); return; }
   if (pw !== confirm) { setError("Passwords do not match"); return; }
@@ -130,9 +131,7 @@ async function deleteCipher(id) {
 
 function onKeyUnlock(e) {
   if (e.key === "Enter") unlock();
-}
-
-// ── Views ──
+}// ── Views ──
 function LoginScreen() {
   return (
     <div class="flex items-center justify-center h-full">
@@ -146,7 +145,7 @@ function LoginScreen() {
           <div class="mb-3 p-2 rounded bg-red-900/30 text-red-400 text-sm">{error()}</div>
         </Show>
         <input
-          id="master-password"
+          ref={loginPasswordRef}
           type="password"
           placeholder="Master password"
           class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3"
@@ -318,6 +317,7 @@ function CreateVaultScreen() {
           <div class="mb-3 p-2 rounded bg-red-900/30 text-red-400 text-sm">{error()}</div>
         </Show>
         <input id="create-password" type="password" placeholder="Master password (8+ chars)"
+          onInput={e => setCreatePassword(e.target.value)}
           class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3" />
         <input id="create-confirm" type="password" placeholder="Confirm password"
           class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3" />
@@ -348,11 +348,12 @@ function RecoveryScreen() {
         </div>
         <button onClick={async () => {
           setStatus("unlocking");
-          const pw = document.getElementById("create-password")?.value;
+          const pw = createPassword();
           if (pw) {
             try {
               await daemon("vault.unlock", pw);
               setStatus("unlocked");
+              setCreatePassword("");
               await refreshCiphers();
             } catch (e) { setError(e.message); setStatus("locked"); }
           } else { setStatus("locked"); }

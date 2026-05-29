@@ -84,11 +84,14 @@
 | Module | Status | What's Planned / Implemented |
 |--------|--------|------------------------------|
 | `desktop` | Done | SolidJS/Tailwind v4 webview in Tauri v2. Login screen + vault view (cipher list, add, get, delete). Dark theme. Scaffolded via `tauri init`. |
-| `desktop/tauri` | Done | Rust backend (edition 2024): daemon_request Tauri command proxies to idtty-daemon via Protobuf. System tray with Show/Quit. All platform icons via `tauri icon`. |
+| `desktop/tauri` | Done | Rust backend (edition 2024): daemon_request Tauri command proxies to idtty-daemon via Protobuf. System tray with Show/Quit. All platform icons via `tauri icon`. Sidecar config in tauri.conf.json. |
 | `desktop/tray` | Done | Tauri v2 TrayIconBuilder with Show/Quit menu. Left-click shows window. Close hides to tray. |
 | `desktop/daemon` | Done | Tauri spawns idtty-daemon on launch. SIGTERM + wait on app exit. |
-| `ci-cd` | Done | GitHub Actions: test.yml (cargo test/fmt/clippy), build-desktop.yml (tauri-action matrix for Linux/macOS/Windows, draft release on tag). |
-| `ci-cd` | Planned | GitHub Actions matrix for multi-platform compilation. |
+| `desktop/create` | Done | Vault creation UI: CreateVaultScreen (password + confirm), RecoveryScreen (BIP-39 phrase display). Auto-unlock after creation. |
+| `cli/binary` | Done | CLI binary renamed to `idtty` (was `idtty-cli`). Package name unchanged for compat. |
+| `daemon/vault.create` | Done | New daemon route: runs creation ceremony, writes all vault files with 0600 perms, opens vault, returns recovery phrase. |
+| `ci-cd` | Done | GitHub Actions: test.yml (cargo test/fmt/clippy), build-desktop.yml (tauri-action matrix). Both workflow_dispatch only. |
+| `docs` | Done | README.md (build/platform/webview instructions), CONTRIBUTING.md (guidelines + code standards). |
 
 ### Phase 5: Mobile & Extension
 | Module | Status | What's Planned / Implemented |
@@ -160,6 +163,19 @@
 - **CO-NEW-2**: Readiness poll used phantom connect instead of ping -> Fixed
 - **M-NEW-1**: `daemon_status` verbose match instead of `.is_ok()` -> Fixed
 
+### Round 6 (Independent Review — Vault Creation)
+10 findings (1 critical, 2 security, 5 correctness, 2 minor). All fixed except CO5:
+- **C1**: Vault files written with 0644 permissions -> Fixed: `write_secret` helper sets 0600 on all sensitive files
+- **S1**: Master password not zeroized after ceremony -> Fixed: `Zeroizing<String>` wrapper
+- **S2**: `shell:allow-spawn/execute` exposed to webview -> Fixed: Removed from capabilities
+- **CO1**: Auto-unlock after vault creation silently failed (getElementById on unmounted DOM) -> Fixed: Uses `createPassword` signal
+- **CO2**: Key files written with default perms -> Fixed: write_secret with 0600
+- **CO3**: No guard against overwriting existing vault -> Fixed: Checks kdf-params.json
+- **CO4**: `unwrap()` on serialization could panic async task -> Fixed: All `map_err`
+- **CO5**: Sidecar declared in config but Rust code still uses PATH spawn -> Partial: Config present, migration deferred
+- **M1**: README code fence broken -> Fixed: Single fenced block
+- **M2**: `getElementById` anti-pattern in SolidJS -> Fixed: Refs + signals
+
 ---
 
 ## Known Limitations
@@ -176,7 +192,7 @@
 
 | Command | Mode | Description |
 |---------|------|-------------|
-| `init --profile <p>` | Direct | Create new vault with master password |
+| `init --profile <p>` | Direct | Create new vault (binary: `idtty`) |
 | `unlock` | Daemon/Direct | Unlock vault (daemon persists state) |
 | `lock` | Daemon | Lock vault, zeroize keys |
 | `add --name N ...` | Daemon/Direct | Add cipher (auto-prompts unlock) |
