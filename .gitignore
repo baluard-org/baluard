@@ -70,3 +70,4 @@ idtty-vault/
 *.crx
 *.xpi
 docs/reviews/
+.codegraph/
