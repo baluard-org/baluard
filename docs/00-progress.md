@@ -214,6 +214,15 @@
 - **M1**: README code fence broken -> Fixed: Single fenced block
 - **M2**: `getElementById` anti-pattern in SolidJS -> Fixed: Refs + signals
 
+### Round 8 (UI/UX Revamp — 1Password/Bitwarden Structure)
+Complete overhaul of the desktop interface to deliver a production-grade 3-column user experience:
+- **Layout Alignment**: Implemented the Bitwarden/1Password 3-column interface (`w-[260px]` Navigation Sidebar, `w-[360px]` Searchable Vault List, and Flex-1 Details & Form Panel).
+- **Refinement of Visuals**: Styled with the custom forest teal and soft lavender reference palette. Added responsive UI micro-animations and smooth transition transitions.
+- **Dynamic Themes**: Built dark and light modes, controlled by a SolidJS signal synced to a `.light-theme` body class. Accessible via theme switcher icons on lock screens, vault views, and create screens.
+- **List Monograms & Hover shortcuts**: Generates beautiful monogram badges based on hostnames. Added hover quick-actions (URL Launch, Copy Password) directly on rows.
+- **Interactive Details & Password Generator**: Integrated a comprehensive details viewer with copy/eye reveal controls and an interactive password generator (with length slider and custom complexity pools) built directly into form flows.
+- **Parallel Loading Optimization**: Loaded decrypted cipher metadata asynchronously in parallel during unlock, ensuring instant search and zero detail latency.
+
 ---
 
 ## Known Limitations
