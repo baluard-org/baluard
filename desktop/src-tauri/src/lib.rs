@@ -30,22 +30,27 @@ use proto::{GatewayRequest, GatewayResponse};
 
 use tauri_plugin_shell::process::CommandChild;
 
-struct Daemon(CommandChild);
+struct Daemon(Option<CommandChild>);
 impl Drop for Daemon {
     fn drop(&mut self) {
         // Send SIGTERM first so daemon can zeroize keys gracefully.
         // CommandChild::kill() sends SIGKILL which bypasses signal handlers.
         #[cfg(unix)]
         {
-            let pid = self.0.pid() as i32;
-            unsafe {
-                libc::kill(pid, libc::SIGTERM);
+            if let Some(ref child) = self.0 {
+                let pid = child.pid() as i32;
+                unsafe {
+                    libc::kill(pid, libc::SIGTERM);
+                }
+                // Give daemon 200ms to zeroize keys before forcing kill
+                std::thread::sleep(Duration::from_millis(200));
             }
-            // Give daemon 200ms to zeroize keys before forcing kill
-            std::thread::sleep(Duration::from_millis(200));
         }
         // SIGKILL fallback (or primary on non-Unix)
-        let _ = self.0.kill();
+        // CommandChild::kill() takes ownership
+        if let Some(child) = self.0.take() {
+            let _ = child.kill();
+        }
     }
 }
 
@@ -137,6 +142,7 @@ fn send_request(action: &str, payload: &str) -> Result<String, String> {
     let req = GatewayRequest {
         action: action.to_string(),
         payload: payload.to_string(),
+        session_token: String::new(),
     };
     let body = req.encode_to_vec();
 
@@ -237,15 +243,13 @@ pub fn run() {
                     // Use tauri-plugin-shell sidecar for bundle-relative binary path.
                     // Binary must exist at src-tauri/binaries/idtty-daemon-{target-triple}
                     let sidecar_command = app.shell().sidecar("idtty-daemon")
-                        .map_err(|e| format!("Sidecar not found: {e}"))?
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null());
+                        .map_err(|e| format!("Sidecar not found: {e}"))?;
 
                     let (_rx, child) = sidecar_command.spawn()
                         .map_err(|e| format!("Failed to start daemon: {e}"))?;
 
                     let state = app.state::<Mutex<Option<Daemon>>>();
-                    *state.lock().unwrap() = Some(Daemon(child));
+                    *state.lock().unwrap() = Some(Daemon(Some(child)));
                     log::info!("Daemon started via sidecar");
 
                     // Wait for daemon readiness (up to 2s)
