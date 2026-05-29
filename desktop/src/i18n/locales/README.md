@@ -20,3 +20,10 @@
 - Use natural, everyday language. No technical jargon
 - If a language has gendered forms, pick the most neutral/common phrasing
 - Test your file is valid JSON before submitting (`jq . your-file.json`)
+
+## Plural handling
+
+This engine supports 2 plural forms: singular (count === 1) and plural (count !== 1).
+Languages with more plural categories (Russian, Polish, Arabic, etc.) should still
+use the `_plural` suffix for now. Proper CLDR plural rules may be added later.
+If your language needs more forms, add a note in your PR.

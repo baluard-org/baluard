@@ -81,7 +81,7 @@ function useActions() {
 
   let loginPasswordRef;
 
-  async function unlock() {
+  async function unlock(t) {
     const password = loginPasswordRef?.value;
     if (!password) return;
     app.setStatus("unlocking");
@@ -95,12 +95,12 @@ function useActions() {
       const info = JSON.parse(await daemon("vault.info"));
       app.setVaultInfo(info);
     } catch (e) {
-      app.setError(e.message);
+      app.setError(sanitizeError(e.message, t));
       app.setStatus("locked");
     }
   }
 
-  async function lock() {
+  async function lock(t) {
     try {
       await daemon("vault.lock");
       app.setStatus("locked");
@@ -109,12 +109,11 @@ function useActions() {
       app.setViewCipher(null);
       app.setShowAdd(false);
     } catch (e) {
-      app.setError(e.message);
+      app.setError(sanitizeError(e.message, t));
     }
   }
 
-  async function createVault() {
-    const { t } = useI18n();
+  async function createVault(t) {
     const pw = app.createPassword();
     const confirm = document.getElementById("create-confirm")?.value;
     if (!pw || pw.length < 8) { app.setError(t("create.errorMinLength")); return; }
@@ -128,7 +127,7 @@ function useActions() {
       app.setRecoveryPhrase(result.recovery_phrase);
       app.setStatus("recovery");
     } catch (e) {
-      app.setError(e.message);
+      app.setError(sanitizeError(e.message, t));
       app.setStatus("init");
     }
   }
@@ -138,11 +137,11 @@ function useActions() {
       const data = JSON.parse(await daemon("vault.list"));
       app.setCiphers(data.cipher_ids || []);
     } catch (e) {
-      app.setError(e.message);
+      // Non-critical: don't overwrite user-facing errors
     }
   }
 
-  async function addCipher() {
+  async function addCipher(t) {
     const c = app.newCipher();
     try {
       await daemon("vault.add", JSON.stringify({
@@ -159,26 +158,26 @@ function useActions() {
       app.setShowAdd(false);
       await refreshCiphers();
     } catch (e) {
-      app.setError(e.message);
+      app.setError(sanitizeError(e.message, t));
     }
   }
 
-  async function getCipher(id) {
+  async function getCipher(id, t) {
     try {
       const data = JSON.parse(await daemon("vault.get", JSON.stringify({ id, decrypt: true })));
       app.setViewCipher(data);
     } catch (e) {
-      app.setError(e.message);
+      app.setError(sanitizeError(e.message, t));
     }
   }
 
-  async function deleteCipher(id) {
+  async function deleteCipher(id, t) {
     try {
       await daemon("vault.delete", id);
       app.setViewCipher(null);
       await refreshCiphers();
     } catch (e) {
-      app.setError(e.message);
+      app.setError(sanitizeError(e.message, t));
     }
   }
 
@@ -211,11 +210,11 @@ function LoginScreen() {
           type="password"
           placeholder={t("login.passwordPlaceholder")}
           class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3"
-          onKeyDown={onKeyUnlock}
+          onKeyDown={(e) => onKeyUnlock(e)}
           autofocus
         />
         <button
-          onClick={unlock}
+          onClick={() => unlock(t)}
           disabled={status() === "unlocking"}
           class="w-full p-3 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-medium transition-colors disabled:opacity-50"
         >
@@ -234,10 +233,11 @@ function LoginScreen() {
 
 function CipherRow(props) {
   const { getCipher } = useActions();
+  const { t } = useI18n();
   return (
     <div
       class="flex items-center justify-between p-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] cursor-pointer hover:border-[var(--color-primary)] transition-colors"
-      onClick={() => getCipher(props.id)}
+      onClick={() => getCipher(props.id, t)}
     >
       <div class="flex items-center gap-3">
         <span class="text-lg">🔑</span>
@@ -269,7 +269,7 @@ function CipherDetail() {
         <Show when={viewCipher()?.notes}><div><span class="text-[var(--color-muted)]">{t("entry.notes")}:</span> {viewCipher().notes}</div></Show>
       </div>
       <button
-        onClick={() => deleteCipher(viewCipher().id)}
+        onClick={() => deleteCipher(viewCipher().id, t)}
         class="mt-4 px-4 py-2 rounded-lg bg-red-900/30 text-red-400 hover:bg-red-900/50 text-sm transition-colors"
       >
         {t("entry.delete")}
@@ -301,7 +301,7 @@ function AddCipherForm() {
           value={newCipher().notes} onInput={e => setNewCipher({ ...newCipher(), notes: e.target.value })} />
       </div>
       <button
-        onClick={addCipher}
+        onClick={() => addCipher(t)}
         class="mt-3 w-full p-2 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-sm font-medium transition-colors"
       >
         {t("entry.add")}
@@ -325,7 +325,7 @@ function VaultView() {
           </div>
           <Show when={vaultInfo()}>
             <div class="text-xs text-[var(--color-muted)] mt-1">
-              {t(ciphers().length === 1 ? "vault.entryCount" : "vault.entryCount_plural", { count: ciphers().length })}
+              {t("vault.entryCount", { count: ciphers().length })}
             </div>
           </Show>
         </div>
@@ -347,7 +347,7 @@ function VaultView() {
             {t("vault.addEntry")}
           </button>
           <button
-            onClick={lock}
+            onClick={() => lock(t)}
             class="w-full p-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm hover:border-red-500 transition-colors"
           >
             {t("vault.lock")}
@@ -398,7 +398,7 @@ function CreateVaultScreen() {
           class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3" />
         <input id="create-confirm" type="password" placeholder={t("create.confirmPlaceholder")}
           class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3" />
-        <button onClick={createVault} disabled={status() === "creating"}
+        <button onClick={() => createVault(t)} disabled={status() === "creating"}
           class="w-full p-3 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-medium transition-colors disabled:opacity-50">
           {status() === "creating" ? t("create.creating") : t("create.submit")}
         </button>
@@ -435,7 +435,7 @@ function RecoveryScreen() {
               setStatus("unlocked");
               setCreatePassword("");
               await refreshCiphers();
-            } catch (e) { setError(e.message); setStatus("locked"); }
+            } catch (e) { setError(sanitizeError(e.message, t)); setStatus("locked"); }
           } else { setStatus("locked"); }
         }}
           class="w-full p-3 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-medium transition-colors">
@@ -464,9 +464,12 @@ function AppInner() {
     try {
       await daemon("vault.open");
     } catch (e) {
-      if (e.message.includes("not running")) {
-        setError("");
-        return;
+      if (ERROR_PATTERNS.some(({ pattern }) => pattern.test(e.message))) {
+        // Daemon not running or vault not found: show login, not error
+        if (/Cannot connect/i.test(e.message)) {
+          setError("");
+          return;
+        }
       }
       setStatus("init");
       return;

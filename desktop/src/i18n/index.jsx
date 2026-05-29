@@ -8,14 +8,17 @@
  * - Persists choice to localStorage
  */
 
-import { createSignal, createContext, useContext } from "solid-js";
+import { createSignal, createContext, useContext, batch } from "solid-js";
 
 import en from "./locales/en.json";
+
+const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
 
 /** Flatten nested JSON into dot-path keys: { a: { b: "hi" } } -> { "a.b": "hi" } */
 function flatten(obj, prefix = "") {
   const out = {};
   for (const [k, v] of Object.entries(obj)) {
+    if (k.startsWith("_")) continue; // skip _comment etc.
     const path = prefix ? `${prefix}.${k}` : k;
     if (typeof v === "object" && v !== null && !Array.isArray(v)) {
       Object.assign(out, flatten(v, path));
@@ -32,19 +35,21 @@ function interpolate(template, vars) {
   return template.replace(/\{(\w+)\}/g, (_, key) => String(vars[key] ?? ""));
 }
 
-function pickPlural(dict, key, count) {
+function pickPlural(dict, fallbackDict, key, count) {
   if (count !== undefined && count !== 1) {
-    const plural = dict[`${key}_plural`];
+    const plural = dict[`${key}_plural`] || fallbackDict[`${key}_plural`];
     if (plural) return plural;
   }
-  return dict[key] ?? key;
+  return dict[key] || fallbackDict[key] || key;
 }
 
 const STORAGE_KEY = "idtty-locale";
+const enDict = flatten(en);
 
 function getStoredLocale() {
   try {
-    return localStorage.getItem(STORAGE_KEY) || "en";
+    const raw = localStorage.getItem(STORAGE_KEY) || "en";
+    return LOCALE_RE.test(raw) ? raw : "en";
   } catch {
     return "en";
   }
@@ -56,46 +61,54 @@ const I18nContext = createContext();
 
 export function I18nProvider(props) {
   const [locale, setLocaleSignal] = createSignal(getStoredLocale());
-  const [dict, setDict] = createSignal(flatten(en));
+  const [dict, setDict] = createSignal(enDict);
 
-  const loaded = new Map([["en", flatten(en)]]);
+  const loaded = new Map([["en", enDict]]);
 
   async function setLocale(l) {
+    if (l === locale()) return;
+
     if (l === "en") {
-      setDict(loaded.get("en"));
-      setLocaleSignal(l);
-      try { localStorage.setItem(STORAGE_KEY, l); } catch { /* noop */ }
+      batch(() => {
+        setDict(enDict);
+        setLocaleSignal("en");
+      });
+      try { localStorage.setItem(STORAGE_KEY, "en"); } catch { /* noop */ }
       return;
     }
+
     if (!loaded.has(l)) {
       try {
         const mod = await import(`./locales/${l}.json`);
         const flat = flatten(mod.default ?? mod);
         loaded.set(l, flat);
-        setDict(flat);
+        // Guard: if locale changed again while we were loading, bail
+        if (locale() !== l) return;
+        batch(() => {
+          setDict(flat);
+          setLocaleSignal(l);
+        });
       } catch {
         console.warn(`Locale "${l}" not found, keeping current`);
         return;
       }
     } else {
-      setDict(loaded.get(l));
+      batch(() => {
+        setDict(loaded.get(l));
+        setLocaleSignal(l);
+      });
     }
-    setLocaleSignal(l);
     try { localStorage.setItem(STORAGE_KEY, l); } catch { /* noop */ }
   }
 
   function t(key, vars) {
     const count = typeof vars?.count === "number" ? vars.count : undefined;
-    const template = pickPlural(dict(), key, count);
+    const template = pickPlural(dict(), enDict, key, count);
     return interpolate(template, vars);
   }
 
-  function availableLocales() {
-    return Array.from(loaded.keys());
-  }
-
   return (
-    <I18nContext.Provider value={{ t, locale, setLocale, availableLocales }}>
+    <I18nContext.Provider value={{ t, locale, setLocale }}>
       {props.children}
     </I18nContext.Provider>
   );
