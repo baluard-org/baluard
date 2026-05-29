@@ -69,13 +69,21 @@ async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
         std::fs::remove_file(socket_path)?;
     }
 
-    // Set restrictive umask BEFORE bind so socket is born with 0600.
-    #[cfg(unix)]
-    {
-        let _prev = unsafe { libc::umask(0o177) }; // lgtm[cpp/overflow]
-    }
-
-    let listener = UnixListener::bind(socket_path)?;
+    // Set restrictive umask BEFORE bind so socket is born with 0600,
+    // then restore original umask so subsequent mkdir calls keep the execute bit.
+    let listener = {
+        #[cfg(unix)]
+        {
+            let prev = unsafe { libc::umask(0o177) }; // lgtm[cpp/overflow]
+            let l = UnixListener::bind(socket_path)?;
+            unsafe { libc::umask(prev); }
+            l
+        }
+        #[cfg(not(unix))]
+        {
+            UnixListener::bind(socket_path)?
+        }
+    };
 
     eprintln!("idtty-daemon listening on {socket_path} (0600)");
     eprintln!("Vault path: {vault_path}");

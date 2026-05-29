@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, WindowEvent};
+use tauri::{Manager, State, WindowEvent};
 use tauri_plugin_shell::ShellExt;
 
 /// Maximum response size (5MB — daemon caps at 4MB, plus headroom)
@@ -106,6 +106,12 @@ fn decode_varint(data: &[u8]) -> Result<(u64, usize), String> {
 
 #[cfg(unix)]
 fn send_request(action: &str, payload: &str) -> Result<String, String> {
+    send_request_with_token(action, payload, "").map(|(data, _)| data)
+}
+
+/// Send a Protobuf request with session token. Returns (payload, optional_new_token).
+#[cfg(unix)]
+fn send_request_with_token(action: &str, payload: &str, token: &str) -> Result<(String, Option<String>), String> {
     use std::os::unix::net::UnixStream;
 
     let socket = default_socket_path();
@@ -123,7 +129,7 @@ fn send_request(action: &str, payload: &str) -> Result<String, String> {
     let req = GatewayRequest {
         action: action.to_string(),
         payload: payload.to_string(),
-        session_token: String::new(),
+        session_token: token.to_string(),
     };
     let body = req.encode_to_vec();
 
@@ -157,8 +163,14 @@ fn send_request(action: &str, payload: &str) -> Result<String, String> {
 
     let resp = GatewayResponse::decode(&buf[offset..end]).map_err(|e| format!("Decode: {e}"))?;
     log::debug!("daemon -> action={} success={}", action, resp.success);
+
     if resp.success {
-        Ok(resp.payload)
+        let new_token = if resp.session_token.is_empty() {
+            None
+        } else {
+            Some(resp.session_token)
+        };
+        Ok((resp.payload, new_token))
     } else {
         log::warn!("daemon error: action={} error={}", action, resp.error_message);
         Err(resp.error_message)
@@ -166,7 +178,7 @@ fn send_request(action: &str, payload: &str) -> Result<String, String> {
 }
 
 #[cfg(not(unix))]
-fn send_request(_action: &str, _payload: &str) -> Result<String, String> {
+fn send_request_with_token(_action: &str, _payload: &str, _token: &str) -> Result<(String, Option<String>), String> {
     Err("IPC not yet implemented on this platform".into())
 }
 
@@ -180,13 +192,29 @@ struct DaemonResponse {
 }
 
 #[tauri::command]
-fn daemon_request(action: String, payload: String) -> DaemonResponse {
-    match send_request(&action, &payload) {
-        Ok(data) => DaemonResponse {
-            success: true,
-            payload: data,
-            error: String::new(),
-        },
+fn daemon_request(
+    action: String,
+    payload: String,
+    token: State<SessionToken>,
+) -> DaemonResponse {
+    // Inject stored session token into request
+    let stored_token = token.0.lock().unwrap().clone().unwrap_or_default();
+
+    match send_request_with_token(&action, &payload, &stored_token) {
+        Ok((data, new_token)) => {
+            // On lock, clear the session token
+            if action == "vault.lock" {
+                *token.0.lock().unwrap() = None;
+            } else if let Some(t) = new_token {
+                // Store token returned by unlock/create
+                *token.0.lock().unwrap() = Some(t);
+            }
+            DaemonResponse {
+                success: true,
+                payload: data,
+                error: String::new(),
+            }
+        }
         Err(e) => DaemonResponse {
             success: false,
             payload: String::new(),
@@ -201,6 +229,9 @@ fn daemon_status() -> bool {
     send_request("ping", "").is_ok()
 }
 
+/// Stored session token obtained from daemon at unlock/create.
+struct SessionToken(Mutex<Option<String>>);
+
 // ── App entry ──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -208,6 +239,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(Mutex::new(None::<Daemon>))
+        .manage(SessionToken(Mutex::new(None::<String>)))
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
