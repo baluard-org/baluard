@@ -71,3 +71,4 @@ idtty-vault/
 *.xpi
 docs/reviews/
 .codegraph/
+bin/
