@@ -113,6 +113,10 @@ idtty/
 * **BIP-39 recovery**: Vault creation generates a recovery phrase for key recovery.
 * **CodeGraph available**: `.codegraph/` index exists for codebase navigation.
 
+## UX PRINCIPLES
+* **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden, "session token" -> invisible. Be transparent for trust, not at the expense of confusing non-tech users.
+* **Everybody-first**: Every screen must be understandable without a computer science degree. If a term needs a tooltip to explain, replace the term.
+
 ## IMPLEMENTATION STATUS
 | Component | Status |
 |-----------|--------|

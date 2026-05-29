@@ -309,7 +309,7 @@ function AddCipherForm() {
 }
 
 function VaultView() {
-  const { ciphers, vaultInfo, error, showAdd, viewCipher } = useApp();
+  const { ciphers, vaultInfo, error, showAdd, viewCipher, setShowAdd } = useApp();
   const { lock } = useActions();
   return (
     <div class="flex h-full">
@@ -335,7 +335,7 @@ function VaultView() {
 
         <div class="p-3 border-t border-[var(--color-border)] space-y-2">
           <button
-            onClick={() => useApp().setShowAdd(true)}
+            onClick={() => setShowAdd(true)}
             class="w-full p-2 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-sm font-medium transition-colors"
           >
             + Add Cipher
