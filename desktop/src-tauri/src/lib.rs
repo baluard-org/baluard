@@ -229,10 +229,14 @@ pub fn run() {
                     // Default vault path lives alongside the socket.
                     let socket_dir = default_socket_path().parent()
                         .expect("socket path has no parent").to_path_buf();
-                    let _vault_path = socket_dir.join("vault");
+                    let vault_path = socket_dir.join("vault");
 
                     let sidecar_command = app.shell().sidecar("idtty-daemon")
                         .map_err(|e| format!("Sidecar not found: {e}"))?;
+
+                    let sidecar_command = sidecar_command
+                        .args(["--vault-path", vault_path.to_str().unwrap_or("."),
+                               "--socket", default_socket_path().to_str().unwrap_or("/tmp/idtty.sock")]);
 
                     let (_rx, child) = sidecar_command.spawn()
                         .map_err(|e| format!("Failed to start daemon: {e}"))?;
