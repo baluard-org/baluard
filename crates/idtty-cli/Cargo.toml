@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 description = "CLI for IDtty password manager"
 
+[[bin]]
+name = "idtty"
+path = "src/main.rs"
+
 [dependencies]
 idtty-core = { path = "../idtty-core", features = ["git-sync"] }
 clap.workspace = true

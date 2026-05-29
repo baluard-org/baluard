@@ -11,6 +11,7 @@ const [viewCipher, setViewCipher] = createSignal(null);
 const [newCipher, setNewCipher] = createSignal({
   name: "", username: "", password: "", uri: "", notes: "",
 });
+const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
 
 // ── Daemon proxy ──
 async function daemon(action, payload = "") {
@@ -56,6 +57,25 @@ async function lock() {
     setShowAdd(false);
   } catch (e) {
     setError(e.message);
+  }
+}
+
+async function createVault() {
+  const pw = document.getElementById("create-password")?.value;
+  const confirm = document.getElementById("create-confirm")?.value;
+  if (!pw || pw.length < 8) { setError("Password must be at least 8 characters"); return; }
+  if (pw !== confirm) { setError("Passwords do not match"); return; }
+  setStatus("creating");
+  setError("");
+  try {
+    const result = JSON.parse(await daemon("vault.create", JSON.stringify({
+      password: pw, profile: "desktop_std",
+    })));
+    setRecoveryPhrase(result.recovery_phrase);
+    setStatus("recovery");
+  } catch (e) {
+    setError(e.message);
+    setStatus("init");
   }
 }
 
@@ -139,6 +159,12 @@ function LoginScreen() {
           class="w-full p-3 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-medium transition-colors disabled:opacity-50"
         >
           {status() === "unlocking" ? "Unlocking..." : "Unlock"}
+        </button>
+        <button
+          onClick={() => setStatus("init")}
+          class="w-full mt-2 p-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors"
+        >
+          Create new vault
         </button>
       </div>
     </div>
@@ -277,10 +303,82 @@ function VaultView() {
   );
 }
 
+// ── Create / Recovery Views ──
+
+function CreateVaultScreen() {
+  return (
+    <div class="flex items-center justify-center h-full">
+      <div class="w-96 p-6 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
+        <div class="text-center mb-6">
+          <div class="text-3xl mb-2">🔐</div>
+          <h1 class="text-xl font-semibold">Create Vault</h1>
+          <p class="text-sm text-[var(--color-muted)] mt-1">Set a master password for your new vault</p>
+        </div>
+        <Show when={error()}>
+          <div class="mb-3 p-2 rounded bg-red-900/30 text-red-400 text-sm">{error()}</div>
+        </Show>
+        <input id="create-password" type="password" placeholder="Master password (8+ chars)"
+          class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3" />
+        <input id="create-confirm" type="password" placeholder="Confirm password"
+          class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3" />
+        <button onClick={createVault} disabled={status() === "creating"}
+          class="w-full p-3 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-medium transition-colors disabled:opacity-50">
+          {status() === "creating" ? "Creating vault..." : "Create Vault"}
+        </button>
+        <button onClick={() => setStatus("locked")}
+          class="w-full mt-2 p-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors">
+          Already have a vault
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RecoveryScreen() {
+  return (
+    <div class="flex items-center justify-center h-full">
+      <div class="w-96 p-6 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
+        <div class="text-center mb-4">
+          <div class="text-3xl mb-2">📋</div>
+          <h1 class="text-xl font-semibold">Recovery Phrase</h1>
+          <p class="text-sm text-red-400 mt-1 font-medium">Write this down. It will NOT be shown again.</p>
+        </div>
+        <div class="p-4 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm leading-relaxed break-words select-all mb-4">
+          {recoveryPhrase()}
+        </div>
+        <button onClick={async () => {
+          setStatus("unlocking");
+          const pw = document.getElementById("create-password")?.value;
+          if (pw) {
+            try {
+              await daemon("vault.unlock", pw);
+              setStatus("unlocked");
+              await refreshCiphers();
+            } catch (e) { setError(e.message); setStatus("locked"); }
+          } else { setStatus("locked"); }
+        }}
+          class="w-full p-3 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-medium transition-colors">
+          I've saved my recovery phrase
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Root App ──
 export default function App() {
   onMount(async () => {
-    try { await daemon("vault.open"); } catch {}
+    try {
+      await daemon("vault.open");
+    } catch (e) {
+      // Vault not initialized? Offer creation
+      if (e.message.includes("not running") || e.message.includes("connect")) {
+        setError("");
+        return; // daemon down, just show login
+      }
+      setStatus("init");
+      return;
+    }
     try {
       const info = JSON.parse(await daemon("vault.info"));
       if (info.unlocked) {
@@ -292,7 +390,15 @@ export default function App() {
   });
 
   return (
-    <Show when={status() === "unlocked"} fallback={<LoginScreen />}>
+    <Show when={status() === "unlocked"} fallback={
+      <Show when={status() === "init" || status() === "creating"} fallback={
+        <Show when={status() === "recovery"} fallback={<LoginScreen />}>
+          <RecoveryScreen />
+        </Show>
+      }>
+        <CreateVaultScreen />
+      </Show>
+    }>
       <VaultView />
     </Show>
   );

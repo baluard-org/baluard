@@ -244,6 +244,16 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
+        "vault.create" => {
+            if req.payload.is_empty() {
+                return err_response("Missing vault creation JSON in payload");
+            }
+            match state.create_vault(&req.payload).await {
+                Ok(json) => GatewayResponse { success: true, error_message: String::new(), payload: json },
+                Err(e) => err_response(e),
+            }
+        }
+
         // ── Sync ──
         "sync.init" => {
             match sync_init(&state.vault_path) {

@@ -218,6 +218,97 @@ impl VaultState {
         });
         Ok(json.to_string())
     }
+
+    /// Create a new vault at the configured vault_path.
+    /// Input JSON: {"password": "...", "profile": "mobile_low"}
+    /// Returns JSON with vault_id, device_id, recovery_phrase.
+    pub async fn create_vault(&self, payload_json: &str) -> Result<String, String> {
+        let v: serde_json::Value = serde_json::from_str(payload_json)
+            .map_err(|e| format!("Invalid JSON: {e}"))?;
+        let password = v["password"].as_str()
+            .ok_or("Missing 'password' field")?;
+        let profile_str = v["profile"].as_str().unwrap_or("mobile_low");
+        let profile = match profile_str {
+            "mobile_low" => idtty_core::types::KdfProfile::MobileLow,
+            "desktop_std" => idtty_core::types::KdfProfile::DesktopStd,
+            "desktop_high" => idtty_core::types::KdfProfile::DesktopHigh,
+            _ => return Err(format!("Unknown profile: {profile_str}. Use mobile_low, desktop_std, or desktop_high")),
+        };
+
+        // Run creation ceremony (CPU-heavy, no lock needed)
+        let result = idtty_core::vault::creation::create_vault_ceremony(password, profile)
+            .map_err(|e| format!("Vault creation failed: {e}"))?;
+
+        let path = &self.vault_path;
+        std::fs::create_dir_all(path.join("ciphers"))
+            .map_err(|e| format!("mkdir ciphers: {e}"))?;
+        std::fs::create_dir_all(path.join("meta/keywrap"))
+            .map_err(|e| format!("mkdir keywrap: {e}"))?;
+        std::fs::create_dir_all(path.join("meta/sequences"))
+            .map_err(|e| format!("mkdir sequences: {e}"))?;
+
+        // Device registry
+        let mut registry = idtty_core::devices::DeviceRegistry::new();
+        let pub_enc = x25519_dalek::PublicKey::from(&result.device_x25519_secret);
+        let verifying = result.device_ed25519_signing.verifying_key();
+        registry.enroll(
+            "this-device".into(),
+            pub_enc.to_bytes(),
+            verifying.to_bytes(),
+        ).map_err(|e| format!("Device enrollment: {e}"))?;
+        std::fs::write(path.join("meta/devices.json"), serde_json::to_string_pretty(&registry).unwrap())
+            .map_err(|e| format!("Write devices: {e}"))?;
+
+        // KDF params
+        std::fs::write(path.join("meta/kdf-params.json"), serde_json::to_string_pretty(&result.kdf_params).unwrap())
+            .map_err(|e| format!("Write kdf-params: {e}"))?;
+
+        // Keywrap
+        let (eph_pub, ct, tag) = &result.wrapped_root_key;
+        let keywrap_data = serde_json::json!({
+            "device_id": result.device_id.to_string(),
+            "ephemeral_public": hex::encode(eph_pub),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        std::fs::write(
+            path.join(format!("meta/keywrap/{}.json", result.device_id)),
+            serde_json::to_string_pretty(&keywrap_data).unwrap(),
+        ).map_err(|e| format!("Write keywrap: {e}"))?;
+
+        // Device private key
+        let privkey_data = serde_json::json!({
+            "x25519_private": hex::encode(result.device_x25519_secret.to_bytes()),
+        });
+        std::fs::write(path.join("meta/device-privkey.json"), serde_json::to_string_pretty(&privkey_data).unwrap())
+            .map_err(|e| format!("Write privkey: {e}"))?;
+
+        // .gitignore
+        std::fs::write(
+            path.join(".gitignore"),
+            "# Secrets - never push these\nmeta/device-privkey.json\n",
+        ).map_err(|e| format!("Write gitignore: {e}"))?;
+
+        // Canaries
+        std::fs::write(path.join("meta/kek-canary.enc"), &result.kek_canary)
+            .map_err(|e| format!("Write kek-canary: {e}"))?;
+        std::fs::write(path.join("meta/rk-canary.enc"), &result.rk_canary)
+            .map_err(|e| format!("Write rk-canary: {e}"))?;
+
+        // Now open the vault so it's ready for use
+        let handle = VaultHandle::open(path)
+            .map_err(|e| format!("Open after create: {e}"))?;
+        let mut guard = self.inner.write().await;
+        *guard = Some(handle);
+
+        let response = serde_json::json!({
+            "vault_id": result.vault_id.to_string(),
+            "device_id": result.device_id.to_string(),
+            "recovery_phrase": result.recovery_phrase.phrase(),
+            "trust_fingerprint": hex::encode(result.trust_fingerprint),
+        });
+        Ok(response.to_string())
+    }
 }
 
 /// Shared vault state type.
