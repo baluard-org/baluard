@@ -49,12 +49,14 @@ idtty/
 │   ├── vault.proto             # VaultEntry, CustomField
 │   ├── space.proto
 │   └── auth.proto
-└── docs/                       # Architecture & design docs (authoritative)
-    ├── 00-progress.md
-    ├── 01-architecture-decisions.md
-    ├── 02-threat-model.md
-    ├── 03-key-lifecycle.md
-    └── 04-software-architecture.md
+├── docs/                       # Architecture & design docs (authoritative)
+│   ├── 00-progress.md
+│   ├── 01-architecture-decisions.md
+│   ├── 02-threat-model.md
+│   ├── 03-key-lifecycle.md
+│   ├── 04-software-architecture.md
+│   └── 05-dev-setup.md
+├── justfile                    # Build system (just, cargo install just)
 ```
 
 ## COMMANDS

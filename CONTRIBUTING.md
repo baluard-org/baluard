@@ -2,6 +2,18 @@
 
 Thank you for your interest in contributing!
 
+## Quick Start
+
+```bash
+cargo install just      # Build runner
+git clone https://github.com/EstebanForge/IDtty.git
+cd IDtty
+just                    # List all targets
+just check              # Full CI parity (fmt + clippy + test + build)
+```
+
+See **[docs/05-dev-setup.md](docs/05-dev-setup.md)** for prerequisites, platform-specific setup, and all build commands.
+
 ## Guidelines
 
 This document provides community guidelines for a safe, respectful, productive, and collaborative place for any person who is willing to contribute to this project. It applies to all "collaborative space", which is defined as community communications channels (such as mailing lists, submitted patches, commit comments, etc.).
@@ -16,9 +28,9 @@ Behaviour which can be reasonably considered harassment will not be tolerated.
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Make your changes
-4. Ensure tests pass (`cargo test`)
-5. Ensure no warnings (`cargo clippy --workspace -- -D warnings`)
-6. Format code (`cargo fmt --all`)
+4. Ensure tests pass (`just test`)
+5. Ensure no warnings (`just lint`)
+6. Format code (`just fmt`)
 7. Submit a pull request
 
 ## Code Standards
