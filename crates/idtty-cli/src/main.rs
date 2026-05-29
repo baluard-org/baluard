@@ -25,7 +25,7 @@ struct Cli {
     #[arg(long, global = true)]
     direct: bool,
 
-    /// Daemon socket path (default: /tmp/idtty.sock).
+    /// Daemon socket path (default: ~/.config/idtty/idtty.sock).
     #[arg(long, global = true)]
     socket: Option<String>,
 

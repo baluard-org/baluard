@@ -133,13 +133,13 @@ e2e: build-release
 	#!/usr/bin/env bash
 	set -euo pipefail
 	VAULT=$(mktemp -d)
-	CLI="target/release/{{ binary }} --vault-path $VAULT"
-	rm -f /tmp/idtty.sock /tmp/idtty.tok
-	echo "Vault: $VAULT"
+	SOCK=$(mktemp -u /tmp/idtty-test-XXXXX)
+	CLI="target/release/{{ binary }} --vault-path $VAULT --socket $SOCK"
+	echo "Vault: $VAULT Socket: $SOCK"
 	echo ""
 	echo "=== INIT ===" && printf "testpass123\ntestpass123\n" | target/release/{{ binary }} init --vault-path "$VAULT"
 	echo ""
-	echo "=== DAEMON ===" && target/release/{{ daemon }} --vault-path "$VAULT" &>/tmp/idtty-daemon.log & DAEMON_PID=$!; sleep 1
+	echo "=== DAEMON ===" && target/release/{{ daemon }} --vault-path "$VAULT" --socket "$SOCK" &>/tmp/idtty-daemon.log & DAEMON_PID=$!; sleep 1
 	echo "=== PING ===" && $CLI ping
 	echo ""
 	echo "=== UNLOCK ===" && $CLI unlock <<< "testpass123"
@@ -157,7 +157,7 @@ e2e: build-release
 	echo "=== LOCK ===" && $CLI lock
 	echo ""
 	kill $DAEMON_PID 2>/dev/null; wait $DAEMON_PID 2>/dev/null || true
-	rm -f /tmp/idtty.sock /tmp/idtty.tok
+	rm -f "$SOCK" "${SOCK%.sock}.tok"
 	rm -rf "$VAULT"
 	echo ""
 	echo "E2E passed."

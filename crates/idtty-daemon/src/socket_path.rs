@@ -1,8 +1,7 @@
 //! Socket path discovery for idtty IPC.
 //!
-//! Platform-aware default socket path:
-//! - Linux: $XDG_RUNTIME_DIR/idtty.sock or /tmp/idtty.sock
-//! - macOS: $HOME/Library/Application Support/idtty/idtty.sock
+//! All platforms use ~/.config/idtty/ for socket and config.
+//! - Unix: ~/.config/idtty/idtty.sock
 //! - Windows: \\.\pipe\idtty (Named Pipes)
 
 use std::path::PathBuf;
@@ -10,41 +9,27 @@ use std::path::PathBuf;
 /// Default socket filename.
 const SOCKET_NAME: &str = "idtty.sock";
 
+/// Get the base config directory: ~/.config/idtty/
+pub fn config_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(".config").join("idtty");
+    }
+    PathBuf::from("/tmp").join("idtty")
+}
+
 /// Get the default socket path for this platform.
 pub fn default_socket_path() -> PathBuf {
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     {
-        // XDG_RUNTIME_DIR is the canonical location (e.g. /run/user/1000)
-        if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
-            let dir = PathBuf::from(xdg);
-            if dir.is_dir() {
-                return dir.join(SOCKET_NAME);
-            }
-        }
-        // Fallback to /tmp (exists on all Linux systems)
-        PathBuf::from("/tmp").join(SOCKET_NAME)
+        config_dir().join(SOCKET_NAME)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(windows)]
     {
-        // macOS: ~/Library/Application Support/idtty/
-        if let Ok(home) = std::env::var("HOME") {
-            let dir = PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("idtty");
-            return dir.join(SOCKET_NAME);
-        }
-        PathBuf::from("/tmp").join(SOCKET_NAME)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        // Windows Named Pipes live in a virtual filesystem
         PathBuf::from(r"\\.\pipe\idtty")
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(unix, windows)))]
     {
         PathBuf::from("/tmp").join(SOCKET_NAME)
     }

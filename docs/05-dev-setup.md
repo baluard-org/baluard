@@ -111,7 +111,7 @@ docs/                  # Architecture & design docs
 
 ### Key flows
 
-- **CLI -> Daemon**: CLI sends Protobuf over Unix socket. Session token persisted to `/tmp/idtty.tok`.
+- **CLI -> Daemon**: CLI sends Protobuf over Unix socket. Session token persisted to `~/.config/idtty/idtty.tok`.
 - **CLI -> Direct**: `--direct` flag loads `idtty-core` in-process. No daemon. State dies with the process.
 - **Desktop -> Daemon**: Tauri app spawns daemon as sidecar via `tauri_plugin_shell`. Communicates over the same Unix socket.
 - **Daemon -> Core**: Daemon links `idtty-core` directly. All crypto happens in-process.

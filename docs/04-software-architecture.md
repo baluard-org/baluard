@@ -87,7 +87,7 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 **Current state**: CLI dual-mode (daemon-first via socket + `--direct` fallback). Daemon fully implemented with vault state, sync, devices. Tauri desktop scaffolded with daemon proxy and system tray.
 
 **Implemented**:
-- **Rust Daemon (`idtty-daemon`)**: Started by the Tauri tray wrapper on boot. Unlocks the vault directly in `zeroize`-protected memory. Opens a platform-aware Unix domain socket (Linux: `$XDG_RUNTIME_DIR/idtty.sock`, macOS: `~/Library/Application Support/idtty/idtty.sock`) with 0600 permissions (set via umask before bind to avoid TOCTOU race). Listens for length-delimited Protobuf requests via tokio async I/O. SO_PEERCRED peer UID verification on Linux.
+- **Rust Daemon (`idtty-daemon`)**: Started by the Tauri tray wrapper on boot. Unlocks the vault directly in `zeroize`-protected memory. Opens a platform-aware Unix domain socket (Linux: `~/.config/idtty/idtty.sock`, macOS: `~/.config/idtty/idtty.sock`) with 0600 permissions (set via umask before bind to avoid TOCTOU race). Listens for length-delimited Protobuf requests via tokio async I/O. SO_PEERCRED peer UID verification on Linux.
 - **CLI (`idtty-cli`)**: Dual-mode binary. Default: compiles flags into Protobuf, transmits over socket, prints response. `--direct` fallback links idtty-core in-process. `--socket <path>` for custom daemon path.
 - **Tauri v2 UI**: SolidJS/Tailwind v4 webview scaffolded via `tauri init`. `daemon_request` Tauri command proxies to daemon via Protobuf over Unix socket. System tray with Show/Quit menu. Login screen + vault view with cipher CRUD. Dark theme. Rust edition 2024.
 

@@ -11,7 +11,7 @@
 |-----------------|-----------------|----------------|-------------------|
 | A — Honest-but-curious Git Provider | Passive read of all repository objects | Metadata inference (bucket distribution), timing analysis | Cannot read entry plaintexts. File names are hashed; entry sizes are uniform buckets (1KB, 8KB, 64KB, 1MB). |
 | B — Malicious Git Provider | Active: can modify refs, inject corrupted index | Rollback attacks, corrupted index injection | index.enc auto-healed locally by idtty-core. Rebuilt from entries if corrupted or conflicted. Unsigned commits rejected. |
-| C — Local Process (on same device) | Read `/tmp/idtty.sock` or pipes | Intercept IPC commands, steal secrets | Mitigated via `0600` socket permissions on Unix and system ACLs on Windows named pipes. Session token required for all cipher/sync operations (R7-2). |
+| C — Local Process (on same device) | Read `~/.config/idtty/idtty.sock` or pipes | Intercept IPC commands, steal secrets | Mitigated via `0600` socket permissions on Unix and system ACLs on Windows named pipes. Session token required for all cipher/sync operations (R7-2). |
 | D — Local Attacker (physical disk access) | Read stored files directly | Offline brute force or cache recovery | Files are AES-GCM encrypted. Keys are isolated in host OS Keyring or `zeroize`-protected memory. |
 | E — Malware with OS root privileges | Full process memory interception | Dump memory, steal secrets | `zeroize`-protected memory with `mlock` guards prevents standard paging and core dump leakage. Hardened boundary. Key material mlock'd to prevent swap persistence (R7-3). |
 | F — Evicted Space Member | Possesses historical local git checkout | Read new entries or make unauthorized commits | Rotated Space Group Key renders future additions unreadable. OAuth token revoked, blocking pushes to Git provider. |
@@ -27,7 +27,7 @@
 
 ### T2: Local IPC Interception
 - **Threat**: Another application on the same machine connects to the daemon and requests secrets.
-- **Control**: Sockets at `/tmp/idtty.sock` are locked to `0600` permissions, allowing only the current user's process to connect. On Windows, Named Pipes use restrictive security descriptors (ACLs). Peer credential verification (SO_PEERCRED on Linux, getpeereid on macOS) rejects connections from other UIDs.
+- **Control**: Sockets at `~/.config/idtty/idtty.sock` are locked to `0600` permissions, allowing only the current user's process to connect. On Windows, Named Pipes use restrictive security descriptors (ACLs). Peer credential verification (SO_PEERCRED on Linux, getpeereid on macOS) rejects connections from other UIDs.
 - **R7-2 Enhancement**: After unlock, the daemon generates a random 256-bit session token. All subsequent requests for cipher data, sync operations, and device listing must include this token. Without it, the daemon rejects the request. This prevents any same-UID process from extracting secrets after unlock without having participated in the unlock exchange.
 
 ### T3: JIT Autofill Hook Timing Attacks

@@ -58,36 +58,17 @@ impl Drop for Daemon {
 
 #[cfg(unix)]
 fn default_socket_path() -> PathBuf {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
-            let dir = PathBuf::from(xdg);
-            if dir.is_dir() {
-                return dir.join("idtty.sock");
-            }
-        }
-        PathBuf::from("/tmp/idtty.sock")
-    }
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     {
         if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("idtty")
-                .join("idtty.sock");
+            return PathBuf::from(home).join(".config").join("idtty").join("idtty.sock");
         }
-        PathBuf::from("/tmp/idtty.sock")
+        PathBuf::from("/tmp/idtty/idtty.sock")
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(unix))]
     {
-        PathBuf::from("/tmp/idtty.sock")
+        PathBuf::from("idtty.sock")
     }
-}
-
-#[cfg(not(unix))]
-fn default_socket_path() -> PathBuf {
-    PathBuf::from("idtty.sock")
 }
 
 // ── Wire protocol ──
@@ -242,6 +223,12 @@ pub fn run() {
                 if !daemon_running {
                     // Use tauri-plugin-shell sidecar for bundle-relative binary path.
                     // Binary must exist at src-tauri/binaries/idtty-daemon-{target-triple}
+                    //
+                    // Default vault path lives alongside the socket.
+                    let socket_dir = default_socket_path().parent()
+                        .expect("socket path has no parent").to_path_buf();
+                    let vault_path = socket_dir.join("vault");
+
                     let sidecar_command = app.shell().sidecar("idtty-daemon")
                         .map_err(|e| format!("Sidecar not found: {e}"))?;
 

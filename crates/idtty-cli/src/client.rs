@@ -14,34 +14,25 @@ use zeroize::Zeroize;
 /// Default socket filename.
 const SOCKET_NAME: &str = "idtty.sock";
 
+/// Get the base config directory: ~/.config/idtty/
+fn config_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(".config").join("idtty");
+    }
+    PathBuf::from("/tmp").join("idtty")
+}
+
 /// Get the default socket path for this platform.
 fn default_socket_path() -> PathBuf {
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     {
-        if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
-            let dir = PathBuf::from(xdg);
-            if dir.is_dir() {
-                return dir.join(SOCKET_NAME);
-            }
-        }
-        PathBuf::from("/tmp").join(SOCKET_NAME)
+        config_dir().join(SOCKET_NAME)
     }
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("idtty")
-                .join(SOCKET_NAME);
-        }
-        PathBuf::from("/tmp").join(SOCKET_NAME)
-    }
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     {
         PathBuf::from(r"\\.\pipe\idtty")
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(unix, windows)))]
     {
         PathBuf::from("/tmp").join(SOCKET_NAME)
     }

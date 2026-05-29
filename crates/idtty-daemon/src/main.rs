@@ -59,6 +59,11 @@ async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
         VaultState::new(PathBuf::from(vault_path))
     );
 
+    // Ensure parent directory exists (~/.config/idtty/)
+    if let Some(parent) = std::path::Path::new(socket_path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
     // Clean stale socket
     if std::path::Path::new(socket_path).exists() {
         std::fs::remove_file(socket_path)?;

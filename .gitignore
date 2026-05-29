@@ -26,7 +26,6 @@ Cargo.lock
 *.dll
 *.so
 *.dylib
-/tmp/idtty.sock
 
 # ── Kotlin Multiplatform / Gradle ──
 /build/
@@ -61,9 +60,7 @@ node_modules/
 *.p12
 *.pfx
 *.jks
-idtty-vault/
-
-# ── Build & Store Artifacts ──
+idtty-vault/ ──
 *.dmg
 *.msi
 *.AppImage
