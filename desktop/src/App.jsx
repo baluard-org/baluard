@@ -60,6 +60,7 @@ function AppProvider(props) {
   // View/Form states
   const [activePane, setActivePane] = createSignal("welcome"); // 'welcome', 'detail', 'add', 'edit'
   const [viewCipher, setViewCipher] = createSignal(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = createSignal(false);
   
   // New / Edited entry buffers
   const [newCipher, setNewCipher] = createSignal({
@@ -88,6 +89,7 @@ function AppProvider(props) {
     searchQuery, setSearchQuery,
     activePane, setActivePane,
     viewCipher, setViewCipher,
+    showDeleteConfirm, setShowDeleteConfirm,
     newCipher, setNewCipher,
     recoveryPhrase, setRecoveryPhrase,
     createPassword, setCreatePassword,
@@ -147,6 +149,7 @@ function useActions() {
       app.setVaultInfo(null);
       app.setViewCipher(null);
       app.setActivePane("welcome");
+      app.setShowDeleteConfirm(false);
     } catch (e) {
       app.setError(sanitizeError(e.message, t));
     }
@@ -266,6 +269,7 @@ function useActions() {
       await daemon("vault.delete", id);
       app.setViewCipher(null);
       app.setActivePane("welcome");
+      app.setShowDeleteConfirm(false);
       await refreshCiphers();
     } catch (e) {
       app.setError(sanitizeError(e.message, t));
@@ -290,13 +294,14 @@ function getCuratedColor(name) {
   return colors[charCodeSum % colors.length];
 }
 
+// Monogram generator
 function getDomainInitials(name) {
   if (!name) return "?";
   let cleanName = name.replace(/^(https?:\/\/)?(www\.)?/, "");
   return cleanName.charAt(0).toUpperCase();
 }
 
-// Floating Theme Selector for lock/create screens
+// Theme Selector
 function ThemeToggleFloating() {
   const { theme, setTheme } = useApp();
   return (
@@ -313,6 +318,74 @@ function ThemeToggleFloating() {
         </Show>
       </button>
     </div>
+  );
+}
+
+// Keyboard accessible Delete Confirmation Modal
+function DeleteConfirmModal() {
+  const { viewCipher, setShowDeleteConfirm, showDeleteConfirm } = useApp();
+  const { deleteCipher } = useActions();
+  const { t } = useI18n();
+
+  let cancelBtnRef;
+  let deleteBtnRef;
+
+  // Auto focus cancel button on open (prevention)
+  createEffect(() => {
+    if (showDeleteConfirm()) {
+      setTimeout(() => cancelBtnRef?.focus(), 50);
+    }
+  });
+
+  // Modal navigation via Left/Right Arrow or Tab
+  function handleKeyDown(e) {
+    if (e.key === "Escape") {
+      setShowDeleteConfirm(false);
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Tab") {
+      e.preventDefault();
+      if (document.activeElement === cancelBtnRef) {
+        deleteBtnRef?.focus();
+      } else {
+        cancelBtnRef?.focus();
+      }
+    }
+  }
+
+  return (
+    <Show when={showDeleteConfirm()}>
+      <div 
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+        onKeyDown={handleKeyDown}
+      >
+        <div class="w-full max-w-sm p-6 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative animate-scale-in text-center">
+          <div class="w-12 h-12 rounded-full bg-red-950/20 text-red-500 border border-red-900/30 flex items-center justify-center mx-auto mb-4">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+          </div>
+          
+          <h3 class="text-lg font-bold text-[var(--color-text)]">Delete Entry?</h3>
+          <p class="text-xs text-[var(--color-muted)] mt-2 leading-relaxed px-2">
+            Are you sure you want to delete <strong class="text-[var(--color-text)] font-semibold select-all">{viewCipher()?.name}</strong>? This action cannot be undone.
+          </p>
+
+          <div class="mt-6 flex gap-3">
+            <button
+              ref={cancelBtnRef}
+              onClick={() => setShowDeleteConfirm(false)}
+              class="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold transition-all text-xs outline-none focus:ring-2 focus:ring-[var(--color-primary)] cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              ref={deleteBtnRef}
+              onClick={() => deleteCipher(viewCipher().id, t)}
+              class="flex-1 py-3 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold transition-all text-xs outline-none focus:ring-2 focus:ring-red-400 cursor-pointer"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </Show>
   );
 }
 
@@ -503,8 +576,7 @@ function CopyableField(props) {
 }
 
 function CipherDetail() {
-  const { viewCipher, setViewCipher, setActivePane, setNewCipher } = useApp();
-  const { deleteCipher } = useActions();
+  const { viewCipher, setViewCipher, setActivePane, setNewCipher, setShowDeleteConfirm } = useApp();
   const { t } = useI18n();
 
   const [revealPass, setRevealPass] = createSignal(false);
@@ -611,7 +683,7 @@ function CipherDetail() {
           Edit
         </button>
         <button
-          onClick={() => deleteCipher(viewCipher().id, t)}
+          onClick={() => setShowDeleteConfirm(true)}
           class="py-3 px-4 rounded-xl bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
@@ -852,6 +924,7 @@ function VaultView() {
 
   return (
     <div class="flex h-full overflow-hidden select-none">
+      <DeleteConfirmModal />
       
       {/* ── Column 1: Left Navigation Sidebar ── */}
       <div class="w-[260px] bg-[var(--color-sidebar)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0">
