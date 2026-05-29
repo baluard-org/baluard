@@ -14,12 +14,28 @@ use zeroize::Zeroize;
 /// Default socket filename.
 const SOCKET_NAME: &str = "idtty.sock";
 
-/// Get the base config directory: ~/.config/idtty/
+/// Get the base config directory.
+/// Unix: ~/.config/idtty/
+/// Windows: %APPDATA%\idtty\
 fn config_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".config").join("idtty");
+    #[cfg(unix)]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(".config").join("idtty");
+        }
+        PathBuf::from("/tmp").join("idtty")
     }
-    PathBuf::from("/tmp").join("idtty")
+    #[cfg(windows)]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            return PathBuf::from(appdata).join("idtty");
+        }
+        PathBuf::from("C:\\ProgramData").join("idtty")
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        PathBuf::from("/tmp").join("idtty")
+    }
 }
 
 /// Get the default socket path for this platform.
