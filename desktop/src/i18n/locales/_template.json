@@ -1,0 +1,65 @@
+{
+  "_comment": "Copy this file, rename to your language code (e.g. es.json, fr.json, de.json), and translate the values. Keep the keys exactly as they are. Submit a PR to desktop/src/i18n/locales/.",
+
+  "app": {
+    "name": "IDtty"
+  },
+  "login": {
+    "title": "IDtty",
+    "subtitle": "ENTER_MASTER_PASSWORD",
+    "passwordPlaceholder": "MASTER_PASSWORD",
+    "unlock": "UNLOCK",
+    "unlocking": "UNLOCKING...",
+    "createNew": "CREATE_NEW_VAULT"
+  },
+  "create": {
+    "title": "CREATE_VAULT",
+    "subtitle": "SET_MASTER_PASSWORD_FOR_NEW_VAULT",
+    "passwordPlaceholder": "MASTER_PASSWORD_8+",
+    "confirmPlaceholder": "CONFIRM_PASSWORD",
+    "submit": "CREATE_VAULT",
+    "creating": "CREATING_VAULT...",
+    "alreadyHaveVault": "ALREADY_HAVE_VAULT",
+    "errorMinLength": "PASSWORD_MIN_8_CHARS",
+    "errorMismatch": "PASSWORDS_DO_NOT_MATCH"
+  },
+  "recovery": {
+    "title": "RECOVERY_PHRASE",
+    "warning": "WRITE_THIS_DOWN_NOT_SHOWN_AGAIN",
+    "confirm": "SAVED_RECOVERY_PHRASE"
+  },
+  "vault": {
+    "statusUnlocked": "UNLOCKED",
+    "entryCount": "{count} ENTRY",
+    "entryCount_plural": "{count} ENTRIES",
+    "emptyList": "NO_ENTRIES_YET",
+    "addEntry": "+ ADD_ENTRY",
+    "lock": "LOCK_VAULT"
+  },
+  "entry": {
+    "addTitle": "ADD_ENTRY",
+    "namePlaceholder": "NAME",
+    "usernamePlaceholder": "USERNAME",
+    "passwordPlaceholder": "PASSWORD",
+    "uriPlaceholder": "WEBSITE",
+    "notesPlaceholder": "NOTES",
+    "add": "ADD",
+    "user": "USER",
+    "pass": "PASSWORD",
+    "uri": "WEBSITE",
+    "notes": "NOTES",
+    "delete": "DELETE",
+    "selectPrompt": "SELECT_OR_ADD_ENTRY"
+  },
+  "errors": {
+    "daemonNotRunning": "DAEMON_NOT_RUNNING",
+    "vaultNotUnlocked": "VAULT_NOT_UNLOCKED",
+    "timeout": "REQUEST_TIMED_OUT",
+    "responseTooLarge": "RESPONSE_TOO_LARGE",
+    "sessionExpired": "SESSION_EXPIRED_UNLOCK_AGAIN",
+    "integrityFailed": "DATA_INTEGRITY_CHECK_FAILED",
+    "corrupted": "VAULT_DATA_CORRUPTED",
+    "alreadyExists": "VAULT_ALREADY_EXISTS",
+    "unexpected": "UNEXPECTED_ERROR"
+  }
+}

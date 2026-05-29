@@ -1,0 +1,63 @@
+{
+  "app": {
+    "name": "IDtty"
+  },
+  "login": {
+    "title": "IDtty",
+    "subtitle": "Enter master password",
+    "passwordPlaceholder": "Master password",
+    "unlock": "Unlock",
+    "unlocking": "Unlocking...",
+    "createNew": "Create new vault"
+  },
+  "create": {
+    "title": "Create Vault",
+    "subtitle": "Set a master password for your new vault",
+    "passwordPlaceholder": "Master password (8+ chars)",
+    "confirmPlaceholder": "Confirm password",
+    "submit": "Create Vault",
+    "creating": "Creating vault...",
+    "alreadyHaveVault": "Already have a vault",
+    "errorMinLength": "Password must be at least 8 characters",
+    "errorMismatch": "Passwords do not match"
+  },
+  "recovery": {
+    "title": "Recovery Phrase",
+    "warning": "Write this down. It will NOT be shown again.",
+    "confirm": "I've saved my recovery phrase"
+  },
+  "vault": {
+    "statusUnlocked": "Unlocked",
+    "entryCount": "{count} entry",
+    "entryCount_plural": "{count} entries",
+    "emptyList": "No entries yet",
+    "addEntry": "+ Add Entry",
+    "lock": "Lock Vault"
+  },
+  "entry": {
+    "addTitle": "Add Entry",
+    "namePlaceholder": "Name",
+    "usernamePlaceholder": "Username",
+    "passwordPlaceholder": "Password",
+    "uriPlaceholder": "Website",
+    "notesPlaceholder": "Notes",
+    "add": "Add",
+    "user": "User",
+    "pass": "Password",
+    "uri": "Website",
+    "notes": "Notes",
+    "delete": "Delete",
+    "selectPrompt": "Select an entry or add a new one"
+  },
+  "errors": {
+    "daemonNotRunning": "Daemon is not running",
+    "vaultNotUnlocked": "Vault is not unlocked",
+    "timeout": "Request timed out",
+    "responseTooLarge": "Response too large",
+    "sessionExpired": "Session expired. Please unlock again.",
+    "integrityFailed": "Data integrity check failed",
+    "corrupted": "Vault data is corrupted",
+    "alreadyExists": "Vault already exists at this location",
+    "unexpected": "An unexpected error occurred"
+  }
+}

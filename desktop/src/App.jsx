@@ -1,33 +1,30 @@
-import { createSignal, onMount, Show, For, createContext, useContext, createMemo } from "solid-js";
+import { createSignal, onMount, Show, For, createContext, useContext } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { useI18n } from "./i18n/index.jsx";
 
 // ── Error sanitization (M5) ──
-// Maps raw daemon errors to user-friendly messages.
+// Maps raw daemon errors to i18n keys.
 // Unknown patterns are fully redacted (no partial leakage).
-const ERROR_MAP = [
-  { pattern: /Cannot connect/i, message: "Daemon is not running" },
-  { pattern: /Vault not/i, message: "Vault is not unlocked" },
-  { pattern: /timeout/i, message: "Request timed out" },
-  { pattern: /Frame too large/i, message: "Response too large" },
-  { pattern: /Invalid session token/i, message: "Session expired. Please unlock again." },
-  { pattern: /identity mismatch/i, message: "Data integrity check failed" },
-  { pattern: /corrupt(ed|ion)?/i, message: "Vault data is corrupted" },
-  { pattern: /already exists/i, message: "Vault already exists at this location" },
+const ERROR_PATTERNS = [
+  { pattern: /Cannot connect/i, key: "errors.daemonNotRunning" },
+  { pattern: /Vault not/i, key: "errors.vaultNotUnlocked" },
+  { pattern: /timeout/i, key: "errors.timeout" },
+  { pattern: /Frame too large/i, key: "errors.responseTooLarge" },
+  { pattern: /Invalid session token/i, key: "errors.sessionExpired" },
+  { pattern: /identity mismatch/i, key: "errors.integrityFailed" },
+  { pattern: /corrupt(ed|ion)?/i, key: "errors.corrupted" },
+  { pattern: /already exists/i, key: "errors.alreadyExists" },
 ];
 
-function sanitizeError(raw) {
-  for (const { pattern, message } of ERROR_MAP) {
-    if (pattern.test(raw)) return message;
+function sanitizeError(raw, t) {
+  for (const { pattern, key } of ERROR_PATTERNS) {
+    if (pattern.test(raw)) return t(key);
   }
-  // Dev mode: show raw error for debugging
   if (import.meta.env.DEV) return `DEBUG: ${raw}`;
-  // Production: fully redact
-  return "An unexpected error occurred";
+  return t("errors.unexpected");
 }
 
 // ── App-wide state context (M4) ──
-// All signals live in a context provider, not at module scope.
-// This makes the app safe for multi-window and testable.
 
 const AppContext = createContext();
 
@@ -73,7 +70,7 @@ function useApp() {
 async function daemon(action, payload = "") {
   const res = await invoke("daemon_request", { action, payload });
   if (!res.success) {
-    throw new Error(sanitizeError(res.error));
+    throw new Error(res.error);
   }
   return res.payload;
 }
@@ -117,10 +114,11 @@ function useActions() {
   }
 
   async function createVault() {
+    const { t } = useI18n();
     const pw = app.createPassword();
     const confirm = document.getElementById("create-confirm")?.value;
-    if (!pw || pw.length < 8) { app.setError("Password must be at least 8 characters"); return; }
-    if (pw !== confirm) { app.setError("Passwords do not match"); return; }
+    if (!pw || pw.length < 8) { app.setError(t("create.errorMinLength")); return; }
+    if (pw !== confirm) { app.setError(t("create.errorMismatch")); return; }
     app.setStatus("creating");
     app.setError("");
     try {
@@ -192,16 +190,18 @@ function useActions() {
 }
 
 // ── Views ──
+
 function LoginScreen() {
   const { error, status } = useApp();
   const { onKeyUnlock, unlock, setLoginPasswordRef } = useActions();
+  const { t } = useI18n();
   return (
     <div class="flex items-center justify-center h-full">
       <div class="w-80 p-6 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
         <div class="text-center mb-6">
           <div class="text-3xl mb-2">🔒</div>
-          <h1 class="text-xl font-semibold">IDtty</h1>
-          <p class="text-sm text-[var(--color-muted)] mt-1">Enter master password</p>
+          <h1 class="text-xl font-semibold">{t("login.title")}</h1>
+          <p class="text-sm text-[var(--color-muted)] mt-1">{t("login.subtitle")}</p>
         </div>
         <Show when={error()}>
           <div class="mb-3 p-2 rounded bg-red-900/30 text-red-400 text-sm">{error()}</div>
@@ -209,7 +209,7 @@ function LoginScreen() {
         <input
           ref={setLoginPasswordRef}
           type="password"
-          placeholder="Master password"
+          placeholder={t("login.passwordPlaceholder")}
           class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3"
           onKeyDown={onKeyUnlock}
           autofocus
@@ -219,13 +219,13 @@ function LoginScreen() {
           disabled={status() === "unlocking"}
           class="w-full p-3 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-medium transition-colors disabled:opacity-50"
         >
-          {status() === "unlocking" ? "Unlocking..." : "Unlock"}
+          {status() === "unlocking" ? t("login.unlocking") : t("login.unlock")}
         </button>
         <button
           onClick={() => useApp().setStatus("init")}
           class="w-full mt-2 p-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors"
         >
-          Create new vault
+          {t("login.createNew")}
         </button>
       </div>
     </div>
@@ -241,7 +241,7 @@ function CipherRow(props) {
     >
       <div class="flex items-center gap-3">
         <span class="text-lg">🔑</span>
-        <span class="text-sm font-mono text-[var(--color-muted)]">{props.id.slice(0, 8)}</span>
+        <span class="text-sm font-mono text-[var(--color-muted)]">{props.name || props.id.slice(0, 8)}</span>
       </div>
     </div>
   );
@@ -250,10 +250,11 @@ function CipherRow(props) {
 function CipherDetail() {
   const { viewCipher, setViewCipher } = useApp();
   const { deleteCipher } = useActions();
+  const { t } = useI18n();
   return (
     <div class="p-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
       <div class="flex items-center justify-between mb-4">
-        <h3 class="text-lg font-semibold">{viewCipher()?.name || "Cipher"}</h3>
+        <h3 class="text-lg font-semibold">{viewCipher()?.name || t("entry.addTitle")}</h3>
         <button
           onClick={() => setViewCipher(null)}
           class="text-[var(--color-muted)] hover:text-[var(--color-text)] text-xl"
@@ -262,16 +263,16 @@ function CipherDetail() {
         </button>
       </div>
       <div class="space-y-2 text-sm">
-        <Show when={viewCipher()?.username}><div><span class="text-[var(--color-muted)]">User:</span> {viewCipher().username}</div></Show>
-        <Show when={viewCipher()?.password}><div><span class="text-[var(--color-muted)]">Pass:</span> {viewCipher().password}</div></Show>
-        <Show when={viewCipher()?.uris?.length}><div><span class="text-[var(--color-muted)]">URI:</span> {viewCipher().uris[0]}</div></Show>
-        <Show when={viewCipher()?.notes}><div><span class="text-[var(--color-muted)]">Notes:</span> {viewCipher().notes}</div></Show>
+        <Show when={viewCipher()?.username}><div><span class="text-[var(--color-muted)]">{t("entry.user")}:</span> {viewCipher().username}</div></Show>
+        <Show when={viewCipher()?.password}><div><span class="text-[var(--color-muted)]">{t("entry.pass")}:</span> {viewCipher().password}</div></Show>
+        <Show when={viewCipher()?.uris?.length}><div><span class="text-[var(--color-muted)]">{t("entry.uri")}:</span> {viewCipher().uris[0]}</div></Show>
+        <Show when={viewCipher()?.notes}><div><span class="text-[var(--color-muted)]">{t("entry.notes")}:</span> {viewCipher().notes}</div></Show>
       </div>
       <button
         onClick={() => deleteCipher(viewCipher().id)}
         class="mt-4 px-4 py-2 rounded-lg bg-red-900/30 text-red-400 hover:bg-red-900/50 text-sm transition-colors"
       >
-        Delete
+        {t("entry.delete")}
       </button>
     </div>
   );
@@ -280,29 +281,30 @@ function CipherDetail() {
 function AddCipherForm() {
   const { newCipher, setNewCipher, setShowAdd } = useApp();
   const { addCipher } = useActions();
+  const { t } = useI18n();
   return (
     <div class="p-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
       <div class="flex items-center justify-between mb-4">
-        <h3 class="text-lg font-semibold">Add Cipher</h3>
+        <h3 class="text-lg font-semibold">{t("entry.addTitle")}</h3>
         <button onClick={() => setShowAdd(false)} class="text-[var(--color-muted)] hover:text-[var(--color-text)] text-xl">✕</button>
       </div>
       <div class="space-y-2">
-        <input placeholder="Name" class="w-full p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-sm outline-none focus:border-[var(--color-primary)]"
+        <input placeholder={t("entry.namePlaceholder")} class="w-full p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-sm outline-none focus:border-[var(--color-primary)]"
           value={newCipher().name} onInput={e => setNewCipher({ ...newCipher(), name: e.target.value })} />
-        <input placeholder="Username" class="w-full p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-sm outline-none focus:border-[var(--color-primary)]"
+        <input placeholder={t("entry.usernamePlaceholder")} class="w-full p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-sm outline-none focus:border-[var(--color-primary)]"
           value={newCipher().username} onInput={e => setNewCipher({ ...newCipher(), username: e.target.value })} />
-        <input placeholder="Password" type="password" class="w-full p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-sm outline-none focus:border-[var(--color-primary)]"
+        <input placeholder={t("entry.passwordPlaceholder")} type="password" class="w-full p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-sm outline-none focus:border-[var(--color-primary)]"
           value={newCipher().password} onInput={e => setNewCipher({ ...newCipher(), password: e.target.value })} />
-        <input placeholder="URI" class="w-full p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-sm outline-none focus:border-[var(--color-primary)]"
+        <input placeholder={t("entry.uriPlaceholder")} class="w-full p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-sm outline-none focus:border-[var(--color-primary)]"
           value={newCipher().uri} onInput={e => setNewCipher({ ...newCipher(), uri: e.target.value })} />
-        <input placeholder="Notes" class="w-full p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-sm outline-none focus:border-[var(--color-primary)]"
+        <input placeholder={t("entry.notesPlaceholder")} class="w-full p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-sm outline-none focus:border-[var(--color-primary)]"
           value={newCipher().notes} onInput={e => setNewCipher({ ...newCipher(), notes: e.target.value })} />
       </div>
       <button
         onClick={addCipher}
         class="mt-3 w-full p-2 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-sm font-medium transition-colors"
       >
-        Add
+        {t("entry.add")}
       </button>
     </div>
   );
@@ -311,23 +313,27 @@ function AddCipherForm() {
 function VaultView() {
   const { ciphers, vaultInfo, error, showAdd, viewCipher, setShowAdd } = useApp();
   const { lock } = useActions();
+  const { t } = useI18n();
   return (
     <div class="flex h-full">
       {/* Sidebar */}
       <div class="w-64 border-r border-[var(--color-border)] flex flex-col">
         <div class="p-4 border-b border-[var(--color-border)]">
           <div class="flex items-center justify-between">
-            <span class="text-lg font-semibold">IDtty</span>
-            <span class="text-xs text-[var(--color-success)]">● Unlocked</span>
+            <span class="text-lg font-semibold">{t("app.name")}</span>
+            <span class="text-xs text-[var(--color-success)]">● {t("vault.statusUnlocked")}</span>
           </div>
           <Show when={vaultInfo()}>
             <div class="text-xs text-[var(--color-muted)] mt-1">
-              {ciphers().length} cipher{ciphers().length !== 1 ? "s" : ""}
+              {t(ciphers().length === 1 ? "vault.entryCount" : "vault.entryCount_plural", { count: ciphers().length })}
             </div>
           </Show>
         </div>
 
         <div class="flex-1 overflow-y-auto p-3 space-y-2">
+          <Show when={ciphers().length === 0}>
+            <div class="text-sm text-[var(--color-muted)] text-center py-4">{t("vault.emptyList")}</div>
+          </Show>
           <For each={ciphers()}>
             {(id) => <CipherRow id={id} />}
           </For>
@@ -338,13 +344,13 @@ function VaultView() {
             onClick={() => setShowAdd(true)}
             class="w-full p-2 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-sm font-medium transition-colors"
           >
-            + Add Cipher
+            {t("vault.addEntry")}
           </button>
           <button
             onClick={lock}
             class="w-full p-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm hover:border-red-500 transition-colors"
           >
-            Lock Vault
+            {t("vault.lock")}
           </button>
         </div>
       </div>
@@ -362,7 +368,7 @@ function VaultView() {
         </Show>
         <Show when={!viewCipher() && !showAdd()}>
           <div class="flex items-center justify-center h-full text-[var(--color-muted)]">
-            Select a cipher or add a new one
+            {t("entry.selectPrompt")}
           </div>
         </Show>
       </div>
@@ -375,29 +381,30 @@ function VaultView() {
 function CreateVaultScreen() {
   const { error, status, setStatus, setCreatePassword } = useApp();
   const { createVault } = useActions();
+  const { t } = useI18n();
   return (
     <div class="flex items-center justify-center h-full">
       <div class="w-96 p-6 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
         <div class="text-center mb-6">
           <div class="text-3xl mb-2">🔐</div>
-          <h1 class="text-xl font-semibold">Create Vault</h1>
-          <p class="text-sm text-[var(--color-muted)] mt-1">Set a master password for your new vault</p>
+          <h1 class="text-xl font-semibold">{t("create.title")}</h1>
+          <p class="text-sm text-[var(--color-muted)] mt-1">{t("create.subtitle")}</p>
         </div>
         <Show when={error()}>
           <div class="mb-3 p-2 rounded bg-red-900/30 text-red-400 text-sm">{error()}</div>
         </Show>
-        <input id="create-password" type="password" placeholder="Master password (8+ chars)"
+        <input id="create-password" type="password" placeholder={t("create.passwordPlaceholder")}
           onInput={e => setCreatePassword(e.target.value)}
           class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3" />
-        <input id="create-confirm" type="password" placeholder="Confirm password"
+        <input id="create-confirm" type="password" placeholder={t("create.confirmPlaceholder")}
           class="w-full p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-3" />
         <button onClick={createVault} disabled={status() === "creating"}
           class="w-full p-3 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-medium transition-colors disabled:opacity-50">
-          {status() === "creating" ? "Creating vault..." : "Create Vault"}
+          {status() === "creating" ? t("create.creating") : t("create.submit")}
         </button>
         <button onClick={() => setStatus("locked")}
           class="w-full mt-2 p-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors">
-          Already have a vault
+          {t("create.alreadyHaveVault")}
         </button>
       </div>
     </div>
@@ -407,13 +414,14 @@ function CreateVaultScreen() {
 function RecoveryScreen() {
   const { recoveryPhrase, createPassword, setStatus, setError, setCreatePassword } = useApp();
   const { refreshCiphers } = useActions();
+  const { t } = useI18n();
   return (
     <div class="flex items-center justify-center h-full">
       <div class="w-96 p-6 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
         <div class="text-center mb-4">
           <div class="text-3xl mb-2">📋</div>
-          <h1 class="text-xl font-semibold">Recovery Phrase</h1>
-          <p class="text-sm text-red-400 mt-1 font-medium">Write this down. It will NOT be shown again.</p>
+          <h1 class="text-xl font-semibold">{t("recovery.title")}</h1>
+          <p class="text-sm text-red-400 mt-1 font-medium">{t("recovery.warning")}</p>
         </div>
         <div class="p-4 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm leading-relaxed break-words select-all mb-4">
           {recoveryPhrase()}
@@ -431,7 +439,7 @@ function RecoveryScreen() {
           } else { setStatus("locked"); }
         }}
           class="w-full p-3 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-medium transition-colors">
-          I've saved my recovery phrase
+          {t("recovery.confirm")}
         </button>
       </div>
     </div>
@@ -450,6 +458,7 @@ export default function App() {
 function AppInner() {
   const { setStatus, setError, setVaultInfo, status } = useApp();
   const { refreshCiphers } = useActions();
+  const { t } = useI18n();
 
   onMount(async () => {
     try {
