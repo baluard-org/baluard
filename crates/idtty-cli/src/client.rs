@@ -55,26 +55,42 @@ mod proto {
 
 use proto::{GatewayRequest, GatewayResponse};
 
-// R7-2: Session token received from daemon after unlock.
-// Stored in thread-local so all subsequent requests in this process
-// automatically include it.
-thread_local! {
-    static SESSION_TOKEN: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+// R7-2: Session token persisted to a file so it survives across CLI invocations.
+// Each `cargo run` is a separate process; thread-local storage dies with it.
+// Token file lives alongside the socket with 0600 perms.
+
+/// Get the token file path (alongside the socket).
+fn token_file_path(socket_path: Option<&str>) -> PathBuf {
+    let socket = socket_path
+        .map(PathBuf::from)
+        .unwrap_or_else(default_socket_path);
+    socket.with_extension("tok")
 }
 
-/// Set the session token (called after successful unlock/create).
-pub fn set_session_token(token: &str) {
-    SESSION_TOKEN.with(|t| *t.borrow_mut() = Some(token.to_string()));
+/// Set the session token (persist to file alongside socket).
+pub fn set_session_token(token: &str, socket_path: Option<&str>) {
+    let path = token_file_path(socket_path);
+    if let Err(e) = std::fs::write(&path, token) {
+        eprintln!("warning: could not save session token: {e}");
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
 }
 
-/// Get the current session token.
-pub fn get_session_token() -> Option<String> {
-    SESSION_TOKEN.with(|t| t.borrow().clone())
+/// Get the current session token (read from file).
+pub fn get_session_token(socket_path: Option<&str>) -> Option<String> {
+    let path = token_file_path(socket_path);
+    std::fs::read_to_string(&path).ok().filter(|t| !t.is_empty())
 }
 
 /// Clear the session token (called after lock).
-pub fn clear_session_token() {
-    SESSION_TOKEN.with(|t| *t.borrow_mut() = None);
+pub fn clear_session_token(socket_path: Option<&str>) {
+    let path = token_file_path(socket_path);
+    let _ = std::fs::remove_file(&path);
 }
 
 /// Send a request to the daemon at a specific socket path.
@@ -89,7 +105,7 @@ pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Res
     let mut req = GatewayRequest {
         action: action.to_string(),
         payload: payload.to_string(),
-        session_token: get_session_token().unwrap_or_default(),
+        session_token: get_session_token(socket_path).unwrap_or_default(),
     };
     let mut body = req.encode_to_vec();
 
@@ -131,7 +147,7 @@ pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Res
 
     // R7-2: Store session token from daemon if present
     if !response.session_token.is_empty() {
-        set_session_token(&response.session_token);
+        set_session_token(&response.session_token, socket_path);
     }
 
     Ok(response)
