@@ -42,4 +42,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Start with `just check` b
 
 ## License
 
-GPL-3.0
+[GPL-3.0](LICENSE)
