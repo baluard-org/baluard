@@ -12,6 +12,14 @@ Everything you need to build, test, and develop IDtty locally.
 | Node.js | 18+ | [nodejs.org](https://nodejs.org) |
 | npm | 9+ | bundled with Node |
 
+### macOS
+
+```bash
+brew install protobuf
+```
+
+No other extras needed. macOS uses system WebKit (WKWebView) and system libgit2/openssl are resolved via Homebrew automatically.
+
 ### Linux (Debian/Ubuntu) extras
 
 Desktop app requires WebKitGTK dev headers:
@@ -168,8 +176,8 @@ cargo build
 ### `protoc not found`
 
 ```bash
-brew install protobuf    # macOS/Linux
-# or: sudo apt install protobuf-compiler
+brew install protobuf         # macOS
+sudo apt install protobuf-compiler  # Linux
 ```
 
 ### Desktop build fails on Linux (WebKitGTK)
