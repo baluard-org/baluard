@@ -19,7 +19,9 @@ function sanitizeError(raw) {
   for (const { pattern, message } of ERROR_MAP) {
     if (pattern.test(raw)) return message;
   }
-  // Unknown error: fully redact, never surface raw daemon output
+  // Dev mode: show raw error for debugging
+  if (import.meta.env.DEV) return `DEBUG: ${raw}`;
+  // Production: fully redact
   return "An unexpected error occurred";
 }
 

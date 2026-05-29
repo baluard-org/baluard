@@ -156,9 +156,11 @@ fn send_request(action: &str, payload: &str) -> Result<String, String> {
     }
 
     let resp = GatewayResponse::decode(&buf[offset..end]).map_err(|e| format!("Decode: {e}"))?;
+    log::debug!("daemon -> action={} success={}", action, resp.success);
     if resp.success {
         Ok(resp.payload)
     } else {
+        log::warn!("daemon error: action={} error={}", action, resp.error_message);
         Err(resp.error_message)
     }
 }
@@ -210,7 +212,7 @@ pub fn run() {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
+                        .level(log::LevelFilter::Debug)
                         .build(),
                 )?;
             }
