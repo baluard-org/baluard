@@ -198,7 +198,8 @@ fn daemon_request(
     token: State<SessionToken>,
 ) -> DaemonResponse {
     // Inject stored session token into request
-    let stored_token = token.0.lock().unwrap().clone().unwrap_or_default();
+    let stored_token = token.0.lock().unwrap()
+        .as_ref().map(|z| z.as_str().to_owned()).unwrap_or_default();
 
     match send_request_with_token(&action, &payload, &stored_token) {
         Ok((data, new_token)) => {
@@ -207,7 +208,7 @@ fn daemon_request(
                 *token.0.lock().unwrap() = None;
             } else if let Some(t) = new_token {
                 // Store token returned by unlock/create
-                *token.0.lock().unwrap() = Some(t);
+                *token.0.lock().unwrap() = Some(zeroize::Zeroizing::new(t));
             }
             DaemonResponse {
                 success: true,
@@ -215,10 +216,17 @@ fn daemon_request(
                 error: String::new(),
             }
         }
-        Err(e) => DaemonResponse {
-            success: false,
-            payload: String::new(),
-            error: e,
+        Err(ref e) => {
+            // Clear stale token on session/auth errors so next request
+            // doesn't keep sending an invalid token
+            if e.contains("session token") || e.contains("locked") || e.contains("Vault is") {
+                *token.0.lock().unwrap() = None;
+            }
+            DaemonResponse {
+                success: false,
+                payload: String::new(),
+                error: e.clone(),
+            }
         },
     }
 }
@@ -230,7 +238,8 @@ fn daemon_status() -> bool {
 }
 
 /// Stored session token obtained from daemon at unlock/create.
-struct SessionToken(Mutex<Option<String>>);
+/// Zeroizes on drop for consistent security posture with the rest of the codebase.
+struct SessionToken(Mutex<Option<zeroize::Zeroizing<String>>>);
 
 // ── App entry ──
 
@@ -239,7 +248,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(Mutex::new(None::<Daemon>))
-        .manage(SessionToken(Mutex::new(None::<String>)))
+        .manage(SessionToken(Mutex::new(None::<zeroize::Zeroizing<String>>)))
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
