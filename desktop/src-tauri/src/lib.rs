@@ -230,6 +230,8 @@ pub fn run() {
                     let socket_dir = default_socket_path().parent()
                         .expect("socket path has no parent").to_path_buf();
                     let vault_path = socket_dir.join("vault");
+                    log::info!("Starting daemon with --vault-path {} --socket {}",
+                        vault_path.display(), default_socket_path().display());
 
                     let sidecar_command = app.shell().sidecar("idtty-daemon")
                         .map_err(|e| format!("Sidecar not found: {e}"))?;
