@@ -14,9 +14,13 @@ pub struct RecoveryPhrase {
 impl RecoveryPhrase {
     /// Generate a new random 24-word recovery phrase.
     pub fn generate() -> Result<Self, CryptoError> {
+        Self::generate_with_rng(&mut rand::rngs::OsRng)
+    }
+
+    /// Generate a new random 24-word recovery phrase using the provided RNG.
+    pub fn generate_with_rng<R: rand_core::RngCore>(rng: &mut R) -> Result<Self, CryptoError> {
         let mut entropy = [0u8; 32]; // 256 bits = 24 words
-        use rand::RngCore;
-        rand::rngs::OsRng.fill_bytes(&mut entropy);
+        rng.fill_bytes(&mut entropy);
         let mnemonic =
             Mnemonic::from_entropy(&entropy).map_err(|e| CryptoError::Bip39(e.to_string()))?;
         Ok(Self { mnemonic })

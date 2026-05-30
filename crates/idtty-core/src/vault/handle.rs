@@ -18,6 +18,8 @@ use crate::keys::hierarchy::{ItemKey, RootKey};
 use crate::types::{Cipher, CipherInput, KdfParams, Tier};
 use crate::vault::cipher;
 
+use zeroize::Zeroize;
+
 /// Vault session state.
 pub struct VaultHandle {
     /// Path to the vault directory on disk.
@@ -55,6 +57,13 @@ pub struct UnlockedState {
     pub item_keys: HashMap<Uuid, ItemKey>,
     /// Current key epoch (read from RK canary or envelope).
     pub current_epoch: u64,
+}
+
+impl Drop for UnlockedState {
+    fn drop(&mut self) {
+        self.session_key.zeroize();
+        self.sync_key.zeroize();
+    }
 }
 
 impl VaultHandle {
@@ -563,7 +572,7 @@ impl VaultHandle {
         Err(VaultError::NotFound("no keywrap files found".into()).into())
     }
 
-    fn derive_vault_id(kdf_params: &KdfParams) -> Uuid {
+    pub fn derive_vault_id(kdf_params: &KdfParams) -> Uuid {
         // Derive a stable UUID from the KDF salt
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();

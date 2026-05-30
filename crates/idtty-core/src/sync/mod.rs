@@ -8,6 +8,7 @@
 
 pub mod commit;
 pub mod conflict;
+pub mod credentials;
 pub mod operations;
 pub mod state_machine;
 
