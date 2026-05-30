@@ -373,7 +373,7 @@ impl VaultHandle {
         info.extend_from_slice(cipher_id.as_bytes());
 
         let hkdf = Hkdf::<Sha256>::new(None, root_key.as_bytes());
-        let mut key = [0u8; 32];
+    let mut key = [0u8; 32];
         hkdf.expand(&info, &mut key)
             .expect("32 bytes is valid output length for HKDF-SHA256");
 
@@ -381,11 +381,18 @@ impl VaultHandle {
     }
 
     /// Get a cipher (decrypts if unlocked, returns metadata only if locked).
+    /// Looks up in both active ciphers and trash.
     pub fn get_cipher(&self, cipher_id: Uuid) -> Result<CipherRead, IdttyError> {
-        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
-        if !file_path.exists() {
+        let active_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
+        let trash_path = self.path.join(format!("trash/{}.enc", cipher_id));
+
+        let file_path = if active_path.exists() {
+            active_path
+        } else if trash_path.exists() {
+            trash_path
+        } else {
             return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
-        }
+        };
 
         let envelope_bytes = std::fs::read(&file_path)?;
         let file = crate::vault::cipher::CipherFile {
@@ -423,6 +430,91 @@ impl VaultHandle {
         }
     }
 
+    /// Delete a cipher by ID. By default, moves it to trash.
+    /// If it is already in trash, deletes it permanently.
+    pub fn delete_cipher(&self, cipher_id: Uuid) -> Result<(), IdttyError> {
+        let active_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
+        let trash_path = self.path.join(format!("trash/{}.enc", cipher_id));
+
+        if active_path.exists() {
+            let trash_dir = self.path.join("trash");
+            std::fs::create_dir_all(&trash_dir)?;
+            let envelope_bytes = std::fs::read(&active_path)?;
+            std::fs::write(&trash_path, &envelope_bytes)?;
+            std::fs::remove_file(&active_path)?;
+            Ok(())
+        } else if trash_path.exists() {
+            std::fs::remove_file(&trash_path)?;
+            Ok(())
+        } else {
+            Err(VaultError::CipherNotFound(cipher_id.to_string()).into())
+        }
+    }
+
+    /// List deleted cipher IDs in trash.
+    pub fn list_trash_ids(&self) -> Result<Vec<Uuid>, IdttyError> {
+        let trash_dir = self.path.join("trash");
+        if !trash_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut ids = Vec::new();
+        for entry in std::fs::read_dir(&trash_dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(id_str) = name.strip_suffix(".enc") {
+                if let Ok(id) = Uuid::parse_str(id_str) {
+                    ids.push(id);
+                }
+            }
+        }
+        Ok(ids)
+    }
+
+    /// Restore a deleted cipher from trash back to active.
+    pub fn restore_cipher(&self, cipher_id: Uuid) -> Result<(), IdttyError> {
+        let active_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
+        let trash_path = self.path.join(format!("trash/{}.enc", cipher_id));
+
+        if !trash_path.exists() {
+            return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
+        }
+
+        let ciphers_dir = self.path.join("ciphers");
+        std::fs::create_dir_all(&ciphers_dir)?;
+        let envelope_bytes = std::fs::read(&trash_path)?;
+        std::fs::write(&active_path, &envelope_bytes)?;
+        std::fs::remove_file(&trash_path)?;
+        Ok(())
+    }
+
+    /// Purge deleted entries from trash that were deleted more than `days` ago.
+    pub fn purge_old_trash(&self, days: u32) -> Result<usize, IdttyError> {
+        let trash_dir = self.path.join("trash");
+        if !trash_dir.exists() {
+            return Ok(0);
+        }
+
+        let mut count = 0;
+        let limit = std::time::SystemTime::now() - std::time::Duration::from_secs(days as u64 * 86400);
+
+        for entry in std::fs::read_dir(&trash_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Ok(metadata) = std::fs::metadata(&path) {
+                    if let Ok(modified) = metadata.modified() {
+                        if modified < limit {
+                            std::fs::remove_file(&path)?;
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(count)
+    }
+
     /// Add a cipher (requires unlocked vault).
     pub fn add_cipher(&mut self, input: &CipherInput) -> Result<Uuid, IdttyError> {
         let unlocked = match &self.state {
@@ -450,15 +542,7 @@ impl VaultHandle {
         Ok(cipher_id)
     }
 
-    /// Delete a cipher by ID.
-    pub fn delete_cipher(&self, cipher_id: Uuid) -> Result<(), IdttyError> {
-        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
-        if !file_path.exists() {
-            return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
-        }
-        std::fs::remove_file(&file_path)?;
-        Ok(())
-    }
+
 
     fn find_device_id(path: &Path) -> Result<Uuid, IdttyError> {
         let keywrap_dir = path.join("meta/keywrap");
@@ -763,5 +847,46 @@ mod tests {
             }
             CipherRead::Decrypted(_) => panic!("expected locked metadata"),
         }
+    }
+
+    #[test]
+    fn trash_soft_delete_restore_purge() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let input = CipherInput {
+            name: "Delete Me".into(),
+            folder_id: None,
+            username: None,
+            password: Some("val".into()),
+            uris: vec![],
+            notes: None,
+            totp_uri: None,
+            custom_fields: vec![],
+        };
+
+        let id = handle.add_cipher(&input).unwrap();
+        assert!(handle.list_cipher_ids().unwrap().contains(&id));
+        assert!(handle.list_trash_ids().unwrap().is_empty());
+
+        // Delete moves it to trash
+        handle.delete_cipher(id).unwrap();
+        assert!(!handle.list_cipher_ids().unwrap().contains(&id));
+        assert!(handle.list_trash_ids().unwrap().contains(&id));
+
+        // Restore moves it back
+        handle.restore_cipher(id).unwrap();
+        assert!(handle.list_cipher_ids().unwrap().contains(&id));
+        assert!(handle.list_trash_ids().unwrap().is_empty());
+
+        // Delete to trash again
+        handle.delete_cipher(id).unwrap();
+        assert!(handle.list_trash_ids().unwrap().contains(&id));
+
+        // Purge (0 days removes it immediately)
+        let count = handle.purge_old_trash(0).unwrap();
+        assert_eq!(count, 1);
+        assert!(handle.list_trash_ids().unwrap().is_empty());
     }
 }
