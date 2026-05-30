@@ -11,7 +11,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::crypto::{hpke_wrap, signature};
+use crate::crypto::signature;
 use crate::devices::DeviceRegistry;
 use crate::error::{DeviceError, IdttyError, KeyError, SyncError};
 use crate::keys::epoch::{EpochInfo, EpochState};
@@ -406,7 +406,9 @@ impl DeviceManager {
     }
 
     /// Generate a self-signed ack for a device that has its private key available.
-    /// In production, this is called by the device that initiated the rotation.
+    /// In production, the caller (VaultHandle/daemon) performs the actual signing
+    /// and passes the completed RotationAck to record_ack().
+    #[allow(dead_code)]
     fn sign_ack(
         &self,
         _device_id: Uuid,
