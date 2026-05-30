@@ -193,8 +193,11 @@ impl VaultState {
                 .map_err(|e| format!("Invalid theme: {e}"))?;
         }
         if let Some(v) = partial.get("default_uri_match") {
-            settings.default_uri_match = serde_json::from_value(v.clone())
-                .map_err(|e| format!("Invalid default_uri_match: {e}"))?;
+            let s = v.as_str().ok_or("default_uri_match must be a string")?;
+            settings.default_uri_match = Some(
+                idtty_core::types::UriMatchStrategy::from_str_strict(s)
+                    .map_err(|e| e)?,
+            );
         }
 
         handle.save_settings(&settings).map_err(|e| format!("{e}"))?;

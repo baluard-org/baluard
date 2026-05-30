@@ -5,6 +5,7 @@
 //! Unlocked: can decrypt ciphers, add/update/delete with proper key material.
 
 use std::collections::HashMap;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
@@ -297,6 +298,7 @@ impl VaultHandle {
             crate::error::VaultError::Metadata(format!("settings serialization: {e}"))
         })?;
         std::fs::write(&tmp_path, &json)?;
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
         std::fs::rename(&tmp_path, &settings_path)?;
         Ok(())
     }

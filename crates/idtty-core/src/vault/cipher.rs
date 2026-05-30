@@ -202,7 +202,7 @@ impl CipherData {
             folder_id: input.folder_id,
             kind: input.kind.clone(),
             notes: input.notes.clone(),
-            totp_uri: totp_uri.clone(),
+            totp_uri,
             custom_fields: input.custom_fields.clone(),
             username,
             password,
