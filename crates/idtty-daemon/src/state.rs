@@ -119,18 +119,34 @@ impl VaultState {
 
         match result {
             idtty_core::vault::handle::CipherRead::Decrypted(c) => {
-                let json = serde_json::json!({
+                let mut json = serde_json::json!({
                     "id": c.id.to_string(),
                     "name": c.name,
-                    "username": c.username,
-                    "password": c.password,
-                    "uris": c.uris,
+                    "type": format!("{:?}", c.kind.cipher_type()),
                     "notes": c.notes,
-                    "totp": c.totp_uri,
                     "tier": format!("{:?}", c.tier),
                     "epoch": c.key_epoch,
                     "seq": c.update_seq,
                 });
+                match &c.kind {
+                    idtty_core::types::CipherKind::Login(data) => {
+                        json["username"] = serde_json::json!(data.username);
+                        json["password"] = serde_json::json!(data.password);
+                        json["uris"] = serde_json::json!(data.uris);
+                        json["totp"] = serde_json::json!(data.totp_uri);
+                    }
+                    idtty_core::types::CipherKind::Card(data) => {
+                        json["cardholder_name"] = serde_json::json!(data.cardholder_name);
+                        json["brand"] = serde_json::json!(data.brand);
+                        json["number"] = serde_json::json!(data.number);
+                    }
+                    idtty_core::types::CipherKind::Identity(data) => {
+                        json["first_name"] = serde_json::json!(data.first_name);
+                        json["last_name"] = serde_json::json!(data.last_name);
+                        json["email"] = serde_json::json!(data.email);
+                    }
+                    _ => {}
+                }
                 Ok(json.to_string())
             }
             idtty_core::vault::handle::CipherRead::Locked(info) => {

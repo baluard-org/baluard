@@ -212,14 +212,28 @@ impl KdfParams {
 // Defined in keys::epoch::EpochState. Re-exported here for convenience.
 pub use crate::keys::epoch::EpochState;
 
-// ── Cipher Input ──
+// ── Cipher Types ──
 
-/// Input for creating or updating a cipher.
+/// Cipher type discriminator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CipherType {
+    Login,
+    SecureNote,
+    Card,
+    Identity,
+    SshKey,
+}
+
+impl Default for CipherType {
+    fn default() -> Self {
+        CipherType::Login
+    }
+}
+
+/// Login-specific cipher data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CipherInput {
-    pub name: String,
-    #[serde(default)]
-    pub folder_id: Option<Uuid>,
+pub struct LoginData {
     #[serde(default)]
     pub username: Option<String>,
     #[serde(default)]
@@ -227,9 +241,139 @@ pub struct CipherInput {
     #[serde(default)]
     pub uris: Vec<String>,
     #[serde(default)]
-    pub notes: Option<String>,
-    #[serde(default)]
     pub totp_uri: Option<String>,
+    #[serde(default)]
+    pub autofill_on_page_load: bool,
+    #[serde(default)]
+    pub password_revision_date: Option<u64>,
+}
+
+/// Card-specific cipher data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CardData {
+    #[serde(default)]
+    pub cardholder_name: Option<String>,
+    #[serde(default)]
+    pub brand: Option<String>,
+    #[serde(default)]
+    pub number: Option<String>,
+    #[serde(default)]
+    pub exp_month: Option<String>,
+    #[serde(default)]
+    pub exp_year: Option<String>,
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+/// Identity-specific cipher data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityData {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub middle_name: Option<String>,
+    #[serde(default)]
+    pub last_name: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub company: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub address1: Option<String>,
+    #[serde(default)]
+    pub address2: Option<String>,
+    #[serde(default)]
+    pub address3: Option<String>,
+    #[serde(default)]
+    pub city: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub postal_code: Option<String>,
+    #[serde(default)]
+    pub country: Option<String>,
+    #[serde(default)]
+    pub ssn: Option<String>,
+    #[serde(default)]
+    pub passport_number: Option<String>,
+    #[serde(default)]
+    pub license_number: Option<String>,
+}
+
+/// SSH Key-specific cipher data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshKeyData {
+    #[serde(default)]
+    pub private_key: Option<String>,
+    #[serde(default)]
+    pub public_key: Option<String>,
+    #[serde(default)]
+    pub key_fingerprint: Option<String>,
+}
+
+/// Type-safe cipher kind. Makes invalid states unrepresentable.
+/// Card(LoginData) is a compile error.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+#[serde(rename_all = "camelCase")]
+pub enum CipherKind {
+    Login(LoginData),
+    SecureNote,
+    Card(CardData),
+    Identity(IdentityData),
+    SshKey(SshKeyData),
+}
+
+impl CipherKind {
+    /// The cipher type discriminator.
+    pub fn cipher_type(&self) -> CipherType {
+        match self {
+            CipherKind::Login(_) => CipherType::Login,
+            CipherKind::SecureNote => CipherType::SecureNote,
+            CipherKind::Card(_) => CipherType::Card,
+            CipherKind::Identity(_) => CipherType::Identity,
+            CipherKind::SshKey(_) => CipherType::SshKey,
+        }
+    }
+}
+
+impl Default for LoginData {
+    fn default() -> Self {
+        Self {
+            username: None,
+            password: None,
+            uris: Vec::new(),
+            totp_uri: None,
+            autofill_on_page_load: false,
+            password_revision_date: None,
+        }
+    }
+}
+
+impl Default for CipherKind {
+    fn default() -> Self {
+        CipherKind::Login(LoginData::default())
+    }
+}
+
+// ── Cipher Input ──
+
+/// Input for creating or updating a cipher.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CipherInput {
+    pub name: String,
+    #[serde(default)]
+    pub folder_id: Option<Uuid>,
+    #[serde(default)]
+    pub kind: CipherKind,
+    #[serde(default)]
+    pub notes: Option<String>,
     #[serde(default)]
     pub custom_fields: Vec<CustomField>,
 }
@@ -250,17 +394,76 @@ pub enum CustomFieldType {
     Boolean,
 }
 
+/// Backward-compatible cipher data within the encrypted envelope.
+///
+/// Handles two formats:
+/// - **Old (pre-Phase-1)**: flat fields (`username`, `password`, `uris`, etc.)
+///   with no `kind` field. Deserialized as Login.
+/// - **New**: `kind: CipherKind` with type-specific data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CipherEnvelopeData {
+    pub name: String,
+    #[serde(default)]
+    pub folder_id: Option<Uuid>,
+    #[serde(default)]
+    pub kind: CipherKind,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub totp_uri: Option<String>,
+    #[serde(default)]
+    pub custom_fields: Vec<CustomField>,
+    // Old flat fields (used only during migration deserialization)
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub uris: Vec<String>,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+impl CipherEnvelopeData {
+    /// Migrate from flat format to typed CipherKind after deserialization.
+    /// If `kind` is the default (Login with empty data) but flat fields are
+    /// present, populate LoginData from the flat fields.
+    pub fn migrate(mut self) -> Self {
+        // Only migrate if kind is the default (empty Login) AND flat fields exist
+        match &self.kind {
+            CipherKind::Login(data) if data.username.is_none()
+                && data.password.is_none()
+                && data.uris.is_empty() =>
+            {
+                // Flat fields present? Migrate them into LoginData.
+                if self.username.is_some() || self.password.is_some() || !self.uris.is_empty() {
+                    self.kind = CipherKind::Login(LoginData {
+                        username: self.username.take(),
+                        password: self.password.take(),
+                        uris: std::mem::take(&mut self.uris),
+                        totp_uri: self.totp_uri.take(),
+                        autofill_on_page_load: false,
+                        password_revision_date: None,
+                    });
+                }
+            }
+            _ => {
+                // kind is already set to non-default or Login with data;
+                // nothing to migrate.
+            }
+        }
+        self
+    }
+}
+
 /// Decrypted cipher data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cipher {
     pub id: CipherId,
     pub name: String,
     pub folder_id: Option<Uuid>,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub uris: Vec<String>,
+    pub kind: CipherKind,
     pub notes: Option<String>,
-    pub totp_uri: Option<String>,
     pub custom_fields: Vec<CustomField>,
     pub key_epoch: u64,
     pub update_seq: u64,
@@ -279,4 +482,196 @@ pub struct CipherMeta {
     pub key_epoch: u64,
     pub update_seq: u64,
     pub updated_at: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cipher_type_default_is_login() {
+        assert_eq!(CipherType::default(), CipherType::Login);
+    }
+
+    #[test]
+    fn cipher_kind_default_is_login() {
+        assert!(matches!(CipherKind::default(), CipherKind::Login(_)));
+    }
+
+    #[test]
+    fn each_cipher_type_serializes_deserializes() {
+        // Login
+        let login = CipherKind::Login(LoginData {
+            username: Some("user@test.com".into()),
+            password: Some("s3cret".into()),
+            uris: vec!["https://example.com".into()],
+            totp_uri: None,
+            autofill_on_page_load: true,
+            password_revision_date: Some(1234567890),
+        });
+        let json = serde_json::to_string(&login).unwrap();
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(login.cipher_type(), back.cipher_type());
+        match back {
+            CipherKind::Login(data) => {
+                assert_eq!(data.username.as_deref(), Some("user@test.com"));
+                assert_eq!(data.password.as_deref(), Some("s3cret"));
+                assert_eq!(data.uris, vec!["https://example.com"]);
+                assert!(data.autofill_on_page_load);
+                assert_eq!(data.password_revision_date, Some(1234567890));
+            }
+            _ => panic!("expected Login"),
+        }
+
+        // SecureNote
+        let note = CipherKind::SecureNote;
+        let json = serde_json::to_string(&note).unwrap();
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.cipher_type(), CipherType::SecureNote);
+
+        // Card
+        let card = CipherKind::Card(CardData {
+            cardholder_name: Some("John Doe".into()),
+            brand: Some("Visa".into()),
+            number: Some("4111111111111111".into()),
+            exp_month: Some("12".into()),
+            exp_year: Some("2026".into()),
+            code: Some("123".into()),
+        });
+        let json = serde_json::to_string(&card).unwrap();
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        match back {
+            CipherKind::Card(data) => {
+                assert_eq!(data.cardholder_name.as_deref(), Some("John Doe"));
+                assert_eq!(data.brand.as_deref(), Some("Visa"));
+                assert_eq!(data.number.as_deref(), Some("4111111111111111"));
+                assert_eq!(data.exp_month.as_deref(), Some("12"));
+                assert_eq!(data.exp_year.as_deref(), Some("2026"));
+                assert_eq!(data.code.as_deref(), Some("123"));
+            }
+            _ => panic!("expected Card"),
+        }
+
+        // Identity
+        let identity = CipherKind::Identity(IdentityData {
+            title: Some("Mr".into()),
+            first_name: Some("John".into()),
+            middle_name: None,
+            last_name: Some("Doe".into()),
+            username: Some("jdoe".into()),
+            company: Some("Acme".into()),
+            email: Some("john@acme.com".into()),
+            phone: Some("555-1234".into()),
+            address1: Some("123 Main St".into()),
+            address2: None,
+            address3: None,
+            city: Some("Springfield".into()),
+            state: Some("IL".into()),
+            postal_code: Some("62701".into()),
+            country: Some("US".into()),
+            ssn: Some("123-45-6789".into()),
+            passport_number: None,
+            license_number: None,
+        });
+        let json = serde_json::to_string(&identity).unwrap();
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        match back {
+            CipherKind::Identity(data) => {
+                assert_eq!(data.first_name.as_deref(), Some("John"));
+                assert_eq!(data.last_name.as_deref(), Some("Doe"));
+                assert_eq!(data.address1.as_deref(), Some("123 Main St"));
+                assert_eq!(data.address2, None);
+                assert_eq!(data.address3, None);
+            }
+            _ => panic!("expected Identity"),
+        }
+
+        // SSH Key
+        let ssh = CipherKind::SshKey(SshKeyData {
+            private_key: Some("-----BEGIN PRIVATE KEY-----".into()),
+            public_key: Some("ssh-rsa AAAA".into()),
+            key_fingerprint: Some("SHA256:abc123".into()),
+        });
+        let json = serde_json::to_string(&ssh).unwrap();
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        match back {
+            CipherKind::SshKey(data) => {
+                assert_eq!(data.public_key.as_deref(), Some("ssh-rsa AAAA"));
+                assert_eq!(data.key_fingerprint.as_deref(), Some("SHA256:abc123"));
+            }
+            _ => panic!("expected SshKey"),
+        }
+    }
+
+    #[test]
+    fn migration_old_flat_format_to_login() {
+        // Simulate old pre-Phase-1 cipher data (flat fields, no "kind")
+        let old_json = r#"{
+            "name": "GitHub",
+            "username": "user@example.com",
+            "password": "s3cret!",
+            "uris": ["https://github.com", "https://api.github.com"],
+            "notes": "My GitHub account",
+            "totp_uri": "otpauth://totp/test",
+            "custom_fields": [],
+            "created_at": 1000000,
+            "updated_at": 2000000
+        }"#;
+
+        let env_data: CipherEnvelopeData = serde_json::from_str(old_json).unwrap();
+        let migrated = env_data.migrate();
+
+        assert_eq!(migrated.name, "GitHub");
+        match &migrated.kind {
+            CipherKind::Login(data) => {
+                assert_eq!(data.username.as_deref(), Some("user@example.com"));
+                assert_eq!(data.password.as_deref(), Some("s3cret!"));
+                assert_eq!(data.uris, vec!["https://github.com", "https://api.github.com"]);
+                assert_eq!(data.totp_uri.as_deref(), Some("otpauth://totp/test"));
+            }
+            _ => panic!("expected Login kind after migration"),
+        }
+        assert_eq!(migrated.notes.as_deref(), Some("My GitHub account"));
+        assert_eq!(migrated.created_at, 1000000);
+    }
+
+    #[test]
+    fn migration_no_op_when_kind_already_set() {
+        // New format with kind already set should not be overwritten
+        let new_json = r#"{
+            "name": "My Card",
+            "kind": {"type": "card", "data": {"brand": "Visa", "number": "4111111111111111"}},
+            "notes": null,
+            "totp_uri": null,
+            "custom_fields": [],
+            "username": null,
+            "password": null,
+            "uris": [],
+            "created_at": 1000000,
+            "updated_at": 2000000
+        }"#;
+
+        let env_data: CipherEnvelopeData = serde_json::from_str(new_json).unwrap();
+        let migrated = env_data.migrate();
+
+        assert_eq!(migrated.name, "My Card");
+        match &migrated.kind {
+            CipherKind::Card(data) => {
+                assert_eq!(data.brand.as_deref(), Some("Visa"));
+            }
+            _ => panic!("expected Card kind"),
+        }
+        // Flat fields should remain as-is (not migrated into LoginData)
+        assert!(migrated.username.is_none());
+    }
+
+    #[test]
+    fn cipher_input_default_is_login() {
+        let input = CipherInput {
+            name: "test".into(),
+            ..Default::default()
+        };
+        // Verify default kind is Login
+        assert!(matches!(input.kind, CipherKind::Login(_)));
+    }
 }
