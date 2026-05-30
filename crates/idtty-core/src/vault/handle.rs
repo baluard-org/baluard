@@ -268,6 +268,39 @@ impl VaultHandle {
         }
     }
 
+    /// Get vault settings (reads from disk).
+    pub fn get_settings(&self) -> Result<crate::vault::manifest::VaultSettings, IdttyError> {
+        let settings_path = self.path.join("meta/settings.json");
+        if !settings_path.exists() {
+            return Ok(crate::vault::manifest::VaultSettings {
+                auto_lock_minutes: None,
+                theme: None,
+                default_uri_match: None,
+            });
+        }
+        let data = std::fs::read_to_string(&settings_path)?;
+        let settings: crate::vault::manifest::VaultSettings =
+            serde_json::from_str(&data).map_err(|e| {
+                crate::error::VaultError::Metadata(format!("settings parse: {e}"))
+            })?;
+        Ok(settings)
+    }
+
+    /// Save vault settings to disk (atomic write).
+    pub fn save_settings(
+        &self,
+        settings: &crate::vault::manifest::VaultSettings,
+    ) -> Result<(), IdttyError> {
+        let settings_path = self.path.join("meta/settings.json");
+        let tmp_path = settings_path.with_extension("tmp");
+        let json = serde_json::to_string_pretty(settings).map_err(|e| {
+            crate::error::VaultError::Metadata(format!("settings serialization: {e}"))
+        })?;
+        std::fs::write(&tmp_path, &json)?;
+        std::fs::rename(&tmp_path, &settings_path)?;
+        Ok(())
+    }
+
     /// List cipher IDs from filenames in ciphers/ directory.
     pub fn list_cipher_ids(&self) -> Result<Vec<Uuid>, IdttyError> {
         let ciphers_dir = self.path.join("ciphers");
@@ -806,7 +839,7 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user@example.com".into()),
                 password: Some("s3cret!".into()),
-                uris: vec!["https://github.com".into()],
+                uris: vec![crate::types::LoginUri::new("https://github.com".into())],
                 totp_uri: None,
                 autofill_on_page_load: false,
                 password_revision_date: None,

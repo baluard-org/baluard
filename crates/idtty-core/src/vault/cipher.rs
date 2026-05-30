@@ -191,7 +191,7 @@ impl CipherData {
             crate::types::CipherKind::Login(data) => (
                 data.username.clone(),
                 data.password.clone(),
-                data.uris.clone(),
+                data.uris.iter().map(|u| u.uri.clone()).collect(),
                 data.totp_uri.clone(),
             ),
             _ => (None, None, Vec::new(), None),
@@ -249,7 +249,7 @@ mod tests {
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user@example.com".into()),
                 password: Some("s3cret!".into()),
-                uris: vec!["https://github.com".into()],
+                uris: vec![crate::types::LoginUri::new("https://github.com".into())],
                 totp_uri: None,
                 autofill_on_page_load: false,
                 password_revision_date: None,
@@ -269,7 +269,8 @@ mod tests {
             crate::types::CipherKind::Login(data) => {
                 assert_eq!(data.username.as_deref(), Some("user@example.com"));
                 assert_eq!(data.password.as_deref(), Some("s3cret!"));
-                assert_eq!(data.uris, vec!["https://github.com"]);
+                assert_eq!(data.uris.len(), 1);
+                assert_eq!(data.uris[0].uri, "https://github.com");
             }
             _ => panic!("expected Login kind"),
         }

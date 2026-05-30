@@ -100,6 +100,12 @@ enum Commands {
         action: DeviceCommands,
     },
 
+    /// Get or set vault settings.
+    Settings {
+        #[command(subcommand)]
+        action: SettingsAction,
+    },
+
     /// Ping the daemon to check connectivity.
     Ping,
 }
@@ -108,6 +114,17 @@ enum Commands {
 enum DeviceCommands {
     /// List enrolled devices.
     List,
+}
+
+#[derive(Subcommand)]
+enum SettingsAction {
+    /// Show current settings.
+    Get,
+    /// Set a setting (key=value).
+    Set {
+        /// Setting key and value (e.g., default_uri_match=host).
+        kv: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -210,6 +227,16 @@ fn main() {
         Commands::Devices { action } => match action {
             DeviceCommands::List => {
                 commands::handle_devices(mode, &cli.vault_path, cli.socket.as_deref())
+            }
+        },
+
+        // Settings
+        Commands::Settings { action } => match action {
+            SettingsAction::Get => {
+                commands::handle_settings_get(mode, cli.socket.as_deref())
+            }
+            SettingsAction::Set { kv } => {
+                commands::handle_settings_set(mode, cli.socket.as_deref(), &kv)
             }
         },
 
