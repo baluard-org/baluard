@@ -214,6 +214,62 @@ pub use crate::keys::epoch::EpochState;
 
 // ── Cipher Types ──
 
+/// URI match strategy for autofill/launch detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UriMatchStrategy {
+    /// Match based on domain (default).
+    Domain,
+    /// Match exact host.
+    Host,
+    /// Match if URI starts with the value.
+    StartsWith,
+    /// Exact match.
+    Exact,
+    /// Regex match.
+    Regex,
+    /// Never match.
+    Never,
+}
+
+impl Default for UriMatchStrategy {
+    fn default() -> Self {
+        UriMatchStrategy::Domain
+    }
+}
+
+impl UriMatchStrategy {
+    /// Parse from string with hard error on unknown values.
+    pub fn from_str_strict(s: &str) -> Result<Self, String> {
+        match s {
+            "domain" => Ok(UriMatchStrategy::Domain),
+            "host" => Ok(UriMatchStrategy::Host),
+            "startsWith" => Ok(UriMatchStrategy::StartsWith),
+            "exact" => Ok(UriMatchStrategy::Exact),
+            "regex" => Ok(UriMatchStrategy::Regex),
+            "never" => Ok(UriMatchStrategy::Never),
+            _ => Err(format!("unknown URI match strategy: '{s}'")),
+        }
+    }
+}
+
+/// A single URI with its match strategy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoginUri {
+    pub uri: String,
+    #[serde(default)]
+    pub match_strategy: UriMatchStrategy,
+}
+
+impl LoginUri {
+    pub fn new(uri: String) -> Self {
+        Self {
+            uri,
+            match_strategy: UriMatchStrategy::default(),
+        }
+    }
+}
+
 /// Cipher type discriminator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -239,7 +295,7 @@ pub struct LoginData {
     #[serde(default)]
     pub password: Option<String>,
     #[serde(default)]
-    pub uris: Vec<String>,
+    pub uris: Vec<LoginUri>,
     #[serde(default)]
     pub totp_uri: Option<String>,
     #[serde(default)]
@@ -443,7 +499,10 @@ impl CipherEnvelopeData {
                     self.kind = CipherKind::Login(LoginData {
                         username: self.username.take(),
                         password: self.password.take(),
-                        uris: std::mem::take(&mut self.uris),
+                        uris: std::mem::take(&mut self.uris)
+                            .into_iter()
+                            .map(LoginUri::new)
+                            .collect(),
                         totp_uri: self.totp_uri.take(),
                         autofill_on_page_load: false,
                         password_revision_date: None,
@@ -507,7 +566,7 @@ mod tests {
         let login = CipherKind::Login(LoginData {
             username: Some("user@test.com".into()),
             password: Some("s3cret".into()),
-            uris: vec!["https://example.com".into()],
+            uris: vec![LoginUri::new("https://example.com".into())],
             totp_uri: None,
             autofill_on_page_load: true,
             password_revision_date: Some(1234567890),
@@ -519,7 +578,9 @@ mod tests {
             CipherKind::Login(data) => {
                 assert_eq!(data.username.as_deref(), Some("user@test.com"));
                 assert_eq!(data.password.as_deref(), Some("s3cret"));
-                assert_eq!(data.uris, vec!["https://example.com"]);
+                assert_eq!(data.uris.len(), 1);
+                assert_eq!(data.uris[0].uri, "https://example.com");
+                assert_eq!(data.uris[0].match_strategy, UriMatchStrategy::Domain);
                 assert!(data.autofill_on_page_load);
                 assert_eq!(data.password_revision_date, Some(1234567890));
             }
@@ -629,7 +690,11 @@ mod tests {
             CipherKind::Login(data) => {
                 assert_eq!(data.username.as_deref(), Some("user@example.com"));
                 assert_eq!(data.password.as_deref(), Some("s3cret!"));
-                assert_eq!(data.uris, vec!["https://github.com", "https://api.github.com"]);
+                assert_eq!(data.uris.len(), 2);
+                assert_eq!(data.uris[0].uri, "https://github.com");
+                assert_eq!(data.uris[0].match_strategy, UriMatchStrategy::Domain);
+                assert_eq!(data.uris[1].uri, "https://api.github.com");
+                assert_eq!(data.uris[1].match_strategy, UriMatchStrategy::Domain);
                 assert_eq!(data.totp_uri.as_deref(), Some("otpauth://totp/test"));
             }
             _ => panic!("expected Login kind after migration"),
@@ -707,6 +772,109 @@ mod tests {
                 assert!(data.uris.is_empty());
             }
             _ => panic!("expected Login kind after migration"),
+        }
+    }
+
+    #[test]
+    fn multi_uri_order_preserved() {
+        // 3 URIs in specific order
+        let uris = vec![
+            LoginUri::new("https://github.com".into()),
+            LoginUri {
+                uri: "https://api.github.com".into(),
+                match_strategy: UriMatchStrategy::Host,
+            },
+            LoginUri::new("https://gist.github.com".into()),
+        ];
+        let login = CipherKind::Login(LoginData {
+            uris: uris.clone(),
+            ..Default::default()
+        });
+        let json = serde_json::to_string(&login).unwrap();
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        match back {
+            CipherKind::Login(data) => {
+                assert_eq!(data.uris.len(), 3);
+                assert_eq!(data.uris[0].uri, "https://github.com");
+                assert_eq!(data.uris[1].uri, "https://api.github.com");
+                assert_eq!(data.uris[1].match_strategy, UriMatchStrategy::Host);
+                assert_eq!(data.uris[2].uri, "https://gist.github.com");
+            }
+            _ => panic!("expected Login"),
+        }
+    }
+
+    #[test]
+    fn match_strategy_round_trip() {
+        let login = CipherKind::Login(LoginData {
+            uris: vec![LoginUri {
+                uri: "https://example.com".into(),
+                match_strategy: UriMatchStrategy::Exact,
+            }],
+            ..Default::default()
+        });
+        let json = serde_json::to_string(&login).unwrap();
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        match back {
+            CipherKind::Login(data) => {
+                assert_eq!(data.uris[0].match_strategy, UriMatchStrategy::Exact);
+            }
+            _ => panic!("expected Login"),
+        }
+    }
+
+    #[test]
+    fn migration_flat_uris_to_login_uri() {
+        let old_json = r#"{
+            "name": "Test",
+            "uris": ["a.com", "b.com"],
+            "notes": null,
+            "custom_fields": [],
+            "created_at": 1,
+            "updated_at": 2
+        }"#;
+        let env: CipherEnvelopeData = serde_json::from_str(old_json).unwrap();
+        let migrated = env.migrate();
+        match &migrated.kind {
+            CipherKind::Login(data) => {
+                assert_eq!(data.uris.len(), 2);
+                assert_eq!(data.uris[0].uri, "a.com");
+                assert_eq!(data.uris[0].match_strategy, UriMatchStrategy::Domain);
+                assert_eq!(data.uris[1].uri, "b.com");
+                assert_eq!(data.uris[1].match_strategy, UriMatchStrategy::Domain);
+            }
+            _ => panic!("expected Login"),
+        }
+    }
+
+    #[test]
+    fn uri_match_strategy_typo_is_hard_error() {
+        let json = r#"{"default_uri_match": "exakt"}"#;
+        let result: Result<serde_json::Value, _> = serde_json::from_str(json);
+        // The string itself parses as JSON, but from_str_strict should fail
+        let val = result.unwrap();
+        let s = val["default_uri_match"].as_str().unwrap();
+        assert!(UriMatchStrategy::from_str_strict(s).is_err());
+    }
+
+    #[test]
+    fn uri_match_strategy_all_variants_round_trip() {
+        let strategies = vec![
+            UriMatchStrategy::Domain,
+            UriMatchStrategy::Host,
+            UriMatchStrategy::StartsWith,
+            UriMatchStrategy::Exact,
+            UriMatchStrategy::Regex,
+            UriMatchStrategy::Never,
+        ];
+        for strategy in strategies {
+            let uri = LoginUri {
+                uri: "https://test.com".into(),
+                match_strategy: strategy,
+            };
+            let json = serde_json::to_string(&uri).unwrap();
+            let back: LoginUri = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.match_strategy, strategy);
         }
     }
 }

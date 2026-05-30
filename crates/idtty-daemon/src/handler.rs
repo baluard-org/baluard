@@ -158,6 +158,8 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.trash.list",
     "vault.trash.restore",
     "vault.trash.purge",
+    "settings.get",
+    "settings.set",
     "sync.init",
     "sync.remote",
     "sync.push",
@@ -372,6 +374,21 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             };
             match sync_log(&state.vault_path, limit) {
                 Ok(msg) => ok_resp(msg, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        // ── Settings (token required) ──
+        "settings.get" => match state.settings_get().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "settings.set" => {
+            if req.payload.is_empty() {
+                return err_response("Missing settings JSON in payload");
+            }
+            match state.settings_set(&req.payload).await {
+                Ok(()) => ok_resp("settings updated", token_str),
                 Err(e) => err_response(e),
             }
         }

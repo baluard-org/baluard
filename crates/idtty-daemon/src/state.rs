@@ -166,6 +166,41 @@ impl VaultState {
         }
     }
 
+    /// Get current vault settings as JSON.
+    pub async fn settings_get(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+        serde_json::to_string(&settings).map_err(|e| format!("settings serialization: {e}"))
+    }
+
+    /// Update vault settings from partial JSON.
+    pub async fn settings_set(&self, payload: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+
+        let partial: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+
+        let mut settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+
+        if let Some(v) = partial.get("auto_lock_minutes") {
+            settings.auto_lock_minutes = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid auto_lock_minutes: {e}"))?;
+        }
+        if let Some(v) = partial.get("theme") {
+            settings.theme = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid theme: {e}"))?;
+        }
+        if let Some(v) = partial.get("default_uri_match") {
+            settings.default_uri_match = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid default_uri_match: {e}"))?;
+        }
+
+        handle.save_settings(&settings).map_err(|e| format!("{e}"))?;
+        Ok(())
+    }
+
     /// Add a new cipher. Requires vault to be unlocked.
     pub async fn add_cipher(&self, payload: &str) -> Result<String, String> {
         let mut guard = self.inner.write().await;

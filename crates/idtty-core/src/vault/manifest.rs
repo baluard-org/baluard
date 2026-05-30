@@ -69,7 +69,39 @@ pub enum TrashObjectType {
 pub struct VaultSettings {
     pub auto_lock_minutes: Option<u32>,
     pub theme: Option<String>,
-    pub default_uri_match: Option<String>,
+    /// URI match strategy global default. Typed enum with hard error on unknown values.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_uri_match_strategy"
+    )]
+    pub default_uri_match: Option<crate::types::UriMatchStrategy>,
+}
+
+fn deserialize_uri_match_strategy<'de, D>(
+    deserializer: D,
+) -> Result<Option<crate::types::UriMatchStrategy>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let opt: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match opt {
+        None => Ok(None),
+        Some(serde_json::Value::Null) => Ok(None),
+        Some(v) => {
+            // Try typed enum first
+            if let Ok(typed) = serde_json::from_value::<crate::types::UriMatchStrategy>(v.clone()) {
+                return Ok(Some(typed));
+            }
+            // Try string with strict parsing
+            if let Some(s) = v.as_str() {
+                return crate::types::UriMatchStrategy::from_str_strict(s)
+                    .map(Some)
+                    .map_err(serde::de::Error::custom);
+            }
+            Err(serde::de::Error::custom("invalid URI match strategy"))
+        }
+    }
 }
 
 /// Sequence manifest entry (per device, stored in meta/sequences/{device_id}.enc).

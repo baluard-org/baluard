@@ -164,7 +164,7 @@ pub fn handle_add(
         kind: CipherKind::Login(LoginData {
             username,
             password: Some((*cipher_password).clone()),
-            uris: uri.map(|u| vec![u]).unwrap_or_default(),
+            uris: uri.map(|u| vec![idtty_core::types::LoginUri::new(u)]).unwrap_or_default(),
             totp_uri: None,
             autofill_on_page_load: false,
             password_revision_date: None,
@@ -241,7 +241,7 @@ pub fn handle_get(
                     }
                     if let Some(uris) = c["uris"].as_array() {
                         for u in uris {
-                            println!("  URI:       {u}");
+                            println!("  URI:       {}", u["uri"]);
                         }
                     }
                     if !c["notes"].is_null() {
@@ -263,7 +263,7 @@ pub fn handle_get(
                     println!("  Password:  ***");
                     if let Some(uris) = c["uris"].as_array() {
                         for u in uris {
-                            println!("  URI:       {u}");
+                            println!("  URI:       {}", u["uri"]);
                         }
                     }
                     if !c["notes"].is_null() {
@@ -332,7 +332,7 @@ pub fn handle_get(
                                     println!("  Password:  {p}");
                                 }
                                 for u in &data.uris {
-                                    println!("  URI:       {u}");
+                                    println!("  URI:       {}", u.uri);
                                 }
                                 if let Some(ref t) = data.totp_uri {
                                     println!("  TOTP:      {t}");
@@ -388,7 +388,7 @@ pub fn handle_get(
                                 }
                                 println!("  Password:  ***");
                                 for u in &data.uris {
-                                    println!("  URI:       {u}");
+                                    println!("  URI:       {}", u.uri);
                                 }
                             }
                             _ => {}
@@ -873,6 +873,64 @@ fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
             let mut buf = String::new();
             std::io::stdin().lock().read_line(&mut buf)?;
             Ok(buf.trim().to_string())
+        }
+    }
+}
+
+// ── Settings ──
+
+pub fn handle_settings_get(
+    mode: ConnectMode,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("settings.get", "", socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("{}", resp.payload);
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Settings requires daemon mode. Use --socket or start the daemon.");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub fn handle_settings_set(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    kv: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (key, value) = kv
+        .split_once('=')
+        .ok_or("Usage: idtty settings set key=value")?;
+
+    let payload = match key {
+        "auto_lock_minutes" => serde_json::json!({"auto_lock_minutes": value.parse::<u32>().map_err(|e: std::num::ParseIntError| format!("Invalid number: {e}"))?}),
+        "theme" => serde_json::json!({"theme": value}),
+        "default_uri_match" => {
+            let strategy = idtty_core::types::UriMatchStrategy::from_str_strict(value)
+                .map_err(|e| format!("Invalid URI match strategy: {e}"))?;
+            serde_json::json!({"default_uri_match": serde_json::to_value(strategy)?})
+        }
+        _ => return Err(format!("Unknown setting: {key}. Available: auto_lock_minutes, theme, default_uri_match").into()),
+    };
+
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("settings.set", &payload.to_string(), socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("Setting updated.");
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Settings requires daemon mode. Use --socket or start the daemon.");
+            std::process::exit(1);
         }
     }
 }
