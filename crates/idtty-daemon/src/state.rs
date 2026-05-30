@@ -122,7 +122,7 @@ impl VaultState {
                 let mut json = serde_json::json!({
                     "id": c.id.to_string(),
                     "name": c.name,
-                    "type": format!("{:?}", c.kind.cipher_type()),
+                    "type": serde_json::to_value(c.kind.cipher_type()).unwrap_or(serde_json::Value::Null),
                     "notes": c.notes,
                     "tier": format!("{:?}", c.tier),
                     "epoch": c.key_epoch,
