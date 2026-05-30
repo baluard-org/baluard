@@ -155,9 +155,9 @@
 - **CO-NEW-2**: Readiness poll used phantom connect instead of ping -> Fixed
 - **M-NEW-1**: `daemon_status` verbose match instead of `.is_ok()` -> Fixed
 
-### Round 7 (Pass Analysis — Independent Peer Review via peer review)
+### Round 7 (Pass Analysis — Independent Peer Review)
 
-**Source**: Full analysis of `pass` (password-store v1.7.4) by zx2c4. Peer review of findings delegated to peer review (via peer). peer review read IDtty source (`vault/envelope.rs`, `vault/cipher.rs`, `crypto/aead.rs`, `keys/hierarchy.rs`) before responding.
+**Source**: Full analysis of `pass` (password-store v1.7.4) by zx2c4. Peer review of findings via independent code review. Reviewer read IDtty source (`vault/envelope.rs`, `vault/cipher.rs`, `crypto/aead.rs`, `keys/hierarchy.rs`) before responding.
 
 **Pass CVEs studied**: CVE-2018-12356 (GPG regex parsing), CVE-2020-28086 (filename swap attack), plus rot256.dev security critique on active-adversary weaknesses.
 
@@ -186,10 +186,10 @@
 
 #### Action Items
 
-- [x] **R7-1**: Add AAD verification to `decrypt_cipher` in `crates/idtty-core/src/vault/cipher.rs`. Before `aead::decrypt`, recompute expected AAD from `(vault_id, ObjectType::Cipher, cipher_id, tier, alg_id, key_epoch, update_seq)` and assert equality with `enc_envelope.aad`. Return `VaultError::Corrupt("cipher identity mismatch")` on mismatch. Fail fast, no decryption oracle. **Done.** Added swap attack test. **peer review: PASS.**
-- [x] **R7-2**: Add per-request session authorization token. Daemon generates 256-bit random token on unlock, returns it in `GatewayResponse.session_token`. CLI stores in thread-local, sends with every request via `GatewayRequest.session_token`. Daemon verifies with constant-time comparison. Token cleared on lock. Proto updated. **Done.** **peer review: 2 bugs found and fixed:** (1) `vault.info` removed from `TOKEN_REQUIRED_ACTIONS` (tokenless: reveals no secrets, used as pre-flight by CLI). (2) `vault.create` now returns token via proto field, not just JSON payload.
-- [x] **R7-3**: Add `mlock` on key material buffers in `keys/hierarchy.rs` (RootKey, ItemKey). Use `libc::mlock` on creation, `munlock` on drop. Best-effort (silent on failure). Prevents key material from paging to swap. **Done.** **peer review: 2 gaps found and fixed:** (1) `derive(Clone)` replaced with manual `Clone` impl that calls `from_bytes` (which mlocks the new copy). (2) Stack-allocated arrays replaced with `Box<[u8; N]>` for stable heap addresses across moves. Custom `Debug` impl redacts key bytes.
-- [x] **R7-4**: Update `docs/02-threat-model.md` to explicitly model the git remote as adversarially writable. Added T5 (Active Git Remote Adversary) and T6 (Key Material Paged to Swap). Updated adversary table with classes C, E, G. **Done.** **peer review: PASS.**
+- [x] **R7-1**: Add AAD verification to `decrypt_cipher` in `crates/idtty-core/src/vault/cipher.rs`. Before `aead::decrypt`, recompute expected AAD from `(vault_id, ObjectType::Cipher, cipher_id, tier, alg_id, key_epoch, update_seq)` and assert equality with `enc_envelope.aad`. Return `VaultError::Corrupt("cipher identity mismatch")` on mismatch. Fail fast, no decryption oracle. **Done.** Added swap attack test. **Peer review: PASS.**
+- [x] **R7-2**: Add per-request session authorization token. Daemon generates 256-bit random token on unlock, returns it in `GatewayResponse.session_token`. CLI stores in thread-local, sends with every request via `GatewayRequest.session_token`. Daemon verifies with constant-time comparison. Token cleared on lock. Proto updated. **Done.** **Peer review: 2 bugs found and fixed:** (1) `vault.info` removed from `TOKEN_REQUIRED_ACTIONS` (tokenless: reveals no secrets, used as pre-flight by CLI). (2) `vault.create` now returns token via proto field, not just JSON payload.
+- [x] **R7-3**: Add `mlock` on key material buffers in `keys/hierarchy.rs` (RootKey, ItemKey). Use `libc::mlock` on creation, `munlock` on drop. Best-effort (silent on failure). Prevents key material from paging to swap. **Done.** **Peer review: 2 gaps found and fixed:** (1) `derive(Clone)` replaced with manual `Clone` impl that calls `from_bytes` (which mlocks the new copy). (2) Stack-allocated arrays replaced with `Box<[u8; N]>` for stable heap addresses across moves. Custom `Debug` impl redacts key bytes.
+- [x] **R7-4**: Update `docs/02-threat-model.md` to explicitly model the git remote as adversarially writable. Added T5 (Active Git Remote Adversary) and T6 (Key Material Paged to Swap). Updated adversary table with classes C, E, G. **Done.** **Peer review: PASS.**
 
 ---
 

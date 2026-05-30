@@ -2,7 +2,7 @@
 
 **Status**: Candidate 3 — Under active development
 **Last updated**: 2026-05-30
-**Reviewers**: peer review (architecture advice + 2 peer reviews), TARS (implementation)
+**Reviewers**: Peer review (architecture advice + 2 rounds), TARS (implementation)
 
 ---
 
