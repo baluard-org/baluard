@@ -185,7 +185,17 @@ Automatic. No approval needed. The empty registry auto-approves the first enroll
 
 Requires physical presence + master password confirmation on an existing enrolled device.
 
-**Two-way QR pairing flow:**
+**Transfer methods** (all first-class, user picks what works):
+
+| Method | How | Best for |
+|--------|-----|----------|
+| **QR code** | Display string as QR, scan with camera | Phones, tablets |
+| **Manual copy** | Display string as text, user copies/types on other device | No camera, accessibility needs, terminals |
+| **File export** | Save as .json file, transfer via USB/LAN | Large payloads, batch enrollment |
+
+All payloads are base64url-encoded JSON strings. Same data, same security, different UX. The code does not care which method the user chose.
+
+**Two-way pairing flow:**
 
 ```
 New device                          Existing device
@@ -222,7 +232,7 @@ New device                          Existing device
    | 12. Enrollment complete              |
 ```
 
-**No server, no relay, no network.** Pure local exchange. All crypto in Rust core via UniFFI. Mobile UI handles camera (QR scan) and a confirmation dialog only.
+**No server, no relay, no network.** Pure local exchange. All crypto in Rust core via UniFFI. Mobile UI handles camera (QR scan), text display (manual copy), and file pickers. All three paths always available.
 
 **Anti-replay:**
 - Nonce: 32 random bytes, unique per enrollment attempt
@@ -230,7 +240,7 @@ New device                          Existing device
 - Timestamp: ±5 minute window
 - Both checked before enrollment is accepted
 
-**Transfer fallback**: If QR payload is too large for the pairing bundle, fall back to file export (AirDrop, USB, shared folder). The bundle format is the same; only the transport changes.
+**Transfer for large payloads**: Pairing bundles may exceed QR capacity. In that case, the app shows the string as copyable text (user pastes in a message, email draft, or shared document) or exports as a .json file. The format is identical; only the transport changes. Manual copy is NOT a fallback. It is always available.
 
 ### UniFFI Exports for Mobile
 
@@ -322,31 +332,29 @@ Recovery bypasses DeviceManager enrollment entirely. The recovery phrase IS the 
 
 ## Open Bugs (from Peer Review)
 
-### BUG-1: Double-ack Quorum Bypass (P0)
+### BUG-1: Double-ack Quorum Bypass (P0) — **Fixed**
 
-`record_ack()` pushes to `collected_acks` without dedup by `device_id`. Quorum gate checks `collected_acks.len()`. A single device submitting N acks reaches quorum without other devices participating.
+`record_ack()` pushed to `collected_acks` without dedup by `device_id`. Quorum gate checked `collected_acks.len()`. A single device submitting N acks reached quorum without other devices participating.
 
-`epoch.acknowledge()` dedups via `acknowledged_devices.contains()`, but the quorum gate ignores it — it uses `collected_acks.len()`. Two counters, one dedupes, one doesn't.
+**Fix**: Reject duplicate acks from same device. Use `epoch.acknowledged_devices.len()` for quorum check (already deduped). Single source of truth.
 
-**Fix**: Use `self.epoch.acknowledged_devices.len()` for quorum check instead of `self.collected_acks.len()`.
+### BUG-2: Seen Nonces Not Persisted (P1) — **Fixed**
 
-### BUG-2: Seen Nonces Not Persisted (P1)
+`seen_nonces: Vec<String>` was in-memory only. Daemon restart cleared it. An attacker who captures an enrollment QR before use could replay it after restart.
 
-`seen_nonces: Vec<String>` is in-memory only. Daemon restart clears it. An attacker who captures an enrollment QR before use can replay it after restart.
+**Fix**: Persist to `meta/seen-nonces.json` on `save_to_vault()`, load on `load_from_vault()`. FIFO eviction at 10,000 entries.
 
-**Fix**: Persist to `meta/seen-nonces.json`. Cap at 10,000 entries with FIFO eviction.
+### BUG-3: Commit Barrier Computed Then Dropped (P1) — **Fixed**
 
-### BUG-3: Commit Barrier Computed Then Dropped (P1)
+In `commit_rotation()`, `_commit_barrier` was built from acks but never written back to the transaction. The `.txn` file's `commit_barrier` field stayed empty. Audit trail was hollow.
 
-In `commit_rotation()`, `_commit_barrier` is built from acks but never written back to the transaction. The `.txn` file's `commit_barrier` field stays empty. Audit trail is hollow.
+**Fix**: Populate `tx.commit_barrier` before commit. Write finalized `.committed` file with populated barrier.
 
-**Fix**: Populate `tx.commit_barrier` before taking the transaction. Write finalized transaction to disk.
+### BUG-4: Two Ack-Tracking Structures Diverge (P1) — **Fixed**
 
-### BUG-4: Two Ack-Tracking Structures Diverge (P1)
+`epoch.acknowledged_devices` and `collected_acks` tracked the same logical set but could disagree after a duplicate ack.
 
-`epoch.acknowledged_devices` and `collected_acks` track the same logical set but can disagree after a double-ack. Single source of truth needed.
-
-**Fix**: `epoch.acknowledged_devices` is canonical for quorum. `collected_acks` provides signed payloads only.
+**Fix**: `epoch.acknowledged_devices` is canonical for quorum. `collected_acks` provides signed payloads only. Duplicate acks rejected before recording.
 
 ---
 
