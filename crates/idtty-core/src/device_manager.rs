@@ -48,7 +48,7 @@ pub struct EnrollmentPayload {
 pub struct ApprovalSignature {
     /// Device ID of the approver.
     pub approver_device_id: Uuid,
-    /// Ed25519 signature over H("enroll" || CBOR(payload) || nonce).
+    /// Ed25519 signature over H("enroll" || JSON(payload)).
     pub signature: Vec<u8>,
 }
 
@@ -436,8 +436,7 @@ impl DeviceManager {
             let committed_path = rekey_dir.join(format!("{}.committed", tx.new_epoch));
             let committed_json = serde_json::to_string_pretty(&tx)
                 .map_err(|e| KeyError::InvalidEpochState(format!("serialize committed: {e}")))?;
-            std::fs::write(&committed_path, committed_json)
-                .map_err(|e| SyncError::Git(format!("write committed: {e}")))?;
+            atomic_write(&committed_path, &committed_json)?;
         }
 
         // Transition epoch: ROTATING → RETIRED (old) → create new ACTIVE
@@ -474,8 +473,10 @@ impl DeviceManager {
 
         // Single surviving device = self-ack = immediate commit
         let rotation_committed = if surviving_count <= quorum_needed {
-            // Caller must provide the ack externally for production.
-            // For single-device case, we auto-acknowledge using the epoch's ack mechanism.
+            // Note: collected_acks is empty here because the actual signing key lives
+            // in the vault keywrap, not DeviceManager. The .committed file will have
+            // an empty commit_barrier. This is correct: force-evict is a single-device
+            // emergency operation, not a multi-device quorum proof.
             self.epoch.acknowledge(surviving_device_id);
             self.commit_rotation()?;
             true
@@ -488,26 +489,6 @@ impl DeviceManager {
             rotation_committed,
             new_epoch: if rotation_committed { new_epoch } else { self.epoch.epoch },
         })
-    }
-
-    /// Generate a self-signed ack for a device that has its private key available.
-    /// In production, the caller (VaultHandle/daemon) performs the actual signing
-    /// and passes the completed RotationAck to record_ack().
-    #[allow(dead_code)]
-    fn sign_ack(
-        &self,
-        _device_id: Uuid,
-        _epoch: u64,
-        _txn_hash: &str,
-    ) -> Result<RotationAck, IdttyError> {
-        // Note: actual signing requires the device's Ed25519 private key,
-        // which is not stored in DeviceManager (it's in the vault keywrap).
-        // The caller (VaultHandle/daemon) performs the actual signing
-        // and passes the completed RotationAck to record_ack().
-        //
-        // This method exists for single-device self-commit where the
-        // caller has direct access to the signing key.
-        Err(KeyError::RootKeyUnavailable.into())
     }
 
     // ── Persistence ──
@@ -589,22 +570,22 @@ impl DeviceManager {
             .map_err(|e| DeviceError::Keystore(format!("create meta dir: {e}")))?;
 
         // Save registry
+        let registry_path = meta.join("devices.json");
         let registry_json = serde_json::to_string_pretty(&self.registry)
             .map_err(|e| DeviceError::Keystore(format!("serialize registry: {e}")))?;
-        std::fs::write(meta.join("devices.json"), registry_json)
-            .map_err(|e| DeviceError::Keystore(format!("write registry: {e}")))?;
+        atomic_write(&registry_path, &registry_json)?;
 
         // Save epoch
+        let epoch_path = meta.join("epoch.json");
         let epoch_json = serde_json::to_string_pretty(&self.epoch)
             .map_err(|e| KeyError::InvalidEpochState(format!("serialize epoch: {e}")))?;
-        std::fs::write(meta.join("epoch.json"), epoch_json)
-            .map_err(|e| KeyError::InvalidEpochState(format!("write epoch: {e}")))?;
+        atomic_write(&epoch_path, &epoch_json)?;
 
         // BUG-2 fix: persist seen nonces
+        let nonces_path = meta.join("seen-nonces.json");
         let nonces_json = serde_json::to_string(&self.seen_nonces)
             .map_err(|e| DeviceError::Keystore(format!("serialize nonces: {e}")))?;
-        std::fs::write(meta.join("seen-nonces.json"), nonces_json)
-            .map_err(|e| DeviceError::Keystore(format!("write nonces: {e}")))?;
+        atomic_write(&nonces_path, &nonces_json)?;
 
         // Save pending transaction if in ROTATING state
         if let Some(ref tx) = self.pending_transaction {
@@ -612,10 +593,10 @@ impl DeviceManager {
             std::fs::create_dir_all(&rekey_dir)
                 .map_err(|e| SyncError::Git(format!("create rekey dir: {e}")))?;
 
+            let txn_path = rekey_dir.join(format!("{}.txn", tx.new_epoch));
             let txn_json = serde_json::to_string_pretty(tx)
                 .map_err(|e| KeyError::InvalidEpochState(format!("serialize txn: {e}")))?;
-            std::fs::write(rekey_dir.join(format!("{}.txn", tx.new_epoch)), txn_json)
-                .map_err(|e| SyncError::Git(format!("write txn: {e}")))?;
+            atomic_write(&txn_path, &txn_json)?;
 
             // Save acks
             for ack in &self.collected_acks {
@@ -623,8 +604,7 @@ impl DeviceManager {
                     .map_err(|e| KeyError::InvalidEpochState(format!("serialize ack: {e}")))?;
                 let ack_path =
                     rekey_dir.join(format!("{}.ack.{}", ack.epoch, ack.device_id));
-                std::fs::write(&ack_path, ack_json)
-                    .map_err(|e| SyncError::Git(format!("write ack: {e}")))?;
+                atomic_write(&ack_path, &ack_json)?;
             }
         }
 
@@ -661,6 +641,17 @@ fn load_seen_nonces(vault_path: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Atomic file write: write to temp file then rename.
+/// Prevents corruption from crash mid-write.
+fn atomic_write(path: &std::path::PathBuf, data: &str) -> Result<(), IdttyError> {
+    let tmp_path = path.with_extension("tmp");
+    std::fs::write(&tmp_path, data)
+        .map_err(|e| DeviceError::Keystore(format!("atomic write tmp: {e}")))?;
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| DeviceError::Keystore(format!("atomic write rename: {e}")))?;
+    Ok(())
+}
+
 /// Compute a hash of a rekey transaction for ack binding.
 fn compute_txn_hash(tx: &RekeyTransaction) -> String {
     use sha2::{Digest, Sha256};
@@ -691,11 +682,12 @@ pub fn build_ack_sign_input(epoch: u64, device_id: &Uuid, txn_hash: &str) -> Vec
 }
 
 /// Build the sign input for enrollment approval. Public so callers can sign externally.
-pub fn build_enroll_sign_input(payload: &EnrollmentPayload) -> Vec<u8> {
-    let payload_bytes = serde_json::to_vec(payload).unwrap_or_default();
+pub fn build_enroll_sign_input(payload: &EnrollmentPayload) -> Result<Vec<u8>, IdttyError> {
+    let payload_bytes = serde_json::to_vec(payload)
+        .map_err(|e| DeviceError::Keystore(format!("serialize enrollment payload: {e}")))?;
     let mut input = b"enroll".to_vec();
     input.extend_from_slice(&payload_bytes);
-    input
+    Ok(input)
 }
 
 #[cfg(test)]
@@ -768,7 +760,7 @@ mod tests {
 
         // Enroll second device with approval from first
         let p2 = make_payload("Second");
-        let sign_input = build_enroll_sign_input(&p2);
+        let sign_input = build_enroll_sign_input(&p2).unwrap();
         let approval_sig = sig::sign(&signing_key, &sign_input).unwrap();
 
         let approval = ApprovalSignature {
