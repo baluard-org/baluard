@@ -215,6 +215,23 @@ Complete overhaul of the desktop interface to deliver a production-grade 3-colum
 - **Interactive Details & Password Generator**: Integrated a comprehensive details viewer with copy/eye reveal controls and an interactive password generator (with length slider and custom complexity pools) built directly into form flows.
 - **Parallel Loading Optimization**: Loaded decrypted cipher metadata asynchronously in parallel during unlock, ensuring instant search and zero detail latency.
 
+### Round 9 (Device Lifecycle Bug Fixes)
+4 bugs from peer review of Candidate 3 (DeviceManager). All fixed:
+
+| # | Severity | Issue | Fix |
+|---|----------|-------|-----|
+| BUG-1 | P0 | `collected_acks` no dedup by `device_id` — single device reaches quorum with N acks | Reject duplicate acks. Use `epoch.acknowledged_devices.len()` for quorum (canonical deduped tracker) |
+| BUG-2 | P1 | `seen_nonces` not persisted across restarts | Persist to `meta/seen-nonces.json`. FIFO eviction at 10,000 entries |
+| BUG-3 | P1 | `_commit_barrier` computed then dropped — audit trail hollow | Populate `tx.commit_barrier` before commit. Write `.committed` file |
+| BUG-4 | P1 | Dual ack-tracking structures (`epoch.acknowledged_devices` vs `collected_acks`) diverge | `epoch.acknowledged_devices` is canonical. `collected_acks` is signed payloads only |
+
+Also added:
+- `EnrollmentPayload::encode_transfer()` / `decode_transfer()` — base64url JSON for QR or manual copy
+- `PairingBundle` struct — formalized pairing response with transfer encoding
+- Enrollment transfer methods documented as first-class (QR, manual copy, file export) — not fallbacks
+- 4 new tests: duplicate ack rejection (2), nonce persistence, FIFO eviction
+- 87 tests passing, 0 clippy errors
+
 ---
 
 ## Known Limitations

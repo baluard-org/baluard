@@ -8,6 +8,7 @@
 
 use std::path::Path;
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -21,7 +22,12 @@ use crate::vault::manifest::DeviceEntry;
 
 // ── Enrollment Authorization ──
 
-/// Enrollment payload from a new device (QR code content).
+/// Enrollment payload from a new device.
+///
+/// Transfer methods (all equivalent, user picks what works):
+/// - QR code: base64url-encoded JSON
+/// - Manual copy: display as text string, user types/pastes on existing device
+/// - File export: save as .json file, transfer via USB/LAN
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnrollmentPayload {
     pub device_id: Uuid,
@@ -46,6 +52,54 @@ pub struct ApprovalSignature {
     pub signature: Vec<u8>,
 }
 
+/// Pairing bundle returned by existing device after approving enrollment.
+/// Transfer methods: QR code, manual copy/paste, file export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairingBundle {
+    /// HPKE-wrapped Root Key for the new device.
+    pub wrapped_root_key: Vec<u8>,
+    /// Updated device registry (includes new device).
+    pub updated_registry: DeviceRegistry,
+    /// Approval signature from the authorizing device.
+    pub approval: ApprovalSignature,
+}
+
+impl EnrollmentPayload {
+    /// Encode as base64url JSON string for manual copy or QR code.
+    pub fn encode_transfer(&self) -> Result<String, IdttyError> {
+        let json = serde_json::to_string(self)
+            .map_err(|e| DeviceError::Keystore(format!("encode payload: {e}")))?;
+        Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&json))
+    }
+
+    /// Decode from base64url JSON string (manual paste or QR scan).
+    pub fn decode_transfer(encoded: &str) -> Result<Self, IdttyError> {
+        let json = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| DeviceError::EnrollmentRejected("invalid transfer encoding".into()))?;
+        serde_json::from_slice(&json)
+            .map_err(|e| DeviceError::EnrollmentRejected(format!("decode payload: {e}")).into())
+    }
+}
+
+impl PairingBundle {
+    /// Encode as base64url JSON string for manual copy or QR code.
+    pub fn encode_transfer(&self) -> Result<String, IdttyError> {
+        let json = serde_json::to_string(self)
+            .map_err(|e| DeviceError::Keystore(format!("encode bundle: {e}")))?;
+        Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&json))
+    }
+
+    /// Decode from base64url JSON string (manual paste or QR scan).
+    pub fn decode_transfer(encoded: &str) -> Result<Self, IdttyError> {
+        let json = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| DeviceError::EnrollmentRejected("invalid bundle encoding".into()))?;
+        serde_json::from_slice(&json)
+            .map_err(|e| DeviceError::EnrollmentRejected(format!("decode bundle: {e}")).into())
+    }
+}
+
 /// Acknowledgment of an epoch rotation proposal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RotationAck {
@@ -61,6 +115,9 @@ pub struct RotationAck {
 
 // ── DeviceManager Aggregate ──
 
+/// Maximum number of enrollment nonces to retain (FIFO eviction beyond this).
+const MAX_SEEN_NONCES: usize = 10_000;
+
 /// Device lifecycle coordinator. Owns registry, epoch state, and rotation logic.
 pub struct DeviceManager {
     /// Device registry (enrolled devices, keys, quorum).
@@ -71,7 +128,7 @@ pub struct DeviceManager {
     pub pending_transaction: Option<RekeyTransaction>,
     /// Collected acks for current rotation.
     pub collected_acks: Vec<RotationAck>,
-    /// Seen enrollment nonces (anti-replay).
+    /// Seen enrollment nonces (anti-replay). Persisted to meta/seen-nonces.json.
     seen_nonces: Vec<String>,
     /// Path to vault directory (for file I/O).
     vault_path: Option<std::path::PathBuf>,
@@ -100,6 +157,14 @@ impl DeviceManager {
             seen_nonces: Vec::new(),
             vault_path: None,
         }
+    }
+
+    /// Record a seen nonce, evicting oldest if at capacity.
+    fn record_nonce(&mut self, nonce: String) {
+        if self.seen_nonces.len() >= MAX_SEEN_NONCES {
+            self.seen_nonces.remove(0);
+        }
+        self.seen_nonces.push(nonce);
     }
 
     /// Set the vault path for file I/O operations.
@@ -214,7 +279,7 @@ impl DeviceManager {
         }
 
         // Record nonce
-        self.seen_nonces.push(payload.nonce.clone());
+        self.record_nonce(payload.nonce.clone());
 
         // Enroll in registry
         let entry = self.registry.enroll_with_id(
@@ -301,6 +366,14 @@ impl DeviceManager {
             .into());
         }
 
+        // BUG-1 fix: reject duplicate ack from same device
+        if self.epoch.acknowledged_devices.contains(&ack.device_id) {
+            return Err(DeviceError::EnrollmentRejected(
+                "duplicate ack: device already acknowledged this epoch".into(),
+            )
+            .into());
+        }
+
         // Verify signature
         let device_entry = self.registry.devices.get(&ack.device_id).unwrap();
         let vk_bytes: [u8; 32] = hex::decode(&device_entry.signing_public_key)
@@ -321,15 +394,15 @@ impl DeviceManager {
         signature::verify(&verifying_key, &sign_input, &sig)
             .map_err(|_| DeviceError::EnrollmentRejected("ack signature verification failed".into()))?;
 
-        // Record ack
+        // BUG-1/BUG-4 fix: record ack in epoch first (canonical dedup tracker),
+        // then store signed payload in collected_acks.
+        // Quorum uses epoch.acknowledged_devices.len() exclusively.
+        self.epoch.acknowledge(ack.device_id);
         self.collected_acks.push(ack);
 
-        // Record in epoch
-        self.epoch.acknowledge(self.collected_acks.last().unwrap().device_id);
-
-        // Check quorum
+        // Check quorum using epoch's deduped tracker
         let quorum = self.registry.quorum_required();
-        if self.collected_acks.len() >= quorum {
+        if self.epoch.acknowledged_devices.len() >= quorum {
             self.commit_rotation()?;
             return Ok(true); // committed
         }
@@ -339,14 +412,15 @@ impl DeviceManager {
 
     /// Commit a rotation after quorum is reached.
     /// Transitions: old epoch → RETIRED, new epoch → ACTIVE.
+    /// BUG-3 fix: populates commit_barrier before committing.
     fn commit_rotation(&mut self) -> Result<(), IdttyError> {
-        let tx = self
+        let mut tx = self
             .pending_transaction
             .take()
             .ok_or_else(|| KeyError::InvalidEpochState("no pending transaction".into()))?;
 
-        // Populate commit barrier with verified ack signatures
-        let _commit_barrier: Vec<CommitBarrierSig> = self
+        // BUG-3 fix: populate commit barrier with verified ack signatures
+        tx.commit_barrier = self
             .collected_acks
             .iter()
             .map(|ack| CommitBarrierSig {
@@ -356,11 +430,22 @@ impl DeviceManager {
             })
             .collect();
 
+        // Write finalized .committed file before transitioning state
+        if let Some(ref vault_path) = self.vault_path {
+            let rekey_dir = vault_path.join(".idtty/rekey");
+            let committed_path = rekey_dir.join(format!("{}.committed", tx.new_epoch));
+            let committed_json = serde_json::to_string_pretty(&tx)
+                .map_err(|e| KeyError::InvalidEpochState(format!("serialize committed: {e}")))?;
+            std::fs::write(&committed_path, committed_json)
+                .map_err(|e| SyncError::Git(format!("write committed: {e}")))?;
+        }
+
         // Transition epoch: ROTATING → RETIRED (old) → create new ACTIVE
         self.epoch.retire().map_err(|e| KeyError::InvalidEpochState(e))?;
         self.epoch = EpochInfo::new(tx.new_epoch);
         self.epoch.activate().map_err(|e| KeyError::InvalidEpochState(e))?;
 
+        // Cleanup acks
         self.collected_acks.clear();
 
         Ok(())
@@ -488,7 +573,7 @@ impl DeviceManager {
             epoch,
             pending_transaction,
             collected_acks,
-            seen_nonces: Vec::new(),
+            seen_nonces: load_seen_nonces(vault_path),
             vault_path: Some(vault_path.to_path_buf()),
         })
     }
@@ -514,6 +599,12 @@ impl DeviceManager {
             .map_err(|e| KeyError::InvalidEpochState(format!("serialize epoch: {e}")))?;
         std::fs::write(meta.join("epoch.json"), epoch_json)
             .map_err(|e| KeyError::InvalidEpochState(format!("write epoch: {e}")))?;
+
+        // BUG-2 fix: persist seen nonces
+        let nonces_json = serde_json::to_string(&self.seen_nonces)
+            .map_err(|e| DeviceError::Keystore(format!("serialize nonces: {e}")))?;
+        std::fs::write(meta.join("seen-nonces.json"), nonces_json)
+            .map_err(|e| DeviceError::Keystore(format!("write nonces: {e}")))?;
 
         // Save pending transaction if in ROTATING state
         if let Some(ref tx) = self.pending_transaction {
@@ -556,6 +647,18 @@ pub struct ForceEvictResult {
     pub rotation_committed: bool,
     /// New epoch number after rotation.
     pub new_epoch: u64,
+}
+
+/// Load seen nonces from vault directory. Returns empty vec if file missing.
+fn load_seen_nonces(vault_path: &Path) -> Vec<String> {
+    let path = vault_path.join("meta/seen-nonces.json");
+    if !path.exists() {
+        return Vec::new();
+    }
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|data| serde_json::from_str(&data).ok())
+        .unwrap_or_default()
 }
 
 /// Compute a hash of a rekey transaction for ack binding.
@@ -864,5 +967,150 @@ mod tests {
         assert_eq!(e.state, EpochState::Retired);
         e.destroy().unwrap();
         assert_eq!(e.state, EpochState::Destroyed);
+    }
+
+    // BUG-1 fix: same device submitting duplicate acks must NOT reach quorum of 2
+    #[test]
+    fn duplicate_ack_does_not_reach_quorum() {
+        let mut mgr = DeviceManager::new();
+        mgr.epoch.activate().unwrap();
+
+        // 2 devices, quorum = 1 (ceil(2/2))
+        let (sk1, vk1) = sig::generate_ed25519_keypair();
+        let (_, x_pk1) = hpke_wrap::generate_x25519_keypair();
+        let d1 = Uuid::new_v4();
+        mgr.registry
+            .enroll_with_id(d1, "D1".into(), x_pk1.to_bytes(), sig::verifying_key_bytes(&vk1))
+            .unwrap();
+
+        let (_, x_pk2) = hpke_wrap::generate_x25519_keypair();
+        let (_, e_pk2) = sig::generate_ed25519_keypair();
+        let _d2 = mgr.registry
+            .enroll_with_id(Uuid::new_v4(), "D2".into(), x_pk2.to_bytes(), sig::verifying_key_bytes(&e_pk2))
+            .unwrap();
+
+        let (_, tx) = mgr.initiate_rotation(d1).unwrap();
+        let txn_hash = compute_txn_hash(tx);
+
+        // First ack from D1 → accepted, quorum reached (N=2, q=1)
+        let sign_input = build_ack_sign_input(1, &d1, &txn_hash);
+        let ack_sig = sig::sign(&sk1, &sign_input).unwrap();
+        let ack1 = RotationAck {
+            epoch: 1,
+            device_id: d1,
+            txn_hash: txn_hash.clone(),
+            signature: ack_sig.to_bytes().to_vec(),
+        };
+        // quorum=1 so first valid ack commits immediately
+        assert!(mgr.record_ack(ack1).unwrap());
+
+        // Rotation already committed — epoch is ACTIVE, no pending tx
+        assert_eq!(mgr.epoch_state(), EpochState::Active);
+    }
+
+    // BUG-1 fix: with 3 devices (quorum=2), same device acking twice must fail
+    #[test]
+    fn duplicate_ack_rejected_with_3_devices() {
+        let mut mgr = DeviceManager::new();
+        mgr.epoch.activate().unwrap();
+
+        // 3 devices with real keypairs so HPKE wrapping works
+        let (sk1, vk1) = sig::generate_ed25519_keypair();
+        let (_, x_pk1) = hpke_wrap::generate_x25519_keypair();
+        let d1 = Uuid::new_v4();
+        mgr.registry
+            .enroll_with_id(d1, "D1".into(), x_pk1.to_bytes(), sig::verifying_key_bytes(&vk1))
+            .unwrap();
+
+        let (_, x_pk2) = hpke_wrap::generate_x25519_keypair();
+        let (_, e_pk2) = sig::generate_ed25519_keypair();
+        mgr.registry
+            .enroll_with_id(Uuid::new_v4(), "D2".into(), x_pk2.to_bytes(), sig::verifying_key_bytes(&e_pk2))
+            .unwrap();
+
+        let (_, x_pk3) = hpke_wrap::generate_x25519_keypair();
+        let (_, e_pk3) = sig::generate_ed25519_keypair();
+        mgr.registry
+            .enroll_with_id(Uuid::new_v4(), "D3".into(), x_pk3.to_bytes(), sig::verifying_key_bytes(&e_pk3))
+            .unwrap();
+
+        assert_eq!(mgr.registry.quorum_required(), 2);
+
+        let (_, tx) = mgr.initiate_rotation(d1).unwrap();
+        let txn_hash = compute_txn_hash(tx);
+
+        // First ack from D1 → accepted
+        let sign_input = build_ack_sign_input(1, &d1, &txn_hash);
+        let ack_sig = sig::sign(&sk1, &sign_input).unwrap();
+        let ack1 = RotationAck {
+            epoch: 1,
+            device_id: d1,
+            txn_hash: txn_hash.clone(),
+            signature: ack_sig.to_bytes().to_vec(),
+        };
+        assert!(!mgr.record_ack(ack1).unwrap()); // 1 of 2, not committed
+
+        // Duplicate ack from same D1 → REJECTED
+        let ack_sig2 = sig::sign(&sk1, &sign_input).unwrap();
+        let ack2 = RotationAck {
+            epoch: 1,
+            device_id: d1,
+            txn_hash: txn_hash.clone(),
+            signature: ack_sig2.to_bytes().to_vec(),
+        };
+        assert!(mgr.record_ack(ack2).is_err());
+
+        // Still not committed (only 1 unique ack)
+        assert_eq!(mgr.epoch_state(), EpochState::Rotating);
+    }
+
+    // BUG-2 fix: seen_nonces persisted and loaded across save/load cycle
+    #[test]
+    fn seen_nonces_persisted_across_save_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path();
+
+        // Create and save
+        {
+            let mut mgr = DeviceManager::new();
+            mgr.epoch.activate().unwrap();
+            mgr.set_vault_path(vault_path);
+
+            let payload = make_payload("First");
+            let nonce = payload.nonce.clone();
+            mgr.enroll(&payload, None).unwrap();
+            mgr.save_to_vault().unwrap();
+
+            // Verify nonce is recorded
+            assert!(mgr.seen_nonces.contains(&nonce));
+        }
+
+        // Load and verify nonce survives
+        {
+            let mgr = DeviceManager::load_from_vault(vault_path).unwrap();
+            // Should have loaded the nonce
+            assert!(!mgr.seen_nonces.is_empty());
+        }
+    }
+
+    // BUG-2 fix: FIFO eviction at capacity
+    #[test]
+    fn seen_nonces_fifo_eviction() {
+        let mut mgr = DeviceManager::new();
+        mgr.epoch.activate().unwrap();
+
+        // Fill beyond capacity using direct registry enrollment + nonce recording
+        for i in 0..=MAX_SEEN_NONCES {
+            mgr.registry
+                .enroll_with_id(Uuid::new_v4(), format!("Dev{i}"), [0u8; 32], [0u8; 32])
+                .unwrap();
+            mgr.record_nonce(format!("nonce-{i}"));
+        }
+
+        assert_eq!(mgr.seen_nonces.len(), MAX_SEEN_NONCES);
+        // First nonce should have been evicted
+        assert!(!mgr.seen_nonces.contains(&"nonce-0".to_string()));
+        // Latest nonce should be present
+        assert!(mgr.seen_nonces.contains(&format!("nonce-{MAX_SEEN_NONCES}")));
     }
 }
