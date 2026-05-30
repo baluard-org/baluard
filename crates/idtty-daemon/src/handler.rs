@@ -155,6 +155,9 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.add",
     "vault.delete",
     "vault.devices",
+    "vault.trash.list",
+    "vault.trash.restore",
+    "vault.trash.purge",
     "sync.init",
     "sync.remote",
     "sync.push",
@@ -214,6 +217,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             req.payload.zeroize();
             match result {
                 Ok(()) => {
+                    // Auto-purge old trash (default 30 days) on unlock
+                    let _ = state.purge_old_trash(30).await;
                     // Token was just generated inside unlock(). Fetch it.
                     let token = state.get_session_token().await;
                     match state.info().await {
@@ -278,6 +283,38 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
             match state.delete_cipher(&req.payload).await {
                 Ok(()) => ok_resp("deleted", token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "vault.trash.list" => match state.list_trash_ids().await {
+            Ok(ids) => {
+                let json = serde_json::json!({"cipher_ids": ids});
+                ok_resp(json.to_string(), token_str)
+            }
+            Err(e) => err_response(e),
+        },
+
+        "vault.trash.restore" => {
+            if req.payload.is_empty() {
+                return err_response("Missing cipher UUID in payload");
+            }
+            match state.restore_cipher(&req.payload).await {
+                Ok(()) => ok_resp("restored", token_str),
+                Err(e) => err_response(e),
+            }
+        },
+
+        "vault.trash.purge" => {
+            let days = match req.payload.parse::<u32>() {
+                Ok(d) => d,
+                Err(_) => 30, // default 30 days
+            };
+            match state.purge_old_trash(days).await {
+                Ok(count) => {
+                    let json = serde_json::json!({"purged_count": count});
+                    ok_resp(json.to_string(), token_str)
+                }
                 Err(e) => err_response(e),
             }
         }

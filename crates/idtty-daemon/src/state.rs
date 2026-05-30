@@ -177,6 +177,29 @@ impl VaultState {
         handle.delete_cipher(cipher_id).map_err(|e| format!("{e}"))
     }
 
+    /// List all trash cipher IDs.
+    pub async fn list_trash_ids(&self) -> Result<Vec<String>, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        let ids = handle.list_trash_ids().map_err(|e| format!("{e}"))?;
+        Ok(ids.iter().map(|id| id.to_string()).collect())
+    }
+
+    /// Restore a cipher by ID.
+    pub async fn restore_cipher(&self, id_str: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        let cipher_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
+        handle.restore_cipher(cipher_id).map_err(|e| format!("{e}"))
+    }
+
+    /// Purge trash older than configurable days.
+    pub async fn purge_old_trash(&self, days: u32) -> Result<usize, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        handle.purge_old_trash(days).map_err(|e| format!("{e}"))
+    }
+
     /// Get vault info (ID, device, state).
     pub async fn info(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
