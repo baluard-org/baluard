@@ -9,7 +9,7 @@ use crate::client;
 
 use std::path::Path;
 
-use idtty_core::types::{CipherInput, KdfProfile};
+use idtty_core::types::{CipherInput, CipherKind, KdfProfile, LoginData};
 use idtty_core::vault::handle::{CipherRead, VaultHandle};
 use zeroize::Zeroize;
 
@@ -161,11 +161,15 @@ pub fn handle_add(
     let input = CipherInput {
         name,
         folder_id: None,
-        username,
-        password: Some((*cipher_password).clone()),
-        uris: uri.map(|u| vec![u]).unwrap_or_default(),
+        kind: CipherKind::Login(LoginData {
+            username,
+            password: Some((*cipher_password).clone()),
+            uris: uri.map(|u| vec![u]).unwrap_or_default(),
+            totp_uri: None,
+            autofill_on_page_load: false,
+            password_revision_date: None,
+        }),
         notes,
-        totp_uri: None,
         custom_fields: vec![],
     };
 
@@ -285,37 +289,89 @@ pub fn handle_get(
             match handle.get_cipher(cipher_id)? {
                 CipherRead::Decrypted(c) => match output {
                     "json" => {
-                        let json = serde_json::json!({
+                        let mut json_obj = serde_json::json!({
                             "id": c.id.to_string(),
                             "name": c.name,
-                            "username": c.username,
-                            "password": c.password,
-                            "uris": c.uris,
+                            "type": format!("{:?}", c.kind.cipher_type()),
                             "notes": c.notes,
-                            "totp": c.totp_uri,
                             "tier": format!("{:?}", c.tier),
                             "epoch": c.key_epoch,
                             "seq": c.update_seq,
                         });
-                        println!("{json}");
+                        match &c.kind {
+                            idtty_core::types::CipherKind::Login(data) => {
+                                json_obj["username"] = serde_json::json!(data.username);
+                                json_obj["password"] = serde_json::json!(data.password);
+                                json_obj["uris"] = serde_json::json!(data.uris);
+                                json_obj["totp"] = serde_json::json!(data.totp_uri);
+                            }
+                            idtty_core::types::CipherKind::Card(data) => {
+                                json_obj["cardholder_name"] = serde_json::json!(data.cardholder_name);
+                                json_obj["brand"] = serde_json::json!(data.brand);
+                                json_obj["number"] = serde_json::json!(data.number);
+                            }
+                            idtty_core::types::CipherKind::Identity(data) => {
+                                json_obj["first_name"] = serde_json::json!(data.first_name);
+                                json_obj["last_name"] = serde_json::json!(data.last_name);
+                                json_obj["email"] = serde_json::json!(data.email);
+                            }
+                            _ => {}
+                        }
+                        println!("{json_obj}");
                     }
                     "text" => {
                         println!("Cipher: {}", c.id);
                         println!("  Name:      {}", c.name);
-                        if let Some(ref u) = c.username {
-                            println!("  Username:  {u}");
-                        }
-                        if let Some(ref p) = c.password {
-                            println!("  Password:  {p}");
-                        }
-                        for u in &c.uris {
-                            println!("  URI:       {u}");
+                        println!("  Type:      {:?}", c.kind.cipher_type());
+                        match &c.kind {
+                            idtty_core::types::CipherKind::Login(data) => {
+                                if let Some(ref u) = data.username {
+                                    println!("  Username:  {u}");
+                                }
+                                if let Some(ref p) = data.password {
+                                    println!("  Password:  {p}");
+                                }
+                                for u in &data.uris {
+                                    println!("  URI:       {u}");
+                                }
+                                if let Some(ref t) = data.totp_uri {
+                                    println!("  TOTP:      {t}");
+                                }
+                            }
+                            idtty_core::types::CipherKind::Card(data) => {
+                                if let Some(ref v) = data.cardholder_name {
+                                    println!("  Cardholder: {v}");
+                                }
+                                if let Some(ref v) = data.brand {
+                                    println!("  Brand:     {v}");
+                                }
+                                if let Some(ref v) = data.number {
+                                    println!("  Number:    {v}");
+                                }
+                            }
+                            idtty_core::types::CipherKind::Identity(data) => {
+                                if let Some(ref v) = data.first_name {
+                                    println!("  First:     {v}");
+                                }
+                                if let Some(ref v) = data.last_name {
+                                    println!("  Last:      {v}");
+                                }
+                                if let Some(ref v) = data.email {
+                                    println!("  Email:     {v}");
+                                }
+                            }
+                            idtty_core::types::CipherKind::SshKey(data) => {
+                                if let Some(ref v) = data.public_key {
+                                    println!("  Public:    {v}");
+                                }
+                                if let Some(ref v) = data.key_fingerprint {
+                                    println!("  Fingerprint: {v}");
+                                }
+                            }
+                            idtty_core::types::CipherKind::SecureNote => {}
                         }
                         if let Some(ref n) = c.notes {
                             println!("  Notes:     {n}");
-                        }
-                        if let Some(ref t) = c.totp_uri {
-                            println!("  TOTP:      {t}");
                         }
                         println!("  Tier:      {:?}", c.tier);
                         println!("  Epoch:     {}", c.key_epoch);
@@ -324,18 +380,21 @@ pub fn handle_get(
                     _ => {
                         println!("Cipher: {}", c.id);
                         println!("  Name:      {}", c.name);
-                        if let Some(ref u) = c.username {
-                            println!("  Username:  {u}");
-                        }
-                        println!("  Password:  ***");
-                        for u in &c.uris {
-                            println!("  URI:       {u}");
+                        println!("  Type:      {:?}", c.kind.cipher_type());
+                        match &c.kind {
+                            idtty_core::types::CipherKind::Login(data) => {
+                                if let Some(ref u) = data.username {
+                                    println!("  Username:  {u}");
+                                }
+                                println!("  Password:  ***");
+                                for u in &data.uris {
+                                    println!("  URI:       {u}");
+                                }
+                            }
+                            _ => {}
                         }
                         if c.notes.is_some() {
                             println!("  Notes:     ***");
-                        }
-                        if c.totp_uri.is_some() {
-                            println!("  TOTP:      ***");
                         }
                         println!("  Use --output=text to reveal secrets");
                     }

@@ -803,11 +803,15 @@ mod tests {
         let input = CipherInput {
             name: "GitHub".into(),
             folder_id: None,
-            username: Some("user@example.com".into()),
-            password: Some("s3cret!".into()),
-            uris: vec!["https://github.com".into()],
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("user@example.com".into()),
+                password: Some("s3cret!".into()),
+                uris: vec!["https://github.com".into()],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+            }),
             notes: None,
-            totp_uri: None,
             custom_fields: vec![],
         };
 
@@ -821,8 +825,13 @@ mod tests {
         match result {
             CipherRead::Decrypted(c) => {
                 assert_eq!(c.name, "GitHub");
-                assert_eq!(c.username.as_deref(), Some("user@example.com"));
-                assert_eq!(c.password.as_deref(), Some("s3cret!"));
+                match &c.kind {
+                    crate::types::CipherKind::Login(data) => {
+                        assert_eq!(data.username.as_deref(), Some("user@example.com"));
+                        assert_eq!(data.password.as_deref(), Some("s3cret!"));
+                    }
+                    _ => panic!("expected Login kind"),
+                }
             }
             CipherRead::Locked(_) => panic!("expected decrypted cipher"),
         }
@@ -837,11 +846,15 @@ mod tests {
         let input = CipherInput {
             name: "Test".into(),
             folder_id: None,
-            username: None,
-            password: Some("pw".into()),
-            uris: vec![],
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: None,
+                password: Some("pw".into()),
+                uris: vec![],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+            }),
             notes: None,
-            totp_uri: None,
             custom_fields: vec![],
         };
 
@@ -867,11 +880,15 @@ mod tests {
         let input = CipherInput {
             name: "Delete Me".into(),
             folder_id: None,
-            username: None,
-            password: Some("val".into()),
-            uris: vec![],
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: None,
+                password: Some("val".into()),
+                uris: vec![],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+            }),
             notes: None,
-            totp_uri: None,
             custom_fields: vec![],
         };
 

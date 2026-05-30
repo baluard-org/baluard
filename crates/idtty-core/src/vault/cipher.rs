@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::crypto::aead;
 use crate::error::{IdttyError, VaultError};
 use crate::keys::hierarchy::ItemKey;
-use crate::types::{Cipher, CipherId, CipherInput, EnvelopeHeader, ObjectType, Tier};
+use crate::types::{Cipher, CipherEnvelopeData, CipherId, CipherInput, EnvelopeHeader, ObjectType, Tier};
 use crate::vault::envelope;
 use crate::vault::padding;
 use crate::{ALG_AES_256_GCM, IDTTY_VERSION};
@@ -130,19 +130,17 @@ pub fn decrypt_cipher(
     // Unpad
     let json = padding::unpad(&padded)?;
 
-    // Deserialize cipher data
-    let data: CipherData = serde_json::from_slice(&json)
+    // Deserialize cipher data (handles old flat format via migrate())
+    let raw_data: CipherEnvelopeData = serde_json::from_slice(&json)
         .map_err(|e| VaultError::Corrupt(format!("cipher deserialization: {e}")))?;
+    let data: CipherData = raw_data.into();
 
     Ok(Cipher {
         id: cipher_id,
         name: data.name,
         folder_id: data.folder_id,
-        username: data.username,
-        password: data.password,
-        uris: data.uris,
+        kind: data.kind,
         notes: data.notes,
-        totp_uri: data.totp_uri,
         custom_fields: data.custom_fields,
         key_epoch: enc_envelope.header.key_epoch,
         update_seq: enc_envelope.header.update_seq,
@@ -156,16 +154,24 @@ pub fn decrypt_cipher(
 }
 
 /// Internal cipher data for JSON serialization (within the encrypted envelope).
+///
+/// Uses `CipherEnvelopeData` which handles backward-compatible deserialization
+/// and migration from old flat-format ciphers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CipherData {
     pub name: String,
     pub folder_id: Option<Uuid>,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub uris: Vec<String>,
+    pub kind: crate::types::CipherKind,
     pub notes: Option<String>,
     pub totp_uri: Option<String>,
     pub custom_fields: Vec<crate::types::CustomField>,
+    // Old flat fields retained for serialization compatibility
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub uris: Vec<String>,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -176,17 +182,49 @@ impl CipherData {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+
+        // Extract login-specific flat fields for backward compat serialization
+        let (username, password, uris, totp_uri) = match &input.kind {
+            crate::types::CipherKind::Login(data) => (
+                data.username.clone(),
+                data.password.clone(),
+                data.uris.clone(),
+                data.totp_uri.clone(),
+            ),
+            _ => (None, None, Vec::new(), None),
+        };
+
         Self {
             name: input.name.clone(),
             folder_id: input.folder_id,
-            username: input.username.clone(),
-            password: input.password.clone(),
-            uris: input.uris.clone(),
+            kind: input.kind.clone(),
             notes: input.notes.clone(),
-            totp_uri: input.totp_uri.clone(),
+            totp_uri: totp_uri.clone(),
             custom_fields: input.custom_fields.clone(),
+            username,
+            password,
+            uris,
             created_at: now,
             updated_at: now,
+        }
+    }
+}
+
+impl From<CipherEnvelopeData> for CipherData {
+    fn from(env: CipherEnvelopeData) -> Self {
+        let migrated = env.migrate();
+        Self {
+            name: migrated.name,
+            folder_id: migrated.folder_id,
+            kind: migrated.kind,
+            notes: migrated.notes,
+            totp_uri: migrated.totp_uri,
+            custom_fields: migrated.custom_fields,
+            username: migrated.username,
+            password: migrated.password,
+            uris: migrated.uris,
+            created_at: migrated.created_at,
+            updated_at: migrated.updated_at,
         }
     }
 }
@@ -205,11 +243,15 @@ mod tests {
         let input = CipherInput {
             name: "GitHub".into(),
             folder_id: None,
-            username: Some("user@example.com".into()),
-            password: Some("s3cret!".into()),
-            uris: vec!["https://github.com".into()],
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("user@example.com".into()),
+                password: Some("s3cret!".into()),
+                uris: vec!["https://github.com".into()],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+            }),
             notes: None,
-            totp_uri: None,
             custom_fields: vec![],
         };
 
@@ -220,9 +262,14 @@ mod tests {
 
         let cipher = decrypt_cipher(vault_id, cipher_id, &file, &item_key).unwrap();
         assert_eq!(cipher.name, "GitHub");
-        assert_eq!(cipher.username.as_deref(), Some("user@example.com"));
-        assert_eq!(cipher.password.as_deref(), Some("s3cret!"));
-        assert_eq!(cipher.uris, vec!["https://github.com"]);
+        match &cipher.kind {
+            crate::types::CipherKind::Login(data) => {
+                assert_eq!(data.username.as_deref(), Some("user@example.com"));
+                assert_eq!(data.password.as_deref(), Some("s3cret!"));
+                assert_eq!(data.uris, vec!["https://github.com"]);
+            }
+            _ => panic!("expected Login kind"),
+        }
         assert_eq!(cipher.key_epoch, 1);
         assert_eq!(cipher.update_seq, 1);
     }
@@ -237,11 +284,15 @@ mod tests {
         let input = CipherInput {
             name: "test".into(),
             folder_id: None,
-            username: None,
-            password: Some("secret".into()),
-            uris: vec![],
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: None,
+                password: Some("secret".into()),
+                uris: vec![],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+            }),
             notes: None,
-            totp_uri: None,
             custom_fields: vec![],
         };
 
@@ -262,11 +313,15 @@ mod tests {
         let input = CipherInput {
             name: "secret-entry".into(),
             folder_id: None,
-            username: None,
-            password: Some("password-for-A".into()),
-            uris: vec![],
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: None,
+                password: Some("password-for-A".into()),
+                uris: vec![],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+            }),
             notes: None,
-            totp_uri: None,
             custom_fields: vec![],
         };
 

@@ -10,7 +10,7 @@
 
 use zeroize::Zeroize;
 
-use crate::types::CipherInput;
+use crate::types::{CipherInput, CipherKind};
 
 /// Result of a field-level merge attempt.
 #[derive(Debug, Clone)]
@@ -37,9 +37,11 @@ impl Drop for ConflictInfo {
             f.remote_value.zeroize();
         }
         // Zeroize sensitive fields in merged_base
-        self.merged_base.password.zeroize();
-        self.merged_base.totp_uri.zeroize();
         self.merged_base.notes.zeroize();
+        if let CipherKind::Login(ref mut data) = self.merged_base.kind {
+            data.password.zeroize();
+            data.totp_uri.zeroize();
+        }
         for cf in &mut self.merged_base.custom_fields {
             if matches!(cf.field_type, crate::types::CustomFieldType::Hidden) {
                 cf.value.zeroize();
@@ -81,35 +83,53 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
     // Check each field individually using 3-way merge
     merge_3way_field(&base.name, &mut merged.name, &remote.name, "name", &mut conflicts);
 
-    merge_3way_field_opt(
-        &base.username,
-        &mut merged.username,
-        &remote.username,
-        "username",
-        &mut conflicts,
-    );
-    merge_3way_field_opt(
-        &base.password,
-        &mut merged.password,
-        &remote.password,
-        "password",
-        &mut conflicts,
-    );
-    merge_3way_field_opt(&base.notes, &mut merged.notes, &remote.notes, "notes", &mut conflicts);
-    merge_3way_field_opt(
-        &base.totp_uri,
-        &mut merged.totp_uri,
-        &remote.totp_uri,
-        "totp_uri",
-        &mut conflicts,
-    );
-
-    // URIs: simple merge (union of unique values)
-    for uri in &remote.uris {
-        if !merged.uris.contains(uri) {
-            merged.uris.push(uri.clone());
+    // Merge kind-specific data
+    match (&base.kind, &local.kind, &remote.kind) {
+        // All three are Login: merge login fields
+        (
+            CipherKind::Login(base_login),
+            CipherKind::Login(local_login),
+            CipherKind::Login(remote_login),
+        ) => {
+            let mut merged_login = local_login.clone();
+            merge_3way_field_opt(
+                &base_login.username,
+                &mut merged_login.username,
+                &remote_login.username,
+                "username",
+                &mut conflicts,
+            );
+            merge_3way_field_opt(
+                &base_login.password,
+                &mut merged_login.password,
+                &remote_login.password,
+                "password",
+                &mut conflicts,
+            );
+            merge_3way_field_opt(
+                &base_login.totp_uri,
+                &mut merged_login.totp_uri,
+                &remote_login.totp_uri,
+                "totp_uri",
+                &mut conflicts,
+            );
+            // URIs: union of unique values
+            for uri in &remote_login.uris {
+                if !merged_login.uris.contains(uri) {
+                    merged_login.uris.push(uri.clone());
+                }
+            }
+            merged.kind = CipherKind::Login(merged_login);
+        }
+        // Same non-Login type on all sides: keep local (no field-level merge for Card/Identity/SshKey yet)
+        (_base, local_kind, _remote) => {
+            // Keep local's kind as-is for non-Login types
+            let _ = local_kind;
         }
     }
+
+    // Merge notes field
+    merge_3way_field_opt(&base.notes, &mut merged.notes, &remote.notes, "notes", &mut conflicts);
 
     // Custom fields: union by name, prefer local on name collision
     for cf in &remote.custom_fields {
@@ -203,11 +223,17 @@ fn merge_3way_field_opt(
 
 fn get_field_value<'a>(input: &'a CipherInput, field: &str) -> Option<&'a str> {
     match field {
-        "username" => input.username.as_deref(),
-        "password" => input.password.as_deref(),
-        "totp_uri" => input.totp_uri.as_deref(),
         "name" => Some(&input.name),
         "notes" => input.notes.as_deref(),
+        "username" | "password" | "totp_uri" => match &input.kind {
+            CipherKind::Login(data) => match field {
+                "username" => data.username.as_deref(),
+                "password" => data.password.as_deref(),
+                "totp_uri" => data.totp_uri.as_deref(),
+                _ => None,
+            },
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -215,16 +241,14 @@ fn get_field_value<'a>(input: &'a CipherInput, field: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{CipherKind, LoginData};
 
     fn base_input(name: &str) -> CipherInput {
         CipherInput {
             name: name.to_string(),
             folder_id: None,
-            username: None,
-            password: None,
-            uris: vec![],
+            kind: CipherKind::Login(LoginData::default()),
             notes: None,
-            totp_uri: None,
             custom_fields: vec![],
         }
     }
@@ -242,7 +266,10 @@ mod tests {
     fn non_overlapping_fields_merge() {
         let base = base_input("GitHub");
         let mut local = base.clone();
-        local.username = Some("user@old.com".into());
+        match &mut local.kind {
+            CipherKind::Login(data) => data.username = Some("user@old.com".into()),
+            _ => panic!("expected login"),
+        }
 
         let mut remote = base.clone();
         remote.notes = Some("added a note".into());
@@ -252,7 +279,12 @@ mod tests {
         let result = merge_ciphers(&base, &local, &remote);
         match result {
             MergeResult::Merged(merged) => {
-                assert_eq!(merged.username.as_deref(), Some("user@old.com"));
+                match &merged.kind {
+                    CipherKind::Login(data) => {
+                        assert_eq!(data.username.as_deref(), Some("user@old.com"));
+                    }
+                    _ => panic!("expected login"),
+                }
                 assert_eq!(merged.notes.as_deref(), Some("added a note"));
             }
             MergeResult::Conflict(_) => panic!("expected clean 3-way merge"),
@@ -263,10 +295,16 @@ mod tests {
     fn overlapping_field_conflict() {
         let base = base_input("GitHub");
         let mut local = base.clone();
-        local.username = Some("local@user.com".into());
+        match &mut local.kind {
+            CipherKind::Login(data) => data.username = Some("local@user.com".into()),
+            _ => panic!("expected login"),
+        }
 
         let mut remote = base.clone();
-        remote.username = Some("remote@user.com".into());
+        match &mut remote.kind {
+            CipherKind::Login(data) => data.username = Some("remote@user.com".into()),
+            _ => panic!("expected login"),
+        }
 
         let result = merge_ciphers(&base, &local, &remote);
         assert!(matches!(result, MergeResult::Conflict(_)));
@@ -275,15 +313,26 @@ mod tests {
     #[test]
     fn semantic_group_atomic() {
         let mut base = base_input("GitHub");
-        base.username = Some("user".into());
-        base.password = Some("old-pass".into());
-        base.totp_uri = Some("otpauth://old".into());
+        match &mut base.kind {
+            CipherKind::Login(data) => {
+                data.username = Some("user".into());
+                data.password = Some("old-pass".into());
+                data.totp_uri = Some("otpauth://old".into());
+            }
+            _ => panic!("expected login"),
+        }
 
         let mut local = base.clone();
-        local.password = Some("local-pass".into()); // both changed password
+        match &mut local.kind {
+            CipherKind::Login(data) => data.password = Some("local-pass".into()),
+            _ => panic!("expected login"),
+        }
 
         let mut remote = base.clone();
-        remote.password = Some("remote-pass".into()); // both changed password
+        match &mut remote.kind {
+            CipherKind::Login(data) => data.password = Some("remote-pass".into()),
+            _ => panic!("expected login"),
+        }
 
         let result = merge_ciphers(&base, &local, &remote);
         match result {
@@ -306,16 +355,25 @@ mod tests {
     fn uri_union_merge() {
         let base = base_input("GitHub");
         let mut local = base.clone();
-        local.uris = vec!["https://github.com".into()];
+        match &mut local.kind {
+            CipherKind::Login(data) => data.uris = vec!["https://github.com".into()],
+            _ => panic!("expected login"),
+        }
 
         let mut remote = base.clone();
-        remote.uris = vec!["https://github.com".into(), "https://api.github.com".into()];
+        match &mut remote.kind {
+            CipherKind::Login(data) => {
+                data.uris = vec!["https://github.com".into(), "https://api.github.com".into()]
+            }
+            _ => panic!("expected login"),
+        }
 
         let result = merge_ciphers(&base, &local, &remote);
         match result {
-            MergeResult::Merged(merged) => {
-                assert_eq!(merged.uris.len(), 2);
-            }
+            MergeResult::Merged(merged) => match &merged.kind {
+                CipherKind::Login(data) => assert_eq!(data.uris.len(), 2),
+                _ => panic!("expected login"),
+            },
             MergeResult::Conflict(_) => panic!("expected clean 3-way merge"),
         }
     }
