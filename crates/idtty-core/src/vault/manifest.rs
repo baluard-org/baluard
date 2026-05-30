@@ -121,3 +121,32 @@ pub struct SequenceEntry {
     pub object_id: Uuid,
     pub last_seq: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vault_settings_rejects_unknown_uri_match_strategy() {
+        let json = r#"{"auto_lock_minutes": 10, "default_uri_match": "exakt"}"#;
+        let result: Result<VaultSettings, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "expected error for unknown strategy, got: {:?}", result);
+    }
+
+    #[test]
+    fn vault_settings_accepts_valid_uri_match_strategy() {
+        let json = r#"{"default_uri_match": "host"}"#;
+        let settings: VaultSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            settings.default_uri_match,
+            Some(crate::types::UriMatchStrategy::Host)
+        );
+    }
+
+    #[test]
+    fn vault_settings_null_uri_match_is_none() {
+        let json = r#"{"default_uri_match": null}"#;
+        let settings: VaultSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.default_uri_match.is_none());
+    }
+}
