@@ -249,7 +249,7 @@ pub struct LoginData {
 }
 
 /// Card-specific cipher data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CardData {
     #[serde(default)]
     pub cardholder_name: Option<String>,
@@ -266,7 +266,7 @@ pub struct CardData {
 }
 
 /// Identity-specific cipher data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IdentityData {
     #[serde(default)]
     pub title: Option<String>,
@@ -307,7 +307,7 @@ pub struct IdentityData {
 }
 
 /// SSH Key-specific cipher data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SshKeyData {
     #[serde(default)]
     pub private_key: Option<String>,
@@ -433,10 +433,13 @@ impl CipherEnvelopeData {
         match &self.kind {
             CipherKind::Login(data) if data.username.is_none()
                 && data.password.is_none()
-                && data.uris.is_empty() =>
+                && data.uris.is_empty()
+                && data.totp_uri.is_none() =>
             {
                 // Flat fields present? Migrate them into LoginData.
-                if self.username.is_some() || self.password.is_some() || !self.uris.is_empty() {
+                if self.username.is_some() || self.password.is_some()
+                    || !self.uris.is_empty() || self.totp_uri.is_some()
+                {
                     self.kind = CipherKind::Login(LoginData {
                         username: self.username.take(),
                         password: self.password.take(),
@@ -673,5 +676,37 @@ mod tests {
         };
         // Verify default kind is Login
         assert!(matches!(input.kind, CipherKind::Login(_)));
+    }
+
+    #[test]
+    fn migration_only_totp_uri() {
+        // Old cipher with ONLY totp_uri set (no username/password/uris)
+        let old_json = r#"{
+            "name": "GitHub",
+            "username": null,
+            "password": null,
+            "uris": [],
+            "totp_uri": "otpauth://totp/GitHub?secret=JBSWY3DPEHPK3PXP",
+            "notes": null,
+            "custom_fields": [],
+            "created_at": 1000000,
+            "updated_at": 2000000
+        }"#;
+
+        let env_data: CipherEnvelopeData = serde_json::from_str(old_json).unwrap();
+        let migrated = env_data.migrate();
+
+        match &migrated.kind {
+            CipherKind::Login(data) => {
+                assert_eq!(
+                    data.totp_uri.as_deref(),
+                    Some("otpauth://totp/GitHub?secret=JBSWY3DPEHPK3PXP")
+                );
+                assert!(data.username.is_none());
+                assert!(data.password.is_none());
+                assert!(data.uris.is_empty());
+            }
+            _ => panic!("expected Login kind after migration"),
+        }
     }
 }

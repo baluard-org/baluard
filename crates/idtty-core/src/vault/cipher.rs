@@ -163,9 +163,12 @@ struct CipherData {
     pub folder_id: Option<Uuid>,
     pub kind: crate::types::CipherKind,
     pub notes: Option<String>,
+    /// Write-only: populated on encrypt for backward compat. Read path uses kind.Login.totp_uri.
+    #[serde(default)]
     pub totp_uri: Option<String>,
     pub custom_fields: Vec<crate::types::CustomField>,
-    // Old flat fields retained for serialization compatibility
+    // Write-only legacy fields: populated on encrypt for backward compat.
+    // Read path uses kind.Login.username/password/uris instead.
     #[serde(default)]
     pub username: Option<String>,
     #[serde(default)]

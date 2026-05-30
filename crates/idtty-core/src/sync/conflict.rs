@@ -38,9 +38,19 @@ impl Drop for ConflictInfo {
         }
         // Zeroize sensitive fields in merged_base
         self.merged_base.notes.zeroize();
-        if let CipherKind::Login(ref mut data) = self.merged_base.kind {
-            data.password.zeroize();
-            data.totp_uri.zeroize();
+        match &mut self.merged_base.kind {
+            CipherKind::Login(data) => {
+                data.password.zeroize();
+                data.totp_uri.zeroize();
+            }
+            CipherKind::Card(data) => {
+                data.code.zeroize();
+                data.number.zeroize();
+            }
+            CipherKind::SshKey(data) => {
+                data.private_key.zeroize();
+            }
+            _ => {}
         }
         for cf in &mut self.merged_base.custom_fields {
             if matches!(cf.field_type, crate::types::CustomFieldType::Hidden) {
@@ -83,7 +93,7 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
     // Check each field individually using 3-way merge
     merge_3way_field(&base.name, &mut merged.name, &remote.name, "name", &mut conflicts);
 
-    // Merge kind-specific data
+        // Merge kind-specific data
     match (&base.kind, &local.kind, &remote.kind) {
         // All three are Login: merge login fields
         (
@@ -122,9 +132,19 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
             merged.kind = CipherKind::Login(merged_login);
         }
         // Same non-Login type on all sides: keep local (no field-level merge for Card/Identity/SshKey yet)
-        (_base, local_kind, _remote) => {
-            // Keep local's kind as-is for non-Login types
-            let _ = local_kind;
+        (_base, _local, _remote)
+            if _local.cipher_type() == _base.cipher_type()
+                && _remote.cipher_type() == _base.cipher_type() =>
+        {
+            // All three have the same type — keep local as-is (intentional)
+        }
+        // Cross-type conflict: one side changed the cipher type
+        _ => {
+            conflicts.push(FieldConflict {
+                field_name: "type".to_string(),
+                local_value: format!("{:?}", local.kind.cipher_type()),
+                remote_value: format!("{:?}", remote.kind.cipher_type()),
+            });
         }
     }
 
@@ -352,29 +372,44 @@ mod tests {
     }
 
     #[test]
-    fn uri_union_merge() {
-        let base = base_input("GitHub");
-        let mut local = base.clone();
-        match &mut local.kind {
-            CipherKind::Login(data) => data.uris = vec!["https://github.com".into()],
-            _ => panic!("expected login"),
-        }
-
+    fn cross_type_change_conflicts() {
+        // Base is Login, local stays Login, remote changed to Card
+        let base = base_input("Entry");
+        let local = base.clone();
         let mut remote = base.clone();
-        match &mut remote.kind {
-            CipherKind::Login(data) => {
-                data.uris = vec!["https://github.com".into(), "https://api.github.com".into()]
-            }
-            _ => panic!("expected login"),
-        }
+        remote.kind = CipherKind::Card(crate::types::CardData::default());
 
         let result = merge_ciphers(&base, &local, &remote);
         match result {
-            MergeResult::Merged(merged) => match &merged.kind {
-                CipherKind::Login(data) => assert_eq!(data.uris.len(), 2),
-                _ => panic!("expected login"),
-            },
-            MergeResult::Conflict(_) => panic!("expected clean 3-way merge"),
+            MergeResult::Conflict(info) => {
+                assert!(info
+                    .conflicting_fields
+                    .iter()
+                    .any(|c| c.field_name == "type"));
+            }
+            MergeResult::Merged(_) => panic!("expected conflict for cross-type change"),
         }
+    }
+
+    #[test]
+    fn same_non_login_type_no_conflict() {
+        // All three are Card: keep local
+        let mut base = CipherInput {
+            name: "Card".into(),
+            folder_id: None,
+            kind: CipherKind::Card(crate::types::CardData {
+                brand: Some("Visa".into()),
+                ..Default::default()
+            }),
+            notes: None,
+            custom_fields: vec![],
+        };
+        base.name = "Card".into();
+
+        let local = base.clone();
+        let remote = base.clone();
+
+        let result = merge_ciphers(&base, &local, &remote);
+        assert!(matches!(result, MergeResult::Merged(_)));
     }
 }
