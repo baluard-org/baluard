@@ -116,6 +116,7 @@ idtty/
 ## UX PRINCIPLES
 * **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden, "session token" -> invisible. Be transparent for trust, not at the expense of confusing non-tech users.
 * **Everybody-first**: Every screen must be understandable without a computer science degree. If a term needs a tooltip to explain, replace the term.
+* **No server backend**: IDtty must NOT depend on any server backend. Desktop and mobile apps work as standalone and fully offline if the user wants. Git sync with GitHub/GitLab is optional, and if enabled, must be easy to set up for non-tech users too.
 * **i18n**: All user-facing strings live in `desktop/src/i18n/locales/en.json`. Use `t("key")` in components. To add a language: copy `_template.json`, rename to locale code, translate values, PR. See `desktop/src/i18n/locales/README.md`.
 
 ## IMPLEMENTATION STATUS
