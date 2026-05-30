@@ -38,8 +38,7 @@ pub fn verify_commit_signature(
     let sig = ed25519_dalek::Signature::from_slice(signature_bytes)
         .map_err(|_| SyncError::InvalidCommitSignature)?;
 
-    signature::verify(&verifying_key, payload, &sig)
-        .map_err(|_| SyncError::InvalidCommitSignature)
+    signature::verify(&verifying_key, payload, &sig).map_err(|_| SyncError::InvalidCommitSignature)
 }
 
 #[cfg(test)]
@@ -64,6 +63,8 @@ mod tests {
         let sig = signature::sign(&signing, &payload).unwrap();
 
         let tampered = create_commit_signature_payload(&[9u8; 20], &[2u8; 20], 12345);
-        assert!(verify_commit_signature(&verifying.to_bytes(), &tampered, &sig.to_bytes()).is_err());
+        assert!(
+            verify_commit_signature(&verifying.to_bytes(), &tampered, &sig.to_bytes()).is_err()
+        );
     }
 }

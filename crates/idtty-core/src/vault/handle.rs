@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
+use crate::crypto::hkdf_derive;
 use crate::crypto::hpke_wrap;
 use crate::crypto::kdf;
-use crate::crypto::hkdf_derive;
 use crate::devices::DeviceRegistry;
 use crate::error::{IdttyError, VaultError};
 use crate::keys::hierarchy::{ItemKey, RootKey};
@@ -119,11 +119,15 @@ impl VaultHandle {
         let sync_key = hkdf_derive::derive_sync_key(&kek)?;
 
         // Step 3: Read keywrap file
-        let keywrap_path = self.path.join(format!("meta/keywrap/{}.json", self.device_id));
+        let keywrap_path = self
+            .path
+            .join(format!("meta/keywrap/{}.json", self.device_id));
         if !keywrap_path.exists() {
             return Err(VaultError::NotFound(format!(
-                "keywrap file for device {}", self.device_id
-            )).into());
+                "keywrap file for device {}",
+                self.device_id
+            ))
+            .into());
         }
 
         let keywrap_json = std::fs::read_to_string(&keywrap_path)
@@ -134,17 +138,25 @@ impl VaultHandle {
         let eph_pub = hex::decode(keywrap["ephemeral_public"].as_str().unwrap_or(""))
             .map_err(|e| VaultError::Corrupt(format!("ephemeral_public hex: {e}")))?;
         if eph_pub.len() != 32 {
-            return Err(VaultError::Corrupt(format!("ephemeral_public: expected 32 bytes, got {}", eph_pub.len())).into());
+            return Err(VaultError::Corrupt(format!(
+                "ephemeral_public: expected 32 bytes, got {}",
+                eph_pub.len()
+            ))
+            .into());
         }
         let ct = hex::decode(keywrap["encrypted_key"].as_str().unwrap_or(""))
             .map_err(|e| VaultError::Corrupt(format!("encrypted_key hex: {e}")))?;
         if ct.len() < 32 {
-            return Err(VaultError::Corrupt(format!("encrypted_key: too short ({} bytes)", ct.len())).into());
+            return Err(VaultError::Corrupt(format!(
+                "encrypted_key: too short ({} bytes)",
+                ct.len()
+            ))
+            .into());
         }
         let tag_hex = keywrap["tag"].as_str().unwrap_or("");
         let mut tag = [0u8; 16];
-        let tag_bytes = hex::decode(tag_hex)
-            .map_err(|e| VaultError::Corrupt(format!("tag hex: {e}")))?;
+        let tag_bytes =
+            hex::decode(tag_hex).map_err(|e| VaultError::Corrupt(format!("tag hex: {e}")))?;
         if tag_bytes.len() != 16 {
             return Err(VaultError::Corrupt("invalid tag length".into()).into());
         }
@@ -157,16 +169,17 @@ impl VaultHandle {
             let canary_data = std::fs::read(self.path.join("meta/kek-canary.enc"))
                 .map_err(|e| VaultError::Metadata(format!("reading kek canary: {e}")))?;
             let canary_envelope = crate::vault::envelope::deserialize(&canary_data)?;
-            let canary_pt = crate::crypto::aead::decrypt(&session_key, &canary_envelope)
-                .map_err(|_| {
+            let canary_pt =
+                crate::crypto::aead::decrypt(&session_key, &canary_envelope).map_err(|_| {
                     let _ = self.record_failed_attempt();
                     VaultError::Corrupt("master password incorrect".into())
                 })?;
             if canary_pt != b"idtty-kek-ok" {
                 let _ = self.record_failed_attempt();
                 return Err(VaultError::Corrupt(
-                    "master password incorrect (KEK canary plaintext mismatch)".into()
-                ).into());
+                    "master password incorrect (KEK canary plaintext mismatch)".into(),
+                )
+                .into());
             }
         }
 
@@ -180,18 +193,21 @@ impl VaultHandle {
                 .map_err(|e| VaultError::Corrupt(format!("privkey json: {e}")))?;
             let priv_bytes = hex::decode(pk_data["x25519_private"].as_str().unwrap_or(""))
                 .map_err(|e| VaultError::Corrupt(format!("privkey hex: {e}")))?;
-            let priv_arr: [u8; 32] = priv_bytes.try_into()
+            let priv_arr: [u8; 32] = priv_bytes
+                .try_into()
                 .map_err(|_| VaultError::Corrupt("invalid private key length".into()))?;
             let priv_key = x25519_dalek::StaticSecret::from(priv_arr);
 
             let unwrapped = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &priv_key)?;
-            let rk_bytes: [u8; 64] = unwrapped.try_into()
+            let rk_bytes: [u8; 64] = unwrapped
+                .try_into()
                 .map_err(|_| VaultError::Corrupt("unwrapped root key not 64 bytes".into()))?;
             RootKey::from_bytes(rk_bytes)
         } else {
             return Err(VaultError::NotFound(
-                "device private key not found (CLI mode requires meta/device-privkey.json)".into()
-            ).into());
+                "device private key not found (CLI mode requires meta/device-privkey.json)".into(),
+            )
+            .into());
         };
 
         // Step 6: Verify root key with RK canary
@@ -280,13 +296,12 @@ impl VaultHandle {
             .map_err(|e| VaultError::Metadata(format!("reading rk canary: {e}")))?;
         let canary_envelope = crate::vault::envelope::deserialize(&canary_data)?;
         let canary_pt = crate::crypto::aead::decrypt(&canary_key, &canary_envelope)
-            .map_err(|_| VaultError::Corrupt(
-                "root key verification failed".into()
-            ))?;
+            .map_err(|_| VaultError::Corrupt("root key verification failed".into()))?;
         if canary_pt != b"idtty-rk-ok" {
             return Err(VaultError::Corrupt(
-                "root key verification failed (plaintext mismatch)".into()
-            ).into());
+                "root key verification failed (plaintext mismatch)".into(),
+            )
+            .into());
         }
         Ok(())
     }
@@ -299,8 +314,9 @@ impl VaultHandle {
             // Empty vault with no RK canary: cannot verify root key.
             // Refuse unlock rather than accept any key silently.
             return Err(VaultError::Corrupt(
-                "vault has no ciphers and no root key canary. Re-initialize vault.".into()
-            ).into());
+                "vault has no ciphers and no root key canary. Re-initialize vault.".into(),
+            )
+            .into());
         }
 
         let canary_id = cipher_ids[0];
@@ -314,8 +330,9 @@ impl VaultHandle {
         match self.try_decrypt_cipher_with_root_key(root_key, &file) {
             Ok(_) => Ok(()),
             Err(_) => Err(VaultError::Corrupt(
-                "master password incorrect (root key verification failed)".into()
-            ).into()),
+                "master password incorrect (root key verification failed)".into(),
+            )
+            .into()),
         }
     }
 
@@ -380,9 +397,16 @@ impl VaultHandle {
             VaultState::Unlocked(unlocked) => {
                 // Read epoch from envelope header for correct Item Key derivation
                 let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
-                let item_key = Self::derive_item_key_static(&unlocked.root_key, cipher_id, envelope.header.key_epoch);
+                let item_key = Self::derive_item_key_static(
+                    &unlocked.root_key,
+                    cipher_id,
+                    envelope.header.key_epoch,
+                );
                 let cipher = crate::vault::cipher::decrypt_cipher(
-                    self.vault_id, cipher_id, &file, &item_key,
+                    self.vault_id,
+                    cipher_id,
+                    &file,
+                    &item_key,
                 )?;
                 Ok(CipherRead::Decrypted(cipher))
             }
@@ -407,7 +431,8 @@ impl VaultHandle {
         };
 
         let cipher_id = Uuid::new_v4();
-        let item_key = Self::derive_item_key_static(&unlocked.root_key, cipher_id, unlocked.current_epoch);
+        let item_key =
+            Self::derive_item_key_static(&unlocked.root_key, cipher_id, unlocked.current_epoch);
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -475,7 +500,9 @@ impl VaultHandle {
     /// by any process with write access. Argon2id provides the real defense.
     fn check_attempt_rate_limit(&self) -> Result<(), IdttyError> {
         let path = self.path.join("meta/kdf-attempts.json");
-        if !path.exists() { return Ok(()); }
+        if !path.exists() {
+            return Ok(());
+        }
 
         let data = std::fs::read_to_string(&path)
             .map_err(|e| VaultError::Metadata(format!("reading attempts: {e}")))?;
@@ -494,7 +521,8 @@ impl VaultHandle {
                 return Err(VaultError::Corrupt(format!(
                     "too many failed attempts, wait {} seconds",
                     delay_secs - (now - last_ts)
-                )).into());
+                ))
+                .into());
             }
         }
         Ok(())
@@ -520,8 +548,11 @@ impl VaultHandle {
             "failed_count": count + 1,
             "last_failed_at": now,
         });
-        std::fs::write(&path, serde_json::to_string_pretty(&record)
-            .map_err(|e| VaultError::Corrupt(format!("attempts serialize: {e}")))?)?;
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&record)
+                .map_err(|e| VaultError::Corrupt(format!("attempts serialize: {e}")))?,
+        )?;
         Ok(())
     }
 
@@ -578,8 +609,8 @@ pub struct LockedCipherInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vault::creation;
     use crate::types::KdfProfile;
+    use crate::vault::creation;
 
     fn create_test_vault() -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().unwrap();
@@ -597,21 +628,25 @@ mod tests {
         std::fs::write(
             path.join("meta/kdf-params.json"),
             serde_json::to_string_pretty(&result.kdf_params).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Device registry
         let mut registry = DeviceRegistry::new();
         let pub_enc = x25519_dalek::PublicKey::from(&result.device_x25519_secret);
         let verifying = result.device_ed25519_signing.verifying_key();
-        registry.enroll(
-            "this-device".into(),
-            pub_enc.to_bytes(),
-            verifying.to_bytes(),
-        ).unwrap();
+        registry
+            .enroll(
+                "this-device".into(),
+                pub_enc.to_bytes(),
+                verifying.to_bytes(),
+            )
+            .unwrap();
         std::fs::write(
             path.join("meta/devices.json"),
             serde_json::to_string_pretty(&registry).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Keywrap
         let (eph_pub, ct, tag) = &result.wrapped_root_key;
@@ -624,7 +659,8 @@ mod tests {
         std::fs::write(
             path.join(format!("meta/keywrap/{}.json", result.device_id)),
             serde_json::to_string_pretty(&keywrap_data).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // CLI mode: store device private key (NOT for production!)
         let privkey_data = serde_json::json!({
@@ -633,19 +669,14 @@ mod tests {
         std::fs::write(
             path.join("meta/device-privkey.json"),
             serde_json::to_string_pretty(&privkey_data).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // KEK canary (for password verification)
-        std::fs::write(
-            path.join("meta/kek-canary.enc"),
-            &result.kek_canary,
-        ).unwrap();
+        std::fs::write(path.join("meta/kek-canary.enc"), &result.kek_canary).unwrap();
 
         // Root Key canary (for RK verification)
-        std::fs::write(
-            path.join("meta/rk-canary.enc"),
-            &result.rk_canary,
-        ).unwrap();
+        std::fs::write(path.join("meta/rk-canary.enc"), &result.rk_canary).unwrap();
 
         (dir, password.to_string())
     }

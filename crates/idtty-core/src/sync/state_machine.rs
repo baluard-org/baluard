@@ -74,7 +74,10 @@ impl SyncStateMachine {
             }
             Ok(())
         } else {
-            Err(format!("invalid transition: {:?} → {:?}", self.current, target))
+            Err(format!(
+                "invalid transition: {:?} → {:?}",
+                self.current, target
+            ))
         }
     }
 

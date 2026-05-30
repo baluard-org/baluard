@@ -57,6 +57,7 @@
     "sessionExpired": "Session expired. Please unlock again.",
     "integrityFailed": "Data integrity check failed",
     "corrupted": "Vault data is corrupted",
+    "invalidPassword": "Incorrect master password",
     "alreadyExists": "Vault already exists at this location",
     "unexpected": "An unexpected error occurred"
   }

@@ -59,6 +59,7 @@
     "sessionExpired": "SESSION_EXPIRED_UNLOCK_AGAIN",
     "integrityFailed": "DATA_INTEGRITY_CHECK_FAILED",
     "corrupted": "VAULT_DATA_CORRUPTED",
+    "invalidPassword": "INCORRECT_MASTER_PASSWORD",
     "alreadyExists": "VAULT_ALREADY_EXISTS",
     "unexpected": "UNEXPECTED_ERROR"
   }

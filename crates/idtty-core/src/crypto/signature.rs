@@ -3,7 +3,7 @@
 //! D22: All commits signed with device's Ed25519 signing key.
 //! D14: Quorum signatures for device enrollment/revocation.
 
-use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Verifier, Signature};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 
 use crate::error::CryptoError;
@@ -75,6 +75,9 @@ mod tests {
         let (_, verifying) = generate_ed25519_keypair();
         let bytes = verifying_key_bytes(&verifying);
         let restored = verifying_key_from_bytes(&bytes).unwrap();
-        assert_eq!(verifying_key_bytes(&verifying), verifying_key_bytes(&restored));
+        assert_eq!(
+            verifying_key_bytes(&verifying),
+            verifying_key_bytes(&restored)
+        );
     }
 }

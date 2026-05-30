@@ -28,16 +28,25 @@ const AAD_LEN_SIZE: usize = 2;
 
 /// Serialize an envelope to binary format.
 pub fn serialize(envelope: &CipherEnvelope) -> Result<Vec<u8>, VaultError> {
-    let tier_byte = envelope.header.tier.map(|t| match t {
-        crate::types::Tier::Xs => 1u8,
-        crate::types::Tier::S => 2,
-        crate::types::Tier::M => 3,
-        crate::types::Tier::L => 4,
-        crate::types::Tier::Xl => 5,
-    }).unwrap_or(0);
+    let tier_byte = envelope
+        .header
+        .tier
+        .map(|t| match t {
+            crate::types::Tier::Xs => 1u8,
+            crate::types::Tier::S => 2,
+            crate::types::Tier::M => 3,
+            crate::types::Tier::L => 4,
+            crate::types::Tier::Xl => 5,
+        })
+        .unwrap_or(0);
 
     let aad_len = envelope.aad.len() as u16;
-    let total_size = HEADER_SIZE + NONCE_SIZE + AAD_LEN_SIZE + envelope.aad.len() + TAG_SIZE + envelope.ciphertext.len();
+    let total_size = HEADER_SIZE
+        + NONCE_SIZE
+        + AAD_LEN_SIZE
+        + envelope.aad.len()
+        + TAG_SIZE
+        + envelope.ciphertext.len();
 
     let mut buf = Vec::with_capacity(total_size);
 
@@ -74,17 +83,23 @@ pub fn deserialize(data: &[u8]) -> Result<CipherEnvelope, VaultError> {
     let mut pos = 0;
 
     // Header
-    let version = data[pos]; pos += 1;
+    let version = data[pos];
+    pos += 1;
     if version != crate::IDTTY_VERSION {
         return Err(VaultError::InvalidEnvelopeVersion(version));
     }
 
-    let alg_id = u16::from_le_bytes(data[pos..pos+2].try_into().unwrap()); pos += 2;
-    let key_epoch = u64::from_le_bytes(data[pos..pos+8].try_into().unwrap()); pos += 8;
-    let nonce_counter = u64::from_le_bytes(data[pos..pos+8].try_into().unwrap()); pos += 8;
-    let update_seq = u64::from_le_bytes(data[pos..pos+8].try_into().unwrap()); pos += 8;
+    let alg_id = u16::from_le_bytes(data[pos..pos + 2].try_into().unwrap());
+    pos += 2;
+    let key_epoch = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
+    pos += 8;
+    let nonce_counter = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
+    pos += 8;
+    let update_seq = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
+    pos += 8;
 
-    let tier_byte = data[pos]; pos += 1;
+    let tier_byte = data[pos];
+    pos += 1;
     let tier = match tier_byte {
         0 => None,
         1 => Some(crate::types::Tier::Xs),
@@ -92,23 +107,31 @@ pub fn deserialize(data: &[u8]) -> Result<CipherEnvelope, VaultError> {
         3 => Some(crate::types::Tier::M),
         4 => Some(crate::types::Tier::L),
         5 => Some(crate::types::Tier::Xl),
-        _ => return Err(VaultError::InvalidTier(format!("invalid tier byte: {tier_byte}"))),
+        _ => {
+            return Err(VaultError::InvalidTier(format!(
+                "invalid tier byte: {tier_byte}"
+            )));
+        }
     };
 
     // Nonce
     let mut nonce = [0u8; NONCE_SIZE];
-    nonce.copy_from_slice(&data[pos..pos+NONCE_SIZE]); pos += NONCE_SIZE;
+    nonce.copy_from_slice(&data[pos..pos + NONCE_SIZE]);
+    pos += NONCE_SIZE;
 
     // AAD
-    let aad_len = u16::from_le_bytes(data[pos..pos+2].try_into().unwrap()) as usize; pos += 2;
+    let aad_len = u16::from_le_bytes(data[pos..pos + 2].try_into().unwrap()) as usize;
+    pos += 2;
     if data.len() < pos + aad_len + TAG_SIZE {
         return Err(VaultError::Corrupt("envelope truncated at AAD".into()));
     }
-    let aad = data[pos..pos+aad_len].to_vec(); pos += aad_len;
+    let aad = data[pos..pos + aad_len].to_vec();
+    pos += aad_len;
 
     // Tag
     let mut tag = [0u8; TAG_SIZE];
-    tag.copy_from_slice(&data[pos..pos+TAG_SIZE]); pos += TAG_SIZE;
+    tag.copy_from_slice(&data[pos..pos + TAG_SIZE]);
+    pos += TAG_SIZE;
 
     // Ciphertext (rest of buffer)
     let ciphertext = data[pos..].to_vec();

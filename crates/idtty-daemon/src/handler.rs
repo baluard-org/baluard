@@ -48,7 +48,9 @@ pub async fn handle_connection(mut stream: UnixStream, state: SharedVaultState) 
 
         while buf.len() < frame_len {
             let read = reader.read_buf(&mut buf).await?;
-            if read == 0 { return Ok(()); }
+            if read == 0 {
+                return Ok(());
+            }
         }
 
         let frame_data = buf.split_to(frame_len);
@@ -93,16 +95,17 @@ async fn read_length(
 
         let read = reader.read_buf(buf).await?;
         if read == 0 {
-            return if buf.is_empty() { Ok(None) } else { Err(anyhow::anyhow!("Connection closed mid-varint")) };
+            return if buf.is_empty() {
+                Ok(None)
+            } else {
+                Err(anyhow::anyhow!("Connection closed mid-varint"))
+            };
         }
     }
 }
 
 /// Write a varint-length-prefixed frame.
-async fn write_frame(
-    writer: &mut (impl AsyncWriteExt + Unpin),
-    data: &[u8],
-) -> Result<()> {
+async fn write_frame(writer: &mut (impl AsyncWriteExt + Unpin), data: &[u8]) -> Result<()> {
     let mut header = Vec::with_capacity(10);
     encode_varint(data.len() as u64, &mut header);
     writer.write_all(&header).await?;
@@ -115,7 +118,10 @@ fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {
     loop {
         let byte = (value & 0x7F) as u8;
         value >>= 7;
-        if value == 0 { buf.push(byte); break; }
+        if value == 0 {
+            buf.push(byte);
+            break;
+        }
         buf.push(byte | 0x80);
     }
 }
@@ -171,7 +177,11 @@ fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
 ///
 /// R7-2: Protected actions require a valid session token obtained at unlock.
 async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
-    eprintln!("[daemon] <- action={} has_token={}", req.action, !req.session_token.is_empty());
+    eprintln!(
+        "[daemon] <- action={} has_token={}",
+        req.action,
+        !req.session_token.is_empty()
+    );
 
     // R7-2: Enforce session token on protected actions
     if TOKEN_REQUIRED_ACTIONS.contains(&req.action.as_str()) {
@@ -187,16 +197,13 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         "ping" => ok_resp("pong", None),
 
         // ── Vault lifecycle (no token required) ──
-
-        "vault.open" => {
-            match state.open().await {
-                Ok(()) => match state.info().await {
-                    Ok(info) => ok_resp(info, token_str),
-                    Err(e) => err_response(e),
-                },
+        "vault.open" => match state.open().await {
+            Ok(()) => match state.info().await {
+                Ok(info) => ok_resp(info, token_str),
                 Err(e) => err_response(e),
-            }
-        }
+            },
+            Err(e) => err_response(e),
+        },
 
         "vault.unlock" => {
             if req.payload.is_empty() {
@@ -218,32 +225,25 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
-        "vault.lock" => {
-            match state.lock().await {
-                Ok(()) => ok_resp("locked", None),
-                Err(e) => err_response(e),
-            }
-        }
+        "vault.lock" => match state.lock().await {
+            Ok(()) => ok_resp("locked", None),
+            Err(e) => err_response(e),
+        },
 
         // vault.info: token NOT required (no secret data, used as pre-flight by CLI)
-        "vault.info" => {
-            match state.info().await {
-                Ok(info) => ok_resp(info, token_str),
-                Err(e) => err_response(e),
-            }
-        }
+        "vault.info" => match state.info().await {
+            Ok(info) => ok_resp(info, token_str),
+            Err(e) => err_response(e),
+        },
 
         // ── Cipher CRUD (token required, enforced above) ──
-
-        "vault.list" => {
-            match state.list_cipher_ids().await {
-                Ok(ids) => {
-                    let json = serde_json::json!({"cipher_ids": ids});
-                    ok_resp(json.to_string(), token_str)
-                }
-                Err(e) => err_response(e),
+        "vault.list" => match state.list_cipher_ids().await {
+            Ok(ids) => {
+                let json = serde_json::json!({"cipher_ids": ids});
+                ok_resp(json.to_string(), token_str)
             }
-        }
+            Err(e) => err_response(e),
+        },
 
         "vault.get" => {
             if req.payload.is_empty() {
@@ -282,12 +282,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
-        "vault.devices" => {
-            match state.devices().await {
-                Ok(json) => ok_resp(json, token_str),
-                Err(e) => err_response(e),
-            }
-        }
+        "vault.devices" => match state.devices().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
 
         "vault.create" => {
             if req.payload.is_empty() {
@@ -304,12 +302,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
 
         // ── Sync (token required, enforced above) ──
-        "sync.init" => {
-            match sync_init(&state.vault_path) {
-                Ok(msg) => ok_resp(msg, token_str),
-                Err(e) => err_response(e),
-            }
-        }
+        "sync.init" => match sync_init(&state.vault_path) {
+            Ok(msg) => ok_resp(msg, token_str),
+            Err(e) => err_response(e),
+        },
         "sync.remote" => {
             if req.payload.is_empty() {
                 return err_response("Missing remote URL in payload");
@@ -319,26 +315,24 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(e) => err_response(e),
             }
         }
-        "sync.push" => {
-            match sync_push(&state.vault_path) {
-                Ok(msg) => ok_resp(msg, token_str),
-                Err(e) => err_response(e),
-            }
-        }
-        "sync.pull" => {
-            match sync_pull(&state.vault_path) {
-                Ok(msg) => ok_resp(msg, token_str),
-                Err(e) => err_response(e),
-            }
-        }
-        "sync.status" => {
-            match sync_status(&state.vault_path) {
-                Ok(msg) => ok_resp(msg, token_str),
-                Err(e) => err_response(e),
-            }
-        }
+        "sync.push" => match sync_push(&state.vault_path) {
+            Ok(msg) => ok_resp(msg, token_str),
+            Err(e) => err_response(e),
+        },
+        "sync.pull" => match sync_pull(&state.vault_path) {
+            Ok(msg) => ok_resp(msg, token_str),
+            Err(e) => err_response(e),
+        },
+        "sync.status" => match sync_status(&state.vault_path) {
+            Ok(msg) => ok_resp(msg, token_str),
+            Err(e) => err_response(e),
+        },
         "sync.log" => {
-            let limit: usize = if req.payload.is_empty() { 10 } else { req.payload.parse().unwrap_or(10) };
+            let limit: usize = if req.payload.is_empty() {
+                10
+            } else {
+                req.payload.parse().unwrap_or(10)
+            };
             match sync_log(&state.vault_path, limit) {
                 Ok(msg) => ok_resp(msg, token_str),
                 Err(e) => err_response(e),
@@ -378,7 +372,8 @@ fn sync_init(vault_path: &std::path::Path) -> Result<String, String> {
     let engine = idtty_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
     let repo = engine.init_repo().map_err(|e| format!("{e}"))?;
     let log = engine.log(&repo, 1).map_err(|e| format!("{e}"))?;
-    let commit_info = log.first()
+    let commit_info = log
+        .first()
         .map(|c| format!("Initial commit: {}", &c.id[..7.min(c.id.len())]))
         .unwrap_or_else(|| "Repo initialized".into());
     Ok(format!("Git repo initialized. {}", commit_info))
@@ -388,7 +383,9 @@ fn sync_init(vault_path: &std::path::Path) -> Result<String, String> {
 fn sync_remote(vault_path: &std::path::Path, url: &str) -> Result<String, String> {
     let engine = idtty_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
-    engine.add_remote(&repo, "origin", url).map_err(|e| format!("{e}"))?;
+    engine
+        .add_remote(&repo, "origin", url)
+        .map_err(|e| format!("{e}"))?;
     Ok(format!("Remote 'origin' set to: {url}"))
 }
 
@@ -403,7 +400,11 @@ fn sync_push(vault_path: &std::path::Path) -> Result<String, String> {
         committed = true;
     }
     engine.push(&repo, "origin").map_err(|e| format!("{e}"))?;
-    let msg = if committed { "Committed pending changes and pushed to origin." } else { "Pushed to origin." };
+    let msg = if committed {
+        "Committed pending changes and pushed to origin."
+    } else {
+        "Pushed to origin."
+    };
     Ok(msg.into())
 }
 
@@ -413,11 +414,12 @@ fn sync_pull(vault_path: &std::path::Path) -> Result<String, String> {
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let result = engine.pull(&repo, "origin").map_err(|e| format!("{e}"))?;
     Ok(match result {
-        idtty_core::sync::engine::PullResult::AlreadyUpToDate => "Already up to date.".
-into(),
+        idtty_core::sync::engine::PullResult::AlreadyUpToDate => "Already up to date.".into(),
         idtty_core::sync::engine::PullResult::FastForward => "Fast-forwarded to latest.".into(),
         idtty_core::sync::engine::PullResult::Merged => "Merged remote changes.".into(),
-        idtty_core::sync::engine::PullResult::Conflict => return Err("Merge conflict detected. Manual resolution required.".into()),
+        idtty_core::sync::engine::PullResult::Conflict => {
+            return Err("Merge conflict detected. Manual resolution required.".into());
+        }
     })
 }
 
@@ -427,7 +429,10 @@ fn sync_status(vault_path: &std::path::Path) -> Result<String, String> {
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let status = engine.status(&repo).map_err(|e| format!("{e}"))?;
     let work_tree = if status.is_dirty() {
-        format!("dirty ({} staged, {} unstaged)", status.staged, status.unstaged)
+        format!(
+            "dirty ({} staged, {} unstaged)",
+            status.staged, status.unstaged
+        )
     } else {
         "clean".into()
     };
@@ -439,7 +444,12 @@ fn sync_status(vault_path: &std::path::Path) -> Result<String, String> {
             let ts = chrono::DateTime::from_timestamp(c.time, 0)
                 .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
                 .unwrap_or_default();
-            result.push_str(&format!("\n  {} {} <{}>", &c.id[..7.min(c.id.len())], c.message.trim(), ts));
+            result.push_str(&format!(
+                "\n  {} {} <{}>",
+                &c.id[..7.min(c.id.len())],
+                c.message.trim(),
+                ts
+            ));
         }
     }
     Ok(result)
@@ -458,24 +468,41 @@ fn sync_log(vault_path: &std::path::Path, limit: usize) -> Result<String, String
         let ts = chrono::DateTime::from_timestamp(c.time, 0)
             .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_default();
-        result.push_str(&format!("{} {} {}\n", &c.id[..7.min(c.id.len())], ts, c.message.trim()));
+        result.push_str(&format!(
+            "{} {} {}\n",
+            &c.id[..7.min(c.id.len())],
+            ts,
+            c.message.trim()
+        ));
     }
     result.push_str(&format!("\n{} commit(s)", log.len()));
     Ok(result)
 }
 
 #[cfg(not(feature = "git-sync"))]
-fn sync_init(_p: &std::path::Path) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+fn sync_init(_p: &std::path::Path) -> Result<String, String> {
+    Err("git-sync feature not enabled".into())
+}
 #[cfg(not(feature = "git-sync"))]
-fn sync_remote(_p: &std::path::Path, _u: &str) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+fn sync_remote(_p: &std::path::Path, _u: &str) -> Result<String, String> {
+    Err("git-sync feature not enabled".into())
+}
 #[cfg(not(feature = "git-sync"))]
-fn sync_push(_p: &std::path::Path) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+fn sync_push(_p: &std::path::Path) -> Result<String, String> {
+    Err("git-sync feature not enabled".into())
+}
 #[cfg(not(feature = "git-sync"))]
-fn sync_pull(_p: &std::path::Path) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+fn sync_pull(_p: &std::path::Path) -> Result<String, String> {
+    Err("git-sync feature not enabled".into())
+}
 #[cfg(not(feature = "git-sync"))]
-fn sync_status(_p: &std::path::Path) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+fn sync_status(_p: &std::path::Path) -> Result<String, String> {
+    Err("git-sync feature not enabled".into())
+}
 #[cfg(not(feature = "git-sync"))]
-fn sync_log(_p: &std::path::Path, _n: usize) -> Result<String, String> { Err("git-sync feature not enabled".into()) }
+fn sync_log(_p: &std::path::Path, _n: usize) -> Result<String, String> {
+    Err("git-sync feature not enabled".into())
+}
 
 // ── Peer credential verification ──
 
@@ -507,7 +534,8 @@ fn verify_peer_uid(stream: &UnixStream) -> Result<()> {
     if cred.uid != my_uid {
         anyhow::bail!(
             "Peer UID {} does not match daemon UID {}. Connection rejected.",
-            cred.uid, my_uid
+            cred.uid,
+            my_uid
         );
     }
 
@@ -516,8 +544,8 @@ fn verify_peer_uid(stream: &UnixStream) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn verify_peer_uid(stream: &UnixStream) -> Result<()> {
+    use libc::{geteuid, getpeereid};
     use std::os::unix::io::AsRawFd;
-    use libc::{getpeereid, geteuid};
 
     let fd = stream.as_raw_fd();
     let mut uid: libc::uid_t = 0;
@@ -530,7 +558,11 @@ fn verify_peer_uid(stream: &UnixStream) -> Result<()> {
 
     let my_uid = unsafe { geteuid() };
     if uid != my_uid {
-        anyhow::bail!("Peer UID {} does not match daemon UID {}. Connection rejected.", uid, my_uid);
+        anyhow::bail!(
+            "Peer UID {} does not match daemon UID {}. Connection rejected.",
+            uid,
+            my_uid
+        );
     }
 
     Ok(())

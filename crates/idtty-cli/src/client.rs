@@ -91,7 +91,9 @@ pub fn set_session_token(token: &str, socket_path: Option<&str>) {
 /// Get the current session token (read from file).
 pub fn get_session_token(socket_path: Option<&str>) -> Option<String> {
     let path = token_file_path(socket_path);
-    std::fs::read_to_string(&path).ok().filter(|t| !t.is_empty())
+    std::fs::read_to_string(&path)
+        .ok()
+        .filter(|t| !t.is_empty())
 }
 
 /// Clear the session token (called after lock).
@@ -102,7 +104,11 @@ pub fn clear_session_token(socket_path: Option<&str>) {
 
 /// Send a request to the daemon at a specific socket path.
 /// Zeroizes the payload and wire bytes after the response is received.
-pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Result<GatewayResponse> {
+pub fn request_to(
+    action: &str,
+    payload: &str,
+    socket_path: Option<&str>,
+) -> Result<GatewayResponse> {
     let socket = socket_path
         .map(PathBuf::from)
         .unwrap_or_else(default_socket_path);
@@ -139,18 +145,20 @@ pub fn request_to(action: &str, payload: &str, socket_path: Option<&str>) -> Res
     }
 
     // Decode varint length with bounds checking
-    let (resp_len, offset) = decode_varint_checked(&buf)
-        .context("Invalid response varint")?;
+    let (resp_len, offset) = decode_varint_checked(&buf).context("Invalid response varint")?;
 
     let resp_end = offset + resp_len as usize;
     if resp_end > buf.len() {
-        bail!("Response frame truncated: declared {} bytes but only {} available",
-              resp_len, buf.len() - offset);
+        bail!(
+            "Response frame truncated: declared {} bytes but only {} available",
+            resp_len,
+            buf.len() - offset
+        );
     }
 
     let resp_data = &buf[offset..resp_end];
-    let response = GatewayResponse::decode(resp_data)
-        .context("Failed to decode daemon response")?;
+    let response =
+        GatewayResponse::decode(resp_data).context("Failed to decode daemon response")?;
 
     // R7-2: Store session token from daemon if present
     if !response.session_token.is_empty() {

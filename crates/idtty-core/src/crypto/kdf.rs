@@ -23,8 +23,13 @@ pub fn derive_kek(password: &str, params: &KdfParams) -> Result<[u8; 32], Crypto
     let argon2 = Argon2::new(
         Algorithm::Argon2id,
         Version::V0x13,
-        Params::new(params.memory_kib, params.time_cost, params.parallelism, Some(32))
-            .map_err(|e| CryptoError::KdfFailed(e.to_string()))?,
+        Params::new(
+            params.memory_kib,
+            params.time_cost,
+            params.parallelism,
+            Some(32),
+        )
+        .map_err(|e| CryptoError::KdfFailed(e.to_string()))?,
     );
 
     let mut kek = [0u8; 32];

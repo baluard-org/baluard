@@ -59,7 +59,8 @@ impl VaultState {
         let mut new_handle = VaultHandle::open(&self.vault_path)
             .map_err(|e| format!("Failed to open vault for unlock: {e}"))?;
 
-        new_handle.unlock(master_password)
+        new_handle
+            .unlock(master_password)
             .map_err(|e| format!("Unlock failed: {e}"))?;
 
         // Swap in the unlocked handle under write lock
@@ -102,24 +103,19 @@ impl VaultState {
     /// List all cipher IDs (works locked or unlocked).
     pub async fn list_cipher_ids(&self) -> Result<Vec<String>, String> {
         let guard = self.inner.read().await;
-        let handle = guard.as_ref()
-            .ok_or("Vault not opened".to_string())?;
-        let ids = handle.list_cipher_ids()
-            .map_err(|e| format!("{e}"))?;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        let ids = handle.list_cipher_ids().map_err(|e| format!("{e}"))?;
         Ok(ids.iter().map(|id| id.to_string()).collect())
     }
 
     /// Get a cipher by ID. Requires vault to be unlocked for decryption.
     pub async fn get_cipher(&self, id_str: &str, decrypt: bool) -> Result<String, String> {
         let guard = self.inner.read().await;
-        let handle = guard.as_ref()
-            .ok_or("Vault not opened".to_string())?;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
 
-        let cipher_id = uuid::Uuid::parse_str(id_str)
-            .map_err(|e| format!("Invalid UUID: {e}"))?;
+        let cipher_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
 
-        let result = handle.get_cipher(cipher_id)
-            .map_err(|e| format!("{e}"))?;
+        let result = handle.get_cipher(cipher_id).map_err(|e| format!("{e}"))?;
 
         match result {
             idtty_core::vault::handle::CipherRead::Decrypted(c) => {
@@ -157,18 +153,16 @@ impl VaultState {
     /// Add a new cipher. Requires vault to be unlocked.
     pub async fn add_cipher(&self, payload: &str) -> Result<String, String> {
         let mut guard = self.inner.write().await;
-        let handle = guard.as_mut()
-            .ok_or("Vault not opened".to_string())?;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
 
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".to_string());
         }
 
-        let input: idtty_core::types::CipherInput = serde_json::from_str(payload)
-            .map_err(|e| format!("Invalid cipher input: {e}"))?;
+        let input: idtty_core::types::CipherInput =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid cipher input: {e}"))?;
 
-        let cipher_id = handle.add_cipher(&input)
-            .map_err(|e| format!("{e}"))?;
+        let cipher_id = handle.add_cipher(&input).map_err(|e| format!("{e}"))?;
 
         Ok(cipher_id.to_string())
     }
@@ -176,25 +170,19 @@ impl VaultState {
     /// Delete a cipher by ID. Uses write lock for filesystem mutation.
     pub async fn delete_cipher(&self, id_str: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;
-        let handle = guard.as_mut()
-            .ok_or("Vault not opened".to_string())?;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
 
-        let cipher_id = uuid::Uuid::parse_str(id_str)
-            .map_err(|e| format!("Invalid UUID: {e}"))?;
+        let cipher_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
 
-        handle.delete_cipher(cipher_id)
-            .map_err(|e| format!("{e}"))
+        handle.delete_cipher(cipher_id).map_err(|e| format!("{e}"))
     }
 
     /// Get vault info (ID, device, state).
     pub async fn info(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
-        let handle = guard.as_ref()
-            .ok_or("Vault not opened".to_string())?;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
 
-        let cipher_count = handle.list_cipher_ids()
-            .map(|ids| ids.len())
-            .unwrap_or(0);
+        let cipher_count = handle.list_cipher_ids().map(|ids| ids.len()).unwrap_or(0);
 
         let json = serde_json::json!({
             "vault_id": handle.vault_id.to_string(),
@@ -208,8 +196,7 @@ impl VaultState {
     /// List enrolled devices.
     pub async fn devices(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
-        let handle = guard.as_ref()
-            .ok_or("Vault not opened".to_string())?;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
 
         let devices: Vec<serde_json::Value> = handle.registry.devices.values().map(|entry| {
             serde_json::json!({
@@ -238,13 +225,17 @@ impl VaultState {
     pub async fn create_vault(&self, payload_json: &str) -> Result<String, String> {
         // Guard: refuse to overwrite an existing vault
         if self.vault_path.join("meta/kdf-params.json").exists() {
-            return Err("Vault already exists at this path. Delete it first if you want to recreate.".into());
+            return Err(
+                "Vault already exists at this path. Delete it first if you want to recreate."
+                    .into(),
+            );
         }
 
-        let v: serde_json::Value = serde_json::from_str(payload_json)
-            .map_err(|e| format!("Invalid JSON: {e}"))?;
+        let v: serde_json::Value =
+            serde_json::from_str(payload_json).map_err(|e| format!("Invalid JSON: {e}"))?;
         // Extract password into zeroizing wrapper
-        let password = v["password"].as_str()
+        let password = v["password"]
+            .as_str()
             .ok_or("Missing 'password' field")?
             .to_string();
         let mut password = zeroize::Zeroizing::new(password);
@@ -254,7 +245,11 @@ impl VaultState {
             "mobile_low" => idtty_core::types::KdfProfile::MobileLow,
             "desktop_std" => idtty_core::types::KdfProfile::DesktopStd,
             "desktop_high" => idtty_core::types::KdfProfile::DesktopHigh,
-            _ => return Err(format!("Unknown profile: {profile_str}. Use mobile_low, desktop_std, or desktop_high")),
+            _ => {
+                return Err(format!(
+                    "Unknown profile: {profile_str}. Use mobile_low, desktop_std, or desktop_high"
+                ));
+            }
         };
 
         // Run creation ceremony (CPU-heavy, no lock needed)
@@ -265,8 +260,7 @@ impl VaultState {
         zeroize::Zeroize::zeroize(&mut *password);
 
         let path = &self.vault_path;
-        std::fs::create_dir_all(path.join("ciphers"))
-            .map_err(|e| format!("mkdir ciphers: {e}"))?;
+        std::fs::create_dir_all(path.join("ciphers")).map_err(|e| format!("mkdir ciphers: {e}"))?;
         std::fs::create_dir_all(path.join("meta/keywrap"))
             .map_err(|e| format!("mkdir keywrap: {e}"))?;
         std::fs::create_dir_all(path.join("meta/sequences"))
@@ -289,20 +283,26 @@ impl VaultState {
         let mut registry = idtty_core::devices::DeviceRegistry::new();
         let pub_enc = x25519_dalek::PublicKey::from(&result.device_x25519_secret);
         let verifying = result.device_ed25519_signing.verifying_key();
-        registry.enroll(
-            "this-device".into(),
-            pub_enc.to_bytes(),
-            verifying.to_bytes(),
-        ).map_err(|e| format!("Device enrollment: {e}"))?;
+        registry
+            .enroll(
+                "this-device".into(),
+                pub_enc.to_bytes(),
+                verifying.to_bytes(),
+            )
+            .map_err(|e| format!("Device enrollment: {e}"))?;
         write_secret(
             path.join("meta/devices.json"),
-            serde_json::to_string_pretty(&registry).map_err(|e| format!("Serialize devices: {e}"))?.as_bytes(),
+            serde_json::to_string_pretty(&registry)
+                .map_err(|e| format!("Serialize devices: {e}"))?
+                .as_bytes(),
         )?;
 
         // KDF params
         write_secret(
             path.join("meta/kdf-params.json"),
-            serde_json::to_string_pretty(&result.kdf_params).map_err(|e| format!("Serialize kdf: {e}"))?.as_bytes(),
+            serde_json::to_string_pretty(&result.kdf_params)
+                .map_err(|e| format!("Serialize kdf: {e}"))?
+                .as_bytes(),
         )?;
 
         // Keywrap
@@ -315,7 +315,9 @@ impl VaultState {
         });
         write_secret(
             path.join(format!("meta/keywrap/{}.json", result.device_id)),
-            serde_json::to_string_pretty(&keywrap_data).map_err(|e| format!("Serialize keywrap: {e}"))?.as_bytes(),
+            serde_json::to_string_pretty(&keywrap_data)
+                .map_err(|e| format!("Serialize keywrap: {e}"))?
+                .as_bytes(),
         )?;
 
         // Device private key (TODO: encrypt at rest with platform keystore)
@@ -324,22 +326,24 @@ impl VaultState {
         });
         write_secret(
             path.join("meta/device-privkey.json"),
-            serde_json::to_string_pretty(&privkey_data).map_err(|e| format!("Serialize privkey: {e}"))?.as_bytes(),
+            serde_json::to_string_pretty(&privkey_data)
+                .map_err(|e| format!("Serialize privkey: {e}"))?
+                .as_bytes(),
         )?;
 
         // .gitignore
         std::fs::write(
             path.join(".gitignore"),
             "# Secrets - never push these\nmeta/device-privkey.json\n",
-        ).map_err(|e| format!("Write gitignore: {e}"))?;
+        )
+        .map_err(|e| format!("Write gitignore: {e}"))?;
 
         // Canaries
         write_secret(path.join("meta/kek-canary.enc"), &result.kek_canary)?;
         write_secret(path.join("meta/rk-canary.enc"), &result.rk_canary)?;
 
         // Now open the vault so it's ready for use
-        let handle = VaultHandle::open(path)
-            .map_err(|e| format!("Open after create: {e}"))?;
+        let handle = VaultHandle::open(path).map_err(|e| format!("Open after create: {e}"))?;
         let mut guard = self.inner.write().await;
         *guard = Some(handle);
 
@@ -364,7 +368,11 @@ impl VaultState {
     pub async fn verify_session_token(&self, provided: &str) -> Result<(), String> {
         let guard = self.session_token.read().await;
         match *guard {
-            Some(ref stored) if crate::crypto::constant_time_eq(provided.as_bytes(), stored.as_bytes()) => Ok(()),
+            Some(ref stored)
+                if crate::crypto::constant_time_eq(provided.as_bytes(), stored.as_bytes()) =>
+            {
+                Ok(())
+            }
             Some(_) => Err("Invalid session token. Re-unlock the vault.".into()),
             None => Err("Vault is locked. Unlock first.".into()),
         }

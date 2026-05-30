@@ -9,4 +9,4 @@ pub mod nonce;
 pub mod rotation;
 
 pub use epoch::{EpochInfo, EpochState};
-pub use hierarchy::{RootKey, ItemKey};
+pub use hierarchy::{ItemKey, RootKey};

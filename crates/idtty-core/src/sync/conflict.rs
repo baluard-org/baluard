@@ -39,9 +39,7 @@ pub struct FieldConflict {
 }
 
 /// Semantic field groups (D10: security-sensitive fields treated as atomic units).
-const SEMANTIC_GROUPS: &[&[&str]] = &[
-    &["username", "password", "totp_uri"],
-];
+const SEMANTIC_GROUPS: &[&[&str]] = &[&["username", "password", "totp_uri"]];
 
 /// Perform field-level merge between local and remote cipher inputs.
 ///
@@ -67,12 +65,7 @@ pub fn merge_ciphers(local: &CipherInput, remote: &CipherInput) -> MergeResult {
         "password",
         &mut conflicts,
     );
-    merge_optional_field_ref(
-        &mut merged.notes,
-        &remote.notes,
-        "notes",
-        &mut conflicts,
-    );
+    merge_optional_field_ref(&mut merged.notes, &remote.notes, "notes", &mut conflicts);
     merge_optional_field_ref(
         &mut merged.totp_uri,
         &remote.totp_uri,
@@ -89,9 +82,9 @@ pub fn merge_ciphers(local: &CipherInput, remote: &CipherInput) -> MergeResult {
 
     // Check semantic groups
     for group in SEMANTIC_GROUPS {
-        let group_has_conflict = group.iter().any(|f| {
-            conflicts.iter().any(|c| c.field_name == *f)
-        });
+        let group_has_conflict = group
+            .iter()
+            .any(|f| conflicts.iter().any(|c| c.field_name == *f));
         if group_has_conflict {
             // Flag ALL fields in the group as conflicting (atomic unit)
             for field in *group {
@@ -215,7 +208,11 @@ mod tests {
         match result {
             MergeResult::Conflict(info) => {
                 // All 3 fields in the semantic group should be flagged
-                let names: Vec<&str> = info.conflicting_fields.iter().map(|c| c.field_name.as_str()).collect();
+                let names: Vec<&str> = info
+                    .conflicting_fields
+                    .iter()
+                    .map(|c| c.field_name.as_str())
+                    .collect();
                 assert!(names.contains(&"password"));
             }
             MergeResult::Merged(_) => panic!("expected conflict for semantic group"),

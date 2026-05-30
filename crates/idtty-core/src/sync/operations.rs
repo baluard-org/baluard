@@ -3,8 +3,6 @@
 //! D11: Shallow by default, auto-unshallow on conflict.
 //! D13: Auto-poll 30-60s via git ref comparison.
 
-
-
 /// Maximum number of commits to fetch during auto-unshallow (D11).
 pub const UNSHALLOW_BUDGET: usize = 500;
 

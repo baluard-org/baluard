@@ -10,15 +10,17 @@ const ERROR_PATTERNS = [
   { pattern: /Frame too large/i, key: "errors.responseTooLarge" },
   { pattern: /Invalid session token/i, key: "errors.sessionExpired" },
   { pattern: /identity mismatch/i, key: "errors.integrityFailed" },
+  { pattern: /invalid password|incorrect password|password incorrect/i, key: "errors.invalidPassword" },
   { pattern: /corrupt(ed|ion)?/i, key: "errors.corrupted" },
   { pattern: /already exists/i, key: "errors.alreadyExists" },
 ];
 
 function sanitizeError(raw, t) {
+  const str = typeof raw === "string" ? raw : (raw?.message || String(raw || ""));
   for (const { pattern, key } of ERROR_PATTERNS) {
-    if (pattern.test(raw)) return t(key);
+    if (pattern.test(str)) return t(key);
   }
-  if (import.meta.env.DEV) return `DEBUG: ${raw}`;
+  if (import.meta.env.DEV) return `DEBUG: ${str}`;
   return t("errors.unexpected");
 }
 
@@ -136,7 +138,7 @@ function useActions() {
       const info = JSON.parse(await daemon("vault.info"));
       app.setVaultInfo(info);
     } catch (e) {
-      app.setError(sanitizeError(e.message, t));
+      app.setError(sanitizeError(e, t));
       app.setStatus("locked");
     }
   }
@@ -151,7 +153,7 @@ function useActions() {
       app.setActivePane("welcome");
       app.setShowDeleteConfirm(false);
     } catch (e) {
-      app.setError(sanitizeError(e.message, t));
+      app.setError(sanitizeError(e, t));
     }
   }
 
@@ -169,7 +171,7 @@ function useActions() {
       app.setRecoveryPhrase(result.recovery_phrase);
       app.setStatus("recovery");
     } catch (e) {
-      app.setError(sanitizeError(e.message, t));
+      app.setError(sanitizeError(e, t));
       app.setStatus("init");
     }
   }
@@ -218,7 +220,7 @@ function useActions() {
       app.setActivePane("welcome");
       await refreshCiphers();
     } catch (e) {
-      app.setError(sanitizeError(e.message, t));
+      app.setError(sanitizeError(e, t));
     }
   }
 
@@ -250,7 +252,7 @@ function useActions() {
       app.setViewCipher(updatedData);
       app.setActivePane("detail");
     } catch (e) {
-      app.setError(sanitizeError(e.message, t));
+      app.setError(sanitizeError(e, t));
     }
   }
 
@@ -260,7 +262,7 @@ function useActions() {
       app.setViewCipher(data);
       app.setActivePane("detail");
     } catch (e) {
-      app.setError(sanitizeError(e.message, t));
+      app.setError(sanitizeError(e, t));
     }
   }
 
@@ -272,7 +274,7 @@ function useActions() {
       app.setShowDeleteConfirm(false);
       await refreshCiphers();
     } catch (e) {
-      app.setError(sanitizeError(e.message, t));
+      app.setError(sanitizeError(e, t));
     }
   }
 
@@ -1106,10 +1108,10 @@ function VaultView() {
 
       {/* ── Column 3: Main Details / Edit Panel ── */}
       <div class="flex-1 bg-[var(--color-detail)] flex flex-col min-w-0">
-        <Show when={app.error()}>
+        <Show when={error()}>
           <div class="m-6 p-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300 text-sm shrink-0 flex items-center gap-2">
             <svg class="w-5 h-5 shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-            {app.error()}
+            {error()}
           </div>
         </Show>
 
@@ -1204,6 +1206,14 @@ function RecoveryScreen() {
   const app = useApp();
   const { refreshCiphers } = useActions();
   const { t } = useI18n();
+  const [copied, setCopied] = createSignal(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(app.recoveryPhrase());
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div class="flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 relative">
       <ThemeToggleFloating />
@@ -1217,8 +1227,20 @@ function RecoveryScreen() {
           <p class="text-sm text-red-400 mt-2 font-semibold">{t("recovery.warning")}</p>
         </div>
 
-        <div class="p-5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm leading-relaxed text-[var(--color-text)] break-words select-all mb-6 text-center select-all shadow-inner">
+        <div class="relative group p-5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm leading-relaxed text-[var(--color-text)] break-words select-all mb-6 text-center select-all shadow-inner pr-12">
           {app.recoveryPhrase()}
+          <button
+            onClick={handleCopy}
+            class="absolute top-2 right-2 p-1.5 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-detail)] transition-all cursor-pointer shadow-sm flex items-center gap-1 text-xs"
+            title="Copy to clipboard"
+          >
+            <Show when={copied()} fallback={
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 002 2h2a2 2 0 002-2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+            }>
+              <span class="text-emerald-500 font-sans font-medium text-xs">Copied!</span>
+              <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+            </Show>
+          </button>
         </div>
 
         <form onSubmit={async (e) => {
@@ -1231,7 +1253,7 @@ function RecoveryScreen() {
               app.setStatus("unlocked");
               app.setCreatePassword("");
               await refreshCiphers();
-            } catch (err) { app.setError(sanitizeError(err.message, t)); app.setStatus("locked"); }
+            } catch (err) { app.setError(sanitizeError(err, t)); app.setStatus("locked"); }
           } else { app.setStatus("locked"); }
         }} class="space-y-4">
           <button

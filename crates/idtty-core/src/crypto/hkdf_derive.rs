@@ -81,7 +81,13 @@ mod tests {
     fn different_kek_different_keys() {
         let kek1 = [1u8; 32];
         let kek2 = [2u8; 32];
-        assert_ne!(derive_session_key(&kek1).unwrap(), derive_session_key(&kek2).unwrap());
-        assert_ne!(derive_sync_key(&kek1).unwrap(), derive_sync_key(&kek2).unwrap());
+        assert_ne!(
+            derive_session_key(&kek1).unwrap(),
+            derive_session_key(&kek2).unwrap()
+        );
+        assert_ne!(
+            derive_sync_key(&kek1).unwrap(),
+            derive_sync_key(&kek2).unwrap()
+        );
     }
 }

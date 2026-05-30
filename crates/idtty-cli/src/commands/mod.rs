@@ -10,8 +10,8 @@ use crate::client;
 use std::path::Path;
 
 use idtty_core::types::{CipherInput, KdfProfile};
-use idtty_core::vault::handle::{CipherRead, VaultHandle};
 use idtty_core::vault::creation;
+use idtty_core::vault::handle::{CipherRead, VaultHandle};
 use zeroize::Zeroize;
 
 // ── Init (always direct) ──
@@ -44,7 +44,10 @@ pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn st
     println!("{}", result.recovery_phrase.phrase());
     println!("=== END RECOVERY PHRASE ===");
     println!();
-    println!("Trust fingerprint: {}", hex::encode(result.trust_fingerprint));
+    println!(
+        "Trust fingerprint: {}",
+        hex::encode(result.trust_fingerprint)
+    );
 
     let path = Path::new(vault_path);
     std::fs::create_dir_all(path.join("ciphers"))?;
@@ -61,10 +64,16 @@ pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn st
         pub_enc.to_bytes(),
         verifying.to_bytes(),
     )?;
-    std::fs::write(path.join("meta/devices.json"), serde_json::to_string_pretty(&registry)?)?;
+    std::fs::write(
+        path.join("meta/devices.json"),
+        serde_json::to_string_pretty(&registry)?,
+    )?;
 
     // KDF params
-    std::fs::write(path.join("meta/kdf-params.json"), serde_json::to_string_pretty(&result.kdf_params)?)?;
+    std::fs::write(
+        path.join("meta/kdf-params.json"),
+        serde_json::to_string_pretty(&result.kdf_params)?,
+    )?;
 
     // Keywrap
     let (eph_pub, ct, tag) = &result.wrapped_root_key;
@@ -83,7 +92,10 @@ pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn st
     let privkey_data = serde_json::json!({
         "x25519_private": hex::encode(result.device_x25519_secret.to_bytes()),
     });
-    std::fs::write(path.join("meta/device-privkey.json"), serde_json::to_string_pretty(&privkey_data)?)?;
+    std::fs::write(
+        path.join("meta/device-privkey.json"),
+        serde_json::to_string_pretty(&privkey_data)?,
+    )?;
 
     // Vault .gitignore: exclude secrets that must never be pushed
     std::fs::write(
@@ -103,7 +115,11 @@ pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn st
 
 // ── Unlock ──
 
-pub fn handle_unlock(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_unlock(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => unlock_daemon(socket),
         ConnectMode::Direct => unlock_direct(vault_path),
@@ -157,7 +173,10 @@ fn unlock_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 // ── Lock ──
 
-pub fn handle_lock(mode: ConnectMode, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_lock(
+    mode: ConnectMode,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
             let resp = client::request_to("vault.lock", "", socket)?;
@@ -169,7 +188,9 @@ pub fn handle_lock(mode: ConnectMode, socket: Option<&str>) -> Result<(), Box<dy
             Ok(())
         }
         ConnectMode::Direct => {
-            return Err("lock requires daemon mode (no vault held in memory in direct mode)".into());
+            return Err(
+                "lock requires daemon mode (no vault held in memory in direct mode)".into(),
+            );
         }
     }
 }
@@ -188,7 +209,9 @@ pub fn handle_add(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cipher_password = match password {
         Some(p) => {
-            eprintln!("warning: --password exposes secret in process list. Use interactive prompt instead.");
+            eprintln!(
+                "warning: --password exposes secret in process list. Use interactive prompt instead."
+            );
             p
         }
         None => prompt_password("Password: ")?,
@@ -252,7 +275,8 @@ pub fn handle_get(
             if decrypt {
                 ensure_unlocked_daemon(socket)?;
             }
-            let payload = serde_json::json!({"id": cipher_id.to_string(), "decrypt": decrypt}).to_string();
+            let payload =
+                serde_json::json!({"id": cipher_id.to_string(), "decrypt": decrypt}).to_string();
             let resp = client::request_to("vault.get", &payload, socket)?;
             if !resp.success {
                 return Err(resp.error_message.into());
@@ -264,13 +288,23 @@ pub fn handle_get(
                 "text" => {
                     println!("Cipher: {}", c["id"]);
                     println!("  Name:      {}", c["name"]);
-                    if !c["username"].is_null() { println!("  Username:  {}", c["username"]); }
-                    if !c["password"].is_null() { println!("  Password:  {}", c["password"]); }
-                    if let Some(uris) = c["uris"].as_array() {
-                        for u in uris { println!("  URI:       {u}"); }
+                    if !c["username"].is_null() {
+                        println!("  Username:  {}", c["username"]);
                     }
-                    if !c["notes"].is_null() { println!("  Notes:     {}", c["notes"]); }
-                    if !c["totp"].is_null() { println!("  TOTP:      {}", c["totp"]); }
+                    if !c["password"].is_null() {
+                        println!("  Password:  {}", c["password"]);
+                    }
+                    if let Some(uris) = c["uris"].as_array() {
+                        for u in uris {
+                            println!("  URI:       {u}");
+                        }
+                    }
+                    if !c["notes"].is_null() {
+                        println!("  Notes:     {}", c["notes"]);
+                    }
+                    if !c["totp"].is_null() {
+                        println!("  TOTP:      {}", c["totp"]);
+                    }
                     println!("  Tier:      {}", c["tier"]);
                     println!("  Epoch:     {}", c["epoch"]);
                     println!("  Seq:       {}", c["seq"]);
@@ -278,13 +312,21 @@ pub fn handle_get(
                 _ => {
                     println!("Cipher: {}", c["id"]);
                     println!("  Name:      {}", c["name"]);
-                    if !c["username"].is_null() { println!("  Username:  {}", c["username"]); }
+                    if !c["username"].is_null() {
+                        println!("  Username:  {}", c["username"]);
+                    }
                     println!("  Password:  ***");
                     if let Some(uris) = c["uris"].as_array() {
-                        for u in uris { println!("  URI:       {u}"); }
+                        for u in uris {
+                            println!("  URI:       {u}");
+                        }
                     }
-                    if !c["notes"].is_null() { println!("  Notes:     ***"); }
-                    if !c["totp"].is_null() { println!("  TOTP:      ***"); }
+                    if !c["notes"].is_null() {
+                        println!("  Notes:     ***");
+                    }
+                    if !c["totp"].is_null() {
+                        println!("  TOTP:      ***");
+                    }
                     println!("  Use --output=text to reveal secrets");
                 }
             }
@@ -300,47 +342,63 @@ pub fn handle_get(
             }
 
             match handle.get_cipher(cipher_id)? {
-                CipherRead::Decrypted(c) => {
-                    match output {
-                        "json" => {
-                            let json = serde_json::json!({
-                                "id": c.id.to_string(),
-                                "name": c.name,
-                                "username": c.username,
-                                "password": c.password,
-                                "uris": c.uris,
-                                "notes": c.notes,
-                                "totp": c.totp_uri,
-                                "tier": format!("{:?}", c.tier),
-                                "epoch": c.key_epoch,
-                                "seq": c.update_seq,
-                            });
-                            println!("{json}");
-                        }
-                        "text" => {
-                            println!("Cipher: {}", c.id);
-                            println!("  Name:      {}", c.name);
-                            if let Some(ref u) = c.username { println!("  Username:  {u}"); }
-                            if let Some(ref p) = c.password { println!("  Password:  {p}"); }
-                            for u in &c.uris { println!("  URI:       {u}"); }
-                            if let Some(ref n) = c.notes { println!("  Notes:     {n}"); }
-                            if let Some(ref t) = c.totp_uri { println!("  TOTP:      {t}"); }
-                            println!("  Tier:      {:?}", c.tier);
-                            println!("  Epoch:     {}", c.key_epoch);
-                            println!("  Seq:       {}", c.update_seq);
-                        }
-                        _ => {
-                            println!("Cipher: {}", c.id);
-                            println!("  Name:      {}", c.name);
-                            if let Some(ref u) = c.username { println!("  Username:  {u}"); }
-                            println!("  Password:  ***");
-                            for u in &c.uris { println!("  URI:       {u}"); }
-                            if c.notes.is_some() { println!("  Notes:     ***"); }
-                            if c.totp_uri.is_some() { println!("  TOTP:      ***"); }
-                            println!("  Use --output=text to reveal secrets");
-                        }
+                CipherRead::Decrypted(c) => match output {
+                    "json" => {
+                        let json = serde_json::json!({
+                            "id": c.id.to_string(),
+                            "name": c.name,
+                            "username": c.username,
+                            "password": c.password,
+                            "uris": c.uris,
+                            "notes": c.notes,
+                            "totp": c.totp_uri,
+                            "tier": format!("{:?}", c.tier),
+                            "epoch": c.key_epoch,
+                            "seq": c.update_seq,
+                        });
+                        println!("{json}");
                     }
-                }
+                    "text" => {
+                        println!("Cipher: {}", c.id);
+                        println!("  Name:      {}", c.name);
+                        if let Some(ref u) = c.username {
+                            println!("  Username:  {u}");
+                        }
+                        if let Some(ref p) = c.password {
+                            println!("  Password:  {p}");
+                        }
+                        for u in &c.uris {
+                            println!("  URI:       {u}");
+                        }
+                        if let Some(ref n) = c.notes {
+                            println!("  Notes:     {n}");
+                        }
+                        if let Some(ref t) = c.totp_uri {
+                            println!("  TOTP:      {t}");
+                        }
+                        println!("  Tier:      {:?}", c.tier);
+                        println!("  Epoch:     {}", c.key_epoch);
+                        println!("  Seq:       {}", c.update_seq);
+                    }
+                    _ => {
+                        println!("Cipher: {}", c.id);
+                        println!("  Name:      {}", c.name);
+                        if let Some(ref u) = c.username {
+                            println!("  Username:  {u}");
+                        }
+                        println!("  Password:  ***");
+                        for u in &c.uris {
+                            println!("  URI:       {u}");
+                        }
+                        if c.notes.is_some() {
+                            println!("  Notes:     ***");
+                        }
+                        if c.totp_uri.is_some() {
+                            println!("  TOTP:      ***");
+                        }
+                        println!("  Use --output=text to reveal secrets");
+                    }
+                },
                 CipherRead::Locked(info) => {
                     println!("Cipher: {}", info.id);
                     println!("  Epoch:          {}", info.key_epoch);
@@ -360,7 +418,11 @@ pub fn handle_get(
 
 // ── List ciphers ──
 
-pub fn handle_list(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_list(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
             let resp = client::request_to("vault.list", "", socket)?;
@@ -368,13 +430,20 @@ pub fn handle_list(mode: ConnectMode, vault_path: &str, socket: Option<&str>) ->
                 return Err(resp.error_message.into());
             }
             let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
-            let ids = data["cipher_ids"].as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+            let ids = data["cipher_ids"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
             if ids.is_empty() {
                 println!("No ciphers found.");
             } else {
-                for id in &ids { println!("{id}"); }
+                for id in &ids {
+                    println!("{id}");
+                }
                 println!();
                 println!("{} cipher(s)", ids.len());
             }
@@ -394,7 +463,9 @@ fn list_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    for id in &ids { println!("{id}"); }
+    for id in &ids {
+        println!("{id}");
+    }
     println!();
     println!("{} cipher(s)", ids.len());
     Ok(())
@@ -402,7 +473,12 @@ fn list_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 // ── Delete cipher ──
 
-pub fn handle_delete(mode: ConnectMode, vault_path: &str, socket: Option<&str>, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_delete(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let cipher_id = uuid::Uuid::parse_str(id).map_err(|_| "invalid UUID")?;
 
     match mode {
@@ -426,7 +502,11 @@ pub fn handle_delete(mode: ConnectMode, vault_path: &str, socket: Option<&str>, 
 
 // ── Devices (direct only, not yet routed through daemon) ──
 
-pub fn handle_devices(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_devices(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
             // Open vault in daemon first if needed
@@ -439,9 +519,7 @@ pub fn handle_devices(mode: ConnectMode, vault_path: &str, socket: Option<&str>)
                 return Err(resp.error_message.into());
             }
             let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
-            let devices = data["devices"].as_array()
-                .cloned()
-                .unwrap_or_default();
+            let devices = data["devices"].as_array().cloned().unwrap_or_default();
             println!("Enrolled devices:");
             for d in &devices {
                 println!("  {} ({})", d["name"], d["device_id"]);
@@ -459,8 +537,16 @@ pub fn handle_devices(mode: ConnectMode, vault_path: &str, socket: Option<&str>)
             println!("Enrolled devices:");
             for entry in handle.registry.devices.values() {
                 println!("  {} ({})", entry.name, entry.device_id);
-                println!("    Encryption key: {}...{}", &entry.encryption_public_key[..8], &entry.encryption_public_key[56..]);
-                println!("    Signing key:    {}...{}", &entry.signing_public_key[..8], &entry.signing_public_key[56..]);
+                println!(
+                    "    Encryption key: {}...{}",
+                    &entry.encryption_public_key[..8],
+                    &entry.encryption_public_key[56..]
+                );
+                println!(
+                    "    Signing key:    {}...{}",
+                    &entry.signing_public_key[..8],
+                    &entry.signing_public_key[56..]
+                );
                 println!("    Enrolled at:    {}", entry.enrolled_at);
             }
             println!();
@@ -472,11 +558,17 @@ pub fn handle_devices(mode: ConnectMode, vault_path: &str, socket: Option<&str>)
 
 // ── Sync (daemon-first with direct fallback) ──
 
-pub fn handle_sync_init(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_sync_init(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
             let resp = client::request_to("sync.init", "", socket)?;
-            if !resp.success { return Err(resp.error_message.into()); }
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
             println!("{}", resp.payload);
             Ok(())
         }
@@ -484,11 +576,18 @@ pub fn handle_sync_init(mode: ConnectMode, vault_path: &str, socket: Option<&str
     }
 }
 
-pub fn handle_sync_remote(mode: ConnectMode, vault_path: &str, socket: Option<&str>, url: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_sync_remote(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    url: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
             let resp = client::request_to("sync.remote", url, socket)?;
-            if !resp.success { return Err(resp.error_message.into()); }
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
             println!("{}", resp.payload);
             Ok(())
         }
@@ -496,11 +595,17 @@ pub fn handle_sync_remote(mode: ConnectMode, vault_path: &str, socket: Option<&s
     }
 }
 
-pub fn handle_sync_push(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_sync_push(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
             let resp = client::request_to("sync.push", "", socket)?;
-            if !resp.success { return Err(resp.error_message.into()); }
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
             println!("{}", resp.payload);
             Ok(())
         }
@@ -508,11 +613,17 @@ pub fn handle_sync_push(mode: ConnectMode, vault_path: &str, socket: Option<&str
     }
 }
 
-pub fn handle_sync_pull(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_sync_pull(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
             let resp = client::request_to("sync.pull", "", socket)?;
-            if !resp.success { return Err(resp.error_message.into()); }
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
             println!("{}", resp.payload);
             Ok(())
         }
@@ -520,11 +631,17 @@ pub fn handle_sync_pull(mode: ConnectMode, vault_path: &str, socket: Option<&str
     }
 }
 
-pub fn handle_sync_status(mode: ConnectMode, vault_path: &str, socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_sync_status(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
             let resp = client::request_to("sync.status", "", socket)?;
-            if !resp.success { return Err(resp.error_message.into()); }
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
             println!("{}", resp.payload);
             Ok(())
         }
@@ -532,11 +649,18 @@ pub fn handle_sync_status(mode: ConnectMode, vault_path: &str, socket: Option<&s
     }
 }
 
-pub fn handle_sync_log(mode: ConnectMode, vault_path: &str, socket: Option<&str>, limit: usize) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_sync_log(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    limit: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
             let resp = client::request_to("sync.log", &limit.to_string(), socket)?;
-            if !resp.success { return Err(resp.error_message.into()); }
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
             println!("{}", resp.payload);
             Ok(())
         }
@@ -608,7 +732,10 @@ fn sync_status_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>
     let repo = engine.open_repo()?;
     let status = engine.status(&repo)?;
     if status.is_dirty() {
-        println!("Working tree: dirty ({} staged, {} unstaged)", status.staged, status.unstaged);
+        println!(
+            "Working tree: dirty ({} staged, {} unstaged)",
+            status.staged, status.unstaged
+        );
     } else {
         println!("Working tree: clean");
     }
@@ -619,7 +746,12 @@ fn sync_status_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>
             let ts = chrono::DateTime::from_timestamp(c.time, 0)
                 .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
                 .unwrap_or_default();
-            println!("  {} {} <{}>", &c.id[..7.min(c.id.len())], c.message.trim(), ts);
+            println!(
+                "  {} {} <{}>",
+                &c.id[..7.min(c.id.len())],
+                c.message.trim(),
+                ts
+            );
         }
     }
     Ok(())
@@ -647,17 +779,29 @@ fn sync_log_direct(vault_path: &str, limit: usize) -> Result<(), Box<dyn std::er
 
 // Fallbacks when git-sync feature is disabled
 #[cfg(not(feature = "git-sync"))]
-fn sync_init_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
+fn sync_init_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("git-sync feature not enabled".into())
+}
 #[cfg(not(feature = "git-sync"))]
-fn sync_remote_direct(_: &str, _u: &str) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
+fn sync_remote_direct(_: &str, _u: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("git-sync feature not enabled".into())
+}
 #[cfg(not(feature = "git-sync"))]
-fn sync_push_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
+fn sync_push_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("git-sync feature not enabled".into())
+}
 #[cfg(not(feature = "git-sync"))]
-fn sync_pull_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
+fn sync_pull_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("git-sync feature not enabled".into())
+}
 #[cfg(not(feature = "git-sync"))]
-fn sync_status_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
+fn sync_status_direct(_: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("git-sync feature not enabled".into())
+}
 #[cfg(not(feature = "git-sync"))]
-fn sync_log_direct(_: &str, _n: usize) -> Result<(), Box<dyn std::error::Error>> { Err("git-sync feature not enabled".into()) }
+fn sync_log_direct(_: &str, _n: usize) -> Result<(), Box<dyn std::error::Error>> {
+    Err("git-sync feature not enabled".into())
+}
 
 // ── Helpers ──
 
@@ -694,7 +838,9 @@ fn parse_profile(s: &str) -> Result<KdfProfile, Box<dyn std::error::Error>> {
         "mobile-low" => Ok(KdfProfile::MobileLow),
         "desktop-std" => Ok(KdfProfile::DesktopStd),
         "desktop-high" => Ok(KdfProfile::DesktopHigh),
-        _ => Err(format!("unknown profile: {s}. Use: mobile-low, desktop-std, desktop-high").into()),
+        _ => {
+            Err(format!("unknown profile: {s}. Use: mobile-low, desktop-std, desktop-high").into())
+        }
     }
 }
 
@@ -703,7 +849,8 @@ fn device_name(vault_path: &str) -> String {
     let reg_path = path.join("meta/devices.json");
     if reg_path.exists() {
         if let Ok(data) = std::fs::read_to_string(&reg_path) {
-            let reg: std::result::Result<idtty_core::devices::DeviceRegistry, _> = serde_json::from_str(&data);
+            let reg: std::result::Result<idtty_core::devices::DeviceRegistry, _> =
+                serde_json::from_str(&data);
             if let Ok(reg) = reg {
                 if let Some(entry) = reg.devices.values().next() {
                     return entry.name.clone();

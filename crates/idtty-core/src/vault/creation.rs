@@ -3,17 +3,16 @@
 //! Establishes the root of trust: vault_id, master password, KDF params,
 //! Root Key, device keypair, HPKE wrapping, initial commit.
 
-
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::crypto::hkdf_derive;
 use crate::crypto::hpke_wrap;
 use crate::crypto::kdf;
-use crate::crypto::hkdf_derive;
 use crate::crypto::signature;
 use crate::error::IdttyError;
-use crate::keys::hierarchy::RootKey;
 use crate::keys::epoch::EpochInfo;
+use crate::keys::hierarchy::RootKey;
 use crate::recovery::RecoveryPhrase;
 use crate::types::{KdfParams, KdfProfile};
 
@@ -93,9 +92,8 @@ pub fn create_vault_ceremony(
     let recovery_phrase = RecoveryPhrase::generate()?;
     let recovery_key = recovery_phrase.derive_key();
     // Derive X25519 key from recovery seed for HPKE wrapping
-    let recovery_x25519_secret = x25519_dalek::StaticSecret::from(
-        <[u8; 32]>::try_from(&recovery_key[..32]).unwrap()
-    );
+    let recovery_x25519_secret =
+        x25519_dalek::StaticSecret::from(<[u8; 32]>::try_from(&recovery_key[..32]).unwrap());
     let recovery_x25519_public = x25519_dalek::PublicKey::from(&recovery_x25519_secret);
     let wrapped_recovery_key = hpke_wrap::wrap_key(root_key.as_bytes(), &recovery_x25519_public)?;
 
@@ -195,7 +193,8 @@ mod tests {
         let result = create_vault_ceremony("test-password", KdfProfile::MobileLow).unwrap();
         let (eph_pub, ct, tag) = &result.wrapped_root_key;
 
-        let unwrapped = hpke_wrap::unwrap_key(eph_pub, ct, tag, &result.device_x25519_secret).unwrap();
+        let unwrapped =
+            hpke_wrap::unwrap_key(eph_pub, ct, tag, &result.device_x25519_secret).unwrap();
         assert_eq!(unwrapped.as_slice(), result.root_key.as_bytes());
     }
 
@@ -207,7 +206,7 @@ mod tests {
         // Derive the recovery X25519 key from the phrase
         let recovery_key_bytes = result.recovery_phrase.derive_key();
         let recovery_x25519_secret = x25519_dalek::StaticSecret::from(
-            <[u8; 32]>::try_from(&recovery_key_bytes[..32]).unwrap()
+            <[u8; 32]>::try_from(&recovery_key_bytes[..32]).unwrap(),
         );
 
         let unwrapped = hpke_wrap::unwrap_key(eph_pub, ct, tag, &recovery_x25519_secret).unwrap();

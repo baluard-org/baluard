@@ -34,10 +34,7 @@ pub fn wrap_key(
     let shared = eph_secret.diffie_hellman(recipient_pub);
 
     // Derive wrapping key from shared secret using HKDF
-    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(
-        Some(eph_public.as_bytes()),
-        shared.as_bytes(),
-    );
+    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(eph_public.as_bytes()), shared.as_bytes());
 
     let mut wrap_key = [0u8; 32];
     hkdf.expand(b"idtty-hpke-wrap-v1", &mut wrap_key)
@@ -47,8 +44,8 @@ pub fn wrap_key(
     use aes_gcm::aead::{Aead, KeyInit};
     use aes_gcm::{Aes256Gcm, Nonce};
 
-    let cipher = Aes256Gcm::new_from_slice(&wrap_key)
-        .map_err(|e| CryptoError::HpkeFailed(e.to_string()))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(&wrap_key).map_err(|e| CryptoError::HpkeFailed(e.to_string()))?;
 
     // Use first 12 bytes of shared secret as nonce (safe: unique per ephemeral key)
     let mut nonce_bytes = [0u8; 12];
@@ -69,7 +66,11 @@ pub fn wrap_key(
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&ciphertext[ct_len..]);
 
-    Ok((eph_public.as_bytes().to_vec(), ciphertext[..ct_len].to_vec(), tag))
+    Ok((
+        eph_public.as_bytes().to_vec(),
+        ciphertext[..ct_len].to_vec(),
+        tag,
+    ))
 }
 
 /// Unwrap (decrypt) a key using HPKE with the recipient's X25519 private key.
@@ -94,10 +95,7 @@ pub fn unwrap_key(
     let shared = recipient_priv.diffie_hellman(&eph_pub);
 
     // Derive wrapping key
-    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(
-        Some(eph_pub_bytes.as_slice()),
-        shared.as_bytes(),
-    );
+    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(eph_pub_bytes.as_slice()), shared.as_bytes());
 
     let mut wrap_key = [0u8; 32];
     hkdf.expand(b"idtty-hpke-wrap-v1", &mut wrap_key)
@@ -112,8 +110,8 @@ pub fn unwrap_key(
     use aes_gcm::aead::{Aead, KeyInit};
     use aes_gcm::{Aes256Gcm, Nonce};
 
-    let cipher = Aes256Gcm::new_from_slice(&wrap_key)
-        .map_err(|e| CryptoError::HpkeFailed(e.to_string()))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(&wrap_key).map_err(|e| CryptoError::HpkeFailed(e.to_string()))?;
 
     let mut nonce_bytes = [0u8; 12];
     nonce_bytes.copy_from_slice(&shared.as_bytes()[..12]);

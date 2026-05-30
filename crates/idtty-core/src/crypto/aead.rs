@@ -72,12 +72,18 @@ pub fn encrypt(
     nonce: &[u8; 12],
     header: EnvelopeHeader,
 ) -> Result<CipherEnvelope, CryptoError> {
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| CryptoError::EncryptFailed(e.to_string()))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|e| CryptoError::EncryptFailed(e.to_string()))?;
 
     let nonce = Nonce::from_slice(nonce);
     let ciphertext_bytes = cipher
-        .encrypt(nonce, aes_gcm::aead::Payload { msg: plaintext, aad })
+        .encrypt(
+            nonce,
+            aes_gcm::aead::Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|e| CryptoError::EncryptFailed(e.to_string()))?;
 
     // aes-gcm appends the 16-byte tag to the ciphertext
@@ -99,8 +105,8 @@ pub fn encrypt(
 
 /// Decrypt a cipher envelope with AES-256-GCM.
 pub fn decrypt(key: &[u8; 32], envelope: &CipherEnvelope) -> Result<Vec<u8>, CryptoError> {
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| CryptoError::DecryptFailed(e.to_string()))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|e| CryptoError::DecryptFailed(e.to_string()))?;
 
     // Reconstruct ciphertext + tag for aes-gcm
     let mut ct_with_tag = Vec::with_capacity(envelope.ciphertext.len() + 16);
@@ -109,7 +115,13 @@ pub fn decrypt(key: &[u8; 32], envelope: &CipherEnvelope) -> Result<Vec<u8>, Cry
 
     let nonce = Nonce::from_slice(&envelope.nonce);
     cipher
-        .decrypt(nonce, aes_gcm::aead::Payload { msg: &ct_with_tag, aad: &envelope.aad })
+        .decrypt(
+            nonce,
+            aes_gcm::aead::Payload {
+                msg: &ct_with_tag,
+                aad: &envelope.aad,
+            },
+        )
         .map_err(|_| CryptoError::AuthTagMismatch)
 }
 
@@ -157,7 +169,15 @@ mod tests {
         let vault_id = Uuid::new_v4();
         let object_id = Uuid::new_v4();
 
-        let aad = build_aad(vault_id, ObjectType::Cipher, object_id, Some(Tier::S), ALG_AES_256_GCM, 1, 1);
+        let aad = build_aad(
+            vault_id,
+            ObjectType::Cipher,
+            object_id,
+            Some(Tier::S),
+            ALG_AES_256_GCM,
+            1,
+            1,
+        );
         let nonce = build_nonce(0, object_id);
         let header = EnvelopeHeader {
             version: IDTTY_VERSION,
@@ -178,8 +198,24 @@ mod tests {
         let vault_id = Uuid::new_v4();
         let object_id = Uuid::new_v4();
 
-        let aad = build_aad(vault_id, ObjectType::Cipher, object_id, Some(Tier::Xs), ALG_AES_256_GCM, 1, 1);
-        let wrong_aad = build_aad(vault_id, ObjectType::Cipher, object_id, Some(Tier::L), ALG_AES_256_GCM, 1, 1);
+        let aad = build_aad(
+            vault_id,
+            ObjectType::Cipher,
+            object_id,
+            Some(Tier::Xs),
+            ALG_AES_256_GCM,
+            1,
+            1,
+        );
+        let wrong_aad = build_aad(
+            vault_id,
+            ObjectType::Cipher,
+            object_id,
+            Some(Tier::L),
+            ALG_AES_256_GCM,
+            1,
+            1,
+        );
         let nonce = build_nonce(0, object_id);
         let header = EnvelopeHeader {
             version: IDTTY_VERSION,
