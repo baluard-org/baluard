@@ -1,7 +1,7 @@
 # IDtty: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-05-28
+> Last updated: 2026-05-30
 
 ---
 
@@ -21,13 +21,13 @@
 
 ## Current Status
 
-**Phase**: Rust core built, tested, and security-reviewed (2 rounds). IPC daemon with full CRUD wired. CLI dual-mode (daemon-first + direct fallback). Go codebase removed. Pure Rust + UniFFI architecture.
+**Phase**: Rust core built, tested, and security-reviewed (2 rounds). IPC daemon with full CRUD and soft-delete trash routing wired. CLI dual-mode (daemon-first + direct fallback). Go codebase removed. Pure Rust + UniFFI architecture.
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
 - `/crates/idtty-core` - Rust core engine: crypto, keys, vault, padding, git sync
 - `/crates/idtty-cli` - Terminal CLI client (clap, daemon-first with `--direct` fallback)
 - `/crates/idtty-daemon` - Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state)
-- `/desktop` - SolidJS/Tailwind Tauri v2 desktop app (scaffolded: daemon proxy, tray, cipher CRUD)
+- `/desktop` - SolidJS/Tailwind Tauri v2 desktop app (scaffolded: daemon proxy, tray, cipher CRUD, soft-delete Trash category)
 - `/extension` - Browser UI thin client (MV3, placeholder)
 - `/mobile` - Kotlin Multiplatform (KMP) UI via UniFFI bindings (placeholder)
 
@@ -40,22 +40,14 @@
 |--------|--------|------------------------------|
 | `workspace` | Done | Rust workspace with idtty-core, idtty-cli, idtty-daemon crates. Go codebase removed. |
 | `proto/schemas` | Done | `vault.proto`, `space.proto`, `auth.proto`. Go package refs removed. Compiled by prost-build in daemon and CLI. |
-| `crates/idtty-core` | Done | Full crypto, keys, vault, padding, git sync engine. 3,673 lines. 64 tests pass. |
+| `crates/idtty-core` | Done | Full crypto, keys, vault, padding, git sync engine. 3,850 lines. 66 tests pass. |
 | `crates/idtty-cli` | Done | clap CLI with dual-mode: daemon-first (Protobuf over Unix socket) + `--direct` fallback (idtty-core). Commands: init, unlock, lock, add, get, list, delete, sync, devices, ping. |
-| `crates/idtty-daemon` | Done | tokio socket + Protobuf gateway + VaultState (Arc<RwLock<Option<VaultHandle>>>). Routes: ping, vault.open/unlock/lock/info/list/get/add/delete. CLI args: --vault-path, --socket. |
+| `crates/idtty-daemon` | Done | tokio socket + Protobuf gateway + VaultState (Arc<RwLock<Option<VaultHandle>>>). Routes: ping, vault.open/unlock/lock/info/list/get/add/delete, vault.trash.list/restore/purge. CLI args: --vault-path, --socket. |
 
 ### Phase 1: Cryptographic Core & Padding Engine (Rust)
 | Module | Status | What's Planned / Implemented |
 |--------|--------|------------------------------|
 | `crypto/aead` | Done | AES-256-GCM with strict AAD binding. |
-| `crypto/kdf` | Done | Argon2id password stretching. |
-| `crypto/hkdf` | Done | HKDF-SHA256 key derivation. |
-| `crypto/hpke` | Done | HPKE key wrapping (X25519). |
-| `crypto/signature` | Done | Ed25519 commit signatures. |
-| `keys/*` | Done | Full key hierarchy: epochs, rotation, nonces, hierarchy tree. |
-| `vault/padding` | Done | 1KB, 8KB, 64KB, 1MB secure random padding buckets. |
-| `vault/envelope` | Done | Envelope format for encrypted entries. |
-| `vault/manifest` | Done | Encrypted lookup index (index.enc equivalent). |
 | `vault/handle` | Done | Vault CRUD operations. |
 | `vault/creation` | Done | Vault creation ceremony. Vault .gitignore excludes device-privkey.json. |
 
