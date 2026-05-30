@@ -152,27 +152,65 @@ fn main() {
 
         // Sync: daemon-first with direct fallback
         Commands::Sync { action } => match action {
-            SyncAction::Init => commands::handle_sync_init(mode, &cli.vault_path, cli.socket.as_deref()),
-            SyncAction::Remote { url } => commands::handle_sync_remote(mode, &cli.vault_path, cli.socket.as_deref(), &url),
-            SyncAction::Push => commands::handle_sync_push(mode, &cli.vault_path, cli.socket.as_deref()),
-            SyncAction::Pull => commands::handle_sync_pull(mode, &cli.vault_path, cli.socket.as_deref()),
-            SyncAction::Status => commands::handle_sync_status(mode, &cli.vault_path, cli.socket.as_deref()),
-            SyncAction::Log { limit } => commands::handle_sync_log(mode, &cli.vault_path, cli.socket.as_deref(), limit),
+            SyncAction::Init => {
+                commands::handle_sync_init(mode, &cli.vault_path, cli.socket.as_deref())
+            }
+            SyncAction::Remote { url } => {
+                commands::handle_sync_remote(mode, &cli.vault_path, cli.socket.as_deref(), &url)
+            }
+            SyncAction::Push => {
+                commands::handle_sync_push(mode, &cli.vault_path, cli.socket.as_deref())
+            }
+            SyncAction::Pull => {
+                commands::handle_sync_pull(mode, &cli.vault_path, cli.socket.as_deref())
+            }
+            SyncAction::Status => {
+                commands::handle_sync_status(mode, &cli.vault_path, cli.socket.as_deref())
+            }
+            SyncAction::Log { limit } => {
+                commands::handle_sync_log(mode, &cli.vault_path, cli.socket.as_deref(), limit)
+            }
         },
 
         // Cipher CRUD: daemon-first with direct fallback
-        Commands::Add { name, username, password, uri, notes } => {
-            commands::handle_add(mode, &cli.vault_path, cli.socket.as_deref(), name, username, password, uri, notes)
-        }
-        Commands::Get { id, decrypt, output } => {
-            commands::handle_get(mode, &cli.vault_path, cli.socket.as_deref(), &id, decrypt, &output)
-        }
+        Commands::Add {
+            name,
+            username,
+            password,
+            uri,
+            notes,
+        } => commands::handle_add(
+            mode,
+            &cli.vault_path,
+            cli.socket.as_deref(),
+            name,
+            username,
+            password,
+            uri,
+            notes,
+        ),
+        Commands::Get {
+            id,
+            decrypt,
+            output,
+        } => commands::handle_get(
+            mode,
+            &cli.vault_path,
+            cli.socket.as_deref(),
+            &id,
+            decrypt,
+            &output,
+        ),
         Commands::List => commands::handle_list(mode, &cli.vault_path, cli.socket.as_deref()),
-        Commands::Delete { id } => commands::handle_delete(mode, &cli.vault_path, cli.socket.as_deref(), &id),
+        Commands::Delete { id } => {
+            commands::handle_delete(mode, &cli.vault_path, cli.socket.as_deref(), &id)
+        }
 
         // Devices
         Commands::Devices { action } => match action {
-            DeviceCommands::List => commands::handle_devices(mode, &cli.vault_path, cli.socket.as_deref()),
+            DeviceCommands::List => {
+                commands::handle_devices(mode, &cli.vault_path, cli.socket.as_deref())
+            }
         },
 
         Commands::Ping => {
@@ -193,7 +231,7 @@ fn main() {
                 }
             }
             Ok(())
-        },
+        }
     };
 
     if let Err(e) = result {

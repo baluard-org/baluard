@@ -136,9 +136,9 @@ impl KdfProfile {
     /// Memory in KiB for this profile.
     pub const fn memory_kib(&self) -> u32 {
         match self {
-            KdfProfile::MobileLow => 19 * 1024,       // 19 MB
-            KdfProfile::DesktopStd => 64 * 1024,      // 64 MB
-            KdfProfile::DesktopHigh => 256 * 1024,    // 256 MB
+            KdfProfile::MobileLow => 19 * 1024,    // 19 MB
+            KdfProfile::DesktopStd => 64 * 1024,   // 64 MB
+            KdfProfile::DesktopHigh => 256 * 1024, // 256 MB
         }
     }
 

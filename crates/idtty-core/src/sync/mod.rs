@@ -6,10 +6,10 @@
 //! D13: Auto-poll 30-60s.
 //! D22: Signed commits + rollback detection.
 
-pub mod state_machine;
 pub mod commit;
 pub mod conflict;
 pub mod operations;
+pub mod state_machine;
 
 #[cfg(feature = "git-sync")]
 pub mod engine;

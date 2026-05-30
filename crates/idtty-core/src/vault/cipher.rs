@@ -10,9 +10,7 @@ use uuid::Uuid;
 use crate::crypto::aead;
 use crate::error::{IdttyError, VaultError};
 use crate::keys::hierarchy::ItemKey;
-use crate::types::{
-    Cipher, CipherId, CipherInput, EnvelopeHeader, ObjectType, Tier,
-};
+use crate::types::{Cipher, CipherId, CipherInput, EnvelopeHeader, ObjectType, Tier};
 use crate::vault::envelope;
 use crate::vault::padding;
 use crate::{ALG_AES_256_GCM, IDTTY_VERSION};
@@ -49,7 +47,10 @@ pub fn encrypt_cipher(
 
     // Tier selection
     let tier = Tier::fit(json.len()).ok_or_else(|| {
-        VaultError::InvalidTier(format!("content too large for any tier: {} bytes", json.len()))
+        VaultError::InvalidTier(format!(
+            "content too large for any tier: {} bytes",
+            json.len()
+        ))
     })?;
 
     // Pad
@@ -145,9 +146,10 @@ pub fn decrypt_cipher(
         custom_fields: data.custom_fields,
         key_epoch: enc_envelope.header.key_epoch,
         update_seq: enc_envelope.header.update_seq,
-        tier: enc_envelope.header.tier.ok_or_else(|| {
-            VaultError::Corrupt("cipher envelope missing tier".into())
-        })?,
+        tier: enc_envelope
+            .header
+            .tier
+            .ok_or_else(|| VaultError::Corrupt("cipher envelope missing tier".into()))?,
         created_at: data.created_at,
         updated_at: data.updated_at,
     })
@@ -269,8 +271,7 @@ mod tests {
         };
 
         // Encrypt for cipher A
-        let file_a =
-            encrypt_cipher(vault_id, cipher_id_a, &input, &item_key, 1, 1, 0).unwrap();
+        let file_a = encrypt_cipher(vault_id, cipher_id_a, &input, &item_key, 1, 1, 0).unwrap();
 
         // Build a fake CipherFile that looks like B but contains A's envelope
         let swapped_file = CipherFile {

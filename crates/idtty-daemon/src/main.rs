@@ -6,8 +6,8 @@
 
 mod crypto;
 mod handler;
-mod state;
 pub mod socket_path;
+mod state;
 pub mod proto {
     #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/idtty.auth.rs"));
@@ -17,9 +17,9 @@ pub mod proto {
 
 use state::{SharedVaultState, VaultState};
 
-use std::sync::Arc;
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::net::UnixListener;
 
 #[cfg(unix)]
@@ -45,19 +45,21 @@ fn main() -> anyhow::Result<()> {
         .get_matches();
 
     let vault = matches.get_one::<String>("vault-path").unwrap().clone();
-    let sock = matches.get_one::<String>("socket")
+    let sock = matches
+        .get_one::<String>("socket")
         .cloned()
-        .unwrap_or_else(|| socket_path::default_socket_path().to_string_lossy().into_owned());
+        .unwrap_or_else(|| {
+            socket_path::default_socket_path()
+                .to_string_lossy()
+                .into_owned()
+        });
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async { run(&sock, &vault).await })
 }
 
 async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
-
-    let vault_state: SharedVaultState = Arc::new(
-        VaultState::new(PathBuf::from(vault_path))
-    );
+    let vault_state: SharedVaultState = Arc::new(VaultState::new(PathBuf::from(vault_path)));
 
     // Ensure parent directory exists (~/.config/idtty/)
     if let Some(parent) = std::path::Path::new(socket_path).parent() {
@@ -76,7 +78,9 @@ async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
         {
             let prev = unsafe { libc::umask(0o177) }; // lgtm[cpp/overflow]
             let l = UnixListener::bind(socket_path)?;
-            unsafe { libc::umask(prev); }
+            unsafe {
+                libc::umask(prev);
+            }
             l
         }
         #[cfg(not(unix))]

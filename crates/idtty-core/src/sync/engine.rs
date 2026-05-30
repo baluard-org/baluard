@@ -6,9 +6,9 @@
 //! D11: Shallow clone by default, auto-unshallow on conflict.
 
 #[cfg(feature = "git-sync")]
-use git2::{Repository, Signature, Oid, FetchOptions, PushOptions};
-#[cfg(feature = "git-sync")]
 use git2::build::RepoBuilder;
+#[cfg(feature = "git-sync")]
+use git2::{FetchOptions, Oid, PushOptions, Repository, Signature};
 
 use std::path::{Path, PathBuf};
 
@@ -45,8 +45,8 @@ impl SyncEngine {
     /// Initialize a git repo in the vault directory.
     /// Creates `.gitignore`, makes initial commit.
     pub fn init_repo(&self) -> Result<Repository, IdttyError> {
-        let repo = Repository::init(&self.vault_path)
-            .map_err(|e| SyncError::Git(format!("init: {e}")))?;
+        let repo =
+            Repository::init(&self.vault_path).map_err(|e| SyncError::Git(format!("init: {e}")))?;
 
         // Write .gitignore
         let gitignore = self.vault_path.join(".gitignore");
@@ -63,25 +63,33 @@ impl SyncEngine {
 
     /// Open an existing repo at the vault path.
     pub fn open_repo(&self) -> Result<Repository, IdttyError> {
-        Repository::open(&self.vault_path)
-            .map_err(|e| SyncError::Git(format!("open: {e}")).into())
+        Repository::open(&self.vault_path).map_err(|e| SyncError::Git(format!("open: {e}")).into())
     }
 
     /// Stage all changes and commit with static message (D9).
     /// Returns the new commit OID.
-    pub fn commit_all(&self, repo: &Repository, _message_override: &str) -> Result<Oid, IdttyError> {
-        let mut index = repo.index()
+    pub fn commit_all(
+        &self,
+        repo: &Repository,
+        _message_override: &str,
+    ) -> Result<Oid, IdttyError> {
+        let mut index = repo
+            .index()
             .map_err(|e| SyncError::Git(format!("index: {e}")))?;
 
         // Stage everything
-        index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
             .map_err(|e| SyncError::Git(format!("add_all: {e}")))?;
-        index.write()
+        index
+            .write()
             .map_err(|e| SyncError::Git(format!("index write: {e}")))?;
 
-        let tree_id = index.write_tree()
+        let tree_id = index
+            .write_tree()
             .map_err(|e| SyncError::Git(format!("write_tree: {e}")))?;
-        let tree = repo.find_tree(tree_id)
+        let tree = repo
+            .find_tree(tree_id)
             .map_err(|e| SyncError::Git(format!("find_tree: {e}")))?;
 
         let sig = Signature::now(&self.device_name, "idtty@local")
@@ -90,7 +98,8 @@ impl SyncEngine {
         // Check for existing HEAD
         let parent_commits: Vec<_> = match repo.head() {
             Ok(head) => {
-                let commit = head.peel_to_commit()
+                let commit = head
+                    .peel_to_commit()
                     .map_err(|e| SyncError::Git(format!("head commit: {e}")))?;
                 vec![commit]
             }
@@ -98,21 +107,17 @@ impl SyncEngine {
         };
 
         let parents: Vec<_> = parent_commits.iter().collect();
-        let commit_id = repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            COMMIT_MESSAGE,
-            &tree,
-            &parents,
-        ).map_err(|e| SyncError::Git(format!("commit: {e}")))?;
+        let commit_id = repo
+            .commit(Some("HEAD"), &sig, &sig, COMMIT_MESSAGE, &tree, &parents)
+            .map_err(|e| SyncError::Git(format!("commit: {e}")))?;
 
         Ok(commit_id)
     }
 
     /// Check if the working tree has uncommitted changes.
     pub fn status(&self, repo: &Repository) -> Result<WorkTreeStatus, IdttyError> {
-        let statuses = repo.statuses(None)
+        let statuses = repo
+            .statuses(None)
             .map_err(|e| SyncError::Git(format!("statuses: {e}")))?;
 
         let mut result = WorkTreeStatus::default();
@@ -130,16 +135,20 @@ impl SyncEngine {
 
     /// Get recent commit history (last N commits).
     pub fn log(&self, repo: &Repository, limit: usize) -> Result<Vec<CommitInfo>, IdttyError> {
-        let head = repo.head()
+        let head = repo
+            .head()
             .map_err(|e| SyncError::Git(format!("head: {e}")))?;
-        let start = head.peel_to_commit()
+        let start = head
+            .peel_to_commit()
             .map_err(|e| SyncError::Git(format!("peel: {e}")))?;
 
         let mut commits = Vec::new();
         let mut current = Some(start);
 
         while let Some(c) = current.take() {
-            if commits.len() >= limit { break; }
+            if commits.len() >= limit {
+                break;
+            }
             commits.push(CommitInfo {
                 id: c.id().to_string(),
                 message: c.message().unwrap_or("").to_string(),
@@ -157,41 +166,47 @@ impl SyncEngine {
     /// Add a remote URL.
     pub fn add_remote(&self, _repo: &Repository, name: &str, url: &str) -> Result<(), IdttyError> {
         validate_git_url(url)?;
-        _repo.remote(name, url)
+        _repo
+            .remote(name, url)
             .map_err(|e| SyncError::Git(format!("remote add: {e}")))?;
         Ok(())
     }
 
     /// Get the remote URL (defaults to "origin").
     pub fn get_remote_url(&self, repo: &Repository, name: &str) -> Result<String, IdttyError> {
-        let remote = repo.find_remote(name)
+        let remote = repo
+            .find_remote(name)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
-        let url = remote.url()
+        let url = remote
+            .url()
             .ok_or_else(|| SyncError::Git("remote has no URL".into()))?;
         Ok(url.to_string())
     }
 
     /// Push to remote. Uses "origin" by default.
     pub fn push(&self, repo: &Repository, remote_name: &str) -> Result<(), IdttyError> {
-        let mut remote = repo.find_remote(remote_name)
+        let mut remote = repo
+            .find_remote(remote_name)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
 
         // Resolve HEAD to a branch name
-        let head = repo.head()
+        let head = repo
+            .head()
             .map_err(|e| SyncError::Git(format!("head: {e}")))?;
-        let refname = head.name()
-            .unwrap_or("HEAD");
+        let refname = head.name().unwrap_or("HEAD");
 
         // Push refs/heads/main:refs/heads/main
         let push_refspec = format!("{refname}:refs/heads/main");
 
         let mut push_options = PushOptions::new();
 
-        remote.push(&[&push_refspec], Some(&mut push_options))
+        remote
+            .push(&[&push_refspec], Some(&mut push_options))
             .map_err(|e| SyncError::Git(format!("push: {e}")))?;
 
         // Track remote HEAD for rollback detection
-        let pushed_oid = repo.head()
+        let pushed_oid = repo
+            .head()
             .map_err(|e| SyncError::Git(format!("head: {e}")))?
             .peel_to_commit()
             .map_err(|e| SyncError::Git(format!("peel: {e}")))?
@@ -204,28 +219,38 @@ impl SyncEngine {
     /// Pull from remote: fetch + merge (with "ours" strategy for non-conflicting merges).
     pub fn pull(&self, repo: &Repository, remote_name: &str) -> Result<PullResult, IdttyError> {
         // Fetch
-        let mut remote = repo.find_remote(remote_name)
+        let mut remote = repo
+            .find_remote(remote_name)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
 
         let mut fetch_opts = FetchOptions::new();
         // TODO: Add credential callbacks
         // TODO: Shallow fetch when shallow=true
 
-        remote.fetch(&["refs/heads/*:refs/remotes/origin/*"], Some(&mut fetch_opts), None)
+        remote
+            .fetch(
+                &["refs/heads/*:refs/remotes/origin/*"],
+                Some(&mut fetch_opts),
+                None,
+            )
             .map_err(|e| SyncError::Git(format!("fetch: {e}")))?;
 
         // Get remote HEAD
-        let remote_head = repo.find_reference(&format!("refs/remotes/{remote_name}/HEAD"))
+        let remote_head = repo
+            .find_reference(&format!("refs/remotes/{remote_name}/HEAD"))
             .or_else(|_| repo.find_reference(&format!("refs/remotes/{remote_name}/main")))
             .map_err(|e| SyncError::Git(format!("find remote HEAD: {e}")))?;
-        let remote_oid = remote_head.peel_to_commit()
+        let remote_oid = remote_head
+            .peel_to_commit()
             .map_err(|e| SyncError::Git(format!("peel remote: {e}")))?
             .id();
 
         // Get local HEAD
-        let local_head = repo.head()
+        let local_head = repo
+            .head()
             .map_err(|e| SyncError::Git(format!("head: {e}")))?;
-        let local_oid = local_head.peel_to_commit()
+        let local_oid = local_head
+            .peel_to_commit()
             .map_err(|e| SyncError::Git(format!("peel local: {e}")))?
             .id();
 
@@ -235,12 +260,15 @@ impl SyncEngine {
         }
 
         // Check if fast-forward possible
-        let _local_commit = repo.find_commit(local_oid)
+        let _local_commit = repo
+            .find_commit(local_oid)
             .map_err(|e| SyncError::Git(format!("find local commit: {e}")))?;
-        let _remote_commit = repo.find_commit(remote_oid)
+        let _remote_commit = repo
+            .find_commit(remote_oid)
             .map_err(|e| SyncError::Git(format!("find remote commit: {e}")))?;
 
-        if repo.graph_descendant_of(remote_oid, local_oid)
+        if repo
+            .graph_descendant_of(remote_oid, local_oid)
             .map_err(|e| SyncError::Git(format!("descendant check: {e}")))?
         {
             // Fast-forward
@@ -257,21 +285,25 @@ impl SyncEngine {
 
         // Non-fast-forward: need merge
         // Use "ours" strategy for conflict resolution (local wins for conflicting fields)
-        let merge_base = repo.merge_base(local_oid, remote_oid)
+        let merge_base = repo
+            .merge_base(local_oid, remote_oid)
             .map_err(|e| SyncError::Git(format!("merge_base: {e}")))?;
 
-        let _ancestor = repo.find_commit(merge_base)
+        let _ancestor = repo
+            .find_commit(merge_base)
             .map_err(|e| SyncError::Git(format!("find ancestor: {e}")))?;
 
         // Perform merge
-        let annotated = repo.find_annotated_commit(remote_oid)
+        let annotated = repo
+            .find_annotated_commit(remote_oid)
             .map_err(|e| SyncError::Git(format!("annotated commit: {e}")))?;
         let mut merge_opts = git2::MergeOptions::new();
         repo.merge(&[&annotated], Some(&mut merge_opts), None)
             .map_err(|e| SyncError::Git(format!("merge: {e}")))?;
 
         // Check for conflicts
-        let mut index = repo.index()
+        let mut index = repo
+            .index()
             .map_err(|e| SyncError::Git(format!("index: {e}")))?;
 
         // Check for conflicts
@@ -284,17 +316,21 @@ impl SyncEngine {
         }
 
         // Create merge commit
-        let tree_id = index.write_tree()
+        let tree_id = index
+            .write_tree()
             .map_err(|e| SyncError::Git(format!("write tree: {e}")))?;
-        let tree = repo.find_tree(tree_id)
+        let tree = repo
+            .find_tree(tree_id)
             .map_err(|e| SyncError::Git(format!("find tree: {e}")))?;
 
         let sig = Signature::now(&self.device_name, "idtty@local")
             .map_err(|e| SyncError::Git(format!("signature: {e}")))?;
 
-        let local_parent = repo.find_commit(local_oid)
+        let local_parent = repo
+            .find_commit(local_oid)
             .map_err(|e| SyncError::Git(format!("find local: {e}")))?;
-        let remote_parent = repo.find_commit(remote_oid)
+        let remote_parent = repo
+            .find_commit(remote_oid)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
 
         repo.commit(
@@ -304,7 +340,8 @@ impl SyncEngine {
             COMMIT_MESSAGE,
             &tree,
             &[&local_parent, &remote_parent],
-        ).map_err(|e| SyncError::Git(format!("merge commit: {e}")))?;
+        )
+        .map_err(|e| SyncError::Git(format!("merge commit: {e}")))?;
 
         self.save_last_head(&remote_oid.to_string())?;
         Ok(PullResult::Merged)
@@ -320,7 +357,8 @@ impl SyncEngine {
     /// Clone without URL validation (for local testing/development).
     pub fn clone_unchecked(url: &str, target: &Path) -> Result<Repository, IdttyError> {
         let mut builder = RepoBuilder::new();
-        let repo = builder.clone(url, target)
+        let repo = builder
+            .clone(url, target)
             .map_err(|e| SyncError::Git(format!("clone: {e}")))?;
         Ok(repo)
     }
@@ -333,7 +371,10 @@ fn validate_git_url(url: &str) -> Result<(), IdttyError> {
     if url.starts_with("https://") || url.starts_with("ssh://") || url.starts_with("git@") {
         Ok(())
     } else {
-        Err(SyncError::Git(format!("unsupported URL scheme: {url}. Use https://, ssh://, or git@")).into())
+        Err(SyncError::Git(format!(
+            "unsupported URL scheme: {url}. Use https://, ssh://, or git@"
+        ))
+        .into())
     }
 }
 
@@ -352,8 +393,11 @@ impl SyncEngine {
     fn save_last_head(&self, oid: &str) -> Result<(), IdttyError> {
         let path = Self::head_path(&self.vault_path);
         let record = serde_json::json!({ "last_remote_head": oid });
-        std::fs::write(&path, serde_json::to_string_pretty(&record)
-            .map_err(|e| SyncError::Git(format!("save head: {e}")))?)?;
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&record)
+                .map_err(|e| SyncError::Git(format!("save head: {e}")))?,
+        )?;
         Ok(())
     }
 }
@@ -480,7 +524,8 @@ mod tests {
         let _cloned = SyncEngine::clone_unchecked(
             &format!("file://{}", dir.path().display()),
             clone_dir.path(),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(clone_dir.path().join("cipher.enc").exists());
         assert!(clone_dir.path().join(".git").exists());
@@ -507,7 +552,9 @@ mod tests {
             repo.set_head("refs/heads/main").unwrap();
         }
 
-        engine.add_remote(&repo, "origin", &remote_path.display().to_string()).unwrap();
+        engine
+            .add_remote(&repo, "origin", &remote_path.display().to_string())
+            .unwrap();
         // Debug: what refs does the bare repo have?
         let bare_repo = Repository::open(&remote_path).unwrap();
         bare_repo.references().unwrap().for_each(|r| {
@@ -519,17 +566,19 @@ mod tests {
 
         // Clone
         let clone_dir = tempfile::tempdir().unwrap();
-        let cloned = SyncEngine::clone_unchecked(
-            &remote_path.display().to_string(),
-            clone_dir.path(),
-        ).unwrap();
+        let cloned =
+            SyncEngine::clone_unchecked(&remote_path.display().to_string(), clone_dir.path())
+                .unwrap();
 
         // Debug: list files
         for entry in std::fs::read_dir(clone_dir.path()).unwrap() {
             eprintln!("  {:?}", entry.unwrap().file_name());
         }
 
-        assert!(clone_dir.path().join("a.enc").exists(), "a.enc not found in clone");
+        assert!(
+            clone_dir.path().join("a.enc").exists(),
+            "a.enc not found in clone"
+        );
 
         // Add cipher on clone, commit and push back
         std::fs::write(clone_dir.path().join("b.enc"), b"\xBB").unwrap();
@@ -539,7 +588,10 @@ mod tests {
 
         // Pull on original
         let result = engine.pull(&repo, "origin").unwrap();
-        assert!(matches!(result, PullResult::FastForward | PullResult::Merged));
+        assert!(matches!(
+            result,
+            PullResult::FastForward | PullResult::Merged
+        ));
         assert!(dir.path().join("b.enc").exists());
     }
 }

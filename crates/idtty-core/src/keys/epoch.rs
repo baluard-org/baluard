@@ -102,7 +102,11 @@ impl EpochInfo {
 
     /// Check if quorum is met: ceil(N/2) of N enrolled devices.
     pub fn quorum_met(&self, enrolled_count: usize) -> bool {
-        let required = if enrolled_count == 0 { 0 } else { (enrolled_count + 1) / 2 };
+        let required = if enrolled_count == 0 {
+            0
+        } else {
+            (enrolled_count + 1) / 2
+        };
         self.acknowledged_devices.len() >= required
     }
 }

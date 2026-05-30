@@ -132,7 +132,9 @@ impl DeviceRegistry {
     /// ceil(N/2) with minimum 1. Intuitive scaling: 1→1, 2→1, 3→2, 4→2, 5→3.
     pub fn quorum_required(&self) -> usize {
         let n = self.devices.len();
-        if n == 0 { return 0; }
+        if n == 0 {
+            return 0;
+        }
         (n + 1) / 2 // ceil(N/2)
     }
 }
@@ -150,11 +152,7 @@ mod tests {
     #[test]
     fn enroll_first_device() {
         let mut reg = DeviceRegistry::new();
-        let entry = reg.enroll(
-            "MacBook".into(),
-            [1u8; 32],
-            [2u8; 32],
-        ).unwrap();
+        let entry = reg.enroll("MacBook".into(), [1u8; 32], [2u8; 32]).unwrap();
         assert_eq!(reg.count(), 1);
         assert_eq!(entry.name, "MacBook");
     }
@@ -189,7 +187,8 @@ mod tests {
         let mut reg = DeviceRegistry::new();
         let surviving = reg.enroll("Survivor".into(), [1u8; 32], [2u8; 32]).unwrap();
         reg.enroll("Lost".into(), [3u8; 32], [4u8; 32]).unwrap();
-        reg.enroll("Also Lost".into(), [5u8; 32], [6u8; 32]).unwrap();
+        reg.enroll("Also Lost".into(), [5u8; 32], [6u8; 32])
+            .unwrap();
 
         let evicted = reg.force_evict(surviving.device_id).unwrap();
         assert_eq!(evicted.len(), 2);

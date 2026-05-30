@@ -15,17 +15,17 @@ impl RecoveryPhrase {
     /// Generate a new random 24-word recovery phrase.
     pub fn generate() -> Result<Self, CryptoError> {
         let mut entropy = [0u8; 32]; // 256 bits = 24 words
-    use rand::RngCore;
-    rand::rngs::OsRng.fill_bytes(&mut entropy);
-    let mnemonic = Mnemonic::from_entropy(&entropy)
-        .map_err(|e| CryptoError::Bip39(e.to_string()))?;
+        use rand::RngCore;
+        rand::rngs::OsRng.fill_bytes(&mut entropy);
+        let mnemonic =
+            Mnemonic::from_entropy(&entropy).map_err(|e| CryptoError::Bip39(e.to_string()))?;
         Ok(Self { mnemonic })
     }
 
     /// Parse a recovery phrase from a space-separated word string.
     pub fn from_phrase(phrase: &str) -> Result<Self, CryptoError> {
-        let mnemonic = Mnemonic::parse_normalized(phrase)
-            .map_err(|e| CryptoError::Bip39(e.to_string()))?;
+        let mnemonic =
+            Mnemonic::parse_normalized(phrase).map_err(|e| CryptoError::Bip39(e.to_string()))?;
         Ok(Self { mnemonic })
     }
 

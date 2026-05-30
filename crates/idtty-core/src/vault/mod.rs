@@ -4,10 +4,10 @@
 //! Doc 06 Section 10: Vault creation ceremony.
 
 pub mod cipher;
+pub mod creation;
 pub mod envelope;
+pub mod handle;
 pub mod manifest;
 pub mod padding;
-pub mod creation;
-pub mod handle;
 
 pub use handle::VaultHandle;
