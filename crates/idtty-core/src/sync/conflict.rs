@@ -8,7 +8,7 @@
 //! 5. Same-field conflict: flag for user resolution (both values shown)
 //! 6. Re-encrypt merged result, commit, push
 
-use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 use crate::types::CipherInput;
 
@@ -30,43 +30,74 @@ pub struct ConflictInfo {
     pub merged_base: CipherInput,
 }
 
+impl Drop for ConflictInfo {
+    fn drop(&mut self) {
+        for f in self.conflicting_fields.iter_mut() {
+            f.local_value.zeroize();
+            f.remote_value.zeroize();
+        }
+        // Zeroize sensitive fields in merged_base
+        self.merged_base.password.zeroize();
+        self.merged_base.totp_uri.zeroize();
+        self.merged_base.notes.zeroize();
+        for cf in &mut self.merged_base.custom_fields {
+            if matches!(cf.field_type, crate::types::CustomFieldType::Hidden) {
+                cf.value.zeroize();
+            }
+        }
+    }
+}
+
 /// A single field conflict.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Intentionally does NOT derive Serialize/Deserialize to prevent
+/// accidental serialization of plaintext passwords.
+#[derive(Debug, Clone)]
 pub struct FieldConflict {
     pub field_name: String,
     pub local_value: String,
     pub remote_value: String,
 }
 
+/// Black-box zeroization on drop for individual conflicts as well.
+impl Drop for FieldConflict {
+    fn drop(&mut self) {
+        self.local_value.zeroize();
+        self.remote_value.zeroize();
+    }
+}
+
 /// Semantic field groups (D10: security-sensitive fields treated as atomic units).
 const SEMANTIC_GROUPS: &[&[&str]] = &[&["username", "password", "totp_uri"]];
 
-/// Perform field-level merge between local and remote cipher inputs.
+/// Perform a 3-way field-level merge between local, remote, and common ancestor (base) cipher inputs.
 ///
 /// Non-overlapping changes merge automatically. Same-field conflicts are flagged.
 /// Security-sensitive field groups (username + password + TOTP) are atomic:
 /// if any field in the group conflicts, the entire group flags for user resolution.
-pub fn merge_ciphers(local: &CipherInput, remote: &CipherInput) -> MergeResult {
+pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInput) -> MergeResult {
     let mut merged = local.clone();
     let mut conflicts = Vec::new();
 
-    // Check each field individually
-    merge_optional_field(&mut merged.name, &remote.name, "name", &mut conflicts);
+    // Check each field individually using 3-way merge
+    merge_3way_field(&base.name, &mut merged.name, &remote.name, "name", &mut conflicts);
 
-    merge_optional_field_ref(
+    merge_3way_field_opt(
+        &base.username,
         &mut merged.username,
         &remote.username,
         "username",
         &mut conflicts,
     );
-    merge_optional_field_ref(
+    merge_3way_field_opt(
+        &base.password,
         &mut merged.password,
         &remote.password,
         "password",
         &mut conflicts,
     );
-    merge_optional_field_ref(&mut merged.notes, &remote.notes, "notes", &mut conflicts);
-    merge_optional_field_ref(
+    merge_3way_field_opt(&base.notes, &mut merged.notes, &remote.notes, "notes", &mut conflicts);
+    merge_3way_field_opt(
+        &base.totp_uri,
         &mut merged.totp_uri,
         &remote.totp_uri,
         "totp_uri",
@@ -77,6 +108,13 @@ pub fn merge_ciphers(local: &CipherInput, remote: &CipherInput) -> MergeResult {
     for uri in &remote.uris {
         if !merged.uris.contains(uri) {
             merged.uris.push(uri.clone());
+        }
+    }
+
+    // Custom fields: union by name, prefer local on name collision
+    for cf in &remote.custom_fields {
+        if !merged.custom_fields.iter().any(|f| f.name == cf.name) {
+            merged.custom_fields.push(cf.clone());
         }
     }
 
@@ -111,14 +149,24 @@ pub fn merge_ciphers(local: &CipherInput, remote: &CipherInput) -> MergeResult {
     }
 }
 
-fn merge_optional_field(
+fn merge_3way_field(
+    base: &str,
     local: &mut String,
     remote: &str,
     field_name: &str,
     conflicts: &mut Vec<FieldConflict>,
 ) {
-    if local != remote {
-        // If they differ, it's a conflict (we don't know which is "newer" at this level)
+    if local == remote {
+        return;
+    }
+    if local == base && remote != base {
+        // Only remote changed
+        *local = remote.to_string();
+    } else if remote == base && local != base {
+        // Only local changed
+        return;
+    } else {
+        // Both changed to different things: conflict!
         conflicts.push(FieldConflict {
             field_name: field_name.to_string(),
             local_value: local.clone(),
@@ -127,13 +175,24 @@ fn merge_optional_field(
     }
 }
 
-fn merge_optional_field_ref(
+fn merge_3way_field_opt(
+    base: &Option<String>,
     local: &mut Option<String>,
     remote: &Option<String>,
     field_name: &str,
     conflicts: &mut Vec<FieldConflict>,
 ) {
-    if local != remote {
+    if local == remote {
+        return;
+    }
+    if local == base && remote != base {
+        // Only remote changed
+        *local = remote.clone();
+    } else if remote == base && local != base {
+        // Only local changed
+        return;
+    } else {
+        // Both changed to different things: conflict!
         conflicts.push(FieldConflict {
             field_name: field_name.to_string(),
             local_value: local.as_deref().unwrap_or("").to_string(),
@@ -172,39 +231,61 @@ mod tests {
 
     #[test]
     fn identical_ciphers_merge_cleanly() {
+        let base = base_input("GitHub");
         let local = base_input("GitHub");
         let remote = base_input("GitHub");
-        let result = merge_ciphers(&local, &remote);
+        let result = merge_ciphers(&base, &local, &remote);
         assert!(matches!(result, MergeResult::Merged(_)));
     }
 
     #[test]
     fn non_overlapping_fields_merge() {
-        let mut local = base_input("GitHub");
+        let base = base_input("GitHub");
+        let mut local = base.clone();
         local.username = Some("user@old.com".into());
 
-        let mut remote = base_input("GitHub");
+        let mut remote = base.clone();
         remote.notes = Some("added a note".into());
 
-        // name and username differ → conflicts
-        let result = merge_ciphers(&local, &remote);
-        // This produces conflicts because both name and username differ
+        // Since only local changed username and only remote changed notes,
+        // it should merge perfectly with NO conflicts!
+        let result = merge_ciphers(&base, &local, &remote);
+        match result {
+            MergeResult::Merged(merged) => {
+                assert_eq!(merged.username.as_deref(), Some("user@old.com"));
+                assert_eq!(merged.notes.as_deref(), Some("added a note"));
+            }
+            MergeResult::Conflict(_) => panic!("expected clean 3-way merge"),
+        }
+    }
+
+    #[test]
+    fn overlapping_field_conflict() {
+        let base = base_input("GitHub");
+        let mut local = base.clone();
+        local.username = Some("local@user.com".into());
+
+        let mut remote = base.clone();
+        remote.username = Some("remote@user.com".into());
+
+        let result = merge_ciphers(&base, &local, &remote);
         assert!(matches!(result, MergeResult::Conflict(_)));
     }
 
     #[test]
     fn semantic_group_atomic() {
-        let mut local = base_input("GitHub");
-        local.username = Some("user".into());
-        local.password = Some("old-pass".into());
-        local.totp_uri = Some("otpauth://old".into());
+        let mut base = base_input("GitHub");
+        base.username = Some("user".into());
+        base.password = Some("old-pass".into());
+        base.totp_uri = Some("otpauth://old".into());
 
-        let mut remote = base_input("GitHub");
-        remote.username = Some("user".into());
-        remote.password = Some("new-pass".into()); // password changed
-        remote.totp_uri = Some("otpauth://old".into());
+        let mut local = base.clone();
+        local.password = Some("local-pass".into()); // both changed password
 
-        let result = merge_ciphers(&local, &remote);
+        let mut remote = base.clone();
+        remote.password = Some("remote-pass".into()); // both changed password
+
+        let result = merge_ciphers(&base, &local, &remote);
         match result {
             MergeResult::Conflict(info) => {
                 // All 3 fields in the semantic group should be flagged
@@ -213,7 +294,9 @@ mod tests {
                     .iter()
                     .map(|c| c.field_name.as_str())
                     .collect();
+                assert!(names.contains(&"username"));
                 assert!(names.contains(&"password"));
+                assert!(names.contains(&"totp_uri"));
             }
             MergeResult::Merged(_) => panic!("expected conflict for semantic group"),
         }
@@ -221,18 +304,19 @@ mod tests {
 
     #[test]
     fn uri_union_merge() {
-        let mut local = base_input("GitHub");
+        let base = base_input("GitHub");
+        let mut local = base.clone();
         local.uris = vec!["https://github.com".into()];
 
-        let mut remote = base_input("GitHub");
+        let mut remote = base.clone();
         remote.uris = vec!["https://github.com".into(), "https://api.github.com".into()];
 
-        let result = merge_ciphers(&local, &remote);
+        let result = merge_ciphers(&base, &local, &remote);
         match result {
             MergeResult::Merged(merged) => {
                 assert_eq!(merged.uris.len(), 2);
             }
-            MergeResult::Conflict(_) => {} // name field may conflict
+            MergeResult::Conflict(_) => panic!("expected clean 3-way merge"),
         }
     }
 }

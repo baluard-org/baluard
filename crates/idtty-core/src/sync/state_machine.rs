@@ -4,6 +4,7 @@
 //! Each transition is idempotent with persisted operation IDs.
 
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Sync operation states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +63,27 @@ impl SyncStateMachine {
             pending_ciphers: Vec::new(),
             pending_since: None,
         }
+    }
+
+    /// Load the checkpointed state machine from disk.
+    pub fn load_from_file(vault_path: &Path) -> Self {
+        let path = vault_path.join("meta/sync-state.json");
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(sm) = serde_json::from_str::<Self>(&data) {
+                return sm;
+            }
+        }
+        Self::new()
+    }
+
+    /// Persist the state machine to disk.
+    pub fn save_to_file(&self, vault_path: &Path) -> Result<(), String> {
+        let path = vault_path.join("meta/sync-state.json");
+        let data = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("serialize state: {e}"))?;
+        std::fs::write(&path, data)
+            .map_err(|e| format!("write state to file: {e}"))?;
+        Ok(())
     }
 
     /// Attempt a state transition. Returns Err if invalid.

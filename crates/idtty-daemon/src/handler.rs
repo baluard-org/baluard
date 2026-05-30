@@ -448,14 +448,16 @@ fn sync_push(vault_path: &std::path::Path) -> Result<String, String> {
 #[cfg(feature = "git-sync")]
 fn sync_pull(vault_path: &std::path::Path) -> Result<String, String> {
     let engine = idtty_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    engine.recover_state().map_err(|e| format!("{e}"))?;
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let result = engine.pull(&repo, "origin").map_err(|e| format!("{e}"))?;
     Ok(match result {
         idtty_core::sync::engine::PullResult::AlreadyUpToDate => "Already up to date.".into(),
         idtty_core::sync::engine::PullResult::FastForward => "Fast-forwarded to latest.".into(),
         idtty_core::sync::engine::PullResult::Merged => "Merged remote changes.".into(),
-        idtty_core::sync::engine::PullResult::Conflict => {
-            return Err("Merge conflict detected. Manual resolution required.".into());
+        idtty_core::sync::engine::PullResult::Conflict { files, .. } => {
+            let file_list = files.join(", ");
+            return Err(format!("Merge conflict in {file_list}. Resolution required."));
         }
     })
 }

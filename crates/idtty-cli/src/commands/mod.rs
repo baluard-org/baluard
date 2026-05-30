@@ -10,7 +10,6 @@ use crate::client;
 use std::path::Path;
 
 use idtty_core::types::{CipherInput, KdfProfile};
-use idtty_core::vault::creation;
 use idtty_core::vault::handle::{CipherRead, VaultHandle};
 use zeroize::Zeroize;
 
@@ -19,10 +18,10 @@ use zeroize::Zeroize;
 pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn std::error::Error>> {
     let profile = parse_profile(profile_str)?;
 
-    let password = prompt_password("Master password: ")?;
-    let confirm = prompt_password("Confirm password: ")?;
+    let password = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
+    let confirm = zeroize::Zeroizing::new(prompt_password("Confirm password: ")?);
 
-    if password != confirm {
+    if *password != *confirm {
         eprintln!("error: passwords do not match");
         std::process::exit(1);
     }
@@ -32,84 +31,26 @@ pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn st
     }
 
     println!("Creating vault...");
-    let result = creation::create_vault_ceremony(&password, profile)?;
+    let (_handle, secrets) = idtty_core::vault::creation::VaultCreator::new(vault_path, &password, "this-device")
+        .kdf_profile(profile)
+        .execute()?;
 
     println!();
     println!("Vault created successfully.");
-    println!("  Vault ID: {}", result.vault_id);
-    println!("  Epoch:    {}", result.epoch_info.epoch);
-    println!("  Device:   {}", result.device_id);
+    println!("  Vault ID: {}", secrets.vault_id);
+    println!("  Epoch:    1");
+    println!("  Device:   {}", secrets.device_id);
     println!();
     println!("=== RECOVERY PHRASE (write this down!) ===");
-    println!("{}", result.recovery_phrase.phrase());
+    println!("{}", secrets.recovery_phrase.phrase());
     println!("=== END RECOVERY PHRASE ===");
     println!();
     println!(
         "Trust fingerprint: {}",
-        hex::encode(result.trust_fingerprint)
+        hex::encode(secrets.trust_fingerprint)
     );
 
-    let path = Path::new(vault_path);
-    std::fs::create_dir_all(path.join("ciphers"))?;
-    std::fs::create_dir_all(path.join("meta"))?;
-    std::fs::create_dir_all(path.join("meta/keywrap"))?;
-    std::fs::create_dir_all(path.join("meta/sequences"))?;
-
-    // Device registry
-    let mut registry = idtty_core::devices::DeviceRegistry::new();
-    let pub_enc = x25519_dalek::PublicKey::from(&result.device_x25519_secret);
-    let verifying = result.device_ed25519_signing.verifying_key();
-    registry.enroll(
-        "this-device".into(),
-        pub_enc.to_bytes(),
-        verifying.to_bytes(),
-    )?;
-    std::fs::write(
-        path.join("meta/devices.json"),
-        serde_json::to_string_pretty(&registry)?,
-    )?;
-
-    // KDF params
-    std::fs::write(
-        path.join("meta/kdf-params.json"),
-        serde_json::to_string_pretty(&result.kdf_params)?,
-    )?;
-
-    // Keywrap
-    let (eph_pub, ct, tag) = &result.wrapped_root_key;
-    let keywrap_data = serde_json::json!({
-        "device_id": result.device_id.to_string(),
-        "ephemeral_public": hex::encode(eph_pub),
-        "encrypted_key": hex::encode(ct),
-        "tag": hex::encode(tag),
-    });
-    std::fs::write(
-        path.join(format!("meta/keywrap/{}.json", result.device_id)),
-        serde_json::to_string_pretty(&keywrap_data)?,
-    )?;
-
-    // CLI mode: device private key (NOT for production!)
-    let privkey_data = serde_json::json!({
-        "x25519_private": hex::encode(result.device_x25519_secret.to_bytes()),
-    });
-    std::fs::write(
-        path.join("meta/device-privkey.json"),
-        serde_json::to_string_pretty(&privkey_data)?,
-    )?;
-
-    // Vault .gitignore: exclude secrets that must never be pushed
-    std::fs::write(
-        path.join(".gitignore"),
-        "# Secrets - never push these\nmeta/device-privkey.json\n",
-    )?;
-
-    // KEK canary (for password verification on unlock)
-    std::fs::write(path.join("meta/kek-canary.enc"), &result.kek_canary)?;
-
-    // Root Key canary (for RK verification on unlock)
-    std::fs::write(path.join("meta/rk-canary.enc"), &result.rk_canary)?;
-
-    println!("Vault files written to: {}", path.display());
+    println!("Vault files written to: {}", vault_path);
     Ok(())
 }
 
@@ -212,16 +153,16 @@ pub fn handle_add(
             eprintln!(
                 "warning: --password exposes secret in process list. Use interactive prompt instead."
             );
-            p
+            zeroize::Zeroizing::new(p)
         }
-        None => prompt_password("Password: ")?,
+        None => zeroize::Zeroizing::new(prompt_password("Password: ")?),
     };
 
     let input = CipherInput {
         name,
         folder_id: None,
         username,
-        password: Some(cipher_password),
+        password: Some((*cipher_password).clone()),
         uris: uri.map(|u| vec![u]).unwrap_or_default(),
         notes,
         totp_uri: None,
@@ -240,7 +181,7 @@ pub fn handle_add(
             Ok(())
         }
         ConnectMode::Direct => {
-            let mp = prompt_password("Master password: ")?;
+            let mp = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
             let path = Path::new(vault_path);
             let mut handle = VaultHandle::open(path)?;
             handle.unlock(&mp)?;
@@ -337,7 +278,7 @@ pub fn handle_get(
             let mut handle = VaultHandle::open(path)?;
 
             if decrypt {
-                let mp = prompt_password("Master password: ")?;
+                let mp = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
                 handle.unlock(&mp)?;
             }
 
@@ -712,14 +653,16 @@ fn sync_push_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
 fn sync_pull_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
     let engine = idtty_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    engine.recover_state()?;
     let repo = engine.open_repo()?;
     let result = engine.pull(&repo, "origin")?;
     match result {
         idtty_core::sync::engine::PullResult::AlreadyUpToDate => println!("Already up to date."),
         idtty_core::sync::engine::PullResult::FastForward => println!("Fast-forwarded to latest."),
         idtty_core::sync::engine::PullResult::Merged => println!("Merged remote changes."),
-        idtty_core::sync::engine::PullResult::Conflict => {
-            return Err("merge conflict detected. Manual resolution required.".into());
+        idtty_core::sync::engine::PullResult::Conflict { files, .. } => {
+            let file_list = files.join(", ");
+            return Err(format!("merge conflict in {file_list}. Resolution required.").into());
         }
     }
     Ok(())

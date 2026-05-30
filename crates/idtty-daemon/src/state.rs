@@ -276,97 +276,14 @@ impl VaultState {
         };
 
         // Run creation ceremony (CPU-heavy, no lock needed)
-        let result = idtty_core::vault::creation::create_vault_ceremony(&password, profile)
+        let (handle, secrets) = idtty_core::vault::creation::VaultCreator::new(&self.vault_path, &password, "this-device")
+            .kdf_profile(profile)
+            .execute()
             .map_err(|e| format!("Vault creation failed: {e}"))?;
 
         // Zeroize password as soon as ceremony completes
         zeroize::Zeroize::zeroize(&mut *password);
 
-        let path = &self.vault_path;
-        std::fs::create_dir_all(path.join("ciphers")).map_err(|e| format!("mkdir ciphers: {e}"))?;
-        std::fs::create_dir_all(path.join("meta/keywrap"))
-            .map_err(|e| format!("mkdir keywrap: {e}"))?;
-        std::fs::create_dir_all(path.join("meta/sequences"))
-            .map_err(|e| format!("mkdir sequences: {e}"))?;
-
-        // Helper: write file with restrictive permissions for sensitive data
-        let write_secret = |file_path: std::path::PathBuf, data: &[u8]| -> Result<(), String> {
-            std::fs::write(&file_path, data)
-                .map_err(|e| format!("Write {}: {e}", file_path.display()))?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600))
-                    .map_err(|e| format!("chmod {}: {e}", file_path.display()))?;
-            }
-            Ok(())
-        };
-
-        // Device registry
-        let mut registry = idtty_core::devices::DeviceRegistry::new();
-        let pub_enc = x25519_dalek::PublicKey::from(&result.device_x25519_secret);
-        let verifying = result.device_ed25519_signing.verifying_key();
-        registry
-            .enroll(
-                "this-device".into(),
-                pub_enc.to_bytes(),
-                verifying.to_bytes(),
-            )
-            .map_err(|e| format!("Device enrollment: {e}"))?;
-        write_secret(
-            path.join("meta/devices.json"),
-            serde_json::to_string_pretty(&registry)
-                .map_err(|e| format!("Serialize devices: {e}"))?
-                .as_bytes(),
-        )?;
-
-        // KDF params
-        write_secret(
-            path.join("meta/kdf-params.json"),
-            serde_json::to_string_pretty(&result.kdf_params)
-                .map_err(|e| format!("Serialize kdf: {e}"))?
-                .as_bytes(),
-        )?;
-
-        // Keywrap
-        let (eph_pub, ct, tag) = &result.wrapped_root_key;
-        let keywrap_data = serde_json::json!({
-            "device_id": result.device_id.to_string(),
-            "ephemeral_public": hex::encode(eph_pub),
-            "encrypted_key": hex::encode(ct),
-            "tag": hex::encode(tag),
-        });
-        write_secret(
-            path.join(format!("meta/keywrap/{}.json", result.device_id)),
-            serde_json::to_string_pretty(&keywrap_data)
-                .map_err(|e| format!("Serialize keywrap: {e}"))?
-                .as_bytes(),
-        )?;
-
-        // Device private key (TODO: encrypt at rest with platform keystore)
-        let privkey_data = serde_json::json!({
-            "x25519_private": hex::encode(result.device_x25519_secret.to_bytes()),
-        });
-        write_secret(
-            path.join("meta/device-privkey.json"),
-            serde_json::to_string_pretty(&privkey_data)
-                .map_err(|e| format!("Serialize privkey: {e}"))?
-                .as_bytes(),
-        )?;
-
-        // .gitignore
-        std::fs::write(
-            path.join(".gitignore"),
-            "# Secrets - never push these\nmeta/device-privkey.json\n",
-        )
-        .map_err(|e| format!("Write gitignore: {e}"))?;
-
-        // Canaries
-        write_secret(path.join("meta/kek-canary.enc"), &result.kek_canary)?;
-        write_secret(path.join("meta/rk-canary.enc"), &result.rk_canary)?;
-
-        // Now open the vault so it's ready for use
-        let handle = VaultHandle::open(path).map_err(|e| format!("Open after create: {e}"))?;
         let mut guard = self.inner.write().await;
         *guard = Some(handle);
 
@@ -375,10 +292,10 @@ impl VaultState {
         let mut token_guard = self.session_token.write().await;
         *token_guard = Some(token.clone());
         let response = serde_json::json!({
-            "vault_id": result.vault_id.to_string(),
-            "device_id": result.device_id.to_string(),
-            "recovery_phrase": result.recovery_phrase.phrase(),
-            "trust_fingerprint": hex::encode(result.trust_fingerprint),
+            "vault_id": secrets.vault_id.to_string(),
+            "device_id": secrets.device_id.to_string(),
+            "recovery_phrase": secrets.recovery_phrase.phrase(),
+            "trust_fingerprint": hex::encode(secrets.trust_fingerprint),
             "session_token": token,
         });
         Ok(response.to_string())

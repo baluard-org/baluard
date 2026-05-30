@@ -36,8 +36,20 @@ impl DeviceRegistry {
         encryption_public_key: [u8; 32],
         signing_public_key: [u8; 32],
     ) -> Result<DeviceEntry, DeviceError> {
-        let device_id = Uuid::new_v4();
+        self.enroll_with_id(Uuid::new_v4(), name, encryption_public_key, signing_public_key)
+    }
 
+    /// Enroll a new device with a specific device ID.
+    pub fn enroll_with_id(
+        &mut self,
+        device_id: Uuid,
+        name: String,
+        encryption_public_key: [u8; 32],
+        signing_public_key: [u8; 32],
+    ) -> Result<DeviceEntry, DeviceError> {
+        if self.devices.contains_key(&device_id) {
+            return Err(DeviceError::AlreadyEnrolled(device_id.to_string()));
+        }
         let entry = DeviceEntry {
             device_id,
             name,
