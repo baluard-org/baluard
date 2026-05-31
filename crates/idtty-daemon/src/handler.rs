@@ -181,10 +181,8 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.attach_upload",
     "vault.attach_download",
     "vault.attach_delete",
-    "vault.biometric_status",
     "vault.biometric_enable",
     "vault.biometric_disable",
-    "vault.biometric_unlock",
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.

@@ -652,11 +652,25 @@ impl VaultState {
         }).to_string())
     }
 
-    /// Enable biometric unlock. Payload: master password.
+    /// Enable biometric unlock. Validates password against vault first,
+    /// then stores in OS keychain.
     pub async fn biometric_enable(&self, payload: &str) -> Result<String, String> {
         let req: serde_json::Value = serde_json::from_str(payload)
             .map_err(|e| format!("{e}"))?;
         let password = req["password"].as_str().ok_or("missing password")?;
+
+        // Verify the password can unlock the vault before storing
+        // Open a temp handle, try unlock, discard
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        let vault_path = handle.path.clone();
+        drop(guard);
+
+        let mut temp = idtty_core::vault::handle::VaultHandle::open(&vault_path)
+            .map_err(|e| format!("Open failed: {e}"))?;
+        temp.unlock(password)
+            .map_err(|_| "Incorrect master password".to_string())?;
+        temp.lock();
 
         idtty_core::biometric::enable(password)?;
 
@@ -669,17 +683,12 @@ impl VaultState {
         Ok(serde_json::json!({"disabled": true}).to_string())
     }
 
-    /// Biometric unlock. Uses stored OS keychain secret.
+    /// Biometric unlock. Retrieves stored master password from OS keychain
+    /// and performs vault unlock. The secret NEVER leaves this process.
     pub async fn biometric_unlock(&self) -> Result<String, String> {
-        let secret = idtty_core::biometric::unlock()?;
-
-        // The secret is a hex-encoded HKDF derivative of the master password.
-        // We need to verify it against the vault by deriving KEK and checking.
-        // For now, return the secret so the caller can use it for unlock.
-        Ok(serde_json::json!({
-            "success": true,
-            "secret": secret,
-        }).to_string())
+        let master_password = idtty_core::biometric::unlock()?;
+        self.unlock(&master_password).await?;
+        Ok(serde_json::json!({"success": true}).to_string())
     }
 
     /// Upload attachment to a cipher.
