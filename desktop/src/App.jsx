@@ -1,4 +1,4 @@
-import { createSignal, onMount, Show, For, createContext, useContext, createEffect } from "solid-js";
+import { createSignal, onMount, onCleanup, Show, For, createContext, useContext, createEffect } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "./i18n/index.jsx";
 
@@ -925,6 +925,34 @@ function CipherDetail() {
   const { t } = useI18n();
 
   const [revealPass, setRevealPass] = createSignal(false);
+  const [totpCode, setTotpCode] = createSignal(null); // { code, period_seconds, expires_at }
+  const [totpCopied, setTotpCopied] = createSignal(false);
+
+  // TOTP code auto-refresh timer
+  createEffect(() => {
+    const cipher = viewCipher();
+    if (!cipher) return;
+    const totpUri = cipher.kind?.login?.totp_uri || cipher.totp_uri;
+    if (!totpUri || !cipher.id) {
+      setTotpCode(null);
+      return;
+    }
+    let active = true;
+    const fetchCode = async () => {
+      if (!active) return;
+      try {
+        const data = JSON.parse(await daemon("cipher.totp_code", cipher.id));
+        if (active) {
+          setTotpCode(data);
+        }
+      } catch (e) {
+        // TOTP might fail if vault locked
+      }
+    };
+    fetchCode();
+    const interval = setInterval(fetchCode, 5000); // refresh every 5s
+    onCleanup(() => { active = false; clearInterval(interval); });
+  });
 
   function startEdit() {
     const c = viewCipher();
@@ -1014,6 +1042,28 @@ function CipherDetail() {
               showPassword={revealPass()}
               onToggleShow={() => setRevealPass(!revealPass())}
             />
+
+            {/* TOTP code widget */}
+            <Show when={totpCode()}>
+              <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
+                <label class="text-[10px] text-[var(--color-muted)] font-extrabold uppercase tracking-wider block mb-2">Verification Code</label>
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="text-2xl font-mono font-bold tracking-[0.3em] text-[var(--color-text)] select-all">{totpCode()?.code?.match(/.{1,3}/g)?.join(" ") || totpCode()?.code}</span>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(totpCode()?.code || ""); setTotpCopied(true); setTimeout(() => setTotpCopied(false), 1500); }}
+                      class="p-1.5 rounded-lg text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                      title="Copy code"
+                    >
+                      <Show when={!totpCopied()} fallback={<span class="text-xs text-green-500">Copied</span>}>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
+                      </Show>
+                    </button>
+                  </div>
+                  <span class="text-[10px] text-[var(--color-muted)]">{totpCode()?.period_seconds}s</span>
+                </div>
+              </div>
+            </Show>
           </div>
         </Show>
 

@@ -7,3 +7,4 @@ pub mod hkdf_derive;
 pub mod hpke_wrap;
 pub mod kdf;
 pub mod signature;
+pub mod totp;
