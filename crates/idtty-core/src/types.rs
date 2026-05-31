@@ -431,6 +431,8 @@ pub struct CipherInput {
     #[serde(default)]
     pub favorite: bool,
     #[serde(default)]
+    pub reprompt: bool,
+    #[serde(default)]
     pub notes: Option<String>,
     #[serde(default)]
     pub custom_fields: Vec<CustomField>,
@@ -481,6 +483,8 @@ pub struct CipherEnvelopeData {
     pub kind: CipherKind,
     #[serde(default)]
     pub favorite: bool,
+    #[serde(default)]
+    pub reprompt: bool,
     #[serde(default)]
     pub notes: Option<String>,
     #[serde(default)]
@@ -547,6 +551,8 @@ pub struct Cipher {
     pub kind: CipherKind,
     #[serde(default)]
     pub favorite: bool,
+    #[serde(default)]
+    pub reprompt: bool,
     pub notes: Option<String>,
     pub custom_fields: Vec<CustomField>,
     pub key_epoch: u64,
@@ -567,6 +573,8 @@ pub struct CipherMeta {
     pub cipher_type: CipherType,
     #[serde(default)]
     pub favorite: bool,
+    #[serde(default)]
+    pub reprompt: bool,
     pub username: Option<String>,
     pub tier: Tier,
     pub key_epoch: u64,

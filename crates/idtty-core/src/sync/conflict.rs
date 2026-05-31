@@ -273,6 +273,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         }
     }
 
@@ -409,6 +410,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         base.name = "Card".into();
 

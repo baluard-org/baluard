@@ -181,6 +181,7 @@ pub fn handle_add(
         custom_fields: vec![],
         created_at: None,
         password_history: vec![],
+            reprompt: false,
     };
 
     match mode {
@@ -984,6 +985,7 @@ pub fn handle_edit(
                     .or(existing_cipher.folder_id),
                 kind: existing_cipher.kind.clone(),
                 favorite: favorite.unwrap_or(existing_cipher.favorite),
+                reprompt: existing_cipher.reprompt,
                 notes: existing_cipher.notes.clone(),
                 custom_fields: existing_cipher.custom_fields.clone(),
                 created_at: Some(existing_cipher.created_at),

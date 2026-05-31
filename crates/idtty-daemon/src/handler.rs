@@ -176,6 +176,7 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "sync.log",
     "vault.import",
     "vault.export",
+    "vault.reprompt_verify",
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.
@@ -547,6 +548,24 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     Err(e) => err_response(e),
                 },
                 _ => err_response(format!("Unknown export format: {format}. Use bw-json or bw-csv")),
+            }
+        }
+
+        // ── Reprompt verify (token required) ──
+        "vault.reprompt_verify" => {
+            // Payload: master password (plaintext)
+            if req.payload.is_empty() {
+                return err_response("Missing master password");
+            }
+            match state.reprompt_verify(&req.payload).await {
+                Ok(json) => {
+                    req.payload.zeroize();
+                    ok_resp(json, token_str)
+                }
+                Err(e) => {
+                    req.payload.zeroize();
+                    err_response(e)
+                }
             }
         }
 

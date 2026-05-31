@@ -141,6 +141,7 @@ pub fn decrypt_cipher(
         folder_id: data.folder_id,
         kind: data.kind,
         favorite: data.favorite,
+        reprompt: data.reprompt,
         notes: data.notes,
         custom_fields: data.custom_fields,
         key_epoch: enc_envelope.header.key_epoch,
@@ -166,6 +167,8 @@ struct CipherData {
     pub kind: crate::types::CipherKind,
     #[serde(default)]
     pub favorite: bool,
+    #[serde(default)]
+    pub reprompt: bool,
     pub notes: Option<String>,
     /// Write-only: populated on encrypt for backward compat. Read path uses kind.Login.totp_uri.
     #[serde(default)]
@@ -211,6 +214,7 @@ impl CipherData {
             folder_id: input.folder_id,
             kind: input.kind.clone(),
             favorite: input.favorite,
+            reprompt: input.reprompt,
             notes: input.notes.clone(),
             totp_uri,
             custom_fields: input.custom_fields.clone(),
@@ -232,6 +236,7 @@ impl From<CipherEnvelopeData> for CipherData {
             folder_id: migrated.folder_id,
             kind: migrated.kind,
             favorite: migrated.favorite,
+            reprompt: migrated.reprompt,
             notes: migrated.notes,
             totp_uri: migrated.totp_uri,
             custom_fields: migrated.custom_fields,
@@ -272,6 +277,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
 
         let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
@@ -317,6 +323,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
 
         let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
@@ -349,6 +356,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
 
         // Encrypt for cipher A

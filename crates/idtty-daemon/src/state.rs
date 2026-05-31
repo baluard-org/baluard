@@ -193,6 +193,7 @@ impl VaultState {
                     "name": c.name,
                     "type": serde_json::to_value(c.kind.cipher_type()).unwrap_or(serde_json::Value::Null),
                     "favorite": c.favorite,
+                    "reprompt": c.reprompt,
                     "notes": c.notes,
                     "tier": format!("{:?}", c.tier),
                     "epoch": c.key_epoch,
@@ -371,6 +372,10 @@ impl VaultState {
                 .get("favorite")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(existing_cipher.favorite),
+            reprompt: update
+                .get("reprompt")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(existing_cipher.reprompt),
             notes: if update.get("notes").map(|v| v.is_null()).unwrap_or(false) {
                 None // explicit null clears notes
             } else {
@@ -627,6 +632,37 @@ impl VaultState {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         handle.purge_old_trash(days).map_err(|e| format!("{e}"))
+    }
+
+    /// Verify master password for reprompt. Opens a temporary handle and attempts unlock.
+    /// Returns a short-lived grant. Does NOT change the main vault state.
+    pub async fn reprompt_verify(&self, master_password: &str) -> Result<String, String> {
+        // Open a temporary handle
+        let mut temp_handle = VaultHandle::open(&self.vault_path)
+            .map_err(|e| format!("Open failed: {e}"))?;
+
+        // Try to unlock with the provided password
+        temp_handle
+            .unlock(master_password)
+            .map_err(|_| "Incorrect master password".to_string())?;
+
+        // Password verified. Generate a short-lived grant token.
+        let mut token_bytes = [0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut token_bytes);
+        let grant = hex::encode(token_bytes);
+        let expires_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() + 30; // 30 second grant
+
+        // Lock the temporary handle (zeroize keys)
+        temp_handle.lock();
+
+        Ok(serde_json::json!({
+            "granted": true,
+            "expires_at": expires_at,
+            "grant_token": grant,
+        }).to_string())
     }
 
     /// Get vault info (ID, device, state).
