@@ -434,6 +434,9 @@ pub struct CipherInput {
     pub notes: Option<String>,
     #[serde(default)]
     pub custom_fields: Vec<CustomField>,
+    /// Preserve original creation time on updates. None = set at creation.
+    #[serde(default)]
+    pub created_at: Option<u64>,
 }
 
 /// Custom field on a cipher.
