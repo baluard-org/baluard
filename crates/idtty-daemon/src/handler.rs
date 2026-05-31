@@ -204,6 +204,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
     let token = state.get_session_token().await;
     let token_str = token.as_deref();
 
+    // Touch activity timer on every request (for auto-lock)
+    state.touch_activity();
+
     let resp = match req.action.as_str() {
         "ping" => ok_resp("pong", None),
 

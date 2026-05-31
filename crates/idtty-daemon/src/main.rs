@@ -61,6 +61,9 @@ fn main() -> anyhow::Result<()> {
 async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
     let vault_state: SharedVaultState = Arc::new(VaultState::new(PathBuf::from(vault_path)));
 
+    // Spawn auto-lock background timer
+    VaultState::spawn_auto_lock_checker(vault_state.clone());
+
     // Ensure parent directory exists (~/.config/idtty/)
     if let Some(parent) = std::path::Path::new(socket_path).parent() {
         std::fs::create_dir_all(parent)?;
