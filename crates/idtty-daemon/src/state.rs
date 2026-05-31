@@ -196,7 +196,14 @@ impl VaultState {
                     "tier": format!("{:?}", c.tier),
                     "epoch": c.key_epoch,
                     "seq": c.update_seq,
+                    "folder_id": c.folder_id,
+                    "created_at": c.created_at,
+                    "updated_at": c.updated_at,
+                    "password_history": c.password_history,
                 });
+                // Emit kind as nested object matching CipherKind serde format
+                json["kind"] = serde_json::to_value(&c.kind).unwrap_or(serde_json::Value::Null);
+                // Also emit flat top-level fields for backward compat
                 match &c.kind {
                     idtty_core::types::CipherKind::Login(data) => {
                         json["username"] = serde_json::json!(data.username);
@@ -208,13 +215,36 @@ impl VaultState {
                         json["cardholder_name"] = serde_json::json!(data.cardholder_name);
                         json["brand"] = serde_json::json!(data.brand);
                         json["number"] = serde_json::json!(data.number);
+                        json["exp_month"] = serde_json::json!(data.exp_month);
+                        json["exp_year"] = serde_json::json!(data.exp_year);
+                        json["code"] = serde_json::json!(data.code);
                     }
                     idtty_core::types::CipherKind::Identity(data) => {
+                        json["title"] = serde_json::json!(data.title);
                         json["first_name"] = serde_json::json!(data.first_name);
+                        json["middle_name"] = serde_json::json!(data.middle_name);
                         json["last_name"] = serde_json::json!(data.last_name);
+                        json["username"] = serde_json::json!(data.username);
+                        json["company"] = serde_json::json!(data.company);
                         json["email"] = serde_json::json!(data.email);
+                        json["phone"] = serde_json::json!(data.phone);
+                        json["address1"] = serde_json::json!(data.address1);
+                        json["address2"] = serde_json::json!(data.address2);
+                        json["address3"] = serde_json::json!(data.address3);
+                        json["city"] = serde_json::json!(data.city);
+                        json["state"] = serde_json::json!(data.state);
+                        json["postal_code"] = serde_json::json!(data.postal_code);
+                        json["country"] = serde_json::json!(data.country);
+                        json["ssn"] = serde_json::json!(data.ssn);
+                        json["passport_number"] = serde_json::json!(data.passport_number);
+                        json["license_number"] = serde_json::json!(data.license_number);
                     }
-                    _ => {}
+                    idtty_core::types::CipherKind::SshKey(data) => {
+                        json["public_key"] = serde_json::json!(data.public_key);
+                        json["private_key"] = serde_json::json!(data.private_key);
+                        json["fingerprint"] = serde_json::json!(data.key_fingerprint);
+                    }
+                    idtty_core::types::CipherKind::SecureNote => {}
                 }
                 Ok(json.to_string())
             }
@@ -332,7 +362,10 @@ impl VaultState {
                     .flatten()
                     .or(existing_cipher.folder_id)
             },
-            kind: existing_cipher.kind.clone(),
+            kind: update
+                .get("kind")
+                .and_then(|v| serde_json::from_value::<idtty_core::types::CipherKind>(v.clone()).ok())
+                .unwrap_or_else(|| existing_cipher.kind.clone()),
             favorite: update
                 .get("favorite")
                 .and_then(|v| v.as_bool())
