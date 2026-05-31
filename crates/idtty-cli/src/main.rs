@@ -71,6 +71,9 @@ enum Commands {
         /// Notes.
         #[arg(long)]
         notes: Option<String>,
+        /// Folder ID to assign to.
+        #[arg(long)]
+        folder: Option<String>,
     },
 
     /// Get a cipher by ID or name.
@@ -121,6 +124,12 @@ enum Commands {
         action: SettingsAction,
     },
 
+    /// Manage folders.
+    Folders {
+        #[command(subcommand)]
+        action: FolderAction,
+    },
+
     /// Ping the daemon to check connectivity.
     Ping,
 }
@@ -139,6 +148,29 @@ enum SettingsAction {
     Set {
         /// Setting key and value (e.g., default_uri_match=host).
         kv: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum FolderAction {
+    /// Create a new folder.
+    Create {
+        /// Folder name.
+        name: String,
+    },
+    /// List all folders.
+    List,
+    /// Rename a folder.
+    Rename {
+        /// Folder ID.
+        id: String,
+        /// New folder name.
+        name: String,
+    },
+    /// Delete a folder (unassigns all entries).
+    Delete {
+        /// Folder ID.
+        id: String,
     },
 }
 
@@ -211,6 +243,7 @@ fn main() {
             password,
             uri,
             notes,
+            folder,
         } => commands::handle_add(
             mode,
             &cli.vault_path,
@@ -220,6 +253,7 @@ fn main() {
             password,
             uri,
             notes,
+            folder.as_deref(),
         ),
         Commands::Get {
             id,
@@ -256,6 +290,21 @@ fn main() {
             }
             SettingsAction::Set { kv } => {
                 commands::handle_settings_set(mode, cli.socket.as_deref(), &kv)
+            }
+        },
+
+        Commands::Folders { action } => match action {
+            FolderAction::Create { name } => {
+                commands::handle_folder_create(mode, cli.socket.as_deref(), &name)
+            }
+            FolderAction::List => {
+                commands::handle_folder_list(mode, cli.socket.as_deref())
+            }
+            FolderAction::Rename { id, name } => {
+                commands::handle_folder_rename(mode, cli.socket.as_deref(), &id, &name)
+            }
+            FolderAction::Delete { id } => {
+                commands::handle_folder_delete(mode, cli.socket.as_deref(), &id)
             }
         },
 

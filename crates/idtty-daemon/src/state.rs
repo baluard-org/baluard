@@ -308,6 +308,61 @@ impl VaultState {
         Ok(new_id.to_string())
     }
 
+    // ── Folder CRUD ──
+
+    /// List all folders.
+    pub async fn list_folders(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+
+        let folders = handle.list_folders().map_err(|e| format!("{e}"))?;
+        serde_json::to_string(&folders).map_err(|e| format!("{e}"))
+    }
+
+    /// Create a folder.
+    pub async fn create_folder(&self, name: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+
+        let id = handle.create_folder(name).map_err(|e| format!("{e}"))?;
+        Ok(id.to_string())
+    }
+
+    /// Rename a folder. Payload: JSON {"id": "...", "name": "new name"}
+    pub async fn rename_folder(&self, payload: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+
+        let data: serde_json::Value = serde_json::from_str(payload)
+            .map_err(|e| format!("Invalid JSON: {e}"))?;
+        let id_str = data["id"].as_str().ok_or("Missing 'id' field")?;
+        let name = data["name"].as_str().ok_or("Missing 'name' field")?;
+        let folder_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
+
+        handle.rename_folder(folder_id, name).map_err(|e| format!("{e}"))
+    }
+
+    /// Delete a folder. Unassigns all ciphers in that folder.
+    pub async fn delete_folder(&self, id_str: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+
+        let folder_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
+        handle.delete_folder(folder_id).map_err(|e| format!("{e}"))
+    }
+
     /// Delete a cipher by ID. Uses write lock for filesystem mutation.
     pub async fn delete_cipher(&self, id_str: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;

@@ -147,6 +147,7 @@ pub fn handle_add(
     password: Option<String>,
     uri: Option<String>,
     notes: Option<String>,
+    folder_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cipher_password = match password {
         Some(p) => {
@@ -158,9 +159,14 @@ pub fn handle_add(
         None => zeroize::Zeroizing::new(prompt_password("Password: ")?),
     };
 
+    let folder_uuid = folder_id
+        .map(|id| uuid::Uuid::parse_str(id))
+        .transpose()
+        .map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid folder UUID: {e}")))?;
+
     let input = CipherInput {
         name,
-        folder_id: None,
+        folder_id: folder_uuid,
         kind: CipherKind::Login(LoginData {
             username,
             password: Some((*cipher_password).clone()),
@@ -437,13 +443,37 @@ pub fn handle_list(
             if ciphers.map_or(true, |a| a.is_empty()) {
                 println!("No ciphers found.");
             } else if let Some(ciphers) = ciphers {
+                // Fetch folders for name resolution
+                let folder_map: std::collections::HashMap<String, String> =
+                    if let Ok(fresp) = client::request_to("folder.list", "", socket) {
+                        if let Ok(fdata) = serde_json::from_str::<serde_json::Value>(&fresp.payload) {
+                            fdata.as_array()
+                                .unwrap_or(&vec![])
+                                .iter()
+                                .filter_map(|f| {
+                                    let id = f["id"].as_str()?.to_string();
+                                    let name = f["name"].as_str()?.to_string();
+                                    Some((id, name))
+                                })
+                                .collect()
+                        } else { std::collections::HashMap::new() }
+                    } else { std::collections::HashMap::new() };
+
                 for c in ciphers {
                     let id = c["id"].as_str().unwrap_or("?");
                     let name = c["name"].as_str().unwrap_or("?");
                     let ctype = c["type"].as_str().unwrap_or("login");
                     let fav = if c["favorite"].as_bool().unwrap_or(false) { "*" } else { " " };
                     let username = c["username"].as_str().unwrap_or("");
-                    println!("{fav} {id}  [{ctype:>10}]  {name}  {username}");
+                    let folder = c["folder_id"].as_str()
+                        .and_then(|fid| folder_map.get(fid))
+                        .map(|n| n.as_str())
+                        .unwrap_or("");
+                    if folder.is_empty() {
+                        println!("{fav} {id}  [{ctype:>10}]  {name}  {username}");
+                    } else {
+                        println!("{fav} {id}  [{ctype:>10}]  {name}  {username}  [{folder}]");
+                    }
                 }
                 println!();
                 println!("{} cipher(s)", ciphers.len());
@@ -1019,6 +1049,106 @@ pub fn handle_settings_set(
         }
         ConnectMode::Direct => {
             eprintln!("Settings requires daemon mode. Use --socket or start the daemon.");
+            std::process::exit(1);
+        }
+    }
+}
+
+// ── Folder CRUD ──
+
+pub fn handle_folder_create(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("folder.create", name, socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("Folder created: {}", resp.payload);
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Folder management requires daemon mode.");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub fn handle_folder_list(
+    mode: ConnectMode,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("folder.list", "", socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            let folders: Vec<serde_json::Value> = serde_json::from_str(&resp.payload)?;
+            if folders.is_empty() {
+                println!("No folders.");
+                return Ok(());
+            }
+            println!("{:<36} {}", "ID", "NAME");
+            for f in &folders {
+                let id = f["id"].as_str().unwrap_or("?");
+                let name = f["name"].as_str().unwrap_or("?");
+                println!("{id} {name}");
+            }
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Folder management requires daemon mode.");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub fn handle_folder_rename(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    id: &str,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let payload = serde_json::json!({"id": id, "name": name}).to_string();
+            let resp = client::request_to("folder.rename", &payload, socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("Folder renamed.");
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Folder management requires daemon mode.");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub fn handle_folder_delete(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("folder.delete", id, socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("Folder deleted. Entries moved to unassigned.");
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Folder management requires daemon mode.");
             std::process::exit(1);
         }
     }
