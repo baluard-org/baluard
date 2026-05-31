@@ -242,7 +242,7 @@ function useActions() {
         kind = {
           type: "card",
           data: {
-            cardholder: c.cardholder || null,
+            cardholder_name: c.cardholder_name || null,
             number: c.cardNumber || null,
             brand: c.cardBrand || null,
             exp_month: c.expMonth || null,
@@ -326,7 +326,7 @@ function useActions() {
         kind = {
           type: "card",
           data: {
-            cardholder: c.cardholder || null,
+            cardholder_name: c.cardholder_name || null,
             number: c.cardNumber || null,
             brand: c.cardBrand || null,
             exp_month: c.expMonth || null,
@@ -978,7 +978,7 @@ function CipherDetail() {
       custom_fields: c.custom_fields || [],
       totp_uri: loginData.totp_uri || "",
       // Card fields
-      cardholder: cardData.cardholder || "",
+      cardholder: cardData.cardholder_name || "",
       cardNumber: cardData.number || "",
       cardBrand: cardData.brand || "",
       expMonth: cardData.exp_month || "",
@@ -1078,7 +1078,7 @@ function CipherDetail() {
             <Show when={viewCipher()?.kind?.card?.brand}>
               <CardBrandDisplay number={viewCipher()?.kind?.card?.number || ""} />
             </Show>
-            <CopyableField label="Cardholder" value={viewCipher()?.kind?.card?.cardholder} />
+            <CopyableField label="Cardholder" value={viewCipher()?.kind?.card?.cardholder_name} />
             <CopyableField label="Number" value={viewCipher()?.kind?.card?.number} />
             <CopyableField label="Expiration" value={viewCipher()?.kind?.card?.exp_month && viewCipher()?.kind?.card?.exp_year ? `${viewCipher()?.kind?.card?.exp_month}/${viewCipher()?.kind?.card?.exp_year}` : null} />
             <CopyableField label="CVV" value={viewCipher()?.kind?.card?.code} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
@@ -1400,7 +1400,7 @@ function AddEditCipherForm(props) {
               <input
                 placeholder="Full name on card"
                 class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
-                value={newCipher().cardholder || ""}
+                value={newCipher().cardholder_name || ""}
                 onInput={e => setNewCipher({ ...newCipher(), cardholder: e.target.value })}
               />
             </div>
