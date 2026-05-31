@@ -3,6 +3,7 @@
 //! Git-native password manager. Crypto, vault format, sync, key lifecycle.
 //! See docs/01-architecture-decisions.md for full design rationale.
 
+pub mod biometric;
 pub mod crypto;
 pub mod device_manager;
 pub mod devices;

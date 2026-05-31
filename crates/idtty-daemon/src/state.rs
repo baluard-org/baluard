@@ -638,6 +638,50 @@ impl VaultState {
         handle.purge_old_trash(days).map_err(|e| format!("{e}"))
     }
 
+    /// Get biometric unlock status.
+    pub async fn biometric_status(&self) -> Result<String, String> {
+        let available = idtty_core::biometric::is_available();
+        let enabled = if available {
+            idtty_core::biometric::is_enabled()
+        } else {
+            false
+        };
+        Ok(serde_json::json!({
+            "available": available,
+            "enabled": enabled,
+        }).to_string())
+    }
+
+    /// Enable biometric unlock. Payload: master password.
+    pub async fn biometric_enable(&self, payload: &str) -> Result<String, String> {
+        let req: serde_json::Value = serde_json::from_str(payload)
+            .map_err(|e| format!("{e}"))?;
+        let password = req["password"].as_str().ok_or("missing password")?;
+
+        idtty_core::biometric::enable(password)?;
+
+        Ok(serde_json::json!({"enabled": true}).to_string())
+    }
+
+    /// Disable biometric unlock.
+    pub async fn biometric_disable(&self) -> Result<String, String> {
+        idtty_core::biometric::disable()?;
+        Ok(serde_json::json!({"disabled": true}).to_string())
+    }
+
+    /// Biometric unlock. Uses stored OS keychain secret.
+    pub async fn biometric_unlock(&self) -> Result<String, String> {
+        let secret = idtty_core::biometric::unlock()?;
+
+        // The secret is a hex-encoded HKDF derivative of the master password.
+        // We need to verify it against the vault by deriving KEK and checking.
+        // For now, return the secret so the caller can use it for unlock.
+        Ok(serde_json::json!({
+            "success": true,
+            "secret": secret,
+        }).to_string())
+    }
+
     /// Upload attachment to a cipher.
     /// Payload: { cipher_id, filename, data_base64 }
     pub async fn attach_upload(&self, payload: &str) -> Result<String, String> {
