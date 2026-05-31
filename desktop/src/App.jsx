@@ -952,10 +952,10 @@ function LoginScreen() {
               type="button"
               onClick={async () => {
                 try {
-                  const result = JSON.parse(await daemon("vault.biometric_unlock"));
-                  if (result.success) {
-                    await unlock(result.secret);
-                  }
+                  await daemon("vault.biometric_unlock");
+                  // Daemon unlocked the vault internally. Refresh UI.
+                  app.setStatus("unlocked");
+                  app.setError(null);
                 } catch (e) { /* Biometric failed or cancelled */ }
               }}
               class="w-full mt-2 py-3 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
