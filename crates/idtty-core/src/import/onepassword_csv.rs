@@ -70,6 +70,7 @@ pub fn parse(data: &str) -> ImportResult {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            attachments: vec![],
             reprompt: false,
         };
 

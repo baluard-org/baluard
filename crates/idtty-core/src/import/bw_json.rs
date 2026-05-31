@@ -317,6 +317,7 @@ pub fn parse(data: &str) -> ImportResult {
             created_at: None,
             password_history,
             reprompt: false,
+            attachments: vec![],
         };
 
         result.add_with_folder(cipher, folder_name);

@@ -442,6 +442,9 @@ pub struct CipherInput {
     /// Password history. Populated by update_cipher on password change.
     #[serde(default)]
     pub password_history: Vec<PasswordHistoryEntry>,
+    /// Existing attachments (preserved across updates).
+    #[serde(default)]
+    pub attachments: Vec<crate::vault::attachment::AttachmentMeta>,
 }
 
 /// Custom field on a cipher.
@@ -502,6 +505,8 @@ pub struct CipherEnvelopeData {
     pub updated_at: u64,
     #[serde(default)]
     pub password_history: Vec<PasswordHistoryEntry>,
+    #[serde(default)]
+    pub attachments: Vec<crate::vault::attachment::AttachmentMeta>,
 }
 
 impl CipherEnvelopeData {
@@ -562,6 +567,8 @@ pub struct Cipher {
     pub updated_at: u64,
     #[serde(default)]
     pub password_history: Vec<PasswordHistoryEntry>,
+    #[serde(default)]
+    pub attachments: Vec<crate::vault::attachment::AttachmentMeta>,
 }
 
 /// Cipher metadata (for listing without decryption).

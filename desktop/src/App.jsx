@@ -74,7 +74,7 @@ const [repromptCallback, setRepromptCallback] = createSignal(null);
   
   // New / Edited entry buffers
   const [newCipher, setNewCipher] = createSignal({
-    name: "", username: "", password: "", uris: [], notes: "", cipherType: "login", favorite: false, reprompt: false, folder_id: null, custom_fields: [], totp_uri: "",
+    name: "", username: "", password: "", uris: [], notes: "", cipherType: "login", favorite: false, reprompt: false, attachments: [], folder_id: null, custom_fields: [], totp_uri: "",
   });
   
   const [trashCiphers, setTrashCiphers] = createSignal([]);
@@ -311,7 +311,7 @@ function useActions() {
         folder_id: c.folder_id || null,
         custom_fields: c.custom_fields || [],
       }));
-      app.setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: "login", favorite: false, reprompt: false, folder_id: null, custom_fields: [], totp_uri: "" });
+      app.setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: "login", favorite: false, reprompt: false, attachments: [], folder_id: null, custom_fields: [], totp_uri: "" });
       app.setActivePane("welcome");
       await refreshCiphers();
     } catch (e) {
@@ -1061,6 +1061,7 @@ function CipherDetail() {
 
   const [revealPass, setRevealPass] = createSignal(false);
   const [totpCode, setTotpCode] = createSignal(null); // { code, period_seconds, expires_at }
+  const [attachLoading, setAttachLoading] = createSignal(false);
   const [totpCopied, setTotpCopied] = createSignal(false);
 
   // TOTP code auto-refresh timer (boundary-aligned)
@@ -1295,6 +1296,56 @@ function CipherDetail() {
             <div class="p-4 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] leading-relaxed font-semibold whitespace-pre-wrap select-text">
               {viewCipher()?.notes}
             </div>
+          </div>
+        </Show>
+
+        {/* Attachments */}
+        <Show when={viewCipher()?.attachments?.length > 0}>
+          <div class="space-y-3 pt-2">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Attachments</h4>
+            <For each={viewCipher()?.attachments || []}>
+              {(attach) => {
+                const sizeStr = () => {
+                  const s = attach.size;
+                  if (s > 1024*1024) return (s/(1024*1024)).toFixed(1) + " MB";
+                  if (s > 1024) return (s/1024).toFixed(1) + " KB";
+                  return s + " bytes";
+                };
+                async function handleDownload() {
+                  try {
+                    const result = await daemon("vault.attach_download", JSON.stringify({
+                      cipher_id: viewCipher().id,
+                      attachment_id: attach.id,
+                    }));
+                    const b64 = result.data_base64;
+                    const binary = atob(b64);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                    const blob = new Blob([bytes]);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url; a.download = attach.filename; a.click();
+                    URL.revokeObjectURL(url);
+                  } catch(e) { alert("Download failed: " + e.message); }
+                }
+                return (
+                  <div class="flex items-center justify-between p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <svg class="w-4 h-4 text-[var(--color-muted)] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                      <div class="min-w-0">
+                        <div class="text-sm font-semibold text-[var(--color-text)] truncate">{attach.filename}</div>
+                        <div class="text-[10px] text-[var(--color-muted)]">{sizeStr()}</div>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0 ml-2">
+                      <button onClick={handleDownload} class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer" title="Download">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                );
+              }}
+            </For>
           </div>
         </Show>
       </div>
@@ -1895,7 +1946,7 @@ function VaultView() {
   };
 
   function startAdd(type = "login") {
-    setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: type, favorite: false, reprompt: false, folder_id: null, custom_fields: [], totp_uri: "" });
+    setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: type, favorite: false, reprompt: false, attachments: [], folder_id: null, custom_fields: [], totp_uri: "" });
     setActivePane("add");
   }
 
