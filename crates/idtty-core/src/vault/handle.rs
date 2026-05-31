@@ -686,6 +686,11 @@ impl VaultHandle {
                 password: old_password.unwrap(),
                 last_used_date: now,
             });
+            // Cap history to match BW parity (5 entries)
+            const MAX_PASSWORD_HISTORY: usize = 5;
+            if history.len() > MAX_PASSWORD_HISTORY {
+                history.drain(0..history.len() - MAX_PASSWORD_HISTORY);
+            }
             input_owned.password_history = history;
 
             // Update password_revision_date on LoginData
@@ -693,7 +698,8 @@ impl VaultHandle {
                 data.password_revision_date = Some(now);
             }
         } else if input_owned.password_history.is_empty() {
-            // Preserve existing history if caller didn't provide one and password didn't change
+            // Preserve existing history if caller didn't provide one and password didn't change.
+            // History is append-only: passing password_history: vec![] preserves existing history.
             input_owned.password_history = existing_cipher.password_history.clone();
         }
 
@@ -1275,6 +1281,8 @@ mod tests {
                 match &c.kind {
                     crate::types::CipherKind::Login(data) => {
                         assert_eq!(data.password.as_deref(), Some("new-pass"));
+                        // password_revision_date must be set after change
+                        assert!(data.password_revision_date.is_some());
                     }
                     _ => panic!("expected login"),
                 }
@@ -1350,6 +1358,57 @@ mod tests {
             CipherRead::Decrypted(c) => {
                 assert_eq!(c.password_history.len(), 1);
                 assert_eq!(c.password_history[0].password, "pass1");
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+    }
+
+    #[test]
+    fn password_history_capped_at_five() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let input = CipherInput {
+            name: "Test".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                password: Some("pw0".into()),
+                ..Default::default()
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+        };
+        let id = handle.add_cipher(&input).unwrap();
+
+        // Change password 8 times
+        for i in 1..=8 {
+            let updated = CipherInput {
+                name: "Test".into(),
+                folder_id: None,
+                kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                    password: Some(format!("pw{i}")),
+                    ..Default::default()
+                }),
+                favorite: false,
+                notes: None,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+            };
+            handle.update_cipher(id, &updated).unwrap();
+        }
+
+        let result = handle.get_cipher(id).unwrap();
+        match result {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.password_history.len(), 5, "history must be capped at 5");
+                // Oldest entries evicted: should have pw4..pw8 (5 most recent)
+                assert_eq!(c.password_history[0].password, "pw3");
+                assert_eq!(c.password_history[4].password, "pw7");
             }
             CipherRead::Locked(_) => panic!("expected decrypted"),
         }
