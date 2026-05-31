@@ -437,6 +437,9 @@ pub struct CipherInput {
     /// Preserve original creation time on updates. None = set at creation.
     #[serde(default)]
     pub created_at: Option<u64>,
+    /// Password history. Populated by update_cipher on password change.
+    #[serde(default)]
+    pub password_history: Vec<PasswordHistoryEntry>,
 }
 
 /// Custom field on a cipher.
@@ -453,6 +456,14 @@ pub enum CustomFieldType {
     Text,
     Hidden,
     Boolean,
+}
+
+/// A single password history entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PasswordHistoryEntry {
+    pub password: String,
+    /// Unix timestamp when this password was last used.
+    pub last_used_date: u64,
 }
 
 /// Backward-compatible cipher data within the encrypted envelope.
@@ -485,6 +496,8 @@ pub struct CipherEnvelopeData {
     pub uris: Vec<String>,
     pub created_at: u64,
     pub updated_at: u64,
+    #[serde(default)]
+    pub password_history: Vec<PasswordHistoryEntry>,
 }
 
 impl CipherEnvelopeData {
@@ -541,6 +554,8 @@ pub struct Cipher {
     pub tier: Tier,
     pub created_at: u64,
     pub updated_at: u64,
+    #[serde(default)]
+    pub password_history: Vec<PasswordHistoryEntry>,
 }
 
 /// Cipher metadata (for listing without decryption).

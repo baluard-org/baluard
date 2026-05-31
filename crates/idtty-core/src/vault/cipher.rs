@@ -151,6 +151,7 @@ pub fn decrypt_cipher(
             .ok_or_else(|| VaultError::Corrupt("cipher envelope missing tier".into()))?,
         created_at: data.created_at,
         updated_at: data.updated_at,
+        password_history: data.password_history,
     })
 }
 
@@ -180,6 +181,8 @@ struct CipherData {
     pub uris: Vec<String>,
     pub created_at: u64,
     pub updated_at: u64,
+    #[serde(default)]
+    pub password_history: Vec<crate::types::PasswordHistoryEntry>,
 }
 
 impl CipherData {
@@ -216,6 +219,7 @@ impl CipherData {
             uris,
             created_at,
             updated_at: now,
+            password_history: input.password_history.clone(),
         }
     }
 }
@@ -236,6 +240,7 @@ impl From<CipherEnvelopeData> for CipherData {
             uris: migrated.uris,
             created_at: migrated.created_at,
             updated_at: migrated.updated_at,
+            password_history: migrated.password_history,
         }
     }
 }
@@ -266,6 +271,7 @@ mod tests {
             notes: None,
             custom_fields: vec![],
             created_at: None,
+            password_history: vec![],
         };
 
         let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
@@ -310,6 +316,7 @@ mod tests {
             notes: None,
             custom_fields: vec![],
             created_at: None,
+            password_history: vec![],
         };
 
         let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
@@ -341,6 +348,7 @@ mod tests {
             notes: None,
             custom_fields: vec![],
             created_at: None,
+            password_history: vec![],
         };
 
         // Encrypt for cipher A

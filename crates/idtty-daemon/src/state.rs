@@ -286,11 +286,26 @@ impl VaultState {
             },
             custom_fields: existing_cipher.custom_fields.clone(),
             created_at: Some(existing_cipher.created_at),
+            password_history: existing_cipher.password_history.clone(),
         };
 
         handle
             .update_cipher(cipher_id, &input)
             .map_err(|e| format!("{e}"))
+    }
+
+    /// Clone a cipher by ID (duplicate with new UUID, empty history).
+    pub async fn clone_cipher(&self, id_str: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+
+        let cipher_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
+        let new_id = handle.clone_cipher(cipher_id).map_err(|e| format!("{e}"))?;
+        Ok(new_id.to_string())
     }
 
     /// Delete a cipher by ID. Uses write lock for filesystem mutation.
