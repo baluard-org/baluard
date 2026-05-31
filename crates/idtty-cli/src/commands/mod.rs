@@ -1329,7 +1329,7 @@ pub fn handle_attach_upload(
 ) -> Result<(), Box<dyn std::error::Error>> {
     ensure_unlocked_daemon(socket)?;
 
-    let data = std::fs::read(file_path)?;
+    let mut data = std::fs::read(file_path)?;
     if data.len() > idtty_core::vault::attachment::MAX_ATTACHMENT_SIZE {
         return Err(format!("File too large: {} bytes (max 2MB)", data.len()).into());
     }
@@ -1345,6 +1345,10 @@ pub fn handle_attach_upload(
         "filename": filename,
         "data_base64": base64::engine::general_purpose::STANDARD.encode(&data),
     }).to_string();
+
+    // Zeroize file data after encoding
+    use zeroize::Zeroize;
+    data.zeroize();
 
     let resp = client::request_to("vault.attach_upload", &payload, socket)?;
     if !resp.success {
@@ -1376,8 +1380,12 @@ pub fn handle_attach_download(
 
     let result: serde_json::Value = serde_json::from_str(&resp.payload)?;
     use base64::Engine;
-    let data = base64::engine::general_purpose::STANDARD.decode(result["data_base64"].as_str().unwrap())?;
+    let mut data = base64::engine::general_purpose::STANDARD.decode(result["data_base64"].as_str().unwrap())?;
     std::fs::write(output_path, &data)?;
+
+    // Zeroize after writing
+    use zeroize::Zeroize;
+    data.zeroize();
 
     println!("Downloaded: {} ({} bytes) -> {}", result["filename"], result["size"], output_path);
     Ok(())
