@@ -461,8 +461,8 @@ impl VaultState {
         serde_json::to_string(&folders).map_err(|e| format!("{e}"))
     }
 
-    /// Create a folder.
-    pub async fn create_folder(&self, name: &str) -> Result<String, String> {
+    /// Create a folder. Payload: JSON {"name": "...", "parent_id": "..." (optional)}
+    pub async fn create_folder(&self, payload: &str) -> Result<String, String> {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
 
@@ -470,7 +470,18 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".to_string());
         }
 
-        let id = handle.create_folder(name).map_err(|e| format!("{e}"))?;
+        // Try JSON format first, fall back to plain name
+        let (name, parent_id) = match serde_json::from_str::<serde_json::Value>(payload) {
+            Ok(v) => (
+                v["name"].as_str().unwrap_or(payload).to_string(),
+                v["parent_id"].as_str()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok()),
+            ),
+            Err(_) => (payload.to_string(), None),
+        };
+
+        let id = handle.create_folder_with_parent(&name, parent_id)
+            .map_err(|e| format!("{e}"))?;
         Ok(id.to_string())
     }
 
