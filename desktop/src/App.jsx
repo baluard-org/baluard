@@ -1352,9 +1352,12 @@ function CipherDetail() {
             <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Custom Fields</h4>
             <For each={viewCipher()?.custom_fields || []}>
               {(field) => {
+                const isLinked = () => typeof field.field_type === "object" && field.field_type?.Linked;
+                const isHidden = () => field.field_type === "Hidden";
+                const linkedType = () => isLinked() ? field.field_type.Linked : "";
                 const resolved = () => {
-                  if (field.field_type?.linked) {
-                    const linkType = typeof field.field_type.linked === "string" ? field.field_type.linked : "";
+                  if (isLinked()) {
+                    const lt = linkedType();
                     const c = viewCipher();
                     if (!c) return field.value || "";
                     const map = {
@@ -1362,20 +1365,33 @@ function CipherDetail() {
                       LoginPassword: c.password || c.kind?.login?.password,
                       CardCardholderName: c.kind?.card?.cardholder_name,
                       CardNumber: c.kind?.card?.number,
+                      CardExpMonth: c.kind?.card?.exp_month,
+                      CardExpYear: c.kind?.card?.exp_year,
                       CardCvv: c.kind?.card?.code,
+                      IdentityTitle: c.kind?.identity?.title,
                       IdentityFirstName: c.kind?.identity?.first_name,
+                      IdentityMiddleName: c.kind?.identity?.middle_name,
                       IdentityLastName: c.kind?.identity?.last_name,
+                      IdentityUsername: c.kind?.identity?.username,
+                      IdentityCompany: c.kind?.identity?.company,
                       IdentityEmail: c.kind?.identity?.email,
                       IdentityPhone: c.kind?.identity?.phone,
+                      IdentityAddress1: c.kind?.identity?.address1,
+                      IdentityAddress2: c.kind?.identity?.address2,
+                      IdentityAddress3: c.kind?.identity?.address3,
+                      IdentityCity: c.kind?.identity?.city,
+                      IdentityState: c.kind?.identity?.state,
+                      IdentityPostalCode: c.kind?.identity?.postal_code,
+                      IdentityCountry: c.kind?.identity?.country,
                     };
-                    return map[linkType] || "(linked field)";
+                    return map[lt] || "(linked field)";
                   }
                   return field.value || "";
                 };
                 return (
                   <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
-                    <label class="text-[10px] text-[var(--color-muted)] block uppercase tracking-wider font-extrabold">{field.name}{field.field_type?.linked ? " (linked)" : ""}</label>
-                    <Show when={field.field_type?.hidden} fallback={
+                    <label class="text-[10px] text-[var(--color-muted)] block uppercase tracking-wider font-extrabold">{field.name}{isLinked() ? " (linked)" : ""}</label>
+                    <Show when={isHidden()} fallback={
                       <div class="text-sm text-[var(--color-text)] font-semibold mt-0.5 select-all">{resolved() || "\u2014"}</div>
                     }>
                       <div class="text-sm font-mono text-[var(--color-text)] tracking-widest mt-0.5 select-all">{"\u2022".repeat(8)}</div>
@@ -1913,14 +1929,22 @@ function AddEditCipherForm(props) {
               <button
                 type="button"
                 onClick={() => {
-                  const fields = [...(newCipher().custom_fields || []), { name: "", value: "", field_type: { text: true } }];
+                  const fields = [...(newCipher().custom_fields || []), { name: "", value: "", field_type: "Text" }];
                   setNewCipher({ ...newCipher(), custom_fields: fields });
                 }}
                 class="text-[10px] font-bold text-[var(--color-primary)] hover:underline cursor-pointer"
               >+ Add field</button>
             </div>
             <For each={newCipher().custom_fields || []}>
-              {(field, i) => (
+              {(field, i) => {
+                const ft = () => {
+                  const t = field.field_type;
+                  if (typeof t === "string") return t;
+                  if (t?.Linked) return "Linked";
+                  return "Text";
+                };
+                const linkedVal = () => typeof field.field_type === "object" && field.field_type?.Linked ? field.field_type.Linked : "LoginUsername";
+                return (
                 <div class="flex gap-2 mb-2 items-center">
                   <input
                     placeholder="Name"
@@ -1934,20 +1958,59 @@ function AddEditCipherForm(props) {
                   />
                   <select
                     class="px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer"
-                    value={field.field_type?.text ? "text" : field.field_type?.hidden ? "hidden" : field.field_type?.boolean ? "boolean" : field.field_type?.linked ? "linked" : "text"}
+                    value={ft()}
                     onChange={e => {
                       const fields = [...newCipher().custom_fields];
-                      const typeMap = { text: { text: true }, hidden: { hidden: true }, boolean: { boolean: true }, linked: { linked: "LoginUsername" } };
-                      fields[i()] = { ...fields[i()], field_type: typeMap[e.target.value] || { text: true } };
+                      const v = e.target.value;
+                      fields[i()] = { ...fields[i()], field_type: v === "Linked" ? { Linked: "LoginUsername" } : v };
                       setNewCipher({ ...newCipher(), custom_fields: fields });
                     }}
                   >
-                    <option value="text">Text</option>
-                    <option value="hidden">Hidden</option>
-                    <option value="boolean">Boolean</option>
-                    <option value="linked">Linked</option>
+                    <option value="Text">Text</option>
+                    <option value="Hidden">Hidden</option>
+                    <option value="Boolean">Boolean</option>
+                    <option value="Linked">Linked</option>
                   </select>
-                  <Show when={field.field_type?.linked} fallback={
+                  <Show when={ft() !== "Linked"} fallback={
+                    <select
+                      class="flex-1 px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer"
+                      value={linkedVal()}
+                      onChange={e => {
+                        const fields = [...newCipher().custom_fields];
+                        fields[i()] = { ...fields[i()], field_type: { Linked: e.target.value }, value: "" };
+                        setNewCipher({ ...newCipher(), custom_fields: fields });
+                      }}
+                    >
+                      <optgroup label="Login">
+                        <option value="LoginUsername">Username</option>
+                        <option value="LoginPassword">Password</option>
+                      </optgroup>
+                      <optgroup label="Card">
+                        <option value="CardCardholderName">Cardholder</option>
+                        <option value="CardNumber">Card Number</option>
+                        <option value="CardExpMonth">Exp Month</option>
+                        <option value="CardExpYear">Exp Year</option>
+                        <option value="CardCvv">CVV</option>
+                      </optgroup>
+                      <optgroup label="Identity">
+                        <option value="IdentityTitle">Title</option>
+                        <option value="IdentityFirstName">First Name</option>
+                        <option value="IdentityMiddleName">Middle Name</option>
+                        <option value="IdentityLastName">Last Name</option>
+                        <option value="IdentityUsername">Username</option>
+                        <option value="IdentityCompany">Company</option>
+                        <option value="IdentityEmail">Email</option>
+                        <option value="IdentityPhone">Phone</option>
+                        <option value="IdentityAddress1">Address 1</option>
+                        <option value="IdentityAddress2">Address 2</option>
+                        <option value="IdentityAddress3">Address 3</option>
+                        <option value="IdentityCity">City</option>
+                        <option value="IdentityState">State</option>
+                        <option value="IdentityPostalCode">Postal Code</option>
+                        <option value="IdentityCountry">Country</option>
+                      </optgroup>
+                    </select>
+                  }>
                     <input
                       placeholder="Value"
                       class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
@@ -1958,26 +2021,6 @@ function AddEditCipherForm(props) {
                         setNewCipher({ ...newCipher(), custom_fields: fields });
                       }}
                     />
-                  }>
-                    <select
-                      class="flex-1 px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer"
-                      value={typeof field.field_type?.linked === "string" ? field.field_type.linked : "LoginUsername"}
-                      onChange={e => {
-                        const fields = [...newCipher().custom_fields];
-                        fields[i()] = { ...fields[i()], field_type: { linked: e.target.value }, value: "" };
-                        setNewCipher({ ...newCipher(), custom_fields: fields });
-                      }}
-                    >
-                      <option value="LoginUsername">Username</option>
-                      <option value="LoginPassword">Password</option>
-                      <option value="CardCardholderName">Cardholder</option>
-                      <option value="CardNumber">Card Number</option>
-                      <option value="CardCvv">CVV</option>
-                      <option value="IdentityFirstName">First Name</option>
-                      <option value="IdentityLastName">Last Name</option>
-                      <option value="IdentityEmail">Email</option>
-                      <option value="IdentityPhone">Phone</option>
-                    </select>
                   </Show>
                   <button
                     type="button"
