@@ -234,6 +234,42 @@ function useActions() {
       let kind;
       if (cipherType === "secureNote") {
         kind = { type: "secureNote", data: {} };
+      } else if (cipherType === "card") {
+        kind = {
+          type: "card",
+          data: {
+            cardholder: c.cardholder || null,
+            number: c.cardNumber || null,
+            brand: c.cardBrand || null,
+            exp_month: c.expMonth || null,
+            exp_year: c.expYear || null,
+            code: c.cvv || null,
+          },
+        };
+      } else if (cipherType === "identity") {
+        kind = {
+          type: "identity",
+          data: {
+            title: c.idTitle || null,
+            first_name: c.firstName || null,
+            middle_name: c.middleName || null,
+            last_name: c.lastName || null,
+            username: c.username || null,
+            company: c.company || null,
+            email: c.email || null,
+            phone: c.phone || null,
+            address1: c.address1 || null,
+            address2: c.address2 || null,
+            address3: c.address3 || null,
+            city: c.city || null,
+            state: c.state || null,
+            postal_code: c.postalCode || null,
+            country: c.country || null,
+            ssn: c.ssn || null,
+            passport_number: c.passportNumber || null,
+            license_number: c.licenseNumber || null,
+          },
+        };
       } else {
         // Login
         kind = {
@@ -273,6 +309,42 @@ function useActions() {
       let kind;
       if (cipherType === "secureNote") {
         kind = { type: "secureNote", data: {} };
+      } else if (cipherType === "card") {
+        kind = {
+          type: "card",
+          data: {
+            cardholder: c.cardholder || null,
+            number: c.cardNumber || null,
+            brand: c.cardBrand || null,
+            exp_month: c.expMonth || null,
+            exp_year: c.expYear || null,
+            code: c.cvv || null,
+          },
+        };
+      } else if (cipherType === "identity") {
+        kind = {
+          type: "identity",
+          data: {
+            title: c.idTitle || null,
+            first_name: c.firstName || null,
+            middle_name: c.middleName || null,
+            last_name: c.lastName || null,
+            username: c.username || null,
+            company: c.company || null,
+            email: c.email || null,
+            phone: c.phone || null,
+            address1: c.address1 || null,
+            address2: c.address2 || null,
+            address3: c.address3 || null,
+            city: c.city || null,
+            state: c.state || null,
+            postal_code: c.postalCode || null,
+            country: c.country || null,
+            ssn: c.ssn || null,
+            passport_number: c.passportNumber || null,
+            license_number: c.licenseNumber || null,
+          },
+        };
       } else {
         kind = {
           type: "login",
@@ -360,6 +432,29 @@ function getDomainInitials(name) {
   if (!name) return "?";
   let cleanName = name.replace(/^(https?:\/\/)?(www\.)?/, "");
   return cleanName.charAt(0).toUpperCase();
+}
+
+function detectCardBrand(number) {
+  const n = number.replace(/\s/g, "");
+  if (!n) return null;
+  if (/^4/.test(n)) return "Visa";
+  if (/^5[1-5]/.test(n) || /^2[2-7]/.test(n)) return "Mastercard";
+  if (/^3[47]/.test(n)) return "Amex";
+  if (/^6(?:011|5)/.test(n)) return "Discover";
+  if (/^35(?:2[89]|[3-8])/.test(n)) return "JCB";
+  return null;
+}
+
+function CardBrandDisplay(props) {
+  const brand = () => detectCardBrand(props.number);
+  const brandColors = { Visa: "bg-blue-600", Mastercard: "bg-orange-500", Amex: "bg-blue-800", Discover: "bg-orange-600", JCB: "bg-green-600" };
+  return (
+    <Show when={brand()}>
+      <div class={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg ${brandColors[brand()] || "bg-slate-600"} text-white text-xs font-bold`}>
+        {brand()}
+      </div>
+    </Show>
+  );
 }
 
 function ThemeToggleFloating() {
@@ -656,12 +751,47 @@ function CipherDetail() {
   function startEdit() {
     const c = viewCipher();
     if (!c) return;
+    const kind = c.kind || {};
+    const loginData = kind.login || kind.Login || {};
+    const cardData = kind.card || kind.Card || {};
+    const idData = kind.identity || kind.Identity || {};
+    const cipherType = c.type || "login";
     setNewCipher({
       name: c.name || "",
-      username: c.username || "",
-      password: c.password || "",
-      uri: c.uris?.[0] || "",
+      cipherType,
+      username: loginData.username || idData.username || "",
+      password: loginData.password || "",
+      uris: (loginData.uris || c.uris || []).map(u => typeof u === "string" ? { uri: u, match_strategy: null } : u),
       notes: c.notes || "",
+      favorite: c.favorite || false,
+      folder_id: c.folder_id || null,
+      custom_fields: c.custom_fields || [],
+      totp_uri: loginData.totp_uri || "",
+      // Card fields
+      cardholder: cardData.cardholder || "",
+      cardNumber: cardData.number || "",
+      cardBrand: cardData.brand || "",
+      expMonth: cardData.exp_month || "",
+      expYear: cardData.exp_year || "",
+      cvv: cardData.code || "",
+      // Identity fields
+      idTitle: idData.title || "",
+      firstName: idData.first_name || "",
+      middleName: idData.middle_name || "",
+      lastName: idData.last_name || "",
+      company: idData.company || "",
+      email: idData.email || "",
+      phone: idData.phone || "",
+      address1: idData.address1 || "",
+      address2: idData.address2 || "",
+      address3: idData.address3 || "",
+      city: idData.city || "",
+      state: idData.state || "",
+      postalCode: idData.postal_code || "",
+      country: idData.country || "",
+      ssn: idData.ssn || "",
+      passportNumber: idData.passport_number || "",
+      licenseNumber: idData.license_number || "",
     });
     setActivePane("edit");
   }
@@ -678,7 +808,7 @@ function CipherDetail() {
             <h3 class="text-2xl font-bold text-[var(--color-text)] truncate leading-tight select-all">{viewCipher()?.name || "Untitled"}</h3>
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] mt-2">
               <span class="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
-              Login Item
+              {viewCipher()?.type === "card" ? "Card" : viewCipher()?.type === "identity" ? "Identity" : viewCipher()?.type === "secureNote" ? "Secure Note" : viewCipher()?.type === "sshKey" ? "SSH Key" : "Login"} Item
             </span>
           </div>
           <button
@@ -690,20 +820,52 @@ function CipherDetail() {
           </button>
         </div>
 
-        {/* Credentials group */}
-        <div class="space-y-4">
-          <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Login credentials</h4>
-          
-          <CopyableField label={t("entry.user")} value={viewCipher()?.username} />
-          
-          <CopyableField 
-            label={t("entry.pass")} 
-            value={viewCipher()?.password} 
-            isPassword={true}
-            showPassword={revealPass()}
-            onToggleShow={() => setRevealPass(!revealPass())}
-          />
-        </div>
+        {/* Login credentials */}
+        <Show when={viewCipher()?.type === "login" || (!viewCipher()?.type && viewCipher()?.username)}>
+          <div class="space-y-4">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Login credentials</h4>
+            <CopyableField label={t("entry.user")} value={viewCipher()?.username || viewCipher()?.kind?.login?.username} />
+            <CopyableField
+              label={t("entry.pass")}
+              value={viewCipher()?.password || viewCipher()?.kind?.login?.password}
+              isPassword={true}
+              showPassword={revealPass()}
+              onToggleShow={() => setRevealPass(!revealPass())}
+            />
+          </div>
+        </Show>
+
+        {/* Card fields */}
+        <Show when={viewCipher()?.type === "card"}>
+          <div class="space-y-4">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Card details</h4>
+            <Show when={viewCipher()?.kind?.card?.brand}>
+              <CardBrandDisplay number={viewCipher()?.kind?.card?.number || ""} />
+            </Show>
+            <CopyableField label="Cardholder" value={viewCipher()?.kind?.card?.cardholder} />
+            <CopyableField label="Number" value={viewCipher()?.kind?.card?.number} />
+            <CopyableField label="Expiration" value={viewCipher()?.kind?.card?.exp_month && viewCipher()?.kind?.card?.exp_year ? `${viewCipher()?.kind?.card?.exp_month}/${viewCipher()?.kind?.card?.exp_year}` : null} />
+            <CopyableField label="CVV" value={viewCipher()?.kind?.card?.code} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+          </div>
+        </Show>
+
+        {/* Identity fields */}
+        <Show when={viewCipher()?.type === "identity"}>
+          <div class="space-y-4">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Identity details</h4>
+            <CopyableField label="Full Name" value={[viewCipher()?.kind?.identity?.title, viewCipher()?.kind?.identity?.first_name, viewCipher()?.kind?.identity?.middle_name, viewCipher()?.kind?.identity?.last_name].filter(Boolean).join(" ") || null} />
+            <CopyableField label="Username" value={viewCipher()?.kind?.identity?.username} />
+            <CopyableField label="Company" value={viewCipher()?.kind?.identity?.company} />
+            <CopyableField label="Email" value={viewCipher()?.kind?.identity?.email} />
+            <CopyableField label="Phone" value={viewCipher()?.kind?.identity?.phone} />
+            <CopyableField label="Address" value={[viewCipher()?.kind?.identity?.address1, viewCipher()?.kind?.identity?.address2, viewCipher()?.kind?.identity?.address3].filter(Boolean).join(", ") || null} />
+            <CopyableField label="City/State/Postal" value={[viewCipher()?.kind?.identity?.city, viewCipher()?.kind?.identity?.state, viewCipher()?.kind?.identity?.postal_code].filter(Boolean).join(", ") || null} />
+            <CopyableField label="Country" value={viewCipher()?.kind?.identity?.country} />
+            <CopyableField label="SSN" value={viewCipher()?.kind?.identity?.ssn} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+            <CopyableField label="Passport #" value={viewCipher()?.kind?.identity?.passport_number} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+            <CopyableField label="License #" value={viewCipher()?.kind?.identity?.license_number} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+          </div>
+        </Show>
 
         {/* Website URI group */}
         <Show when={viewCipher()?.uris?.length}>
@@ -982,6 +1144,164 @@ function AddEditCipherForm(props) {
             </div>
           </Show>
 
+          {/* Card fields */}
+          <Show when={cipherType() === "card"}>
+            {/* Brand auto-detect */}
+            <CardBrandDisplay number={newCipher().cardNumber || ""} />
+
+            <div>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Cardholder Name</label>
+              <input
+                placeholder="Full name on card"
+                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
+                value={newCipher().cardholder || ""}
+                onInput={e => setNewCipher({ ...newCipher(), cardholder: e.target.value })}
+              />
+            </div>
+
+            <div>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Card Number</label>
+              <input
+                placeholder="1234 5678 9012 3456"
+                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
+                value={newCipher().cardNumber || ""}
+                onInput={e => setNewCipher({ ...newCipher(), cardNumber: e.target.value })}
+              />
+            </div>
+
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Month</label>
+                <select
+                  class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                  value={newCipher().expMonth || ""}
+                  onChange={e => setNewCipher({ ...newCipher(), expMonth: e.target.value })}
+                >
+                  <option value="">MM</option>
+                  {["01","02","03","04","05","06","07","08","09","10","11","12"].map(m => <option value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Year</label>
+                <input
+                  placeholder="2028"
+                  class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
+                  value={newCipher().expYear || ""}
+                  onInput={e => setNewCipher({ ...newCipher(), expYear: e.target.value })}
+                />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">CVV</label>
+                <input
+                  placeholder="123"
+                  type="password"
+                  class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
+                  value={newCipher().cvv || ""}
+                  onInput={e => setNewCipher({ ...newCipher(), cvv: e.target.value })}
+                />
+              </div>
+            </div>
+          </Show>
+
+          {/* Identity fields */}
+          <Show when={cipherType() === "identity"}>
+            <div class="grid grid-cols-4 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Title</label>
+                <select
+                  class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                  value={newCipher().idTitle || ""}
+                  onChange={e => setNewCipher({ ...newCipher(), idTitle: e.target.value })}
+                >
+                  <option value="">--</option>
+                  {["Mr","Mrs","Ms","Dr"].map(t => <option value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">First Name</label>
+                <input placeholder="John" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().firstName || ""} onInput={e => setNewCipher({ ...newCipher(), firstName: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Middle</label>
+                <input placeholder="A" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().middleName || ""} onInput={e => setNewCipher({ ...newCipher(), middleName: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Last Name</label>
+                <input placeholder="Doe" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().lastName || ""} onInput={e => setNewCipher({ ...newCipher(), lastName: e.target.value })} />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Username</label>
+                <input placeholder="johndoe" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().username || ""} onInput={e => setNewCipher({ ...newCipher(), username: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Company</label>
+                <input placeholder="Acme Inc" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().company || ""} onInput={e => setNewCipher({ ...newCipher(), company: e.target.value })} />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Email</label>
+                <input placeholder="john@example.com" type="email" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().email || ""} onInput={e => setNewCipher({ ...newCipher(), email: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Phone</label>
+                <input placeholder="+1 555 123 4567" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().phone || ""} onInput={e => setNewCipher({ ...newCipher(), phone: e.target.value })} />
+              </div>
+            </div>
+
+            <div>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Address Line 1</label>
+              <input placeholder="123 Main St" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().address1 || ""} onInput={e => setNewCipher({ ...newCipher(), address1: e.target.value })} />
+            </div>
+            <div>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Address Line 2</label>
+              <input placeholder="Apt 4B" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().address2 || ""} onInput={e => setNewCipher({ ...newCipher(), address2: e.target.value })} />
+            </div>
+            <div>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Address Line 3</label>
+              <input placeholder="Care of" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().address3 || ""} onInput={e => setNewCipher({ ...newCipher(), address3: e.target.value })} />
+            </div>
+
+            <div class="grid grid-cols-4 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">City</label>
+                <input placeholder="New York" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().city || ""} onInput={e => setNewCipher({ ...newCipher(), city: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">State</label>
+                <input placeholder="NY" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().state || ""} onInput={e => setNewCipher({ ...newCipher(), state: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Postal</label>
+                <input placeholder="10001" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().postalCode || ""} onInput={e => setNewCipher({ ...newCipher(), postalCode: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Country</label>
+                <input placeholder="US" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().country || ""} onInput={e => setNewCipher({ ...newCipher(), country: e.target.value })} />
+              </div>
+            </div>
+
+            {/* Sensitive fields */}
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">SSN</label>
+                <input placeholder="123-45-6789" type="password" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().ssn || ""} onInput={e => setNewCipher({ ...newCipher(), ssn: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Passport #</label>
+                <input placeholder="AB1234567" type="password" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().passportNumber || ""} onInput={e => setNewCipher({ ...newCipher(), passportNumber: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">License #</label>
+                <input placeholder="D123-456-78-901" type="password" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().licenseNumber || ""} onInput={e => setNewCipher({ ...newCipher(), licenseNumber: e.target.value })} />
+              </div>
+            </div>
+          </Show>
+
           {/* Notes (all types) */}
           <div>
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.notes")}</label>
@@ -1224,6 +1544,14 @@ function VaultView() {
                 <button onClick={() => startAdd("secureNote")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                   Secure Note
+                </button>
+                <button onClick={() => startAdd("card")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+                  Card
+                </button>
+                <button onClick={() => startAdd("identity")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                  Identity
                 </button>
               </div>
             </div>
