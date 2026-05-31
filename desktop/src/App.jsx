@@ -2221,10 +2221,18 @@ function VaultView() {
       list = list.filter(c => (c.type || c._meta?.type) === "sshKey");
     }
 
-    // Folder filtering
+    // Folder filtering (include subfolder ciphers)
     const folder = selectedFolder();
     if (folder) {
-      list = list.filter(c => (c.folder_id || c._meta?.folder_id) === folder);
+      const allFolders = folders() || [];
+      const descendantIds = new Set();
+      const queue = [folder];
+      while (queue.length > 0) {
+        const current = queue.shift();
+        descendantIds.add(current);
+        allFolders.forEach(f => { if (f.parent_id === current) queue.push(f.id); });
+      }
+      list = list.filter(c => descendantIds.has(c.folder_id || c._meta?.folder_id));
     }
 
     // Search query filtering

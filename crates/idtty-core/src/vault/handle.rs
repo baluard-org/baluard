@@ -4,7 +4,7 @@
 //! Locked: can list cipher metadata (filenames, envelope headers).
 //! Unlocked: can decrypt ciphers, add/update/delete with proper key material.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -22,6 +22,22 @@ use crate::vault::cipher;
 use zeroize::Zeroize;
 
 /// Vault session state.
+/// Collect a folder ID and all its descendant folder IDs.
+fn collect_descendant_ids(folder_id: Uuid, folders: &[crate::vault::manifest::Folder]) -> HashSet<Uuid> {
+    let mut result = HashSet::new();
+    result.insert(folder_id);
+    let mut queue = vec![folder_id];
+    while let Some(current) = queue.pop() {
+        for f in folders {
+            if f.parent_id == Some(current) {
+                result.insert(f.id);
+                queue.push(f.id);
+            }
+        }
+    }
+    result
+}
+
 pub struct VaultHandle {
     /// Path to the vault directory on disk.
     pub path: PathBuf,
@@ -337,6 +353,9 @@ impl VaultHandle {
         self.create_folder_with_parent(name, None)
     }
 
+    /// Maximum folder nesting depth.
+    const MAX_FOLDER_DEPTH: usize = 16;
+
     /// Create a new folder with optional parent.
     pub fn create_folder_with_parent(&mut self, name: &str, parent_id: Option<Uuid>) -> Result<Uuid, IdttyError> {
         if name.trim().is_empty() {
@@ -348,10 +367,24 @@ impl VaultHandle {
         if folders.iter().any(|f| f.name == trimmed && f.parent_id == parent_id) {
             return Err(crate::error::VaultError::Metadata(format!("folder '{trimmed}' already exists")).into());
         }
-        // Validate parent exists
+        // Validate parent exists and check depth
         if let Some(pid) = parent_id {
             if !folders.iter().any(|f| f.id == pid) {
                 return Err(crate::error::VaultError::Metadata(format!("parent folder not found")).into());
+            }
+            // Walk parent chain to check depth
+            let mut depth = 1;
+            let mut current = pid;
+            while let Some(parent) = folders.iter().find(|f| f.id == current) {
+                match parent.parent_id {
+                    Some(gp) => { depth += 1; current = gp; }
+                    None => break,
+                }
+                if depth >= Self::MAX_FOLDER_DEPTH {
+                    return Err(crate::error::VaultError::Metadata(format!(
+                        "folder nesting too deep (max {})", Self::MAX_FOLDER_DEPTH
+                    )).into());
+                }
             }
         }
         let id = Uuid::new_v4();
@@ -379,17 +412,23 @@ impl VaultHandle {
         Ok(())
     }
 
-    /// Delete a folder by ID. All ciphers with this folder_id become unassigned (None).
+    /// Delete a folder by ID. Cascades to child folders.
+    /// All ciphers with this folder_id (or any child's) become unassigned.
     pub fn delete_folder(&mut self, folder_id: Uuid) -> Result<(), IdttyError> {
-        // Verify folder exists
-        let mut folders = self.list_folders()?;
-        let len_before = folders.len();
-        folders.retain(|f| f.id != folder_id);
-        if folders.len() == len_before {
+        // Collect this folder + all descendants
+        let all_folders = self.list_folders()?;
+        let ids_to_delete = collect_descendant_ids(folder_id, &all_folders);
+
+        if !all_folders.iter().any(|f| f.id == folder_id) {
             return Err(IdttyError::from(crate::error::VaultError::NotFound(format!("folder {folder_id}"))));
         }
 
-        // Unassign all ciphers FIRST (before removing folder from index)
+        // Remove all collected folders
+        let mut folders = all_folders;
+        folders.retain(|f| !ids_to_delete.contains(&f.id));
+        self.save_folders(&folders)?;
+
+        // Unassign all ciphers in any of the deleted folders
         let cipher_ids = self.list_cipher_ids()?;
         for cipher_id in cipher_ids {
             let file_path = self.path.join(format!("ciphers/{cipher_id}.enc"));
@@ -410,7 +449,7 @@ impl VaultHandle {
                 self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?
             };
 
-            if existing_cipher.folder_id == Some(folder_id) {
+            if existing_cipher.folder_id.map_or(false, |fid| ids_to_delete.contains(&fid)) {
                 // Reuse update_cipher to maintain all invariants (history, timestamps, etc.)
                 let input = CipherInput {
                     name: existing_cipher.name.clone(),
