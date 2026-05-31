@@ -142,6 +142,7 @@ fn field_type_to_bw(ft: &CustomFieldType) -> u8 {
         CustomFieldType::Text => 0,
         CustomFieldType::Hidden => 1,
         CustomFieldType::Boolean => 2,
+        CustomFieldType::Linked(_) => 0, // exported as text
     }
 }
 

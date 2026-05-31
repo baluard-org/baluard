@@ -1346,6 +1346,47 @@ function CipherDetail() {
           </div>
         </Show>
 
+        {/* Custom Fields */}
+        <Show when={viewCipher()?.custom_fields?.length > 0}>
+          <div class="space-y-3 pt-2">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Custom Fields</h4>
+            <For each={viewCipher()?.custom_fields || []}>
+              {(field) => {
+                const resolved = () => {
+                  if (field.field_type?.linked) {
+                    const linkType = typeof field.field_type.linked === "string" ? field.field_type.linked : "";
+                    const c = viewCipher();
+                    if (!c) return field.value || "";
+                    const map = {
+                      LoginUsername: c.username || c.kind?.login?.username,
+                      LoginPassword: c.password || c.kind?.login?.password,
+                      CardCardholderName: c.kind?.card?.cardholder_name,
+                      CardNumber: c.kind?.card?.number,
+                      CardCvv: c.kind?.card?.code,
+                      IdentityFirstName: c.kind?.identity?.first_name,
+                      IdentityLastName: c.kind?.identity?.last_name,
+                      IdentityEmail: c.kind?.identity?.email,
+                      IdentityPhone: c.kind?.identity?.phone,
+                    };
+                    return map[linkType] || "(linked field)";
+                  }
+                  return field.value || "";
+                };
+                return (
+                  <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
+                    <label class="text-[10px] text-[var(--color-muted)] block uppercase tracking-wider font-extrabold">{field.name}{field.field_type?.linked ? " (linked)" : ""}</label>
+                    <Show when={field.field_type?.hidden} fallback={
+                      <div class="text-sm text-[var(--color-text)] font-semibold mt-0.5 select-all">{resolved() || "\u2014"}</div>
+                    }>
+                      <div class="text-sm font-mono text-[var(--color-text)] tracking-widest mt-0.5 select-all">{"\u2022".repeat(8)}</div>
+                    </Show>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
+
         {/* Notes group */}
         <Show when={viewCipher()?.notes}>
           <div class="space-y-4 pt-2">
@@ -1864,10 +1905,97 @@ function AddEditCipherForm(props) {
               onInput={e => setNewCipher({ ...newCipher(), notes: e.target.value })}
             />
           </div>
+
+          {/* Custom Fields */}
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">Custom Fields</label>
+              <button
+                type="button"
+                onClick={() => {
+                  const fields = [...(newCipher().custom_fields || []), { name: "", value: "", field_type: { text: true } }];
+                  setNewCipher({ ...newCipher(), custom_fields: fields });
+                }}
+                class="text-[10px] font-bold text-[var(--color-primary)] hover:underline cursor-pointer"
+              >+ Add field</button>
+            </div>
+            <For each={newCipher().custom_fields || []}>
+              {(field, i) => (
+                <div class="flex gap-2 mb-2 items-center">
+                  <input
+                    placeholder="Name"
+                    class="w-1/3 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                    value={field.name}
+                    onInput={e => {
+                      const fields = [...newCipher().custom_fields];
+                      fields[i()] = { ...fields[i()], name: e.target.value };
+                      setNewCipher({ ...newCipher(), custom_fields: fields });
+                    }}
+                  />
+                  <select
+                    class="px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer"
+                    value={field.field_type?.text ? "text" : field.field_type?.hidden ? "hidden" : field.field_type?.boolean ? "boolean" : field.field_type?.linked ? "linked" : "text"}
+                    onChange={e => {
+                      const fields = [...newCipher().custom_fields];
+                      const typeMap = { text: { text: true }, hidden: { hidden: true }, boolean: { boolean: true }, linked: { linked: "LoginUsername" } };
+                      fields[i()] = { ...fields[i()], field_type: typeMap[e.target.value] || { text: true } };
+                      setNewCipher({ ...newCipher(), custom_fields: fields });
+                    }}
+                  >
+                    <option value="text">Text</option>
+                    <option value="hidden">Hidden</option>
+                    <option value="boolean">Boolean</option>
+                    <option value="linked">Linked</option>
+                  </select>
+                  <Show when={field.field_type?.linked} fallback={
+                    <input
+                      placeholder="Value"
+                      class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                      value={field.value}
+                      onInput={e => {
+                        const fields = [...newCipher().custom_fields];
+                        fields[i()] = { ...fields[i()], value: e.target.value };
+                        setNewCipher({ ...newCipher(), custom_fields: fields });
+                      }}
+                    />
+                  }>
+                    <select
+                      class="flex-1 px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer"
+                      value={typeof field.field_type?.linked === "string" ? field.field_type.linked : "LoginUsername"}
+                      onChange={e => {
+                        const fields = [...newCipher().custom_fields];
+                        fields[i()] = { ...fields[i()], field_type: { linked: e.target.value }, value: "" };
+                        setNewCipher({ ...newCipher(), custom_fields: fields });
+                      }}
+                    >
+                      <option value="LoginUsername">Username</option>
+                      <option value="LoginPassword">Password</option>
+                      <option value="CardCardholderName">Cardholder</option>
+                      <option value="CardNumber">Card Number</option>
+                      <option value="CardCvv">CVV</option>
+                      <option value="IdentityFirstName">First Name</option>
+                      <option value="IdentityLastName">Last Name</option>
+                      <option value="IdentityEmail">Email</option>
+                      <option value="IdentityPhone">Phone</option>
+                    </select>
+                  </Show>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const fields = newCipher().custom_fields.filter((_, j) => j !== i());
+                      setNewCipher({ ...newCipher(), custom_fields: fields });
+                    }}
+                    class="p-1.5 rounded-lg text-red-400 hover:bg-red-950/20 cursor-pointer shrink-0"
+                    title="Remove"
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
         </div>
       </div>
-
-      <div class="p-6 bg-[var(--color-sidebar)] border-t border-[var(--color-border)] flex gap-4">
         <button
           onClick={handleSave}
           class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99]"
