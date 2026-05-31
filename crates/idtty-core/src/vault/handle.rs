@@ -686,8 +686,8 @@ impl VaultHandle {
                 password: old_password.unwrap(),
                 last_used_date: now,
             });
-            // Cap history to match BW parity (5 entries)
-            const MAX_PASSWORD_HISTORY: usize = 5;
+            // Cap history at 10 entries (BW parity default is 5, but 10 is more practical)
+            const MAX_PASSWORD_HISTORY: usize = 10;
             if history.len() > MAX_PASSWORD_HISTORY {
                 history.drain(0..history.len() - MAX_PASSWORD_HISTORY);
             }
@@ -1364,7 +1364,7 @@ mod tests {
     }
 
     #[test]
-    fn password_history_capped_at_five() {
+    fn password_history_capped_at_ten() {
         let (dir, password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
         handle.unlock(&password).unwrap();
@@ -1384,8 +1384,8 @@ mod tests {
         };
         let id = handle.add_cipher(&input).unwrap();
 
-        // Change password 8 times
-        for i in 1..=8 {
+        // Change password 15 times
+        for i in 1..=15 {
             let updated = CipherInput {
                 name: "Test".into(),
                 folder_id: None,
@@ -1405,10 +1405,10 @@ mod tests {
         let result = handle.get_cipher(id).unwrap();
         match result {
             CipherRead::Decrypted(c) => {
-                assert_eq!(c.password_history.len(), 5, "history must be capped at 5");
-                // Oldest entries evicted: should have pw4..pw8 (5 most recent)
-                assert_eq!(c.password_history[0].password, "pw3");
-                assert_eq!(c.password_history[4].password, "pw7");
+                assert_eq!(c.password_history.len(), 10, "history must be capped at 10");
+                // Oldest entries evicted: should have pw5..pw14 (10 most recent)
+                assert_eq!(c.password_history[0].password, "pw5");
+                assert_eq!(c.password_history[9].password, "pw14");
             }
             CipherRead::Locked(_) => panic!("expected decrypted"),
         }
