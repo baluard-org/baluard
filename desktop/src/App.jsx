@@ -66,7 +66,7 @@ function AppProvider(props) {
   
   // New / Edited entry buffers
   const [newCipher, setNewCipher] = createSignal({
-    name: "", username: "", password: "", uri: "", notes: "",
+    name: "", username: "", password: "", uris: [], notes: "", cipherType: "login", favorite: false, folder_id: null, custom_fields: [], totp_uri: "",
   });
   
   const [trashCiphers, setTrashCiphers] = createSignal([]);
@@ -201,16 +201,17 @@ function useActions() {
   async function refreshCiphers() {
     try {
       const data = JSON.parse(await daemon("vault.list"));
-      const ids = data.cipher_ids || [];
+      // vault.list now returns {ciphers: [CipherMeta]} with type, favorite, username
+      const metas = data.ciphers || [];
       
-      // Decrypt and load full details in parallel so client-side lists, details & search are lightning-fast
+      // Decrypt and load full details in parallel
       const fullCiphers = await Promise.all(
-        ids.map(async (id) => {
+        metas.map(async (meta) => {
           try {
-            const detailStr = await daemon("vault.get", JSON.stringify({ id, decrypt: true }));
-            return JSON.parse(detailStr);
+            const detailStr = await daemon("vault.get", JSON.stringify({ id: meta.id, decrypt: true }));
+            return { ...JSON.parse(detailStr), _meta: meta };
           } catch (e) {
-            return { id, name: "Decryption Error", username: "", uris: [] };
+            return { ...meta, name: meta.name || "Decryption Error", username: "", uris: [] };
           }
         })
       );
@@ -229,17 +230,31 @@ function useActions() {
       return;
     }
     try {
+      const cipherType = c.cipherType || "login";
+      let kind;
+      if (cipherType === "secureNote") {
+        kind = { type: "secureNote", data: {} };
+      } else {
+        // Login
+        kind = {
+          type: "login",
+          data: {
+            username: c.username || null,
+            password: c.password || null,
+            uris: (c.uris || []).map(u => ({ uri: u.uri || u, match_strategy: u.match_strategy || null })),
+            totp_uri: c.totp_uri || null,
+          },
+        };
+      }
       await daemon("vault.add", JSON.stringify({
         name: c.name,
-        username: c.username || null,
-        password: c.password || null,
-        uris: c.uri ? [c.uri] : [],
+        kind,
+        favorite: c.favorite || false,
         notes: c.notes || null,
-        totp_uri: null,
-        folder_id: null,
-        custom_fields: [],
+        folder_id: c.folder_id || null,
+        custom_fields: c.custom_fields || [],
       }));
-      app.setNewCipher({ name: "", username: "", password: "", uri: "", notes: "" });
+      app.setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: "login", favorite: false, folder_id: null, custom_fields: [], totp_uri: "" });
       app.setActivePane("welcome");
       await refreshCiphers();
     } catch (e) {
@@ -254,24 +269,35 @@ function useActions() {
       return;
     }
     try {
-      // 1. Delete original cipher
-      await daemon("vault.delete", id);
-      // 2. Add as updated cipher
-      const newId = await daemon("vault.add", JSON.stringify({
+      const cipherType = c.cipherType || "login";
+      let kind;
+      if (cipherType === "secureNote") {
+        kind = { type: "secureNote", data: {} };
+      } else {
+        kind = {
+          type: "login",
+          data: {
+            username: c.username || null,
+            password: c.password || null,
+            uris: (c.uris || []).map(u => ({ uri: u.uri || u, match_strategy: u.match_strategy || null })),
+            totp_uri: c.totp_uri || null,
+          },
+        };
+      }
+      await daemon("vault.update", JSON.stringify({
+        id,
         name: c.name,
-        username: c.username || null,
-        password: c.password || null,
-        uris: c.uri ? [c.uri] : [],
+        kind,
+        favorite: c.favorite || false,
         notes: c.notes || null,
-        totp_uri: null,
-        folder_id: null,
-        custom_fields: [],
+        folder_id: c.folder_id || null,
+        custom_fields: c.custom_fields || [],
       }));
       app.setActivePane("welcome");
       await refreshCiphers();
       
       // Select the updated item
-      const updatedData = JSON.parse(await daemon("vault.get", JSON.stringify({ id: newId, decrypt: true })));
+      const updatedData = JSON.parse(await daemon("vault.get", JSON.stringify({ id, decrypt: true })));
       app.setViewCipher(updatedData);
       app.setActivePane("detail");
     } catch (e) {
@@ -497,6 +523,8 @@ function CipherRow(props) {
   const { t } = useI18n();
 
   const isSelected = () => viewCipher()?.id === props.cipher.id && activePane() === "detail";
+  const cipherType = () => props.cipher.type || props.cipher._meta?.type || "login";
+  const isFav = () => props.cipher.favorite || props.cipher._meta?.favorite || false;
 
   return (
     <div
@@ -514,11 +542,18 @@ function CipherRow(props) {
           {getDomainInitials(props.cipher.name)}
         </div>
         <div class="min-w-0 flex-1">
-          <div class={`text-sm font-semibold truncate ${isSelected() ? "text-[var(--color-primary-text)]" : "text-[var(--color-text)]"}`}>
-            {props.cipher.name || "Untitled"}
+          <div class="flex items-center gap-1.5">
+            <span class={`text-sm font-semibold truncate ${isSelected() ? "text-[var(--color-primary-text)]" : "text-[var(--color-text)]"}`}>
+              {props.cipher.name || "Untitled"}
+            </span>
+            {isFav() && (
+              <svg class={`w-3.5 h-3.5 shrink-0 ${isSelected() ? "text-yellow-300" : "text-yellow-500"}`} fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </svg>
+            )}
           </div>
           <div class={`text-xs truncate mt-0.5 ${isSelected() ? "text-[var(--color-primary-text)]/75" : "text-[var(--color-muted)]"}`}>
-            {props.cipher.username || (props.cipher.uris?.[0] || "No username")}
+            {props.cipher.username || (cipherType() === "login" ? "No username" : cipherType() === "secureNote" ? "Secure note" : cipherType())}
           </div>
         </div>
       </div>
@@ -755,6 +790,8 @@ function AddEditCipherForm(props) {
   const { addCipher, updateCipher } = useActions();
   const { t } = useI18n();
 
+  const cipherType = () => newCipher().cipherType || "login";
+
   // Generator states
   const [genLen, setGenLen] = createSignal(16);
   const [showGen, setShowGen] = createSignal(false);
@@ -765,6 +802,27 @@ function AddEditCipherForm(props) {
   function handleGenerate() {
     const pw = generateSecurePassword(genLen(), genUpper(), genNums(), genSyms());
     setNewCipher({ ...newCipher(), password: pw });
+  }
+
+  function addUri() {
+    const c = newCipher();
+    setNewCipher({ ...c, uris: [...(c.uris || []), { uri: "", match_strategy: null }] });
+  }
+
+  function removeUri(index) {
+    const c = newCipher();
+    setNewCipher({ ...c, uris: (c.uris || []).filter((_, i) => i !== index) });
+  }
+
+  function updateUri(index, field, value) {
+    const c = newCipher();
+    const uris = [...(c.uris || [])];
+    uris[index] = { ...uris[index], [field]: value };
+    setNewCipher({ ...c, uris });
+  }
+
+  function toggleFavorite() {
+    setNewCipher({ ...newCipher(), favorite: !newCipher().favorite });
   }
 
   function handleSave() {
@@ -792,115 +850,147 @@ function AddEditCipherForm(props) {
         </div>
 
         <div class="space-y-4">
+          {/* Favorite toggle */}
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">Favorite</label>
+            <button
+              onClick={toggleFavorite}
+              class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().favorite ? "text-yellow-500" : "text-[var(--color-muted)] hover:text-yellow-500"}`}
+            >
+              <svg class="w-5 h-5" fill={newCipher().favorite ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+              </svg>
+            </button>
+          </div>
+
           <div>
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Item Name</label>
-            <input 
-              placeholder={t("entry.namePlaceholder")} 
+            <input
+              placeholder={t("entry.namePlaceholder")}
               class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
-              value={newCipher().name} 
-              onInput={e => setNewCipher({ ...newCipher(), name: e.target.value })} 
+              value={newCipher().name}
+              onInput={e => setNewCipher({ ...newCipher(), name: e.target.value })}
             />
           </div>
 
-          <div>
-            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.user")}</label>
-            <input 
-              placeholder={t("entry.usernamePlaceholder")} 
-              class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
-              value={newCipher().username} 
-              onInput={e => setNewCipher({ ...newCipher(), username: e.target.value })} 
-            />
-          </div>
-
-          {/* Password generator */}
-          <div>
-            <div class="flex items-center justify-between mb-1.5">
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.pass")}</label>
-              <button
-                onClick={() => { setShowGen(!showGen()); if (!newCipher().password) handleGenerate(); }}
-                class="text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-              >
-                {showGen() ? "Close Generator" : "Generate Password"}
-              </button>
-            </div>
-            <div class="relative">
-              <input 
-                placeholder={t("entry.passwordPlaceholder")} 
-                type="text" 
-                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
-                value={newCipher().password} 
-                onInput={e => setNewCipher({ ...newCipher(), password: e.target.value })} 
+          {/* Login-specific fields */}
+          <Show when={cipherType() === "login"}>
+            <div>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.user")}</label>
+              <input
+                placeholder={t("entry.usernamePlaceholder")}
+                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
+                value={newCipher().username}
+                onInput={e => setNewCipher({ ...newCipher(), username: e.target.value })}
               />
             </div>
 
-            <Show when={showGen()}>
-              <div class="mt-3 p-4 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-4">
-                <div class="flex items-center justify-between text-xs text-[var(--color-text)]">
-                  <span>Length: <strong class="text-[var(--color-primary)] text-sm">{genLen()}</strong></span>
-                  <input
-                    type="range"
-                    min="8"
-                    max="64"
-                    value={genLen()}
-                    onInput={(e) => { setGenLen(parseInt(e.target.value)); handleGenerate(); }}
-                    class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer"
-                  />
-                </div>
-                
-                <div class="grid grid-cols-3 gap-2">
-                  <button
-                    onClick={() => { setGenUpper(!genUpper()); handleGenerate(); }}
-                    class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
-                      genUpper() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"
-                    }`}
-                  >
-                    A-Z
-                  </button>
-                  <button
-                    onClick={() => { setGenNums(!genNums()); handleGenerate(); }}
-                    class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
-                      genNums() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"
-                    }`}
-                  >
-                    0-9
-                  </button>
-                  <button
-                    onClick={() => { setGenSyms(!genSyms()); handleGenerate(); }}
-                    class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
-                      genSyms() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"
-                    }`}
-                  >
-                    !@#
-                  </button>
-                </div>
+            {/* Password generator */}
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.pass")}</label>
                 <button
-                  onClick={handleGenerate}
-                  class="w-full py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] hover:bg-[var(--color-sidebar)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer"
+                  onClick={() => { setShowGen(!showGen()); if (!newCipher().password) handleGenerate(); }}
+                  class="text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                 >
-                  Generate New
+                  {showGen() ? "Close Generator" : "Generate Password"}
                 </button>
               </div>
-            </Show>
-          </div>
+              <div class="relative">
+                <input
+                  placeholder={t("entry.passwordPlaceholder")}
+                  type="text"
+                  class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
+                  value={newCipher().password}
+                  onInput={e => setNewCipher({ ...newCipher(), password: e.target.value })}
+                />
+              </div>
 
-          <div>
-            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.uri")}</label>
-            <input 
-              placeholder={t("entry.uriPlaceholder")} 
-              class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
-              value={newCipher().uri} 
-              onInput={e => setNewCipher({ ...newCipher(), uri: e.target.value })} 
-            />
-          </div>
+              <Show when={showGen()}>
+                <div class="mt-3 p-4 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-4">
+                  <div class="flex items-center justify-between text-xs text-[var(--color-text)]">
+                    <span>Length: <strong class="text-[var(--color-primary)] text-sm">{genLen()}</strong></span>
+                    <input
+                      type="range"
+                      min="8"
+                      max="64"
+                      value={genLen()}
+                      onInput={(e) => { setGenLen(parseInt(e.target.value)); handleGenerate(); }}
+                      class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer"
+                    />
+                  </div>
+                  <div class="grid grid-cols-3 gap-2">
+                    <button onClick={() => { setGenUpper(!genUpper()); handleGenerate(); }} class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${genUpper() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>A-Z</button>
+                    <button onClick={() => { setGenNums(!genNums()); handleGenerate(); }} class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${genNums() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>0-9</button>
+                    <button onClick={() => { setGenSyms(!genSyms()); handleGenerate(); }} class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${genSyms() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>!@#</button>
+                  </div>
+                  <button onClick={handleGenerate} class="w-full py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] hover:bg-[var(--color-sidebar)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer">Generate New</button>
+                </div>
+              </Show>
+            </div>
 
+            {/* Multi-URI list */}
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">URIs</label>
+                <button onClick={addUri} class="text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer">+ Add URI</button>
+              </div>
+              <For each={newCipher().uris || []}>
+                {(uriObj, index) => (
+                  <div class="flex gap-2 mb-2">
+                    <input
+                      placeholder="https://example.com"
+                      class="flex-1 px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
+                      value={uriObj.uri || ""}
+                      onInput={e => updateUri(index(), "uri", e.target.value)}
+                    />
+                    <select
+                      class="px-2 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-muted)] outline-none"
+                      value={uriObj.match_strategy || ""}
+                      onChange={e => updateUri(index(), "match_strategy", e.target.value || null)}
+                    >
+                      <option value="">Default</option>
+                      <option value="domain">Domain</option>
+                      <option value="host">Host</option>
+                      <option value="startsWith">Starts with</option>
+                      <option value="exact">Exact</option>
+                      <option value="regex">Regex</option>
+                      <option value="never">Never</option>
+                    </select>
+                    <button onClick={() => removeUri(index())} class="p-3 text-[var(--color-muted)] hover:text-red-500 transition-colors cursor-pointer">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+                )}
+              </For>
+              <Show when={!(newCipher().uris || []).length}>
+                <button onClick={addUri} class="w-full py-3 rounded-xl bg-[var(--color-card)] border border-dashed border-[var(--color-border)] text-sm text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] transition-all cursor-pointer">
+                  + Add URI
+                </button>
+              </Show>
+            </div>
+
+            {/* TOTP URI */}
+            <div>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">TOTP URI</label>
+              <input
+                placeholder="otpauth://totp/..."
+                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
+                value={newCipher().totp_uri || ""}
+                onInput={e => setNewCipher({ ...newCipher(), totp_uri: e.target.value })}
+              />
+            </div>
+          </Show>
+
+          {/* Notes (all types) */}
           <div>
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.notes")}</label>
-            <textarea 
-              placeholder={t("entry.notesPlaceholder")} 
-              rows="4"
+            <textarea
+              placeholder={t("entry.notesPlaceholder")}
+              rows={cipherType() === "secureNote" ? "8" : "4"}
               class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all resize-none"
-              value={newCipher().notes} 
-              onInput={e => setNewCipher({ ...newCipher(), notes: e.target.value })} 
+              value={newCipher().notes}
+              onInput={e => setNewCipher({ ...newCipher(), notes: e.target.value })}
             />
           </div>
         </div>
@@ -947,19 +1037,19 @@ function VaultView() {
     let list = cat === "Trash" ? (trashCiphers() || []) : (ciphers() || []);
     const query = searchQuery().toLowerCase();
 
-    // Category filtering
+    // Category filtering (using cipher.type from backend)
     if (cat === "Favorites") {
-      list = list.slice(0, Math.min(list.length, 2));
+      list = list.filter(c => c.favorite || c._meta?.favorite);
     } else if (cat === "Login") {
-      list = list.filter(c => c.username || c.password);
+      list = list.filter(c => (c.type || c._meta?.type) === "login");
     } else if (cat === "Card") {
-      list = list.filter(c => c.name?.toLowerCase().includes("card") || c.notes?.toLowerCase().includes("card"));
+      list = list.filter(c => (c.type || c._meta?.type) === "card");
     } else if (cat === "Identity") {
-      list = list.filter(c => c.name?.toLowerCase().includes("id") || c.notes?.toLowerCase().includes("identity"));
+      list = list.filter(c => (c.type || c._meta?.type) === "identity");
     } else if (cat === "Secure note") {
-      list = list.filter(c => !c.username && !c.password && c.notes);
+      list = list.filter(c => (c.type || c._meta?.type) === "secureNote");
     } else if (cat === "SSH key") {
-      list = list.filter(c => c.name?.toLowerCase().includes("ssh") || c.name?.toLowerCase().includes("key"));
+      list = list.filter(c => (c.type || c._meta?.type) === "sshKey");
     }
 
     // Search query filtering
@@ -974,9 +1064,9 @@ function VaultView() {
     return list;
   };
 
-  function startAdd() {
-    setNewCipher({ name: "", username: "", password: "", uri: "", notes: "" });
-    setActivePane("add");
+  function startAdd(type = "login") {
+    app.setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: type, favorite: false, folder_id: null, custom_fields: [], totp_uri: "" });
+    app.setActivePane("add");
   }
 
   return (
@@ -1118,12 +1208,25 @@ function VaultView() {
               </div>
             </div>
             
-            <button
-              onClick={startAdd}
-              class="px-4 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer"
-            >
-              + New
-            </button>
+            <div class="relative group">
+              <button
+                onClick={() => startAdd("login")}
+                class="px-4 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center gap-1"
+              >
+                + New
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+              </button>
+              <div class="absolute right-0 top-full mt-1 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl py-1 w-40 z-50 hidden group-hover:block">
+                <button onClick={() => startAdd("login")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+                  Login
+                </button>
+                <button onClick={() => startAdd("secureNote")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  Secure Note
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Search Input bar */}
