@@ -1,7 +1,7 @@
 # IDtty: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-05-30
+> Last updated: 2026-05-31
 
 ---
 
@@ -21,13 +21,13 @@
 
 ## Current Status
 
-**Phase**: Rust core built, tested, and security-reviewed (2 rounds). IPC daemon with full CRUD and soft-delete trash routing wired. CLI dual-mode (daemon-first + direct fallback). Go codebase removed. Pure Rust + UniFFI architecture.
+**Phase**: Rust core built, tested, and security-reviewed (2 rounds). IPC daemon with full CRUD, TOTP, auto-lock. CLI dual-mode. Desktop app with 5 cipher types, generator, TOTP widget. 130 tests, 0 clippy errors.
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
 - `/crates/idtty-core` - Rust core engine: crypto, keys, vault, padding, git sync
 - `/crates/idtty-cli` - Terminal CLI client (clap, daemon-first with `--direct` fallback)
 - `/crates/idtty-daemon` - Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state)
-- `/desktop` - SolidJS/Tailwind Tauri v2 desktop app (scaffolded: daemon proxy, tray, cipher CRUD, soft-delete Trash category)
+- `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 5 cipher types, generator, TOTP, auto-lock, dark/light themes)
 - `/extension` - Browser UI thin client (MV3, placeholder)
 - `/mobile` - Kotlin Multiplatform (KMP) UI via UniFFI bindings (placeholder)
 
@@ -234,6 +234,34 @@ Also added:
 
 ---
 
+### Bitwarden Desktop Parity (Phases 1-8)
+
+All 8 phases complete, peer-reviewed, and merged. **130 tests, 0 clippy errors.**
+
+| Phase | Description | Key Changes |
+|-------|-------------|-------------|
+| 1 | CipherKind sum type | `CipherKind` tagged enum (Login/Card/Identity/SshKey/SecureNote). Invalid states unrepresentable. |
+| 2 | Multi-URI + settings | Login ciphers support multiple URIs with match strategy. `VaultSettings` CRUD via daemon. |
+| 3 | CipherMeta + vault.update | `vault.list` returns `CipherMeta` (type, favorite, username). `vault.update` with PATCH semantics. |
+| 4 | Password history + clone | Auto-append on password change, cap 10 entries. `cipher.clone` creates new UUID with empty history. |
+| 5 | Folder CRUD | `list/create/rename/delete` folders. `delete_folder` unassigns ciphers first. CLI `idtty folders` + `--folder` flag on add. |
+| 6a | Desktop: Login + SecureNote | Type-aware forms, multi-URI editor, category filtering, CipherKind JSON construction. |
+| 6b | Desktop: Card + Identity | Card form (brand auto-detect), Identity form (16 fields). Full kind nesting in daemon response. |
+| 6c | Desktop: SSH Key | Public/private key + fingerprint form. Private key masked with reveal. |
+| 7 | Generator + auto-lock | Password generator (CSPRNG, EFF 7776-word passphrase). Auto-lock timer (configurable, daemon-side). |
+| 8 | TOTP code generation | RFC 6238/4226 (SHA1/256/512, 6/8 digits). Daemon route `cipher.totp_code`. UI widget with boundary-aligned refresh. |
+
+#### Key Architectural Decisions (from peer reviews)
+- Daemon `get_cipher` emits BOTH nested `kind` object AND flat top-level fields
+- `update_cipher` parses `kind` from payload JSON (not clone existing)
+- Rust field names must match frontend JSON keys exactly (`cardholder_name`, `key_fingerprint`)
+- TOTP `period=0` rejected at parse time (division-by-zero protection)
+- `TotpParams.secret` zeroized on drop via `ZeroizeOnDrop`
+- Generator uses `crypto.getRandomValues` exclusively (never `Math.random`)
+- Passphrase digits use separate random source from word selection
+
+---
+
 ## Known Limitations
 
 1. **OS Keystore Binding**: OAuth PAT and digital identity private keys are locked in host OS keyring; CLI requires daemon connectivity to unlock.
@@ -254,7 +282,9 @@ Also added:
 | `add --name N ...` | Daemon/Direct | Add cipher (auto-prompts unlock) |
 | `get <id> --decrypt` | Daemon/Direct | Get cipher by UUID |
 | `list` | Daemon/Direct | List all cipher UUIDs |
+| `edit <id> --name/--favorite/--folder` | Daemon/Direct | Edit cipher metadata |
 | `delete <id>` | Daemon/Direct | Delete cipher by UUID |
+| `folders {create\|list\|rename\|delete}` | Daemon/Direct | Folder management |
 | `sync {init\|remote\|push\|pull\|...}` | Daemon/Direct | Git sync operations |
 | `devices list` | Direct | List enrolled devices |
 | `ping` | Daemon | Check daemon connectivity |
@@ -269,10 +299,10 @@ Also added:
 idtty/
 ├── proto/                        # Shared Protobuf Schemas (vault, space, auth)
 ├── crates/
-│   ├── idtty-core/               # Rust Core: crypto, keys, vault, padding, sync
+│   ├── idtty-core/               # Rust Core: crypto (AES-256-GCM, Argon2id, TOTP), keys, vault, padding, sync
 │   ├── idtty-cli/                # Terminal CLI (daemon-first + --direct fallback)
-│   └── idtty-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState)
-├── desktop/                      # Tauri v2 Desktop app (scaffolded)
+│   └── idtty-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState, auto-lock, TOTP)
+├── desktop/                      # Tauri v2 Desktop app (full CRUD, 5 cipher types, generator, TOTP)
 ├── extension/                    # Browser extension (placeholder)
 ├── mobile/                       # Kotlin Multiplatform (KMP) Mobile App (placeholder)
 └── docs/                         # Architecture Blueprint Docs

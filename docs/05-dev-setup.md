@@ -68,7 +68,7 @@ All commands run from the project root. `just` reads the `justfile`.
 | `just build` | Debug build of all Rust crates |
 | `just build-release` | Optimized release build |
 | `just build-signed` | Release build + codesign (macOS only; no-op on Linux) |
-| `just test` | Run all tests (69 tests across 4 suites) |
+| `just test` | Run all tests (130 tests across 4 suites) |
 | `just test-core` | Run `idtty-core` tests only |
 | `just test-release` | Tests in release mode |
 | `just test-verbose` | Tests with `--nocapture` (see println output) |
@@ -92,10 +92,11 @@ All commands run from the project root. `just` reads the `justfile`.
 
 ```
 crates/idtty-core/     # All crypto, vault format, key lifecycle, git sync
-  src/crypto/          # KDF, AEAD, HKDF, HPKE, Ed25519
+  src/crypto/          # KDF, AEAD, HKDF, HPKE, Ed25519, TOTP (RFC 6238)
   src/keys/            # Key hierarchy, epochs, rotation
-  src/vault/           # Vault handle, cipher CRUD, padding
+  src/vault/           # Vault handle, cipher CRUD, padding, folders
   src/sync/            # Git sync engine (git2-rs)
+  src/types.rs         # CipherKind, CipherInput, CipherMeta, all data structs
 crates/idtty-cli/      # Terminal client (clap)
   src/client.rs        # Protobuf socket client, session tokens
   src/commands/        # Dual-mode handlers (daemon + --direct)
@@ -168,10 +169,20 @@ idtty init --vault-path ~/.idtty
 # Unlock and add a credential
 idtty unlock
 idtty add --name "GitHub" --username "user" --password "secret"
+idtty add --name "Work VPN" --folder <folder-id>
 
 # List and retrieve
 idtty list
 idtty get <uuid>
+
+# Edit metadata
+idtty edit <uuid> --name "New Name" --favorite
+
+# Folder management
+idtty folders create "Personal"
+idtty folders list
+idtty folders rename <id> "Work"
+idtty folders delete <id>
 
 # Sync
 idtty sync init
@@ -188,12 +199,19 @@ All commands route through the daemon by default. Use `--direct` to run in-proce
 
 - **AES-256-GCM** encryption with Argon2id key derivation
 - **Padded buckets** (1KB/8KB/64KB/1MB) prevent metadata leakage
+- **5 cipher types**: Login, Card, Identity, SSH Key, Secure Note
+- **TOTP code generation** (RFC 6238, SHA1/256/512, 6/8 digits)
+- **Password generator** with CSPRNG + EFF 7776-word passphrase
+- **Password history** (auto-tracked, 10 entries FIFO)
+- **Folder organization** with CRUD
 - **BIP-39 recovery phrase** for key recovery
 - **HPKE key wrapping** (X25519 + Ed25519 device identity)
 - **Git-native sync** - vault is a git repository
 - **SO_PEERCRED** peer UID verification on Unix sockets
+- **Auto-lock timer** (configurable, daemon-side)
 - **Zeroize** all sensitive memory after use
 - **CSP-enforced** webview security
+- **Dark/light themes**
 
 ## Common Issues
 

@@ -5,10 +5,10 @@ Git-native password manager with padded-bucket encrypted storage, device-identit
 ## Architecture
 
 ```
-idtty-core    → Pure Rust: crypto (AES-256-GCM, Argon2id, HPKE, Ed25519), vault format, key lifecycle, git sync
-idtty-daemon  → Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state in memory)
-idtty-cli     → Terminal client (daemon-first with --direct fallback)
-desktop/      → Tauri v2 desktop app (SolidJS + Tailwind v4)
+idtty-core    -> Pure Rust: crypto (AES-256-GCM, Argon2id, HPKE, Ed25519, TOTP), vault format, key lifecycle, git sync
+idtty-daemon  -> Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state, auto-lock, TOTP)
+idtty-cli     -> Terminal client (daemon-first with --direct fallback, folders, edit)
+desktop/      -> Tauri v2 desktop app (SolidJS + Tailwind v4, 5 cipher types, generator, TOTP widget)
 mobile/       → Kotlin Multiplatform via UniFFI (planned)
 extension/    → MV3 browser extension (planned)
 ```
@@ -34,6 +34,9 @@ See **[docs/05-dev-setup.md](docs/05-dev-setup.md)** for prerequisites, platform
 | [Threat Model](docs/02-threat-model.md) | Adversaries, attack surfaces, mitigations |
 | [Key Lifecycle](docs/03-key-lifecycle.md) | Key hierarchy, derivation, rotation |
 | [Software Architecture](docs/04-software-architecture.md) | Component diagram, data flows, IPC protocol |
+| [Device Lifecycle](docs/06-device-lifecycle.md) | Device enrollment, pairing, key rotation |
+| [2FA Analysis](docs/07-2fa-analysis.md) | TOTP implementation, RFC 6238/4226 compliance |
+| [BW Parity PRD](docs/prd-bitwarden-parity.md) | Bitwarden desktop feature parity requirements |
 | [Progress](docs/00-progress.md) | Implementation status and review history |
 
 ## Contributing
