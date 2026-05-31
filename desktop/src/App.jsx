@@ -932,7 +932,7 @@ function CipherDetail() {
   const [totpCode, setTotpCode] = createSignal(null); // { code, period_seconds, expires_at }
   const [totpCopied, setTotpCopied] = createSignal(false);
 
-  // TOTP code auto-refresh timer
+  // TOTP code auto-refresh timer (boundary-aligned)
   createEffect(() => {
     const cipher = viewCipher();
     if (!cipher) return;
@@ -942,20 +942,28 @@ function CipherDetail() {
       return;
     }
     let active = true;
+    let timer = null;
     const fetchCode = async () => {
       if (!active) return;
       try {
         const data = JSON.parse(await daemon("cipher.totp_code", cipher.id));
         if (active) {
           setTotpCode(data);
+          // Schedule next fetch just after window boundary
+          if (data.expires_at) {
+            const msLeft = data.expires_at * 1000 - Date.now();
+            const delay = Math.max(200, msLeft + 200);
+            timer = setTimeout(fetchCode, delay);
+          } else {
+            timer = setTimeout(fetchCode, 5000);
+          }
         }
       } catch (e) {
-        // TOTP might fail if vault locked
+        setTotpCode(null);
       }
     };
     fetchCode();
-    const interval = setInterval(fetchCode, 5000); // refresh every 5s
-    onCleanup(() => { active = false; clearInterval(interval); });
+    onCleanup(() => { active = false; if (timer) clearTimeout(timer); });
   });
 
   function startEdit() {

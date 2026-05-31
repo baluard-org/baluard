@@ -6,9 +6,10 @@
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
+use zeroize::ZeroizeOnDrop;
 
 /// Parsed TOTP parameters from an `otpauth://` URI.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, ZeroizeOnDrop)]
 pub struct TotpParams {
     /// Base32-encoded secret (raw bytes after decoding).
     pub secret: Vec<u8>,
@@ -22,7 +23,7 @@ pub struct TotpParams {
     pub issuer: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, zeroize::Zeroize)]
 pub enum TotpAlgorithm {
     Sha1,
     Sha256,
@@ -75,7 +76,11 @@ pub fn parse_totp_uri(uri: &str) -> Result<TotpParams, String> {
                 }
             }
             "period" => {
-                period = value.parse::<u64>().map_err(|e| format!("Invalid period: {e}"))?;
+                let p = value.parse::<u64>().map_err(|e| format!("Invalid period: {e}"))?;
+                if p == 0 {
+                    return Err("period must be > 0".into());
+                }
+                period = p;
             }
             "issuer" => {
                 issuer = Some(urldecode(value));
@@ -139,7 +144,7 @@ fn compute_totp(secret: &[u8], counter: u64, algorithm: TotpAlgorithm, digits: u
     };
 
     // Dynamic truncation (RFC 4226)
-    let offset = (hmac_result.last().unwrap() & 0x0F) as usize;
+    let offset = (hmac_result.last().expect("HMAC digest is never empty") & 0x0F) as usize;
     let binary = ((hmac_result[offset] as u32 & 0x7F) << 24)
         | ((hmac_result[offset + 1] as u32) << 16)
         | ((hmac_result[offset + 2] as u32) << 8)
@@ -249,6 +254,14 @@ mod tests {
         assert!(parse_totp_uri("otpauth://totp/Test?digits=6").is_err());
     }
 
+    #[test]
+    fn reject_period_zero() {
+        let result = parse_totp_uri("otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP&period=0");
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("period must be > 0"), "Expected period error, got: {msg}");
+    }
+
     // RFC 6238 test vectors for SHA-1 with secret "12345678901234567890"
     // Secret base32: GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ
     #[test]
@@ -308,6 +321,34 @@ mod tests {
         assert_eq!(code.len(), 8);
         // RFC 6238 SHA512 at t=59: "90693936"
         assert_eq!(code, "90693936");
+    }
+
+    #[test]
+    fn sha256_at_larger_timestamp() {
+        // RFC 6238 SHA256 at t=1111111109: "68084774"
+        let params = TotpParams {
+            secret: b"12345678901234567890123456789012".to_vec(),
+            algorithm: TotpAlgorithm::Sha256,
+            period: 30,
+            digits: 8,
+            issuer: None,
+        };
+        let code = generate_totp_at(&params, 1111111109);
+        assert_eq!(code, "68084774");
+    }
+
+    #[test]
+    fn sha512_at_larger_timestamp() {
+        // RFC 6238 SHA512 at t=1111111109: "25091201"
+        let params = TotpParams {
+            secret: b"1234567890123456789012345678901234567890123456789012345678901234".to_vec(),
+            algorithm: TotpAlgorithm::Sha512,
+            period: 30,
+            digits: 8,
+            issuer: None,
+        };
+        let code = generate_totp_at(&params, 1111111109);
+        assert_eq!(code, "25091201");
     }
 
     #[test]
