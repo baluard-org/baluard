@@ -1,7 +1,7 @@
 //! Manifest: hybrid filename-based cipher list + encrypted metadata files.
 //!
 //! D6: Cipher list from filenames in ciphers/. Encrypted meta files for structure.
-//! Meta files: folders.enc, settings.enc, trash.enc, devices.enc, device-pks (plaintext).
+//! Meta files: folders.json, settings.json, trash.enc, devices.enc, device-pks (plaintext).
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -38,7 +38,7 @@ pub struct DevicePublicKeyEntry {
     pub quorum_signature: String,
 }
 
-/// Folder definition (stored encrypted in meta/folders.enc).
+/// Folder definition (stored in meta/folders.json).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Folder {
     pub id: Uuid,

@@ -337,11 +337,15 @@ impl VaultHandle {
         if name.trim().is_empty() {
             return Err(crate::error::VaultError::Metadata("folder name cannot be empty".into()).into());
         }
+        let trimmed = name.trim();
         let mut folders = self.list_folders()?;
+        if folders.iter().any(|f| f.name == trimmed) {
+            return Err(crate::error::VaultError::Metadata(format!("folder '{trimmed}' already exists")).into());
+        }
         let id = Uuid::new_v4();
         folders.push(crate::vault::manifest::Folder {
             id,
-            name: name.trim().to_string(),
+            name: trimmed.to_string(),
             parent_id: None,
             icon: None,
         });
@@ -365,15 +369,15 @@ impl VaultHandle {
 
     /// Delete a folder by ID. All ciphers with this folder_id become unassigned (None).
     pub fn delete_folder(&mut self, folder_id: Uuid) -> Result<(), IdttyError> {
+        // Verify folder exists
         let mut folders = self.list_folders()?;
         let len_before = folders.len();
         folders.retain(|f| f.id != folder_id);
         if folders.len() == len_before {
             return Err(IdttyError::from(crate::error::VaultError::NotFound(format!("folder {folder_id}"))));
         }
-        self.save_folders(&folders)?;
 
-        // Unassign all ciphers that belonged to this folder
+        // Unassign all ciphers FIRST (before removing folder from index)
         let cipher_ids = self.list_cipher_ids()?;
         for cipher_id in cipher_ids {
             let file_path = self.path.join(format!("ciphers/{cipher_id}.enc"));
@@ -391,13 +395,11 @@ impl VaultHandle {
                     VaultState::Unlocked(u) => u,
                     VaultState::Locked => return Err(VaultError::Locked.into()),
                 };
-                match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file) {
-                    Ok(c) => c,
-                    Err(_) => continue, // corrupt, skip
-                }
+                self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?
             };
 
             if existing_cipher.folder_id == Some(folder_id) {
+                // Reuse update_cipher to maintain all invariants (history, timestamps, etc.)
                 let input = CipherInput {
                     name: existing_cipher.name.clone(),
                     folder_id: None, // unassign
@@ -408,26 +410,12 @@ impl VaultHandle {
                     created_at: Some(existing_cipher.created_at),
                     password_history: existing_cipher.password_history.clone(),
                 };
-                let new_update_seq = existing_envelope.header.update_seq + 1;
-                let key_epoch = existing_envelope.header.key_epoch;
-                let unlocked = match &self.state {
-                    VaultState::Unlocked(u) => u,
-                    VaultState::Locked => return Err(VaultError::Locked.into()),
-                };
-                let item_key =
-                    Self::derive_item_key_static(&unlocked.root_key, cipher_id, key_epoch);
-                let file = cipher::encrypt_cipher(
-                    self.vault_id,
-                    cipher_id,
-                    &input,
-                    &item_key,
-                    key_epoch,
-                    new_update_seq,
-                    new_update_seq, // nonce_counter = update_seq for uniqueness
-                )?;
-                std::fs::write(&file_path, &file.envelope_bytes)?;
+                self.update_cipher(cipher_id, &input)?;
             }
         }
+
+        // NOW remove folder from index (after all ciphers unassigned successfully)
+        self.save_folders(&folders)?;
 
         Ok(())
     }
