@@ -70,6 +70,15 @@ function AppProvider(props) {
   const [showDeleteConfirm, setShowDeleteConfirm] = createSignal(false);
 const [showReprompt, setShowReprompt] = createSignal(false);
 const [repromptCallback, setRepromptCallback] = createSignal(null);
+const [biometricAvailable, setBiometricAvailable] = createSignal(false);
+
+// Check biometric availability on load
+createEffect(() => {
+  daemon("vault.biometric_status").then(r => {
+    const s = JSON.parse(r);
+    setBiometricAvailable(s.available && s.enabled);
+  }).catch(() => {});
+});
   const [showGenerator, setShowGenerator] = createSignal(false);
   
   // New / Edited entry buffers
@@ -104,6 +113,7 @@ const [repromptCallback, setRepromptCallback] = createSignal(null);
     showDeleteConfirm, setShowDeleteConfirm,
   showReprompt, setShowReprompt,
   repromptCallback, setRepromptCallback,
+  biometricAvailable,
     showGenerator, setShowGenerator,
     newCipher, setNewCipher,
     recoveryPhrase, setRecoveryPhrase,
@@ -660,6 +670,34 @@ function AutoLockButton() {
             {saved() ? "Saved" : "Save"}
           </button>
           <div class="text-[10px] text-[var(--color-muted)] mt-2">Vault locks after inactivity</div>
+
+          {/* Biometric Unlock */}
+          <div class="border-t border-[var(--color-border)] mt-3 pt-3">
+            <div class="flex items-center justify-between">
+              <div class="text-xs font-bold text-[var(--color-text)]">Quick Unlock</div>
+              <button
+                onClick={async () => {
+                  try {
+                    const status = JSON.parse(await daemon("vault.biometric_status"));
+                    if (status.enabled) {
+                      await daemon("vault.biometric_disable");
+                    } else {
+                      const password = prompt("Enter master password to enable Quick Unlock:");
+                      if (password) {
+                        await daemon("vault.biometric_enable", JSON.stringify({ password }));
+                      }
+                    }
+                    loadSetting();
+                  } catch (e) { alert(e.message); }
+                }}
+                class="p-1.5 rounded-lg transition-colors cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-primary)]"
+                title="Store unlock secret in OS keychain (biometric protected)"
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm-6 6c0-2.21 3.58-4 8-4s8 1.79 8 4" /></svg>
+              </button>
+            </div>
+            <div class="text-[10px] text-[var(--color-muted)] mt-1">Unlock with biometric or device PIN</div>
+          </div>
         </div>
       </Show>
     </div>
@@ -907,6 +945,25 @@ function LoginScreen() {
           >
             {app.status() === "unlocking" ? t("login.unlocking") : t("login.unlock")}
           </button>
+
+          {/* Quick Unlock (Biometric) */}
+          <Show when={app.biometricAvailable()}>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const result = JSON.parse(await daemon("vault.biometric_unlock"));
+                  if (result.success) {
+                    await unlock(result.secret);
+                  }
+                } catch (e) { /* Biometric failed or cancelled */ }
+              }}
+              class="w-full mt-2 py-3 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm-6 6c0-2.21 3.58-4 8-4s8 1.79 8 4" /></svg>
+              Quick Unlock
+            </button>
+          </Show>
         </form>
 
         <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4">

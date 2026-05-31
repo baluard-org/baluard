@@ -181,6 +181,10 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.attach_upload",
     "vault.attach_download",
     "vault.attach_delete",
+    "vault.biometric_status",
+    "vault.biometric_enable",
+    "vault.biometric_disable",
+    "vault.biometric_unlock",
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.
@@ -593,6 +597,27 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
         // ── Attachment delete (token required) ──
         "vault.attach_delete" => match state.attach_delete(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        // ── Biometric unlock (token NOT required for status/unlock) ──
+        "vault.biometric_status" => match state.biometric_status().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.biometric_enable" => match state.biometric_enable(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.biometric_disable" => match state.biometric_disable().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.biometric_unlock" => match state.biometric_unlock().await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
