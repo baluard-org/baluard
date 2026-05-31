@@ -1,7 +1,7 @@
 # IDtty: Software Architecture
 
 > Monorepo software architecture for the Rust Core Space Manager.
-> Covers: monorepo structure, Single-String Protobuf Gateway (planned), Unix Domain Sockets IPC, Tauri v2 tray integration, UniFFI mobile bindings (planned), Kotlin Multiplatform JIT mobile sync, and Mock Engine.
+> Covers: monorepo structure, Single-String Protobuf Gateway, Unix Domain Sockets IPC, Tauri v2 tray integration, UniFFI mobile bindings (planned), Kotlin Multiplatform JIT mobile sync, and Mock Engine.
 
 ---
 
@@ -10,11 +10,11 @@
 ```text
 idtty/
 ├── proto/                      # Shared Protobuf Schemas (vault.proto, space.proto, auth.proto)
-│                               # NOTE: schemas only, not yet compiled into Rust
+│                               # Compiled into Rust via prost-build in daemon + CLI
 ├── crates/                     # Rust Workspace
 │   ├── idtty-core/             # Core Engine: crypto, keys, vault, padding, git sync
 │   │   └── src/
-│   │       ├── crypto/         # AES-256-GCM, KDF (Argon2id), HKDF, HPKE, Ed25519 signatures
+│   │       ├── crypto/         # AES-256-GCM, KDF (Argon2id), HKDF, HPKE, Ed25519, TOTP (RFC 6238)
 │   │       ├── keys/           # Key hierarchy, epochs, rotation, nonces
 │   │       ├── vault/          # Padding engine (1KB/8KB/64KB/1MB), envelope, manifest, CRUD
 │   │       ├── sync/           # git2-rs sync engine, conflict auto-heal, state machine
@@ -24,16 +24,18 @@ idtty/
 │   │       ├── orgs.rs         # Team sharing / RBAC
 │   │       ├── providers.rs    # Credential provider abstraction
 │   │       ├── recovery.rs     # BIP-39 recovery
-│   │       ├── types.rs        # Shared types
+│   │       ├── types.rs        # CipherKind, CipherInput, CipherMeta, all cipher data structs
 │   │       └── error.rs        # IdttyError enum
-│   └── idtty-cli/              # CLI Client (clap) - currently links idtty-core directly
+│   └── idtty-cli/              # CLI Client (clap) - daemon-first with --direct fallback
 │       └── src/
 │           ├── main.rs         # Command dispatch
-│           └── commands/       # Direct idtty-core function calls
-│   └── idtty-daemon/           # Background IPC Daemon [STUB]
+│           ├── client.rs       # Protobuf socket client, session tokens
+│           └── commands/       # Dual-mode handlers (daemon + --direct)
+│   └── idtty-daemon/           # Background IPC Daemon
 │       └── src/
-│           ├── main.rs         # tokio Unix socket listener, SIGINT/SIGTERM, umask(0177)
-│           └── handler.rs      # Protobuf routing, 16 routes, SO_PEERCRED verification
+│           ├── main.rs         # tokio Unix socket listener, auto-lock timer, SIGINT/SIGTERM
+│           ├── handler.rs      # Protobuf routing, 30+ routes, token-gated actions, SO_PEERCRED
+│           └── state.rs        # VaultState, activity tracking, TOTP code gen, folder ops
 ├── desktop/                    # Tauri v2 Desktop App (scaffolded)
 │   ├── src-tauri/              # Rust backend: daemon proxy, tray, proto codegen
 │   ├── src/                    # SolidJS webview: login, vault, cipher CRUD
@@ -47,9 +49,9 @@ idtty/
 
 ---
 
-## 2. Unification: Single-String Protobuf Gateway (Planned)
+## 2. Single-String Protobuf Gateway
 
-**Current state**: Protobuf gateway fully wired. CLI has dual-mode (daemon-first + `--direct` fallback). Daemon has 16 routes (vault, sync, devices). Tauri desktop scaffolded via `tauri init` with daemon proxy command.
+**Current state**: Protobuf gateway fully wired. CLI has dual-mode (daemon-first + `--direct` fallback). Daemon has 30+ routes (vault CRUD, sync, devices, folders, TOTP, settings). Tauri desktop with full CRUD UI.
 
 **Target state**: All application tiers (Tauri Webview, CLI, KMP Mobile, Browser Extension) communicate with idtty-core through a serialized Single-String Protocol Buffer Gateway:
 
@@ -84,12 +86,12 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 
 ### 3.1 Desktop Tier (B2C/B2B)
 
-**Current state**: CLI dual-mode (daemon-first via socket + `--direct` fallback). Daemon fully implemented with vault state, sync, devices. Tauri desktop scaffolded with daemon proxy and system tray.
+**Current state**: CLI dual-mode (daemon-first via socket + `--direct` fallback). Daemon fully implemented with vault state, sync, devices, TOTP, auto-lock. Tauri desktop with full CRUD UI, 5 cipher types, generator, TOTP widget.
 
 **Implemented**:
 - **Rust Daemon (`idtty-daemon`)**: Started by the Tauri tray wrapper on boot. Unlocks the vault directly in `zeroize`-protected memory. Opens a platform-aware Unix domain socket (Linux: `~/.config/idtty/idtty.sock`, macOS: `~/.config/idtty/idtty.sock`) with 0600 permissions (set via umask before bind to avoid TOCTOU race). Listens for length-delimited Protobuf requests via tokio async I/O. SO_PEERCRED peer UID verification on Linux.
 - **CLI (`idtty-cli`)**: Dual-mode binary. Default: compiles flags into Protobuf, transmits over socket, prints response. `--direct` fallback links idtty-core in-process. `--socket <path>` for custom daemon path.
-- **Tauri v2 UI**: SolidJS/Tailwind v4 webview scaffolded via `tauri init`. `daemon_request` Tauri command proxies to daemon via Protobuf over Unix socket. System tray with Show/Quit menu. Login screen + vault view with cipher CRUD. Dark theme. Rust edition 2024.
+- **Tauri v2 UI**: SolidJS/Tailwind v4 webview. `daemon_request` Tauri command proxies to daemon via Protobuf over Unix socket. System tray with Show/Quit menu. Full cipher CRUD with 5 types (Login, Card, Identity, SSH Key, Secure Note). Password generator (CSPRNG + EFF 7776-word passphrase). TOTP code widget with boundary-aligned refresh. Auto-lock settings. Dark/light themes. Folder support. Rust edition 2024.
 
 ### 3.2 Mobile Tier (B2C)
 
