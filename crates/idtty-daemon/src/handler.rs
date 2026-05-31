@@ -154,6 +154,7 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.get",
     "vault.add",
     "vault.update",
+    "cipher.clone",
     "vault.delete",
     "vault.devices",
     "vault.trash.list",
@@ -286,6 +287,16 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
             match state.update_cipher(&req.payload).await {
                 Ok(()) => ok_resp("updated", token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "cipher.clone" => {
+            if req.payload.is_empty() {
+                return err_response("Missing cipher UUID in payload");
+            }
+            match state.clone_cipher(&req.payload).await {
+                Ok(id) => ok_resp(id, token_str),
                 Err(e) => err_response(e),
             }
         }

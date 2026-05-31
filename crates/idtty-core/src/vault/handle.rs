@@ -667,6 +667,36 @@ impl VaultHandle {
         let mut input_owned = input.clone();
         input_owned.created_at = Some(existing_cipher.created_at);
 
+        // Auto-append old password to history if password changed
+        let old_password = match &existing_cipher.kind {
+            crate::types::CipherKind::Login(data) => data.password.clone(),
+            _ => None,
+        };
+        let new_password = match &input_owned.kind {
+            crate::types::CipherKind::Login(data) => data.password.clone(),
+            _ => None,
+        };
+        if old_password.is_some() && old_password != new_password {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let mut history = existing_cipher.password_history.clone();
+            history.push(crate::types::PasswordHistoryEntry {
+                password: old_password.unwrap(),
+                last_used_date: now,
+            });
+            input_owned.password_history = history;
+
+            // Update password_revision_date on LoginData
+            if let crate::types::CipherKind::Login(ref mut data) = input_owned.kind {
+                data.password_revision_date = Some(now);
+            }
+        } else if input_owned.password_history.is_empty() {
+            // Preserve existing history if caller didn't provide one and password didn't change
+            input_owned.password_history = existing_cipher.password_history.clone();
+        }
+
         let item_key =
             Self::derive_item_key_static(&unlocked.root_key, cipher_id, key_epoch);
 
@@ -683,6 +713,39 @@ impl VaultHandle {
         std::fs::write(&file_path, &file.envelope_bytes)?;
 
         Ok(())
+    }
+
+    /// Clone a cipher: duplicate with new UUID, empty password history, reset update_seq.
+    pub fn clone_cipher(&mut self, cipher_id: Uuid) -> Result<Uuid, IdttyError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+
+        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
+        if !file_path.exists() {
+            return Err(VaultError::NotFound(format!("cipher {cipher_id}")).into());
+        }
+
+        let existing_file = cipher::CipherFile {
+            id: cipher_id,
+            envelope_bytes: std::fs::read(&file_path)?,
+        };
+        let existing = self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
+
+        let input = CipherInput {
+            name: existing.name,
+            folder_id: existing.folder_id,
+            kind: existing.kind,
+            favorite: existing.favorite,
+            notes: existing.notes,
+            custom_fields: existing.custom_fields,
+            created_at: None, // fresh timestamp for the clone
+            password_history: vec![], // empty history for clone
+        };
+
+        // add_cipher handles new UUID + encryption
+        self.add_cipher(&input)
     }
 
 
@@ -949,6 +1012,7 @@ mod tests {
             notes: None,
             custom_fields: vec![],
             created_at: None,
+            password_history: vec![],
         };
 
         let cipher_id = handle.add_cipher(&input).unwrap();
@@ -994,6 +1058,7 @@ mod tests {
             notes: None,
             custom_fields: vec![],
             created_at: None,
+            password_history: vec![],
         };
 
         let cipher_id = handle.add_cipher(&input).unwrap();
@@ -1030,6 +1095,7 @@ mod tests {
             notes: None,
             custom_fields: vec![],
             created_at: None,
+            password_history: vec![],
         };
 
         let id = handle.add_cipher(&input).unwrap();
@@ -1078,6 +1144,7 @@ mod tests {
             notes: None,
             custom_fields: vec![],
             created_at: None,
+            password_history: vec![],
         };
         handle.add_cipher(&input).unwrap();
 
@@ -1093,6 +1160,7 @@ mod tests {
             notes: None,
             custom_fields: vec![],
             created_at: None,
+            password_history: vec![],
         };
         handle.add_cipher(&card_input).unwrap();
 
@@ -1124,6 +1192,7 @@ mod tests {
             notes: None,
             custom_fields: vec![],
             created_at: None,
+            password_history: vec![],
         };
         let id = handle.add_cipher(&input).unwrap();
 
@@ -1135,6 +1204,7 @@ mod tests {
             notes: None,
             custom_fields: vec![],
             created_at: None,
+            password_history: vec![],
         };
         handle.update_cipher(id, &updated).unwrap();
 
@@ -1145,6 +1215,141 @@ mod tests {
                 assert_eq!(c.name, "New Name");
                 assert!(c.favorite);
                 assert_eq!(c.update_seq, 2);
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+    }
+
+    #[test]
+    fn password_change_appends_history() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let input = CipherInput {
+            name: "GitHub".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("user@gh.com".into()),
+                password: Some("old-pass-1".into()),
+                ..Default::default()
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+        };
+        let id = handle.add_cipher(&input).unwrap();
+
+        // Change password 3 times
+        for pw in ["old-pass-2", "old-pass-3", "new-pass"] {
+            let updated = CipherInput {
+                name: "GitHub".into(),
+                folder_id: None,
+                kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                    username: Some("user@gh.com".into()),
+                    password: Some(pw.into()),
+                    ..Default::default()
+                }),
+                favorite: false,
+                notes: None,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+            };
+            handle.update_cipher(id, &updated).unwrap();
+        }
+
+        let result = handle.get_cipher(id).unwrap();
+        match result {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.password_history.len(), 3);
+                assert_eq!(c.password_history[0].password, "old-pass-1");
+                assert_eq!(c.password_history[1].password, "old-pass-2");
+                assert_eq!(c.password_history[2].password, "old-pass-3");
+                // Ascending timestamps
+                assert!(c.password_history[0].last_used_date <= c.password_history[1].last_used_date);
+                assert!(c.password_history[1].last_used_date <= c.password_history[2].last_used_date);
+                // Current password is the new one
+                match &c.kind {
+                    crate::types::CipherKind::Login(data) => {
+                        assert_eq!(data.password.as_deref(), Some("new-pass"));
+                    }
+                    _ => panic!("expected login"),
+                }
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+    }
+
+    #[test]
+    fn clone_has_empty_history_and_different_id() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Create entry with some password history
+        let input = CipherInput {
+            name: "GitHub".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("user".into()),
+                password: Some("pass1".into()),
+                ..Default::default()
+            }),
+            favorite: true,
+            notes: Some("notes".into()),
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+        };
+        let id = handle.add_cipher(&input).unwrap();
+
+        // Change password to create history
+        let updated = CipherInput {
+            name: "GitHub".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("user".into()),
+                password: Some("pass2".into()),
+                ..Default::default()
+            }),
+            favorite: true,
+            notes: Some("notes".into()),
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+        };
+        handle.update_cipher(id, &updated).unwrap();
+
+        // Clone
+        let cloned_id = handle.clone_cipher(id).unwrap();
+        assert_ne!(cloned_id, id, "clone must have different UUID");
+
+        // Verify clone
+        let result = handle.get_cipher(cloned_id).unwrap();
+        match result {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.name, "GitHub");
+                assert!(c.favorite);
+                assert!(c.password_history.is_empty(), "clone must have empty history");
+                match &c.kind {
+                    crate::types::CipherKind::Login(data) => {
+                        assert_eq!(data.password.as_deref(), Some("pass2"));
+                    }
+                    _ => panic!("expected login"),
+                }
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+
+        // Verify original still has history
+        let original = handle.get_cipher(id).unwrap();
+        match original {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.password_history.len(), 1);
+                assert_eq!(c.password_history[0].password, "pass1");
             }
             CipherRead::Locked(_) => panic!("expected decrypted"),
         }
