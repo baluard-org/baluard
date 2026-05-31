@@ -155,6 +155,7 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.add",
     "vault.update",
     "cipher.clone",
+    "cipher.totp_code",
     "folder.list",
     "folder.create",
     "folder.rename",
@@ -304,6 +305,16 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
             match state.clone_cipher(&req.payload).await {
                 Ok(id) => ok_resp(id, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "cipher.totp_code" => {
+            if req.payload.is_empty() {
+                return err_response("Missing cipher UUID in payload");
+            }
+            match state.totp_code(&req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
                 Err(e) => err_response(e),
             }
         }

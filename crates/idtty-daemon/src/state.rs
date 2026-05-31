@@ -369,6 +369,43 @@ impl VaultState {
         Ok(new_id.to_string())
     }
 
+    /// Generate TOTP code for a cipher. Returns JSON {code, period_seconds, expires_at}.
+    /// The otpauth URI (seed) is NEVER included in the response.
+    pub async fn totp_code(&self, id_str: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+
+        let cipher_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
+        let cipher = handle.get_cipher(cipher_id).map_err(|e| format!("{e}"))?;
+
+        let cipher_ref = match cipher {
+            idtty_core::vault::handle::CipherRead::Decrypted(c) => c,
+            idtty_core::vault::handle::CipherRead::Locked(_) => return Err("Cipher is locked".into()),
+        };
+
+        // Extract totp_uri from the Login kind
+        let totp_uri = match &cipher_ref.kind {
+            idtty_core::types::CipherKind::Login(data) => data.totp_uri.as_deref(),
+            _ => None,
+        }.ok_or("No TOTP URI found for this cipher")?;
+
+        let params = idtty_core::crypto::totp::parse_totp_uri(totp_uri)
+            .map_err(|e| format!("Invalid TOTP URI: {e}"))?;
+
+        let (code, period_seconds, expires_at) = idtty_core::crypto::totp::generate_totp(&params);
+
+        // Return ONLY the code + metadata. Never the seed.
+        serde_json::to_string(&serde_json::json!({
+            "code": code,
+            "period_seconds": period_seconds,
+            "expires_at": expires_at,
+        })).map_err(|e| format!("{e}"))
+    }
+
     // ── Folder CRUD ──
 
     /// List all folders.
