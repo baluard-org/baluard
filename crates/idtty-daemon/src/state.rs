@@ -162,6 +162,7 @@ impl VaultState {
     }
 
     /// List all cipher IDs (works locked or unlocked).
+    #[allow(dead_code)]
     pub async fn list_cipher_ids(&self) -> Result<Vec<String>, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
