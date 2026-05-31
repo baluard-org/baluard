@@ -178,6 +178,9 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.export",
     "vault.reprompt_verify",
     "vault.health",
+    "vault.attach_upload",
+    "vault.attach_download",
+    "vault.attach_delete",
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.
@@ -572,6 +575,24 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
         // ── Password health report (token required) ──
         "vault.health" => match state.health_report().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        // ── Attachment upload (token required) ──
+        "vault.attach_upload" => match state.attach_upload(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        // ── Attachment download (token required) ──
+        "vault.attach_download" => match state.attach_download(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        // ── Attachment delete (token required) ──
+        "vault.attach_delete" => match state.attach_delete(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },

@@ -362,6 +362,7 @@ mod tests {
             updated_at: 2000,
             password_history: vec![],
             reprompt: false,
+            attachments: vec![],
         }
     }
 

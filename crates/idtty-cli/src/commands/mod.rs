@@ -181,6 +181,7 @@ pub fn handle_add(
         custom_fields: vec![],
         created_at: None,
         password_history: vec![],
+            attachments: vec![],
             reprompt: false,
     };
 
@@ -990,6 +991,7 @@ pub fn handle_edit(
                 custom_fields: existing_cipher.custom_fields.clone(),
                 created_at: Some(existing_cipher.created_at),
                 password_history: existing_cipher.password_history.clone(),
+                attachments: existing_cipher.attachments.clone(),
             };
 
             handle.update_cipher(cipher_id, &input)?;
@@ -1313,6 +1315,126 @@ pub fn handle_health(
 
     if weak == 0 && reused == 0 && old == 0 {
         println!("All passwords are healthy. No issues found.");
+    }
+
+    Ok(())
+}
+
+// ── Attachment Commands ──
+
+pub fn handle_attach_upload(
+    socket: Option<&str>,
+    cipher_id: &str,
+    file_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_unlocked_daemon(socket)?;
+
+    let data = std::fs::read(file_path)?;
+    if data.len() > idtty_core::vault::attachment::MAX_ATTACHMENT_SIZE {
+        return Err(format!("File too large: {} bytes (max 2MB)", data.len()).into());
+    }
+
+    let filename = std::path::Path::new(file_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "attachment".into());
+
+    use base64::Engine;
+    let payload = serde_json::json!({
+        "cipher_id": cipher_id,
+        "filename": filename,
+        "data_base64": base64::engine::general_purpose::STANDARD.encode(&data),
+    }).to_string();
+
+    let resp = client::request_to("vault.attach_upload", &payload, socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+
+    let result: serde_json::Value = serde_json::from_str(&resp.payload)?;
+    println!("Uploaded: {} ({})", result["filename"], result["id"]);
+    Ok(())
+}
+
+pub fn handle_attach_download(
+    socket: Option<&str>,
+    cipher_id: &str,
+    attachment_id: &str,
+    output_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_unlocked_daemon(socket)?;
+
+    let payload = serde_json::json!({
+        "cipher_id": cipher_id,
+        "attachment_id": attachment_id,
+    }).to_string();
+
+    let resp = client::request_to("vault.attach_download", &payload, socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+
+    let result: serde_json::Value = serde_json::from_str(&resp.payload)?;
+    use base64::Engine;
+    let data = base64::engine::general_purpose::STANDARD.decode(result["data_base64"].as_str().unwrap())?;
+    std::fs::write(output_path, &data)?;
+
+    println!("Downloaded: {} ({} bytes) -> {}", result["filename"], result["size"], output_path);
+    Ok(())
+}
+
+pub fn handle_attach_delete(
+    socket: Option<&str>,
+    cipher_id: &str,
+    attachment_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_unlocked_daemon(socket)?;
+
+    let payload = serde_json::json!({
+        "cipher_id": cipher_id,
+        "attachment_id": attachment_id,
+    }).to_string();
+
+    let resp = client::request_to("vault.attach_delete", &payload, socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+
+    println!("Attachment deleted.");
+    Ok(())
+}
+
+pub fn handle_attach_list(
+    socket: Option<&str>,
+    cipher_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_unlocked_daemon(socket)?;
+
+    let payload = serde_json::json!({ "id": cipher_id }).to_string();
+    let resp = client::request_to("vault.get_cipher", &payload, socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+
+    let cipher: serde_json::Value = serde_json::from_str(&resp.payload)?;
+    let attachments = cipher["attachments"].as_array();
+
+    match attachments {
+        Some(list) if !list.is_empty() => {
+            println!("Attachments for {}:", cipher_id);
+            for a in list {
+                let size = a["size"].as_u64().unwrap_or(0);
+                let size_str = if size > 1024 * 1024 {
+                    format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+                } else if size > 1024 {
+                    format!("{:.1} KB", size as f64 / 1024.0)
+                } else {
+                    format!("{} bytes", size)
+                };
+                println!("  {} {} {} {}", a["id"].as_str().unwrap_or("?"), a["filename"].as_str().unwrap_or("?"), size_str, a["mime_type"].as_str().unwrap_or(""));
+            }
+        }
+        _ => println!("No attachments found for {}.", cipher_id),
     }
 
     Ok(())

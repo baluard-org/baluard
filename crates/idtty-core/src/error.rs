@@ -108,6 +108,9 @@ pub enum VaultError {
 
     #[error("metadata error: {0}")]
     Metadata(String),
+
+    #[error("crypto error: {0}")]
+    Crypto(String),
 }
 
 /// Git sync and conflict errors.

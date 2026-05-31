@@ -191,6 +191,7 @@ mod tests {
             created_at: updated_at - 100000,
             updated_at,
             password_history: vec![],
+            attachments: vec![],
         }
     }
 

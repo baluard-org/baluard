@@ -153,6 +153,7 @@ pub fn decrypt_cipher(
         created_at: data.created_at,
         updated_at: data.updated_at,
         password_history: data.password_history,
+        attachments: data.attachments,
     })
 }
 
@@ -186,6 +187,8 @@ struct CipherData {
     pub updated_at: u64,
     #[serde(default)]
     pub password_history: Vec<crate::types::PasswordHistoryEntry>,
+    #[serde(default)]
+    pub attachments: Vec<crate::vault::attachment::AttachmentMeta>,
 }
 
 impl CipherData {
@@ -224,6 +227,7 @@ impl CipherData {
             created_at,
             updated_at: now,
             password_history: input.password_history.clone(),
+            attachments: input.attachments.clone(),
         }
     }
 }
@@ -246,6 +250,7 @@ impl From<CipherEnvelopeData> for CipherData {
             created_at: migrated.created_at,
             updated_at: migrated.updated_at,
             password_history: migrated.password_history,
+            attachments: migrated.attachments,
         }
     }
 }
@@ -277,6 +282,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            attachments: vec![],
             reprompt: false,
         };
 
@@ -323,6 +329,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            attachments: vec![],
             reprompt: false,
         };
 
@@ -356,6 +363,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            attachments: vec![],
             reprompt: false,
         };
 

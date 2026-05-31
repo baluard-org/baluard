@@ -149,6 +149,38 @@ enum Commands {
     /// Show password health report (weak, reused, old passwords).
     Health,
 
+    /// Upload a file attachment to a cipher.
+    AttachUpload {
+        /// Cipher ID.
+        cipher_id: String,
+        /// Path to file to attach.
+        file: String,
+    },
+
+    /// Download an attachment from a cipher.
+    AttachDownload {
+        /// Cipher ID.
+        cipher_id: String,
+        /// Attachment ID.
+        attachment_id: String,
+        /// Output file path.
+        output: String,
+    },
+
+    /// Delete an attachment from a cipher.
+    AttachDelete {
+        /// Cipher ID.
+        cipher_id: String,
+        /// Attachment ID.
+        attachment_id: String,
+    },
+
+    /// List attachments on a cipher.
+    AttachList {
+        /// Cipher ID.
+        cipher_id: String,
+    },
+
     /// Ping the daemon to check connectivity.
     Ping,
 }
@@ -337,6 +369,22 @@ fn main() {
 
         Commands::Health => {
             commands::handle_health(cli.socket.as_deref())
+        }
+
+        Commands::AttachUpload { cipher_id, file } => {
+            commands::handle_attach_upload(cli.socket.as_deref(), &cipher_id, &file)
+        }
+
+        Commands::AttachDownload { cipher_id, attachment_id, output } => {
+            commands::handle_attach_download(cli.socket.as_deref(), &cipher_id, &attachment_id, &output)
+        }
+
+        Commands::AttachDelete { cipher_id, attachment_id } => {
+            commands::handle_attach_delete(cli.socket.as_deref(), &cipher_id, &attachment_id)
+        }
+
+        Commands::AttachList { cipher_id } => {
+            commands::handle_attach_list(cli.socket.as_deref(), &cipher_id)
         }
 
         Commands::Ping => {

@@ -7,6 +7,7 @@ use idtty_core::vault::handle::{CipherRead, VaultHandle};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use base64::Engine;
 use tokio::sync::RwLock;
 
 /// Shared vault state accessible from all connection handlers.
@@ -387,6 +388,7 @@ impl VaultState {
             custom_fields: existing_cipher.custom_fields.clone(),
             created_at: Some(existing_cipher.created_at),
             password_history: existing_cipher.password_history.clone(),
+                    attachments: existing_cipher.attachments.clone(),
         };
 
         handle
@@ -632,6 +634,184 @@ impl VaultState {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         handle.purge_old_trash(days).map_err(|e| format!("{e}"))
+    }
+
+    /// Upload attachment to a cipher.
+    /// Payload: { cipher_id, filename, data_base64 }
+    pub async fn attach_upload(&self, payload: &str) -> Result<String, String> {
+        let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
+        let cipher_id: uuid::Uuid = req["cipher_id"].as_str()
+            .ok_or("missing cipher_id")?
+            .parse().map_err(|e| format!("invalid cipher_id: {e}"))?;
+        let filename = req["filename"].as_str().ok_or("missing filename")?;
+        let data_b64 = req["data_base64"].as_str().ok_or("missing data_base64")?;
+        let plaintext = base64::engine::general_purpose::STANDARD.decode(data_b64)
+            .map_err(|e| format!("base64 decode: {e}"))?;
+
+        if plaintext.len() > idtty_core::vault::attachment::MAX_ATTACHMENT_SIZE {
+            return Err(format!("File too large: {} bytes (max 2MB)", plaintext.len()));
+        }
+
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".into());
+        }
+
+        // Get cipher to find its item key and existing attachments
+        let cipher = match handle.get_cipher(cipher_id) {
+            Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => c,
+            _ => return Err("Cipher not found or vault locked".into()),
+        };
+
+        // Derive item key
+        let item_key = handle.derive_item_key(cipher_id, cipher.key_epoch);
+
+        // Generate attachment ID
+        let attach_id = uuid::Uuid::new_v4().to_string();
+
+        // Encrypt
+        let encrypted = idtty_core::vault::attachment::encrypt_attachment(
+            item_key.as_bytes(), &plaintext
+        ).map_err(|e| format!("{e}"))?;
+
+        // Create attachment directory
+        let attach_dir = handle.path.join("entries").join(cipher_id.to_string()).join("attachments");
+        std::fs::create_dir_all(&attach_dir).map_err(|e| format!("mkdir: {e}"))?;
+
+        // Write encrypted file
+        let attach_path = attach_dir.join(format!("{}.enc", attach_id));
+        std::fs::write(&attach_path, &encrypted).map_err(|e| format!("write: {e}"))?;
+
+        // Update cipher metadata with new attachment
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+        let meta = idtty_core::vault::attachment::AttachmentMeta {
+            id: attach_id.clone(),
+            filename: filename.to_string(),
+            size: plaintext.len() as u64,
+            encrypted_size: encrypted.len() as u64,
+            mime_type: idtty_core::vault::attachment::detect_mime(filename),
+            created_at: now,
+        };
+
+        let mut attachments = cipher.attachments.clone();
+        attachments.push(meta);
+
+        // Update cipher with new attachments list
+        let input = idtty_core::types::CipherInput {
+            name: cipher.name.clone(),
+            folder_id: cipher.folder_id,
+            kind: cipher.kind.clone(),
+            favorite: cipher.favorite,
+            reprompt: cipher.reprompt,
+            notes: cipher.notes.clone(),
+            custom_fields: cipher.custom_fields.clone(),
+            created_at: Some(cipher.created_at),
+            password_history: cipher.password_history.clone(),
+            attachments,
+        };
+        handle.update_cipher(cipher_id, &input).map_err(|e| format!("{e}"))?;
+
+        Ok(serde_json::json!({"id": attach_id, "filename": filename}).to_string())
+    }
+
+    /// Download attachment from a cipher.
+    /// Payload: { cipher_id, attachment_id }
+    pub async fn attach_download(&self, payload: &str) -> Result<String, String> {
+        let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
+        let cipher_id: uuid::Uuid = req["cipher_id"].as_str()
+            .ok_or("missing cipher_id")?
+            .parse().map_err(|e| format!("invalid cipher_id: {e}"))?;
+        let attach_id = req["attachment_id"].as_str().ok_or("missing attachment_id")?;
+
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".into());
+        }
+
+        let cipher = match handle.get_cipher(cipher_id) {
+            Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => c,
+            _ => return Err("Cipher not found or vault locked".into()),
+        };
+
+        // Verify attachment exists in metadata
+        let meta = cipher.attachments.iter()
+            .find(|a| a.id == attach_id)
+            .ok_or("Attachment not found")?;
+
+        let item_key = handle.derive_item_key(cipher_id, cipher.key_epoch);
+
+        let attach_path = handle.path
+            .join("entries").join(cipher_id.to_string())
+            .join("attachments").join(format!("{}.enc", attach_id));
+
+        let encrypted = std::fs::read(&attach_path).map_err(|e| format!("read: {e}"))?;
+        let plaintext = idtty_core::vault::attachment::decrypt_attachment(item_key.as_bytes(), &encrypted)
+            .map_err(|e| format!("{e}"))?;
+
+        Ok(serde_json::json!({
+            "filename": meta.filename,
+            "mime_type": meta.mime_type,
+            "size": meta.size,
+            "data_base64": base64::engine::general_purpose::STANDARD.encode(&plaintext),
+        }).to_string())
+    }
+
+    /// Delete attachment from a cipher.
+    /// Payload: { cipher_id, attachment_id }
+    pub async fn attach_delete(&self, payload: &str) -> Result<String, String> {
+        let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
+        let cipher_id: uuid::Uuid = req["cipher_id"].as_str()
+            .ok_or("missing cipher_id")?
+            .parse().map_err(|e| format!("invalid cipher_id: {e}"))?;
+        let attach_id = req["attachment_id"].as_str().ok_or("missing attachment_id")?;
+
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".into());
+        }
+
+        let cipher = match handle.get_cipher(cipher_id) {
+            Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => c,
+            _ => return Err("Cipher not found or vault locked".into()),
+        };
+
+        // Remove from attachments list
+        let mut attachments = cipher.attachments.clone();
+        let idx = attachments.iter().position(|a| a.id == attach_id)
+            .ok_or("Attachment not found")?;
+        attachments.remove(idx);
+
+        // Delete encrypted file
+        let attach_path = handle.path
+            .join("entries").join(cipher_id.to_string())
+            .join("attachments").join(format!("{}.enc", attach_id));
+        if attach_path.exists() {
+            std::fs::remove_file(&attach_path).map_err(|e| format!("delete: {e}"))?;
+        }
+
+        // Update cipher
+        let input = idtty_core::types::CipherInput {
+            name: cipher.name.clone(),
+            folder_id: cipher.folder_id,
+            kind: cipher.kind.clone(),
+            favorite: cipher.favorite,
+            reprompt: cipher.reprompt,
+            notes: cipher.notes.clone(),
+            custom_fields: cipher.custom_fields.clone(),
+            created_at: Some(cipher.created_at),
+            password_history: cipher.password_history.clone(),
+            attachments,
+        };
+        handle.update_cipher(cipher_id, &input).map_err(|e| format!("{e}"))?;
+
+        Ok(serde_json::json!({"deleted": true}).to_string())
     }
 
     /// Get password health report.
