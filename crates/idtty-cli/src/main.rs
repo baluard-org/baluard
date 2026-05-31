@@ -94,6 +94,21 @@ enum Commands {
         id: String,
     },
 
+    /// Edit an existing cipher.
+    Edit {
+        /// Cipher ID.
+        id: String,
+        /// New name.
+        #[arg(long)]
+        name: Option<String>,
+        /// New favorite status.
+        #[arg(long)]
+        favorite: Option<bool>,
+        /// New folder ID.
+        #[arg(long)]
+        folder: Option<String>,
+    },
+
     /// Manage enrolled devices.
     Devices {
         #[command(subcommand)]
@@ -221,6 +236,10 @@ fn main() {
         Commands::List => commands::handle_list(mode, &cli.vault_path, cli.socket.as_deref()),
         Commands::Delete { id } => {
             commands::handle_delete(mode, &cli.vault_path, cli.socket.as_deref(), &id)
+        }
+
+        Commands::Edit { id, name, favorite, folder } => {
+            commands::handle_edit(mode, &cli.vault_path, cli.socket.as_deref(), &id, name, favorite, folder)
         }
 
         // Devices

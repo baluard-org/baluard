@@ -153,6 +153,7 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.list",
     "vault.get",
     "vault.add",
+    "vault.update",
     "vault.delete",
     "vault.devices",
     "vault.trash.list",
@@ -244,9 +245,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         },
 
         // ── Cipher CRUD (token required, enforced above) ──
-        "vault.list" => match state.list_cipher_ids().await {
-            Ok(ids) => {
-                let json = serde_json::json!({"cipher_ids": ids});
+        "vault.list" => match state.list_cipher_meta().await {
+            Ok(metas) => {
+                let json = serde_json::json!({"ciphers": metas});
                 ok_resp(json.to_string(), token_str)
             }
             Err(e) => err_response(e),
@@ -275,6 +276,16 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
             match state.add_cipher(&req.payload).await {
                 Ok(id) => ok_resp(id, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "vault.update" => {
+            if req.payload.is_empty() {
+                return err_response("Missing update JSON in payload");
+            }
+            match state.update_cipher(&req.payload).await {
+                Ok(()) => ok_resp("updated", token_str),
                 Err(e) => err_response(e),
             }
         }

@@ -268,6 +268,7 @@ mod tests {
             name: name.to_string(),
             folder_id: None,
             kind: CipherKind::Login(LoginData::default()),
+            favorite: false,
             notes: None,
             custom_fields: vec![],
         }
@@ -401,6 +402,7 @@ mod tests {
                 brand: Some("Visa".into()),
                 ..Default::default()
             }),
+            favorite: false,
             notes: None,
             custom_fields: vec![],
         };

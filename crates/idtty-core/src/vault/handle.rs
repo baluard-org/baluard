@@ -323,6 +323,55 @@ impl VaultHandle {
         Ok(ids)
     }
 
+    /// List cipher metadata (requires unlocked vault for full CipherMeta).
+    /// Decrypts each cipher to extract name, type, favorite, username.
+    pub fn list_cipher_meta(&self) -> Result<Vec<crate::types::CipherMeta>, IdttyError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+
+        let ids = self.list_cipher_ids()?;
+        let mut metas = Vec::with_capacity(ids.len());
+
+        for id in ids {
+            let file_path = self.path.join(format!("ciphers/{}.enc", id));
+            if !file_path.exists() {
+                continue;
+            }
+            let envelope_bytes = std::fs::read(&file_path)?;
+            let file = cipher::CipherFile {
+                id,
+                envelope_bytes,
+            };
+
+            let c = match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &file) {
+                Ok(c) => c,
+                Err(_) => continue, // skip undecryptable entries
+            };
+
+            let username = match &c.kind {
+                crate::types::CipherKind::Login(data) => data.username.clone(),
+                _ => None,
+            };
+
+            metas.push(crate::types::CipherMeta {
+                id: c.id,
+                name: c.name,
+                folder_id: c.folder_id,
+                cipher_type: c.kind.cipher_type(),
+                favorite: c.favorite,
+                username,
+                tier: c.tier,
+                key_epoch: c.key_epoch,
+                update_seq: c.update_seq,
+                updated_at: c.updated_at,
+            });
+        }
+
+        Ok(metas)
+    }
+
     /// Verify root key by decrypting the Root Key canary.
     /// The canary is stored at vault creation as AES-256-GCM("idtty-rk-ok")
     /// encrypted with a key derived from Root Key.
@@ -586,6 +635,47 @@ impl VaultHandle {
         Ok(cipher_id)
     }
 
+    /// Update an existing cipher (requires unlocked vault).
+    /// Re-encrypts with incremented update_seq.
+    pub fn update_cipher(&mut self, cipher_id: Uuid, input: &CipherInput) -> Result<(), IdttyError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+
+        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
+        if !file_path.exists() {
+            return Err(VaultError::NotFound(format!("cipher {cipher_id}")).into());
+        }
+
+        // Read existing envelope to get current update_seq and key_epoch
+        let existing_bytes = std::fs::read(&file_path)?;
+        let existing_file = cipher::CipherFile {
+            id: cipher_id,
+            envelope_bytes: existing_bytes,
+        };
+        let existing_envelope = crate::vault::envelope::deserialize(&existing_file.envelope_bytes)?;
+        let new_update_seq = existing_envelope.header.update_seq + 1;
+        let key_epoch = existing_envelope.header.key_epoch;
+
+        let item_key =
+            Self::derive_item_key_static(&unlocked.root_key, cipher_id, key_epoch);
+
+        let file = cipher::encrypt_cipher(
+            self.vault_id,
+            cipher_id,
+            input,
+            &item_key,
+            key_epoch,
+            new_update_seq,
+            0, // nonce_counter
+        )?;
+
+        std::fs::write(&file_path, &file.envelope_bytes)?;
+
+        Ok(())
+    }
+
 
 
     fn find_device_id(path: &Path) -> Result<Uuid, IdttyError> {
@@ -846,6 +936,7 @@ mod tests {
                 autofill_on_page_load: false,
                 password_revision_date: None,
             }),
+            favorite: false,
             notes: None,
             custom_fields: vec![],
         };
@@ -889,6 +980,7 @@ mod tests {
                 autofill_on_page_load: false,
                 password_revision_date: None,
             }),
+            favorite: false,
             notes: None,
             custom_fields: vec![],
         };
@@ -923,6 +1015,7 @@ mod tests {
                 autofill_on_page_load: false,
                 password_revision_date: None,
             }),
+            favorite: false,
             notes: None,
             custom_fields: vec![],
         };
@@ -949,5 +1042,95 @@ mod tests {
         let count = handle.purge_old_trash(0).unwrap();
         assert_eq!(count, 1);
         assert!(handle.list_trash_ids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_cipher_meta_returns_type_and_favorite() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Add a login
+        let input = CipherInput {
+            name: "GitHub".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("user@gh.com".into()),
+                password: Some("s3cret".into()),
+                uris: vec![],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+            }),
+            favorite: true,
+            notes: None,
+            custom_fields: vec![],
+        };
+        handle.add_cipher(&input).unwrap();
+
+        // Add a card
+        let card_input = CipherInput {
+            name: "Visa".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Card(crate::types::CardData {
+                brand: Some("Visa".into()),
+                ..Default::default()
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+        };
+        handle.add_cipher(&card_input).unwrap();
+
+        let metas = handle.list_cipher_meta().unwrap();
+        assert_eq!(metas.len(), 2);
+
+        let login_meta = metas.iter().find(|m| m.name == "GitHub").unwrap();
+        assert_eq!(login_meta.cipher_type, crate::types::CipherType::Login);
+        assert!(login_meta.favorite);
+        assert_eq!(login_meta.username.as_deref(), Some("user@gh.com"));
+
+        let card_meta = metas.iter().find(|m| m.name == "Visa").unwrap();
+        assert_eq!(card_meta.cipher_type, crate::types::CipherType::Card);
+        assert!(!card_meta.favorite);
+        assert!(card_meta.username.is_none());
+    }
+
+    #[test]
+    fn update_cipher_changes_name() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let input = CipherInput {
+            name: "Old Name".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+        };
+        let id = handle.add_cipher(&input).unwrap();
+
+        let updated = CipherInput {
+            name: "New Name".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: true,
+            notes: None,
+            custom_fields: vec![],
+        };
+        handle.update_cipher(id, &updated).unwrap();
+
+        // Re-read to verify
+        let result = handle.get_cipher(id).unwrap();
+        match result {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.name, "New Name");
+                assert!(c.favorite);
+                assert!(c.update_seq >= 2);
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
     }
 }

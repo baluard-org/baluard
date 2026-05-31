@@ -140,6 +140,7 @@ pub fn decrypt_cipher(
         name: data.name,
         folder_id: data.folder_id,
         kind: data.kind,
+        favorite: data.favorite,
         notes: data.notes,
         custom_fields: data.custom_fields,
         key_epoch: enc_envelope.header.key_epoch,
@@ -162,6 +163,8 @@ struct CipherData {
     pub name: String,
     pub folder_id: Option<Uuid>,
     pub kind: crate::types::CipherKind,
+    #[serde(default)]
+    pub favorite: bool,
     pub notes: Option<String>,
     /// Write-only: populated on encrypt for backward compat. Read path uses kind.Login.totp_uri.
     #[serde(default)]
@@ -201,6 +204,7 @@ impl CipherData {
             name: input.name.clone(),
             folder_id: input.folder_id,
             kind: input.kind.clone(),
+            favorite: input.favorite,
             notes: input.notes.clone(),
             totp_uri,
             custom_fields: input.custom_fields.clone(),
@@ -220,6 +224,7 @@ impl From<CipherEnvelopeData> for CipherData {
             name: migrated.name,
             folder_id: migrated.folder_id,
             kind: migrated.kind,
+            favorite: migrated.favorite,
             notes: migrated.notes,
             totp_uri: migrated.totp_uri,
             custom_fields: migrated.custom_fields,
@@ -254,6 +259,7 @@ mod tests {
                 autofill_on_page_load: false,
                 password_revision_date: None,
             }),
+            favorite: false,
             notes: None,
             custom_fields: vec![],
         };
@@ -296,6 +302,7 @@ mod tests {
                 autofill_on_page_load: false,
                 password_revision_date: None,
             }),
+            favorite: false,
             notes: None,
             custom_fields: vec![],
         };
@@ -325,6 +332,7 @@ mod tests {
                 autofill_on_page_load: false,
                 password_revision_date: None,
             }),
+            favorite: false,
             notes: None,
             custom_fields: vec![],
         };
