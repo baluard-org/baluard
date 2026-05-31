@@ -189,6 +189,9 @@ impl CipherData {
             .unwrap_or_default()
             .as_secs();
 
+        // Preserve original created_at on updates, use now for new ciphers
+        let created_at = input.created_at.unwrap_or(now);
+
         // Extract login-specific flat fields for backward compat serialization
         let (username, password, uris, totp_uri) = match &input.kind {
             crate::types::CipherKind::Login(data) => (
@@ -211,7 +214,7 @@ impl CipherData {
             username,
             password,
             uris,
-            created_at: now,
+            created_at,
             updated_at: now,
         }
     }
@@ -262,6 +265,7 @@ mod tests {
             favorite: false,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         };
 
         let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
@@ -305,6 +309,7 @@ mod tests {
             favorite: false,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         };
 
         let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
@@ -335,6 +340,7 @@ mod tests {
             favorite: false,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         };
 
         // Encrypt for cipher A

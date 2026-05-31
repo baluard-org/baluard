@@ -658,17 +658,26 @@ impl VaultHandle {
         let new_update_seq = existing_envelope.header.update_seq + 1;
         let key_epoch = existing_envelope.header.key_epoch;
 
+        // Read existing cipher to preserve created_at
+        let existing_cipher = match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file) {
+            Ok(c) => c,
+            Err(e) => return Err(e),
+        };
+
+        let mut input_owned = input.clone();
+        input_owned.created_at = Some(existing_cipher.created_at);
+
         let item_key =
             Self::derive_item_key_static(&unlocked.root_key, cipher_id, key_epoch);
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
             cipher_id,
-            input,
+            &input_owned,
             &item_key,
             key_epoch,
             new_update_seq,
-            0, // nonce_counter
+            new_update_seq, // nonce_counter: use update_seq to ensure unique nonce per update
         )?;
 
         std::fs::write(&file_path, &file.envelope_bytes)?;
@@ -939,6 +948,7 @@ mod tests {
             favorite: false,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         };
 
         let cipher_id = handle.add_cipher(&input).unwrap();
@@ -983,6 +993,7 @@ mod tests {
             favorite: false,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         };
 
         let cipher_id = handle.add_cipher(&input).unwrap();
@@ -1018,6 +1029,7 @@ mod tests {
             favorite: false,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         };
 
         let id = handle.add_cipher(&input).unwrap();
@@ -1065,6 +1077,7 @@ mod tests {
             favorite: true,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         };
         handle.add_cipher(&input).unwrap();
 
@@ -1079,6 +1092,7 @@ mod tests {
             favorite: false,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         };
         handle.add_cipher(&card_input).unwrap();
 
@@ -1109,6 +1123,7 @@ mod tests {
             favorite: false,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         };
         let id = handle.add_cipher(&input).unwrap();
 
@@ -1119,6 +1134,7 @@ mod tests {
             favorite: true,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         };
         handle.update_cipher(id, &updated).unwrap();
 
@@ -1128,7 +1144,7 @@ mod tests {
             CipherRead::Decrypted(c) => {
                 assert_eq!(c.name, "New Name");
                 assert!(c.favorite);
-                assert!(c.update_seq >= 2);
+                assert_eq!(c.update_seq, 2);
             }
             CipherRead::Locked(_) => panic!("expected decrypted"),
         }

@@ -172,6 +172,7 @@ pub fn handle_add(
         favorite: false,
         notes,
         custom_fields: vec![],
+        created_at: None,
     };
 
     match mode {
@@ -953,6 +954,7 @@ pub fn handle_edit(
                 favorite: favorite.unwrap_or(existing_cipher.favorite),
                 notes: existing_cipher.notes.clone(),
                 custom_fields: existing_cipher.custom_fields.clone(),
+                created_at: Some(existing_cipher.created_at),
             };
 
             handle.update_cipher(cipher_id, &input)?;

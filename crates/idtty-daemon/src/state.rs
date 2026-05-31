@@ -254,25 +254,38 @@ impl VaultState {
             _ => return Err("Cipher not found or vault locked".to_string()),
         };
 
-        // Build merged input from existing + updates
-        let mut input = idtty_core::types::CipherInput {
-            name: update["name"].as_str().unwrap_or(&existing_cipher.name).to_string(),
-            folder_id: update
-                .get("folder_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.parse::<uuid::Uuid>().ok())
-                .flatten()
-                .or(existing_cipher.folder_id),
+        // Build merged input from existing + updates (proper PATCH semantics)
+        // Distinguishes "key absent" from "key present with null"
+        let input = idtty_core::types::CipherInput {
+            name: update
+                .get("name")
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_else(|| existing_cipher.name.clone()),
+            folder_id: if update.get("folder_id").map(|v| v.is_null()).unwrap_or(false) {
+                None // explicit null clears folder
+            } else {
+                update
+                    .get("folder_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.parse::<uuid::Uuid>().ok())
+                    .flatten()
+                    .or(existing_cipher.folder_id)
+            },
             kind: existing_cipher.kind.clone(),
             favorite: update
                 .get("favorite")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(existing_cipher.favorite),
-            notes: update
-                .get("notes")
-                .and_then(|v| v.as_str().map(String::from))
-                .or(existing_cipher.notes.clone()),
+            notes: if update.get("notes").map(|v| v.is_null()).unwrap_or(false) {
+                None // explicit null clears notes
+            } else {
+                update
+                    .get("notes")
+                    .and_then(|v| v.as_str().map(String::from))
+                    .or(existing_cipher.notes.clone())
+            },
             custom_fields: existing_cipher.custom_fields.clone(),
+            created_at: Some(existing_cipher.created_at),
         };
 
         handle

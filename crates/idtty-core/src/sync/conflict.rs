@@ -271,6 +271,7 @@ mod tests {
             favorite: false,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         }
     }
 
@@ -405,6 +406,7 @@ mod tests {
             favorite: false,
             notes: None,
             custom_fields: vec![],
+            created_at: None,
         };
         base.name = "Card".into();
 
