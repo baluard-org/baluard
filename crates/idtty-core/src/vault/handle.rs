@@ -405,6 +405,7 @@ impl VaultHandle {
                     folder_id: None, // unassign
                     kind: existing_cipher.kind.clone(),
                     favorite: existing_cipher.favorite,
+                    reprompt: existing_cipher.reprompt,
                     notes: existing_cipher.notes.clone(),
                     custom_fields: existing_cipher.custom_fields.clone(),
                     created_at: Some(existing_cipher.created_at),
@@ -478,6 +479,7 @@ impl VaultHandle {
                 folder_id: c.folder_id,
                 cipher_type: c.kind.cipher_type(),
                 favorite: c.favorite,
+                reprompt: c.reprompt,
                 username,
                 tier: c.tier,
                 key_epoch: c.key_epoch,
@@ -861,6 +863,7 @@ impl VaultHandle {
             folder_id: existing.folder_id,
             kind: existing.kind,
             favorite: existing.favorite,
+            reprompt: existing.reprompt,
             notes: existing.notes,
             custom_fields: existing.custom_fields,
             created_at: None, // fresh timestamp for the clone
@@ -1136,6 +1139,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
 
         let cipher_id = handle.add_cipher(&input).unwrap();
@@ -1182,6 +1186,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
 
         let cipher_id = handle.add_cipher(&input).unwrap();
@@ -1219,6 +1224,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
 
         let id = handle.add_cipher(&input).unwrap();
@@ -1268,6 +1274,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         handle.add_cipher(&input).unwrap();
 
@@ -1284,6 +1291,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         handle.add_cipher(&card_input).unwrap();
 
@@ -1316,6 +1324,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
 
@@ -1328,6 +1337,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         handle.update_cipher(id, &updated).unwrap();
 
@@ -1362,6 +1372,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
 
@@ -1380,6 +1391,7 @@ mod tests {
                 custom_fields: vec![],
                 created_at: None,
                 password_history: vec![],
+            reprompt: false,
             };
             handle.update_cipher(id, &updated).unwrap();
         }
@@ -1428,6 +1440,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
 
@@ -1445,6 +1458,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         handle.update_cipher(id, &updated).unwrap();
 
@@ -1498,6 +1512,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
 
@@ -1515,6 +1530,7 @@ mod tests {
                 custom_fields: vec![],
                 created_at: None,
                 password_history: vec![],
+            reprompt: false,
             };
             handle.update_cipher(id, &updated).unwrap();
         }
@@ -1588,6 +1604,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         let cipher_id = handle.add_cipher(&input).unwrap();
 
@@ -1630,6 +1647,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         let cipher_id = handle.add_cipher(&input).unwrap();
 
@@ -1643,6 +1661,7 @@ mod tests {
             custom_fields: vec![],
             created_at: None,
             password_history: vec![],
+            reprompt: false,
         };
         handle.update_cipher(cipher_id, &updated).unwrap();
 

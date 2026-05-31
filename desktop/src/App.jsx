@@ -68,11 +68,13 @@ function AppProvider(props) {
   const [activePane, setActivePane] = createSignal("welcome"); // 'welcome', 'detail', 'add', 'edit'
   const [viewCipher, setViewCipher] = createSignal(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = createSignal(false);
+const [showReprompt, setShowReprompt] = createSignal(false);
+const [repromptCallback, setRepromptCallback] = createSignal(null);
   const [showGenerator, setShowGenerator] = createSignal(false);
   
   // New / Edited entry buffers
   const [newCipher, setNewCipher] = createSignal({
-    name: "", username: "", password: "", uris: [], notes: "", cipherType: "login", favorite: false, folder_id: null, custom_fields: [], totp_uri: "",
+    name: "", username: "", password: "", uris: [], notes: "", cipherType: "login", favorite: false, reprompt: false, folder_id: null, custom_fields: [], totp_uri: "",
   });
   
   const [trashCiphers, setTrashCiphers] = createSignal([]);
@@ -100,6 +102,8 @@ function AppProvider(props) {
     activePane, setActivePane,
     viewCipher, setViewCipher,
     showDeleteConfirm, setShowDeleteConfirm,
+  showReprompt, setShowReprompt,
+  repromptCallback, setRepromptCallback,
     showGenerator, setShowGenerator,
     newCipher, setNewCipher,
     recoveryPhrase, setRecoveryPhrase,
@@ -307,7 +311,7 @@ function useActions() {
         folder_id: c.folder_id || null,
         custom_fields: c.custom_fields || [],
       }));
-      app.setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: "login", favorite: false, folder_id: null, custom_fields: [], totp_uri: "" });
+      app.setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: "login", favorite: false, reprompt: false, folder_id: null, custom_fields: [], totp_uri: "" });
       app.setActivePane("welcome");
       await refreshCiphers();
     } catch (e) {
@@ -952,6 +956,9 @@ function CipherRow(props) {
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
               </svg>
             )}
+            {(props.cipher.reprompt || props.cipher._meta?.reprompt) && (
+              <svg class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+            )}
           </div>
           <div class={`text-xs truncate mt-0.5 ${isSelected() ? "text-[var(--color-primary-text)]/75" : "text-[var(--color-muted)]"}`}>
             {props.cipher.username || (cipherType() === "login" ? "No username" : cipherType() === "secureNote" ? "Secure note" : cipherType())}
@@ -1048,7 +1055,7 @@ function CopyableField(props) {
 }
 
 function CipherDetail() {
-  const { viewCipher, setViewCipher, setActivePane, setNewCipher, setShowDeleteConfirm, selectedCategory } = useApp();
+  const { viewCipher, setViewCipher, setActivePane, setNewCipher, setShowDeleteConfirm, setShowReprompt, setRepromptCallback, selectedCategory } = useApp();
   const { restoreCipher } = useActions();
   const { t } = useI18n();
 
@@ -1176,7 +1183,14 @@ function CipherDetail() {
               value={viewCipher()?.password || viewCipher()?.kind?.login?.password}
               isPassword={true}
               showPassword={revealPass()}
-              onToggleShow={() => setRevealPass(!revealPass())}
+              onToggleShow={() => {
+                if (!revealPass() && (viewCipher()?.reprompt || viewCipher()?._meta?.reprompt)) {
+                  setRepromptCallback(() => () => setRevealPass(true));
+                  setShowReprompt(true);
+                } else {
+                  setRevealPass(!revealPass());
+                }
+              }}
             />
 
             {/* TOTP code widget */}
@@ -1365,6 +1379,10 @@ function AddEditCipherForm(props) {
     setNewCipher({ ...newCipher(), favorite: !newCipher().favorite });
   }
 
+  function toggleReprompt() {
+    setNewCipher({ ...newCipher(), reprompt: !newCipher().reprompt });
+  }
+
   function handleSave() {
     if (props.isEdit) {
       updateCipher(viewCipher().id, t);
@@ -1400,6 +1418,17 @@ function AddEditCipherForm(props) {
               <svg class="w-5 h-5" fill={newCipher().favorite ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
               </svg>
+            </button>
+          </div>
+
+          {/* Reprompt toggle */}
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">Require password to view</label>
+            <button
+              onClick={toggleReprompt}
+              class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().reprompt ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-primary)]"}`}
+            >
+              <svg class="w-5 h-5" fill={newCipher().reprompt ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
             </button>
           </div>
 
@@ -1748,6 +1777,73 @@ function AddEditCipherForm(props) {
   );
 }
 
+function RepromptModal() {
+  const { showReprompt, setShowReprompt, repromptCallback } = useApp();
+  const [password, setPassword] = createSignal("");
+  const [error, setError] = createSignal("");
+  const [loading, setLoading] = createSignal(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!password()) return;
+    setLoading(true);
+    setError("");
+    try {
+      await daemon("vault.reprompt_verify", password());
+      setShowReprompt(false);
+      const cb = repromptCallback();
+      if (cb) cb();
+      setPassword("");
+    } catch (e) {
+      setError("Incorrect password");
+    }
+    setLoading(false);
+  }
+
+  return (
+    <Show when={showReprompt()}>
+      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div class="w-full max-w-sm p-6 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative animate-scale-in">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+            </div>
+            <div>
+              <div class="text-sm font-bold text-[var(--color-text)]">Verify your identity</div>
+              <div class="text-xs text-[var(--color-muted)]">Enter your master password to continue</div>
+            </div>
+          </div>
+          <form onSubmit={handleSubmit}>
+            <input
+              type="password"
+              placeholder="Master password"
+              value={password()}
+              onInput={e => setPassword(e.target.value)}
+              class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all mb-3"
+              autofocus
+            />
+            <Show when={error()}>
+              <div class="text-xs text-red-400 mb-3">{error()}</div>
+            </Show>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowReprompt(false); setPassword(""); }}
+                class="flex-1 py-2.5 rounded-xl text-xs font-bold text-[var(--color-muted)] border border-[var(--color-border)] hover:bg-[var(--color-card)] transition-all cursor-pointer"
+              >Cancel</button>
+              <button
+                type="submit"
+                disabled={loading() || !password()}
+                class="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold disabled:opacity-50 transition-all cursor-pointer"
+              >{loading() ? "Verifying..." : "Verify"}</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
 function VaultView() {
   const { ciphers, trashCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator } = useApp();
   const { lock } = useActions();
@@ -1799,7 +1895,7 @@ function VaultView() {
   };
 
   function startAdd(type = "login") {
-    setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: type, favorite: false, folder_id: null, custom_fields: [], totp_uri: "" });
+    setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: type, favorite: false, reprompt: false, folder_id: null, custom_fields: [], totp_uri: "" });
     setActivePane("add");
   }
 
@@ -1807,6 +1903,7 @@ function VaultView() {
     <div class="flex h-full overflow-hidden select-none">
       <DeleteConfirmModal />
       <GeneratorModal />
+      <RepromptModal />
       
       {/* ── Column 1: Left Navigation Sidebar ── */}
       <div class="w-[260px] bg-[var(--color-sidebar)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0">

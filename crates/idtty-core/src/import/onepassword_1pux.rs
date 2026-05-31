@@ -154,6 +154,7 @@ pub fn parse(data: &[u8]) -> ImportResult {
                     custom_fields,
                     created_at: None,
                     password_history: vec![],
+            reprompt: false,
                 };
 
                 result.add_with_folder(cipher, folder);

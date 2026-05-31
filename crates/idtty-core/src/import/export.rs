@@ -361,6 +361,7 @@ mod tests {
             created_at: 1000,
             updated_at: 2000,
             password_history: vec![],
+            reprompt: false,
         }
     }
 

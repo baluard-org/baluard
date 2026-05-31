@@ -316,6 +316,7 @@ pub fn parse(data: &str) -> ImportResult {
             custom_fields,
             created_at: None,
             password_history,
+            reprompt: false,
         };
 
         result.add_with_folder(cipher, folder_name);
