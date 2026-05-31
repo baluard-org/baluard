@@ -389,7 +389,7 @@ impl VaultHandle {
                 id: cipher_id,
                 envelope_bytes: existing_bytes,
             };
-            let existing_envelope = crate::vault::envelope::deserialize(&existing_file.envelope_bytes)?;
+            let _existing_envelope = crate::vault::envelope::deserialize(&existing_file.envelope_bytes)?;
             let existing_cipher = {
                 let unlocked = match &self.state {
                     VaultState::Unlocked(u) => u,
