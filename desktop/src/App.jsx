@@ -1822,7 +1822,7 @@ function VaultView() {
             
             <div class="relative group">
               <button
-                onClick={() => startAdd("login")}}
+                onClick={() => startAdd("login")}
                 class="px-4 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center gap-1"
               >
                 + New
