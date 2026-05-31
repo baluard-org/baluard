@@ -177,6 +177,7 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.import",
     "vault.export",
     "vault.reprompt_verify",
+    "vault.health",
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.
@@ -568,6 +569,12 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 }
             }
         }
+
+        // ── Password health report (token required) ──
+        "vault.health" => match state.health_report().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
 
         _ => err_response(format!("Unknown action: {}", req.action)),
     };

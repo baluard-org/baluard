@@ -634,6 +634,28 @@ impl VaultState {
         handle.purge_old_trash(days).map_err(|e| format!("{e}"))
     }
 
+    /// Get password health report.
+    pub async fn health_report(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".into());
+        }
+
+        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
+        let mut ciphers = Vec::new();
+        for meta in &metas {
+            match handle.get_cipher(meta.id) {
+                Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => ciphers.push(c),
+                _ => continue,
+            }
+        }
+
+        let report = idtty_core::health::analyze(&ciphers);
+        serde_json::to_string(&report).map_err(|e| format!("{e}"))
+    }
+
     /// Verify master password for reprompt. Opens a temporary handle and attempts unlock.
     /// Returns a short-lived grant. Does NOT change the main vault state.
     pub async fn reprompt_verify(&self, master_password: &str) -> Result<String, String> {
