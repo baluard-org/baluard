@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use base64::Engine;
+use zeroize::Zeroize;
 use tokio::sync::RwLock;
 
 /// Shared vault state accessible from all connection handlers.
@@ -203,6 +204,7 @@ impl VaultState {
                     "created_at": c.created_at,
                     "updated_at": c.updated_at,
                     "password_history": c.password_history,
+                    "attachments": c.attachments,
                 });
                 // Emit kind as nested object matching CipherKind serde format
                 json["kind"] = serde_json::to_value(&c.kind).unwrap_or(serde_json::Value::Null);
@@ -645,7 +647,7 @@ impl VaultState {
             .parse().map_err(|e| format!("invalid cipher_id: {e}"))?;
         let filename = req["filename"].as_str().ok_or("missing filename")?;
         let data_b64 = req["data_base64"].as_str().ok_or("missing data_base64")?;
-        let plaintext = base64::engine::general_purpose::STANDARD.decode(data_b64)
+        let mut plaintext = base64::engine::general_purpose::STANDARD.decode(data_b64)
             .map_err(|e| format!("base64 decode: {e}"))?;
 
         if plaintext.len() > idtty_core::vault::attachment::MAX_ATTACHMENT_SIZE {
@@ -675,6 +677,9 @@ impl VaultState {
         let encrypted = idtty_core::vault::attachment::encrypt_attachment(
             item_key.as_bytes(), &plaintext
         ).map_err(|e| format!("{e}"))?;
+
+        // Zeroize plaintext after encryption
+        plaintext.zeroize();
 
         // Create attachment directory
         let attach_dir = handle.path.join("entries").join(cipher_id.to_string()).join("attachments");
@@ -712,7 +717,11 @@ impl VaultState {
             password_history: cipher.password_history.clone(),
             attachments,
         };
-        handle.update_cipher(cipher_id, &input).map_err(|e| format!("{e}"))?;
+        handle.update_cipher(cipher_id, &input).map_err(|e| {
+            // Clean up orphaned encrypted file on update failure
+            let _ = std::fs::remove_file(&attach_path);
+            format!("{e}")
+        })?;
 
         Ok(serde_json::json!({"id": attach_id, "filename": filename}).to_string())
     }
@@ -750,15 +759,20 @@ impl VaultState {
             .join("attachments").join(format!("{}.enc", attach_id));
 
         let encrypted = std::fs::read(&attach_path).map_err(|e| format!("read: {e}"))?;
-        let plaintext = idtty_core::vault::attachment::decrypt_attachment(item_key.as_bytes(), &encrypted)
+        let mut plaintext = idtty_core::vault::attachment::decrypt_attachment(item_key.as_bytes(), &encrypted)
             .map_err(|e| format!("{e}"))?;
 
-        Ok(serde_json::json!({
+        let result = serde_json::json!({
             "filename": meta.filename,
             "mime_type": meta.mime_type,
             "size": meta.size,
             "data_base64": base64::engine::general_purpose::STANDARD.encode(&plaintext),
-        }).to_string())
+        }).to_string();
+
+        // Zeroize plaintext after encoding
+        plaintext.zeroize();
+
+        Ok(result)
     }
 
     /// Delete attachment from a cipher.

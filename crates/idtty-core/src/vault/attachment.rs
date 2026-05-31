@@ -80,7 +80,8 @@ pub fn detect_mime(filename: &str) -> String {
     else if lower.ends_with(".xml") { "application/xml".into() }
     else if lower.ends_with(".zip") { "application/zip".into() }
     else if lower.ends_with(".key") || lower.ends_with(".pem") { "application/x-pem-file".into() }
-    else if lower.ends_with(".doc") || lower.ends_with(".docx") { "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into() }
+    else if lower.ends_with(".doc") { "application/msword".into() }
+    else if lower.ends_with(".docx") { "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into() }
     else { "application/octet-stream".into() }
 }
 
