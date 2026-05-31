@@ -270,6 +270,15 @@ function useActions() {
             license_number: c.licenseNumber || null,
           },
         };
+      } else if (cipherType === "sshKey") {
+        kind = {
+          type: "sshKey",
+          data: {
+            public_key: c.publicKey || null,
+            private_key: c.privateKey || null,
+            fingerprint: c.fingerprint || null,
+          },
+        };
       } else {
         // Login
         kind = {
@@ -343,6 +352,15 @@ function useActions() {
             ssn: c.ssn || null,
             passport_number: c.passportNumber || null,
             license_number: c.licenseNumber || null,
+          },
+        };
+      } else if (cipherType === "sshKey") {
+        kind = {
+          type: "sshKey",
+          data: {
+            public_key: c.publicKey || null,
+            private_key: c.privateKey || null,
+            fingerprint: c.fingerprint || null,
           },
         };
       } else {
@@ -792,6 +810,10 @@ function CipherDetail() {
       ssn: idData.ssn || "",
       passportNumber: idData.passport_number || "",
       licenseNumber: idData.license_number || "",
+      // SSH Key fields
+      publicKey: (kind.sshKey || kind.SshKey || {}).public_key || "",
+      privateKey: (kind.sshKey || kind.SshKey || {}).private_key || "",
+      fingerprint: (kind.sshKey || kind.SshKey || {}).fingerprint || "",
     });
     setActivePane("edit");
   }
@@ -864,6 +886,16 @@ function CipherDetail() {
             <CopyableField label="SSN" value={viewCipher()?.kind?.identity?.ssn} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
             <CopyableField label="Passport #" value={viewCipher()?.kind?.identity?.passport_number} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
             <CopyableField label="License #" value={viewCipher()?.kind?.identity?.license_number} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+          </div>
+        </Show>
+
+        {/* SSH Key fields */}
+        <Show when={viewCipher()?.type === "sshKey"}>
+          <div class="space-y-4">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">SSH Key details</h4>
+            <CopyableField label="Public Key" value={viewCipher()?.kind?.sshKey?.public_key} />
+            <CopyableField label="Fingerprint" value={viewCipher()?.kind?.sshKey?.fingerprint} />
+            <CopyableField label="Private Key" value={viewCipher()?.kind?.sshKey?.private_key} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
           </div>
         </Show>
 
@@ -1302,6 +1334,43 @@ function AddEditCipherForm(props) {
             </div>
           </Show>
 
+          {/* SSH Key fields */}
+          <Show when={cipherType() === "sshKey"}>
+            <div>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Public Key</label>
+              <textarea
+                placeholder="ssh-rsa AAAA..."
+                rows="4"
+                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all resize-none font-mono"
+                value={newCipher().publicKey || ""}
+                onInput={e => setNewCipher({ ...newCipher(), publicKey: e.target.value })}
+              />
+            </div>
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">Private Key</label>
+                <span class="text-[10px] text-[var(--color-muted)]">Hidden by default</span>
+              </div>
+              <textarea
+                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                rows="6"
+                type="password"
+                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all resize-none font-mono"
+                value={newCipher().privateKey || ""}
+                onInput={e => setNewCipher({ ...newCipher(), privateKey: e.target.value })}
+              />
+            </div>
+            <div>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Fingerprint</label>
+              <input
+                placeholder="SHA256:abc123..."
+                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
+                value={newCipher().fingerprint || ""}
+                onInput={e => setNewCipher({ ...newCipher(), fingerprint: e.target.value })}
+              />
+            </div>
+          </Show>
+
           {/* Notes (all types) */}
           <div>
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.notes")}</label>
@@ -1552,6 +1621,10 @@ function VaultView() {
                 <button onClick={() => startAdd("identity")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                   Identity
+                </button>
+                <button onClick={() => startAdd("sshKey")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m0 0a2 2 0 01-2 2m2-2h2a2 2 0 002-2V5a2 2 0 00-2-2h-2a2 2 0 00-2 2v2m0 0h-2m-2 0A5 5 0 113 12a5 5 0 0110 0v1a2 2 0 002 2h2a2 2 0 002-2v-1a2 2 0 00-2-2h-2" /></svg>
+                  SSH Key
                 </button>
               </div>
             </div>
