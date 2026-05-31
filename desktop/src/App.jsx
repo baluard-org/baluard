@@ -128,6 +128,7 @@ async function daemon(action, payload = "") {
 // ── Actions ──
 function useActions() {
   const app = useApp();
+  const { t } = useI18n();
   let loginPasswordRef;
 
   async function unlock(t) {
