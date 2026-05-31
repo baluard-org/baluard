@@ -280,7 +280,7 @@ function useActions() {
           data: {
             public_key: c.publicKey || null,
             private_key: c.privateKey || null,
-            fingerprint: c.fingerprint || null,
+            key_fingerprint: c.fingerprint || null,
           },
         };
       } else {
@@ -364,7 +364,7 @@ function useActions() {
           data: {
             public_key: c.publicKey || null,
             private_key: c.privateKey || null,
-            fingerprint: c.fingerprint || null,
+            key_fingerprint: c.fingerprint || null,
           },
         };
       } else {
@@ -1005,7 +1005,7 @@ function CipherDetail() {
       // SSH Key fields
       publicKey: (kind.sshKey || kind.SshKey || {}).public_key || "",
       privateKey: (kind.sshKey || kind.SshKey || {}).private_key || "",
-      fingerprint: (kind.sshKey || kind.SshKey || {}).fingerprint || "",
+      fingerprint: (kind.sshKey || kind.SshKey || {}).key_fingerprint || "",
     });
     setActivePane("edit");
   }
@@ -1108,7 +1108,7 @@ function CipherDetail() {
           <div class="space-y-4">
             <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">SSH Key details</h4>
             <CopyableField label="Public Key" value={viewCipher()?.kind?.sshKey?.public_key} />
-            <CopyableField label="Fingerprint" value={viewCipher()?.kind?.sshKey?.fingerprint} />
+            <CopyableField label="Fingerprint" value={viewCipher()?.kind?.sshKey?.key_fingerprint} />
             <CopyableField label="Private Key" value={viewCipher()?.kind?.sshKey?.private_key} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
           </div>
         </Show>
