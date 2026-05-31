@@ -155,6 +155,10 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.add",
     "vault.update",
     "cipher.clone",
+    "folder.list",
+    "folder.create",
+    "folder.rename",
+    "folder.delete",
     "vault.delete",
     "vault.devices",
     "vault.trash.list",
@@ -297,6 +301,40 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
             match state.clone_cipher(&req.payload).await {
                 Ok(id) => ok_resp(id, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "folder.list" => {
+            match state.list_folders().await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "folder.create" => {
+            if req.payload.is_empty() {
+                return err_response("Missing folder name in payload");
+            }
+            match state.create_folder(&req.payload).await {
+                Ok(id) => ok_resp(id, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "folder.rename" => {
+            if req.payload.is_empty() {
+                return err_response("Missing folder rename JSON in payload");
+            }
+            match state.rename_folder(&req.payload).await {
+                Ok(()) => ok_resp("renamed", token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "folder.delete" => {
+            if req.payload.is_empty() {
+                return err_response("Missing folder UUID in payload");
+            }
+            match state.delete_folder(&req.payload).await {
+                Ok(()) => ok_resp("deleted", token_str),
                 Err(e) => err_response(e),
             }
         }

@@ -303,6 +303,135 @@ impl VaultHandle {
         Ok(())
     }
 
+    // ── Folder CRUD ──
+
+    /// List all folders.
+    pub fn list_folders(&self) -> Result<Vec<crate::vault::manifest::Folder>, IdttyError> {
+        let folders_path = self.path.join("meta/folders.json");
+        if !folders_path.exists() {
+            return Ok(Vec::new());
+        }
+        let data = std::fs::read_to_string(&folders_path)?;
+        let folders: Vec<crate::vault::manifest::Folder> =
+            serde_json::from_str(&data).map_err(|e| {
+                crate::error::VaultError::Metadata(format!("folders parse: {e}"))
+            })?;
+        Ok(folders)
+    }
+
+    /// Save folders to disk (atomic write).
+    fn save_folders(&self, folders: &[crate::vault::manifest::Folder]) -> Result<(), IdttyError> {
+        let folders_path = self.path.join("meta/folders.json");
+        let tmp_path = folders_path.with_extension("tmp");
+        let json = serde_json::to_string_pretty(folders).map_err(|e| {
+            crate::error::VaultError::Metadata(format!("folders serialization: {e}"))
+        })?;
+        std::fs::write(&tmp_path, &json)?;
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
+        std::fs::rename(&tmp_path, &folders_path)?;
+        Ok(())
+    }
+
+    /// Create a new folder.
+    pub fn create_folder(&mut self, name: &str) -> Result<Uuid, IdttyError> {
+        if name.trim().is_empty() {
+            return Err(crate::error::VaultError::Metadata("folder name cannot be empty".into()).into());
+        }
+        let mut folders = self.list_folders()?;
+        let id = Uuid::new_v4();
+        folders.push(crate::vault::manifest::Folder {
+            id,
+            name: name.trim().to_string(),
+            parent_id: None,
+            icon: None,
+        });
+        self.save_folders(&folders)?;
+        Ok(id)
+    }
+
+    /// Rename a folder by ID.
+    pub fn rename_folder(&mut self, folder_id: Uuid, new_name: &str) -> Result<(), IdttyError> {
+        if new_name.trim().is_empty() {
+            return Err(crate::error::VaultError::Metadata("folder name cannot be empty".into()).into());
+        }
+        let mut folders = self.list_folders()?;
+        let folder = folders.iter_mut().find(|f| f.id == folder_id).ok_or_else(|| {
+            IdttyError::from(crate::error::VaultError::NotFound(format!("folder {folder_id}")))
+        })?;
+        folder.name = new_name.trim().to_string();
+        self.save_folders(&folders)?;
+        Ok(())
+    }
+
+    /// Delete a folder by ID. All ciphers with this folder_id become unassigned (None).
+    pub fn delete_folder(&mut self, folder_id: Uuid) -> Result<(), IdttyError> {
+        let mut folders = self.list_folders()?;
+        let len_before = folders.len();
+        folders.retain(|f| f.id != folder_id);
+        if folders.len() == len_before {
+            return Err(IdttyError::from(crate::error::VaultError::NotFound(format!("folder {folder_id}"))));
+        }
+        self.save_folders(&folders)?;
+
+        // Unassign all ciphers that belonged to this folder
+        let cipher_ids = self.list_cipher_ids()?;
+        for cipher_id in cipher_ids {
+            let file_path = self.path.join(format!("ciphers/{cipher_id}.enc"));
+            if !file_path.exists() {
+                continue;
+            }
+            let existing_bytes = std::fs::read(&file_path)?;
+            let existing_file = cipher::CipherFile {
+                id: cipher_id,
+                envelope_bytes: existing_bytes,
+            };
+            let existing_envelope = crate::vault::envelope::deserialize(&existing_file.envelope_bytes)?;
+            let existing_cipher = {
+                let unlocked = match &self.state {
+                    VaultState::Unlocked(u) => u,
+                    VaultState::Locked => return Err(VaultError::Locked.into()),
+                };
+                match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file) {
+                    Ok(c) => c,
+                    Err(_) => continue, // corrupt, skip
+                }
+            };
+
+            if existing_cipher.folder_id == Some(folder_id) {
+                let input = CipherInput {
+                    name: existing_cipher.name.clone(),
+                    folder_id: None, // unassign
+                    kind: existing_cipher.kind.clone(),
+                    favorite: existing_cipher.favorite,
+                    notes: existing_cipher.notes.clone(),
+                    custom_fields: existing_cipher.custom_fields.clone(),
+                    created_at: Some(existing_cipher.created_at),
+                    password_history: existing_cipher.password_history.clone(),
+                };
+                let new_update_seq = existing_envelope.header.update_seq + 1;
+                let key_epoch = existing_envelope.header.key_epoch;
+                let unlocked = match &self.state {
+                    VaultState::Unlocked(u) => u,
+                    VaultState::Locked => return Err(VaultError::Locked.into()),
+                };
+                let item_key =
+                    Self::derive_item_key_static(&unlocked.root_key, cipher_id, key_epoch);
+                let file = cipher::encrypt_cipher(
+                    self.vault_id,
+                    cipher_id,
+                    &input,
+                    &item_key,
+                    key_epoch,
+                    new_update_seq,
+                    new_update_seq, // nonce_counter = update_seq for uniqueness
+                )?;
+                std::fs::write(&file_path, &file.envelope_bytes)?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// List cipher IDs from filenames in ciphers/ directory.
     pub fn list_cipher_ids(&self) -> Result<Vec<Uuid>, IdttyError> {
         let ciphers_dir = self.path.join("ciphers");
@@ -1409,6 +1538,131 @@ mod tests {
                 // Oldest entries evicted: should have pw5..pw14 (10 most recent)
                 assert_eq!(c.password_history[0].password, "pw5");
                 assert_eq!(c.password_history[9].password, "pw14");
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+    }
+
+    #[test]
+    fn folder_create_list_rename_delete() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Initially empty
+        let folders = handle.list_folders().unwrap();
+        assert!(folders.is_empty());
+
+        // Create
+        let id1 = handle.create_folder("Work").unwrap();
+        let id2 = handle.create_folder("Personal").unwrap();
+        assert_ne!(id1, id2);
+
+        // List
+        let folders = handle.list_folders().unwrap();
+        assert_eq!(folders.len(), 2);
+        let names: Vec<&str> = folders.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.contains(&"Work"));
+        assert!(names.contains(&"Personal"));
+
+        // Rename
+        handle.rename_folder(id1, "Work - Renamed").unwrap();
+        let folders = handle.list_folders().unwrap();
+        let renamed = folders.iter().find(|f| f.id == id1).unwrap();
+        assert_eq!(renamed.name, "Work - Renamed");
+
+        // Delete
+        handle.delete_folder(id2).unwrap();
+        let folders = handle.list_folders().unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].id, id1);
+
+        // Delete non-existent
+        let result = handle.delete_folder(id2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn folder_delete_unassigns_ciphers() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let folder_id = handle.create_folder("Social").unwrap();
+
+        // Add cipher assigned to folder
+        let input = CipherInput {
+            name: "Twitter".into(),
+            folder_id: Some(folder_id),
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+        };
+        let cipher_id = handle.add_cipher(&input).unwrap();
+
+        // Verify folder assignment
+        let cipher = handle.get_cipher(cipher_id).unwrap();
+        match cipher {
+            CipherRead::Decrypted(c) => assert_eq!(c.folder_id, Some(folder_id)),
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+
+        // Delete folder
+        handle.delete_folder(folder_id).unwrap();
+
+        // Verify cipher is now unassigned
+        let cipher = handle.get_cipher(cipher_id).unwrap();
+        match cipher {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.folder_id, None, "cipher should be unassigned after folder delete");
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+    }
+
+    #[test]
+    fn folder_move_cipher_between_folders() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let folder_a = handle.create_folder("A").unwrap();
+        let folder_b = handle.create_folder("B").unwrap();
+
+        // Add cipher to folder A
+        let input = CipherInput {
+            name: "Test".into(),
+            folder_id: Some(folder_a),
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+        };
+        let cipher_id = handle.add_cipher(&input).unwrap();
+
+        // Move to folder B via update_cipher
+        let updated = CipherInput {
+            name: "Test".into(),
+            folder_id: Some(folder_b),
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+        };
+        handle.update_cipher(cipher_id, &updated).unwrap();
+
+        // Verify
+        let cipher = handle.get_cipher(cipher_id).unwrap();
+        match cipher {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.folder_id, Some(folder_b));
             }
             CipherRead::Locked(_) => panic!("expected decrypted"),
         }
