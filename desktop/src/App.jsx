@@ -36,9 +36,11 @@ function generateSecurePassword(length = 16, useUpper = true, useNumbers = true,
   if (useNumbers) pool += numbers;
   if (useSymbols) pool += symbols;
   
+  const arr = new Uint32Array(length);
+  crypto.getRandomValues(arr);
   let result = "";
   for (let i = 0; i < length; i++) {
-    result += pool.charAt(Math.floor(Math.random() * pool.length));
+    result += pool.charAt(arr[i] % pool.length);
   }
   return result;
 }
@@ -221,7 +223,7 @@ function useActions() {
       app.setCiphers(fullCiphers);
       await refreshTrashCiphers();
     } catch (e) {
-      // Non-critical
+      app.setError(sanitizeError(e, t));
     }
   }
 
@@ -517,11 +519,13 @@ function GeneratorModal() {
 
   function generatePassword() {
     if (genMode() === "passphrase") {
+      const randArr = new Uint32Array(passWords());
+      crypto.getRandomValues(randArr);
       let words = [];
       for (let i = 0; i < passWords(); i++) {
-        let w = EFF_WORDS[Math.floor(Math.random() * EFF_WORDS.length)];
+        let w = EFF_WORDS[randArr[i] % EFF_WORDS.length];
         if (passCap()) w = w.charAt(0).toUpperCase() + w.slice(1);
-        if (passNum()) w += Math.floor(Math.random() * 10);
+        if (passNum()) w += (randArr[i] % 10);
         words.push(w);
       }
       setGenResult(words.join(passSep()));
@@ -1564,7 +1568,6 @@ function AddEditCipherForm(props) {
               <textarea
                 placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
                 rows="6"
-                type="password"
                 class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all resize-none font-mono"
                 value={newCipher().privateKey || ""}
                 onInput={e => setNewCipher({ ...newCipher(), privateKey: e.target.value })}
@@ -1656,7 +1659,7 @@ function VaultView() {
       list = list.filter(c => 
         c.name?.toLowerCase().includes(query) ||
         c.username?.toLowerCase().includes(query) ||
-        (c.uris && c.uris.some(u => u.toLowerCase().includes(query))) ||
+        (c.uris && c.uris.some(u => (typeof u === 'string' ? u : u.uri || '').toLowerCase().includes(query))) ||
         c.notes?.toLowerCase().includes(query)
       );
     }
@@ -1664,8 +1667,8 @@ function VaultView() {
   };
 
   function startAdd(type = "login") {
-    app.setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: type, favorite: false, folder_id: null, custom_fields: [], totp_uri: "" });
-    app.setActivePane("add");
+    setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: type, favorite: false, folder_id: null, custom_fields: [], totp_uri: "" });
+    setActivePane("add");
   }
 
   return (
