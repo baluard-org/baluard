@@ -146,6 +146,9 @@ enum Commands {
         path: String,
     },
 
+    /// Show password health report (weak, reused, old passwords).
+    Health,
+
     /// Ping the daemon to check connectivity.
     Ping,
 }
@@ -330,6 +333,10 @@ fn main() {
 
         Commands::Export { format, path } => {
             commands::handle_export(cli.socket.as_deref(), &format, &path)
+        }
+
+        Commands::Health => {
+            commands::handle_health(cli.socket.as_deref())
         }
 
         Commands::Ping => {

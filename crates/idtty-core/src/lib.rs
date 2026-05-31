@@ -7,6 +7,7 @@ pub mod crypto;
 pub mod device_manager;
 pub mod devices;
 pub mod emergency;
+pub mod health;
 pub mod import;
 pub mod integrity;
 pub mod keys;

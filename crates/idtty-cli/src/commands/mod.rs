@@ -1265,3 +1265,55 @@ pub fn handle_export(
     println!("Export complete: {path}");
     Ok(())
 }
+
+// ── Health Report ──
+
+pub fn handle_health(
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_unlocked_daemon(socket)?;
+
+    let resp = client::request_to("vault.health", "", socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+
+    let report: serde_json::Value = serde_json::from_str(&resp.payload)?;
+
+    let weak = report["weak"].as_array().map(|a| a.len()).unwrap_or(0);
+    let reused = report["reused"].as_array().map(|a| a.len()).unwrap_or(0);
+    let old = report["old"].as_array().map(|a| a.len()).unwrap_or(0);
+
+    println!("=== Password Health Report ===");
+    println!();
+
+    if weak > 0 {
+        println!("Weak passwords ({}):", weak);
+        for entry in report["weak"].as_array().unwrap() {
+            println!("  {} - {}", entry["name"].as_str().unwrap_or("?"), entry["reason"].as_str().unwrap_or(""));
+        }
+        println!();
+    }
+
+    if reused > 0 {
+        println!("Reused passwords ({}):", reused);
+        for entry in report["reused"].as_array().unwrap() {
+            println!("  {} - {}", entry["name"].as_str().unwrap_or("?"), entry["reason"].as_str().unwrap_or(""));
+        }
+        println!();
+    }
+
+    if old > 0 {
+        println!("Old passwords ({}):", old);
+        for entry in report["old"].as_array().unwrap() {
+            println!("  {} - {}", entry["name"].as_str().unwrap_or("?"), entry["reason"].as_str().unwrap_or(""));
+        }
+        println!();
+    }
+
+    if weak == 0 && reused == 0 && old == 0 {
+        println!("All passwords are healthy. No issues found.");
+    }
+
+    Ok(())
+}
