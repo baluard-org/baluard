@@ -205,6 +205,7 @@ impl VaultState {
                     "updated_at": c.updated_at,
                     "password_history": c.password_history,
                     "attachments": c.attachments,
+                    "custom_fields": c.custom_fields,
                 });
                 // Emit kind as nested object matching CipherKind serde format
                 json["kind"] = serde_json::to_value(&c.kind).unwrap_or(serde_json::Value::Null);
