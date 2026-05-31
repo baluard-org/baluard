@@ -6,6 +6,7 @@
 use idtty_core::vault::handle::VaultHandle;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 /// Shared vault state accessible from all connection handlers.
@@ -18,6 +19,8 @@ pub struct VaultState {
     /// Any same-UID process connecting after unlock must present this token
     /// to access cipher data. Prevents the daemon from being a full-vault oracle.
     session_token: RwLock<Option<String>>,
+    /// Last activity timestamp (seconds since epoch). Updated on every IPC request.
+    last_activity: AtomicU64,
 }
 
 impl VaultState {
@@ -27,7 +30,65 @@ impl VaultState {
             vault_path,
             inner: RwLock::new(None),
             session_token: RwLock::new(None),
+            last_activity: AtomicU64::new(0),
         }
+    }
+
+    /// Touch last activity timestamp (called on every IPC request).
+    pub fn touch_activity(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.last_activity.store(now, Ordering::Relaxed);
+    }
+
+    /// Get seconds since last activity.
+    pub fn seconds_since_activity(&self) -> u64 {
+        let last = self.last_activity.load(Ordering::Relaxed);
+        if last == 0 { return 0; }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now.saturating_sub(last)
+    }
+
+    /// Spawn auto-lock background checker. Checks every 30s.
+    pub fn spawn_auto_lock_checker(state: Arc<Self>) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+
+                // Read auto_lock_minutes from settings
+                let timeout_minutes = {
+                    let guard = state.inner.read().await;
+                    if let Some(handle) = guard.as_ref() {
+                        handle.get_settings().ok()
+                            .and_then(|s| s.auto_lock_minutes)
+                            .unwrap_or(15) // default 15 minutes
+                    } else {
+                        continue; // no vault open
+                    }
+                };
+
+                let elapsed = state.seconds_since_activity();
+                let timeout_secs = (timeout_minutes as u64) * 60;
+
+                if elapsed >= timeout_secs && timeout_secs > 0 {
+                    eprintln!("Auto-lock: {}s idle >= {}s timeout, locking vault", elapsed, timeout_secs);
+                    let mut guard = state.inner.write().await;
+                    if let Some(handle) = guard.as_mut() {
+                        if handle.is_unlocked() {
+                            let _ = handle.lock();
+                            *state.session_token.write().await = None;
+                            state.last_activity.store(0, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
+        });
     }
 
     /// Open a vault from disk (locked state).
