@@ -130,6 +130,22 @@ enum Commands {
         action: FolderAction,
     },
 
+    /// Import entries from external format.
+    Import {
+        /// Format: bw-json, bw-csv, chrome-csv, firefox-csv, lastpass-csv, 1password-1pux, 1password-csv, keepass-xml.
+        format: String,
+        /// Path to import file.
+        path: String,
+    },
+
+    /// Export vault entries.
+    Export {
+        /// Format: bw-json, bw-csv.
+        format: String,
+        /// Output file path.
+        path: String,
+    },
+
     /// Ping the daemon to check connectivity.
     Ping,
 }
@@ -307,6 +323,14 @@ fn main() {
                 commands::handle_folder_delete(mode, cli.socket.as_deref(), &id)
             }
         },
+
+        Commands::Import { format, path } => {
+            commands::handle_import(cli.socket.as_deref(), &format, &path)
+        }
+
+        Commands::Export { format, path } => {
+            commands::handle_export(cli.socket.as_deref(), &format, &path)
+        }
 
         Commands::Ping => {
             match client::request_to("ping", "", cli.socket.as_deref()) {

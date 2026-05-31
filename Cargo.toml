@@ -56,7 +56,7 @@ bytes = "1"
 
 # Hex / Base64
 hex = "0.4"
-base64 = "0.22"
+base64 = { version = "0.22", features = ["alloc"] }
 
 # Secure memory
 zeroize = { version = "1", features = ["derive"] }

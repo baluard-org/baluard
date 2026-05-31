@@ -3,7 +3,7 @@
 //! Holds an unlocked VaultHandle in memory behind a shared lock.
 //! The daemon routes gateway actions through this state.
 
-use idtty_core::vault::handle::VaultHandle;
+use idtty_core::vault::handle::{CipherRead, VaultHandle};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -480,6 +480,107 @@ impl VaultState {
         let folder_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
 
         handle.rename_folder(folder_id, name).map_err(|e| format!("{e}"))
+    }
+
+    /// Import ciphers from parsed data. Creates folders from folder_map, then batch-creates ciphers.
+    pub async fn import_ciphers(&self, import_result: idtty_core::import::ImportResult) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+
+        // Create folders and build name->id map
+        let mut folder_id_map: std::collections::HashMap<String, uuid::Uuid> = std::collections::HashMap::new();
+        for folder_name in import_result.folder_map.keys() {
+            match handle.create_folder(folder_name) {
+                Ok(id) => { folder_id_map.insert(folder_name.clone(), id); }
+                Err(_) => {
+                    // Folder may already exist; try to find it
+                    if let Ok(folders) = handle.list_folders() {
+                        if let Some(existing) = folders.iter().find(|f| f.name == *folder_name) {
+                            folder_id_map.insert(folder_name.clone(), existing.id);
+                        }
+                    }
+                }
+            }
+        }
+
+        let total = import_result.ciphers.len();
+        let mut created = 0usize;
+        let mut errors = import_result.errors.clone();
+
+        for (idx, mut cipher) in import_result.ciphers.into_iter().enumerate() {
+            // Assign folder_id if this cipher belongs to a folder
+            let folder_name = import_result.folder_map.iter()
+                .find(|(_, indices)| indices.contains(&idx))
+                .map(|(name, _)| name.clone());
+            if let Some(name) = folder_name {
+                cipher.folder_id = folder_id_map.get(&name).copied();
+            }
+
+            match handle.add_cipher(&cipher) {
+                Ok(_) => created += 1,
+                Err(e) => errors.push(format!("Cipher '{}': {e}", cipher.name)),
+            }
+        }
+
+        let response = serde_json::json!({
+            "imported": created,
+            "skipped": import_result.skipped + (total - created),
+            "folders_created": folder_id_map.len(),
+            "errors": errors,
+        });
+        Ok(response.to_string())
+    }
+
+    /// Export all ciphers as BW-compatible JSON.
+    pub async fn export_bw_json(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+
+        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
+        let mut ciphers = Vec::new();
+        for meta in &metas {
+            match handle.get_cipher(meta.id) {
+                Ok(CipherRead::Decrypted(c)) => ciphers.push(c),
+                Ok(CipherRead::Locked(_)) => continue,
+                Err(e) => eprintln!("[export] skipping {}: {e}", meta.id),
+            }
+        }
+
+        // Get folders
+        let folders = handle.list_folders().map_err(|e| format!("{e}"))?;
+        let folder_pairs: Vec<(uuid::Uuid, String)> = folders.into_iter().map(|f| (f.id, f.name)).collect();
+
+        idtty_core::import::export::export_bw_json(&ciphers, &folder_pairs)
+    }
+
+    /// Export all ciphers as BW-compatible CSV (logins only).
+    pub async fn export_bw_csv(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+
+        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
+        let mut ciphers = Vec::new();
+        for meta in &metas {
+            match handle.get_cipher(meta.id) {
+                Ok(CipherRead::Decrypted(c)) => ciphers.push(c),
+                Ok(CipherRead::Locked(_)) => continue,
+                Err(e) => eprintln!("[export] skipping {}: {e}", meta.id),
+            }
+        }
+
+        idtty_core::import::export::export_bw_csv(&ciphers)
     }
 
     /// Delete a folder. Unassigns all ciphers in that folder.

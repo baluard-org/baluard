@@ -662,7 +662,127 @@ function AutoLockButton() {
   );
 }
 
-function DeleteConfirmModal() {
+function ImportExportButton() {
+  const [showMenu, setShowMenu] = createSignal(false);
+  const [importing, setImporting] = createSignal(false);
+  const [exporting, setExporting] = createSignal(false);
+  const [message, setMessage] = createSignal(null);
+
+  const formats = [
+    { id: "bw-json", label: "Bitwarden JSON" },
+    { id: "bw-csv", label: "Bitwarden CSV" },
+    { id: "chrome-csv", label: "Chrome CSV" },
+    { id: "firefox-csv", label: "Firefox CSV" },
+    { id: "lastpass-csv", label: "LastPass CSV" },
+    { id: "1password-1pux", label: "1Password (1PUX)" },
+    { id: "1password-csv", label: "1Password CSV" },
+    { id: "keepass-xml", label: "KeePass XML" },
+  ];
+
+  async function doImport(format) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = format === "1password-1pux" ? ".1pux" : ".csv,.json,.xml,.txt";
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      setImporting(true);
+      setMessage(null);
+      try {
+        let data;
+        if (format === "1password-1pux") {
+          const buf = await file.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          let binary = "";
+          bytes.forEach(b => binary += String.fromCharCode(b));
+          data = btoa(binary);
+        } else {
+          data = await file.text();
+        }
+        const payload = JSON.stringify({ format, data });
+        const resp = await daemon("vault.import", payload);
+        const result = JSON.parse(resp);
+        setMessage(`Imported ${result.imported || 0} entries` + (result.skipped ? `, skipped ${result.skipped}` : ""));
+      } catch (e) {
+        setMessage("Import failed: " + sanitizeError(e, null));
+      }
+      setImporting(false);
+      setShowMenu(false);
+    };
+    input.click();
+  }
+
+  async function doExport(format) {
+    setExporting(true);
+    setMessage(null);
+    try {
+      const resp = await daemon("vault.export", format);
+      const ext = format === "bw-csv" ? "csv" : "json";
+      const blob = new Blob([resp], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `idtty-export.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setMessage("Export complete");
+    } catch (e) {
+      setMessage("Export failed: " + sanitizeError(e, null));
+    }
+    setExporting(false);
+    setShowMenu(false);
+  }
+
+  return (
+    <div class="relative">
+      <button
+        onClick={() => setShowMenu(!showMenu())}
+        title="Import / Export"
+        class="p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)]"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+      </button>
+      <Show when={showMenu()}>
+        <div class="absolute bottom-full right-0 mb-2 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl p-4 w-64 z-50">
+          <div class="text-xs font-bold text-[var(--color-text)] mb-2">Import from</div>
+          <div class="space-y-1 mb-3">
+            <For each={formats}>
+              {(f) => (
+                <button
+                  onClick={() => doImport(f.id)}
+                  disabled={importing()}
+                  class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {f.label}
+                </button>
+              )}
+            </For>
+          </div>
+          <div class="border-t border-[var(--color-border)] pt-2">
+            <div class="text-xs font-bold text-[var(--color-text)] mb-2">Export as</div>
+            <button
+              onClick={() => doExport("bw-json")}
+              disabled={exporting()}
+              class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer disabled:opacity-50"
+            >
+              Bitwarden JSON
+            </button>
+            <button
+              onClick={() => doExport("bw-csv")}
+              disabled={exporting()}
+              class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer disabled:opacity-50"
+            >
+              Bitwarden CSV
+            </button>
+          </div>
+          <Show when={message()}>
+            <div class="mt-2 text-[10px] text-[var(--color-primary)] font-bold">{message()}</div>
+          </Show>
+        </div>
+      </Show>
+    </div>
+  );
+}
   const { viewCipher, setShowDeleteConfirm, showDeleteConfirm, selectedCategory } = useApp();
   const { deleteCipher } = useActions();
   const { t } = useI18n();
@@ -1807,6 +1927,7 @@ function VaultView() {
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
             </button>
             <AutoLockButton />
+            <ImportExportButton />
           </div>
         </div>
       </div>

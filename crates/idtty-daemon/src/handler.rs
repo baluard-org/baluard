@@ -9,6 +9,7 @@ use crate::proto::{GatewayRequest, GatewayResponse};
 use crate::state::SharedVaultState;
 
 use anyhow::Result;
+use base64::Engine;
 use bytes::{Buf, BytesMut};
 use prost::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -173,6 +174,8 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "sync.pull",
     "sync.status",
     "sync.log",
+    "vault.import",
+    "vault.export",
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.
@@ -464,6 +467,86 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             match state.settings_set(&req.payload).await {
                 Ok(()) => ok_resp("settings updated", token_str),
                 Err(e) => err_response(e),
+            }
+        }
+
+        // ── Import (token required) ──
+        "vault.import" => {
+            // Payload: JSON {"format": "bw-json", "data": "..."}
+            // OR for file-based: JSON {"format": "keepass-xml", "path": "/path/to/file"}
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(e) => return err_response(format!("Invalid JSON: {e}")),
+            };
+            let format_str = parsed["format"].as_str().unwrap_or("");
+            let format = match idtty_core::import::ImportFormat::from_str(format_str) {
+                Some(f) => f,
+                None => return err_response(format!("Unknown import format: {format_str}. Supported: {:?}", idtty_core::import::ImportFormat::all_names())),
+            };
+
+            let import_result = match format {
+                idtty_core::import::ImportFormat::BwJson => {
+                    let data = parsed["data"].as_str().unwrap_or("");
+                    idtty_core::import::bw_json::parse(data)
+                }
+                idtty_core::import::ImportFormat::BwCsv => {
+                    let data = parsed["data"].as_str().unwrap_or("");
+                    idtty_core::import::bw_csv::parse(data)
+                }
+                idtty_core::import::ImportFormat::ChromeCsv => {
+                    let data = parsed["data"].as_str().unwrap_or("");
+                    idtty_core::import::chrome_csv::parse(data)
+                }
+                idtty_core::import::ImportFormat::FirefoxCsv => {
+                    let data = parsed["data"].as_str().unwrap_or("");
+                    idtty_core::import::firefox_csv::parse(data)
+                }
+                idtty_core::import::ImportFormat::LastPassCsv => {
+                    let data = parsed["data"].as_str().unwrap_or("");
+                    idtty_core::import::lastpass_csv::parse(data)
+                }
+                idtty_core::import::ImportFormat::OnePassword1pux => {
+                    // 1PUX is binary (ZIP). Data comes as base64.
+                    let b64 = parsed["data"].as_str().unwrap_or("");
+                    match base64::engine::general_purpose::STANDARD.decode(b64) {
+                        Ok(bytes) => idtty_core::import::onepassword_1pux::parse(&bytes),
+                        Err(e) => {
+                            let mut r = idtty_core::import::ImportResult::new();
+                            r.skip(format!("Invalid base64: {e}"));
+                            r
+                        }
+                    }
+                }
+                idtty_core::import::ImportFormat::OnePasswordCsv => {
+                    let data = parsed["data"].as_str().unwrap_or("");
+                    idtty_core::import::onepassword_csv::parse(data)
+                }
+                idtty_core::import::ImportFormat::KeePassXml => {
+                    let data = parsed["data"].as_str().unwrap_or("");
+                    idtty_core::import::keepass_xml::parse(data)
+                }
+            };
+
+            match state.import_ciphers(import_result).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        // ── Export (token required) ──
+        "vault.export" => {
+            // Payload: "bw-json" or "bw-csv"
+            let format = req.payload.trim();
+            match format {
+                "bw-json" => match state.export_bw_json().await {
+                    Ok(json) => ok_resp(json, token_str),
+                    Err(e) => err_response(e),
+                },
+                "bw-csv" => match state.export_bw_csv().await {
+                    Ok(csv) => ok_resp(csv, token_str),
+                    Err(e) => err_response(e),
+                },
+                _ => err_response(format!("Unknown export format: {format}. Use bw-json or bw-csv")),
             }
         }
 

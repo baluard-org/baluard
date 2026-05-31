@@ -12,6 +12,7 @@ use std::path::Path;
 use idtty_core::types::{CipherInput, CipherKind, KdfProfile, LoginData};
 use idtty_core::vault::handle::{CipherRead, VaultHandle};
 use zeroize::Zeroize;
+use base64::Engine;
 
 // ── Init (always direct) ──
 
@@ -1152,4 +1153,113 @@ pub fn handle_folder_delete(
             std::process::exit(1);
         }
     }
+}
+
+// ── Import ──
+
+pub fn handle_import(
+    socket: Option<&str>,
+    format: &str,
+    path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let import_format = idtty_core::import::ImportFormat::from_str(format)
+        .ok_or_else(|| -> Box<dyn std::error::Error> {
+            format!("Unknown format: {format}. Supported: {:?}", idtty_core::import::ImportFormat::all_names()).into()
+        })?;
+
+    ensure_unlocked_daemon(socket)?;
+
+    // Pre-read file size check (prevent OOM on large files)
+    const MAX_IMPORT_SIZE: u64 = 50 * 1024 * 1024; // 50MB
+    let file_meta = std::fs::metadata(path)
+        .map_err(|e| format!("Failed to stat {path}: {e}"))?;
+    if file_meta.len() > MAX_IMPORT_SIZE {
+        return Err(format!("Import file too large: {} bytes (max {} bytes)", file_meta.len(), MAX_IMPORT_SIZE).into());
+    }
+
+    // For 1PUX, read as binary and base64-encode
+    let payload = match import_format {
+        idtty_core::import::ImportFormat::OnePassword1pux => {
+            let bytes = std::fs::read(path)
+                .map_err(|e| format!("Failed to read {path}: {e}"))?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            serde_json::json!({"format": format, "data": b64}).to_string()
+        }
+        _ => {
+            let file_data = std::fs::read_to_string(path)
+                .map_err(|e| format!("Failed to read {path}: {e}"))?;
+            serde_json::json!({"format": format, "data": file_data}).to_string()
+        }
+    };
+
+    println!("Importing from {path} (format: {format})...");
+    let resp = client::request_to("vault.import", &payload, socket)?;
+
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+
+    let result: serde_json::Value = serde_json::from_str(&resp.payload)?;
+    println!("Import complete:");
+    println!("  Imported: {}", result["imported"].as_u64().unwrap_or(0));
+    println!("  Skipped:  {}", result["skipped"].as_u64().unwrap_or(0));
+    if let Some(folders) = result["folders_created"].as_u64() {
+        if folders > 0 {
+            println!("  Folders created: {folders}");
+        }
+    }
+    if let Some(errors) = result["errors"].as_array() {
+        if !errors.is_empty() {
+            eprintln!("Errors:");
+            for err in errors {
+                eprintln!("  - {}", err.as_str().unwrap_or("unknown"));
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── Export ──
+
+pub fn handle_export(
+    socket: Option<&str>,
+    format: &str,
+    path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_unlocked_daemon(socket)?;
+
+    // Warn about plaintext secrets
+    eprintln!("WARNING: Export file will contain UNENCRYPTED secrets (passwords, cards, SSH keys).");
+    eprintln!("         Delete the file after use. Do not upload to cloud storage.");
+
+    // Confirm overwrite if file exists
+    if std::path::Path::new(path).exists() {
+        println!("File '{path}' already exists. Overwrite? [y/N] ");
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if !answer.trim().eq_ignore_ascii_case("y") {
+            println!("Export cancelled.");
+            return Ok(());
+        }
+    }
+
+    println!("Exporting vault as {format}...");
+    let resp = client::request_to("vault.export", format, socket)?;
+
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+
+    std::fs::write(path, &resp.payload)
+        .map_err(|e| format!("Failed to write {path}: {e}"))?;
+
+    // Set file permissions to 0600 on Unix (owner-only read/write)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    println!("Export complete: {path}");
+    Ok(())
 }
