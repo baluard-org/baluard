@@ -108,6 +108,13 @@ impl VaultState {
         Ok(ids.iter().map(|id| id.to_string()).collect())
     }
 
+    /// List cipher metadata (requires unlocked vault).
+    pub async fn list_cipher_meta(&self) -> Result<Vec<idtty_core::types::CipherMeta>, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        handle.list_cipher_meta().map_err(|e| format!("{e}"))
+    }
+
     /// Get a cipher by ID. Requires vault to be unlocked for decryption.
     pub async fn get_cipher(&self, id_str: &str, decrypt: bool) -> Result<String, String> {
         let guard = self.inner.read().await;
@@ -123,6 +130,7 @@ impl VaultState {
                     "id": c.id.to_string(),
                     "name": c.name,
                     "type": serde_json::to_value(c.kind.cipher_type()).unwrap_or(serde_json::Value::Null),
+                    "favorite": c.favorite,
                     "notes": c.notes,
                     "tier": format!("{:?}", c.tier),
                     "epoch": c.key_epoch,
@@ -219,6 +227,57 @@ impl VaultState {
         let cipher_id = handle.add_cipher(&input).map_err(|e| format!("{e}"))?;
 
         Ok(cipher_id.to_string())
+    }
+
+    /// Update an existing cipher.
+    pub async fn update_cipher(&self, payload: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+
+        let update: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+
+        let cipher_id = update["id"]
+            .as_str()
+            .ok_or("Missing 'id' field")?
+            .parse::<uuid::Uuid>()
+            .map_err(|e| format!("Invalid UUID: {e}"))?;
+
+        // Get existing cipher to merge updates
+        let existing = handle.get_cipher(cipher_id).map_err(|e| format!("{e}"))?;
+        let existing_cipher = match existing {
+            idtty_core::vault::handle::CipherRead::Decrypted(c) => c,
+            _ => return Err("Cipher not found or vault locked".to_string()),
+        };
+
+        // Build merged input from existing + updates
+        let mut input = idtty_core::types::CipherInput {
+            name: update["name"].as_str().unwrap_or(&existing_cipher.name).to_string(),
+            folder_id: update
+                .get("folder_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.parse::<uuid::Uuid>().ok())
+                .flatten()
+                .or(existing_cipher.folder_id),
+            kind: existing_cipher.kind.clone(),
+            favorite: update
+                .get("favorite")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(existing_cipher.favorite),
+            notes: update
+                .get("notes")
+                .and_then(|v| v.as_str().map(String::from))
+                .or(existing_cipher.notes.clone()),
+            custom_fields: existing_cipher.custom_fields.clone(),
+        };
+
+        handle
+            .update_cipher(cipher_id, &input)
+            .map_err(|e| format!("{e}"))
     }
 
     /// Delete a cipher by ID. Uses write lock for filesystem mutation.

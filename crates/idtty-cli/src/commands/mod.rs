@@ -169,6 +169,7 @@ pub fn handle_add(
             autofill_on_page_load: false,
             password_revision_date: None,
         }),
+        favorite: false,
         notes,
         custom_fields: vec![],
     };
@@ -430,22 +431,20 @@ pub fn handle_list(
                 return Err(resp.error_message.into());
             }
             let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
-            let ids = data["cipher_ids"]
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            if ids.is_empty() {
+            let ciphers = data["ciphers"].as_array();
+            if ciphers.map_or(true, |a| a.is_empty()) {
                 println!("No ciphers found.");
-            } else {
-                for id in &ids {
-                    println!("{id}");
+            } else if let Some(ciphers) = ciphers {
+                for c in ciphers {
+                    let id = c["id"].as_str().unwrap_or("?");
+                    let name = c["name"].as_str().unwrap_or("?");
+                    let ctype = c["type"].as_str().unwrap_or("login");
+                    let fav = if c["favorite"].as_bool().unwrap_or(false) { "*" } else { " " };
+                    let username = c["username"].as_str().unwrap_or("");
+                    println!("{fav} {id}  [{ctype:>10}]  {name}  {username}");
                 }
                 println!();
-                println!("{} cipher(s)", ids.len());
+                println!("{} cipher(s)", ciphers.len());
             }
             Ok(())
         }
@@ -456,18 +455,35 @@ pub fn handle_list(
 fn list_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
     let handle = VaultHandle::open(path)?;
-    let ids = handle.list_cipher_ids()?;
 
-    if ids.is_empty() {
-        println!("No ciphers found.");
-        return Ok(());
+    // Try CipherMeta listing (requires unlock)
+    if handle.is_unlocked() {
+        let metas = handle.list_cipher_meta()?;
+        if metas.is_empty() {
+            println!("No ciphers found.");
+            return Ok(());
+        }
+        for m in &metas {
+            let fav = if m.favorite { "*" } else { " " };
+            let ctype = format!("{:?}", m.cipher_type).to_lowercase();
+            let username = m.username.as_deref().unwrap_or("");
+            println!("{fav} {}  [{ctype:>10}]  {}  {username}", m.id, m.name);
+        }
+        println!();
+        println!("{} cipher(s)", metas.len());
+    } else {
+        // Locked: fall back to IDs only
+        let ids = handle.list_cipher_ids()?;
+        if ids.is_empty() {
+            println!("No ciphers found.");
+            return Ok(());
+        }
+        for id in &ids {
+            println!("{id}");
+        }
+        println!();
+        println!("{} cipher(s) (locked, unlock for details)", ids.len());
     }
-
-    for id in &ids {
-        println!("{id}");
-    }
-    println!();
-    println!("{} cipher(s)", ids.len());
     Ok(())
 }
 
@@ -873,6 +889,75 @@ fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
             let mut buf = String::new();
             std::io::stdin().lock().read_line(&mut buf)?;
             Ok(buf.trim().to_string())
+        }
+    }
+}
+
+// ── Edit cipher ──
+
+pub fn handle_edit(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    id: &str,
+    name: Option<String>,
+    favorite: Option<bool>,
+    folder: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if name.is_none() && favorite.is_none() && folder.is_none() {
+        eprintln!("Nothing to edit. Use --name, --favorite, or --folder.");
+        return Ok(());
+    }
+
+    let mut payload = serde_json::json!({"id": id});
+    if let Some(ref n) = name {
+        payload["name"] = serde_json::Value::String(n.clone());
+    }
+    if let Some(f) = favorite {
+        payload["favorite"] = serde_json::Value::Bool(f);
+    }
+    if let Some(ref fid) = folder {
+        payload["folder_id"] = serde_json::Value::String(fid.clone());
+    }
+
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("vault.update", &payload.to_string(), socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("Cipher updated.");
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            let mp = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
+            let path = Path::new(vault_path);
+            let mut handle = VaultHandle::open(path)?;
+            handle.unlock(&mp)?;
+
+            let cipher_id = uuid::Uuid::parse_str(id).map_err(|_| "invalid UUID")?;
+            let existing = handle.get_cipher(cipher_id)?;
+            let existing_cipher = match existing {
+                CipherRead::Decrypted(c) => c,
+                CipherRead::Locked(_) => return Err("Cipher not found or vault locked".into()),
+            };
+
+            let input = idtty_core::types::CipherInput {
+                name: name.clone().unwrap_or_else(|| existing_cipher.name.clone()),
+                folder_id: folder
+                    .as_ref()
+                    .map(|f| f.parse::<uuid::Uuid>().ok())
+                    .flatten()
+                    .or(existing_cipher.folder_id),
+                kind: existing_cipher.kind.clone(),
+                favorite: favorite.unwrap_or(existing_cipher.favorite),
+                notes: existing_cipher.notes.clone(),
+                custom_fields: existing_cipher.custom_fields.clone(),
+            };
+
+            handle.update_cipher(cipher_id, &input)?;
+            println!("Cipher updated.");
+            Ok(())
         }
     }
 }

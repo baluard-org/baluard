@@ -13,6 +13,36 @@ message VaultEntry {
   string notes = 6;
   string totp_uri = 7;
   repeated CustomField custom_fields = 8;
+  // Phase 3 additions (reference schema, not used in wire format)
+  bool favorite = 9;
+  CipherType cipher_type = 10;
+  repeated LoginUri uris = 11;
+}
+
+// Reference schema: cipher type discriminator.
+// Actual wire format uses JSON-in-string via GatewayRequest.payload.
+enum CipherType {
+  LOGIN = 0;
+  SECURE_NOTE = 1;
+  CARD = 2;
+  IDENTITY = 3;
+  SSH_KEY = 4;
+}
+
+// Reference schema: URI with match strategy.
+message LoginUri {
+  string uri = 1;
+  UriMatchStrategy match_strategy = 2;
+}
+
+// Reference schema: URI match strategy.
+enum UriMatchStrategy {
+  DOMAIN = 0;
+  HOST = 1;
+  STARTS_WITH = 2;
+  EXACT = 3;
+  REGEX = 4;
+  NEVER = 5;
 }
 
 message CustomField {
