@@ -62,6 +62,8 @@ function AppProvider(props) {
   
   // Navigation & filter states
   const [selectedCategory, setSelectedCategory] = createSignal("All items");
+  const [selectedFolder, setSelectedFolder] = createSignal(null);
+  const [folders, setFolders] = createSignal([]);
   const [searchQuery, setSearchQuery] = createSignal("");
   
   // View/Form states
@@ -107,6 +109,8 @@ createEffect(() => {
     vaultInfo, setVaultInfo,
     theme, setTheme,
     selectedCategory, setSelectedCategory,
+  selectedFolder, setSelectedFolder,
+  folders, setFolders,
     searchQuery, setSearchQuery,
     activePane, setActivePane,
     viewCipher, setViewCipher,
@@ -239,6 +243,13 @@ function useActions() {
       );
       
       app.setCiphers(fullCiphers);
+
+      // Load folders
+      try {
+        const folderData = JSON.parse(await daemon("folder.list"));
+        app.setFolders(Array.isArray(folderData) ? folderData : []);
+      } catch (e) {}
+
       await refreshTrashCiphers();
     } catch (e) {
       app.setError(sanitizeError(e, t));
@@ -2123,8 +2134,57 @@ function RepromptModal() {
   );
 }
 
+function FolderTree(props) {
+  // Build tree from flat list
+  const tree = () => {
+    const folders = props.folders || [];
+    const roots = folders.filter(f => !f.parent_id);
+    return roots.map(r => buildNode(r, folders));
+  };
+
+  function buildNode(folder, allFolders) {
+    const children = allFolders.filter(f => f.parent_id === folder.id);
+    return { ...folder, children: children.map(c => buildNode(c, allFolders)) };
+  }
+
+  return <For each={tree()}>
+    {(node) => <FolderNode node={node} depth={0} selectedFolder={props.selectedFolder} setSelectedFolder={props.setSelectedFolder} />}
+  </For>;
+}
+
+function FolderNode(props) {
+  const [expanded, setExpanded] = createSignal(true);
+  const hasChildren = () => (props.node.children || []).length > 0;
+
+  return (
+    <div>
+      <div
+        class={`flex items-center gap-1 px-3.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${props.selectedFolder?.() === props.node.id ? "bg-[var(--color-sidebar)] text-[var(--color-text)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
+        style={{ "padding-left": `${12 + props.depth * 16}px` }}
+        onClick={() => props.setSelectedFolder?.(props.node.id)}
+      >
+        {hasChildren() ? (
+          <button
+            onClick={e => { e.stopPropagation(); setExpanded(!expanded()); }}
+            class="p-0.5 rounded hover:bg-black/10 cursor-pointer shrink-0"
+          >
+            <svg class={`w-3 h-3 transition-transform ${expanded() ? "rotate-90" : ""}`} fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
+          </button>
+        ) : <span class="w-4 shrink-0" />}
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+        <span class="truncate">{props.node.name}</span>
+      </div>
+      <Show when={hasChildren() && expanded()}>
+        <For each={props.node.children || []}>
+          {(child) => <FolderNode node={child} depth={props.depth + 1} selectedFolder={props.selectedFolder} setSelectedFolder={props.setSelectedFolder} />}
+        </For>
+      </Show>
+    </div>
+  );
+}
+
 function VaultView() {
-  const { ciphers, trashCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator } = useApp();
+  const { ciphers, trashCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator } = useApp();
   const { lock } = useActions();
   const { t } = useI18n();
 
@@ -2159,6 +2219,12 @@ function VaultView() {
       list = list.filter(c => (c.type || c._meta?.type) === "secureNote");
     } else if (cat === "SSH key") {
       list = list.filter(c => (c.type || c._meta?.type) === "sshKey");
+    }
+
+    // Folder filtering
+    const folder = selectedFolder();
+    if (folder) {
+      list = list.filter(c => (c.folder_id || c._meta?.folder_id) === folder);
     }
 
     // Search query filtering
@@ -2230,7 +2296,7 @@ function VaultView() {
                 <For each={categories}>
                   {(cat) => (
                     <button
-                      onClick={() => setSelectedCategory(cat.name)}
+                      onClick={() => { setSelectedCategory(cat.name); setSelectedFolder(null); }}
                       class={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between text-left cursor-pointer ${
                         selectedCategory() === cat.name
                           ? "bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] shadow-sm"
@@ -2259,13 +2325,35 @@ function VaultView() {
             
             {/* Folders */}
             <div>
-              <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">
-                Folders
+              <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between">
+                <span>Folders</span>
+                <button
+                  onClick={async () => {
+                    const name = prompt("Folder name:");
+                    if (name) {
+                      try {
+                        await daemon("folder.create", JSON.stringify({ name }));
+                        await refreshCiphers();
+                      } catch (e) { alert(e.message); }
+                    }
+                  }}
+                  class="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] cursor-pointer"
+                  title="New folder"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                </button>
               </div>
               <div class="space-y-0.5 mt-1">
-                <button class="w-full px-3.5 py-2 rounded-xl text-xs font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10 flex items-center gap-3 text-left cursor-pointer">
+                {/* Folder tree */}
+                <Show when={folders() && folders().length > 0}>
+                  <FolderTree folders={folders() || []} selectedFolder={selectedFolder} setSelectedFolder={setSelectedFolder} />
+                </Show>
+                <button
+                  onClick={() => setSelectedFolder(null)}
+                  class={`w-full px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-3 text-left cursor-pointer ${!selectedFolder() ? "bg-[var(--color-sidebar)] text-[var(--color-text)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
+                >
                   <svg class="w-4 h-4 text-[var(--color-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                  Others
+                  No Folder
                 </button>
               </div>
             </div>

@@ -334,19 +334,31 @@ impl VaultHandle {
 
     /// Create a new folder.
     pub fn create_folder(&mut self, name: &str) -> Result<Uuid, IdttyError> {
+        self.create_folder_with_parent(name, None)
+    }
+
+    /// Create a new folder with optional parent.
+    pub fn create_folder_with_parent(&mut self, name: &str, parent_id: Option<Uuid>) -> Result<Uuid, IdttyError> {
         if name.trim().is_empty() {
             return Err(crate::error::VaultError::Metadata("folder name cannot be empty".into()).into());
         }
         let trimmed = name.trim();
         let mut folders = self.list_folders()?;
-        if folders.iter().any(|f| f.name == trimmed) {
+        // Check for duplicate name within the same parent
+        if folders.iter().any(|f| f.name == trimmed && f.parent_id == parent_id) {
             return Err(crate::error::VaultError::Metadata(format!("folder '{trimmed}' already exists")).into());
+        }
+        // Validate parent exists
+        if let Some(pid) = parent_id {
+            if !folders.iter().any(|f| f.id == pid) {
+                return Err(crate::error::VaultError::Metadata(format!("parent folder not found")).into());
+            }
         }
         let id = Uuid::new_v4();
         folders.push(crate::vault::manifest::Folder {
             id,
             name: trimmed.to_string(),
-            parent_id: None,
+            parent_id,
             icon: None,
         });
         self.save_folders(&folders)?;
