@@ -24,6 +24,9 @@ function sanitizeError(raw, t) {
   return t("errors.unexpected");
 }
 
+// Normalize URI (string or {uri, match_strategy}) to plain string
+const uriStr = (u) => typeof u === "string" ? u : (u?.uri || "");
+
 // Helper to generate password
 function generateSecurePassword(length = 16, useUpper = true, useNumbers = true, useSymbols = true) {
   const lowercase = "abcdefghijklmnopqrstuvwxyz";
@@ -840,7 +843,7 @@ function CipherRow(props) {
       <div class="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
         <Show when={props.cipher.uris?.[0]}>
           <a
-            href={props.cipher.uris[0].startsWith("http") ? props.cipher.uris[0] : `https://${props.cipher.uris[0]}`}
+            href={(() => { const u = uriStr(props.cipher.uris[0]); return u.startsWith("http") ? u : `https://${u}`; })()}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
@@ -1130,16 +1133,16 @@ function CipherDetail() {
               <div class="min-w-0 flex-1">
                 <label class="text-[10px] text-[var(--color-muted)] font-extrabold uppercase tracking-wider block">Website URL</label>
                 <a
-                  href={viewCipher()?.uris[0].startsWith("http") ? viewCipher()?.uris[0] : `https://${viewCipher()?.uris[0]}`}
+                  href={(() => { const u = uriStr(viewCipher()?.uris?.[0]); return u.startsWith("http") ? u : `https://${u}`; })()}
                   target="_blank"
                   rel="noopener noreferrer"
                   class="text-sm text-[var(--color-accent)] hover:underline font-semibold mt-0.5 inline-block"
                 >
-                  {viewCipher()?.uris[0]}
+                  {uriStr(viewCipher()?.uris?.[0])}
                 </a>
               </div>
               <a
-                href={viewCipher()?.uris[0].startsWith("http") ? viewCipher()?.uris[0] : `https://${viewCipher()?.uris[0]}`}
+                href={(() => { const u = uriStr(viewCipher()?.uris?.[0]); return u.startsWith("http") ? u : `https://${u}`; })()}
                 target="_blank"
                 rel="noopener noreferrer"
                 class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
