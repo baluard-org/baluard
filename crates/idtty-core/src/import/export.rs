@@ -40,6 +40,14 @@ struct BwExportItem {
     identity: Option<BwExportIdentity>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ssh_key: Option<BwExportSshKey>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bank_account: Option<crate::types::BankAccountData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drivers_license: Option<crate::types::DriversLicenseData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    passport: Option<crate::types::PassportData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    country_id: Option<crate::types::CountryIdData>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     fields: Vec<BwExportField>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -170,9 +178,23 @@ pub fn export_bw_json(
             CipherKind::Card(_) => 3,
             CipherKind::Identity(_) => 4,
             CipherKind::SshKey(_) => 5,
+            CipherKind::BankAccount(_) => 6,
+            CipherKind::DriversLicense(_) => 7,
+            CipherKind::Passport(_) => 8,
+            CipherKind::CountryId(_) => 9,
         };
 
-        let (login, secure_note, card, identity, ssh_key) = match &cipher.kind {
+        let (
+            login,
+            secure_note,
+            card,
+            identity,
+            ssh_key,
+            bank_account,
+            drivers_license,
+            passport,
+            country_id,
+        ) = match &cipher.kind {
             CipherKind::Login(data) => (
                 Some(BwExportLogin {
                     username: data.username.clone(),
@@ -192,10 +214,18 @@ pub fn export_bw_json(
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
+                None,
             ),
             CipherKind::SecureNote => (
                 None,
                 Some(BwExportSecureNote { r#type: 0 }),
+                None,
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -211,6 +241,10 @@ pub fn export_bw_json(
                     exp_year: data.exp_year.clone(),
                     code: data.code.clone(),
                 }),
+                None,
+                None,
+                None,
+                None,
                 None,
                 None,
             ),
@@ -239,6 +273,10 @@ pub fn export_bw_json(
                     license_number: data.license_number.clone(),
                 }),
                 None,
+                None,
+                None,
+                None,
+                None,
             ),
             CipherKind::SshKey(data) => (
                 None,
@@ -250,6 +288,54 @@ pub fn export_bw_json(
                     public_key: data.public_key.clone(),
                     key_fingerprint: data.key_fingerprint.clone(),
                 }),
+                None,
+                None,
+                None,
+                None,
+            ),
+            CipherKind::BankAccount(data) => (
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(data.clone()),
+                None,
+                None,
+                None,
+            ),
+            CipherKind::DriversLicense(data) => (
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(data.clone()),
+                None,
+                None,
+            ),
+            CipherKind::Passport(data) => (
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(data.clone()),
+                None,
+            ),
+            CipherKind::CountryId(data) => (
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(data.clone()),
             ),
         };
 
@@ -284,6 +370,10 @@ pub fn export_bw_json(
             card,
             identity,
             ssh_key,
+            bank_account,
+            drivers_license,
+            passport,
+            country_id,
             fields,
             password_history: history,
         });

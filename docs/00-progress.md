@@ -21,7 +21,7 @@
 
 ## Current Status
 
-**Phase**: Desktop BW parity complete (phases 1-8 + A-G). Device lifecycle complete (MISS-1 through MISS-5, peer review fixes). **182 tests, 0 clippy errors workspace-wide**, 10 security review rounds. Full desktop feature set: CRUD, 5 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders.
+**Phase**: Desktop BW parity complete (phases 1-8 + A-G). Device lifecycle complete (MISS-1 through MISS-5, peer review fixes). **186 tests, 0 clippy errors workspace-wide**, 10 security review rounds. Full desktop feature set: CRUD, 5 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders.
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
 - `/crates/idtty-core` - Rust core engine: crypto, keys, vault, padding, git sync
@@ -261,7 +261,7 @@ Peer review found 4 Critical, 7 High, 8 Medium, 4 Low issues. All Critical/High/
 | H7 | Recovery epoch hardcoded to 1 conflicts with existing ciphers | Read epoch from RK canary/cipher envelopes |
 | M1-M8 | Duplicated hash, atomic_write perms, registry divergence, test helper | All fixed |
 
-178 idtty-core tests, 182 workspace-wide. 0 clippy errors.
+182 idtty-core tests, 186 workspace-wide. 0 clippy errors.
 
 ### Round 11 (Workspace-Wide Clippy Cleanup)
 
@@ -274,13 +274,13 @@ Fixed 20+ pre-existing clippy warnings across all 3 crates (idtty-core, idtty-cl
 - **Structural** (3): match → `?`, match → `if let`, collapsed nested `if` into match guard
 - **Style** (3): doc comment → regular comment, `Box<Cipher>` for large enum variants, `#[allow]` annotations
 
-**182 tests, 0 clippy errors workspace-wide.**
+**186 tests, 0 clippy errors workspace-wide.**
 
 ---
 
 ### Bitwarden Desktop Parity (Phases 1-8)
 
-All 8 phases complete, peer-reviewed, and merged. **130 tests (now 182 workspace-wide), 0 clippy errors.**
+All 8 phases complete, peer-reviewed, and merged. **130 tests (now 186 workspace-wide), 0 clippy errors.**
 
 | Phase | Description | Key Changes |
 |-------|-------------|-------------|
@@ -306,7 +306,7 @@ All 8 phases complete, peer-reviewed, and merged. **130 tests (now 182 workspace
 
 ### Desktop BW Parity Phases A-G (Final Push)
 
-All 7 phases complete, individually peer reviewed, fixes applied. **178 idtty-core tests (182 workspace), 0 clippy errors.**
+All 7 phases complete, individually peer reviewed, fixes applied. **182 idtty-core tests (186 workspace), 0 clippy errors.**
 
 | Phase | Description | Key Changes | Review Findings |
 |-------|-------------|-------------|----------------|
