@@ -18,9 +18,9 @@
 
 ---
 
-## 1. Stub Modules
+## 1. Core Modules Status
 
-Files with TODO comments, no production logic. Each has a design decision (D-number) in `01-architecture-decisions.md`.
+Verification status of core modules with their design decisions (D-number) in `01-architecture-decisions.md`.
 
 | File | Doc Ref | What's Documented | Status |
 |------|---------|-------------------|--------|
@@ -28,12 +28,12 @@ Files with TODO comments, no production logic. Each has a design decision (D-num
 | `crates/idtty-core/src/orgs.rs` | D17, D19 | Team/org sharing. X25519 + HPKE authenticated key wrapping. Member add/remove. Auto-rekey all shared items on member removal. | **Done** |
 | `crates/idtty-core/src/providers.rs` | D15 | Git provider adapters (GitHub, GitLab). OAuth flow. PAT fallback. Auto-create `idtty-vault` repo. `ProviderAdapter` trait. | **Done** |
 
-### Dependencies Between Stubs
+### Dependencies and Execution
 
 ```
-providers.rs ──→ (unblocks OAuth enrollment for new devices)
-emergency.rs ──→ (depends on orgs.rs for trusted contact model)
-orgs.rs ──→ (depends on access_list.json, Space Group Key rotation)
+providers.rs ──→ (unblocks OAuth enrollment for new devices) [Done]
+emergency.rs ──→ (depends on orgs.rs for trusted contact model) [Done]
+orgs.rs ──→ (depends on access_list.json, Space Group Key rotation) [Done]
 integrity.rs ──→ DONE (sequence manifest, signed checkpoints, rollback detection, bootstrap)
 ```
 
