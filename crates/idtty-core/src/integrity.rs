@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::error::IntegrityError;
 use crate::IdttyError;
+use crate::error::IntegrityError;
 
 /// Manifest file path relative to vault root.
 const MANIFEST_PATH: &str = "meta/integrity.json";
@@ -89,7 +89,8 @@ impl IntegrityManifest {
                     object: object_id.to_string(),
                     old_seq: existing.seq,
                     new_seq: seq,
-                }.into());
+                }
+                .into());
             }
         }
 
@@ -117,37 +118,40 @@ impl IntegrityManifest {
         object_id: &str,
         verifying_key: &[u8; 32],
     ) -> Result<(), IdttyError> {
-        let cp = self.checkpoints.get(object_id).ok_or_else(|| {
-            IntegrityError::Corrupt(format!("no checkpoint for {object_id}"))
-        })?;
+        let cp = self
+            .checkpoints
+            .get(object_id)
+            .ok_or_else(|| IntegrityError::Corrupt(format!("no checkpoint for {object_id}")))?;
 
         let payload = format!("{}|{}|{}", cp.object_id, cp.seq, cp.device_id);
         let sig_bytes = hex::decode(&cp.signature)
             .map_err(|e| IntegrityError::Corrupt(format!("decode sig: {e}")))?;
 
-        let vk = crate::crypto::signature::verifying_key_from_bytes(verifying_key)
-            .map_err(|_| IntegrityError::InvalidCheckpointSignature {
-                device_id: cp.device_id.clone(),
+        let vk =
+            crate::crypto::signature::verifying_key_from_bytes(verifying_key).map_err(|_| {
+                IntegrityError::InvalidCheckpointSignature {
+                    device_id: cp.device_id.clone(),
+                }
             })?;
-        let sig = ed25519_dalek::Signature::from_slice(&sig_bytes)
-            .map_err(|_| IntegrityError::InvalidCheckpointSignature {
+        let sig = ed25519_dalek::Signature::from_slice(&sig_bytes).map_err(|_| {
+            IntegrityError::InvalidCheckpointSignature {
                 device_id: cp.device_id.clone(),
-            })?;
+            }
+        })?;
 
-        crate::crypto::signature::verify(&vk, payload.as_bytes(), &sig)
-            .map_err(|_| IntegrityError::InvalidCheckpointSignature {
+        crate::crypto::signature::verify(&vk, payload.as_bytes(), &sig).map_err(|_| {
+            IntegrityError::InvalidCheckpointSignature {
                 device_id: cp.device_id.clone(),
-            }.into())
+            }
+            .into()
+        })
     }
 
     /// Check for rollback: compare manifest seq against actual seq for each object.
     ///
     /// Returns list of objects where actual seq < manifest seq (rollback detected).
     /// Returns empty if no rollback.
-    pub fn detect_rollback(
-        &self,
-        actual_seqs: &HashMap<String, u64>,
-    ) -> Vec<RollbackEntry> {
+    pub fn detect_rollback(&self, actual_seqs: &HashMap<String, u64>) -> Vec<RollbackEntry> {
         let mut rollbacks = Vec::new();
         for (object_id, cp) in &self.checkpoints {
             if let Some(&actual_seq) = actual_seqs.get(object_id) {
@@ -220,10 +224,14 @@ mod tests {
         let (signing, _) = test_keys();
 
         let mut manifest = IntegrityManifest::load(dir.path()).unwrap();
-        let old = manifest.record("cipher-1", 5, "device-A", &signing).unwrap();
+        let old = manifest
+            .record("cipher-1", 5, "device-A", &signing)
+            .unwrap();
         assert_eq!(old, None);
 
-        let old = manifest.record("cipher-1", 10, "device-A", &signing).unwrap();
+        let old = manifest
+            .record("cipher-1", 10, "device-A", &signing)
+            .unwrap();
         assert_eq!(old, Some(5));
 
         manifest.save(dir.path()).unwrap();
@@ -237,16 +245,23 @@ mod tests {
     fn verify_checkpoint_signature() {
         let (signing, _) = test_keys();
         let verifying_bytes = crate::crypto::signature::verifying_key_bytes(
-            &crate::crypto::signature::verifying_key_from_bytes(&signing.verifying_key().to_bytes()).unwrap(),
+            &crate::crypto::signature::verifying_key_from_bytes(
+                &signing.verifying_key().to_bytes(),
+            )
+            .unwrap(),
         );
 
         let mut manifest = IntegrityManifest {
             checkpoints: HashMap::new(),
             last_writer: "device-A".into(),
         };
-        manifest.record("cipher-1", 5, "device-A", &signing).unwrap();
+        manifest
+            .record("cipher-1", 5, "device-A", &signing)
+            .unwrap();
 
-        manifest.verify_checkpoint("cipher-1", &verifying_bytes).unwrap();
+        manifest
+            .verify_checkpoint("cipher-1", &verifying_bytes)
+            .unwrap();
     }
 
     #[test]
@@ -258,12 +273,18 @@ mod tests {
             checkpoints: HashMap::new(),
             last_writer: "device-A".into(),
         };
-        manifest.record("cipher-1", 5, "device-A", &signing).unwrap();
+        manifest
+            .record("cipher-1", 5, "device-A", &signing)
+            .unwrap();
 
         // Tamper with seq
         manifest.checkpoints.get_mut("cipher-1").unwrap().seq = 99;
 
-        assert!(manifest.verify_checkpoint("cipher-1", &verifying_bytes).is_err());
+        assert!(
+            manifest
+                .verify_checkpoint("cipher-1", &verifying_bytes)
+                .is_err()
+        );
     }
 
     #[test]
@@ -274,14 +295,17 @@ mod tests {
             checkpoints: HashMap::new(),
             last_writer: "device-A".into(),
         };
-        manifest.record("cipher-1", 10, "device-A", &signing).unwrap();
-        manifest.record("cipher-2", 20, "device-A", &signing).unwrap();
+        manifest
+            .record("cipher-1", 10, "device-A", &signing)
+            .unwrap();
+        manifest
+            .record("cipher-2", 20, "device-A", &signing)
+            .unwrap();
 
         // cipher-1 rolled back from 10 to 5, cipher-2 advanced from 20 to 25
-        let actual: HashMap<String, u64> = [
-            ("cipher-1".into(), 5),
-            ("cipher-2".into(), 25),
-        ].into_iter().collect();
+        let actual: HashMap<String, u64> = [("cipher-1".into(), 5), ("cipher-2".into(), 25)]
+            .into_iter()
+            .collect();
 
         let rollbacks = manifest.detect_rollback(&actual);
         assert_eq!(rollbacks.len(), 1);
@@ -298,7 +322,9 @@ mod tests {
             checkpoints: HashMap::new(),
             last_writer: "device-A".into(),
         };
-        manifest.record("cipher-1", 5, "device-A", &signing).unwrap();
+        manifest
+            .record("cipher-1", 5, "device-A", &signing)
+            .unwrap();
 
         let actual: HashMap<String, u64> = [("cipher-1".into(), 10)].into_iter().collect();
         assert!(manifest.detect_rollback(&actual).is_empty());

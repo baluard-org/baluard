@@ -601,6 +601,48 @@ pub struct CipherMeta {
     pub updated_at: u64,
 }
 
+/// Resolve a linked field's value from a cipher's data.
+pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<String> {
+    match (&cipher.kind, field) {
+        // Login fields
+        (CipherKind::Login(data), LinkedFieldType::LoginUsername) => data.username.clone(),
+        (CipherKind::Login(data), LinkedFieldType::LoginPassword) => data.password.clone(),
+
+        // Card fields
+        (CipherKind::Card(data), LinkedFieldType::CardCardholderName) => {
+            data.cardholder_name.clone()
+        }
+        (CipherKind::Card(data), LinkedFieldType::CardNumber) => data.number.clone(),
+        (CipherKind::Card(data), LinkedFieldType::CardExpMonth) => data.exp_month.clone(),
+        (CipherKind::Card(data), LinkedFieldType::CardExpYear) => data.exp_year.clone(),
+        (CipherKind::Card(data), LinkedFieldType::CardCvv) => data.code.clone(),
+
+        // Identity fields
+        (CipherKind::Identity(data), LinkedFieldType::IdentityTitle) => data.title.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityFirstName) => data.first_name.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityMiddleName) => {
+            data.middle_name.clone()
+        }
+        (CipherKind::Identity(data), LinkedFieldType::IdentityLastName) => data.last_name.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityUsername) => data.username.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityCompany) => data.company.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityEmail) => data.email.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityPhone) => data.phone.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityAddress1) => data.address1.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityAddress2) => data.address2.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityAddress3) => data.address3.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityCity) => data.city.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityState) => data.state.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityPostalCode) => {
+            data.postal_code.clone()
+        }
+        (CipherKind::Identity(data), LinkedFieldType::IdentityCountry) => data.country.clone(),
+
+        // Type mismatch: field doesn't match cipher kind
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -931,47 +973,5 @@ mod tests {
             let back: LoginUri = serde_json::from_str(&json).unwrap();
             assert_eq!(back.match_strategy, strategy);
         }
-    }
-}
-
-/// Resolve a linked field's value from a cipher's data.
-pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<String> {
-    match (&cipher.kind, field) {
-        // Login fields
-        (CipherKind::Login(data), LinkedFieldType::LoginUsername) => data.username.clone(),
-        (CipherKind::Login(data), LinkedFieldType::LoginPassword) => data.password.clone(),
-
-        // Card fields
-        (CipherKind::Card(data), LinkedFieldType::CardCardholderName) => {
-            data.cardholder_name.clone()
-        }
-        (CipherKind::Card(data), LinkedFieldType::CardNumber) => data.number.clone(),
-        (CipherKind::Card(data), LinkedFieldType::CardExpMonth) => data.exp_month.clone(),
-        (CipherKind::Card(data), LinkedFieldType::CardExpYear) => data.exp_year.clone(),
-        (CipherKind::Card(data), LinkedFieldType::CardCvv) => data.code.clone(),
-
-        // Identity fields
-        (CipherKind::Identity(data), LinkedFieldType::IdentityTitle) => data.title.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityFirstName) => data.first_name.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityMiddleName) => {
-            data.middle_name.clone()
-        }
-        (CipherKind::Identity(data), LinkedFieldType::IdentityLastName) => data.last_name.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityUsername) => data.username.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityCompany) => data.company.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityEmail) => data.email.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityPhone) => data.phone.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityAddress1) => data.address1.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityAddress2) => data.address2.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityAddress3) => data.address3.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityCity) => data.city.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityState) => data.state.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityPostalCode) => {
-            data.postal_code.clone()
-        }
-        (CipherKind::Identity(data), LinkedFieldType::IdentityCountry) => data.country.clone(),
-
-        // Type mismatch: field doesn't match cipher kind
-        _ => None,
     }
 }

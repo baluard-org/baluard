@@ -13,9 +13,9 @@ use uuid::Uuid;
 use crate::crypto::hkdf_derive;
 use crate::crypto::hpke_wrap;
 use crate::crypto::kdf;
+use crate::device_manager::DeviceManager;
 use crate::devices::DeviceRegistry;
 use crate::error::{IdttyError, VaultError};
-use crate::device_manager::DeviceManager;
 use crate::keys::hierarchy::{ItemKey, RootKey};
 use crate::types::{Cipher, CipherInput, KdfParams, Tier};
 use crate::vault::cipher;
@@ -129,12 +129,17 @@ impl VaultHandle {
         } else {
             let mut dm = DeviceManager::new();
             dm.set_vault_path(path);
-            dm.epoch.activate().map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
+            dm.epoch
+                .activate()
+                .map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
             dm
         };
         // Ensure epoch is ACTIVE for existing vaults (may be CREATED after load)
         if device_manager.epoch_state() == crate::keys::epoch::EpochState::Created {
-            device_manager.epoch.activate().map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
+            device_manager
+                .epoch
+                .activate()
+                .map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
         }
 
         Ok(VaultHandle {
@@ -884,8 +889,8 @@ impl VaultHandle {
             input,
             &item_key,
             unlocked.current_epoch, // epoch
-            1, // update_seq
-            0, // nonce_counter
+            1,                      // update_seq
+            0,                      // nonce_counter
         )?;
 
         let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
@@ -1176,7 +1181,10 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         if !self.device_manager.writes_allowed() {
-            return Err(VaultError::Corrupt("rotation in progress, use finalize_rotation()".into()).into());
+            return Err(VaultError::Corrupt(
+                "rotation in progress, use finalize_rotation()".into(),
+            )
+            .into());
         }
 
         let old_epoch = match &self.state {
@@ -1201,7 +1209,10 @@ impl VaultHandle {
             "old_epoch": old_epoch,
             "new_epoch": new_epoch,
         });
-        std::fs::write(&pending_marker, serde_json::to_string_pretty(&pending_data).unwrap())?;
+        std::fs::write(
+            &pending_marker,
+            serde_json::to_string_pretty(&pending_data).unwrap(),
+        )?;
 
         // Phase 1: Re-encrypt all ciphers to .tmp files (staged)
         let mut staged_renames: Vec<(PathBuf, PathBuf)> = Vec::new();
@@ -1237,8 +1248,7 @@ impl VaultHandle {
                 attachments: existing.attachments.clone(),
             };
 
-            let new_item_key =
-                Self::derive_item_key_static(&new_root_key, *cipher_id, new_epoch);
+            let new_item_key = Self::derive_item_key_static(&new_root_key, *cipher_id, new_epoch);
             let new_file = cipher::encrypt_cipher(
                 self.vault_id,
                 *cipher_id,
@@ -1307,10 +1317,9 @@ impl VaultHandle {
                 let _ = std::fs::remove_file(tmp);
             }
             let _ = std::fs::remove_file(&canary_tmp);
-            return Err(VaultError::NotFound(
-                "device private key not found for keywrap".into(),
-            )
-            .into());
+            return Err(
+                VaultError::NotFound("device private key not found for keywrap".into()).into(),
+            );
         };
         let x25519_public = x25519_dalek::PublicKey::from(&x25519_secret);
         let (eph_pub, ct, tag) =
@@ -1321,10 +1330,14 @@ impl VaultHandle {
             "encrypted_key": hex::encode(ct),
             "tag": hex::encode(tag),
         });
-        let keywrap_path =
-            self.path.join(format!("meta/keywrap/{}.json", self.device_id));
+        let keywrap_path = self
+            .path
+            .join(format!("meta/keywrap/{}.json", self.device_id));
         let keywrap_tmp = keywrap_path.with_extension("json.tmp");
-        std::fs::write(&keywrap_tmp, serde_json::to_string_pretty(&keywrap_data).unwrap())?;
+        std::fs::write(
+            &keywrap_tmp,
+            serde_json::to_string_pretty(&keywrap_data).unwrap(),
+        )?;
 
         // Phase 4: Atomic commit - rename all .tmp -> final
         // Order matters for crash safety: ciphers first, canary second, keywrap last.
@@ -1362,7 +1375,8 @@ impl VaultHandle {
 
         // Fire observer hook
         if let Some(vp) = self.vault_path_as_ref() {
-            self.device_manager.fire(|obs| obs.on_rotation_committed(new_epoch, vp));
+            self.device_manager
+                .fire(|obs| obs.on_rotation_committed(new_epoch, vp));
         }
 
         // Clean up rotation-pending marker
@@ -1422,9 +1436,8 @@ impl VaultHandle {
         // Build self-ack: sign with this device's Ed25519 key
         let txn_hash = crate::device_manager::compute_txn_hash(tx);
 
-        let sign_input = crate::device_manager::build_ack_sign_input(
-            tx.new_epoch, &self.device_id, &txn_hash,
-        );
+        let sign_input =
+            crate::device_manager::build_ack_sign_input(tx.new_epoch, &self.device_id, &txn_hash);
 
         // Load signing key
         let privkey_path = self.path.join("meta/device-privkey.json");
@@ -1462,7 +1475,9 @@ impl VaultHandle {
     /// For single-device vaults, commits immediately.
     ///
     /// Returns the result of the eviction.
-    pub fn force_evict_and_rotate(&mut self) -> Result<crate::device_manager::ForceEvictResult, IdttyError> {
+    pub fn force_evict_and_rotate(
+        &mut self,
+    ) -> Result<crate::device_manager::ForceEvictResult, IdttyError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
@@ -1481,7 +1496,9 @@ impl VaultHandle {
         phrase: &str,
         device_name: &str,
     ) -> Result<crate::device_manager::RecoveryResult, IdttyError> {
-        let result = self.device_manager.recover_from_phrase(phrase, device_name)?;
+        let result = self
+            .device_manager
+            .recover_from_phrase(phrase, device_name)?;
         // M6 fix: sync registry after recovery
         self.sync_registry_from_device_manager();
         Ok(result)
