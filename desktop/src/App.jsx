@@ -2047,11 +2047,13 @@ function AddEditCipherForm(props) {
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                   </button>
                 </div>
-              )}
+              );
+              }}
             </For>
           </div>
         </div>
       </div>
+      <div class="flex gap-3 p-8 pt-0">
         <button
           onClick={handleSave}
           class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99]"
