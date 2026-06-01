@@ -550,14 +550,17 @@ impl CipherEnvelopeData {
     pub fn migrate(mut self) -> Self {
         // Only migrate if kind is the default (empty Login) AND flat fields exist
         match &self.kind {
-            CipherKind::Login(data) if data.username.is_none()
-                && data.password.is_none()
-                && data.uris.is_empty()
-                && data.totp_uri.is_none() =>
+            CipherKind::Login(data)
+                if data.username.is_none()
+                    && data.password.is_none()
+                    && data.uris.is_empty()
+                    && data.totp_uri.is_none() =>
             {
                 // Flat fields present? Migrate them into LoginData.
-                if self.username.is_some() || self.password.is_some()
-                    || !self.uris.is_empty() || self.totp_uri.is_some()
+                if self.username.is_some()
+                    || self.password.is_some()
+                    || !self.uris.is_empty()
+                    || self.totp_uri.is_some()
                 {
                     self.kind = CipherKind::Login(LoginData {
                         username: self.username.take(),
@@ -964,7 +967,9 @@ pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<
         (CipherKind::Login(data), LinkedFieldType::LoginPassword) => data.password.clone(),
 
         // Card fields
-        (CipherKind::Card(data), LinkedFieldType::CardCardholderName) => data.cardholder_name.clone(),
+        (CipherKind::Card(data), LinkedFieldType::CardCardholderName) => {
+            data.cardholder_name.clone()
+        }
         (CipherKind::Card(data), LinkedFieldType::CardNumber) => data.number.clone(),
         (CipherKind::Card(data), LinkedFieldType::CardExpMonth) => data.exp_month.clone(),
         (CipherKind::Card(data), LinkedFieldType::CardExpYear) => data.exp_year.clone(),
@@ -973,7 +978,9 @@ pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<
         // Identity fields
         (CipherKind::Identity(data), LinkedFieldType::IdentityTitle) => data.title.clone(),
         (CipherKind::Identity(data), LinkedFieldType::IdentityFirstName) => data.first_name.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityMiddleName) => data.middle_name.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityMiddleName) => {
+            data.middle_name.clone()
+        }
         (CipherKind::Identity(data), LinkedFieldType::IdentityLastName) => data.last_name.clone(),
         (CipherKind::Identity(data), LinkedFieldType::IdentityUsername) => data.username.clone(),
         (CipherKind::Identity(data), LinkedFieldType::IdentityCompany) => data.company.clone(),
@@ -984,7 +991,9 @@ pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<
         (CipherKind::Identity(data), LinkedFieldType::IdentityAddress3) => data.address3.clone(),
         (CipherKind::Identity(data), LinkedFieldType::IdentityCity) => data.city.clone(),
         (CipherKind::Identity(data), LinkedFieldType::IdentityState) => data.state.clone(),
-        (CipherKind::Identity(data), LinkedFieldType::IdentityPostalCode) => data.postal_code.clone(),
+        (CipherKind::Identity(data), LinkedFieldType::IdentityPostalCode) => {
+            data.postal_code.clone()
+        }
         (CipherKind::Identity(data), LinkedFieldType::IdentityCountry) => data.country.clone(),
 
         // Type mismatch: field doesn't match cipher kind

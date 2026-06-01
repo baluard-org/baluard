@@ -23,7 +23,10 @@ use zeroize::Zeroize;
 
 /// Vault session state.
 /// Collect a folder ID and all its descendant folder IDs.
-fn collect_descendant_ids(folder_id: Uuid, folders: &[crate::vault::manifest::Folder]) -> HashSet<Uuid> {
+fn collect_descendant_ids(
+    folder_id: Uuid,
+    folders: &[crate::vault::manifest::Folder],
+) -> HashSet<Uuid> {
     let mut result = HashSet::new();
     result.insert(folder_id);
     let mut queue = vec![folder_id];
@@ -296,10 +299,8 @@ impl VaultHandle {
             });
         }
         let data = std::fs::read_to_string(&settings_path)?;
-        let settings: crate::vault::manifest::VaultSettings =
-            serde_json::from_str(&data).map_err(|e| {
-                crate::error::VaultError::Metadata(format!("settings parse: {e}"))
-            })?;
+        let settings: crate::vault::manifest::VaultSettings = serde_json::from_str(&data)
+            .map_err(|e| crate::error::VaultError::Metadata(format!("settings parse: {e}")))?;
         Ok(settings)
     }
 
@@ -328,10 +329,8 @@ impl VaultHandle {
             return Ok(Vec::new());
         }
         let data = std::fs::read_to_string(&folders_path)?;
-        let folders: Vec<crate::vault::manifest::Folder> =
-            serde_json::from_str(&data).map_err(|e| {
-                crate::error::VaultError::Metadata(format!("folders parse: {e}"))
-            })?;
+        let folders: Vec<crate::vault::manifest::Folder> = serde_json::from_str(&data)
+            .map_err(|e| crate::error::VaultError::Metadata(format!("folders parse: {e}")))?;
         Ok(folders)
     }
 
@@ -357,33 +356,52 @@ impl VaultHandle {
     const MAX_FOLDER_DEPTH: usize = 16;
 
     /// Create a new folder with optional parent.
-    pub fn create_folder_with_parent(&mut self, name: &str, parent_id: Option<Uuid>) -> Result<Uuid, IdttyError> {
+    pub fn create_folder_with_parent(
+        &mut self,
+        name: &str,
+        parent_id: Option<Uuid>,
+    ) -> Result<Uuid, IdttyError> {
         if name.trim().is_empty() {
-            return Err(crate::error::VaultError::Metadata("folder name cannot be empty".into()).into());
+            return Err(
+                crate::error::VaultError::Metadata("folder name cannot be empty".into()).into(),
+            );
         }
         let trimmed = name.trim();
         let mut folders = self.list_folders()?;
         // Check for duplicate name within the same parent
-        if folders.iter().any(|f| f.name == trimmed && f.parent_id == parent_id) {
-            return Err(crate::error::VaultError::Metadata(format!("folder '{trimmed}' already exists")).into());
+        if folders
+            .iter()
+            .any(|f| f.name == trimmed && f.parent_id == parent_id)
+        {
+            return Err(crate::error::VaultError::Metadata(format!(
+                "folder '{trimmed}' already exists"
+            ))
+            .into());
         }
         // Validate parent exists and check depth
         if let Some(pid) = parent_id {
             if !folders.iter().any(|f| f.id == pid) {
-                return Err(crate::error::VaultError::Metadata(format!("parent folder not found")).into());
+                return Err(
+                    crate::error::VaultError::Metadata(format!("parent folder not found")).into(),
+                );
             }
             // Walk parent chain to check depth
             let mut depth = 1;
             let mut current = pid;
             while let Some(parent) = folders.iter().find(|f| f.id == current) {
                 match parent.parent_id {
-                    Some(gp) => { depth += 1; current = gp; }
+                    Some(gp) => {
+                        depth += 1;
+                        current = gp;
+                    }
                     None => break,
                 }
                 if depth >= Self::MAX_FOLDER_DEPTH {
                     return Err(crate::error::VaultError::Metadata(format!(
-                        "folder nesting too deep (max {})", Self::MAX_FOLDER_DEPTH
-                    )).into());
+                        "folder nesting too deep (max {})",
+                        Self::MAX_FOLDER_DEPTH
+                    ))
+                    .into());
                 }
             }
         }
@@ -401,12 +419,19 @@ impl VaultHandle {
     /// Rename a folder by ID.
     pub fn rename_folder(&mut self, folder_id: Uuid, new_name: &str) -> Result<(), IdttyError> {
         if new_name.trim().is_empty() {
-            return Err(crate::error::VaultError::Metadata("folder name cannot be empty".into()).into());
+            return Err(
+                crate::error::VaultError::Metadata("folder name cannot be empty".into()).into(),
+            );
         }
         let mut folders = self.list_folders()?;
-        let folder = folders.iter_mut().find(|f| f.id == folder_id).ok_or_else(|| {
-            IdttyError::from(crate::error::VaultError::NotFound(format!("folder {folder_id}")))
-        })?;
+        let folder = folders
+            .iter_mut()
+            .find(|f| f.id == folder_id)
+            .ok_or_else(|| {
+                IdttyError::from(crate::error::VaultError::NotFound(format!(
+                    "folder {folder_id}"
+                )))
+            })?;
         folder.name = new_name.trim().to_string();
         self.save_folders(&folders)?;
         Ok(())
@@ -420,7 +445,9 @@ impl VaultHandle {
         let ids_to_delete = collect_descendant_ids(folder_id, &all_folders);
 
         if !all_folders.iter().any(|f| f.id == folder_id) {
-            return Err(IdttyError::from(crate::error::VaultError::NotFound(format!("folder {folder_id}"))));
+            return Err(IdttyError::from(crate::error::VaultError::NotFound(
+                format!("folder {folder_id}"),
+            )));
         }
 
         // Remove all collected folders
@@ -440,7 +467,8 @@ impl VaultHandle {
                 id: cipher_id,
                 envelope_bytes: existing_bytes,
             };
-            let _existing_envelope = crate::vault::envelope::deserialize(&existing_file.envelope_bytes)?;
+            let _existing_envelope =
+                crate::vault::envelope::deserialize(&existing_file.envelope_bytes)?;
             let existing_cipher = {
                 let unlocked = match &self.state {
                     VaultState::Unlocked(u) => u,
@@ -449,7 +477,10 @@ impl VaultHandle {
                 self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?
             };
 
-            if existing_cipher.folder_id.map_or(false, |fid| ids_to_delete.contains(&fid)) {
+            if existing_cipher
+                .folder_id
+                .map_or(false, |fid| ids_to_delete.contains(&fid))
+            {
                 // Reuse update_cipher to maintain all invariants (history, timestamps, etc.)
                 let input = CipherInput {
                     name: existing_cipher.name.clone(),
@@ -510,10 +541,7 @@ impl VaultHandle {
                 continue;
             }
             let envelope_bytes = std::fs::read(&file_path)?;
-            let file = cipher::CipherFile {
-                id,
-                envelope_bytes,
-            };
+            let file = cipher::CipherFile { id, envelope_bytes };
 
             let c = match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &file) {
                 Ok(c) => c,
@@ -637,7 +665,7 @@ impl VaultHandle {
         info.extend_from_slice(cipher_id.as_bytes());
 
         let hkdf = Hkdf::<Sha256>::new(None, root_key.as_bytes());
-    let mut key = [0u8; 32];
+        let mut key = [0u8; 32];
         hkdf.expand(&info, &mut key)
             .expect("32 bytes is valid output length for HKDF-SHA256");
 
@@ -645,7 +673,11 @@ impl VaultHandle {
     }
 
     /// Derive item key for a cipher (requires unlocked vault).
-    pub fn derive_item_key(&self, cipher_id: Uuid, key_epoch: u64) -> crate::keys::hierarchy::ItemKey {
+    pub fn derive_item_key(
+        &self,
+        cipher_id: Uuid,
+        key_epoch: u64,
+    ) -> crate::keys::hierarchy::ItemKey {
         let root_key = match &self.state {
             VaultState::Unlocked(u) => &u.root_key,
             VaultState::Locked => panic!("derive_item_key called on locked vault"),
@@ -769,7 +801,8 @@ impl VaultHandle {
         }
 
         let mut count = 0;
-        let limit = std::time::SystemTime::now() - std::time::Duration::from_secs(days as u64 * 86400);
+        let limit =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(days as u64 * 86400);
 
         for entry in std::fs::read_dir(&trash_dir)? {
             let entry = entry?;
@@ -817,7 +850,11 @@ impl VaultHandle {
 
     /// Update an existing cipher (requires unlocked vault).
     /// Re-encrypts with incremented update_seq.
-    pub fn update_cipher(&mut self, cipher_id: Uuid, input: &CipherInput) -> Result<(), IdttyError> {
+    pub fn update_cipher(
+        &mut self,
+        cipher_id: Uuid,
+        input: &CipherInput,
+    ) -> Result<(), IdttyError> {
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -839,10 +876,11 @@ impl VaultHandle {
         let key_epoch = existing_envelope.header.key_epoch;
 
         // Read existing cipher to preserve created_at
-        let existing_cipher = match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file) {
-            Ok(c) => c,
-            Err(e) => return Err(e),
-        };
+        let existing_cipher =
+            match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file) {
+                Ok(c) => c,
+                Err(e) => return Err(e),
+            };
 
         let mut input_owned = input.clone();
         input_owned.created_at = Some(existing_cipher.created_at);
@@ -883,8 +921,7 @@ impl VaultHandle {
             input_owned.password_history = existing_cipher.password_history.clone();
         }
 
-        let item_key =
-            Self::derive_item_key_static(&unlocked.root_key, cipher_id, key_epoch);
+        let item_key = Self::derive_item_key_static(&unlocked.root_key, cipher_id, key_epoch);
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -927,7 +964,7 @@ impl VaultHandle {
             reprompt: existing.reprompt,
             notes: existing.notes,
             custom_fields: existing.custom_fields,
-            created_at: None, // fresh timestamp for the clone
+            created_at: None,         // fresh timestamp for the clone
             password_history: vec![], // empty history for clone
             attachments: existing.attachments.clone(),
         };
@@ -935,8 +972,6 @@ impl VaultHandle {
         // add_cipher handles new UUID + encryption
         self.add_cipher(&input)
     }
-
-
 
     fn find_device_id(path: &Path) -> Result<Uuid, IdttyError> {
         let keywrap_dir = path.join("meta/keywrap");
@@ -1461,8 +1496,8 @@ mod tests {
                 custom_fields: vec![],
                 created_at: None,
                 password_history: vec![],
-            attachments: vec![],
-            reprompt: false,
+                attachments: vec![],
+                reprompt: false,
             };
             handle.update_cipher(id, &updated).unwrap();
         }
@@ -1475,8 +1510,12 @@ mod tests {
                 assert_eq!(c.password_history[1].password, "old-pass-2");
                 assert_eq!(c.password_history[2].password, "old-pass-3");
                 // Ascending timestamps
-                assert!(c.password_history[0].last_used_date <= c.password_history[1].last_used_date);
-                assert!(c.password_history[1].last_used_date <= c.password_history[2].last_used_date);
+                assert!(
+                    c.password_history[0].last_used_date <= c.password_history[1].last_used_date
+                );
+                assert!(
+                    c.password_history[1].last_used_date <= c.password_history[2].last_used_date
+                );
                 // Current password is the new one
                 match &c.kind {
                     crate::types::CipherKind::Login(data) => {
@@ -1545,7 +1584,10 @@ mod tests {
             CipherRead::Decrypted(c) => {
                 assert_eq!(c.name, "GitHub");
                 assert!(c.favorite);
-                assert!(c.password_history.is_empty(), "clone must have empty history");
+                assert!(
+                    c.password_history.is_empty(),
+                    "clone must have empty history"
+                );
                 match &c.kind {
                     crate::types::CipherKind::Login(data) => {
                         assert_eq!(data.password.as_deref(), Some("pass2"));
@@ -1604,8 +1646,8 @@ mod tests {
                 custom_fields: vec![],
                 created_at: None,
                 password_history: vec![],
-            attachments: vec![],
-            reprompt: false,
+                attachments: vec![],
+                reprompt: false,
             };
             handle.update_cipher(id, &updated).unwrap();
         }
@@ -1698,7 +1740,10 @@ mod tests {
         let cipher = handle.get_cipher(cipher_id).unwrap();
         match cipher {
             CipherRead::Decrypted(c) => {
-                assert_eq!(c.folder_id, None, "cipher should be unassigned after folder delete");
+                assert_eq!(
+                    c.folder_id, None,
+                    "cipher should be unassigned after folder delete"
+                );
             }
             CipherRead::Locked(_) => panic!("expected decrypted"),
         }

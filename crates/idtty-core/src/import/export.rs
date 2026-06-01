@@ -304,7 +304,13 @@ pub fn export_bw_csv(ciphers: &[Cipher]) -> Result<String, String> {
 
     // Write header
     wtr.write_record([
-        "type", "name", "notes", "login_uri", "login_username", "login_password", "login_totp",
+        "type",
+        "name",
+        "notes",
+        "login_uri",
+        "login_username",
+        "login_password",
+        "login_totp",
     ])
     .map_err(|e| format!("CSV write error: {e}"))?;
 
@@ -339,7 +345,9 @@ pub fn export_bw_csv(ciphers: &[Cipher]) -> Result<String, String> {
         }
     }
 
-    let bytes = wtr.into_inner().map_err(|e| format!("CSV flush error: {e}"))?;
+    let bytes = wtr
+        .into_inner()
+        .map_err(|e| format!("CSV flush error: {e}"))?;
     String::from_utf8(bytes).map_err(|e| format!("UTF-8 error: {e}"))
 }
 
@@ -452,7 +460,16 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["folders"][0]["name"], "Work");
         assert_eq!(parsed["items"][0]["folderId"], folder_id.to_string());
-        assert_eq!(parsed["items"][0]["passwordHistory"].as_array().unwrap().len(), 1);
-        assert_eq!(parsed["items"][0]["passwordHistory"][0]["password"], "old_pass");
+        assert_eq!(
+            parsed["items"][0]["passwordHistory"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            parsed["items"][0]["passwordHistory"][0]["password"],
+            "old_pass"
+        );
     }
 }

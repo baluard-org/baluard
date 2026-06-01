@@ -329,12 +329,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
-        "folder.list" => {
-            match state.list_folders().await {
-                Ok(json) => ok_resp(json, token_str),
-                Err(e) => err_response(e),
-            }
-        }
+        "folder.list" => match state.list_folders().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
         "folder.create" => {
             if req.payload.is_empty() {
                 return err_response("Missing folder name in payload");
@@ -389,7 +387,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(()) => ok_resp("restored", token_str),
                 Err(e) => err_response(e),
             }
-        },
+        }
 
         "vault.trash.purge" => {
             let days = match req.payload.parse::<u32>() {
@@ -488,7 +486,12 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let format_str = parsed["format"].as_str().unwrap_or("");
             let format = match idtty_core::import::ImportFormat::from_str(format_str) {
                 Some(f) => f,
-                None => return err_response(format!("Unknown import format: {format_str}. Supported: {:?}", idtty_core::import::ImportFormat::all_names())),
+                None => {
+                    return err_response(format!(
+                        "Unknown import format: {format_str}. Supported: {:?}",
+                        idtty_core::import::ImportFormat::all_names()
+                    ));
+                }
             };
 
             let import_result = match format {
@@ -553,7 +556,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     Ok(csv) => ok_resp(csv, token_str),
                     Err(e) => err_response(e),
                 },
-                _ => err_response(format!("Unknown export format: {format}. Use bw-json or bw-csv")),
+                _ => err_response(format!(
+                    "Unknown export format: {format}. Use bw-json or bw-csv"
+                )),
             }
         }
 
@@ -701,7 +706,9 @@ fn sync_pull(vault_path: &std::path::Path) -> Result<String, String> {
         idtty_core::sync::engine::PullResult::Merged => "Merged remote changes.".into(),
         idtty_core::sync::engine::PullResult::Conflict { files, .. } => {
             let file_list = files.join(", ");
-            return Err(format!("Merge conflict in {file_list}. Resolution required."));
+            return Err(format!(
+                "Merge conflict in {file_list}. Resolution required."
+            ));
         }
     })
 }

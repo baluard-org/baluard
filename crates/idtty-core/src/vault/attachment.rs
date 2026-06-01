@@ -8,8 +8,8 @@
 
 use crate::error::VaultError;
 
-use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use aes_gcm::aead::Aead;
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 
 /// Attachment metadata stored inside the cipher.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -70,19 +70,33 @@ pub fn decrypt_attachment(item_key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, V
 /// Detect MIME type from file extension.
 pub fn detect_mime(filename: &str) -> String {
     let lower = filename.to_lowercase();
-    if lower.ends_with(".pdf") { "application/pdf".into() }
-    else if lower.ends_with(".png") { "image/png".into() }
-    else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") { "image/jpeg".into() }
-    else if lower.ends_with(".gif") { "image/gif".into() }
-    else if lower.ends_with(".txt") { "text/plain".into() }
-    else if lower.ends_with(".csv") { "text/csv".into() }
-    else if lower.ends_with(".json") { "application/json".into() }
-    else if lower.ends_with(".xml") { "application/xml".into() }
-    else if lower.ends_with(".zip") { "application/zip".into() }
-    else if lower.ends_with(".key") || lower.ends_with(".pem") { "application/x-pem-file".into() }
-    else if lower.ends_with(".doc") { "application/msword".into() }
-    else if lower.ends_with(".docx") { "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into() }
-    else { "application/octet-stream".into() }
+    if lower.ends_with(".pdf") {
+        "application/pdf".into()
+    } else if lower.ends_with(".png") {
+        "image/png".into()
+    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg".into()
+    } else if lower.ends_with(".gif") {
+        "image/gif".into()
+    } else if lower.ends_with(".txt") {
+        "text/plain".into()
+    } else if lower.ends_with(".csv") {
+        "text/csv".into()
+    } else if lower.ends_with(".json") {
+        "application/json".into()
+    } else if lower.ends_with(".xml") {
+        "application/xml".into()
+    } else if lower.ends_with(".zip") {
+        "application/zip".into()
+    } else if lower.ends_with(".key") || lower.ends_with(".pem") {
+        "application/x-pem-file".into()
+    } else if lower.ends_with(".doc") {
+        "application/msword".into()
+    } else if lower.ends_with(".docx") {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into()
+    } else {
+        "application/octet-stream".into()
+    }
 }
 
 /// Maximum attachment file size: 2 MB.

@@ -4,9 +4,9 @@
 //! Root Key, device keypair, HPKE wrapping, initial commit.
 
 use sha2::{Digest, Sha256};
-use uuid::Uuid;
-use std::path::{Path, PathBuf};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::crypto::hkdf_derive;
@@ -18,7 +18,7 @@ use crate::keys::epoch::EpochInfo;
 use crate::keys::hierarchy::RootKey;
 use crate::recovery::RecoveryPhrase;
 use crate::types::{KdfParams, KdfProfile};
-use crate::vault::handle::{VaultHandle, VaultState, UnlockedState};
+use crate::vault::handle::{UnlockedState, VaultHandle, VaultState};
 use rand_core::RngCore;
 
 /// Result of a successful vault creation ceremony.
@@ -224,9 +224,7 @@ pub enum CeremonyMode {
     /// Create a brand-new vault and generate a new recovery phrase.
     Create,
     /// Join an existing vault using a recovery phrase.
-    Join {
-        recovery_phrase: String,
-    },
+    Join { recovery_phrase: String },
 }
 
 /// Crucial vault secrets returned by the ceremony.
@@ -317,13 +315,22 @@ impl<'a> VaultCreator<'a> {
 
         let path = self.path.clone();
         let write_secret = |file_path: &Path, data: &[u8]| -> Result<(), IdttyError> {
-            std::fs::write(file_path, data)
-                .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("Write {}: {e}", file_path.display()))))?;
+            std::fs::write(file_path, data).map_err(|e| {
+                IdttyError::from(VaultError::Corrupt(format!(
+                    "Write {}: {e}",
+                    file_path.display()
+                )))
+            })?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 std::fs::set_permissions(file_path, std::fs::Permissions::from_mode(0o600))
-                    .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("chmod {}: {e}", file_path.display()))))?;
+                    .map_err(|e| {
+                        IdttyError::from(VaultError::Corrupt(format!(
+                            "chmod {}: {e}",
+                            file_path.display()
+                        )))
+                    })?;
             }
             Ok(())
         };
@@ -338,14 +345,18 @@ impl<'a> VaultCreator<'a> {
 
                 let mut adapter = RngAdapter { provider: &mut *ep };
 
-                std::fs::create_dir_all(path.join("ciphers"))
-                    .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("mkdir ciphers: {e}"))))?;
-                std::fs::create_dir_all(path.join("meta/keywrap"))
-                    .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("mkdir keywrap: {e}"))))?;
-                std::fs::create_dir_all(path.join("meta/sequences"))
-                    .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("mkdir sequences: {e}"))))?;
-                std::fs::create_dir_all(path.join("trash"))
-                    .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("mkdir trash: {e}"))))?;
+                std::fs::create_dir_all(path.join("ciphers")).map_err(|e| {
+                    IdttyError::from(VaultError::Corrupt(format!("mkdir ciphers: {e}")))
+                })?;
+                std::fs::create_dir_all(path.join("meta/keywrap")).map_err(|e| {
+                    IdttyError::from(VaultError::Corrupt(format!("mkdir keywrap: {e}")))
+                })?;
+                std::fs::create_dir_all(path.join("meta/sequences")).map_err(|e| {
+                    IdttyError::from(VaultError::Corrupt(format!("mkdir sequences: {e}")))
+                })?;
+                std::fs::create_dir_all(path.join("trash")).map_err(|e| {
+                    IdttyError::from(VaultError::Corrupt(format!("mkdir trash: {e}")))
+                })?;
 
                 let kdf_params = kdf::create_params(self.kdf_profile.clone());
                 let vault_id = VaultHandle::derive_vault_id(&kdf_params);
@@ -356,11 +367,13 @@ impl<'a> VaultCreator<'a> {
                 let root_key = RootKey::from_bytes(root_key_bytes);
                 root_key_bytes.zeroize();
 
-                let device_x25519_secret = x25519_dalek::StaticSecret::random_from_rng(&mut adapter);
+                let device_x25519_secret =
+                    x25519_dalek::StaticSecret::random_from_rng(&mut adapter);
                 let device_x25519_public = x25519_dalek::PublicKey::from(&device_x25519_secret);
                 let device_ed25519_signing = ed25519_dalek::SigningKey::generate(&mut adapter);
 
-                let wrapped_root_key = hpke_wrap::wrap_key(root_key.as_bytes(), &device_x25519_public)?;
+                let wrapped_root_key =
+                    hpke_wrap::wrap_key(root_key.as_bytes(), &device_x25519_public)?;
 
                 let session_key = hkdf_derive::derive_session_key(&kek)?;
                 let sync_key = hkdf_derive::derive_sync_key(&kek)?;
@@ -368,10 +381,13 @@ impl<'a> VaultCreator<'a> {
 
                 let recovery_phrase = RecoveryPhrase::generate_with_rng(&mut adapter)?;
                 let mut recovery_key = recovery_phrase.derive_key();
-                let recovery_x25519_secret = x25519_dalek::StaticSecret::from(<[u8; 32]>::try_from(&recovery_key[..32]).unwrap());
+                let recovery_x25519_secret = x25519_dalek::StaticSecret::from(
+                    <[u8; 32]>::try_from(&recovery_key[..32]).unwrap(),
+                );
                 recovery_key.zeroize();
                 let recovery_x25519_public = x25519_dalek::PublicKey::from(&recovery_x25519_secret);
-                let wrapped_recovery_key = hpke_wrap::wrap_key(root_key.as_bytes(), &recovery_x25519_public)?;
+                let wrapped_recovery_key =
+                    hpke_wrap::wrap_key(root_key.as_bytes(), &recovery_x25519_public)?;
 
                 let mut hasher = Sha256::new();
                 hasher.update(root_key.as_bytes());
@@ -441,7 +457,9 @@ impl<'a> VaultCreator<'a> {
 
                 write_secret(
                     &path.join("meta/kdf-params.json"),
-                    serde_json::to_string_pretty(&kdf_params).unwrap().as_bytes(),
+                    serde_json::to_string_pretty(&kdf_params)
+                        .unwrap()
+                        .as_bytes(),
                 )?;
 
                 let keywrap_data = serde_json::json!({
@@ -452,7 +470,9 @@ impl<'a> VaultCreator<'a> {
                 });
                 write_secret(
                     &path.join(format!("meta/keywrap/{device_id}.json")),
-                    serde_json::to_string_pretty(&keywrap_data).unwrap().as_bytes(),
+                    serde_json::to_string_pretty(&keywrap_data)
+                        .unwrap()
+                        .as_bytes(),
                 )?;
 
                 let recovery_data = serde_json::json!({
@@ -462,12 +482,18 @@ impl<'a> VaultCreator<'a> {
                 });
                 write_secret(
                     &path.join("meta/recovery.json"),
-                    serde_json::to_string_pretty(&recovery_data).unwrap().as_bytes(),
+                    serde_json::to_string_pretty(&recovery_data)
+                        .unwrap()
+                        .as_bytes(),
                 )?;
 
                 if let Some(keystore) = self.keystore {
-                    keystore.store_secret("device_x25519_secret", &device_x25519_secret.to_bytes())?;
-                    keystore.store_secret("device_ed25519_signing", &device_ed25519_signing.to_bytes())?;
+                    keystore
+                        .store_secret("device_x25519_secret", &device_x25519_secret.to_bytes())?;
+                    keystore.store_secret(
+                        "device_ed25519_signing",
+                        &device_ed25519_signing.to_bytes(),
+                    )?;
                 } else {
                     let mut x25519_hex = hex::encode(device_x25519_secret.to_bytes());
                     let mut ed25519_hex = hex::encode(device_ed25519_signing.to_bytes());
@@ -523,16 +549,20 @@ impl<'a> VaultCreator<'a> {
 
                 Ok((handle, secrets))
             }
-            CeremonyMode::Join { recovery_phrase: phrase_str } => {
+            CeremonyMode::Join {
+                recovery_phrase: phrase_str,
+            } => {
                 let kdf_path = path.join("meta/kdf-params.json");
                 if !kdf_path.exists() {
                     return Err(VaultError::NotFound(kdf_path.display().to_string()).into());
                 }
 
-                let kdf_json = std::fs::read_to_string(&kdf_path)
-                    .map_err(|e| IdttyError::from(VaultError::Metadata(format!("reading kdf params: {e}"))))?;
-                let kdf_params: KdfParams = serde_json::from_str(&kdf_json)
-                    .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("kdf params: {e}"))))?;
+                let kdf_json = std::fs::read_to_string(&kdf_path).map_err(|e| {
+                    IdttyError::from(VaultError::Metadata(format!("reading kdf params: {e}")))
+                })?;
+                let kdf_params: KdfParams = serde_json::from_str(&kdf_json).map_err(|e| {
+                    IdttyError::from(VaultError::Corrupt(format!("kdf params: {e}")))
+                })?;
 
                 let mut kek = kdf::derive_kek(&*self.password, &kdf_params)?;
                 let session_key = hkdf_derive::derive_session_key(&kek)?;
@@ -543,28 +573,44 @@ impl<'a> VaultCreator<'a> {
                 if !kek_canary_path.exists() {
                     return Err(VaultError::NotFound("meta/kek-canary.enc".into()).into());
                 }
-                let canary_data = std::fs::read(&kek_canary_path)
-                    .map_err(|e| IdttyError::from(VaultError::Metadata(format!("reading kek canary: {e}"))))?;
+                let canary_data = std::fs::read(&kek_canary_path).map_err(|e| {
+                    IdttyError::from(VaultError::Metadata(format!("reading kek canary: {e}")))
+                })?;
                 let canary_envelope = crate::vault::envelope::deserialize(&canary_data)?;
                 let canary_pt = crate::crypto::aead::decrypt(&session_key, &canary_envelope)
-                    .map_err(|_| IdttyError::from(VaultError::Corrupt("master password incorrect".into())))?;
+                    .map_err(|_| {
+                        IdttyError::from(VaultError::Corrupt("master password incorrect".into()))
+                    })?;
                 if canary_pt != b"idtty-kek-ok" {
                     return Err(VaultError::Corrupt("master password incorrect".into()).into());
                 }
 
                 let recovery_json_str = std::fs::read_to_string(path.join("meta/recovery.json"))
-                    .map_err(|e| IdttyError::from(VaultError::Metadata(format!("reading recovery wrapped key: {e}"))))?;
+                    .map_err(|e| {
+                        IdttyError::from(VaultError::Metadata(format!(
+                            "reading recovery wrapped key: {e}"
+                        )))
+                    })?;
                 let recovery_json: serde_json::Value = serde_json::from_str(&recovery_json_str)
-                    .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("recovery json format: {e}"))))?;
+                    .map_err(|e| {
+                        IdttyError::from(VaultError::Corrupt(format!("recovery json format: {e}")))
+                    })?;
 
                 let eph_pub = hex::decode(recovery_json["ephemeral_public"].as_str().unwrap_or(""))
-                    .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("recovery eph_public: {e}"))))?;
+                    .map_err(|e| {
+                        IdttyError::from(VaultError::Corrupt(format!("recovery eph_public: {e}")))
+                    })?;
                 let ct = hex::decode(recovery_json["encrypted_key"].as_str().unwrap_or(""))
-                    .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("recovery encrypted key: {e}"))))?;
+                    .map_err(|e| {
+                        IdttyError::from(VaultError::Corrupt(format!(
+                            "recovery encrypted key: {e}"
+                        )))
+                    })?;
                 let tag_hex = recovery_json["tag"].as_str().unwrap_or("");
                 let mut tag = [0u8; 16];
-                let tag_bytes = hex::decode(tag_hex)
-                    .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("recovery tag hex: {e}"))))?;
+                let tag_bytes = hex::decode(tag_hex).map_err(|e| {
+                    IdttyError::from(VaultError::Corrupt(format!("recovery tag hex: {e}")))
+                })?;
                 if tag_bytes.len() != 16 {
                     return Err(VaultError::Corrupt("invalid tag length".into()).into());
                 }
@@ -572,21 +618,27 @@ impl<'a> VaultCreator<'a> {
 
                 let recovery_phrase_obj = RecoveryPhrase::from_phrase(phrase_str)?;
                 let mut recovery_key_bytes = recovery_phrase_obj.derive_key();
-                let recovery_x25519_secret = x25519_dalek::StaticSecret::from(<[u8; 32]>::try_from(&recovery_key_bytes[..32]).unwrap());
+                let recovery_x25519_secret = x25519_dalek::StaticSecret::from(
+                    <[u8; 32]>::try_from(&recovery_key_bytes[..32]).unwrap(),
+                );
                 recovery_key_bytes.zeroize();
 
-                let root_key_bytes = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &recovery_x25519_secret)?;
-                let root_key_arr: [u8; 64] = root_key_bytes
-                    .try_into()
-                    .map_err(|_| IdttyError::from(VaultError::Corrupt("unwrapped root key not 64 bytes".into())))?;
+                let root_key_bytes =
+                    hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &recovery_x25519_secret)?;
+                let root_key_arr: [u8; 64] = root_key_bytes.try_into().map_err(|_| {
+                    IdttyError::from(VaultError::Corrupt(
+                        "unwrapped root key not 64 bytes".into(),
+                    ))
+                })?;
                 let root_key = RootKey::from_bytes(root_key_arr);
 
                 let rk_canary_path = path.join("meta/rk-canary.enc");
                 if !rk_canary_path.exists() {
                     return Err(VaultError::NotFound("meta/rk-canary.enc".into()).into());
                 }
-                let rk_canary_data = std::fs::read(&rk_canary_path)
-                    .map_err(|e| IdttyError::from(VaultError::Metadata(format!("reading rk canary: {e}"))))?;
+                let rk_canary_data = std::fs::read(&rk_canary_path).map_err(|e| {
+                    IdttyError::from(VaultError::Metadata(format!("reading rk canary: {e}")))
+                })?;
                 let rk_canary_envelope = crate::vault::envelope::deserialize(&rk_canary_data)?;
                 let mut rk_canary_key = {
                     use hkdf::Hkdf;
@@ -596,8 +648,13 @@ impl<'a> VaultCreator<'a> {
                     hkdf.expand(b"idtty-rk-canary-v1", &mut key).unwrap();
                     key
                 };
-                let rk_canary_pt = crate::crypto::aead::decrypt(&rk_canary_key, &rk_canary_envelope)
-                    .map_err(|_| IdttyError::from(VaultError::Corrupt("root key verification failed".into())))?;
+                let rk_canary_pt = crate::crypto::aead::decrypt(
+                    &rk_canary_key,
+                    &rk_canary_envelope,
+                )
+                .map_err(|_| {
+                    IdttyError::from(VaultError::Corrupt("root key verification failed".into()))
+                })?;
                 rk_canary_key.zeroize();
                 if rk_canary_pt != b"idtty-rk-ok" {
                     return Err(VaultError::Corrupt("root key verification failed".into()).into());
@@ -605,17 +662,20 @@ impl<'a> VaultCreator<'a> {
 
                 let registry_path = path.join("meta/devices.json");
                 let mut registry = if registry_path.exists() {
-                    let reg_json = std::fs::read_to_string(&registry_path)
-                        .map_err(|e| IdttyError::from(VaultError::Metadata(format!("reading devices: {e}"))))?;
-                    serde_json::from_str(&reg_json)
-                        .map_err(|e| IdttyError::from(VaultError::Corrupt(format!("devices: {e}"))))?
+                    let reg_json = std::fs::read_to_string(&registry_path).map_err(|e| {
+                        IdttyError::from(VaultError::Metadata(format!("reading devices: {e}")))
+                    })?;
+                    serde_json::from_str(&reg_json).map_err(|e| {
+                        IdttyError::from(VaultError::Corrupt(format!("devices: {e}")))
+                    })?
                 } else {
                     crate::devices::DeviceRegistry::new()
                 };
 
                 let device_id = ep.generate_uuid();
                 let mut adapter = RngAdapter { provider: &mut *ep };
-                let device_x25519_secret = x25519_dalek::StaticSecret::random_from_rng(&mut adapter);
+                let device_x25519_secret =
+                    x25519_dalek::StaticSecret::random_from_rng(&mut adapter);
                 let device_x25519_public = x25519_dalek::PublicKey::from(&device_x25519_secret);
                 let device_ed25519_signing = ed25519_dalek::SigningKey::generate(&mut adapter);
 
@@ -631,7 +691,8 @@ impl<'a> VaultCreator<'a> {
                     serde_json::to_string_pretty(&registry).unwrap().as_bytes(),
                 )?;
 
-                let wrapped_root_key = hpke_wrap::wrap_key(root_key.as_bytes(), &device_x25519_public)?;
+                let wrapped_root_key =
+                    hpke_wrap::wrap_key(root_key.as_bytes(), &device_x25519_public)?;
                 let keywrap_data = serde_json::json!({
                     "device_id": device_id.to_string(),
                     "ephemeral_public": hex::encode(&wrapped_root_key.0),
@@ -640,12 +701,18 @@ impl<'a> VaultCreator<'a> {
                 });
                 write_secret(
                     &path.join(format!("meta/keywrap/{device_id}.json")),
-                    serde_json::to_string_pretty(&keywrap_data).unwrap().as_bytes(),
+                    serde_json::to_string_pretty(&keywrap_data)
+                        .unwrap()
+                        .as_bytes(),
                 )?;
 
                 if let Some(keystore) = self.keystore {
-                    keystore.store_secret("device_x25519_secret", &device_x25519_secret.to_bytes())?;
-                    keystore.store_secret("device_ed25519_signing", &device_ed25519_signing.to_bytes())?;
+                    keystore
+                        .store_secret("device_x25519_secret", &device_x25519_secret.to_bytes())?;
+                    keystore.store_secret(
+                        "device_ed25519_signing",
+                        &device_ed25519_signing.to_bytes(),
+                    )?;
                 } else {
                     let mut x25519_hex = hex::encode(device_x25519_secret.to_bytes());
                     let mut ed25519_hex = hex::encode(device_ed25519_signing.to_bytes());
@@ -789,13 +856,16 @@ mod tests {
         let join_path = path.clone();
         let phrase_str = secrets.recovery_phrase.phrase();
 
-        let (join_handle, join_secrets) = VaultCreator::new(&join_path, "master-pass", "SecondDevice")
-            .kdf_profile(KdfProfile::MobileLow)
-            .mode(CeremonyMode::Join { recovery_phrase: phrase_str })
-            .initialize_git(false)
-            .entropy(DeterministicEntropy { val: 9 })
-            .execute()
-            .unwrap();
+        let (join_handle, join_secrets) =
+            VaultCreator::new(&join_path, "master-pass", "SecondDevice")
+                .kdf_profile(KdfProfile::MobileLow)
+                .mode(CeremonyMode::Join {
+                    recovery_phrase: phrase_str,
+                })
+                .initialize_git(false)
+                .entropy(DeterministicEntropy { val: 9 })
+                .execute()
+                .unwrap();
 
         assert!(join_handle.is_unlocked());
         assert_eq!(join_secrets.device_id.into_bytes(), [9u8; 16]);

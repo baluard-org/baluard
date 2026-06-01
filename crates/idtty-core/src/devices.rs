@@ -36,7 +36,12 @@ impl DeviceRegistry {
         encryption_public_key: [u8; 32],
         signing_public_key: [u8; 32],
     ) -> Result<DeviceEntry, DeviceError> {
-        self.enroll_with_id(Uuid::new_v4(), name, encryption_public_key, signing_public_key)
+        self.enroll_with_id(
+            Uuid::new_v4(),
+            name,
+            encryption_public_key,
+            signing_public_key,
+        )
     }
 
     /// Enroll a new device with a specific device ID.

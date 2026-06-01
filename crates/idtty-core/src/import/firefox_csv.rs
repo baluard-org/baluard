@@ -3,8 +3,8 @@
 //! Columns: url, username, password, httpRealm, formActionOrigin, guid, timeCreated, timeLastUsed, timePasswordChanged
 //! Same shape as Chrome: url + username + password. All entries become Login ciphers.
 
-use crate::types::*;
 use crate::import::ImportResult;
+use crate::types::*;
 
 /// Parse a Firefox CSV export.
 pub fn parse(data: &str) -> ImportResult {
@@ -25,12 +25,15 @@ pub fn parse(data: &str) -> ImportResult {
     let col_url = headers.iter().position(|h| h == "url");
     let col_username = headers.iter().position(|h| h == "username");
     let col_password = headers.iter().position(|h| h == "password");
-    let col_name = headers.iter().position(|h| h == "name")
+    let col_name = headers
+        .iter()
+        .position(|h| h == "name")
         .or_else(|| headers.iter().position(|h| h == "title")); // Fallback if title column exists
     let col_http_realm = headers.iter().position(|h| h == "httpRealm");
 
     let get = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
-        idx.and_then(|i| record.get(i).map(|s| s.to_string())).filter(|s| !s.is_empty())
+        idx.and_then(|i| record.get(i).map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
     };
 
     for (row_num, record) in reader.records().enumerate() {
@@ -44,14 +47,16 @@ pub fn parse(data: &str) -> ImportResult {
 
         let url = get(&record, col_url);
         // Name: use explicit name column, or derive from URL hostname
-        let name = get(&record, col_name).or_else(|| {
-            url.as_ref().and_then(|u| {
-                u.strip_prefix("https://")
-                    .or_else(|| u.strip_prefix("http://"))
-                    .and_then(|s| s.split('/').next())
-                    .map(|s| s.to_string())
+        let name = get(&record, col_name)
+            .or_else(|| {
+                url.as_ref().and_then(|u| {
+                    u.strip_prefix("https://")
+                        .or_else(|| u.strip_prefix("http://"))
+                        .and_then(|s| s.split('/').next())
+                        .map(|s| s.to_string())
+                })
             })
-        }).unwrap_or_else(|| "Untitled".into());
+            .unwrap_or_else(|| "Untitled".into());
 
         let uris = if let Some(ref u) = url {
             vec![LoginUri::new(u.clone())]
@@ -127,6 +132,9 @@ https://google.com,user@gmail.com,pass123,,,"guid-2",1700000000,1700002000,17000
         let result = parse(csv);
         assert_eq!(result.ciphers.len(), 1);
         assert_eq!(result.ciphers[0].name, "Untitled");
-        assert_eq!(result.ciphers[0].notes.as_deref(), Some("HTTP Realm: Router Admin"));
+        assert_eq!(
+            result.ciphers[0].notes.as_deref(),
+            Some("HTTP Realm: Router Admin")
+        );
     }
 }

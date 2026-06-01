@@ -10,7 +10,9 @@ use uuid::Uuid;
 use crate::crypto::aead;
 use crate::error::{IdttyError, VaultError};
 use crate::keys::hierarchy::ItemKey;
-use crate::types::{Cipher, CipherEnvelopeData, CipherId, CipherInput, EnvelopeHeader, ObjectType, Tier};
+use crate::types::{
+    Cipher, CipherEnvelopeData, CipherId, CipherInput, EnvelopeHeader, ObjectType, Tier,
+};
 use crate::vault::envelope;
 use crate::vault::padding;
 use crate::{ALG_AES_256_GCM, IDTTY_VERSION};

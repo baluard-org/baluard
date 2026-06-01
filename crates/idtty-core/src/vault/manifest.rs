@@ -70,10 +70,7 @@ pub struct VaultSettings {
     pub auto_lock_minutes: Option<u32>,
     pub theme: Option<String>,
     /// URI match strategy global default. Typed enum with hard error on unknown values.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_uri_match_strategy"
-    )]
+    #[serde(default, deserialize_with = "deserialize_uri_match_strategy")]
     pub default_uri_match: Option<crate::types::UriMatchStrategy>,
 }
 
@@ -130,7 +127,11 @@ mod tests {
     fn vault_settings_rejects_unknown_uri_match_strategy() {
         let json = r#"{"auto_lock_minutes": 10, "default_uri_match": "exakt"}"#;
         let result: Result<VaultSettings, _> = serde_json::from_str(json);
-        assert!(result.is_err(), "expected error for unknown strategy, got: {:?}", result);
+        assert!(
+            result.is_err(),
+            "expected error for unknown strategy, got: {:?}",
+            result
+        );
     }
 
     #[test]

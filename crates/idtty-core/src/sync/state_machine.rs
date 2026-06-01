@@ -79,10 +79,9 @@ impl SyncStateMachine {
     /// Persist the state machine to disk.
     pub fn save_to_file(&self, vault_path: &Path) -> Result<(), String> {
         let path = vault_path.join("meta/sync-state.json");
-        let data = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("serialize state: {e}"))?;
-        std::fs::write(&path, data)
-            .map_err(|e| format!("write state to file: {e}"))?;
+        let data =
+            serde_json::to_string_pretty(self).map_err(|e| format!("serialize state: {e}"))?;
+        std::fs::write(&path, data).map_err(|e| format!("write state to file: {e}"))?;
         Ok(())
     }
 

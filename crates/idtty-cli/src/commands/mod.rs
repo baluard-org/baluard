@@ -9,10 +9,10 @@ use crate::client;
 
 use std::path::Path;
 
+use base64::Engine;
 use idtty_core::types::{CipherInput, CipherKind, KdfProfile, LoginData};
 use idtty_core::vault::handle::{CipherRead, VaultHandle};
 use zeroize::Zeroize;
-use base64::Engine;
 
 // ── Init (always direct) ──
 
@@ -32,9 +32,10 @@ pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn st
     }
 
     println!("Creating vault...");
-    let (_handle, secrets) = idtty_core::vault::creation::VaultCreator::new(vault_path, &password, "this-device")
-        .kdf_profile(profile)
-        .execute()?;
+    let (_handle, secrets) =
+        idtty_core::vault::creation::VaultCreator::new(vault_path, &password, "this-device")
+            .kdf_profile(profile)
+            .execute()?;
 
     println!();
     println!("Vault created successfully.");
@@ -171,7 +172,9 @@ pub fn handle_add(
         kind: CipherKind::Login(LoginData {
             username,
             password: Some((*cipher_password).clone()),
-            uris: uri.map(|u| vec![idtty_core::types::LoginUri::new(u)]).unwrap_or_default(),
+            uris: uri
+                .map(|u| vec![idtty_core::types::LoginUri::new(u)])
+                .unwrap_or_default(),
             totp_uri: None,
             autofill_on_page_load: false,
             password_revision_date: None,
@@ -181,8 +184,8 @@ pub fn handle_add(
         custom_fields: vec![],
         created_at: None,
         password_history: vec![],
-            attachments: vec![],
-            reprompt: false,
+        attachments: vec![],
+        reprompt: false,
     };
 
     match mode {
@@ -318,7 +321,8 @@ pub fn handle_get(
                                 json_obj["totp"] = serde_json::json!(data.totp_uri);
                             }
                             idtty_core::types::CipherKind::Card(data) => {
-                                json_obj["cardholder_name"] = serde_json::json!(data.cardholder_name);
+                                json_obj["cardholder_name"] =
+                                    serde_json::json!(data.cardholder_name);
                                 json_obj["brand"] = serde_json::json!(data.brand);
                                 json_obj["number"] = serde_json::json!(data.number);
                             }
@@ -447,28 +451,39 @@ pub fn handle_list(
                 println!("No ciphers found.");
             } else if let Some(ciphers) = ciphers {
                 // Fetch folders for name resolution
-                let folder_map: std::collections::HashMap<String, String> =
-                    if let Ok(fresp) = client::request_to("folder.list", "", socket) {
-                        if let Ok(fdata) = serde_json::from_str::<serde_json::Value>(&fresp.payload) {
-                            fdata.as_array()
-                                .unwrap_or(&vec![])
-                                .iter()
-                                .filter_map(|f| {
-                                    let id = f["id"].as_str()?.to_string();
-                                    let name = f["name"].as_str()?.to_string();
-                                    Some((id, name))
-                                })
-                                .collect()
-                        } else { std::collections::HashMap::new() }
-                    } else { std::collections::HashMap::new() };
+                let folder_map: std::collections::HashMap<String, String> = if let Ok(fresp) =
+                    client::request_to("folder.list", "", socket)
+                {
+                    if let Ok(fdata) = serde_json::from_str::<serde_json::Value>(&fresp.payload) {
+                        fdata
+                            .as_array()
+                            .unwrap_or(&vec![])
+                            .iter()
+                            .filter_map(|f| {
+                                let id = f["id"].as_str()?.to_string();
+                                let name = f["name"].as_str()?.to_string();
+                                Some((id, name))
+                            })
+                            .collect()
+                    } else {
+                        std::collections::HashMap::new()
+                    }
+                } else {
+                    std::collections::HashMap::new()
+                };
 
                 for c in ciphers {
                     let id = c["id"].as_str().unwrap_or("?");
                     let name = c["name"].as_str().unwrap_or("?");
                     let ctype = c["type"].as_str().unwrap_or("login");
-                    let fav = if c["favorite"].as_bool().unwrap_or(false) { "*" } else { " " };
+                    let fav = if c["favorite"].as_bool().unwrap_or(false) {
+                        "*"
+                    } else {
+                        " "
+                    };
                     let username = c["username"].as_str().unwrap_or("");
-                    let folder = c["folder_id"].as_str()
+                    let folder = c["folder_id"]
+                        .as_str()
                         .and_then(|fid| folder_map.get(fid))
                         .map(|n| n.as_str())
                         .unwrap_or("");
@@ -1033,14 +1048,21 @@ pub fn handle_settings_set(
         .ok_or("Usage: idtty settings set key=value")?;
 
     let payload = match key {
-        "auto_lock_minutes" => serde_json::json!({"auto_lock_minutes": value.parse::<u32>().map_err(|e: std::num::ParseIntError| format!("Invalid number: {e}"))?}),
+        "auto_lock_minutes" => {
+            serde_json::json!({"auto_lock_minutes": value.parse::<u32>().map_err(|e: std::num::ParseIntError| format!("Invalid number: {e}"))?})
+        }
         "theme" => serde_json::json!({"theme": value}),
         "default_uri_match" => {
             let strategy = idtty_core::types::UriMatchStrategy::from_str_strict(value)
                 .map_err(|e| format!("Invalid URI match strategy: {e}"))?;
             serde_json::json!({"default_uri_match": serde_json::to_value(strategy)?})
         }
-        _ => return Err(format!("Unknown setting: {key}. Available: auto_lock_minutes, theme, default_uri_match").into()),
+        _ => {
+            return Err(format!(
+                "Unknown setting: {key}. Available: auto_lock_minutes, theme, default_uri_match"
+            )
+            .into());
+        }
     };
 
     match mode {
@@ -1166,32 +1188,40 @@ pub fn handle_import(
     format: &str,
     path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let import_format = idtty_core::import::ImportFormat::from_str(format)
-        .ok_or_else(|| -> Box<dyn std::error::Error> {
-            format!("Unknown format: {format}. Supported: {:?}", idtty_core::import::ImportFormat::all_names()).into()
-        })?;
+    let import_format = idtty_core::import::ImportFormat::from_str(format).ok_or_else(
+        || -> Box<dyn std::error::Error> {
+            format!(
+                "Unknown format: {format}. Supported: {:?}",
+                idtty_core::import::ImportFormat::all_names()
+            )
+            .into()
+        },
+    )?;
 
     ensure_unlocked_daemon(socket)?;
 
     // Pre-read file size check (prevent OOM on large files)
     const MAX_IMPORT_SIZE: u64 = 50 * 1024 * 1024; // 50MB
-    let file_meta = std::fs::metadata(path)
-        .map_err(|e| format!("Failed to stat {path}: {e}"))?;
+    let file_meta = std::fs::metadata(path).map_err(|e| format!("Failed to stat {path}: {e}"))?;
     if file_meta.len() > MAX_IMPORT_SIZE {
-        return Err(format!("Import file too large: {} bytes (max {} bytes)", file_meta.len(), MAX_IMPORT_SIZE).into());
+        return Err(format!(
+            "Import file too large: {} bytes (max {} bytes)",
+            file_meta.len(),
+            MAX_IMPORT_SIZE
+        )
+        .into());
     }
 
     // For 1PUX, read as binary and base64-encode
     let payload = match import_format {
         idtty_core::import::ImportFormat::OnePassword1pux => {
-            let bytes = std::fs::read(path)
-                .map_err(|e| format!("Failed to read {path}: {e}"))?;
+            let bytes = std::fs::read(path).map_err(|e| format!("Failed to read {path}: {e}"))?;
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
             serde_json::json!({"format": format, "data": b64}).to_string()
         }
         _ => {
-            let file_data = std::fs::read_to_string(path)
-                .map_err(|e| format!("Failed to read {path}: {e}"))?;
+            let file_data =
+                std::fs::read_to_string(path).map_err(|e| format!("Failed to read {path}: {e}"))?;
             serde_json::json!({"format": format, "data": file_data}).to_string()
         }
     };
@@ -1233,7 +1263,9 @@ pub fn handle_export(
     ensure_unlocked_daemon(socket)?;
 
     // Warn about plaintext secrets
-    eprintln!("WARNING: Export file will contain UNENCRYPTED secrets (passwords, cards, SSH keys).");
+    eprintln!(
+        "WARNING: Export file will contain UNENCRYPTED secrets (passwords, cards, SSH keys)."
+    );
     eprintln!("         Delete the file after use. Do not upload to cloud storage.");
 
     // Confirm overwrite if file exists
@@ -1254,8 +1286,7 @@ pub fn handle_export(
         return Err(resp.error_message.into());
     }
 
-    std::fs::write(path, &resp.payload)
-        .map_err(|e| format!("Failed to write {path}: {e}"))?;
+    std::fs::write(path, &resp.payload).map_err(|e| format!("Failed to write {path}: {e}"))?;
 
     // Set file permissions to 0600 on Unix (owner-only read/write)
     #[cfg(unix)]
@@ -1270,9 +1301,7 @@ pub fn handle_export(
 
 // ── Health Report ──
 
-pub fn handle_health(
-    socket: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_health(socket: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     ensure_unlocked_daemon(socket)?;
 
     let resp = client::request_to("vault.health", "", socket)?;
@@ -1292,7 +1321,11 @@ pub fn handle_health(
     if weak > 0 {
         println!("Weak passwords ({}):", weak);
         for entry in report["weak"].as_array().unwrap() {
-            println!("  {} - {}", entry["name"].as_str().unwrap_or("?"), entry["reason"].as_str().unwrap_or(""));
+            println!(
+                "  {} - {}",
+                entry["name"].as_str().unwrap_or("?"),
+                entry["reason"].as_str().unwrap_or("")
+            );
         }
         println!();
     }
@@ -1300,7 +1333,11 @@ pub fn handle_health(
     if reused > 0 {
         println!("Reused passwords ({}):", reused);
         for entry in report["reused"].as_array().unwrap() {
-            println!("  {} - {}", entry["name"].as_str().unwrap_or("?"), entry["reason"].as_str().unwrap_or(""));
+            println!(
+                "  {} - {}",
+                entry["name"].as_str().unwrap_or("?"),
+                entry["reason"].as_str().unwrap_or("")
+            );
         }
         println!();
     }
@@ -1308,7 +1345,11 @@ pub fn handle_health(
     if old > 0 {
         println!("Old passwords ({}):", old);
         for entry in report["old"].as_array().unwrap() {
-            println!("  {} - {}", entry["name"].as_str().unwrap_or("?"), entry["reason"].as_str().unwrap_or(""));
+            println!(
+                "  {} - {}",
+                entry["name"].as_str().unwrap_or("?"),
+                entry["reason"].as_str().unwrap_or("")
+            );
         }
         println!();
     }
@@ -1344,7 +1385,8 @@ pub fn handle_attach_upload(
         "cipher_id": cipher_id,
         "filename": filename,
         "data_base64": base64::engine::general_purpose::STANDARD.encode(&data),
-    }).to_string();
+    })
+    .to_string();
 
     // Zeroize file data after encoding
     use zeroize::Zeroize;
@@ -1371,7 +1413,8 @@ pub fn handle_attach_download(
     let payload = serde_json::json!({
         "cipher_id": cipher_id,
         "attachment_id": attachment_id,
-    }).to_string();
+    })
+    .to_string();
 
     let resp = client::request_to("vault.attach_download", &payload, socket)?;
     if !resp.success {
@@ -1380,14 +1423,18 @@ pub fn handle_attach_download(
 
     let result: serde_json::Value = serde_json::from_str(&resp.payload)?;
     use base64::Engine;
-    let mut data = base64::engine::general_purpose::STANDARD.decode(result["data_base64"].as_str().unwrap())?;
+    let mut data = base64::engine::general_purpose::STANDARD
+        .decode(result["data_base64"].as_str().unwrap())?;
     std::fs::write(output_path, &data)?;
 
     // Zeroize after writing
     use zeroize::Zeroize;
     data.zeroize();
 
-    println!("Downloaded: {} ({} bytes) -> {}", result["filename"], result["size"], output_path);
+    println!(
+        "Downloaded: {} ({} bytes) -> {}",
+        result["filename"], result["size"], output_path
+    );
     Ok(())
 }
 
@@ -1401,7 +1448,8 @@ pub fn handle_attach_delete(
     let payload = serde_json::json!({
         "cipher_id": cipher_id,
         "attachment_id": attachment_id,
-    }).to_string();
+    })
+    .to_string();
 
     let resp = client::request_to("vault.attach_delete", &payload, socket)?;
     if !resp.success {
@@ -1439,7 +1487,13 @@ pub fn handle_attach_list(
                 } else {
                     format!("{} bytes", size)
                 };
-                println!("  {} {} {} {}", a["id"].as_str().unwrap_or("?"), a["filename"].as_str().unwrap_or("?"), size_str, a["mime_type"].as_str().unwrap_or(""));
+                println!(
+                    "  {} {} {} {}",
+                    a["id"].as_str().unwrap_or("?"),
+                    a["filename"].as_str().unwrap_or("?"),
+                    size_str,
+                    a["mime_type"].as_str().unwrap_or("")
+                );
             }
         }
         _ => println!("No attachments found for {}.", cipher_id),

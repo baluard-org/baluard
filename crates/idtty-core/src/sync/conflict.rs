@@ -91,9 +91,15 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
     let mut conflicts = Vec::new();
 
     // Check each field individually using 3-way merge
-    merge_3way_field(&base.name, &mut merged.name, &remote.name, "name", &mut conflicts);
+    merge_3way_field(
+        &base.name,
+        &mut merged.name,
+        &remote.name,
+        "name",
+        &mut conflicts,
+    );
 
-        // Merge kind-specific data
+    // Merge kind-specific data
     match (&base.kind, &local.kind, &remote.kind) {
         // All three are Login: merge login fields
         (
@@ -149,7 +155,13 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
     }
 
     // Merge notes field
-    merge_3way_field_opt(&base.notes, &mut merged.notes, &remote.notes, "notes", &mut conflicts);
+    merge_3way_field_opt(
+        &base.notes,
+        &mut merged.notes,
+        &remote.notes,
+        "notes",
+        &mut conflicts,
+    );
 
     // Custom fields: union by name, prefer local on name collision
     for cf in &remote.custom_fields {
@@ -387,10 +399,11 @@ mod tests {
         let result = merge_ciphers(&base, &local, &remote);
         match result {
             MergeResult::Conflict(info) => {
-                assert!(info
-                    .conflicting_fields
-                    .iter()
-                    .any(|c| c.field_name == "type"));
+                assert!(
+                    info.conflicting_fields
+                        .iter()
+                        .any(|c| c.field_name == "type")
+                );
             }
             MergeResult::Merged(_) => panic!("expected conflict for cross-type change"),
         }

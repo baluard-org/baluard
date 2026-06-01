@@ -82,6 +82,7 @@ createEffect(() => {
   }).catch(() => {});
 });
   const [showGenerator, setShowGenerator] = createSignal(false);
+  const [showSettingsModal, setShowSettingsModal] = createSignal(false);
   
   // New / Edited entry buffers
   const [newCipher, setNewCipher] = createSignal({
@@ -119,6 +120,7 @@ createEffect(() => {
   repromptCallback, setRepromptCallback,
   biometricAvailable,
     showGenerator, setShowGenerator,
+    showSettingsModal, setShowSettingsModal,
     newCipher, setNewCipher,
     recoveryPhrase, setRecoveryPhrase,
     createPassword, setCreatePassword,
@@ -621,6 +623,297 @@ function GeneratorModal() {
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
                 </button>
               </div>
+            </Show>
+          </div>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
+function SettingsModal() {
+  const { showSettingsModal, setShowSettingsModal, theme, setTheme } = useApp();
+  const { t } = useI18n();
+
+  const [activeTab, setActiveTab] = createSignal("general"); // "general" or "data"
+  
+  // Auto-lock state
+  const [lockMinutes, setLockMinutes] = createSignal(15);
+  const [saved, setSaved] = createSignal(false);
+
+  // Biometric state
+  const [biometricEnabled, setBiometricEnabled] = createSignal(false);
+  const [biometricAvailable, setBiometricAvailable] = createSignal(false);
+
+  // Import/Export state
+  const [importing, setImporting] = createSignal(false);
+  const [exporting, setExporting] = createSignal(false);
+  const [message, setMessage] = createSignal(null);
+
+  const formats = [
+    { id: "bw-json", label: "Bitwarden JSON" },
+    { id: "bw-csv", label: "Bitwarden CSV" },
+    { id: "chrome-csv", label: "Chrome CSV" },
+    { id: "firefox-csv", label: "Firefox CSV" },
+    { id: "lastpass-csv", label: "LastPass CSV" },
+    { id: "1password-1pux", label: "1Password (1PUX)" },
+    { id: "1password-csv", label: "1Password CSV" },
+    { id: "keepass-xml", label: "KeePass XML" },
+  ];
+
+  createEffect(() => {
+    if (showSettingsModal()) {
+      loadSettings();
+    }
+  });
+
+  async function loadSettings() {
+    try {
+      // Load auto lock
+      const data = JSON.parse(await daemon("settings.get"));
+      if (data.auto_lock_minutes) setLockMinutes(data.auto_lock_minutes);
+
+      // Load biometric status
+      const status = JSON.parse(await daemon("vault.biometric_status"));
+      setBiometricAvailable(status.available);
+      setBiometricEnabled(status.enabled);
+    } catch (e) {}
+  }
+
+  async function saveAutoLock() {
+    try {
+      await daemon("settings.set", JSON.stringify({ auto_lock_minutes: lockMinutes() }));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (e) {}
+  }
+
+  async function toggleBiometric() {
+    try {
+      if (biometricEnabled()) {
+        await daemon("vault.biometric_disable");
+        setBiometricEnabled(false);
+      } else {
+        const password = prompt("Enter master password to enable Quick Unlock:");
+        if (password) {
+          await daemon("vault.biometric_enable", JSON.stringify({ password }));
+          setBiometricEnabled(true);
+        }
+      }
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function doImport(format) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = format === "1password-1pux" ? ".1pux" : ".csv,.json,.xml,.txt";
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      setImporting(true);
+      setMessage(null);
+      try {
+        let data;
+        if (format === "1password-1pux") {
+          const buf = await file.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          let binary = "";
+          bytes.forEach(b => binary += String.fromCharCode(b));
+          data = btoa(binary);
+        } else {
+          data = await file.text();
+        }
+        const payload = JSON.stringify({ format, data });
+        const resp = await daemon("vault.import", payload);
+        const result = JSON.parse(resp);
+        setMessage(`Imported ${result.imported || 0} entries` + (result.skipped ? `, skipped ${result.skipped}` : ""));
+        const { refreshCiphers } = useActions();
+        await refreshCiphers();
+      } catch (e) {
+        setMessage("Import failed: " + sanitizeError(e, t));
+      } finally {
+        setImporting(false);
+      }
+    };
+    input.click();
+  }
+
+  async function doExport(format) {
+    setExporting(true);
+    setMessage(null);
+    try {
+      const resp = await daemon("vault.export", JSON.stringify({ format }));
+      const blob = new Blob([resp], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `idtty_export_${format === "bw-json" ? "bitwarden.json" : "bitwarden.csv"}`;
+      a.click();
+      setMessage("Exported successfully");
+    } catch (e) {
+      setMessage("Export failed: " + sanitizeError(e, t));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <Show when={showSettingsModal()}>
+      <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]" onClick={() => setShowSettingsModal(false)}>
+        <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[500px] max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+          {/* Header */}
+          <div class="p-6 pb-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
+            <h3 class="text-lg font-bold text-[var(--color-text)]">App Settings</h3>
+            <button onClick={() => setShowSettingsModal(false)} class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+
+          {/* Navigation Tabs */}
+          <div class="px-6 flex gap-4 border-b border-[var(--color-border)] shrink-0 bg-[var(--color-sidebar)]/30">
+            <button
+              onClick={() => setActiveTab("general")}
+              class={`py-3 text-xs font-bold transition-all relative cursor-pointer ${activeTab() === "general" ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
+            >
+              General & Security
+              <Show when={activeTab() === "general"}>
+                <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
+              </Show>
+            </button>
+            <button
+              onClick={() => setActiveTab("data")}
+              class={`py-3 text-xs font-bold transition-all relative cursor-pointer ${activeTab() === "data" ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
+            >
+              Data Import / Export
+              <Show when={activeTab() === "data"}>
+                <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
+              </Show>
+            </button>
+          </div>
+
+          {/* Content */}
+          <div class="flex-1 overflow-y-auto p-6 space-y-6">
+            <Show when={activeTab() === "general"}>
+              {/* Theme Settings */}
+              <div class="space-y-2">
+                <label class="text-xs font-bold text-[var(--color-text)]">App Theme</label>
+                <div class="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => setTheme("dark")}
+                    class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "dark" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                    <span class="text-xs font-bold">Dark Mode</span>
+                  </button>
+                  <button
+                    onClick={() => setTheme("light")}
+                    class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "light" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+                    <span class="text-xs font-bold">Light Mode</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Auto-lock Settings */}
+              <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
+                <div class="flex flex-col">
+                  <span class="text-xs font-bold text-[var(--color-text)]">Auto-lock Timeout</span>
+                  <span class="text-[10px] text-[var(--color-muted)] mt-0.5">Automatically locks the vault after a period of inactivity.</span>
+                </div>
+                <div class="flex items-center gap-3">
+                  <div class="flex items-center gap-2 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-xl px-3 py-1.5 flex-1 max-w-[200px]">
+                    <input
+                      type="number"
+                      min="1"
+                      max="120"
+                      value={lockMinutes()}
+                      onInput={e => setLockMinutes(parseInt(e.target.value) || 15)}
+                      class="w-full bg-transparent text-sm text-[var(--color-text)] outline-none font-bold text-center"
+                    />
+                    <span class="text-xs text-[var(--color-muted)]">minutes</span>
+                  </div>
+                  <button
+                    onClick={saveAutoLock}
+                    class="px-5 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md"
+                  >
+                    {saved() ? "Saved" : "Save"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Unlock (Biometric) Settings */}
+              <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
+                <div class="flex items-center justify-between">
+                  <div class="flex flex-col flex-1 pr-4">
+                    <span class="text-xs font-bold text-[var(--color-text)]">Quick Unlock</span>
+                    <span class="text-[10px] text-[var(--color-muted)] mt-0.5">Store credentials securely in OS Keychain using device biometrics (fingerprint/face) or PIN code.</span>
+                  </div>
+                  <Show when={biometricAvailable()} fallback={
+                    <div class="text-[10px] text-[var(--color-muted)] bg-[var(--color-sidebar)] px-2.5 py-1 rounded-lg border border-[var(--color-border)] font-bold">Unsupported</div>
+                  }>
+                    <button
+                      onClick={toggleBiometric}
+                      class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${biometricEnabled() ? "bg-green-950/20 text-green-400 border-green-900/50 hover:bg-green-950/30" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                    >
+                      {biometricEnabled() ? "Enabled" : "Enable"}
+                    </button>
+                  </Show>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={activeTab() === "data"}>
+              {/* Import Section */}
+              <div class="space-y-3">
+                <label class="text-xs font-bold text-[var(--color-text)]">Import Vault Data</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <For each={formats}>
+                    {(f) => (
+                      <button
+                        onClick={() => doImport(f.id)}
+                        disabled={importing()}
+                        class="text-left px-3 py-2.5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50 flex items-center justify-between group"
+                      >
+                        <span class="font-medium">{f.label}</span>
+                        <svg class="w-3.5 h-3.5 text-[var(--color-muted)] group-hover:text-[var(--color-primary)] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </div>
+
+              {/* Export Section */}
+              <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
+                <label class="text-xs font-bold text-[var(--color-text)]">Export Vault Data</label>
+                <div class="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => doExport("bw-json")}
+                    disabled={exporting()}
+                    class="flex items-center justify-center gap-2 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <svg class="w-4 h-4 text-[var(--color-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    Bitwarden JSON
+                  </button>
+                  <button
+                    onClick={() => doExport("bw-csv")}
+                    disabled={exporting()}
+                    class="flex items-center justify-center gap-2 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <svg class="w-4 h-4 text-[var(--color-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    Bitwarden CSV
+                  </button>
+                </div>
+              </div>
+
+              {/* Message Display */}
+              <Show when={message()}>
+                <div class="p-3.5 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-primary)] font-bold text-center">
+                  {message()}
+                </div>
+              </Show>
             </Show>
           </div>
         </div>
@@ -2188,7 +2481,7 @@ function FolderNode(props) {
 }
 
 function VaultView() {
-  const { ciphers, trashCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator } = useApp();
+  const { ciphers, trashCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator, showSettingsModal, setShowSettingsModal } = useApp();
   const { lock } = useActions();
   const { t } = useI18n();
 
@@ -2261,6 +2554,7 @@ function VaultView() {
       <DeleteConfirmModal />
       <GeneratorModal />
       <RepromptModal />
+      <SettingsModal />
       
       {/* Column 1: Left Navigation Sidebar */}
       <div class="w-[260px] bg-[var(--color-sidebar)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0 select-none">
@@ -2372,10 +2666,10 @@ function VaultView() {
           </div>
         </div>
 
-        {/* Sidebar Footer Lock & Theme Toggle */}
+        {/* Sidebar Footer Lock & Settings */}
         <div class="p-4 border-t border-[var(--color-border)] flex items-center justify-between gap-3 bg-[var(--color-sidebar)]">
-          <div class="flex items-center gap-3 min-w-0">
-            <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-xs shadow-md">
+          <div class="flex items-center gap-3 min-w-0 flex-1">
+            <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-xs shadow-md shrink-0">
               ES
             </div>
             <div class="min-w-0 flex-1">
@@ -2385,15 +2679,11 @@ function VaultView() {
           </div>
           <div class="flex items-center gap-1.5 shrink-0">
             <button
-              onClick={() => setTheme(theme() === "dark" ? "light" : "dark")}
-              title={theme() === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              onClick={() => setShowSettingsModal(true)}
+              title="Open Settings"
               class="p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)]"
             >
-              <Show when={theme() === "dark"} fallback={
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
-              }>
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
-              </Show>
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
             </button>
             <button
               onClick={() => lock(t)}
@@ -2402,8 +2692,6 @@ function VaultView() {
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
             </button>
-            <AutoLockButton />
-            <ImportExportButton />
           </div>
         </div>
       </div>
