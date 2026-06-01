@@ -13,21 +13,11 @@ pub const POLL_INTERVAL_FOREGROUND_SECS: u64 = 30;
 pub const POLL_INTERVAL_BACKGROUND_MAX_SECS: u64 = 300;
 
 /// Result of a sync operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SyncResult {
     pub pulled_commits: usize,
     pub pushed_commits: usize,
     pub conflicts: Vec<uuid::Uuid>,
-}
-
-impl Default for SyncResult {
-    fn default() -> Self {
-        Self {
-            pulled_commits: 0,
-            pushed_commits: 0,
-            conflicts: Vec::new(),
-        }
-    }
 }
 
 // Note: Full git2 operations will be implemented when wiring the vault handle

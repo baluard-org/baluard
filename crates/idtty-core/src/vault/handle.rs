@@ -15,6 +15,7 @@ use crate::crypto::hpke_wrap;
 use crate::crypto::kdf;
 use crate::devices::DeviceRegistry;
 use crate::error::{IdttyError, VaultError};
+use crate::device_manager::DeviceManager;
 use crate::keys::hierarchy::{ItemKey, RootKey};
 use crate::types::{Cipher, CipherInput, KdfParams, Tier};
 use crate::vault::cipher;
@@ -49,9 +50,13 @@ pub struct VaultHandle {
     /// KDF parameters (loaded from meta/kdf-params.json).
     pub kdf_params: KdfParams,
     /// Device registry (loaded from meta/devices.json).
+    /// Kept for backward compat; DeviceManager is the authoritative owner.
     pub registry: DeviceRegistry,
     /// Current device ID.
     pub device_id: Uuid,
+    /// Device lifecycle coordinator (MISS-2).
+    /// Loaded on open, manages epoch state, enrollment, and rotation.
+    pub device_manager: DeviceManager,
     /// Session state.
     pub state: VaultState,
 }
@@ -81,6 +86,7 @@ pub struct UnlockedState {
 
 impl Drop for UnlockedState {
     fn drop(&mut self) {
+        self.root_key.zeroize();
         self.session_key.zeroize();
         self.sync_key.zeroize();
     }
@@ -117,12 +123,27 @@ impl VaultHandle {
         // TODO: store vault_id explicitly in a meta file during creation
         let vault_id = Self::derive_vault_id(&kdf_params);
 
+        // MISS-2: Load DeviceManager from vault directory
+        let mut device_manager = if DeviceManager::vault_files_exist(path) {
+            DeviceManager::load_from_vault(path)?
+        } else {
+            let mut dm = DeviceManager::new();
+            dm.set_vault_path(path);
+            dm.epoch.activate().map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
+            dm
+        };
+        // Ensure epoch is ACTIVE for existing vaults (may be CREATED after load)
+        if device_manager.epoch_state() == crate::keys::epoch::EpochState::Created {
+            device_manager.epoch.activate().map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
+        }
+
         Ok(VaultHandle {
             path: path.to_path_buf(),
             vault_id,
             kdf_params,
             registry,
             device_id,
+            device_manager,
             state: VaultState::Locked,
         })
     }
@@ -259,6 +280,9 @@ impl VaultHandle {
             current_epoch,
         });
 
+        // M6 fix: ensure registries stay in sync after unlock
+        self.sync_registry_to_device_manager();
+
         Ok(())
     }
 
@@ -270,6 +294,23 @@ impl VaultHandle {
     /// Check if vault is unlocked.
     pub fn is_unlocked(&self) -> bool {
         matches!(self.state, VaultState::Unlocked(_))
+    }
+
+    /// Helper: get vault path as &Path for observer hooks.
+    fn vault_path_as_ref(&self) -> Option<&Path> {
+        Some(&self.path)
+    }
+
+    /// M6 fix: sync VaultHandle.registry with device_manager.registry.
+    /// Call after loading or mutating either registry.
+    fn sync_registry_to_device_manager(&mut self) {
+        self.device_manager.registry = self.registry.clone();
+    }
+
+    /// Sync VaultHandle.registry with device_manager.registry.
+    /// Call after operations that mutate device_manager's registry.
+    fn sync_registry_from_device_manager(&mut self) {
+        self.registry = self.device_manager.registry.clone();
     }
 
     /// Get a reference to the unlocked state (panics if locked).
@@ -382,7 +423,7 @@ impl VaultHandle {
         if let Some(pid) = parent_id {
             if !folders.iter().any(|f| f.id == pid) {
                 return Err(
-                    crate::error::VaultError::Metadata(format!("parent folder not found")).into(),
+                    crate::error::VaultError::Metadata("parent folder not found".into()).into(),
                 );
             }
             // Walk parent chain to check depth
@@ -450,10 +491,9 @@ impl VaultHandle {
             )));
         }
 
-        // Remove all collected folders
+        // Remove all collected folders (persist only after cipher unassignment succeeds)
         let mut folders = all_folders;
         folders.retain(|f| !ids_to_delete.contains(&f.id));
-        self.save_folders(&folders)?;
 
         // Unassign all ciphers in any of the deleted folders
         let cipher_ids = self.list_cipher_ids()?;
@@ -479,7 +519,7 @@ impl VaultHandle {
 
             if existing_cipher
                 .folder_id
-                .map_or(false, |fid| ids_to_delete.contains(&fid))
+                .is_some_and(|fid| ids_to_delete.contains(&fid))
             {
                 // Reuse update_cipher to maintain all invariants (history, timestamps, etc.)
                 let input = CipherInput {
@@ -720,7 +760,7 @@ impl VaultHandle {
                     &file,
                     &item_key,
                 )?;
-                Ok(CipherRead::Decrypted(cipher))
+                Ok(CipherRead::Decrypted(Box::new(cipher)))
             }
             VaultState::Locked => {
                 let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
@@ -738,6 +778,9 @@ impl VaultHandle {
     /// Delete a cipher by ID. By default, moves it to trash.
     /// If it is already in trash, deletes it permanently.
     pub fn delete_cipher(&self, cipher_id: Uuid) -> Result<(), IdttyError> {
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
+        }
         let active_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
         let trash_path = self.path.join(format!("trash/{}.enc", cipher_id));
 
@@ -823,6 +866,9 @@ impl VaultHandle {
 
     /// Add a cipher (requires unlocked vault).
     pub fn add_cipher(&mut self, input: &CipherInput) -> Result<Uuid, IdttyError> {
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
+        }
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -837,7 +883,7 @@ impl VaultHandle {
             cipher_id,
             input,
             &item_key,
-            1, // epoch
+            unlocked.current_epoch, // epoch
             1, // update_seq
             0, // nonce_counter
         )?;
@@ -855,6 +901,9 @@ impl VaultHandle {
         cipher_id: Uuid,
         input: &CipherInput,
     ) -> Result<(), IdttyError> {
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
+        }
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -877,10 +926,7 @@ impl VaultHandle {
 
         // Read existing cipher to preserve created_at
         let existing_cipher =
-            match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file) {
-                Ok(c) => c,
-                Err(e) => return Err(e),
-            };
+            self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
 
         let mut input_owned = input.clone();
         input_owned.created_at = Some(existing_cipher.created_at);
@@ -894,26 +940,28 @@ impl VaultHandle {
             crate::types::CipherKind::Login(data) => data.password.clone(),
             _ => None,
         };
-        if old_password.is_some() && old_password != new_password {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let mut history = existing_cipher.password_history.clone();
-            history.push(crate::types::PasswordHistoryEntry {
-                password: old_password.unwrap(),
-                last_used_date: now,
-            });
-            // Cap history at 10 entries (BW parity default is 5, but 10 is more practical)
-            const MAX_PASSWORD_HISTORY: usize = 10;
-            if history.len() > MAX_PASSWORD_HISTORY {
-                history.drain(0..history.len() - MAX_PASSWORD_HISTORY);
-            }
-            input_owned.password_history = history;
+        if let Some(ref old_pw) = old_password {
+            if old_password != new_password {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let mut history = existing_cipher.password_history.clone();
+                history.push(crate::types::PasswordHistoryEntry {
+                    password: old_pw.clone(),
+                    last_used_date: now,
+                });
+                // Cap history at 10 entries (BW parity default is 5, but 10 is more practical)
+                const MAX_PASSWORD_HISTORY: usize = 10;
+                if history.len() > MAX_PASSWORD_HISTORY {
+                    history.drain(0..history.len() - MAX_PASSWORD_HISTORY);
+                }
+                input_owned.password_history = history;
 
-            // Update password_revision_date on LoginData
-            if let crate::types::CipherKind::Login(ref mut data) = input_owned.kind {
-                data.password_revision_date = Some(now);
+                // Update password_revision_date on LoginData
+                if let crate::types::CipherKind::Login(ref mut data) = input_owned.kind {
+                    data.password_revision_date = Some(now);
+                }
             }
         } else if input_owned.password_history.is_empty() {
             // Preserve existing history if caller didn't provide one and password didn't change.
@@ -940,6 +988,9 @@ impl VaultHandle {
 
     /// Clone a cipher: duplicate with new UUID, empty password history, reset update_seq.
     pub fn clone_cipher(&mut self, cipher_id: Uuid) -> Result<Uuid, IdttyError> {
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
+        }
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -1102,11 +1153,344 @@ impl VaultHandle {
         // Default: epoch 1
         1
     }
+
+    // ── Key Rotation (MISS-1 + MISS-2) ──
+
+    /// Full root key rotation for single-device vaults.
+    ///
+    /// Atomic rotation with staged writes:
+    /// 1. Generate new Root Key
+    /// 2. Re-encrypt all ciphers (active + trash) to .tmp files
+    /// 3. Update RK canary with new Root Key
+    /// 4. Write new keywrap file for this device
+    /// 5. Rename all .tmp -> final (single pass)
+    /// 6. Transition epoch via DeviceManager lifecycle
+    /// 7. Zeroize old Root Key
+    ///
+    /// After this, the old Root Key cannot decrypt any cipher.
+    /// Forward secrecy is achieved.
+    ///
+    /// Requires unlocked vault.
+    pub fn rotate_root_key(&mut self) -> Result<(), IdttyError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt("rotation in progress, use finalize_rotation()".into()).into());
+        }
+
+        let old_epoch = match &self.state {
+            VaultState::Unlocked(u) => u.current_epoch,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let new_epoch = old_epoch + 1;
+        let new_root_key = RootKey::generate();
+
+        // Collect both active and trash cipher IDs
+        let active_ids = self.list_cipher_ids()?;
+        let trash_ids = self.list_trash_ids()?;
+        let all_ids: Vec<(Uuid, bool)> = active_ids
+            .iter()
+            .map(|id| (*id, false))
+            .chain(trash_ids.iter().map(|id| (*id, true)))
+            .collect();
+
+        // Write rotation-pending marker for crash recovery
+        let pending_marker = self.path.join("meta/.rotation-pending");
+        let pending_data = serde_json::json!({
+            "old_epoch": old_epoch,
+            "new_epoch": new_epoch,
+        });
+        std::fs::write(&pending_marker, serde_json::to_string_pretty(&pending_data).unwrap())?;
+
+        // Phase 1: Re-encrypt all ciphers to .tmp files (staged)
+        let mut staged_renames: Vec<(PathBuf, PathBuf)> = Vec::new();
+        for (cipher_id, is_trash) in &all_ids {
+            let dir = if *is_trash { "trash" } else { "ciphers" };
+            let file_path = self.path.join(format!("{dir}/{cipher_id}.enc"));
+            if !file_path.exists() {
+                continue;
+            }
+            let envelope_bytes = std::fs::read(&file_path)?;
+            let file = cipher::CipherFile {
+                id: *cipher_id,
+                envelope_bytes,
+            };
+
+            let old_root = match &self.state {
+                VaultState::Unlocked(u) => u.root_key.clone(),
+                VaultState::Locked => return Err(VaultError::Locked.into()),
+            };
+            let existing = self.try_decrypt_cipher_with_root_key(&old_root, &file)?;
+            drop(old_root);
+
+            let input = CipherInput {
+                name: existing.name.clone(),
+                folder_id: existing.folder_id,
+                kind: existing.kind.clone(),
+                favorite: existing.favorite,
+                reprompt: existing.reprompt,
+                notes: existing.notes.clone(),
+                custom_fields: existing.custom_fields.clone(),
+                created_at: Some(existing.created_at),
+                password_history: existing.password_history.clone(),
+                attachments: existing.attachments.clone(),
+            };
+
+            let new_item_key =
+                Self::derive_item_key_static(&new_root_key, *cipher_id, new_epoch);
+            let new_file = cipher::encrypt_cipher(
+                self.vault_id,
+                *cipher_id,
+                &input,
+                &new_item_key,
+                new_epoch,
+                existing.update_seq,
+                existing.update_seq,
+            )?;
+
+            // Write to .tmp path (staged)
+            let tmp_path = file_path.with_extension("enc.tmp");
+            std::fs::write(&tmp_path, &new_file.envelope_bytes)?;
+            staged_renames.push((tmp_path, file_path));
+        }
+
+        // Phase 2: Update RK canary (staged)
+        let mut rk_canary_key = {
+            use hkdf::Hkdf;
+            use sha2::Sha256;
+            let hkdf = Hkdf::<Sha256>::new(None, new_root_key.as_bytes());
+            let mut key = [0u8; 32];
+            hkdf.expand(b"idtty-rk-canary-v1", &mut key).unwrap();
+            key
+        };
+        let rk_canary_nonce = crate::crypto::aead::build_nonce(0, self.vault_id);
+        let rk_canary_header = crate::types::EnvelopeHeader {
+            version: crate::IDTTY_VERSION,
+            alg_id: crate::ALG_AES_256_GCM,
+            key_epoch: new_epoch,
+            nonce_counter: 0,
+            update_seq: 0,
+            tier: None,
+        };
+        let rk_canary_envelope = crate::crypto::aead::encrypt(
+            &rk_canary_key,
+            b"idtty-rk-ok",
+            b"idtty-rk-canary-v1",
+            &rk_canary_nonce,
+            rk_canary_header,
+        )?;
+        let rk_canary = crate::vault::envelope::serialize(&rk_canary_envelope)?;
+        rk_canary_key.zeroize();
+        let canary_path = self.path.join("meta/rk-canary.enc");
+        let canary_tmp = canary_path.with_extension("enc.tmp");
+        std::fs::write(&canary_tmp, &rk_canary)?;
+        let canary_rename = (canary_tmp.clone(), canary_path.clone());
+
+        // Phase 3: Write new keywrap file (staged)
+        let privkey_path = self.path.join("meta/device-privkey.json");
+        let x25519_secret = if privkey_path.exists() {
+            let pk_json = std::fs::read_to_string(&privkey_path)
+                .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
+            let pk_data: serde_json::Value = serde_json::from_str(&pk_json)
+                .map_err(|e| VaultError::Corrupt(format!("privkey json: {e}")))?;
+            let priv_hex = pk_data["x25519_private"].as_str().unwrap_or("");
+            let priv_bytes = hex::decode(priv_hex)
+                .map_err(|e| VaultError::Corrupt(format!("x25519_private hex: {e}")))?;
+            let priv_arr: [u8; 32] = priv_bytes
+                .try_into()
+                .map_err(|_| VaultError::Corrupt("invalid x25519 key length".into()))?;
+            x25519_dalek::StaticSecret::from(priv_arr)
+        } else {
+            // Cleanup staged files on error
+            for (tmp, _) in &staged_renames {
+                let _ = std::fs::remove_file(tmp);
+            }
+            let _ = std::fs::remove_file(&canary_tmp);
+            return Err(VaultError::NotFound(
+                "device private key not found for keywrap".into(),
+            )
+            .into());
+        };
+        let x25519_public = x25519_dalek::PublicKey::from(&x25519_secret);
+        let (eph_pub, ct, tag) =
+            crate::crypto::hpke_wrap::wrap_key(new_root_key.as_bytes(), &x25519_public)?;
+        let keywrap_data = serde_json::json!({
+            "device_id": self.device_id.to_string(),
+            "ephemeral_public": hex::encode(eph_pub),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        let keywrap_path =
+            self.path.join(format!("meta/keywrap/{}.json", self.device_id));
+        let keywrap_tmp = keywrap_path.with_extension("json.tmp");
+        std::fs::write(&keywrap_tmp, serde_json::to_string_pretty(&keywrap_data).unwrap())?;
+
+        // Phase 4: Atomic commit - rename all .tmp -> final
+        // Order matters for crash safety: ciphers first, canary second, keywrap last.
+        // If crash occurs mid-way, .rotation-pending marker enables recovery.
+        // 1. Commit all cipher files first (the bulk of the data)
+        for (tmp, final_path) in &staged_renames {
+            std::fs::rename(tmp, final_path)?;
+        }
+        // 2. Commit RK canary (signals new root key is active)
+        std::fs::rename(&canary_rename.0, &canary_rename.1)?;
+        // 3. Commit keywrap last (point of no return)
+        std::fs::rename(&keywrap_tmp, &keywrap_path)?;
+
+        // Phase 5: Swap Root Key and update epoch via DeviceManager lifecycle
+        match &mut self.state {
+            VaultState::Unlocked(u) => {
+                u.root_key.zeroize();
+                u.root_key = new_root_key;
+                u.current_epoch = new_epoch;
+                u.item_keys.clear();
+            }
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        }
+
+        // H4 fix: proper epoch lifecycle through DeviceManager
+        // Clean transition: old ACTIVE -> new ACTIVE (single-device shortcut)
+        self.device_manager.epoch = crate::keys::epoch::EpochInfo::new(new_epoch);
+        self.device_manager
+            .epoch
+            .activate()
+            .map_err(crate::error::KeyError::InvalidEpochState)?;
+        self.device_manager.pending_transaction = None;
+        self.device_manager.collected_acks.clear();
+        self.device_manager.auto_save_result()?;
+
+        // Fire observer hook
+        if let Some(vp) = self.vault_path_as_ref() {
+            self.device_manager.fire(|obs| obs.on_rotation_committed(new_epoch, vp));
+        }
+
+        // Clean up rotation-pending marker
+        let _ = std::fs::remove_file(self.path.join("meta/.rotation-pending"));
+
+        Ok(())
+    }
+
+    /// Initiate a root key rotation for this device.
+    ///
+    /// Generates a new Root Key, wraps it for all enrolled devices,
+    /// and transitions the epoch to ROTATING.
+    ///
+    /// After calling this, the caller should:
+    /// 1. If multi-device: git push the .txn file
+    /// 2. If single-device: call `finalize_rotation()` immediately
+    ///
+    /// Requires unlocked vault.
+    pub fn initiate_key_rotation(&mut self) -> Result<RootKey, IdttyError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+
+        let (new_root, _tx) = self.device_manager.initiate_rotation(self.device_id)?;
+        Ok(new_root)
+    }
+
+    /// Check if there is a pending rotation that needs processing.
+    pub fn has_pending_rotation(&self) -> bool {
+        self.device_manager.epoch_state() == crate::keys::epoch::EpochState::Rotating
+    }
+
+    /// Get the current epoch state from DeviceManager.
+    pub fn epoch_state(&self) -> crate::keys::epoch::EpochState {
+        self.device_manager.epoch_state()
+    }
+
+    /// Finalize a rotation after quorum is reached (or single-device self-ack).
+    ///
+    /// This method:
+    /// 1. Records a self-ack for single-device scenarios
+    /// 2. Commits the rotation if quorum is reached
+    ///
+    /// Returns true if the rotation was committed.
+    pub fn finalize_rotation(&mut self) -> Result<bool, IdttyError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+
+        let _epoch = self.device_manager.current_epoch();
+        let tx_ref = self.device_manager.pending_transaction.as_ref();
+        let tx = match tx_ref {
+            Some(tx) => tx,
+            None => return Err(VaultError::Corrupt("no pending rotation".into()).into()),
+        };
+
+        // Build self-ack: sign with this device's Ed25519 key
+        let txn_hash = crate::device_manager::compute_txn_hash(tx);
+
+        let sign_input = crate::device_manager::build_ack_sign_input(
+            tx.new_epoch, &self.device_id, &txn_hash,
+        );
+
+        // Load signing key
+        let privkey_path = self.path.join("meta/device-privkey.json");
+        if !privkey_path.exists() {
+            return Err(VaultError::NotFound(
+                "device signing key not found (CLI mode requires meta/device-privkey.json)".into(),
+            )
+            .into());
+        }
+        let pk_json = std::fs::read_to_string(&privkey_path)?;
+        let pk_data: serde_json::Value = serde_json::from_str(&pk_json)
+            .map_err(|e| VaultError::Corrupt(format!("privkey json: {e}")))?;
+        let ed_priv_hex = pk_data["ed25519_private"].as_str().unwrap_or("");
+        let ed_priv_bytes = hex::decode(ed_priv_hex)
+            .map_err(|e| VaultError::Corrupt(format!("ed25519_private hex: {e}")))?;
+        let ed_priv_arr: [u8; 32] = ed_priv_bytes
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("invalid ed25519 private key length".into()))?;
+
+        use crate::crypto::signature;
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&ed_priv_arr);
+        let ack_sig = signature::sign(&signing_key, &sign_input)?;
+
+        let ack = crate::device_manager::RotationAck {
+            epoch: tx.new_epoch,
+            device_id: self.device_id,
+            txn_hash: txn_hash.clone(),
+            signature: ack_sig.to_bytes().to_vec(),
+        };
+
+        self.device_manager.record_ack(ack)
+    }
+
+    /// Emergency force evict: removes all other devices, initiates rotation.
+    /// For single-device vaults, commits immediately.
+    ///
+    /// Returns the result of the eviction.
+    pub fn force_evict_and_rotate(&mut self) -> Result<crate::device_manager::ForceEvictResult, IdttyError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let result = self.device_manager.force_evict_and_rotate(self.device_id)?;
+        // M6 fix: sync registry after eviction
+        self.sync_registry_from_device_manager();
+        Ok(result)
+    }
+
+    /// Recover vault from BIP-39 recovery phrase.
+    /// Resets the device registry and enrolls this device as sole survivor.
+    ///
+    /// Returns the recovered Root Key and new device entry.
+    pub fn recover_from_phrase(
+        &mut self,
+        phrase: &str,
+        device_name: &str,
+    ) -> Result<crate::device_manager::RecoveryResult, IdttyError> {
+        let result = self.device_manager.recover_from_phrase(phrase, device_name)?;
+        // M6 fix: sync registry after recovery
+        self.sync_registry_from_device_manager();
+        Ok(result)
+    }
 }
 
 /// Result of reading a cipher: either decrypted content or locked metadata.
 pub enum CipherRead {
-    Decrypted(Cipher),
+    Decrypted(Box<Cipher>),
     Locked(LockedCipherInfo),
 }
 
@@ -1178,6 +1562,7 @@ mod tests {
         // CLI mode: store device private key (NOT for production!)
         let privkey_data = serde_json::json!({
             "x25519_private": hex::encode(result.device_x25519_secret.to_bytes()),
+            "ed25519_private": hex::encode(result.device_ed25519_signing.to_bytes()),
         });
         std::fs::write(
             path.join("meta/device-privkey.json"),
@@ -1795,6 +2180,101 @@ mod tests {
                 assert_eq!(c.folder_id, Some(folder_b));
             }
             CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+    }
+
+    // MISS-1: rotate_root_key re-encrypts all ciphers
+    #[test]
+    fn rotate_root_key_re_encrypts_ciphers() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Add some ciphers
+        let input1 = CipherInput {
+            name: "GitHub".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("user@gh.com".into()),
+                password: Some("secret123".into()),
+                ..Default::default()
+            }),
+            favorite: true,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            reprompt: false,
+        };
+        let id1 = handle.add_cipher(&input1).unwrap();
+
+        let input2 = CipherInput {
+            name: "AWS".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("admin".into()),
+                password: Some("aws-key".into()),
+                ..Default::default()
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            reprompt: false,
+        };
+        let id2 = handle.add_cipher(&input2).unwrap();
+
+        // Capture old epoch
+        let old_epoch = handle.unlocked().current_epoch;
+
+        // Rotate root key
+        handle.rotate_root_key().unwrap();
+
+        // Verify epoch incremented
+        let new_epoch = handle.unlocked().current_epoch;
+        assert_eq!(new_epoch, old_epoch + 1);
+
+        // Verify both ciphers still decrypt correctly
+        match handle.get_cipher(id1).unwrap() {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.name, "GitHub");
+                assert!(c.favorite);
+                match &c.kind {
+                    crate::types::CipherKind::Login(d) => {
+                        assert_eq!(d.username.as_deref(), Some("user@gh.com"));
+                        assert_eq!(d.password.as_deref(), Some("secret123"));
+                    }
+                    _ => panic!("expected login"),
+                }
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+
+        match handle.get_cipher(id2).unwrap() {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.name, "AWS");
+                match &c.kind {
+                    crate::types::CipherKind::Login(d) => {
+                        assert_eq!(d.password.as_deref(), Some("aws-key"));
+                    }
+                    _ => panic!("expected login"),
+                }
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+
+        // Verify persistence: re-open vault and verify decryption still works
+        let password2 = password.clone();
+        let mut handle2 = VaultHandle::open(dir.path()).unwrap();
+        handle2.unlock(&password2).unwrap();
+        assert_eq!(handle2.unlocked().current_epoch, new_epoch);
+
+        match handle2.get_cipher(id1).unwrap() {
+            CipherRead::Decrypted(c) => assert_eq!(c.name, "GitHub"),
+            CipherRead::Locked(_) => panic!("expected decrypted after re-open"),
         }
     }
 }

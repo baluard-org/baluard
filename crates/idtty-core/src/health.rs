@@ -154,7 +154,7 @@ pub fn analyze(ciphers: &[Cipher]) -> HealthReport {
     }
 
     // Reuse: passwords used on multiple entries
-    for (_pw, entries) in &password_map {
+    for entries in password_map.values() {
         if entries.len() > 1 {
             for (id, name) in entries {
                 reused.push(HealthEntry {

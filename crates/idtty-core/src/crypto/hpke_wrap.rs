@@ -9,6 +9,9 @@ use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::error::CryptoError;
 
+/// Result of HPKE key wrapping: (ephemeral_public_key, encrypted_key, auth_tag).
+pub type WrapResult = Result<(Vec<u8>, Vec<u8>, [u8; 16]), CryptoError>;
+
 /// Generate a new X25519 keypair for device wrapping.
 pub fn generate_x25519_keypair() -> (StaticSecret, PublicKey) {
     let secret = StaticSecret::random_from_rng(OsRng);
@@ -25,7 +28,7 @@ pub fn generate_x25519_keypair() -> (StaticSecret, PublicKey) {
 pub fn wrap_key(
     plaintext_key: &[u8],
     recipient_pub: &PublicKey,
-) -> Result<(Vec<u8>, Vec<u8>, [u8; 16]), CryptoError> {
+) -> WrapResult {
     // Generate ephemeral X25519 keypair
     let eph_secret = StaticSecret::random_from_rng(OsRng);
     let eph_public = PublicKey::from(&eph_secret);

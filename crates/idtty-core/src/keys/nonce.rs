@@ -21,7 +21,7 @@ impl NonceCounter {
     }
 
     /// Increment and return the new counter value.
-    pub fn next(&mut self) -> u64 {
+    pub fn advance(&mut self) -> u64 {
         self.counter += 1;
         self.counter
     }

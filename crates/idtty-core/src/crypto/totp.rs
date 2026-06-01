@@ -23,17 +23,12 @@ pub struct TotpParams {
     pub issuer: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, zeroize::Zeroize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, zeroize::Zeroize, Default)]
 pub enum TotpAlgorithm {
+    #[default]
     Sha1,
     Sha256,
     Sha512,
-}
-
-impl Default for TotpAlgorithm {
-    fn default() -> Self {
-        Self::Sha1
-    }
 }
 
 /// Parse an `otpauth://totp/` URI into TOTP parameters.
@@ -167,7 +162,7 @@ fn decode_base32(input: &str) -> Result<Vec<u8>, String> {
         .filter(|c| *c != '=' && *c != ' ')
         .collect();
 
-    if s.len() == 0 {
+    if s.is_empty() {
         return Err("Empty base32 secret".into());
     }
 

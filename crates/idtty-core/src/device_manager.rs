@@ -20,6 +20,24 @@ use crate::keys::hierarchy::RootKey;
 use crate::keys::rotation::{CommitBarrierSig, RekeyTransaction};
 use crate::vault::manifest::DeviceEntry;
 
+// ── Rotation Observer (MISS-3) ──
+
+/// Hook for observing rotation state transitions.
+/// Implementations can trigger git sync, notifications, or other side effects.
+/// Default no-op implementation. Injected via `set_observer()`.
+pub trait RotationObserver: Send + Sync {
+    /// Called after a rotation proposal is written (.txn file).
+    fn on_rotation_proposed(&self, _epoch: u64, _vault_path: &Path) {}
+    /// Called after an ack is recorded (.ack file).
+    fn on_ack_recorded(&self, _epoch: u64, _device_id: &Uuid, _vault_path: &Path) {}
+    /// Called after a rotation is committed (.committed file).
+    fn on_rotation_committed(&self, _epoch: u64, _vault_path: &Path) {}
+    /// Called after a device enrollment.
+    fn on_device_enrolled(&self, _device_id: &Uuid, _vault_path: &Path) {}
+    /// Called after force eviction.
+    fn on_devices_evicted(&self, _evicted_count: usize, _vault_path: &Path) {}
+}
+
 // ── Enrollment Authorization ──
 
 /// Enrollment payload from a new device.
@@ -132,6 +150,8 @@ pub struct DeviceManager {
     seen_nonces: Vec<String>,
     /// Path to vault directory (for file I/O).
     vault_path: Option<std::path::PathBuf>,
+    /// Rotation observer for side effects (MISS-3).
+    observer: Option<Box<dyn RotationObserver>>,
 }
 
 impl DeviceManager {
@@ -144,6 +164,7 @@ impl DeviceManager {
             collected_acks: Vec::new(),
             seen_nonces: Vec::new(),
             vault_path: None,
+            observer: None,
         }
     }
 
@@ -156,6 +177,29 @@ impl DeviceManager {
             collected_acks: Vec::new(),
             seen_nonces: Vec::new(),
             vault_path: None,
+            observer: None,
+        }
+    }
+
+    /// Set a rotation observer for side effects (MISS-3).
+    pub fn set_observer(&mut self, observer: Box<dyn RotationObserver>) {
+        self.observer = Some(observer);
+    }
+
+    /// Fire observer hook if set.
+    pub(crate) fn fire<F: Fn(&dyn RotationObserver)>(&self, f: F) {
+        if let Some(ref obs) = self.observer {
+            f(obs.as_ref());
+        }
+    }
+
+    /// Auto-save to vault directory if vault_path is configured.
+    /// Returns error on failure. Use for security-critical mutations.
+    pub(crate) fn auto_save_result(&self) -> Result<(), IdttyError> {
+        if self.vault_path.is_some() {
+            self.save_to_vault()
+        } else {
+            Ok(())
         }
     }
 
@@ -280,6 +324,15 @@ impl DeviceManager {
             sig_arr,
         )?;
 
+        // MISS-4: auto-persist enrollment
+        self.auto_save_result()?;
+
+        // MISS-3: notify observer of enrollment
+        let enrolled_id = payload.device_id;
+        if let Some(ref vp) = self.vault_path {
+            self.fire(|obs| obs.on_device_enrolled(&enrolled_id, vp));
+        }
+
         Ok(entry)
     }
 
@@ -315,13 +368,24 @@ impl DeviceManager {
             initiating_device_id,
         )?;
 
+        // Capture epoch before tx is moved
+        let proposed_epoch = tx.new_epoch;
+
         // Transition epoch to ROTATING
         self.epoch
             .begin_rotation()
-            .map_err(|e| KeyError::InvalidEpochState(e))?;
+            .map_err(KeyError::InvalidEpochState)?;
 
         self.pending_transaction = Some(tx);
         self.collected_acks.clear();
+
+        // MISS-4: auto-persist rotation proposal
+        self.auto_save_result()?;
+
+        // MISS-3: notify observer of rotation proposal
+        if let Some(ref vp) = self.vault_path {
+            self.fire(|obs| obs.on_rotation_proposed(proposed_epoch, vp));
+        }
 
         Ok((new_root, self.pending_transaction.as_ref().unwrap()))
     }
@@ -385,6 +449,10 @@ impl DeviceManager {
             DeviceError::EnrollmentRejected("ack signature verification failed".into())
         })?;
 
+        // MISS-3: notify observer of ack recorded
+        let notify_epoch = ack.epoch;
+        let notify_device = ack.device_id;
+
         // BUG-1/BUG-4 fix: record ack in epoch first (canonical dedup tracker),
         // then store signed payload in collected_acks.
         // Quorum uses epoch.acknowledged_devices.len() exclusively.
@@ -395,7 +463,15 @@ impl DeviceManager {
         let quorum = self.registry.quorum_required();
         if self.epoch.acknowledged_devices.len() >= quorum {
             self.commit_rotation()?;
-            return Ok(true); // committed
+            return Ok(true); // committed (auto_save inside commit_rotation)
+        }
+
+        // MISS-4: auto-persist recorded ack
+        self.auto_save_result()?;
+
+        // MISS-3: notify observer of ack recorded
+        if let Some(ref vp) = self.vault_path {
+            self.fire(|obs| obs.on_ack_recorded(notify_epoch, &notify_device, vp));
         }
 
         Ok(false) // ack recorded, not yet committed
@@ -409,6 +485,9 @@ impl DeviceManager {
             .pending_transaction
             .take()
             .ok_or_else(|| KeyError::InvalidEpochState("no pending transaction".into()))?;
+
+        // Capture epoch before tx is consumed
+        let committed_epoch = tx.new_epoch;
 
         // BUG-3 fix: populate commit barrier with verified ack signatures
         tx.commit_barrier = self
@@ -433,14 +512,22 @@ impl DeviceManager {
         // Transition epoch: ROTATING → RETIRED (old) → create new ACTIVE
         self.epoch
             .retire()
-            .map_err(|e| KeyError::InvalidEpochState(e))?;
+            .map_err(KeyError::InvalidEpochState)?;
         self.epoch = EpochInfo::new(tx.new_epoch);
         self.epoch
             .activate()
-            .map_err(|e| KeyError::InvalidEpochState(e))?;
+            .map_err(KeyError::InvalidEpochState)?;
 
         // Cleanup acks
         self.collected_acks.clear();
+
+        // MISS-4: auto-persist committed rotation
+        self.auto_save_result()?;
+
+        // MISS-3: notify observer of rotation committed
+        if let Some(ref vp) = self.vault_path {
+            self.fire(|obs| obs.on_rotation_committed(committed_epoch, vp));
+        }
 
         Ok(())
     }
@@ -457,29 +544,30 @@ impl DeviceManager {
         surviving_device_id: Uuid,
     ) -> Result<ForceEvictResult, IdttyError> {
         let evicted = self.registry.force_evict(surviving_device_id)?;
+        let evicted_count = evicted.len();
 
         // Capture surviving count before initiating rotation (which borrows mutably)
         let surviving_count = self.registry.count();
         let quorum_needed = self.registry.quorum_required();
 
         // Immediately initiate rotation
-        let (_new_root, tx) = self.initiate_rotation(surviving_device_id)?;
+        let (new_root, tx) = self.initiate_rotation(surviving_device_id)?;
         let new_epoch = tx.new_epoch;
 
         // Single surviving device = self-ack = immediate commit
-        let rotation_committed = if surviving_count <= quorum_needed {
+        let (rotation_committed, new_root_key) = if surviving_count <= quorum_needed {
             // Note: collected_acks is empty here because the actual signing key lives
             // in the vault keywrap, not DeviceManager. The .committed file will have
             // an empty commit_barrier. This is correct: force-evict is a single-device
             // emergency operation, not a multi-device quorum proof.
             self.epoch.acknowledge(surviving_device_id);
             self.commit_rotation()?;
-            true
+            (true, Some(new_root))
         } else {
-            false
+            (false, None) // new_root consumed by pending_transaction
         };
 
-        Ok(ForceEvictResult {
+        let result = ForceEvictResult {
             evicted_devices: evicted,
             rotation_committed,
             new_epoch: if rotation_committed {
@@ -487,10 +575,211 @@ impl DeviceManager {
             } else {
                 self.epoch.epoch
             },
+            new_root_key,
+        };
+
+        // MISS-4: auto-persist eviction + rotation state
+        // (initiate_rotation auto-saves, but if rotation didn't commit, save again to ensure
+        //  the evicted registry is persisted)
+        if !rotation_committed {
+            self.auto_save_result()?;
+        }
+
+        // MISS-3: notify observer of eviction
+        if let Some(ref vp) = self.vault_path {
+            self.fire(|obs| obs.on_devices_evicted(evicted_count, vp));
+        }
+
+        Ok(result)
+    }
+
+    // ── Recovery from BIP-39 Phrase (MISS-5) ──
+
+    /// Recover from total device loss using a BIP-39 recovery phrase.
+    ///
+    /// This method:
+    /// 1. Derives a recovery key from the BIP-39 phrase
+    /// 2. HPKE-unwrapes the Root Key from meta/recovery.json
+    /// 3. Resets the device registry (old devices abandoned)
+    /// 4. Enrolls the new device as the sole surviving device
+    /// 5. Sets epoch to match existing vault data
+    ///
+    /// Returns the recovered Root Key, the new device entry, and the
+    /// device's X25519 and Ed25519 private keys for keywrap/signing.
+    pub fn recover_from_phrase(
+        &mut self,
+        phrase: &str,
+        new_device_name: &str,
+    ) -> Result<RecoveryResult, IdttyError> {
+        use crate::recovery::RecoveryPhrase;
+
+        // Step 1: Parse phrase
+        let recovery_phrase =
+            RecoveryPhrase::from_phrase(phrase)
+                .map_err(|e| DeviceError::EnrollmentRejected(format!("invalid recovery phrase: {e}")))?;
+
+        // Step 2: Derive recovery key and X25519 secret
+        let mut recovery_key = recovery_phrase.derive_key();
+        let recovery_x25519_secret = x25519_dalek::StaticSecret::from(
+            <[u8; 32]>::try_from(&recovery_key[..32])
+                .map_err(|_| DeviceError::Keystore("recovery key too short".into()))?,
+        );
+        // Zeroize full 64-byte recovery key (only first 32 bytes were consumed)
+        use zeroize::Zeroize;
+        recovery_key.zeroize();
+
+        // Step 3: Load recovery.json from vault
+        let vault_path = self.vault_path.as_ref().ok_or_else(|| {
+            DeviceError::Keystore("vault_path not set for recovery".into())
+        })?;
+        let recovery_json_path = vault_path.join("meta/recovery.json");
+        if !recovery_json_path.exists() {
+            return Err(DeviceError::Keystore("meta/recovery.json not found".into()).into());
+        }
+
+        let recovery_json_str = std::fs::read_to_string(&recovery_json_path)
+            .map_err(|e| DeviceError::Keystore(format!("reading recovery.json: {e}")))?;
+        let recovery_json: serde_json::Value = serde_json::from_str(&recovery_json_str)
+            .map_err(|e| DeviceError::Keystore(format!("parsing recovery.json: {e}")))?;
+
+        let eph_pub = hex::decode(recovery_json["ephemeral_public"].as_str().unwrap_or(""))
+            .map_err(|e| DeviceError::Keystore(format!("recovery eph_public hex: {e}")))?;
+        let ct = hex::decode(recovery_json["encrypted_key"].as_str().unwrap_or(""))
+            .map_err(|e| DeviceError::Keystore(format!("recovery encrypted_key hex: {e}")))?;
+        let tag_hex = recovery_json["tag"].as_str().unwrap_or("");
+        let tag_bytes = hex::decode(tag_hex)
+            .map_err(|e| DeviceError::Keystore(format!("recovery tag hex: {e}")))?;
+        let mut tag = [0u8; 16];
+        if tag_bytes.len() != 16 {
+            return Err(DeviceError::Keystore("invalid recovery tag length".into()).into());
+        }
+        tag.copy_from_slice(&tag_bytes);
+
+        // Step 4: HPKE-unwrap Root Key
+        let root_key_bytes = crate::crypto::hpke_wrap::unwrap_key(
+            &eph_pub, &ct, &tag, &recovery_x25519_secret,
+        )?;
+        let rk_arr: [u8; 64] = root_key_bytes
+            .try_into()
+            .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?;
+        let root_key = RootKey::from_bytes(rk_arr);
+
+        // Step 5: Determine current epoch from vault data (H7 fix)
+        let current_epoch = Self::determine_epoch_from_vault(vault_path);
+
+        // Step 6: Reset registry — old devices abandoned
+        self.registry = DeviceRegistry::new();
+
+        // Step 7: Generate new device keypair and enroll as sole device
+        let (x25519_secret, x25519_public) = crate::crypto::hpke_wrap::generate_x25519_keypair();
+        let (ed25519_signing, ed25519_verifying) = crate::crypto::signature::generate_ed25519_keypair();
+        let new_device_id = Uuid::new_v4();
+
+        let entry = self.registry.enroll_with_id(
+            new_device_id,
+            new_device_name.to_string(),
+            x25519_public.to_bytes(),
+            crate::crypto::signature::verifying_key_bytes(&ed25519_verifying),
+        )?;
+
+        // Step 8: Set epoch to match existing vault data
+        self.epoch = EpochInfo::new(current_epoch);
+        self.epoch.activate().map_err(KeyError::InvalidEpochState)?;
+        self.pending_transaction = None;
+        self.collected_acks.clear();
+
+        // Step 9: Write keywrap for new device (M5 fix: vault must be usable on next open)
+        let x25519_public = x25519_dalek::PublicKey::from(&x25519_secret);
+        let (eph_pub, ct, tag) =
+            crate::crypto::hpke_wrap::wrap_key(root_key.as_bytes(), &x25519_public)?;
+        let keywrap_data = serde_json::json!({
+            "device_id": new_device_id.to_string(),
+            "ephemeral_public": hex::encode(eph_pub),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        let keywrap_dir = vault_path.join("meta/keywrap");
+        let _ = std::fs::create_dir_all(&keywrap_dir);
+        atomic_write(
+            &keywrap_dir.join(format!("{}.json", new_device_id)),
+            &serde_json::to_string_pretty(&keywrap_data).unwrap(),
+        )?;
+
+        // Step 10: Remove old keywrap files (evicted devices)
+        if let Ok(entries) = std::fs::read_dir(&keywrap_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".json") && !name.starts_with(&new_device_id.to_string()) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+
+        // Step 11: Write device-privkey.json for CLI/rotation use
+        let ed_priv_bytes = ed25519_signing.to_bytes();
+        let privkey_data = serde_json::json!({
+            "x25519_private": hex::encode(x25519_secret.to_bytes()),
+            "ed25519_private": hex::encode(ed_priv_bytes),
+        });
+        let privkey_path = vault_path.join("meta/device-privkey.json");
+        let privkey_tmp = privkey_path.with_extension("json.tmp");
+        std::fs::write(&privkey_tmp, serde_json::to_string_pretty(&privkey_data).unwrap())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
+        }
+        std::fs::rename(&privkey_tmp, &privkey_path)?;
+
+        // Step 12: Persist recovered state
+        self.auto_save_result()?;
+
+        Ok(RecoveryResult {
+            root_key,
+            entry,
+            device_id: new_device_id,
+            x25519_secret,
+            ed25519_signing,
         })
     }
 
+    /// Determine current epoch from vault cipher headers or RK canary.
+    fn determine_epoch_from_vault(vault_path: &Path) -> u64 {
+        // Try RK canary first
+        let rk_path = vault_path.join("meta/rk-canary.enc");
+        if rk_path.exists() {
+            if let Ok(data) = std::fs::read(&rk_path) {
+                if let Ok(envelope) = crate::vault::envelope::deserialize(&data) {
+                    return envelope.header.key_epoch;
+                }
+            }
+        }
+        // Try first cipher
+        let ciphers_dir = vault_path.join("ciphers");
+        if ciphers_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&ciphers_dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.ends_with(".enc") {
+                        if let Ok(data) = std::fs::read(entry.path()) {
+                            if let Ok(envelope) = crate::vault::envelope::deserialize(&data) {
+                                return envelope.header.key_epoch;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        1 // default for new vaults
+    }
+
     // ── Persistence ──
+
+    /// Check if DeviceManager vault files exist (meta/devices.json or meta/epoch.json).
+    pub fn vault_files_exist(vault_path: &Path) -> bool {
+        vault_path.join("meta/devices.json").exists()
+            || vault_path.join("meta/epoch.json").exists()
+    }
 
     /// Load DeviceManager from vault directory.
     pub fn load_from_vault(vault_path: &Path) -> Result<Self, IdttyError> {
@@ -555,6 +844,7 @@ impl DeviceManager {
             collected_acks,
             seen_nonces: load_seen_nonces(vault_path),
             vault_path: Some(vault_path.to_path_buf()),
+            observer: None,
         })
     }
 
@@ -626,6 +916,24 @@ pub struct ForceEvictResult {
     pub rotation_committed: bool,
     /// New epoch number after rotation.
     pub new_epoch: u64,
+    /// New Root Key. Present only when rotation_committed = true.
+    /// Caller MUST write a new keywrap file for the surviving device.
+    pub new_root_key: Option<RootKey>,
+}
+
+/// Result of a recovery operation.
+/// Contains everything the caller needs to write keywrap files and persist keys.
+pub struct RecoveryResult {
+    /// Recovered Root Key.
+    pub root_key: RootKey,
+    /// New device entry (with public keys).
+    pub entry: DeviceEntry,
+    /// New device ID.
+    pub device_id: Uuid,
+    /// X25519 private key for HPKE keywrap.
+    pub x25519_secret: x25519_dalek::StaticSecret,
+    /// Ed25519 signing key for ack signatures.
+    pub ed25519_signing: ed25519_dalek::SigningKey,
 }
 
 /// Load seen nonces from vault directory. Returns empty vec if file missing.
@@ -641,18 +949,24 @@ fn load_seen_nonces(vault_path: &Path) -> Vec<String> {
 }
 
 /// Atomic file write: write to temp file then rename.
-/// Prevents corruption from crash mid-write.
+/// Prevents corruption from crash mid-write. Sets 0600 permissions on Unix.
 fn atomic_write(path: &std::path::PathBuf, data: &str) -> Result<(), IdttyError> {
     let tmp_path = path.with_extension("tmp");
     std::fs::write(&tmp_path, data)
         .map_err(|e| DeviceError::Keystore(format!("atomic write tmp: {e}")))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| DeviceError::Keystore(format!("atomic write chmod: {e}")))?;
+    }
     std::fs::rename(&tmp_path, path)
         .map_err(|e| DeviceError::Keystore(format!("atomic write rename: {e}")))?;
     Ok(())
 }
 
 /// Compute a hash of a rekey transaction for ack binding.
-fn compute_txn_hash(tx: &RekeyTransaction) -> String {
+pub(crate) fn compute_txn_hash(tx: &RekeyTransaction) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     // Deterministic serialization of key fields
@@ -664,7 +978,7 @@ fn compute_txn_hash(tx: &RekeyTransaction) -> String {
         hasher.update(entry.device_id.as_bytes());
         hasher.update(&entry.ephemeral_public);
         hasher.update(&entry.encrypted_key);
-        hasher.update(&entry.tag);
+        hasher.update(entry.tag);
     }
     format!("{:x}", hasher.finalize())
 }
@@ -1160,5 +1474,123 @@ mod tests {
             mgr.seen_nonces
                 .contains(&format!("nonce-{MAX_SEEN_NONCES}"))
         );
+    }
+
+    // MISS-4: auto-save persists mutations without explicit save_to_vault()
+    #[test]
+    fn auto_save_persists_enrollment() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path();
+
+        // Create, enroll, then check persistence without calling save_to_vault()
+        {
+            let mut mgr = DeviceManager::new();
+            mgr.epoch.activate().unwrap();
+            mgr.set_vault_path(vault_path);
+
+            let payload = make_payload("AutoSaved");
+            mgr.enroll(&payload, None).unwrap();
+            // No explicit save_to_vault() call
+        }
+
+        // Load from disk - auto_save should have persisted enrollment
+        {
+            let mgr = DeviceManager::load_from_vault(vault_path).unwrap();
+            assert_eq!(mgr.registry.count(), 1);
+        }
+    }
+
+    // MISS-4: auto-save persists rotation state without explicit save_to_vault()
+    #[test]
+    fn auto_save_persists_rotation() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path();
+
+        let (sk, vk) = sig::generate_ed25519_keypair();
+        let (_, x_pk) = hpke_wrap::generate_x25519_keypair();
+        let device_id = Uuid::new_v4();
+
+        {
+            let mut mgr = DeviceManager::new();
+            mgr.epoch.activate().unwrap();
+            mgr.set_vault_path(vault_path);
+            mgr.registry
+                .enroll_with_id(
+                    device_id,
+                    "Solo".into(),
+                    x_pk.to_bytes(),
+                    sig::verifying_key_bytes(&vk),
+                )
+                .unwrap();
+
+            // Initiate rotation - auto_save should persist ROTATING state
+            let (_rk, _tx) = mgr.initiate_rotation(device_id).unwrap();
+            // No explicit save_to_vault()
+        }
+
+        // Load from disk - should see ROTATING state with pending transaction
+        {
+            let mgr = DeviceManager::load_from_vault(vault_path).unwrap();
+            assert_eq!(mgr.epoch_state(), EpochState::Rotating);
+            assert!(mgr.pending_transaction.is_some());
+        }
+    }
+
+    // MISS-5: recovery from BIP-39 phrase bootstraps new device
+    #[test]
+    fn recover_from_phrase_bootstraps_new_device() {
+        use crate::recovery::RecoveryPhrase;
+        use crate::vault::creation;
+        use crate::types::KdfProfile;
+
+        // Step 1: Create a vault with known recovery phrase
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path();
+
+        let ceremony = creation::create_vault_ceremony("password", KdfProfile::MobileLow).unwrap();
+        let phrase_str = ceremony.recovery_phrase.phrase();
+
+        // Write minimal vault structure
+        std::fs::create_dir_all(vault_path.join("meta/keywrap")).unwrap();
+        std::fs::create_dir_all(vault_path.join("meta")).unwrap();
+
+        // Write recovery.json
+        let (eph_pub, ct, tag) = &ceremony.wrapped_recovery_key;
+        let recovery_json = serde_json::json!({
+            "ephemeral_public": hex::encode(eph_pub),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        std::fs::write(
+            vault_path.join("meta/recovery.json"),
+            serde_json::to_string_pretty(&recovery_json).unwrap(),
+        )
+        .unwrap();
+
+        // Step 2: Recover using the phrase
+        let mut mgr = DeviceManager::new();
+        mgr.epoch.activate().unwrap();
+        mgr.set_vault_path(vault_path);
+
+        let result = mgr.recover_from_phrase(&phrase_str, "Recovered Device").unwrap();
+
+        // Verify: new device enrolled as sole device
+        assert_eq!(mgr.registry.count(), 1);
+        assert_eq!(result.entry.name, "Recovered Device");
+        assert_eq!(mgr.epoch_state(), EpochState::Active);
+        assert!(mgr.pending_transaction.is_none());
+
+        // Verify: recovered Root Key matches original
+        assert_eq!(result.root_key.as_bytes(), ceremony.root_key.as_bytes());
+
+        // Verify: private keys were returned (not discarded)
+        assert_eq!(result.device_id, result.entry.device_id);
+        // Verify X25519 keypair consistency: public key in entry matches private key
+        let derived_pub = x25519_dalek::PublicKey::from(&result.x25519_secret);
+        assert_eq!(hex::encode(derived_pub.as_bytes()), result.entry.encryption_public_key);
+
+        // Verify: state persisted to disk
+        let loaded = DeviceManager::load_from_vault(vault_path).unwrap();
+        assert_eq!(loaded.registry.count(), 1);
     }
 }

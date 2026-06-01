@@ -21,7 +21,7 @@
 
 ## Current Status
 
-**Phase**: Desktop BW parity complete (phases 1-8 + A-G). 170 tests, 0 clippy errors, 7 security review rounds. Full desktop feature set: CRUD, 5 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders.
+**Phase**: Desktop BW parity complete (phases 1-8 + A-G). Device lifecycle complete (MISS-1 through MISS-5, peer review fixes). **174 tests, 0 clippy errors workspace-wide**, 10 security review rounds. Full desktop feature set: CRUD, 5 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders.
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
 - `/crates/idtty-core` - Rust core engine: crypto, keys, vault, padding, git sync
@@ -232,11 +232,55 @@ Also added:
 - 4 new tests: duplicate ack rejection (2), nonce persistence, FIFO eviction
 - 87 tests passing, 0 clippy errors
 
+### Round 10 (Device Lifecycle Implementation + Peer Review Fixes)
+
+Implemented 5 missing device lifecycle features (MISS-1 through MISS-5) from `docs/06-device-lifecycle.md`:
+
+| ID | Description | Key Changes |
+|----|-------------|-------------|
+| MISS-1 | Root Key Rotation with Cipher Re-encryption | `VaultHandle::rotate_root_key()` — atomic staged writes, re-encrypts active + trash, new epoch via DeviceManager |
+| MISS-2 | VaultHandle Signing Integration | `DeviceManager` field on VaultHandle, `initiate/finalize_key_rotation`, `force_evict_and_rotate`, `recover_from_phrase` |
+| MISS-3 | Rotation Observer for Git Sync | `RotationObserver` trait (5 hooks), `set_observer()` injection, `fire()` helper |
+| MISS-4 | Auto-Save After State Transitions | `auto_save()` (best-effort) + `auto_save_result()` (critical paths) on DeviceManager |
+| MISS-5 | Recovery Phrase Path Through DeviceManager | `recover_from_phrase()` — BIP-39 parse, HPKE-unwrap Root Key, new device enrollment, epoch from vault data |
+
+Peer review found 4 Critical, 7 High, 8 Medium, 4 Low issues. All Critical/High/Medium fixed:
+
+| ID | Finding | Fix |
+|----|---------|-----|
+| C1 | `add_cipher` hardcoded `key_epoch: 1` | Use `unlocked.current_epoch` |
+| C2 | `rotate_root_key()` not atomic (crash = corruption) | Staged `.tmp` writes + atomic rename pass |
+| C3 | `recover_from_phrase()` discards private keys | Return `RecoveryResult` with X25519/Ed25519 secrets |
+| C4 | `UnlockedState::Drop` doesn't zeroize Root Key | `self.root_key.zeroize()` in Drop impl |
+| H1 | Cipher writes not blocked during ROTATING epoch | Guards on add/update/delete/clone |
+| H2 | `auto_save()` silently swallows I/O errors | Added `auto_save_result()` for critical paths |
+| H3 | Trash ciphers not re-encrypted during rotation | `rotate_root_key` processes both `ciphers/` and `trash/` |
+| H4 | `rotate_root_key()` bypasses DeviceManager epoch lifecycle | Proper epoch transition + observer hooks |
+| H5 | `force_evict_and_rotate()` discards new Root Key | `ForceEvictResult.new_root_key: Option<RootKey>` |
+| H6 | DeviceManager empty registry in creation ceremony | Sync `registry.clone()` after enrollment |
+| H7 | Recovery epoch hardcoded to 1 conflicts with existing ciphers | Read epoch from RK canary/cipher envelopes |
+| M1-M8 | Duplicated hash, atomic_write perms, registry divergence, test helper | All fixed |
+
+170 idtty-core tests, 174 workspace-wide. 0 clippy errors.
+
+### Round 11 (Workspace-Wide Clippy Cleanup)
+
+Fixed 20+ pre-existing clippy warnings across all 3 crates (idtty-core, idtty-cli, idtty-daemon). Categories:
+
+- **Derive Default** (5): `TotpAlgorithm`, `ImportResult`, `SyncResult`, `UriMatchStrategy`, `CipherType`, `LoginData`
+- **Redundant closures** (5): `SyncError::StateMachine`, `KeyError::InvalidEpochState`, `Uuid::parse_str`, identity `.map_err`
+- **Simplification** (4): `div_ceil`, `is_empty`, `is_some_and`/`is_none_or`, `and_then` vs `map+flatten`
+- **Naming** (2): `from_str` → `from_name`, `next` → `advance` (avoid trait confusion)
+- **Structural** (3): match → `?`, match → `if let`, collapsed nested `if` into match guard
+- **Style** (3): doc comment → regular comment, `Box<Cipher>` for large enum variants, `#[allow]` annotations
+
+**174 tests, 0 clippy errors workspace-wide.**
+
 ---
 
 ### Bitwarden Desktop Parity (Phases 1-8)
 
-All 8 phases complete, peer-reviewed, and merged. **130 tests, 0 clippy errors.**
+All 8 phases complete, peer-reviewed, and merged. **130 tests (now 174 workspace-wide), 0 clippy errors.**
 
 | Phase | Description | Key Changes |
 |-------|-------------|-------------|
@@ -262,7 +306,7 @@ All 8 phases complete, peer-reviewed, and merged. **130 tests, 0 clippy errors.*
 
 ### Desktop BW Parity Phases A-G (Final Push)
 
-All 7 phases complete, individually peer reviewed, fixes applied. **170 tests, 0 clippy errors.**
+All 7 phases complete, individually peer reviewed, fixes applied. **170 idtty-core tests (174 workspace), 0 clippy errors.**
 
 | Phase | Description | Key Changes | Review Findings |
 |-------|-------------|-------------|----------------|

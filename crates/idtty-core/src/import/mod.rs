@@ -17,6 +17,7 @@ use crate::types::CipherInput;
 
 /// Result of an import operation.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ImportResult {
     /// Successfully parsed cipher inputs ready for batch-create.
     pub ciphers: Vec<CipherInput>,
@@ -30,12 +31,7 @@ pub struct ImportResult {
 
 impl ImportResult {
     pub fn new() -> Self {
-        Self {
-            ciphers: Vec::new(),
-            skipped: 0,
-            errors: Vec::new(),
-            folder_map: std::collections::HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Add a successfully parsed cipher.
@@ -73,7 +69,7 @@ pub enum ImportFormat {
 }
 
 impl ImportFormat {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_name(s: &str) -> Option<Self> {
         match s {
             "bw-json" => Some(Self::BwJson),
             "bw-csv" => Some(Self::BwCsv),

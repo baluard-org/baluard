@@ -90,7 +90,7 @@ impl VaultState {
                     let mut guard = state.inner.write().await;
                     if let Some(handle) = guard.as_mut() {
                         if handle.is_unlocked() {
-                            let _ = handle.lock();
+                            handle.lock();
                             *state.session_token.write().await = None;
                             state.last_activity.store(0, Ordering::Relaxed);
                         }
@@ -167,7 +167,7 @@ impl VaultState {
     #[allow(dead_code)]
     pub async fn is_unlocked(&self) -> bool {
         let guard = self.inner.read().await;
-        guard.as_ref().map_or(false, |h| h.is_unlocked())
+        guard.as_ref().is_some_and(|h| h.is_unlocked())
     }
 
     /// List all cipher IDs (works locked or unlocked).
@@ -307,7 +307,7 @@ impl VaultState {
         if let Some(v) = partial.get("default_uri_match") {
             let s = v.as_str().ok_or("default_uri_match must be a string")?;
             settings.default_uri_match =
-                Some(idtty_core::types::UriMatchStrategy::from_str_strict(s).map_err(|e| e)?);
+                Some(idtty_core::types::UriMatchStrategy::from_str_strict(s)?);
         }
 
         handle
@@ -354,7 +354,7 @@ impl VaultState {
         // Get existing cipher to merge updates
         let existing = handle.get_cipher(cipher_id).map_err(|e| format!("{e}"))?;
         let existing_cipher = match existing {
-            idtty_core::vault::handle::CipherRead::Decrypted(c) => c,
+            idtty_core::vault::handle::CipherRead::Decrypted(c) => *c,
             _ => return Err("Cipher not found or vault locked".to_string()),
         };
 
@@ -375,8 +375,7 @@ impl VaultState {
                 update
                     .get("folder_id")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.parse::<uuid::Uuid>().ok())
-                    .flatten()
+                    .and_then(|s| s.parse::<uuid::Uuid>().ok())
                     .or(existing_cipher.folder_id)
             },
             kind: update
@@ -440,7 +439,7 @@ impl VaultState {
         let cipher = handle.get_cipher(cipher_id).map_err(|e| format!("{e}"))?;
 
         let cipher_ref = match cipher {
-            idtty_core::vault::handle::CipherRead::Decrypted(c) => c,
+            idtty_core::vault::handle::CipherRead::Decrypted(c) => *c,
             idtty_core::vault::handle::CipherRead::Locked(_) => {
                 return Err("Cipher is locked".into());
             }
@@ -598,7 +597,7 @@ impl VaultState {
         let mut ciphers = Vec::new();
         for meta in &metas {
             match handle.get_cipher(meta.id) {
-                Ok(CipherRead::Decrypted(c)) => ciphers.push(c),
+                Ok(CipherRead::Decrypted(c)) => ciphers.push(*c),
                 Ok(CipherRead::Locked(_)) => continue,
                 Err(e) => eprintln!("[export] skipping {}: {e}", meta.id),
             }
@@ -625,7 +624,7 @@ impl VaultState {
         let mut ciphers = Vec::new();
         for meta in &metas {
             match handle.get_cipher(meta.id) {
-                Ok(CipherRead::Decrypted(c)) => ciphers.push(c),
+                Ok(CipherRead::Decrypted(c)) => ciphers.push(*c),
                 Ok(CipherRead::Locked(_)) => continue,
                 Err(e) => eprintln!("[export] skipping {}: {e}", meta.id),
             }
@@ -764,7 +763,7 @@ impl VaultState {
 
         // Get cipher to find its item key and existing attachments
         let cipher = match handle.get_cipher(cipher_id) {
-            Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => c,
+            Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => *c,
             _ => return Err("Cipher not found or vault locked".into()),
         };
 
@@ -854,7 +853,7 @@ impl VaultState {
         }
 
         let cipher = match handle.get_cipher(cipher_id) {
-            Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => c,
+            Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => *c,
             _ => return Err("Cipher not found or vault locked".into()),
         };
 
@@ -914,7 +913,7 @@ impl VaultState {
         }
 
         let cipher = match handle.get_cipher(cipher_id) {
-            Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => c,
+            Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => *c,
             _ => return Err("Cipher not found or vault locked".into()),
         };
 
@@ -970,7 +969,7 @@ impl VaultState {
         let mut ciphers = Vec::new();
         for meta in &metas {
             match handle.get_cipher(meta.id) {
-                Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => ciphers.push(c),
+                Ok(idtty_core::vault::handle::CipherRead::Decrypted(c)) => ciphers.push(*c),
                 _ => continue,
             }
         }

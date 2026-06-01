@@ -215,10 +215,11 @@ pub use crate::keys::epoch::EpochState;
 // ── Cipher Types ──
 
 /// URI match strategy for autofill/launch detection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum UriMatchStrategy {
     /// Match based on domain (default).
+    #[default]
     Domain,
     /// Match exact host.
     Host,
@@ -230,12 +231,6 @@ pub enum UriMatchStrategy {
     Regex,
     /// Never match.
     Never,
-}
-
-impl Default for UriMatchStrategy {
-    fn default() -> Self {
-        UriMatchStrategy::Domain
-    }
 }
 
 impl UriMatchStrategy {
@@ -271,9 +266,10 @@ impl LoginUri {
 }
 
 /// Cipher type discriminator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum CipherType {
+    #[default]
     Login,
     SecureNote,
     Card,
@@ -281,14 +277,8 @@ pub enum CipherType {
     SshKey,
 }
 
-impl Default for CipherType {
-    fn default() -> Self {
-        CipherType::Login
-    }
-}
-
 /// Login-specific cipher data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LoginData {
     #[serde(default)]
     pub username: Option<String>,
@@ -378,6 +368,7 @@ pub struct SshKeyData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::large_enum_variant)]
 pub enum CipherKind {
     Login(LoginData),
     SecureNote,
@@ -395,19 +386,6 @@ impl CipherKind {
             CipherKind::Card(_) => CipherType::Card,
             CipherKind::Identity(_) => CipherType::Identity,
             CipherKind::SshKey(_) => CipherType::SshKey,
-        }
-    }
-}
-
-impl Default for LoginData {
-    fn default() -> Self {
-        Self {
-            username: None,
-            password: None,
-            uris: Vec::new(),
-            totp_uri: None,
-            autofill_on_page_load: false,
-            password_revision_date: None,
         }
     }
 }
@@ -554,26 +532,23 @@ impl CipherEnvelopeData {
                 if data.username.is_none()
                     && data.password.is_none()
                     && data.uris.is_empty()
-                    && data.totp_uri.is_none() =>
+                    && data.totp_uri.is_none()
+                    && (self.username.is_some()
+                        || self.password.is_some()
+                        || !self.uris.is_empty()
+                        || self.totp_uri.is_some()) =>
             {
-                // Flat fields present? Migrate them into LoginData.
-                if self.username.is_some()
-                    || self.password.is_some()
-                    || !self.uris.is_empty()
-                    || self.totp_uri.is_some()
-                {
-                    self.kind = CipherKind::Login(LoginData {
-                        username: self.username.take(),
-                        password: self.password.take(),
-                        uris: std::mem::take(&mut self.uris)
-                            .into_iter()
-                            .map(LoginUri::new)
-                            .collect(),
-                        totp_uri: self.totp_uri.take(),
-                        autofill_on_page_load: false,
-                        password_revision_date: None,
-                    });
-                }
+                self.kind = CipherKind::Login(LoginData {
+                    username: self.username.take(),
+                    password: self.password.take(),
+                    uris: std::mem::take(&mut self.uris)
+                        .into_iter()
+                        .map(LoginUri::new)
+                        .collect(),
+                    totp_uri: self.totp_uri.take(),
+                    autofill_on_page_load: false,
+                    password_revision_date: None,
+                });
             }
             _ => {
                 // kind is already set to non-default or Login with data;

@@ -8,18 +8,18 @@
 use crate::error::VaultError;
 use crate::types::{CipherEnvelope, EnvelopeHeader};
 
-/// Binary envelope layout:
-///   [0]       version: u8
-///   [1..3]    alg_id: u16 LE
-///   [3..11]   key_epoch: u64 LE
-///   [11..19]  nonce_counter: u64 LE
-///   [19..27]  update_seq: u64 LE
-///   [27]      tier: u8 (0=none, 1=xs, 2=s, 3=m, 4=l, 5=xl)
-///   [27..39]  nonce: [u8; 12]
-///   [39..41]  aad_len: u16 LE
-///   [41..41+aad_len]  aad
-///   [41+aad_len..41+aad_len+tag_len]  tag: [u8; 16]
-///   [rest]    ciphertext
+// Binary envelope layout:
+//   [0]       version: u8
+//   [1..3]    alg_id: u16 LE
+//   [3..11]   key_epoch: u64 LE
+//   [11..19]  nonce_counter: u64 LE
+//   [19..27]  update_seq: u64 LE
+//   [27]      tier: u8 (0=none, 1=xs, 2=s, 3=m, 4=l, 5=xl)
+//   [27..39]  nonce: [u8; 12]
+//   [39..41]  aad_len: u16 LE
+//   [41..41+aad_len]  aad
+//   [41+aad_len..41+aad_len+tag_len]  tag: [u8; 16]
+//   [rest]    ciphertext
 
 const HEADER_SIZE: usize = 27;
 const NONCE_SIZE: usize = 12;

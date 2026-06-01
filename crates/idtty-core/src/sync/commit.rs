@@ -19,7 +19,8 @@ pub fn create_commit_signature_payload(
     parent_hash: &[u8],
     timestamp: u64,
 ) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(64 + 8);
+    let mut payload = Vec::with_capacity(64 + 8 + 16);
+    payload.extend_from_slice(b"idtty-commit-v1");
     payload.extend_from_slice(tree_hash);
     payload.extend_from_slice(parent_hash);
     payload.extend_from_slice(&timestamp.to_le_bytes());

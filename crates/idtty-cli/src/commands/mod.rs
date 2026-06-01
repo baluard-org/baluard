@@ -131,15 +131,16 @@ pub fn handle_lock(
             Ok(())
         }
         ConnectMode::Direct => {
-            return Err(
+            Err(
                 "lock requires daemon mode (no vault held in memory in direct mode)".into(),
-            );
+            )
         }
     }
 }
 
 // ── Add cipher ──
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_add(
     mode: ConnectMode,
     vault_path: &str,
@@ -162,7 +163,7 @@ pub fn handle_add(
     };
 
     let folder_uuid = folder_id
-        .map(|id| uuid::Uuid::parse_str(id))
+        .map(uuid::Uuid::parse_str)
         .transpose()
         .map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid folder UUID: {e}")))?;
 
@@ -397,17 +398,14 @@ pub fn handle_get(
                         println!("Cipher: {}", c.id);
                         println!("  Name:      {}", c.name);
                         println!("  Type:      {:?}", c.kind.cipher_type());
-                        match &c.kind {
-                            idtty_core::types::CipherKind::Login(data) => {
-                                if let Some(ref u) = data.username {
-                                    println!("  Username:  {u}");
-                                }
-                                println!("  Password:  ***");
-                                for u in &data.uris {
-                                    println!("  URI:       {}", u.uri);
-                                }
+                        if let idtty_core::types::CipherKind::Login(data) = &c.kind {
+                            if let Some(ref u) = data.username {
+                                println!("  Username:  {u}");
                             }
-                            _ => {}
+                            println!("  Password:  ***");
+                            for u in &data.uris {
+                                println!("  URI:       {}", u.uri);
+                            }
                         }
                         if c.notes.is_some() {
                             println!("  Notes:     ***");
@@ -447,7 +445,7 @@ pub fn handle_list(
             }
             let data: serde_json::Value = serde_json::from_str(&resp.payload)?;
             let ciphers = data["ciphers"].as_array();
-            if ciphers.map_or(true, |a| a.is_empty()) {
+            if ciphers.as_ref().is_none_or(|a| a.is_empty()) {
                 println!("No ciphers found.");
             } else if let Some(ciphers) = ciphers {
                 // Fetch folders for name resolution
@@ -996,8 +994,7 @@ pub fn handle_edit(
                 name: name.clone().unwrap_or_else(|| existing_cipher.name.clone()),
                 folder_id: folder
                     .as_ref()
-                    .map(|f| f.parse::<uuid::Uuid>().ok())
-                    .flatten()
+                    .and_then(|f| f.parse::<uuid::Uuid>().ok())
                     .or(existing_cipher.folder_id),
                 kind: existing_cipher.kind.clone(),
                 favorite: favorite.unwrap_or(existing_cipher.favorite),
@@ -1120,7 +1117,7 @@ pub fn handle_folder_list(
                 println!("No folders.");
                 return Ok(());
             }
-            println!("{:<36} {}", "ID", "NAME");
+            println!("{:<36} NAME", "ID");
             for f in &folders {
                 let id = f["id"].as_str().unwrap_or("?");
                 let name = f["name"].as_str().unwrap_or("?");
@@ -1188,7 +1185,7 @@ pub fn handle_import(
     format: &str,
     path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let import_format = idtty_core::import::ImportFormat::from_str(format).ok_or_else(
+    let import_format = idtty_core::import::ImportFormat::from_name(format).ok_or_else(
         || -> Box<dyn std::error::Error> {
             format!(
                 "Unknown format: {format}. Supported: {:?}",

@@ -76,12 +76,10 @@ async fn read_length(
     buf: &mut BytesMut,
 ) -> Result<Option<usize>> {
     loop {
-        let mut tmp = buf.chunk().iter();
         let mut len = 0u64;
         let mut shift = 0u32;
         let mut bytes_consumed = 0;
-
-        while let Some(&byte) = tmp.next() {
+        for &byte in buf.chunk().iter() {
             bytes_consumed += 1;
             len |= ((byte & 0x7F) as u64) << shift;
             shift += 7;
@@ -390,10 +388,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
 
         "vault.trash.purge" => {
-            let days = match req.payload.parse::<u32>() {
-                Ok(d) => d,
-                Err(_) => 30, // default 30 days
-            };
+            let days = req.payload.parse::<u32>().unwrap_or(30);
             match state.purge_old_trash(days).await {
                 Ok(count) => {
                     let json = serde_json::json!({"purged_count": count});
@@ -484,7 +479,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(e) => return err_response(format!("Invalid JSON: {e}")),
             };
             let format_str = parsed["format"].as_str().unwrap_or("");
-            let format = match idtty_core::import::ImportFormat::from_str(format_str) {
+            let format = match idtty_core::import::ImportFormat::from_name(format_str) {
                 Some(f) => f,
                 None => {
                     return err_response(format!(

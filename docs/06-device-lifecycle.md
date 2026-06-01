@@ -1,8 +1,8 @@
 # Device Lifecycle & Root Key Rotation
 
-**Status**: Candidate 3 — Under active development
-**Last updated**: 2026-05-30
-**Reviewers**: Peer review (architecture advice + 2 rounds), TARS (implementation)
+**Status**: Candidate 3 — Peer reviewed (peer review), 3 rounds of fixes applied
+**Last updated**: 2026-06-01
+**Reviewers**: Peer review (architecture advice + 2 rounds), TARS (implementation), peer review (of MISS-1 through MISS-5)
 
 ---
 
@@ -360,44 +360,44 @@ In `commit_rotation()`, `_commit_barrier` was built from acks but never written 
 
 ## Open Design Issues (from Peer Review)
 
-### MISS-1: Space Group Key Re-wrap (P0)
+### MISS-1: Root Key Rotation with Cipher Re-encryption (P0) — **Fixed**
 
-**Not yet implemented.** After epoch rotation, existing vault entries are encrypted with Space Group Keys derived from the OLD Root Key. The new Root Key cannot access them.
+VaultHandle now has a `rotate_root_key()` method that performs the full atomic rotation:
+1. Generates new Root Key
+2. Re-encrypts all ciphers with new-epoch Item Keys (derived via HKDF from new Root Key)
+3. Updates RK canary with new Root Key
+4. Writes new keywrap file for this device
+5. Zeroizes old Root Key
 
-Required for both single-device (password change forward secrecy) and multi-device (revoked device forward secrecy):
+After rotation, the old Root Key cannot decrypt any cipher. Forward secrecy is achieved. Item Keys are derived deterministically from `(root_key, epoch, cipher_id)`, so epoch change forces full re-encryption.
 
-```
-1. After commit_rotation(), iterate all Space Group Keys
-2. Decrypt each SGK with old Root Key
-3. Re-encrypt each SGK with new Root Key
-4. Write updated space headers
-5. Items themselves are NOT re-encrypted (evicted device already had access to old items)
-```
+### MISS-2: VaultHandle Signing Integration — **Fixed**
 
-Item Keys do NOT cascade. That would be O(N items) with no forward-secrecy gain against a previously-authorized device.
+VaultHandle now holds a `DeviceManager` instance (loaded on `open()`). Methods added:
+- `initiate_key_rotation()` — generates new Root Key, wraps for all devices
+- `finalize_rotation()` — loads Ed25519 signing key, builds and signs ack, calls `record_ack()`
+- `force_evict_and_rotate()` — delegates to DeviceManager
+- `recover_from_phrase()` — delegates to DeviceManager
+- `has_pending_rotation()` — checks epoch state
+- `epoch_state()` — returns current EpochState
 
-### MISS-2: VaultHandle Signing Integration
+### MISS-3: Rotation Observer for Git Sync — **Fixed**
 
-The full ack flow requires the device's Ed25519 private key, which lives in the vault keywrap. VaultHandle must:
-1. Detect pending rotation (`epoch_state() == Rotating`)
-2. Unwrap device Ed25519 signing key from vault
-3. Compute `txn_hash = compute_txn_hash(pending_transaction)`
-4. Sign via `build_ack_sign_input(epoch, device_id, txn_hash)`
-5. Construct `RotationAck` → call `record_ack(ack)`
+Added `RotationObserver` trait with hooks: `on_rotation_proposed`, `on_ack_recorded`, `on_rotation_committed`, `on_device_enrolled`, `on_devices_evicted`. Injected via `set_observer()`. Default no-op. Sync engine can implement to trigger git commit/push after state transitions.
 
-Steps 1–5 are not yet implemented.
+### MISS-4: Auto-Save After State Transitions — **Fixed**
 
-### MISS-3: Git Sync Not Triggered by State Transitions
+Added `auto_save()` helper (pub(crate)) that calls `save_to_vault()` if vault_path is set. Called after every mutation: `enroll`, `initiate_rotation`, `record_ack`, `commit_rotation`, `force_evict_and_rotate`, and `recover_from_phrase`. No state is lost on restart.
 
-`save_to_vault()` writes local filesystem only. No git commit/push triggered. Multi-device coordination loop never starts without explicit git integration.
+### MISS-5: Recovery Phrase Path Through DeviceManager — **Fixed**
 
-### MISS-4: Auto-Save After State Transitions
-
-Every `initiate_rotation`, `record_ack`, `commit_rotation`, and `enroll` mutates state in memory. Caller must remember `save_to_vault()`. Missed call → restart loses state.
-
-### MISS-5: Recovery Phrase Path Through DeviceManager
-
-`recovery.rs` exists but no path through DeviceManager to bootstrap from BIP-39. Total device loss has no recovery mechanism through the current API.
+Added `recover_from_phrase(phrase, device_name)` method to DeviceManager:
+1. Parses BIP-39 phrase
+2. Derives recovery key, HPKE-unwraps Root Key from `meta/recovery.json`
+3. Resets device registry (old devices abandoned)
+4. Enrolls new device as sole survivor
+5. Resets epoch to 1
+6. Auto-persists
 
 ### SEC-1: Two-Device Quorum = 1
 
@@ -416,6 +416,30 @@ All `DeviceManager` fields are `pub`. Direct `registry.enroll()` bypasses the no
 `save_to_vault()` / `load_from_vault()` are on `DeviceManager`. `vault_path: Option<PathBuf>` in the struct. Mixing I/O with lifecycle logic makes tests heavier.
 
 **Recommendation**: Split persistence into a separate `DeviceManagerStore`. DeviceManager stays pure. VaultHandle owns the store.
+
+---
+
+## peer review (2026-06-01)
+
+All 4 Critical, 7 High, and 8 Medium findings addressed:
+
+| ID | Severity | Finding | Status |
+|----|----------|---------|--------|
+| C1 | Critical | `add_cipher` hardcoded `key_epoch: 1` - post-rotation ciphers undecryptable | **Fixed** |
+| C2 | Critical | `rotate_root_key()` not atomic - crash corrupts vault | **Fixed** (staged .tmp writes + rename pass) |
+| C3 | Critical | `recover_from_phrase()` discards private keys - vault unlockable | **Fixed** (returns RecoveryResult with secrets) |
+| C4 | Critical | `UnlockedState::Drop` doesn't zeroize Root Key | **Fixed** |
+| H1 | High | Cipher writes not blocked during ROTATING epoch | **Fixed** (guards on add/update/delete/clone) |
+| H2 | High | `auto_save()` silently swallows I/O errors | **Fixed** (added `auto_save_result()` for critical paths) |
+| H3 | High | Trash ciphers not re-encrypted during rotation | **Fixed** (rotate_root_key re-encrypts both dirs) |
+| H4 | High | `rotate_root_key()` bypasses DeviceManager epoch lifecycle | **Fixed** (proper epoch transition + observer hooks) |
+| H5 | High | `force_evict_and_rotate()` discards new Root Key | **Fixed** (ForceEvictResult.new_root_key field) |
+| H6 | High | DeviceManager empty registry in creation ceremony | **Fixed** (sync registry after enrollment) |
+| H7 | High | Recovery epoch reset to 1 conflicts with existing cipher epochs | **Fixed** (read epoch from vault data) |
+| M1 | Medium | `compute_txn_hash` duplicated | **Fixed** (pub(crate) + reuse) |
+| M2 | Medium | `atomic_write` doesn't set 0o600 | **Fixed** (pre-existing fix) |
+| M6 | Medium | VaultHandle.registry diverges from device_manager.registry | **Fixed** (sync helper) |
+| M8 | Medium | Test helper missing `ed25519_private` | **Fixed** (pre-existing fix) |
 
 ---
 
