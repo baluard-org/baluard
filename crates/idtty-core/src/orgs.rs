@@ -45,13 +45,17 @@ pub fn load_access_list(vault_path: &Path) -> Result<AccessList, IdttyError> {
     Ok(list)
 }
 
-/// Save the access list JSON to disk.
+/// Save the access list JSON to disk (atomic: write tmp + rename).
 pub fn save_access_list(vault_path: &Path, list: &AccessList) -> Result<(), IdttyError> {
     let path = vault_path.join("meta/access_list.json");
-    std::fs::create_dir_all(path.parent().unwrap())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let json = serde_json::to_string_pretty(list)
         .map_err(|e| VaultError::Metadata(format!("access list serialization: {e}")))?;
-    std::fs::write(&path, json)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &json)?;
+    std::fs::rename(&tmp, &path)?;
     Ok(())
 }
 
@@ -63,6 +67,10 @@ pub fn add_member(
     x25519_pub_bytes: &[u8],
     group_key: &[u8; 32],
 ) -> Result<(), IdttyError> {
+    if x25519_pub_bytes.len() != 32 {
+        return Err(VaultError::Metadata("invalid X25519 public key length".into()).into());
+    }
+
     let mut list = load_access_list(vault_path)?;
 
     // Remove if duplicate device_id exists
@@ -76,9 +84,6 @@ pub fn add_member(
 
     // HPKE wrap the group key
     let mut pub_key_bytes = [0u8; 32];
-    if x25519_pub_bytes.len() != 32 {
-        return Err(VaultError::Metadata("invalid X25519 public key length".into()).into());
-    }
     pub_key_bytes.copy_from_slice(x25519_pub_bytes);
     let pub_key = PublicKey::from(pub_key_bytes);
 
@@ -104,29 +109,39 @@ pub fn remove_member(vault_path: &Path, device_id: Uuid) -> Result<[u8; 32], Idt
     list.members.retain(|m| m.device_id != device_id);
     list.wrapped_group_keys.remove(&device_id);
 
-    // Generate a new rotated Space Group Key
+    // Generate a new rotated Space Group Key using cryptographically secure OsRng
     use rand::RngCore;
+    use rand::rngs::OsRng;
     let mut new_group_key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut new_group_key);
+    OsRng.fill_bytes(&mut new_group_key);
 
-    // Re-wrap the new Group Key for all remaining members
+    // Re-wrap the new Group Key for all remaining members (fails visibly on error)
     let mut new_wrapped_group_keys = HashMap::new();
     for member in &list.members {
-        let mut pub_key_bytes = [0u8; 32];
         if member.x25519_public_key.len() != 32 {
-            continue;
+            return Err(VaultError::Metadata(format!(
+                "invalid public key length for remaining member {}",
+                member.email
+            ))
+            .into());
         }
+        let mut pub_key_bytes = [0u8; 32];
         pub_key_bytes.copy_from_slice(&member.x25519_public_key);
         let pub_key = PublicKey::from(pub_key_bytes);
 
-        if let Ok((eph_pub, ct, tag)) = hpke_wrap::wrap_key(&new_group_key, &pub_key) {
-            let bundle = WrappedKeyBundle {
-                ephemeral_pub: hex::encode(eph_pub),
-                ciphertext: hex::encode(ct),
-                tag: hex::encode(tag),
-            };
-            new_wrapped_group_keys.insert(member.device_id, bundle);
-        }
+        let (eph_pub, ct, tag) = hpke_wrap::wrap_key(&new_group_key, &pub_key).map_err(|e| {
+            VaultError::Crypto(format!(
+                "failed to wrap key for member {}: {}",
+                member.email, e
+            ))
+        })?;
+
+        let bundle = WrappedKeyBundle {
+            ephemeral_pub: hex::encode(eph_pub),
+            ciphertext: hex::encode(ct),
+            tag: hex::encode(tag),
+        };
+        new_wrapped_group_keys.insert(member.device_id, bundle);
     }
     list.wrapped_group_keys = new_wrapped_group_keys;
 

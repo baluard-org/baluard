@@ -39,16 +39,20 @@ pub fn load_emergency_config(vault_path: &Path) -> Result<Option<EmergencyConfig
     Ok(Some(config))
 }
 
-/// Save the emergency config JSON to disk.
+/// Save the emergency config JSON to disk (atomic write tmp + rename).
 pub fn save_emergency_config(
     vault_path: &Path,
     config: &EmergencyConfig,
 ) -> Result<(), IdttyError> {
     let path = vault_path.join("meta/emergency.json");
-    std::fs::create_dir_all(path.parent().unwrap())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let json = serde_json::to_string_pretty(config)
         .map_err(|e| VaultError::Metadata(format!("emergency config serialization: {e}")))?;
-    std::fs::write(&path, json)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &json)?;
+    std::fs::rename(&tmp, &path)?;
     Ok(())
 }
 
@@ -58,7 +62,7 @@ pub fn setup_emergency_access(
     email: &str,
     contact_pubkey_bytes: &[u8],
     delay_seconds: u64,
-    root_key: &[u8; 32],
+    root_key: &[u8; 64],
 ) -> Result<(), IdttyError> {
     if contact_pubkey_bytes.len() != 32 {
         return Err(VaultError::Metadata("invalid X25519 public key length".into()).into());
@@ -93,9 +97,16 @@ pub fn initiate_emergency_request(vault_path: &Path) -> Result<(), IdttyError> {
     let mut config = load_emergency_config(vault_path)?
         .ok_or_else(|| VaultError::Metadata("emergency access not configured".into()))?;
 
+    if matches!(config.status, EmergencyStatus::Revoked) {
+        return Err(VaultError::Metadata(
+            "Access Denied: emergency access has been permanently revoked by the owner".into(),
+        )
+        .into());
+    }
+
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs();
 
     config.status = EmergencyStatus::Requested { request_time: now };
@@ -128,13 +139,13 @@ pub fn reject_or_revoke_emergency(vault_path: &Path) -> Result<(), IdttyError> {
 pub fn recover_emergency_root_key(
     vault_path: &Path,
     contact_privkey: &StaticSecret,
-) -> Result<[u8; 32], IdttyError> {
+) -> Result<[u8; 64], IdttyError> {
     let config = load_emergency_config(vault_path)?
         .ok_or_else(|| VaultError::Metadata("emergency access not configured".into()))?;
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs();
 
     let authorized = match config.status {
@@ -165,11 +176,11 @@ pub fn recover_emergency_root_key(
 
     let decrypted = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, contact_privkey)?;
 
-    if decrypted.len() != 32 {
+    if decrypted.len() != 64 {
         return Err(VaultError::Corrupt("decrypted key is invalid length".into()).into());
     }
 
-    let mut root_key = [0u8; 32];
+    let mut root_key = [0u8; 64];
     root_key.copy_from_slice(&decrypted);
 
     Ok(root_key)
@@ -185,7 +196,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let vault_path = dir.path();
 
-        let root_key = [7u8; 32];
+        let root_key = [7u8; 64];
         let (contact_priv, contact_pub) = hpke_wrap::generate_x25519_keypair();
 
         // 1. Setup emergency access
@@ -215,6 +226,10 @@ mod tests {
         // 4. Revocation closes access
         reject_or_revoke_emergency(vault_path).unwrap();
         let res = recover_emergency_root_key(vault_path, &contact_priv);
+        assert!(res.is_err());
+
+        // 5. Re-initiation fails once Revoked
+        let res = initiate_emergency_request(vault_path);
         assert!(res.is_err());
     }
 }
