@@ -2971,6 +2971,20 @@ function AppInner() {
   const { t } = useI18n();
 
   onMount(async () => {
+    // Dynamically set window size to 70% width and 85% height of screen on mount (ensures macOS behaves correctly)
+    try {
+      const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
+      const appWindow = getCurrentWindow();
+      const screenWidth = window.screen.availWidth;
+      const screenHeight = window.screen.availHeight;
+      const targetWidth = Math.round(screenWidth * 0.70);
+      const targetHeight = Math.round(screenHeight * 0.85);
+      await appWindow.setSize(new LogicalSize(targetWidth, targetHeight));
+      await appWindow.center();
+    } catch (e) {
+      console.warn("Tauri window API not available or failed:", e);
+    }
+
     try {
       await daemon("vault.open");
     } catch (e) {
