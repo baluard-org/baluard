@@ -344,13 +344,13 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Set window size dynamically to 70% of screen size
+            // Set window size dynamically to 70% width and 85% height of screen size
             if let Some(window) = app.get_webview_window("main") {
                 if let Ok(Some(monitor)) = window.primary_monitor() {
                     let monitor_size = monitor.size();
                     let scale_factor = monitor.scale_factor();
                     let width = (monitor_size.width as f64 * 0.70) / scale_factor;
-                    let height = (monitor_size.height as f64 * 0.70) / scale_factor;
+                    let height = (monitor_size.height as f64 * 0.85) / scale_factor;
                     let _ = window.set_size(tauri::LogicalSize::new(width, height));
                     let _ = window.center();
                 }
