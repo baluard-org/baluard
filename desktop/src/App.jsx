@@ -2257,13 +2257,13 @@ function VaultView() {
   }
 
   return (
-    <div class="flex h-full overflow-hidden select-none">
+    <div class="flex h-full overflow-hidden">
       <DeleteConfirmModal />
       <GeneratorModal />
       <RepromptModal />
       
-      {/* ── Column 1: Left Navigation Sidebar ── */}
-      <div class="w-[260px] bg-[var(--color-sidebar)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0">
+      {/* Column 1: Left Navigation Sidebar */}
+      <div class="w-[260px] bg-[var(--color-sidebar)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0 select-none">
         <div>
           {/* Header Brand */}
           <div class="p-6 pb-4 border-b border-[var(--color-border)] flex items-center justify-between">
@@ -2408,8 +2408,8 @@ function VaultView() {
         </div>
       </div>
 
-      {/* ── Column 2: Vault Items List Pane ── */}
-      <div class="w-[360px] bg-[var(--color-list)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0">
+      {/* Column 2: Vault Items List Pane */}
+      <div class="w-[360px] bg-[var(--color-list)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0 select-none">
         <div class="flex-1 flex flex-col min-h-0">
           
           {/* Header Action Bar */}

@@ -44,7 +44,6 @@ body {
   color: var(--color-text);
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   overflow: hidden;
-  user-select: none;
   transition: background-color 0.25s ease, color 0.25s ease;
 }
 
