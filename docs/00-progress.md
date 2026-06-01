@@ -21,7 +21,7 @@
 
 ## Current Status
 
-**Phase**: Rust core built, tested, and security-reviewed (2 rounds). IPC daemon with full CRUD, TOTP, auto-lock. CLI dual-mode. Desktop app with 5 cipher types, generator, TOTP widget. 130 tests, 0 clippy errors.
+**Phase**: Desktop BW parity complete (phases 1-8 + A-G). 170 tests, 0 clippy errors, 7 security review rounds. Full desktop feature set: CRUD, 5 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders.
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
 - `/crates/idtty-core` - Rust core engine: crypto, keys, vault, padding, git sync
@@ -260,6 +260,28 @@ All 8 phases complete, peer-reviewed, and merged. **130 tests, 0 clippy errors.*
 - Generator uses `crypto.getRandomValues` exclusively (never `Math.random`)
 - Passphrase digits use separate random source from word selection
 
+### Desktop BW Parity Phases A-G (Final Push)
+
+All 7 phases complete, individually peer reviewed, fixes applied. **170 tests, 0 clippy errors.**
+
+| Phase | Description | Key Changes | Review Findings |
+|-------|-------------|-------------|----------------|
+| A | Import/Export | 8 import parsers (bw_json, bw_csv, chrome_csv, firefox_csv, lastpass_csv, 1password_1pux, 1password_csv, keepass_xml) + 2 export formats (bw_json, bw_csv). Daemon routes. CLI commands. Desktop ImportExportButton. | 1C (folder resolution), 2H (export safety, type detection), 4M. All fixed. |
+| B | Reprompt | `reprompt: bool` on Cipher/CipherMeta/CipherInput. Daemon `vault.reprompt_verify` (temp handle, 30s grant). Desktop RepromptModal + shield icon. | Field addition, no standalone review. |
+| C | Password Health | `health.rs` weak (<8 chars, common50, sequential), reused (same password across entries), old (>90 days). Daemon `vault.health`. CLI `idtty health`. | Self-contained module, no standalone review. |
+| D | Attachments | `vault/attachment.rs` AES-256-GCM with cipher's item key, random nonce, max 2MB. Stored at `entries/<id>/attachments/<id>.enc`. Daemon upload/download/delete. CLI commands. Desktop attachment list. Plaintext zeroized in daemon+CLI. | 2C (zeroize), 3H (orphan files, action name, missing response field), 5M, 3L. All fixed. |
+| E | Biometric Unlock | `biometric.rs` stores master password in OS keychain (keyring crate). Daemon performs unlock internally (secret never over IPC). Desktop Quick Unlock button + settings toggle. | 3C (non-functional frontend, token gate, wrong secret), 4H (IPC exposure, timing leak, validation, rotation), 3M, 2L. All fixed. |
+| F | Linked Custom Fields | `CustomFieldType::Linked(LinkedFieldType)` with 24 variants. `resolve_linked_field()`. Desktop custom field editor with type dropdown + linked field selector. | 2C (wire format mismatch, missing response field), 2H (incomplete dropdown/map), 2M, 1L. All fixed. |
+| G | Nested Folders | `create_folder_with_parent` with depth limit (16). `delete_folder` cascades via `collect_descendant_ids`. Desktop FolderTree/FolderNode recursive components. Folder filter includes subfolder ciphers. | 1C (orphaned children on delete), 2H (depth limit, subfolder filtering), 2M. All fixed. |
+
+#### Key Architectural Decisions (from A-G reviews)
+- Desktop JS field_type must match Rust serde externally-tagged format (`"Text"`, `"Hidden"`, `{"Linked":"LoginUsername"}`)
+- Daemon `get_cipher` must include ALL fields in JSON response (custom_fields, attachments, reprompt)
+- All plaintext attachment data zeroized after encrypt/decode in both daemon and CLI
+- Biometric unlock happens daemon-side only; master password never returns over IPC
+- Folder delete cascades to children; depth limited to 16
+- `collect_descendant_ids` uses BFS to prevent cycles
+
 ---
 
 ## Known Limitations
@@ -286,6 +308,13 @@ All 8 phases complete, peer-reviewed, and merged. **130 tests, 0 clippy errors.*
 | `delete <id>` | Daemon/Direct | Delete cipher by UUID |
 | `folders {create\|list\|rename\|delete}` | Daemon/Direct | Folder management |
 | `sync {init\|remote\|push\|pull\|...}` | Daemon/Direct | Git sync operations |
+| `import <format> <file>` | Daemon | Import entries (bw-json/bw-csv/chrome-csv/firefox-csv/lastpass-csv/1password-1pux/1password-csv/keepass-xml) |
+| `export <format> <file>` | Daemon | Export entries (bw-json/bw-csv) |
+| `health` | Daemon | Password health report (weak/reused/old) |
+| `attach-upload <cipher_id> <file>` | Daemon | Upload encrypted attachment (max 2MB) |
+| `attach-download <cipher_id> <attach_id> <output>` | Daemon | Download attachment |
+| `attach-delete <cipher_id> <attach_id>` | Daemon | Delete attachment |
+| `attach-list <cipher_id>` | Daemon | List attachments on a cipher |
 | `devices list` | Direct | List enrolled devices |
 | `ping` | Daemon | Check daemon connectivity |
 
@@ -299,10 +328,10 @@ All 8 phases complete, peer-reviewed, and merged. **130 tests, 0 clippy errors.*
 idtty/
 ├── proto/                        # Shared Protobuf Schemas (vault, space, auth)
 ├── crates/
-│   ├── idtty-core/               # Rust Core: crypto (AES-256-GCM, Argon2id, TOTP), keys, vault, padding, sync
-│   ├── idtty-cli/                # Terminal CLI (daemon-first + --direct fallback)
-│   └── idtty-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState, auto-lock, TOTP)
-├── desktop/                      # Tauri v2 Desktop app (full CRUD, 5 cipher types, generator, TOTP)
+│   ├── idtty-core/               # Rust Core: crypto (AES-256-GCM, Argon2id, TOTP), keys, vault, padding, sync, import/export, health, biometric, attachments
+│   ├── idtty-cli/                # Terminal CLI (daemon-first + --direct fallback, import/export, health, attachments)
+│   └── idtty-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState, auto-lock, TOTP, attachments, biometric, import/export, health)
+├── desktop/                      # Tauri v2 Desktop app (full CRUD, 5 cipher types, generator, TOTP, import/export, reprompt, health, attachments, biometric, custom fields, nested folders)
 ├── extension/                    # Browser extension (placeholder)
 ├── mobile/                       # Kotlin Multiplatform (KMP) Mobile App (placeholder)
 └── docs/                         # Architecture Blueprint Docs
