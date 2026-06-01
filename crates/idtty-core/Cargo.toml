@@ -33,7 +33,7 @@ keyring.workspace = true
 csv = "1.3"
 roxmltree = "0.20"
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
-uniffi = "0.28"
+uniffi.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
