@@ -8,6 +8,7 @@ pub mod cipher;
 pub mod creation;
 pub mod envelope;
 pub mod handle;
+pub mod index;
 pub mod manifest;
 pub mod padding;
 

@@ -47,19 +47,17 @@ Decisions documented in `01-architecture-decisions.md` that have no code backing
 
 **Documented**: Plaintext Protobuf payloads padded to uniform bucket sizes (1KB/8KB/64KB/1MB) before encryption. Encrypted lookup table (`index.enc`) maps human-readable metadata (URLs, titles) to hashed filenames under `entries/`.
 
-**Current state**: **Padding fully implemented**. `padding.rs` provides `pad()`/`unpad()` with 5 tiers (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB). `encrypt_cipher()` auto-selects tier via `Tier::fit()` and pads before encryption. `decrypt_cipher()` unpads after decryption. Envelope binary format stores tier byte. All cipher operations produce uniform-size files. `index.enc` fast-lookup table is the only remaining gap.
+**Current state**: **Padding fully implemented**. `padding.rs` provides `pad()`/`unpad()` with 5 tiers. **`index.enc` fast-lookup table fully implemented**. `index.rs` encrypts/decrypts `index.enc` lookup table under derived key. `list_cipher_meta` performs O(1) decryption on search. `rebuild_index` updates the index on add/update/delete/restore.
 
-**Remaining gap**:
-- No `index.enc` fast-lookup table (vault `list` reads directory + decrypts headers)
-- `index.enc` auto-heal (D4) depends on this
+**Remaining gap**: None.
 
 ### D4: Index Auto-Heal
 
-**Documented**: If `index.enc` has a Git conflict, idtty-core decrypts the entire `entries/` folder, rebuilds the index from scratch, and silently force-pushes the clean resolution.
+**Documented**: If `index.enc` has a Git conflict or corruption, idtty-core decrypts the entire ciphers folder, rebuilds the index from scratch, and silently rewrites the index.
 
-**Current state**: No `index.enc` to auto-heal. Conflict resolution exists in `sync/` but operates on individual cipher files, not an index.
+**Current state**: **Auto-healing fully implemented**. If index decryption fails (due to corruption, conflicts, or stale keys), `list_cipher_meta()` triggers an automatic self-healing routine: scans the ciphers folder, rebuilds the lookup table, and overwrites `index.enc` with the healthy copy.
 
-**Gap**: Entirely dependent on D2 (`index.enc`) existing first.
+**Gap**: None.
 
 ### D5: Mobile JIT Sync
 
@@ -101,7 +99,7 @@ Decisions documented in `01-architecture-decisions.md` that have no code backing
 |------|----------|-------------|
 | Space Group Key (256-bit AES) | Per-Space symmetric key, wrapped per member in `access_list.json` | **Not implemented**. Item Keys derive from RootKey directly. |
 | `metadata/access_list.json` | Member public keys → wrapped Group Keys | **Not created** |
-| `index.enc` | Encrypted lookup table for fast search | **Not created** (list reads directory) |
+| `index.enc` | Encrypted lookup table for fast search | **Done**. Rebuilt on mutations; decrypted in O(1) time; auto-healing on corruption. |
 | Git commit signing (Ed25519) | All commits cryptographically signed, unsigned rejected | **Done**. Native git2 signing via `commit_create_buffer` + Ed25519 + `commit_signed`. Signature embedded in commit `gpgsig` header. `extract_signature` verifies on pull. Unsigned commits rejected. Merge + conflict resolution commits also signed. |
 | OAuth PAT escrow | PAT stored in OS keyring, never in git config | **Not wired** (PAT stored in standard git credential storage) |
 | Offboarding rekey flow | Remove member, rotate Group Key, re-encrypt all entries | **Not built** (depends on orgs + access_list) |
@@ -208,7 +206,7 @@ All tiers are design-only. No implementation.
 | Git commit signing | Prevents rollback/swap from git remote (T5) | **Done** (native git2 gpgsig, Ed25519, all commit sites) |
 | `integrity.rs` (D3/D22) | Rollback detection | **Done** (7 tests, atomic saves, monotonicity) |
 | Cover commits / timing randomization | Masks usage patterns from remote adversary | **Done** (`cover_commit` indistinguishable, `jitter_delay`) |
-| `index.enc` fast lookup (D2/D4) | Performance at scale | Not started |
+| `index.enc` fast lookup (D2/D4) | Performance at scale | **Done** |
 | FIDO2 vault unlock (2FA Tier 2) | Real hardware second factor | Not started (weeks of effort) |
 
 ### Priority 3: Multi-User Features
@@ -224,7 +222,7 @@ All tiers are design-only. No implementation.
 
 | Item | Why |
 |------|-----|
-| `index.enc` fast lookup (D2/D4) | Performance at scale |
+| `index.enc` fast lookup (D2/D4) | Performance at scale | **Done** |
 | DESIGN-1 (`pub` → `pub(crate)`) | Encapsulation |
 | DESIGN-2 (persistence split) | Testability |
 | Pre-existing clippy cleanup | Code hygiene |

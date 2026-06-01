@@ -11,6 +11,7 @@ use crate::error::CryptoError;
 const SESSION_INFO: &[u8] = b"idtty-session-v1";
 const SYNC_INFO: &[u8] = b"idtty-sync-v1";
 const SEQUENCE_INFO: &[u8] = b"idtty-sequence-v1";
+const INDEX_INFO: &[u8] = b"idtty-index-v1";
 
 /// Derive a 32-byte Session Key from KEK.
 ///
@@ -37,6 +38,15 @@ pub fn derive_sequence_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError>
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
     let mut key = [0u8; 32];
     hkdf.expand(SEQUENCE_INFO, &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
+/// Derive a 32-byte Index Key from Root Key.
+pub fn derive_index_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, root_key);
+    let mut key = [0u8; 32];
+    hkdf.expand(INDEX_INFO, &mut key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
