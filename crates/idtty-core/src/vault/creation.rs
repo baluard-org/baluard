@@ -13,12 +13,12 @@ use crate::crypto::hkdf_derive;
 use crate::crypto::hpke_wrap;
 use crate::crypto::kdf;
 use crate::crypto::signature;
+use crate::device_manager::DeviceManager;
 use crate::error::{IdttyError, VaultError};
 use crate::keys::epoch::EpochInfo;
 use crate::keys::hierarchy::RootKey;
 use crate::recovery::RecoveryPhrase;
 use crate::types::{KdfParams, KdfProfile};
-use crate::device_manager::DeviceManager;
 use crate::vault::handle::{UnlockedState, VaultHandle, VaultState};
 use rand_core::RngCore;
 
@@ -528,7 +528,10 @@ impl<'a> VaultCreator<'a> {
 
                 let mut device_manager = DeviceManager::new();
                 device_manager.set_vault_path(&path);
-                device_manager.epoch.activate().map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
+                device_manager
+                    .epoch
+                    .activate()
+                    .map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
                 // H6 fix: sync registry so device_manager.is_enrolled() works
                 device_manager.registry = registry.clone();
 
@@ -742,7 +745,10 @@ impl<'a> VaultCreator<'a> {
 
                 let mut device_manager = DeviceManager::new();
                 device_manager.set_vault_path(&path);
-                device_manager.epoch.activate().map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
+                device_manager
+                    .epoch
+                    .activate()
+                    .map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
                 // H6 fix: sync registry so device_manager.is_enrolled() works
                 device_manager.registry = registry.clone();
 

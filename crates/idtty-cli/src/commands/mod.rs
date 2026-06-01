@@ -131,9 +131,7 @@ pub fn handle_lock(
             Ok(())
         }
         ConnectMode::Direct => {
-            Err(
-                "lock requires daemon mode (no vault held in memory in direct mode)".into(),
-            )
+            Err("lock requires daemon mode (no vault held in memory in direct mode)".into())
         }
     }
 }

@@ -25,10 +25,7 @@ pub fn generate_x25519_keypair() -> (StaticSecret, PublicKey) {
 /// For production, use a full HPKE library (RFC 9180).
 ///
 /// Returns: (ephemeral_public_key, encrypted_key, auth_tag)
-pub fn wrap_key(
-    plaintext_key: &[u8],
-    recipient_pub: &PublicKey,
-) -> WrapResult {
+pub fn wrap_key(plaintext_key: &[u8], recipient_pub: &PublicKey) -> WrapResult {
     // Generate ephemeral X25519 keypair
     let eph_secret = StaticSecret::random_from_rng(OsRng);
     let eph_public = PublicKey::from(&eph_secret);

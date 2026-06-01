@@ -510,13 +510,9 @@ impl DeviceManager {
         }
 
         // Transition epoch: ROTATING → RETIRED (old) → create new ACTIVE
-        self.epoch
-            .retire()
-            .map_err(KeyError::InvalidEpochState)?;
+        self.epoch.retire().map_err(KeyError::InvalidEpochState)?;
         self.epoch = EpochInfo::new(tx.new_epoch);
-        self.epoch
-            .activate()
-            .map_err(KeyError::InvalidEpochState)?;
+        self.epoch.activate().map_err(KeyError::InvalidEpochState)?;
 
         // Cleanup acks
         self.collected_acks.clear();
@@ -614,9 +610,9 @@ impl DeviceManager {
         use crate::recovery::RecoveryPhrase;
 
         // Step 1: Parse phrase
-        let recovery_phrase =
-            RecoveryPhrase::from_phrase(phrase)
-                .map_err(|e| DeviceError::EnrollmentRejected(format!("invalid recovery phrase: {e}")))?;
+        let recovery_phrase = RecoveryPhrase::from_phrase(phrase).map_err(|e| {
+            DeviceError::EnrollmentRejected(format!("invalid recovery phrase: {e}"))
+        })?;
 
         // Step 2: Derive recovery key and X25519 secret
         let mut recovery_key = recovery_phrase.derive_key();
@@ -629,9 +625,10 @@ impl DeviceManager {
         recovery_key.zeroize();
 
         // Step 3: Load recovery.json from vault
-        let vault_path = self.vault_path.as_ref().ok_or_else(|| {
-            DeviceError::Keystore("vault_path not set for recovery".into())
-        })?;
+        let vault_path = self
+            .vault_path
+            .as_ref()
+            .ok_or_else(|| DeviceError::Keystore("vault_path not set for recovery".into()))?;
         let recovery_json_path = vault_path.join("meta/recovery.json");
         if !recovery_json_path.exists() {
             return Err(DeviceError::Keystore("meta/recovery.json not found".into()).into());
@@ -656,9 +653,8 @@ impl DeviceManager {
         tag.copy_from_slice(&tag_bytes);
 
         // Step 4: HPKE-unwrap Root Key
-        let root_key_bytes = crate::crypto::hpke_wrap::unwrap_key(
-            &eph_pub, &ct, &tag, &recovery_x25519_secret,
-        )?;
+        let root_key_bytes =
+            crate::crypto::hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &recovery_x25519_secret)?;
         let rk_arr: [u8; 64] = root_key_bytes
             .try_into()
             .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?;
@@ -672,7 +668,8 @@ impl DeviceManager {
 
         // Step 7: Generate new device keypair and enroll as sole device
         let (x25519_secret, x25519_public) = crate::crypto::hpke_wrap::generate_x25519_keypair();
-        let (ed25519_signing, ed25519_verifying) = crate::crypto::signature::generate_ed25519_keypair();
+        let (ed25519_signing, ed25519_verifying) =
+            crate::crypto::signature::generate_ed25519_keypair();
         let new_device_id = Uuid::new_v4();
 
         let entry = self.registry.enroll_with_id(
@@ -723,7 +720,10 @@ impl DeviceManager {
         });
         let privkey_path = vault_path.join("meta/device-privkey.json");
         let privkey_tmp = privkey_path.with_extension("json.tmp");
-        std::fs::write(&privkey_tmp, serde_json::to_string_pretty(&privkey_data).unwrap())?;
+        std::fs::write(
+            &privkey_tmp,
+            serde_json::to_string_pretty(&privkey_data).unwrap(),
+        )?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -777,8 +777,7 @@ impl DeviceManager {
 
     /// Check if DeviceManager vault files exist (meta/devices.json or meta/epoch.json).
     pub fn vault_files_exist(vault_path: &Path) -> bool {
-        vault_path.join("meta/devices.json").exists()
-            || vault_path.join("meta/epoch.json").exists()
+        vault_path.join("meta/devices.json").exists() || vault_path.join("meta/epoch.json").exists()
     }
 
     /// Load DeviceManager from vault directory.
@@ -1127,7 +1126,7 @@ mod tests {
         let (_root_key, tx) = mgr.initiate_rotation(device_id).unwrap();
         assert_eq!(tx.new_epoch, 1);
         assert_eq!(tx.wrapped_root_keys.len(), 1);
-        drop(tx); // release borrow on reference does nothing, but tx goes out of scope
+        let _ = tx; // release borrow on reference does nothing, but tx goes out of scope
         assert_eq!(mgr.epoch_state(), EpochState::Rotating);
         assert!(!mgr.writes_allowed());
     }
@@ -1234,7 +1233,7 @@ mod tests {
         let mut mgr = DeviceManager::new();
         mgr.epoch.activate().unwrap();
 
-        let (real_signing, real_verifying) = sig::generate_ed25519_keypair();
+        let (_real_signing, real_verifying) = sig::generate_ed25519_keypair();
         let (fake_signing, _) = sig::generate_ed25519_keypair();
         let device_id = Uuid::new_v4();
         let (_, x_pk) = hpke_wrap::generate_x25519_keypair();
@@ -1506,7 +1505,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault_path = dir.path();
 
-        let (sk, vk) = sig::generate_ed25519_keypair();
+        let (_sk, vk) = sig::generate_ed25519_keypair();
         let (_, x_pk) = hpke_wrap::generate_x25519_keypair();
         let device_id = Uuid::new_v4();
 
@@ -1539,9 +1538,8 @@ mod tests {
     // MISS-5: recovery from BIP-39 phrase bootstraps new device
     #[test]
     fn recover_from_phrase_bootstraps_new_device() {
-        use crate::recovery::RecoveryPhrase;
-        use crate::vault::creation;
         use crate::types::KdfProfile;
+        use crate::vault::creation;
 
         // Step 1: Create a vault with known recovery phrase
         let dir = tempfile::tempdir().unwrap();
@@ -1572,7 +1570,9 @@ mod tests {
         mgr.epoch.activate().unwrap();
         mgr.set_vault_path(vault_path);
 
-        let result = mgr.recover_from_phrase(&phrase_str, "Recovered Device").unwrap();
+        let result = mgr
+            .recover_from_phrase(&phrase_str, "Recovered Device")
+            .unwrap();
 
         // Verify: new device enrolled as sole device
         assert_eq!(mgr.registry.count(), 1);
@@ -1587,7 +1587,10 @@ mod tests {
         assert_eq!(result.device_id, result.entry.device_id);
         // Verify X25519 keypair consistency: public key in entry matches private key
         let derived_pub = x25519_dalek::PublicKey::from(&result.x25519_secret);
-        assert_eq!(hex::encode(derived_pub.as_bytes()), result.entry.encryption_public_key);
+        assert_eq!(
+            hex::encode(derived_pub.as_bytes()),
+            result.entry.encryption_public_key
+        );
 
         // Verify: state persisted to disk
         let loaded = DeviceManager::load_from_vault(vault_path).unwrap();

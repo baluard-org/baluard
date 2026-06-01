@@ -16,8 +16,7 @@ pub mod onepassword_csv;
 use crate::types::CipherInput;
 
 /// Result of an import operation.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ImportResult {
     /// Successfully parsed cipher inputs ready for batch-create.
     pub ciphers: Vec<CipherInput>,
