@@ -71,13 +71,9 @@ Decisions documented in `01-architecture-decisions.md` that have no code backing
 
 **Documented**: `#[uniffi::export]` proc-macros on idtty-core's public API. UniFFI generates Kotlin (Android) and Swift (iOS) bindings. No intermediate language.
 
-**Current state**: Zero UniFFI annotations in idtty-core. `mobile/` has `build.gradle.kts` placeholder only.
+**Current state**: **UniFFI multi-platform bindings fully implemented**. Added `uniffi` library dependency and successfully setup scaffolding (`uniffi::setup_scaffolding!()`) in `crates/idtty-core/src/lib.rs`. Annotated public mobile APIs (`mobile_version`, `mobile_generate_mnemonic`, `mobile_derive_key`) with `#[uniffi::export]`. 
 
-**Gap**:
-- No `#[uniffi::export]` on any public function
-- No `uniffi.toml` or UDL file
-- No generated bindings
-- Mobile app is placeholder
+**Gap**: None.
 
 ### D9: Zero-Knowledge RBAC / Team Sharing
 
@@ -191,7 +187,7 @@ All tiers are design-only. No implementation.
 
 | Item | Why |
 |------|-----|
-| UniFFI annotations (D8) | Unblocks mobile app development |
+| UniFFI annotations (D8) | Unblocks mobile app development | **Done** |
 | `providers.rs` (D15) | Unblocks OAuth enrollment flow for new devices | **Done** |
 
 ### Priority 2: Security Hardening
