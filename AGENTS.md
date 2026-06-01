@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-05-31
+**Generated:** 2026-05-31 | **Updated:** 2026-06-01
 
 ## OVERVIEW
 Project: **IDtty** (Git-native password manager / Space Manager)
@@ -19,15 +19,18 @@ idtty/
 │   │   └── src/
 │   │       ├── crypto/         # KDF (Argon2id), AEAD (AES-256-GCM), HKDF, HPKE, Ed25519, TOTP (RFC 6238)
 │   │       ├── keys/           # Key hierarchy (Root/Item/Session), epochs, rotation, nonces
-│   │       ├── vault/          # Vault handle, cipher CRUD, envelope format, creation ceremony, padding
+│   │       ├── vault/          # Vault handle, cipher CRUD, envelope format, creation ceremony, padding, attachment encrypt/decrypt
 │   │       ├── sync/           # Git sync engine (git2-rs), commit, conflict resolution, state machine
+│   │       ├── import/         # Import parsers (8 formats) + export (2 formats)
+│   │       ├── health.rs       # Password health analysis (weak/reused/old)
+│   │       ├── biometric.rs    # OS keychain biometric unlock (keyring crate)
 │   │       ├── devices.rs      # Device registry (enrollment, public keys)
 │   │       ├── emergency.rs    # Emergency access / break-glass
 │   │       ├── integrity.rs    # Canary checks (KEK/RK verification)
 │   │       ├── orgs.rs         # Organization / team sharing
 │   │       ├── providers.rs    # Credential provider abstraction
 │   │       ├── recovery.rs     # BIP-39 recovery phrase
-│   │       ├── types.rs        # CipherKind, CipherInput, CipherMeta, CardData, IdentityData, SshKeyData, etc.
+│   │       ├── types.rs        # CipherKind, CipherInput, CipherMeta, CustomFieldType (incl Linked), AttachmentMeta, etc.
 │   │       └── error.rs        # IdttyError enum
 │   ├── idtty-cli/              # CLI binary (clap) - daemon-first with --direct fallback
 │   │   └── src/
@@ -39,9 +42,9 @@ idtty/
 │           ├── main.rs         # Socket listener, SIGINT/SIGTERM, 0600 perms, auto-lock timer
 │           ├── handler.rs      # Protobuf routing, password zeroize, varint framing, token-gated actions
 │           └── state.rs        # VaultState (Arc<RwLock<Option<VaultHandle>>>), auto-lock, activity tracking
-├── desktop/                    # Tauri v2 desktop app (full CRUD, 5 cipher types, generator, auto-lock, TOTP)
+├── desktop/                    # Tauri v2 desktop app (full CRUD, 5 cipher types, generator, auto-lock, TOTP, attachments, nested folders, biometric, custom fields)
 │   └── src/
-│       ├── App.jsx             # SolidJS frontend (2100+ lines)
+│       ├── App.jsx             # SolidJS frontend (2500+ lines)
 │       ├── i18n/               # Internationalization (en.json + template)
 │       └── main.jsx            # Entry point
 ├── mobile/                     # Kotlin Multiplatform mobile app [PLACEHOLDER]
@@ -116,7 +119,8 @@ idtty/
 * **Daemon get_cipher response**: Returns BOTH nested `kind` object AND flat top-level fields for backward compat. Frontend reads `kind.card.*`, `kind.identity.*`, etc.
 * **update_cipher parses kind from payload**: Does NOT clone existing kind. Allows type-aware field edits through the daemon.
 * **Password history**: Auto-appended on password change. Cap at 10 entries (FIFO eviction). `PasswordHistoryEntry { password, last_used_date }`.
-* **Folder CRUD**: `list_folders`, `create_folder` (duplicate name rejection), `rename_folder`, `delete_folder` (unassigns ciphers first). Stored as `folders.json` in vault meta.
+* **Folder CRUD**: `list_folders`, `create_folder` (with optional `parent_id` for nesting), `rename_folder`, `delete_folder` (cascades to children, unassigns ciphers). Stored as `folders.json` in vault meta. Max nesting depth: 16.
+* **Nested folders**: `parent_id` on Folder struct. Desktop FolderTree component renders recursively. Folder filter includes subfolder ciphers (BFS descendant collection).
 * **TOTP code generation**: `crypto/totp.rs` — RFC 6238/4226. SHA1/SHA256/SHA512, 6/8 digits, 30/60s periods. Daemon route `cipher.totp_code <id>` returns `{code, period_seconds, expires_at}` — seed NEVER in response. `TotpParams.secret` zeroized on drop.
 * **Auto-lock timer**: Daemon tracks `last_activity` (AtomicU64). Background tokio task checks every 30s. Reads `auto_lock_minutes` from settings (default 15). Locks vault on timeout.
 * **CLI dual-mode (daemon-first)**: All vault commands route through the daemon by default. `--direct` flag falls back to idtty-core in-process. `--socket <path>` accepts custom daemon socket.
@@ -129,6 +133,13 @@ idtty/
 * **Key hierarchy**: Master Password -> KEK (Argon2id) -> Device Private Key (escrowed) -> Space Group Key -> Item Keys.
 * **BIP-39 recovery**: Vault creation generates a recovery phrase for key recovery.
 * **CodeGraph available**: `.codegraph/` index exists for codebase navigation.
+* **Import/Export (Phase A)**: 8 import parsers in `import/` (bw_json, bw_csv, chrome_csv, firefox_csv, lastpass_csv, onepassword_1pux, onepassword_csv, keepass_xml). 2 export formats (bw_json, bw_csv). Daemon routes `vault.import`, `vault.export`. CLI `idtty import/export`. Desktop ImportExportButton.
+* **Reprompt (Phase B)**: `reprompt: bool` on Cipher, CipherMeta, CipherInput. Daemon `vault.reprompt_verify` (opens temp handle, verifies MP, 30s grant). Desktop RepromptModal + shield icon on entries.
+* **Password Health (Phase C)**: `health.rs` detects weak (<8 chars, common, sequential), reused (same password across entries), old (>90 days). Daemon `vault.health`. CLI `idtty health`.
+* **Attachments (Phase D)**: `vault/attachment.rs` encrypts with cipher's item key (AES-256-GCM, random nonce). Max 2MB. Stored at `<vault>/entries/<cipher_id>/attachments/<id>.enc`. Daemon upload/download/delete routes. Plaintext zeroized in daemon and CLI after use. AttachmentMeta tracked in cipher JSON.
+* **Biometric Unlock (Phase E)**: `biometric.rs` stores master password in OS keychain (keyring crate: macOS Keychain, Windows Credential Manager, Linux libsecret). Daemon `biometric_unlock` performs vault unlock internally (secret never returns over IPC). `biometric_status/enable/disable` routes. Desktop Quick Unlock button + settings toggle.
+* **Linked Custom Fields (Phase F)**: `CustomFieldType::Linked(LinkedFieldType)` with 24 variants across Login/Card/Identity. `resolve_linked_field()` for type-safe resolution. Desktop custom field editor with type dropdown + linked field selector. Rust serde format: `"Text"`, `"Hidden"`, `"Boolean"`, `{"Linked":"LoginUsername"}`.
+* **Nested Folders (Phase G)**: `create_folder_with_parent` with depth limit (16). `delete_folder` cascades via `collect_descendant_ids` (BFS). Desktop FolderTree/FolderNode recursive components.
 
 ## UX PRINCIPLES
 * **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden, "session token" -> invisible.
@@ -139,18 +150,22 @@ idtty/
 ## IMPLEMENTATION STATUS
 | Component | Status |
 |-----------|--------|
-| `idtty-core` crypto/keys/vault | Built, tested, security-reviewed (2 rounds) |
+| `idtty-core` crypto/keys/vault | Built, tested, security-reviewed (7 rounds) |
 | `idtty-core` sync engine | Built, tested |
-| `idtty-core` TOTP (RFC 6238) | Built, tested (130 tests) |
-| `idtty-cli` (dual-mode) | Daemon-first + `--direct` fallback. CRUD + folders + edit. |
-| `idtty-daemon` socket server | Protobuf wire, VaultState, full CRUD, TOTP, auto-lock. SIGTERM safe. |
+| `idtty-core` TOTP (RFC 6238) | Built, tested |
+| `idtty-core` import/export | 8 import parsers + 2 export formats, tested |
+| `idtty-core` health | Weak/reused/old password detection, tested |
+| `idtty-core` biometric | OS keychain unlock via keyring crate, tested |
+| `idtty-core` attachments | AES-256-GCM encrypted file storage, tested |
+| `idtty-cli` (dual-mode) | Daemon-first + `--direct` fallback. CRUD + folders + edit + import/export + health + attachments |
+| `idtty-daemon` socket server | Protobuf wire, VaultState, full CRUD, TOTP, auto-lock, attachments, biometric, import/export, health. SIGTERM safe |
 | Protobuf codegen | Compiled via prost in daemon + CLI build.rs |
-| Desktop Tauri app | Full CRUD, 5 cipher types (Login/Card/Identity/SSH Key/SecureNote), generator (password + passphrase), TOTP widget, auto-lock settings, folder support, dark/light themes |
+| Desktop Tauri app | Full CRUD, 5 cipher types, generator, TOTP widget, auto-lock, nested folders, attachments, biometric unlock, custom fields (incl linked), reprompt, import/export, health, dark/light themes |
 | UniFFI annotations | Not yet applied to idtty-core |
 | Mobile KMP app | Placeholder |
 | Browser extension | Placeholder |
 
-### BW Parity Phases (Complete)
+### BW Parity Phases 1-8 (Original)
 | Phase | Description | Tests | Peer Reviewed |
 |-------|-------------|-------|---------------|
 | 1 | CipherKind sum type | 99 | Yes (7 findings) |
@@ -163,3 +178,14 @@ idtty/
 | 6c | Desktop: SSH Key form | 115 | Yes (1 bug) |
 | 7 | Generator + auto-lock timer | 115 | Yes (2C, 2H, 1M) |
 | 8 | TOTP code generation (RFC 6238) | 130 | Yes (1H, 2M, 4L) |
+
+### Desktop BW Parity Phases A-G (Final Push)
+| Phase | Description | Tests | Peer Reviewed | Findings Fixed |
+|-------|-------------|-------|---------------|---------------|
+| A | Import/Export (8 formats in, 2 out) | 156 | Yes (1C, 2H, 4M) | Yes |
+| B | Reprompt (per-entry MP challenge) | 156 | N/A (field addition) | - |
+| C | Password Health Reports | 162 | N/A (self-contained) | - |
+| D | Attachments (encrypted file storage) | 168 | Yes (2C, 3H, 5M, 3L) | Yes |
+| E | Biometric/Quick Unlock via OS Keychain | 170 | Yes (3C, 4H, 3M, 2L) | Yes |
+| F | Linked Custom Fields (24 variants) | 170 | Yes (2C, 2H, 2M, 1L) | Yes |
+| G | Nested Folders UI (tree + cascade delete) | 170 | Yes (1C, 2H, 2M) | Yes |
