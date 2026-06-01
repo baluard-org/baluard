@@ -26,7 +26,7 @@ Files with TODO comments, no production logic. Each has a design decision (D-num
 |------|---------|-------------------|--------|
 | `crates/idtty-core/src/emergency.rs` | D18 | Break-glass access. Pre-wrapped Root Key in `meta/emergency.json`. Advisory time gate. Setup, request, approve, revoke, recovery flows. | **Done** |
 | `crates/idtty-core/src/orgs.rs` | D17, D19 | Team/org sharing. X25519 + HPKE authenticated key wrapping. Member add/remove. Auto-rekey all shared items on member removal. | **Done** |
-| `crates/idtty-core/src/providers.rs` | D15 | Git provider adapters (GitHub, GitLab). OAuth flow. PAT fallback. Auto-create `idtty-vault` repo. `ProviderAdapter` trait. | **Stub** |
+| `crates/idtty-core/src/providers.rs` | D15 | Git provider adapters (GitHub, GitLab). OAuth flow. PAT fallback. Auto-create `idtty-vault` repo. `ProviderAdapter` trait. | **Done** |
 
 ### Dependencies Between Stubs
 
@@ -192,7 +192,7 @@ All tiers are design-only. No implementation.
 | Item | Why |
 |------|-----|
 | UniFFI annotations (D8) | Unblocks mobile app development |
-| `providers.rs` (D15) | Unblocks OAuth enrollment flow for new devices |
+| `providers.rs` (D15) | Unblocks OAuth enrollment flow for new devices | **Done** |
 
 ### Priority 2: Security Hardening
 
