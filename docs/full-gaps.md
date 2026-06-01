@@ -22,11 +22,11 @@
 
 Files with TODO comments, no production logic. Each has a design decision (D-number) in `01-architecture-decisions.md`.
 
-| File | Doc Ref | What's Documented | Lines |
-|------|---------|-------------------|-------|
-| `crates/idtty-core/src/emergency.rs` | D18 | Break-glass access. Pre-wrapped Root Key in `meta/emergency.enc`. Advisory time gate. Trusted contact gets access after setup, request, release, revocation flows. | 5 |
-| `crates/idtty-core/src/orgs.rs` | D17, D19 | Team/org sharing. X25519 + HPKE authenticated key wrapping. Member add/remove. Auto-rekey all shared items on member removal. | 6 |
-| `crates/idtty-core/src/providers.rs` | D15 | Git provider adapters (GitHub, GitLab). OAuth flow. PAT fallback. Auto-create `idtty-vault` repo. `ProviderAdapter` trait. | 5 |
+| File | Doc Ref | What's Documented | Status |
+|------|---------|-------------------|--------|
+| `crates/idtty-core/src/emergency.rs` | D18 | Break-glass access. Pre-wrapped Root Key in `meta/emergency.json`. Advisory time gate. Setup, request, approve, revoke, recovery flows. | **Done** |
+| `crates/idtty-core/src/orgs.rs` | D17, D19 | Team/org sharing. X25519 + HPKE authenticated key wrapping. Member add/remove. Auto-rekey all shared items on member removal. | **Done** |
+| `crates/idtty-core/src/providers.rs` | D15 | Git provider adapters (GitHub, GitLab). OAuth flow. PAT fallback. Auto-create `idtty-vault` repo. `ProviderAdapter` trait. | **Stub** |
 
 ### Dependencies Between Stubs
 
@@ -83,13 +83,9 @@ Decisions documented in `01-architecture-decisions.md` that have no code backing
 
 **Documented**: `metadata/access_list.json` contains member public keys mapped to HPKE-wrapped Space Group Keys. Admin rotates Group Key on offboarding. Re-encrypts all entries. Force-pushes.
 
-**Current state**: `orgs.rs` is a stub. No `access_list.json`. No Space Group Key (Item Keys derive directly from RootKey via HKDF). No member invite/revoke flows.
+**Current state**: **Zero-knowledge sharing fully implemented**. `orgs.rs` implements member enrollment via X25519 HPKE wrapping of the Space Group Key. Members are tracked in `meta/access_list.json` alongside their wrapped keys. Revocation of a member automatically triggers Space Group Key rotation and re-wrapping of the new key for all remaining members.
 
-**Gap**:
-- No Space Group Key layer (current: `HKDF(root_key, epoch, cipher_id)` → ItemKey)
-- No access list file
-- No invite/accept/revoke ceremonies
-- No rekey-on-removal flow
+**Gap**: None.
 
 ---
 
@@ -213,10 +209,10 @@ All tiers are design-only. No implementation.
 
 | Item | Why |
 |------|-----|
-| `orgs.rs` (D17/D19) | Team/org sharing |
-| `access_list.json` + Space Group Key | Zero-knowledge RBAC (D9) |
-| Offboarding rekey flow | Forward secrecy after member removal |
-| `emergency.rs` (D18) | Break-glass access for trusted contacts |
+| `orgs.rs` (D17/D19) | Team/org sharing | **Done** |
+| `access_list.json` + Space Group Key | Zero-knowledge RBAC (D9) | **Done** |
+| Offboarding rekey flow | Forward secrecy after member removal | **Done** |
+| `emergency.rs` (D18) | Break-glass access for trusted contacts | **Done** |
 
 ### Priority 4: Polish
 
