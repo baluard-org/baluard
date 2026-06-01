@@ -12,15 +12,13 @@
   "app": {
     "windows": [
       {
-        "label": "main",
         "title": "IDtty",
-        "width": 900,
-        "height": 600,
+        "width": 1000,
+        "height": 700,
         "minWidth": 700,
         "minHeight": 400,
         "resizable": true,
-        "fullscreen": false,
-        "center": true
+        "fullscreen": false
       }
     ],
     "security": {
