@@ -4,8 +4,8 @@
 //! BW CSV columns: type, name, notes, login_uri, login_username, login_password,
 //! login_totp, login_uris, field_name, field_value, field_type, custom_fields, folders
 
-use crate::types::*;
 use crate::import::ImportResult;
+use crate::types::*;
 
 /// Parse a BW CSV export string into cipher inputs.
 pub fn parse(data: &str) -> ImportResult {
@@ -44,7 +44,8 @@ pub fn parse(data: &str) -> ImportResult {
     }
 
     let get = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
-        idx.and_then(|i| record.get(i).map(|s| s.to_string())).filter(|s| !s.is_empty())
+        idx.and_then(|i| record.get(i).map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
     };
 
     for (row_num, record) in reader.records().enumerate() {
@@ -81,19 +82,21 @@ pub fn parse(data: &str) -> ImportResult {
                 })
             }
             2 => CipherKind::SecureNote,
-            3 => {
-                CipherKind::Card(CardData {
-                    cardholder_name: get(&record, col_cardholder),
-                    brand: get(&record, col_brand),
-                    number: get(&record, col_number),
-                    exp_month: get(&record, col_exp_month),
-                    exp_year: get(&record, col_exp_year),
-                    code: get(&record, col_cvv),
-                })
-            }
+            3 => CipherKind::Card(CardData {
+                cardholder_name: get(&record, col_cardholder),
+                brand: get(&record, col_brand),
+                number: get(&record, col_number),
+                exp_month: get(&record, col_exp_month),
+                exp_year: get(&record, col_exp_year),
+                code: get(&record, col_cvv),
+            }),
             // BW CSV doesn't reliably support Identity/SSH Key. Skip gracefully.
             _ => {
-                result.skip(format!("Row {}: unsupported type {}", row_num + 2, cipher_type));
+                result.skip(format!(
+                    "Row {}: unsupported type {}",
+                    row_num + 2,
+                    cipher_type
+                ));
                 continue;
             }
         };

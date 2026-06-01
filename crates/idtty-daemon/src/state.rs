@@ -3,13 +3,13 @@
 //! Holds an unlocked VaultHandle in memory behind a shared lock.
 //! The daemon routes gateway actions through this state.
 
+use base64::Engine;
 use idtty_core::vault::handle::{CipherRead, VaultHandle};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use base64::Engine;
-use zeroize::Zeroize;
 use tokio::sync::RwLock;
+use zeroize::Zeroize;
 
 /// Shared vault state accessible from all connection handlers.
 pub struct VaultState {
@@ -48,7 +48,9 @@ impl VaultState {
     /// Get seconds since last activity.
     pub fn seconds_since_activity(&self) -> u64 {
         let last = self.last_activity.load(Ordering::Relaxed);
-        if last == 0 { return 0; }
+        if last == 0 {
+            return 0;
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -67,7 +69,9 @@ impl VaultState {
                 let timeout_minutes = {
                     let guard = state.inner.read().await;
                     if let Some(handle) = guard.as_ref() {
-                        handle.get_settings().ok()
+                        handle
+                            .get_settings()
+                            .ok()
                             .and_then(|s| s.auto_lock_minutes)
                             .unwrap_or(15) // default 15 minutes
                     } else {
@@ -79,7 +83,10 @@ impl VaultState {
                 let timeout_secs = (timeout_minutes as u64) * 60;
 
                 if elapsed >= timeout_secs && timeout_secs > 0 {
-                    eprintln!("Auto-lock: {}s idle >= {}s timeout, locking vault", elapsed, timeout_secs);
+                    eprintln!(
+                        "Auto-lock: {}s idle >= {}s timeout, locking vault",
+                        elapsed, timeout_secs
+                    );
                     let mut guard = state.inner.write().await;
                     if let Some(handle) = guard.as_mut() {
                         if handle.is_unlocked() {
@@ -294,18 +301,18 @@ impl VaultState {
                 .map_err(|e| format!("Invalid auto_lock_minutes: {e}"))?;
         }
         if let Some(v) = partial.get("theme") {
-            settings.theme = serde_json::from_value(v.clone())
-                .map_err(|e| format!("Invalid theme: {e}"))?;
+            settings.theme =
+                serde_json::from_value(v.clone()).map_err(|e| format!("Invalid theme: {e}"))?;
         }
         if let Some(v) = partial.get("default_uri_match") {
             let s = v.as_str().ok_or("default_uri_match must be a string")?;
-            settings.default_uri_match = Some(
-                idtty_core::types::UriMatchStrategy::from_str_strict(s)
-                    .map_err(|e| e)?,
-            );
+            settings.default_uri_match =
+                Some(idtty_core::types::UriMatchStrategy::from_str_strict(s).map_err(|e| e)?);
         }
 
-        handle.save_settings(&settings).map_err(|e| format!("{e}"))?;
+        handle
+            .save_settings(&settings)
+            .map_err(|e| format!("{e}"))?;
         Ok(())
     }
 
@@ -358,7 +365,11 @@ impl VaultState {
                 .get("name")
                 .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_else(|| existing_cipher.name.clone()),
-            folder_id: if update.get("folder_id").map(|v| v.is_null()).unwrap_or(false) {
+            folder_id: if update
+                .get("folder_id")
+                .map(|v| v.is_null())
+                .unwrap_or(false)
+            {
                 None // explicit null clears folder
             } else {
                 update
@@ -370,7 +381,9 @@ impl VaultState {
             },
             kind: update
                 .get("kind")
-                .and_then(|v| serde_json::from_value::<idtty_core::types::CipherKind>(v.clone()).ok())
+                .and_then(|v| {
+                    serde_json::from_value::<idtty_core::types::CipherKind>(v.clone()).ok()
+                })
                 .unwrap_or_else(|| existing_cipher.kind.clone()),
             favorite: update
                 .get("favorite")
@@ -391,7 +404,7 @@ impl VaultState {
             custom_fields: existing_cipher.custom_fields.clone(),
             created_at: Some(existing_cipher.created_at),
             password_history: existing_cipher.password_history.clone(),
-                    attachments: existing_cipher.attachments.clone(),
+            attachments: existing_cipher.attachments.clone(),
         };
 
         handle
@@ -428,14 +441,17 @@ impl VaultState {
 
         let cipher_ref = match cipher {
             idtty_core::vault::handle::CipherRead::Decrypted(c) => c,
-            idtty_core::vault::handle::CipherRead::Locked(_) => return Err("Cipher is locked".into()),
+            idtty_core::vault::handle::CipherRead::Locked(_) => {
+                return Err("Cipher is locked".into());
+            }
         };
 
         // Extract totp_uri from the Login kind
         let totp_uri = match &cipher_ref.kind {
             idtty_core::types::CipherKind::Login(data) => data.totp_uri.as_deref(),
             _ => None,
-        }.ok_or("No TOTP URI found for this cipher")?;
+        }
+        .ok_or("No TOTP URI found for this cipher")?;
 
         let params = idtty_core::crypto::totp::parse_totp_uri(totp_uri)
             .map_err(|e| format!("Invalid TOTP URI: {e}"))?;
@@ -447,7 +463,8 @@ impl VaultState {
             "code": code,
             "period_seconds": period_seconds,
             "expires_at": expires_at,
-        })).map_err(|e| format!("{e}"))
+        }))
+        .map_err(|e| format!("{e}"))
     }
 
     // ── Folder CRUD ──
@@ -474,13 +491,15 @@ impl VaultState {
         let (name, parent_id) = match serde_json::from_str::<serde_json::Value>(payload) {
             Ok(v) => (
                 v["name"].as_str().unwrap_or(payload).to_string(),
-                v["parent_id"].as_str()
+                v["parent_id"]
+                    .as_str()
                     .and_then(|s| uuid::Uuid::parse_str(s).ok()),
             ),
             Err(_) => (payload.to_string(), None),
         };
 
-        let id = handle.create_folder_with_parent(&name, parent_id)
+        let id = handle
+            .create_folder_with_parent(&name, parent_id)
             .map_err(|e| format!("{e}"))?;
         Ok(id.to_string())
     }
@@ -494,17 +513,22 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".to_string());
         }
 
-        let data: serde_json::Value = serde_json::from_str(payload)
-            .map_err(|e| format!("Invalid JSON: {e}"))?;
+        let data: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let id_str = data["id"].as_str().ok_or("Missing 'id' field")?;
         let name = data["name"].as_str().ok_or("Missing 'name' field")?;
         let folder_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
 
-        handle.rename_folder(folder_id, name).map_err(|e| format!("{e}"))
+        handle
+            .rename_folder(folder_id, name)
+            .map_err(|e| format!("{e}"))
     }
 
     /// Import ciphers from parsed data. Creates folders from folder_map, then batch-creates ciphers.
-    pub async fn import_ciphers(&self, import_result: idtty_core::import::ImportResult) -> Result<String, String> {
+    pub async fn import_ciphers(
+        &self,
+        import_result: idtty_core::import::ImportResult,
+    ) -> Result<String, String> {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened")?;
 
@@ -513,10 +537,13 @@ impl VaultState {
         }
 
         // Create folders and build name->id map
-        let mut folder_id_map: std::collections::HashMap<String, uuid::Uuid> = std::collections::HashMap::new();
+        let mut folder_id_map: std::collections::HashMap<String, uuid::Uuid> =
+            std::collections::HashMap::new();
         for folder_name in import_result.folder_map.keys() {
             match handle.create_folder(folder_name) {
-                Ok(id) => { folder_id_map.insert(folder_name.clone(), id); }
+                Ok(id) => {
+                    folder_id_map.insert(folder_name.clone(), id);
+                }
                 Err(_) => {
                     // Folder may already exist; try to find it
                     if let Ok(folders) = handle.list_folders() {
@@ -534,7 +561,9 @@ impl VaultState {
 
         for (idx, mut cipher) in import_result.ciphers.into_iter().enumerate() {
             // Assign folder_id if this cipher belongs to a folder
-            let folder_name = import_result.folder_map.iter()
+            let folder_name = import_result
+                .folder_map
+                .iter()
                 .find(|(_, indices)| indices.contains(&idx))
                 .map(|(name, _)| name.clone());
             if let Some(name) = folder_name {
@@ -577,7 +606,8 @@ impl VaultState {
 
         // Get folders
         let folders = handle.list_folders().map_err(|e| format!("{e}"))?;
-        let folder_pairs: Vec<(uuid::Uuid, String)> = folders.into_iter().map(|f| (f.id, f.name)).collect();
+        let folder_pairs: Vec<(uuid::Uuid, String)> =
+            folders.into_iter().map(|f| (f.id, f.name)).collect();
 
         idtty_core::import::export::export_bw_json(&ciphers, &folder_pairs)
     }
@@ -661,14 +691,14 @@ impl VaultState {
         Ok(serde_json::json!({
             "available": available,
             "enabled": enabled,
-        }).to_string())
+        })
+        .to_string())
     }
 
     /// Enable biometric unlock. Validates password against vault first,
     /// then stores in OS keychain.
     pub async fn biometric_enable(&self, payload: &str) -> Result<String, String> {
-        let req: serde_json::Value = serde_json::from_str(payload)
-            .map_err(|e| format!("{e}"))?;
+        let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
         let password = req["password"].as_str().ok_or("missing password")?;
 
         // Verify the password can unlock the vault before storing
@@ -707,16 +737,22 @@ impl VaultState {
     /// Payload: { cipher_id, filename, data_base64 }
     pub async fn attach_upload(&self, payload: &str) -> Result<String, String> {
         let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
-        let cipher_id: uuid::Uuid = req["cipher_id"].as_str()
+        let cipher_id: uuid::Uuid = req["cipher_id"]
+            .as_str()
             .ok_or("missing cipher_id")?
-            .parse().map_err(|e| format!("invalid cipher_id: {e}"))?;
+            .parse()
+            .map_err(|e| format!("invalid cipher_id: {e}"))?;
         let filename = req["filename"].as_str().ok_or("missing filename")?;
         let data_b64 = req["data_base64"].as_str().ok_or("missing data_base64")?;
-        let mut plaintext = base64::engine::general_purpose::STANDARD.decode(data_b64)
+        let mut plaintext = base64::engine::general_purpose::STANDARD
+            .decode(data_b64)
             .map_err(|e| format!("base64 decode: {e}"))?;
 
         if plaintext.len() > idtty_core::vault::attachment::MAX_ATTACHMENT_SIZE {
-            return Err(format!("File too large: {} bytes (max 2MB)", plaintext.len()));
+            return Err(format!(
+                "File too large: {} bytes (max 2MB)",
+                plaintext.len()
+            ));
         }
 
         let mut guard = self.inner.write().await;
@@ -739,15 +775,19 @@ impl VaultState {
         let attach_id = uuid::Uuid::new_v4().to_string();
 
         // Encrypt
-        let encrypted = idtty_core::vault::attachment::encrypt_attachment(
-            item_key.as_bytes(), &plaintext
-        ).map_err(|e| format!("{e}"))?;
+        let encrypted =
+            idtty_core::vault::attachment::encrypt_attachment(item_key.as_bytes(), &plaintext)
+                .map_err(|e| format!("{e}"))?;
 
         // Zeroize plaintext after encryption
         plaintext.zeroize();
 
         // Create attachment directory
-        let attach_dir = handle.path.join("entries").join(cipher_id.to_string()).join("attachments");
+        let attach_dir = handle
+            .path
+            .join("entries")
+            .join(cipher_id.to_string())
+            .join("attachments");
         std::fs::create_dir_all(&attach_dir).map_err(|e| format!("mkdir: {e}"))?;
 
         // Write encrypted file
@@ -756,7 +796,9 @@ impl VaultState {
 
         // Update cipher metadata with new attachment
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let meta = idtty_core::vault::attachment::AttachmentMeta {
             id: attach_id.clone(),
             filename: filename.to_string(),
@@ -795,10 +837,14 @@ impl VaultState {
     /// Payload: { cipher_id, attachment_id }
     pub async fn attach_download(&self, payload: &str) -> Result<String, String> {
         let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
-        let cipher_id: uuid::Uuid = req["cipher_id"].as_str()
+        let cipher_id: uuid::Uuid = req["cipher_id"]
+            .as_str()
             .ok_or("missing cipher_id")?
-            .parse().map_err(|e| format!("invalid cipher_id: {e}"))?;
-        let attach_id = req["attachment_id"].as_str().ok_or("missing attachment_id")?;
+            .parse()
+            .map_err(|e| format!("invalid cipher_id: {e}"))?;
+        let attach_id = req["attachment_id"]
+            .as_str()
+            .ok_or("missing attachment_id")?;
 
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
@@ -813,26 +859,33 @@ impl VaultState {
         };
 
         // Verify attachment exists in metadata
-        let meta = cipher.attachments.iter()
+        let meta = cipher
+            .attachments
+            .iter()
             .find(|a| a.id == attach_id)
             .ok_or("Attachment not found")?;
 
         let item_key = handle.derive_item_key(cipher_id, cipher.key_epoch);
 
-        let attach_path = handle.path
-            .join("entries").join(cipher_id.to_string())
-            .join("attachments").join(format!("{}.enc", attach_id));
+        let attach_path = handle
+            .path
+            .join("entries")
+            .join(cipher_id.to_string())
+            .join("attachments")
+            .join(format!("{}.enc", attach_id));
 
         let encrypted = std::fs::read(&attach_path).map_err(|e| format!("read: {e}"))?;
-        let mut plaintext = idtty_core::vault::attachment::decrypt_attachment(item_key.as_bytes(), &encrypted)
-            .map_err(|e| format!("{e}"))?;
+        let mut plaintext =
+            idtty_core::vault::attachment::decrypt_attachment(item_key.as_bytes(), &encrypted)
+                .map_err(|e| format!("{e}"))?;
 
         let result = serde_json::json!({
             "filename": meta.filename,
             "mime_type": meta.mime_type,
             "size": meta.size,
             "data_base64": base64::engine::general_purpose::STANDARD.encode(&plaintext),
-        }).to_string();
+        })
+        .to_string();
 
         // Zeroize plaintext after encoding
         plaintext.zeroize();
@@ -844,10 +897,14 @@ impl VaultState {
     /// Payload: { cipher_id, attachment_id }
     pub async fn attach_delete(&self, payload: &str) -> Result<String, String> {
         let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
-        let cipher_id: uuid::Uuid = req["cipher_id"].as_str()
+        let cipher_id: uuid::Uuid = req["cipher_id"]
+            .as_str()
             .ok_or("missing cipher_id")?
-            .parse().map_err(|e| format!("invalid cipher_id: {e}"))?;
-        let attach_id = req["attachment_id"].as_str().ok_or("missing attachment_id")?;
+            .parse()
+            .map_err(|e| format!("invalid cipher_id: {e}"))?;
+        let attach_id = req["attachment_id"]
+            .as_str()
+            .ok_or("missing attachment_id")?;
 
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened")?;
@@ -863,14 +920,19 @@ impl VaultState {
 
         // Remove from attachments list
         let mut attachments = cipher.attachments.clone();
-        let idx = attachments.iter().position(|a| a.id == attach_id)
+        let idx = attachments
+            .iter()
+            .position(|a| a.id == attach_id)
             .ok_or("Attachment not found")?;
         attachments.remove(idx);
 
         // Delete encrypted file
-        let attach_path = handle.path
-            .join("entries").join(cipher_id.to_string())
-            .join("attachments").join(format!("{}.enc", attach_id));
+        let attach_path = handle
+            .path
+            .join("entries")
+            .join(cipher_id.to_string())
+            .join("attachments")
+            .join(format!("{}.enc", attach_id));
         if attach_path.exists() {
             std::fs::remove_file(&attach_path).map_err(|e| format!("delete: {e}"))?;
         }
@@ -888,7 +950,9 @@ impl VaultState {
             password_history: cipher.password_history.clone(),
             attachments,
         };
-        handle.update_cipher(cipher_id, &input).map_err(|e| format!("{e}"))?;
+        handle
+            .update_cipher(cipher_id, &input)
+            .map_err(|e| format!("{e}"))?;
 
         Ok(serde_json::json!({"deleted": true}).to_string())
     }
@@ -919,8 +983,8 @@ impl VaultState {
     /// Returns a short-lived grant. Does NOT change the main vault state.
     pub async fn reprompt_verify(&self, master_password: &str) -> Result<String, String> {
         // Open a temporary handle
-        let mut temp_handle = VaultHandle::open(&self.vault_path)
-            .map_err(|e| format!("Open failed: {e}"))?;
+        let mut temp_handle =
+            VaultHandle::open(&self.vault_path).map_err(|e| format!("Open failed: {e}"))?;
 
         // Try to unlock with the provided password
         temp_handle
@@ -934,7 +998,8 @@ impl VaultState {
         let expires_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs() + 30; // 30 second grant
+            .as_secs()
+            + 30; // 30 second grant
 
         // Lock the temporary handle (zeroize keys)
         temp_handle.lock();
@@ -943,7 +1008,8 @@ impl VaultState {
             "granted": true,
             "expires_at": expires_at,
             "grant_token": grant,
-        }).to_string())
+        })
+        .to_string())
     }
 
     /// Get vault info (ID, device, state).
@@ -1022,10 +1088,14 @@ impl VaultState {
         };
 
         // Run creation ceremony (CPU-heavy, no lock needed)
-        let (handle, secrets) = idtty_core::vault::creation::VaultCreator::new(&self.vault_path, &password, "this-device")
-            .kdf_profile(profile)
-            .execute()
-            .map_err(|e| format!("Vault creation failed: {e}"))?;
+        let (handle, secrets) = idtty_core::vault::creation::VaultCreator::new(
+            &self.vault_path,
+            &password,
+            "this-device",
+        )
+        .kdf_profile(profile)
+        .execute()
+        .map_err(|e| format!("Vault creation failed: {e}"))?;
 
         // Zeroize password as soon as ceremony completes
         zeroize::Zeroize::zeroize(&mut *password);

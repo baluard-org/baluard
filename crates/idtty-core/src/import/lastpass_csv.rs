@@ -3,8 +3,8 @@
 //! Columns: url, username, password, name, grouping, extra, fav, id
 //! grouping -> folder, extra -> notes. All entries become Login ciphers.
 
-use crate::types::*;
 use crate::import::ImportResult;
+use crate::types::*;
 
 /// Parse a LastPass CSV export.
 pub fn parse(data: &str) -> ImportResult {
@@ -30,7 +30,8 @@ pub fn parse(data: &str) -> ImportResult {
     let col_fav = headers.iter().position(|h| h == "fav");
 
     let get = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
-        idx.and_then(|i| record.get(i).map(|s| s.to_string())).filter(|s| !s.is_empty())
+        idx.and_then(|i| record.get(i).map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
     };
 
     for (row_num, record) in reader.records().enumerate() {
@@ -44,7 +45,11 @@ pub fn parse(data: &str) -> ImportResult {
 
         let name = get(&record, col_name).unwrap_or_else(|| "Untitled".into());
         let uri = get(&record, col_url);
-        let uris = if let Some(u) = uri { vec![LoginUri::new(u)] } else { vec![] };
+        let uris = if let Some(u) = uri {
+            vec![LoginUri::new(u)]
+        } else {
+            vec![]
+        };
         let folder = get(&record, col_grouping);
         let favorite = col_fav
             .and_then(|i| record.get(i))

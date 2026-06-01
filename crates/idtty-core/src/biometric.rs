@@ -19,10 +19,11 @@ pub fn is_available() -> bool {
 /// The OS keychain provides at-rest encryption; biometric gating depends on
 /// OS keychain configuration (macOS: Keychain Access Control; Windows: Cred Provider).
 pub fn enable(master_password: &str) -> Result<(), String> {
-    let entry = Entry::new(SERVICE_NAME, QUICK_UNLOCK_KEY)
-        .map_err(|e| format!("keyring entry: {e}"))?;
+    let entry =
+        Entry::new(SERVICE_NAME, QUICK_UNLOCK_KEY).map_err(|e| format!("keyring entry: {e}"))?;
 
-    entry.set_password(master_password)
+    entry
+        .set_password(master_password)
         .map_err(|e| format!("keyring store: {e}"))?;
 
     Ok(())
@@ -31,8 +32,8 @@ pub fn enable(master_password: &str) -> Result<(), String> {
 /// Disable biometric unlock by deleting the stored master password.
 /// IMPORTANT: Must be called on master password change to invalidate stale secrets.
 pub fn disable() -> Result<(), String> {
-    let entry = Entry::new(SERVICE_NAME, QUICK_UNLOCK_KEY)
-        .map_err(|e| format!("keyring entry: {e}"))?;
+    let entry =
+        Entry::new(SERVICE_NAME, QUICK_UNLOCK_KEY).map_err(|e| format!("keyring entry: {e}"))?;
 
     match entry.delete_credential() {
         Ok(()) => Ok(()),
@@ -53,10 +54,11 @@ pub fn is_enabled() -> bool {
 /// The OS may prompt for biometric/PIN before releasing.
 /// Returns the raw master password for vault unlock (daemon-internal only).
 pub fn unlock() -> Result<String, String> {
-    let entry = Entry::new(SERVICE_NAME, QUICK_UNLOCK_KEY)
-        .map_err(|e| format!("keyring entry: {e}"))?;
+    let entry =
+        Entry::new(SERVICE_NAME, QUICK_UNLOCK_KEY).map_err(|e| format!("keyring entry: {e}"))?;
 
-    entry.get_password()
+    entry
+        .get_password()
         .map_err(|e| format!("biometric unlock failed: {e}"))
 }
 

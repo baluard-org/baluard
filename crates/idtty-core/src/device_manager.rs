@@ -200,10 +200,9 @@ impl DeviceManager {
     ) -> Result<DeviceEntry, IdttyError> {
         // Anti-replay: reject seen nonces
         if self.seen_nonces.contains(&payload.nonce) {
-            return Err(DeviceError::EnrollmentRejected(
-                "replay: nonce already used".into(),
-            )
-            .into());
+            return Err(
+                DeviceError::EnrollmentRejected("replay: nonce already used".into()).into(),
+            );
         }
 
         // Timestamp window: ±5 minutes
@@ -225,10 +224,7 @@ impl DeviceManager {
         let sig_pk = hex::decode(&payload.signing_public_key)
             .map_err(|_| DeviceError::EnrollmentRejected("invalid signing key hex".into()))?;
         if enc_pk.len() != 32 || sig_pk.len() != 32 {
-            return Err(DeviceError::EnrollmentRejected(
-                "invalid public key length".into(),
-            )
-            .into());
+            return Err(DeviceError::EnrollmentRejected("invalid public key length".into()).into());
         }
 
         let mut enc_arr = [0u8; 32];
@@ -239,17 +235,12 @@ impl DeviceManager {
         // Authorization gate: first device auto-approves, others need approval
         if self.registry.count() > 0 {
             let approval = approval.ok_or_else(|| {
-                DeviceError::EnrollmentRejected(
-                    "approval required from enrolled device".into(),
-                )
+                DeviceError::EnrollmentRejected("approval required from enrolled device".into())
             })?;
 
             // Verify approver is enrolled
             if !self.registry.is_enrolled(&approval.approver_device_id) {
-                return Err(DeviceError::EnrollmentRejected(
-                    "approver not enrolled".into(),
-                )
-                .into());
+                return Err(DeviceError::EnrollmentRejected("approver not enrolled".into()).into());
             }
 
             // Verify signature
@@ -258,11 +249,10 @@ impl DeviceManager {
                 .devices
                 .get(&approval.approver_device_id)
                 .unwrap();
-            let approver_vk_bytes: [u8; 32] =
-                hex::decode(&approver_entry.signing_public_key)
-                    .map_err(|_| DeviceError::Keystore("invalid approver key".into()))?
-                    .try_into()
-                    .map_err(|_| DeviceError::Keystore("approver key wrong length".into()))?;
+            let approver_vk_bytes: [u8; 32] = hex::decode(&approver_entry.signing_public_key)
+                .map_err(|_| DeviceError::Keystore("invalid approver key".into()))?
+                .try_into()
+                .map_err(|_| DeviceError::Keystore("approver key wrong length".into()))?;
 
             let verifying_key = signature::verifying_key_from_bytes(&approver_vk_bytes)
                 .map_err(|_| DeviceError::EnrollmentRejected("invalid approver key".into()))?;
@@ -274,8 +264,9 @@ impl DeviceManager {
             sign_input.extend_from_slice(&payload_bytes);
             let sig = ed25519_dalek::Signature::from_slice(&approval.signature)
                 .map_err(|_| DeviceError::EnrollmentRejected("invalid signature".into()))?;
-            signature::verify(&verifying_key, &sign_input, &sig)
-                .map_err(|_| DeviceError::EnrollmentRejected("signature verification failed".into()))?;
+            signature::verify(&verifying_key, &sign_input, &sig).map_err(|_| {
+                DeviceError::EnrollmentRejected("signature verification failed".into())
+            })?;
         }
 
         // Record nonce
@@ -325,7 +316,9 @@ impl DeviceManager {
         )?;
 
         // Transition epoch to ROTATING
-        self.epoch.begin_rotation().map_err(|e| KeyError::InvalidEpochState(e))?;
+        self.epoch
+            .begin_rotation()
+            .map_err(|e| KeyError::InvalidEpochState(e))?;
 
         self.pending_transaction = Some(tx);
         self.collected_acks.clear();
@@ -360,10 +353,7 @@ impl DeviceManager {
         // Verify txn_hash matches pending transaction
         let actual_txn_hash = compute_txn_hash(tx);
         if ack.txn_hash != actual_txn_hash {
-            return Err(DeviceError::EnrollmentRejected(
-                "ack txn_hash mismatch".into(),
-            )
-            .into());
+            return Err(DeviceError::EnrollmentRejected("ack txn_hash mismatch".into()).into());
         }
 
         // BUG-1 fix: reject duplicate ack from same device
@@ -391,8 +381,9 @@ impl DeviceManager {
 
         let sig = ed25519_dalek::Signature::from_slice(&ack.signature)
             .map_err(|_| DeviceError::EnrollmentRejected("invalid ack signature".into()))?;
-        signature::verify(&verifying_key, &sign_input, &sig)
-            .map_err(|_| DeviceError::EnrollmentRejected("ack signature verification failed".into()))?;
+        signature::verify(&verifying_key, &sign_input, &sig).map_err(|_| {
+            DeviceError::EnrollmentRejected("ack signature verification failed".into())
+        })?;
 
         // BUG-1/BUG-4 fix: record ack in epoch first (canonical dedup tracker),
         // then store signed payload in collected_acks.
@@ -440,9 +431,13 @@ impl DeviceManager {
         }
 
         // Transition epoch: ROTATING → RETIRED (old) → create new ACTIVE
-        self.epoch.retire().map_err(|e| KeyError::InvalidEpochState(e))?;
+        self.epoch
+            .retire()
+            .map_err(|e| KeyError::InvalidEpochState(e))?;
         self.epoch = EpochInfo::new(tx.new_epoch);
-        self.epoch.activate().map_err(|e| KeyError::InvalidEpochState(e))?;
+        self.epoch
+            .activate()
+            .map_err(|e| KeyError::InvalidEpochState(e))?;
 
         // Cleanup acks
         self.collected_acks.clear();
@@ -487,7 +482,11 @@ impl DeviceManager {
         Ok(ForceEvictResult {
             evicted_devices: evicted,
             rotation_committed,
-            new_epoch: if rotation_committed { new_epoch } else { self.epoch.epoch },
+            new_epoch: if rotation_committed {
+                new_epoch
+            } else {
+                self.epoch.epoch
+            },
         })
     }
 
@@ -561,9 +560,10 @@ impl DeviceManager {
 
     /// Save registry and epoch state to vault directory.
     pub fn save_to_vault(&self) -> Result<(), IdttyError> {
-        let vault_path = self.vault_path.as_ref().ok_or_else(|| {
-            DeviceError::Keystore("no vault path set".into())
-        })?;
+        let vault_path = self
+            .vault_path
+            .as_ref()
+            .ok_or_else(|| DeviceError::Keystore("no vault path set".into()))?;
 
         let meta = vault_path.join("meta");
         std::fs::create_dir_all(&meta)
@@ -602,8 +602,7 @@ impl DeviceManager {
             for ack in &self.collected_acks {
                 let ack_json = serde_json::to_string_pretty(ack)
                     .map_err(|e| KeyError::InvalidEpochState(format!("serialize ack: {e}")))?;
-                let ack_path =
-                    rekey_dir.join(format!("{}.ack.{}", ack.epoch, ack.device_id));
+                let ack_path = rekey_dir.join(format!("{}.ack.{}", ack.epoch, ack.device_id));
                 atomic_write(&ack_path, &ack_json)?;
             }
         }
@@ -803,7 +802,12 @@ mod tests {
         let (_, e_pk) = sig::generate_ed25519_keypair();
         let device_id = Uuid::new_v4();
         mgr.registry
-            .enroll_with_id(device_id, "D1".into(), x_pk.to_bytes(), sig::verifying_key_bytes(&e_pk))
+            .enroll_with_id(
+                device_id,
+                "D1".into(),
+                x_pk.to_bytes(),
+                sig::verifying_key_bytes(&e_pk),
+            )
             .unwrap();
 
         let (_root_key, tx) = mgr.initiate_rotation(device_id).unwrap();
@@ -822,7 +826,12 @@ mod tests {
         let (_, e_pk) = sig::generate_ed25519_keypair();
         let device_id = Uuid::new_v4();
         mgr.registry
-            .enroll_with_id(device_id, "Solo".into(), x_pk.to_bytes(), sig::verifying_key_bytes(&e_pk))
+            .enroll_with_id(
+                device_id,
+                "Solo".into(),
+                x_pk.to_bytes(),
+                sig::verifying_key_bytes(&e_pk),
+            )
             .unwrap();
 
         let result = mgr.force_evict_and_rotate(device_id).unwrap();
@@ -837,9 +846,18 @@ mod tests {
         let mut mgr = DeviceManager::new();
         mgr.epoch.activate().unwrap();
 
-        let d1 = mgr.registry.enroll("D1".into(), [1u8; 32], [2u8; 32]).unwrap();
-        let d2 = mgr.registry.enroll("D2".into(), [3u8; 32], [4u8; 32]).unwrap();
-        let d3 = mgr.registry.enroll("D3".into(), [5u8; 32], [6u8; 32]).unwrap();
+        let d1 = mgr
+            .registry
+            .enroll("D1".into(), [1u8; 32], [2u8; 32])
+            .unwrap();
+        let d2 = mgr
+            .registry
+            .enroll("D2".into(), [3u8; 32], [4u8; 32])
+            .unwrap();
+        let d3 = mgr
+            .registry
+            .enroll("D3".into(), [5u8; 32], [6u8; 32])
+            .unwrap();
 
         // Note: force_evict keeps ONLY surviving device, removes all others.
         let result = mgr.force_evict_and_rotate(d1.device_id).unwrap();
@@ -938,9 +956,18 @@ mod tests {
         mgr.epoch.activate().unwrap();
 
         // 3 devices: need ceil(3/2) = 2 acks
-        let _d1 = mgr.registry.enroll("D1".into(), [1u8; 32], [2u8; 32]).unwrap();
-        let _d2 = mgr.registry.enroll("D2".into(), [3u8; 32], [4u8; 32]).unwrap();
-        let _d3 = mgr.registry.enroll("D3".into(), [5u8; 32], [6u8; 32]).unwrap();
+        let _d1 = mgr
+            .registry
+            .enroll("D1".into(), [1u8; 32], [2u8; 32])
+            .unwrap();
+        let _d2 = mgr
+            .registry
+            .enroll("D2".into(), [3u8; 32], [4u8; 32])
+            .unwrap();
+        let _d3 = mgr
+            .registry
+            .enroll("D3".into(), [5u8; 32], [6u8; 32])
+            .unwrap();
 
         // Can't initiate with real rotation (need real keypairs for HPKE wrapping)
         // Just test quorum_required logic
@@ -972,13 +999,24 @@ mod tests {
         let (_, x_pk1) = hpke_wrap::generate_x25519_keypair();
         let d1 = Uuid::new_v4();
         mgr.registry
-            .enroll_with_id(d1, "D1".into(), x_pk1.to_bytes(), sig::verifying_key_bytes(&vk1))
+            .enroll_with_id(
+                d1,
+                "D1".into(),
+                x_pk1.to_bytes(),
+                sig::verifying_key_bytes(&vk1),
+            )
             .unwrap();
 
         let (_, x_pk2) = hpke_wrap::generate_x25519_keypair();
         let (_, e_pk2) = sig::generate_ed25519_keypair();
-        let _d2 = mgr.registry
-            .enroll_with_id(Uuid::new_v4(), "D2".into(), x_pk2.to_bytes(), sig::verifying_key_bytes(&e_pk2))
+        let _d2 = mgr
+            .registry
+            .enroll_with_id(
+                Uuid::new_v4(),
+                "D2".into(),
+                x_pk2.to_bytes(),
+                sig::verifying_key_bytes(&e_pk2),
+            )
             .unwrap();
 
         let (_, tx) = mgr.initiate_rotation(d1).unwrap();
@@ -1011,19 +1049,34 @@ mod tests {
         let (_, x_pk1) = hpke_wrap::generate_x25519_keypair();
         let d1 = Uuid::new_v4();
         mgr.registry
-            .enroll_with_id(d1, "D1".into(), x_pk1.to_bytes(), sig::verifying_key_bytes(&vk1))
+            .enroll_with_id(
+                d1,
+                "D1".into(),
+                x_pk1.to_bytes(),
+                sig::verifying_key_bytes(&vk1),
+            )
             .unwrap();
 
         let (_, x_pk2) = hpke_wrap::generate_x25519_keypair();
         let (_, e_pk2) = sig::generate_ed25519_keypair();
         mgr.registry
-            .enroll_with_id(Uuid::new_v4(), "D2".into(), x_pk2.to_bytes(), sig::verifying_key_bytes(&e_pk2))
+            .enroll_with_id(
+                Uuid::new_v4(),
+                "D2".into(),
+                x_pk2.to_bytes(),
+                sig::verifying_key_bytes(&e_pk2),
+            )
             .unwrap();
 
         let (_, x_pk3) = hpke_wrap::generate_x25519_keypair();
         let (_, e_pk3) = sig::generate_ed25519_keypair();
         mgr.registry
-            .enroll_with_id(Uuid::new_v4(), "D3".into(), x_pk3.to_bytes(), sig::verifying_key_bytes(&e_pk3))
+            .enroll_with_id(
+                Uuid::new_v4(),
+                "D3".into(),
+                x_pk3.to_bytes(),
+                sig::verifying_key_bytes(&e_pk3),
+            )
             .unwrap();
 
         assert_eq!(mgr.registry.quorum_required(), 2);
@@ -1103,6 +1156,9 @@ mod tests {
         // First nonce should have been evicted
         assert!(!mgr.seen_nonces.contains(&"nonce-0".to_string()));
         // Latest nonce should be present
-        assert!(mgr.seen_nonces.contains(&format!("nonce-{MAX_SEEN_NONCES}")));
+        assert!(
+            mgr.seen_nonces
+                .contains(&format!("nonce-{MAX_SEEN_NONCES}"))
+        );
     }
 }

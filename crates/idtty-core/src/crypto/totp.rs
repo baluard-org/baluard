@@ -70,13 +70,17 @@ pub fn parse_totp_uri(uri: &str) -> Result<TotpParams, String> {
                 };
             }
             "digits" => {
-                digits = value.parse::<u32>().map_err(|e| format!("Invalid digits: {e}"))?;
+                digits = value
+                    .parse::<u32>()
+                    .map_err(|e| format!("Invalid digits: {e}"))?;
                 if digits != 6 && digits != 8 {
                     return Err(format!("digits must be 6 or 8, got {digits}"));
                 }
             }
             "period" => {
-                let p = value.parse::<u64>().map_err(|e| format!("Invalid period: {e}"))?;
+                let p = value
+                    .parse::<u64>()
+                    .map_err(|e| format!("Invalid period: {e}"))?;
                 if p == 0 {
                     return Err("period must be > 0".into());
                 }
@@ -157,7 +161,11 @@ fn compute_totp(secret: &[u8], counter: u64, algorithm: TotpAlgorithm, digits: u
 /// RFC 4648 Base32 decode (case-insensitive, ignores padding).
 fn decode_base32(input: &str) -> Result<Vec<u8>, String> {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    let s: String = input.to_uppercase().chars().filter(|c| *c != '=' && *c != ' ').collect();
+    let s: String = input
+        .to_uppercase()
+        .chars()
+        .filter(|c| *c != '=' && *c != ' ')
+        .collect();
 
     if s.len() == 0 {
         return Err("Empty base32 secret".into());
@@ -168,7 +176,9 @@ fn decode_base32(input: &str) -> Result<Vec<u8>, String> {
     let mut result = Vec::new();
 
     for c in s.chars() {
-        let val = ALPHABET.iter().position(|&b| b as char == c)
+        let val = ALPHABET
+            .iter()
+            .position(|&b| b as char == c)
             .ok_or_else(|| format!("Invalid base32 character: {c}"))? as u64;
         bits = (bits << 5) | val;
         bit_count += 5;
@@ -259,7 +269,10 @@ mod tests {
         let result = parse_totp_uri("otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP&period=0");
         assert!(result.is_err());
         let msg = result.unwrap_err();
-        assert!(msg.contains("period must be > 0"), "Expected period error, got: {msg}");
+        assert!(
+            msg.contains("period must be > 0"),
+            "Expected period error, got: {msg}"
+        );
     }
 
     // RFC 6238 test vectors for SHA-1 with secret "12345678901234567890"

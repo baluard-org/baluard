@@ -6,8 +6,8 @@
 //! Handles BW's `encryptedString` format by using the plaintext values
 //! from the JSON export (BW exports are decrypted before writing).
 
-use crate::types::*;
 use crate::import::ImportResult;
+use crate::types::*;
 
 /// Top-level BW JSON export structure.
 #[derive(Debug, serde::Deserialize)]
@@ -175,14 +175,12 @@ pub fn parse(data: &str) -> ImportResult {
     }
 
     // Parse items (BW uses "items" in personal vault exports, "ciphers" in org exports)
-    let items: Vec<&BwItem> = export
-        .items
-        .iter()
-        .chain(export.ciphers.iter())
-        .collect();
+    let items: Vec<&BwItem> = export.items.iter().chain(export.ciphers.iter()).collect();
 
     // Build folder ID -> folder name mapping
-    let folder_map: std::collections::HashMap<String, String> = export.folders.iter()
+    let folder_map: std::collections::HashMap<String, String> = export
+        .folders
+        .iter()
         .filter_map(|f| {
             let id = f.id.as_ref()?;
             let name = f.name.as_ref()?;
@@ -194,35 +192,50 @@ pub fn parse(data: &str) -> ImportResult {
         let name = item.name.clone().unwrap_or_else(|| "Untitled".into());
 
         // Resolve folder name from item's folder_id
-        let folder_name = item.folder_id.as_ref()
+        let folder_name = item
+            .folder_id
+            .as_ref()
             .and_then(|id| folder_map.get(id))
             .cloned();
 
         // Parse custom fields
-        let custom_fields = item.fields.as_ref().map(|fields| {
-            fields
-                .iter()
-                .filter(|f| f.r#type != Some(3)) // Skip Linked fields (deferred)
-                .map(|f| CustomField {
-                    name: f.name.clone().unwrap_or_default(),
-                    value: f.value.clone().unwrap_or_default(),
-                    field_type: bw_field_type(f.r#type),
-                })
-                .collect()
-        }).unwrap_or_default();
+        let custom_fields = item
+            .fields
+            .as_ref()
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter(|f| f.r#type != Some(3)) // Skip Linked fields (deferred)
+                    .map(|f| CustomField {
+                        name: f.name.clone().unwrap_or_default(),
+                        value: f.value.clone().unwrap_or_default(),
+                        field_type: bw_field_type(f.r#type),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         // Parse password history
-        let password_history = item.password_history.as_ref().map(|hist| {
-            hist.iter()
-                .filter_map(|h| {
-                    let password = h.password.clone()?;
-                    let last_used_date = h.last_used_date.as_ref()
-                        .and_then(|d| d.parse::<u64>().ok())
-                        .unwrap_or(0);
-                    Some(PasswordHistoryEntry { password, last_used_date })
-                })
-                .collect()
-        }).unwrap_or_default();
+        let password_history = item
+            .password_history
+            .as_ref()
+            .map(|hist| {
+                hist.iter()
+                    .filter_map(|h| {
+                        let password = h.password.clone()?;
+                        let last_used_date = h
+                            .last_used_date
+                            .as_ref()
+                            .and_then(|d| d.parse::<u64>().ok())
+                            .unwrap_or(0);
+                        Some(PasswordHistoryEntry {
+                            password,
+                            last_used_date,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let kind = match item.r#type {
             Some(1) => {
@@ -247,7 +260,9 @@ pub fn parse(data: &str) -> ImportResult {
                     password: login.and_then(|l| l.password.clone()),
                     uris,
                     totp_uri: login.and_then(|l| l.totp.clone()),
-                    autofill_on_page_load: login.and_then(|l| l.autofill_on_page_load).unwrap_or(false),
+                    autofill_on_page_load: login
+                        .and_then(|l| l.autofill_on_page_load)
+                        .unwrap_or(false),
                     password_revision_date: login
                         .and_then(|l| l.password_revision_date.as_ref())
                         .and_then(|d| d.parse::<u64>().ok()),
@@ -304,7 +319,10 @@ pub fn parse(data: &str) -> ImportResult {
             }
             _ => {
                 // Unknown type, default to SecureNote with notes
-                result.skip(format!("Unknown cipher type {:?} for '{}'", item.r#type, name));
+                result.skip(format!(
+                    "Unknown cipher type {:?} for '{}'",
+                    item.r#type, name
+                ));
                 continue;
             }
         };
@@ -423,7 +441,10 @@ mod tests {
                 assert_eq!(data.uris[0].match_strategy, UriMatchStrategy::Domain);
                 assert_eq!(data.uris[1].uri, "https://api.github.com");
                 assert_eq!(data.uris[1].match_strategy, UriMatchStrategy::Host);
-                assert_eq!(data.totp_uri.as_deref(), Some("otpauth://totp/GitHub?secret=JBSWY3DPEHPK3PXP"));
+                assert_eq!(
+                    data.totp_uri.as_deref(),
+                    Some("otpauth://totp/GitHub?secret=JBSWY3DPEHPK3PXP")
+                );
             }
             _ => panic!("expected Login"),
         }

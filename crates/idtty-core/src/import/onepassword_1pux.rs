@@ -6,8 +6,8 @@
 //! 1PUX format: ZIP containing `export.data` JSON with structure:
 //! { accounts: [{ vaults: [{ items: [{ item: { ... } }] }] }] }
 
-use crate::types::*;
 use crate::import::ImportResult;
+use crate::types::*;
 
 /// Top-level 1PUX export structure.
 #[derive(Debug, serde::Deserialize)]
@@ -116,7 +116,10 @@ pub fn parse(data: &[u8]) -> ImportResult {
                     all_fields.extend(section.fields.iter());
                 }
 
-                let notes = detail.notes.as_ref().and_then(|n| n.0.clone())
+                let notes = detail
+                    .notes
+                    .as_ref()
+                    .and_then(|n| n.0.clone())
                     .or_else(|| field_value(&all_fields, "notesPlain"));
 
                 let kind = match detail.category.as_deref() {
@@ -154,8 +157,8 @@ pub fn parse(data: &[u8]) -> ImportResult {
                     custom_fields,
                     created_at: None,
                     password_history: vec![],
-            attachments: vec![],
-            reprompt: false,
+                    attachments: vec![],
+                    reprompt: false,
                 };
 
                 result.add_with_folder(cipher, folder);
@@ -272,12 +275,37 @@ fn parse_ssh_key(fields: &[&OnePuxField]) -> Option<CipherKind> {
 
 fn extract_custom_fields(fields: &[&OnePuxField]) -> Vec<CustomField> {
     let known_ids = [
-        "username", "password", "url", "website", "totp",
-        "cardholder", "type", "number", "expiry_month", "expiry_year", "cvv",
-        "title", "first_name", "middle_name", "last_name", "company", "email",
-        "phone", "address1", "address2", "address3", "city", "state", "zip",
-        "country", "ssn", "passport_number", "license_number",
-        "private_key", "public_key", "fingerprint",
+        "username",
+        "password",
+        "url",
+        "website",
+        "totp",
+        "cardholder",
+        "type",
+        "number",
+        "expiry_month",
+        "expiry_year",
+        "cvv",
+        "title",
+        "first_name",
+        "middle_name",
+        "last_name",
+        "company",
+        "email",
+        "phone",
+        "address1",
+        "address2",
+        "address3",
+        "city",
+        "state",
+        "zip",
+        "country",
+        "ssn",
+        "passport_number",
+        "license_number",
+        "private_key",
+        "public_key",
+        "fingerprint",
         "notesPlain",
     ];
 
@@ -285,9 +313,7 @@ fn extract_custom_fields(fields: &[&OnePuxField]) -> Vec<CustomField> {
         .iter()
         .filter(|f| {
             let id = f.id.as_deref().unwrap_or("");
-            !known_ids.contains(&id)
-                && f.value.is_some()
-                && f.r#type.as_deref() != Some("MENU")
+            !known_ids.contains(&id) && f.value.is_some() && f.r#type.as_deref() != Some("MENU")
         })
         .filter_map(|f| {
             let value = f.value.as_ref()?;
@@ -299,7 +325,10 @@ fn extract_custom_fields(fields: &[&OnePuxField]) -> Vec<CustomField> {
                 return None;
             }
             Some(CustomField {
-                name: f.label.clone().unwrap_or_else(|| f.id.clone().unwrap_or_default()),
+                name: f
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| f.id.clone().unwrap_or_default()),
                 value: val,
                 field_type: match f.r#type.as_deref() {
                     Some("CONCEALED") | Some("PASSWORD") => CustomFieldType::Hidden,

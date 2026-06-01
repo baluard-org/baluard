@@ -323,9 +323,20 @@ fn main() {
             commands::handle_delete(mode, &cli.vault_path, cli.socket.as_deref(), &id)
         }
 
-        Commands::Edit { id, name, favorite, folder } => {
-            commands::handle_edit(mode, &cli.vault_path, cli.socket.as_deref(), &id, name, favorite, folder)
-        }
+        Commands::Edit {
+            id,
+            name,
+            favorite,
+            folder,
+        } => commands::handle_edit(
+            mode,
+            &cli.vault_path,
+            cli.socket.as_deref(),
+            &id,
+            name,
+            favorite,
+            folder,
+        ),
 
         // Devices
         Commands::Devices { action } => match action {
@@ -336,9 +347,7 @@ fn main() {
 
         // Settings
         Commands::Settings { action } => match action {
-            SettingsAction::Get => {
-                commands::handle_settings_get(mode, cli.socket.as_deref())
-            }
+            SettingsAction::Get => commands::handle_settings_get(mode, cli.socket.as_deref()),
             SettingsAction::Set { kv } => {
                 commands::handle_settings_set(mode, cli.socket.as_deref(), &kv)
             }
@@ -348,9 +357,7 @@ fn main() {
             FolderAction::Create { name } => {
                 commands::handle_folder_create(mode, cli.socket.as_deref(), &name)
             }
-            FolderAction::List => {
-                commands::handle_folder_list(mode, cli.socket.as_deref())
-            }
+            FolderAction::List => commands::handle_folder_list(mode, cli.socket.as_deref()),
             FolderAction::Rename { id, name } => {
                 commands::handle_folder_rename(mode, cli.socket.as_deref(), &id, &name)
             }
@@ -367,21 +374,27 @@ fn main() {
             commands::handle_export(cli.socket.as_deref(), &format, &path)
         }
 
-        Commands::Health => {
-            commands::handle_health(cli.socket.as_deref())
-        }
+        Commands::Health => commands::handle_health(cli.socket.as_deref()),
 
         Commands::AttachUpload { cipher_id, file } => {
             commands::handle_attach_upload(cli.socket.as_deref(), &cipher_id, &file)
         }
 
-        Commands::AttachDownload { cipher_id, attachment_id, output } => {
-            commands::handle_attach_download(cli.socket.as_deref(), &cipher_id, &attachment_id, &output)
-        }
+        Commands::AttachDownload {
+            cipher_id,
+            attachment_id,
+            output,
+        } => commands::handle_attach_download(
+            cli.socket.as_deref(),
+            &cipher_id,
+            &attachment_id,
+            &output,
+        ),
 
-        Commands::AttachDelete { cipher_id, attachment_id } => {
-            commands::handle_attach_delete(cli.socket.as_deref(), &cipher_id, &attachment_id)
-        }
+        Commands::AttachDelete {
+            cipher_id,
+            attachment_id,
+        } => commands::handle_attach_delete(cli.socket.as_deref(), &cipher_id, &attachment_id),
 
         Commands::AttachList { cipher_id } => {
             commands::handle_attach_list(cli.socket.as_deref(), &cipher_id)

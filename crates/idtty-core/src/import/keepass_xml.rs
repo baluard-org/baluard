@@ -3,8 +3,8 @@
 //! Parses KeePass 2.x XML export format.
 //! Entry fields: Title, UserName, Password, URL, Notes, custom string fields.
 
-use crate::types::*;
 use crate::import::ImportResult;
+use crate::types::*;
 
 /// Parse a KeePass XML export.
 pub fn parse(data: &str) -> ImportResult {
@@ -82,7 +82,9 @@ pub fn parse(data: &str) -> ImportResult {
             // Move URL into notes if present
             let mut combined_notes = notes.take().unwrap_or_default();
             if let Some(ref u) = url {
-                if !combined_notes.is_empty() { combined_notes.push('\n'); }
+                if !combined_notes.is_empty() {
+                    combined_notes.push('\n');
+                }
                 combined_notes.push_str("URL: ");
                 combined_notes.push_str(u);
             }
@@ -178,7 +180,10 @@ mod tests {
             _ => panic!("expected Login"),
         }
         assert_eq!(result.ciphers[0].name, "GitHub");
-        assert_eq!(result.ciphers[0].notes.as_deref(), Some("My GitHub account"));
+        assert_eq!(
+            result.ciphers[0].notes.as_deref(),
+            Some("My GitHub account")
+        );
         assert_eq!(result.ciphers[0].custom_fields.len(), 1);
         assert_eq!(result.ciphers[0].custom_fields[0].name, "API Key");
         assert_eq!(result.ciphers[0].custom_fields[0].value, "key123");

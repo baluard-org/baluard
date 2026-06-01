@@ -3,8 +3,8 @@
 //! Columns: Title, Url, Username, Password, Notes, Type
 //! Login entries only. No folders, no custom fields, no TOTP.
 
-use crate::types::*;
 use crate::import::ImportResult;
+use crate::types::*;
 
 /// Parse a 1Password CSV export.
 pub fn parse(data: &str) -> ImportResult {
@@ -23,13 +23,18 @@ pub fn parse(data: &str) -> ImportResult {
 
     let col_title = headers.iter().position(|h| h.eq_ignore_ascii_case("title"));
     let col_url = headers.iter().position(|h| h.eq_ignore_ascii_case("url"));
-    let col_username = headers.iter().position(|h| h.eq_ignore_ascii_case("username"));
-    let col_password = headers.iter().position(|h| h.eq_ignore_ascii_case("password"));
+    let col_username = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("username"));
+    let col_password = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case("password"));
     let col_notes = headers.iter().position(|h| h.eq_ignore_ascii_case("notes"));
     let col_type = headers.iter().position(|h| h.eq_ignore_ascii_case("type"));
 
     let get = |record: &csv::StringRecord, idx: Option<usize>| -> Option<String> {
-        idx.and_then(|i| record.get(i).map(|s| s.to_string())).filter(|s| !s.is_empty())
+        idx.and_then(|i| record.get(i).map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
     };
 
     for (row_num, record) in reader.records().enumerate() {
@@ -43,7 +48,11 @@ pub fn parse(data: &str) -> ImportResult {
 
         let name = get(&record, col_title).unwrap_or_else(|| "Untitled".into());
         let uri = get(&record, col_url);
-        let uris = if let Some(u) = uri { vec![LoginUri::new(u)] } else { vec![] };
+        let uris = if let Some(u) = uri {
+            vec![LoginUri::new(u)]
+        } else {
+            vec![]
+        };
 
         let entry_type = get(&record, col_type).unwrap_or_default();
 

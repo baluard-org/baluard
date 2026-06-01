@@ -326,7 +326,6 @@ impl SyncEngine {
     /// Inner pull implementation (state machine transitions for Merging/Idle done here).
     /// State machine must be in Pulling state. Does NOT take &mut self for transition_state.
     fn pull_inner(&self, repo: &Repository, remote_name: &str) -> Result<PullResult, IdttyError> {
-
         // Fetch (scoped to release credential borrow before state transitions)
         let (remote_oid, local_oid) = {
             let mut remote = repo
@@ -339,11 +338,7 @@ impl SyncEngine {
 
             let refspec = format!("refs/heads/*:refs/remotes/{remote_name}/*");
             remote
-                .fetch(
-                    &[&refspec],
-                    Some(&mut fetch_opts),
-                    None,
-                )
+                .fetch(&[&refspec], Some(&mut fetch_opts), None)
                 .map_err(|e| SyncError::Git(format!("fetch: {e}")))?;
 
             // Resolve remote branch dynamically
@@ -352,7 +347,9 @@ impl SyncEngine {
             // Get remote HEAD
             let remote_head = repo
                 .find_reference(&format!("refs/remotes/{remote_name}/HEAD"))
-                .or_else(|_| repo.find_reference(&format!("refs/remotes/{remote_name}/{remote_branch}")))
+                .or_else(|_| {
+                    repo.find_reference(&format!("refs/remotes/{remote_name}/{remote_branch}"))
+                })
                 .map_err(|e| SyncError::Git(format!("find remote HEAD: {e}")))?;
             let r_oid = remote_head
                 .peel_to_commit()
@@ -390,8 +387,13 @@ impl SyncEngine {
         {
             // Fast-forward
             let branch = Self::resolve_default_branch(repo);
-            repo.reference(&format!("refs/heads/{branch}"), remote_oid, true, "fast-forward merge")
-                .map_err(|e| SyncError::Git(format!("ff update ref: {e}")))?;
+            repo.reference(
+                &format!("refs/heads/{branch}"),
+                remote_oid,
+                true,
+                "fast-forward merge",
+            )
+            .map_err(|e| SyncError::Git(format!("ff update ref: {e}")))?;
             repo.set_head(&format!("refs/heads/{branch}"))
                 .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
             repo.checkout_head(None)
@@ -497,7 +499,9 @@ impl SyncEngine {
         let commit = repo
             .find_commit(commit_oid)
             .map_err(|e| SyncError::Git(format!("find commit: {e}")))?;
-        let tree = commit.tree().map_err(|e| SyncError::Git(format!("tree: {e}")))?;
+        let tree = commit
+            .tree()
+            .map_err(|e| SyncError::Git(format!("tree: {e}")))?;
         let entry = tree
             .get_path(Path::new(file_path))
             .map_err(|e| SyncError::Git(format!("path '{file_path}' not in tree: {e}")))?;
@@ -529,35 +533,43 @@ impl SyncEngine {
         }
 
         // Stage all and create merge commit
-        let mut index = repo.index()
+        let mut index = repo
+            .index()
             .map_err(|e| SyncError::Git(format!("index: {e}")))?;
         index
             .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
             .map_err(|e| SyncError::Git(format!("add_all: {e}")))?;
-        index.write()
+        index
+            .write()
             .map_err(|e| SyncError::Git(format!("index write: {e}")))?;
 
-        let tree_id = index.write_tree()
+        let tree_id = index
+            .write_tree()
             .map_err(|e| SyncError::Git(format!("write_tree: {e}")))?;
-        let tree = repo.find_tree(tree_id)
+        let tree = repo
+            .find_tree(tree_id)
             .map_err(|e| SyncError::Git(format!("find_tree: {e}")))?;
 
         let sig = Signature::now(&self.device_name, "idtty@local")
             .map_err(|e| SyncError::Git(format!("signature: {e}")))?;
 
-        let local_parent = repo.find_commit(local_oid)
+        let local_parent = repo
+            .find_commit(local_oid)
             .map_err(|e| SyncError::Git(format!("find local: {e}")))?;
-        let remote_parent = repo.find_commit(remote_oid)
+        let remote_parent = repo
+            .find_commit(remote_oid)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
 
-        let merge_oid = repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            COMMIT_MESSAGE,
-            &tree,
-            &[&local_parent, &remote_parent],
-        ).map_err(|e| SyncError::Git(format!("merge commit: {e}")))?;
+        let merge_oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                COMMIT_MESSAGE,
+                &tree,
+                &[&local_parent, &remote_parent],
+            )
+            .map_err(|e| SyncError::Git(format!("merge commit: {e}")))?;
 
         self.save_last_head(&merge_oid.to_string())?;
         repo.cleanup_state()
