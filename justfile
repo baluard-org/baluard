@@ -110,9 +110,11 @@ _sidecar:
 	set -euo pipefail
 	TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
 	mkdir -p desktop/src-tauri/binaries
-	{{ linuxbrew_env }} cargo build --release -p idtty-daemon
+	{{ linuxbrew_env }} cargo build --release -p idtty-daemon -p idtty-cli
 	cp target/release/idtty-daemon desktop/src-tauri/binaries/idtty-daemon-"$TRIPLE"
+	cp target/release/idtty desktop/src-tauri/binaries/idtty-"$TRIPLE"
 	echo "Sidecar: desktop/src-tauri/binaries/idtty-daemon-$TRIPLE"
+	echo "CLI:     desktop/src-tauri/binaries/idtty-$TRIPLE"
 
 # Install desktop npm dependencies
 desktop-deps:

@@ -36,7 +36,8 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/idtty-daemon"
+      "binaries/idtty-daemon",
+      "binaries/idtty"
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
