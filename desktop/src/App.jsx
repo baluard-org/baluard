@@ -836,6 +836,8 @@ function ImportExportButton() {
     </div>
   );
 }
+
+function DeleteConfirmModal() {
   const { viewCipher, setShowDeleteConfirm, showDeleteConfirm, selectedCategory } = useApp();
   const { deleteCipher } = useActions();
   const { t } = useI18n();

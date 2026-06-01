@@ -8,7 +8,6 @@
 
 use crate::types::*;
 use crate::import::ImportResult;
-use uuid::Uuid;
 
 /// Top-level BW JSON export structure.
 #[derive(Debug, serde::Deserialize)]
@@ -33,6 +32,7 @@ struct BwFolder {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct BwItem {
     id: Option<String>,
     name: Option<String>,
@@ -53,6 +53,7 @@ struct BwItem {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct BwLogin {
     username: Option<String>,
     password: Option<String>,
@@ -73,6 +74,7 @@ struct BwLoginUri {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 struct BwSecureNote {
     r#type: Option<u8>,
 }
