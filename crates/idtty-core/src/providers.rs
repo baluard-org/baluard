@@ -27,6 +27,68 @@ pub trait ProviderAdapter {
     ) -> Result<String, IdttyError>;
 }
 
+/// Helper function to perform secure network requests via curl using stdin configs,
+/// entirely hiding tokens, URLs, and payloads from procfs/command line arguments.
+fn run_secure_curl(
+    url: &str,
+    method: &str,
+    headers: &[(&str, String)],
+    data: Option<&str>,
+) -> Result<std::process::Output, IdttyError> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new("curl")
+        .args(["-s", "--config", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| VaultError::Crypto(format!("failed to spawn curl: {e}")))?;
+
+    {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| VaultError::Crypto("failed to open curl stdin".into()))?;
+
+        writeln!(stdin, "url = \"{}\"", url.replace('"', "\\\""))?;
+        writeln!(stdin, "request = \"{}\"", method)?;
+        for (k, v) in headers {
+            writeln!(stdin, "header = \"{}: {}\"", k, v.replace('"', "\\\""))?;
+        }
+        if let Some(d) = data {
+            writeln!(
+                stdin,
+                "data = \"{}\"",
+                d.replace('\\', "\\\\").replace('"', "\\\"")
+            )?;
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| VaultError::Crypto(format!("curl wait failed: {e}")))?;
+
+    Ok(output)
+}
+
+/// Safely percent-encodes a string to prevent URL parameter injection.
+fn percent_encode(input: &str) -> String {
+    let mut encoded = String::new();
+    for b in input.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(b as char);
+            }
+            _ => {
+                encoded.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    encoded
+}
+
 pub struct GitHubProvider;
 
 impl ProviderAdapter for GitHubProvider {
@@ -37,7 +99,9 @@ impl ProviderAdapter for GitHubProvider {
     fn get_auth_url(&self, client_id: &str, redirect_uri: &str, state: &str) -> String {
         format!(
             "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&state={}&scope=repo",
-            client_id, redirect_uri, state
+            percent_encode(client_id),
+            percent_encode(redirect_uri),
+            percent_encode(state)
         )
     }
 
@@ -56,21 +120,12 @@ impl ProviderAdapter for GitHubProvider {
             "redirect_uri": redirect_uri
         });
 
-        let output = Command::new("curl")
-            .args([
-                "-s",
-                "-X",
-                "POST",
-                "-H",
-                "Content-Type: application/json",
-                "-H",
-                "Accept: application/json",
-                "-d",
-                &payload.to_string(),
-                url,
-            ])
-            .output()
-            .map_err(|e| VaultError::Crypto(format!("failed to execute curl: {e}")))?;
+        let headers = vec![
+            ("Content-Type", "application/json".to_string()),
+            ("Accept", "application/json".to_string()),
+        ];
+
+        let output = run_secure_curl(url, "POST", &headers, Some(&payload.to_string()))?;
 
         if !output.status.success() {
             return Err(VaultError::Crypto("curl request failed".into()).into());
@@ -105,25 +160,14 @@ impl ProviderAdapter for GitHubProvider {
             "description": "IDtty Password Manager Vault (Git backed)"
         });
 
-        let output = Command::new("curl")
-            .args([
-                "-s",
-                "-X",
-                "POST",
-                "-H",
-                &format!("Authorization: Bearer {}", token),
-                "-H",
-                "Accept: application/vnd.github.v3+json",
-                "-H",
-                "User-Agent: IDtty-Core",
-                "-H",
-                "Content-Type: application/json",
-                "-d",
-                &payload.to_string(),
-                url,
-            ])
-            .output()
-            .map_err(|e| VaultError::Crypto(format!("failed to execute curl: {e}")))?;
+        let headers = vec![
+            ("Authorization", format!("Bearer {}", token)),
+            ("Accept", "application/vnd.github.v3+json".to_string()),
+            ("User-Agent", "IDtty-Core".to_string()),
+            ("Content-Type", "application/json".to_string()),
+        ];
+
+        let output = run_secure_curl(url, "POST", &headers, Some(&payload.to_string()))?;
 
         if !output.status.success() {
             return Err(VaultError::Crypto("repo creation curl command failed".into()).into());
@@ -165,7 +209,9 @@ impl ProviderAdapter for GitLabProvider {
     fn get_auth_url(&self, client_id: &str, redirect_uri: &str, state: &str) -> String {
         format!(
             "https://gitlab.com/oauth/authorize?client_id={}&redirect_uri={}&state={}&response_type=code&scope=api",
-            client_id, redirect_uri, state
+            percent_encode(client_id),
+            percent_encode(redirect_uri),
+            percent_encode(state)
         )
     }
 
@@ -185,21 +231,12 @@ impl ProviderAdapter for GitLabProvider {
             "redirect_uri": redirect_uri
         });
 
-        let output = Command::new("curl")
-            .args([
-                "-s",
-                "-X",
-                "POST",
-                "-H",
-                "Content-Type: application/json",
-                "-H",
-                "Accept: application/json",
-                "-d",
-                &payload.to_string(),
-                url,
-            ])
-            .output()
-            .map_err(|e| VaultError::Crypto(format!("failed to execute curl: {e}")))?;
+        let headers = vec![
+            ("Content-Type", "application/json".to_string()),
+            ("Accept", "application/json".to_string()),
+        ];
+
+        let output = run_secure_curl(url, "POST", &headers, Some(&payload.to_string()))?;
 
         if !output.status.success() {
             return Err(VaultError::Crypto("curl request failed".into()).into());
@@ -235,21 +272,12 @@ impl ProviderAdapter for GitLabProvider {
             "description": "IDtty Password Manager Vault (Git backed)"
         });
 
-        let output = Command::new("curl")
-            .args([
-                "-s",
-                "-X",
-                "POST",
-                "-H",
-                &format!("Authorization: Bearer {}", token),
-                "-H",
-                "Content-Type: application/json",
-                "-d",
-                &payload.to_string(),
-                url,
-            ])
-            .output()
-            .map_err(|e| VaultError::Crypto(format!("failed to execute curl: {e}")))?;
+        let headers = vec![
+            ("Authorization", format!("Bearer {}", token)),
+            ("Content-Type", "application/json".to_string()),
+        ];
+
+        let output = run_secure_curl(url, "POST", &headers, Some(&payload.to_string()))?;
 
         if !output.status.success() {
             return Err(VaultError::Crypto("repo creation curl command failed".into()).into());
@@ -292,5 +320,12 @@ mod tests {
         let url = gl.get_auth_url("client123", "http://redirect", "state123");
         assert!(url.contains("client_id=client123"));
         assert!(url.contains("scope=api"));
+    }
+
+    #[test]
+    fn test_percent_encode() {
+        assert_eq!(percent_encode("abc"), "abc");
+        assert_eq!(percent_encode("a b"), "a%20b");
+        assert_eq!(percent_encode("a&b=c"), "a%26b%3Dc");
     }
 }

@@ -45,7 +45,7 @@ pub fn mobile_generate_mnemonic() -> Result<String, String> {
 }
 
 #[uniffi::export]
-pub fn mobile_derive_key(password: String, salt: String) -> Result<String, String> {
+pub fn mobile_derive_key(password: String, salt: String) -> Result<Vec<u8>, String> {
     let salt_bytes = salt.as_bytes();
     let mut salt_32 = vec![0u8; 32];
     if salt_bytes.len() == 32 {
@@ -66,7 +66,7 @@ pub fn mobile_derive_key(password: String, salt: String) -> Result<String, Strin
     };
 
     match crate::crypto::kdf::derive_kek(&password, &params) {
-        Ok(key) => Ok(hex::encode(key)),
+        Ok(key) => Ok(key.to_vec()),
         Err(e) => Err(e.to_string()),
     }
 }
@@ -82,6 +82,6 @@ mod tests {
         assert_eq!(phrase.split_whitespace().count(), 24);
 
         let key = mobile_derive_key("password123".to_string(), "salt123".to_string()).unwrap();
-        assert_eq!(key.len(), 64);
+        assert_eq!(key.len(), 32);
     }
 }

@@ -44,13 +44,20 @@ pub fn encrypt_index(
         1,
     );
 
-    let nonce = aead::build_nonce(0, Uuid::nil());
+    let nonce_counter = {
+        use rand::RngCore;
+        let mut bytes = [0u8; 8];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        u64::from_le_bytes(bytes)
+    };
+
+    let nonce = aead::build_nonce(nonce_counter, Uuid::nil());
 
     let header = EnvelopeHeader {
         version: IDTTY_VERSION,
         alg_id: ALG_AES_256_GCM,
         key_epoch,
-        nonce_counter: 0,
+        nonce_counter,
         update_seq: 1,
         tier: Some(tier),
     };
