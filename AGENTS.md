@@ -65,6 +65,7 @@ idtty/
 │   ├── 05-dev-setup.md
 │   ├── 06-device-lifecycle.md
 │   ├── 07-2fa-analysis.md
+│   ├── full-gaps.md              # Gap analysis: docs vs code
 │   ├── prd-bitwarden-parity.md # BW parity PRD (43 user stories)
 │   └── bw-parity.md            # Original analysis
 └── justfile                    # Build system (just, cargo install just)
@@ -140,6 +141,9 @@ idtty/
 * **Biometric Unlock (Phase E)**: `biometric.rs` stores master password in OS keychain (keyring crate: macOS Keychain, Windows Credential Manager, Linux libsecret). Daemon `biometric_unlock` performs vault unlock internally (secret never returns over IPC). `biometric_status/enable/disable` routes. Desktop Quick Unlock button + settings toggle.
 * **Linked Custom Fields (Phase F)**: `CustomFieldType::Linked(LinkedFieldType)` with 24 variants across Login/Card/Identity. `resolve_linked_field()` for type-safe resolution. Desktop custom field editor with type dropdown + linked field selector. Rust serde format: `"Text"`, `"Hidden"`, `"Boolean"`, `{"Linked":"LoginUsername"}`.
 * **Nested Folders (Phase G)**: `create_folder_with_parent` with depth limit (16). `delete_folder` cascades via `collect_descendant_ids` (BFS). Desktop FolderTree/FolderNode recursive components.
+* **Device Lifecycle (MISS-1 through MISS-5)**: `device_manager.rs` owns registry, epoch state machine, rotation coordinator. VaultHandle holds a DeviceManager instance. `rotate_root_key()` performs atomic re-encryption with staged `.tmp` writes. `recover_from_phrase()` returns `RecoveryResult` with private keys. `RotationObserver` trait for sync engine hooks. Epoch state machine: CREATED→ACTIVE→ROTATING→RETIRED→DESTROYED. Cipher writes blocked during ROTATING.
+* **ItemKey derivation**: `HKDF(root_key, "idtty-item-v1" || epoch || cipher_id)`. Epoch-bound: rotation forces full re-encryption. No Space Group Key layer.
+* **Full gap analysis**: See `docs/full-gaps.md` for comprehensive docs-vs-code diff.
 
 ## UX PRINCIPLES
 * **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden, "session token" -> invisible.
@@ -150,7 +154,8 @@ idtty/
 ## IMPLEMENTATION STATUS
 | Component | Status |
 |-----------|--------|
-| `idtty-core` crypto/keys/vault | Built, tested, security-reviewed (7 rounds) |
+| `idtty-core` crypto/keys/vault | Built, tested, security-reviewed (10 rounds) |
+| `idtty-core` device lifecycle | Built, tested, peer-reviewed (MISS-1 through MISS-5, all Critical/High/Medium findings fixed) |
 | `idtty-core` sync engine | Built, tested |
 | `idtty-core` TOTP (RFC 6238) | Built, tested |
 | `idtty-core` import/export | 8 import parsers + 2 export formats, tested |
@@ -164,6 +169,8 @@ idtty/
 | UniFFI annotations | Not yet applied to idtty-core |
 | Mobile KMP app | Placeholder |
 | Browser extension | Placeholder |
+
+**Test counts**: 174 workspace-wide (170 idtty-core + 4 across CLI/daemon). 1 ignored. **0 clippy errors workspace-wide.**
 
 ### BW Parity Phases 1-8 (Original)
 | Phase | Description | Tests | Peer Reviewed |

@@ -105,7 +105,7 @@ impl EpochInfo {
         let required = if enrolled_count == 0 {
             0
         } else {
-            (enrolled_count + 1) / 2
+            enrolled_count.div_ceil(2)
         };
         self.acknowledged_devices.len() >= required
     }

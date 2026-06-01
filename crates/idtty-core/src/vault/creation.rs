@@ -18,6 +18,7 @@ use crate::keys::epoch::EpochInfo;
 use crate::keys::hierarchy::RootKey;
 use crate::recovery::RecoveryPhrase;
 use crate::types::{KdfParams, KdfProfile};
+use crate::device_manager::DeviceManager;
 use crate::vault::handle::{UnlockedState, VaultHandle, VaultState};
 use rand_core::RngCore;
 
@@ -360,7 +361,7 @@ impl<'a> VaultCreator<'a> {
 
                 let kdf_params = kdf::create_params(self.kdf_profile.clone());
                 let vault_id = VaultHandle::derive_vault_id(&kdf_params);
-                let mut kek = kdf::derive_kek(&*self.password, &kdf_params)?;
+                let mut kek = kdf::derive_kek(&self.password, &kdf_params)?;
 
                 let mut root_key_bytes = [0u8; 64];
                 adapter.fill_bytes(&mut root_key_bytes);
@@ -464,9 +465,9 @@ impl<'a> VaultCreator<'a> {
 
                 let keywrap_data = serde_json::json!({
                     "device_id": device_id.to_string(),
-                    "ephemeral_public": hex::encode(&wrapped_root_key.0),
-                    "encrypted_key": hex::encode(&wrapped_root_key.1),
-                    "tag": hex::encode(&wrapped_root_key.2),
+                    "ephemeral_public": hex::encode(wrapped_root_key.0),
+                    "encrypted_key": hex::encode(wrapped_root_key.1),
+                    "tag": hex::encode(wrapped_root_key.2),
                 });
                 write_secret(
                     &path.join(format!("meta/keywrap/{device_id}.json")),
@@ -476,9 +477,9 @@ impl<'a> VaultCreator<'a> {
                 )?;
 
                 let recovery_data = serde_json::json!({
-                    "ephemeral_public": hex::encode(&wrapped_recovery_key.0),
-                    "encrypted_key": hex::encode(&wrapped_recovery_key.1),
-                    "tag": hex::encode(&wrapped_recovery_key.2),
+                    "ephemeral_public": hex::encode(wrapped_recovery_key.0),
+                    "encrypted_key": hex::encode(wrapped_recovery_key.1),
+                    "tag": hex::encode(wrapped_recovery_key.2),
                 });
                 write_secret(
                     &path.join("meta/recovery.json"),
@@ -525,12 +526,19 @@ impl<'a> VaultCreator<'a> {
                     ).map_err(|e| IdttyError::from(VaultError::Corrupt(format!("Write gitignore: {e}"))))?;
                 }
 
+                let mut device_manager = DeviceManager::new();
+                device_manager.set_vault_path(&path);
+                device_manager.epoch.activate().map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
+                // H6 fix: sync registry so device_manager.is_enrolled() works
+                device_manager.registry = registry.clone();
+
                 let handle = VaultHandle {
                     path: path.clone(),
                     vault_id,
                     kdf_params,
                     registry,
                     device_id,
+                    device_manager,
                     state: VaultState::Unlocked(UnlockedState {
                         root_key,
                         session_key,
@@ -564,7 +572,7 @@ impl<'a> VaultCreator<'a> {
                     IdttyError::from(VaultError::Corrupt(format!("kdf params: {e}")))
                 })?;
 
-                let mut kek = kdf::derive_kek(&*self.password, &kdf_params)?;
+                let mut kek = kdf::derive_kek(&self.password, &kdf_params)?;
                 let session_key = hkdf_derive::derive_session_key(&kek)?;
                 let sync_key = hkdf_derive::derive_sync_key(&kek)?;
                 kek.zeroize();
@@ -695,9 +703,9 @@ impl<'a> VaultCreator<'a> {
                     hpke_wrap::wrap_key(root_key.as_bytes(), &device_x25519_public)?;
                 let keywrap_data = serde_json::json!({
                     "device_id": device_id.to_string(),
-                    "ephemeral_public": hex::encode(&wrapped_root_key.0),
-                    "encrypted_key": hex::encode(&wrapped_root_key.1),
-                    "tag": hex::encode(&wrapped_root_key.2),
+                    "ephemeral_public": hex::encode(wrapped_root_key.0),
+                    "encrypted_key": hex::encode(wrapped_root_key.1),
+                    "tag": hex::encode(wrapped_root_key.2),
                 });
                 write_secret(
                     &path.join(format!("meta/keywrap/{device_id}.json")),
@@ -732,12 +740,19 @@ impl<'a> VaultCreator<'a> {
 
                 let vault_id = VaultHandle::derive_vault_id(&kdf_params);
 
+                let mut device_manager = DeviceManager::new();
+                device_manager.set_vault_path(&path);
+                device_manager.epoch.activate().map_err(|e| IdttyError::from(crate::error::KeyError::InvalidEpochState(e)))?;
+                // H6 fix: sync registry so device_manager.is_enrolled() works
+                device_manager.registry = registry.clone();
+
                 let handle = VaultHandle {
                     path: path.clone(),
                     vault_id,
                     kdf_params,
                     registry,
                     device_id,
+                    device_manager,
                     state: VaultState::Unlocked(UnlockedState {
                         root_key,
                         session_key,

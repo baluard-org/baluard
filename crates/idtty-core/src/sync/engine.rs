@@ -18,6 +18,8 @@ use crate::sync::commit::COMMIT_MESSAGE;
 use crate::sync::credentials::CredentialConfig;
 use crate::sync::state_machine::{SyncState, SyncStateMachine};
 
+use base64::Engine;
+
 /// Git sync engine wrapping git2-rs operations.
 #[cfg(feature = "git-sync")]
 pub struct SyncEngine {
@@ -35,6 +37,9 @@ pub struct SyncEngine {
     /// Transactional state machine (persisted to meta/sync-state.json).
     /// RefCell for interior mutability (pull/push take &self for git2 borrow reasons).
     pub state_machine: RefCell<SyncStateMachine>,
+    /// Device Ed25519 signing key (loaded from meta/device-privkey.json).
+    /// Used to sign all commits. None = unsigned commits (legacy compat).
+    signing_key: Option<ed25519_dalek::SigningKey>,
 }
 
 #[cfg(feature = "git-sync")]
@@ -45,6 +50,14 @@ impl SyncEngine {
         let last_remote_head = Self::load_last_head(vault_path);
         let credential_config = CredentialConfig::load(vault_path);
         let state_machine = RefCell::new(SyncStateMachine::load_from_file(vault_path));
+        // Load signing key — log warning on corrupt file but don't fail
+        let signing_key = match Self::load_signing_key(vault_path) {
+            Ok(key) => key,
+            Err(e) => {
+                eprintln!("warning: failed to load signing key: {e}");
+                None
+            }
+        };
         Self {
             vault_path: vault_path.to_path_buf(),
             device_name: device_name.to_string(),
@@ -52,6 +65,7 @@ impl SyncEngine {
             last_remote_head,
             credential_config,
             state_machine,
+            signing_key,
         }
     }
 
@@ -59,9 +73,9 @@ impl SyncEngine {
     fn transition_state(&self, target: SyncState) -> Result<(), IdttyError> {
         let mut sm = self.state_machine.borrow_mut();
         sm.transition(target)
-            .map_err(|e| SyncError::StateMachine(e))?;
+            .map_err(SyncError::StateMachine)?;
         sm.save_to_file(&self.vault_path)
-            .map_err(|e| SyncError::StateMachine(e))?;
+            .map_err(SyncError::StateMachine)?;
         Ok(())
     }
 
@@ -82,7 +96,7 @@ impl SyncEngine {
         }
 
         sm.save_to_file(&self.vault_path)
-            .map_err(|e| SyncError::StateMachine(e))?;
+            .map_err(SyncError::StateMachine)?;
         Ok(())
     }
 
@@ -151,11 +165,64 @@ impl SyncEngine {
         };
 
         let parents: Vec<_> = parent_commits.iter().collect();
-        let commit_id = repo
-            .commit(Some("HEAD"), &sig, &sig, COMMIT_MESSAGE, &tree, &parents)
-            .map_err(|e| SyncError::Git(format!("commit: {e}")))?;
+        let commit_id = self.create_signed_commit(
+            repo, &sig, COMMIT_MESSAGE, &tree, &parents,
+        )?;
+        // Update HEAD to point to the new commit
+        let branch = Self::resolve_default_branch(repo);
+        repo.reference(&format!("refs/heads/{branch}"), commit_id, true, "vault update")
+            .map_err(|e| SyncError::Git(format!("update HEAD: {e}")))?;
+        repo.set_head(&format!("refs/heads/{branch}"))
+            .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
 
         Ok(commit_id)
+    }
+
+    /// Create a cover commit (no-op) to mask real usage patterns.
+    ///
+    /// Creates a commit with the same tree as HEAD (no file changes).
+    /// Indistinguishable from a real vault update where nothing changed.
+    /// Uses the same static message and signing as real commits.
+    pub fn cover_commit(&self, repo: &Repository) -> Result<Oid, IdttyError> {
+        // Same tree as current HEAD, creates an empty commit
+        self.commit_all(repo, "")
+    }
+
+    /// Apply random jitter delay before a network operation.
+    ///
+    /// Defends against T3 timing analysis by git remote adversary.
+    /// Delay is uniformly random in [0, max_delay_secs].
+    /// Uses CSPRNG for delay selection.
+    pub fn jitter_delay(max_delay_secs: u64) {
+        if max_delay_secs == 0 {
+            return;
+        }
+        // CSPRNG-backed uniform delay selection
+        let rand_val: u64 = rand::random();
+        let delay_ms = (rand_val % (max_delay_secs * 1000)) as u64;
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+    }
+
+    /// Push with timing jitter to mask usage patterns.
+    pub fn push_with_jitter(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+        max_delay_secs: u64,
+    ) -> Result<(), IdttyError> {
+        Self::jitter_delay(max_delay_secs);
+        self.push(repo, remote_name)
+    }
+
+    /// Pull with timing jitter to mask usage patterns.
+    pub fn pull_with_jitter(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+        max_delay_secs: u64,
+    ) -> Result<PullResult, IdttyError> {
+        Self::jitter_delay(max_delay_secs);
+        self.pull(repo, remote_name)
     }
 
     /// Check if the working tree has uncommitted changes.
@@ -234,6 +301,61 @@ impl SyncEngine {
         }
         // Default
         "main".to_string()
+    }
+
+    /// Create a commit with Ed25519 signature embedded in the git object.
+    /// If signing_key is available, uses commit_create_buffer + commit_signed.
+    /// Otherwise falls back to unsigned commit.
+    fn create_signed_commit(
+        &self,
+        repo: &Repository,
+        sig: &Signature<'_>,
+        message: &str,
+        tree: &git2::Tree<'_>,
+        parents: &[&git2::Commit<'_>],
+    ) -> Result<Oid, IdttyError> {
+        if let Some(ref signing_key) = self.signing_key {
+            let buf = repo
+                .commit_create_buffer(sig, sig, message, tree, parents)
+                .map_err(|e| SyncError::Git(format!("commit buffer: {e}")))?;
+            let raw = buf.as_str()
+                .ok_or_else(|| SyncError::Git("commit buffer not UTF-8".into()))?;
+            let ed_sig = crate::crypto::signature::sign(signing_key, raw.as_bytes())
+                .map_err(|e| SyncError::Git(format!("sign: {e}")))?;
+            let sig_b64 = base64::engine::general_purpose::STANDARD.encode(ed_sig.to_bytes());
+            let sig_field = format!(
+                "-----BEGIN IDTTY SIGNATURE-----\n{sig_b64}\n-----END IDTTY SIGNATURE-----"
+            );
+            let oid = repo.commit_signed(raw, &sig_field, None)
+                .map_err(|e| SyncError::Git(format!("commit_signed: {e}")))?;
+            Ok(oid)
+        } else {
+            let oid = repo.commit(Some("HEAD"), sig, sig, message, tree, parents)
+                .map_err(|e| SyncError::Git(format!("commit: {e}")))?;
+            Ok(oid)
+        }
+    }
+    /// Returns error if walk terminates before ancestor (shallow clone gap).
+    fn collect_commit_range(
+        repo: &Repository,
+        ancestor: Oid,
+        descendant: Oid,
+    ) -> Result<Vec<Oid>, IdttyError> {
+        let mut oids = Vec::new();
+        let mut current = descendant;
+        while current != ancestor {
+            oids.push(current);
+            let commit = repo.find_commit(current)
+                .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
+            if commit.parent_count() == 0 {
+                // Reached repo root or shallow boundary without finding ancestor
+                return Err(SyncError::Git(
+                    "shallow clone prevents full signature verification: history truncated".into()
+                ).into());
+            }
+            current = commit.parent_id(0).unwrap();
+        }
+        Ok(oids)
     }
 
     /// Resolve the default branch name from a remote's HEAD symref.
@@ -387,6 +509,11 @@ impl SyncEngine {
         {
             // Fast-forward
             let branch = Self::resolve_default_branch(repo);
+
+            // D22: Verify commit signatures BEFORE updating any refs or working tree
+            let new_oids = Self::collect_commit_range(repo, local_oid, remote_oid)?;
+            self.verify_commit_signatures(repo, &new_oids)?;
+
             repo.reference(
                 &format!("refs/heads/{branch}"),
                 remote_oid,
@@ -396,6 +523,7 @@ impl SyncEngine {
             .map_err(|e| SyncError::Git(format!("ff update ref: {e}")))?;
             repo.set_head(&format!("refs/heads/{branch}"))
                 .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
+
             repo.checkout_head(None)
                 .map_err(|e| SyncError::Git(format!("checkout head: {e}")))?;
 
@@ -470,16 +598,15 @@ impl SyncEngine {
             .find_commit(remote_oid)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
 
-        let merge_oid = repo
-            .commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                COMMIT_MESSAGE,
-                &tree,
-                &[&local_parent, &remote_parent],
-            )
-            .map_err(|e| SyncError::Git(format!("merge commit: {e}")))?;
+        let merge_oid = self.create_signed_commit(
+            repo, &sig, COMMIT_MESSAGE, &tree, &[&local_parent, &remote_parent],
+        )?;
+        // Point HEAD at the merge commit
+        let branch = Self::resolve_default_branch(repo);
+        repo.reference(&format!("refs/heads/{branch}"), merge_oid, true, "merge")
+            .map_err(|e| SyncError::Git(format!("update ref: {e}")))?;
+        repo.set_head(&format!("refs/heads/{branch}"))
+            .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
 
         // Track merge commit OID (not remote HEAD) for rollback detection
         self.save_last_head(&merge_oid.to_string())?;
@@ -560,16 +687,15 @@ impl SyncEngine {
             .find_commit(remote_oid)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
 
-        let merge_oid = repo
-            .commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                COMMIT_MESSAGE,
-                &tree,
-                &[&local_parent, &remote_parent],
-            )
-            .map_err(|e| SyncError::Git(format!("merge commit: {e}")))?;
+        let merge_oid = self.create_signed_commit(
+            repo, &sig, COMMIT_MESSAGE, &tree, &[&local_parent, &remote_parent],
+        )?;
+        // Point HEAD at the merge commit
+        let branch = Self::resolve_default_branch(repo);
+        repo.reference(&format!("refs/heads/{branch}"), merge_oid, true, "conflict resolution")
+            .map_err(|e| SyncError::Git(format!("update ref: {e}")))?;
+        repo.set_head(&format!("refs/heads/{branch}"))
+            .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
 
         self.save_last_head(&merge_oid.to_string())?;
         repo.cleanup_state()
@@ -656,6 +782,128 @@ impl SyncEngine {
                 .map_err(|e| SyncError::Git(format!("save head: {e}")))?,
         )?;
         Ok(())
+    }
+
+    /// Load Ed25519 signing key from meta/device-privkey.json.
+    /// Returns None if file missing (pre-vault). Returns error if file is corrupt.
+    fn load_signing_key(vault_path: &Path) -> Result<Option<ed25519_dalek::SigningKey>, IdttyError> {
+        let path = vault_path.join("meta/device-privkey.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let data = std::fs::read_to_string(&path)
+            .map_err(|e| SyncError::Git(format!("read privkey: {e}")))?;
+        let v: serde_json::Value = serde_json::from_str(&data)
+            .map_err(|e| SyncError::Git(format!("parse privkey: {e}")))?;
+        let hex_str = v["ed25519_private"].as_str()
+            .ok_or_else(|| SyncError::Git("privkey missing ed25519_private field".into()))?;
+        let mut bytes: [u8; 32] = hex::decode(hex_str)
+            .map_err(|e| SyncError::Git(format!("decode privkey hex: {e}")))?
+            .try_into()
+            .map_err(|_| SyncError::Git("privkey wrong length".into()))?;
+        let key = ed25519_dalek::SigningKey::from_bytes(&bytes);
+        use zeroize::Zeroize;
+        bytes.zeroize();
+        Ok(Some(key))
+    }
+
+    /// Verify signatures for new commits pulled from remote.
+    /// Uses git2's native extract_signature to get signature + signed data from commit object.
+    /// The signature is embedded in the git commit object itself (gpgsig header).
+    /// Returns number of verified commits. Returns error if any signature is invalid.
+    /// Unsigned commits in the range cause an error (no backward compat for security).
+    pub fn verify_commit_signatures(
+        &self,
+        repo: &Repository,
+        new_oids: &[Oid],
+    ) -> Result<usize, IdttyError> {
+        if new_oids.is_empty() {
+            return Ok(0);
+        }
+
+        // Load known device verifying keys: device_name → hex verifying key
+        let verifying_keys = Self::load_verifying_keys(&self.vault_path)?;
+
+        let mut verified = 0;
+        for oid in new_oids {
+            // Extract signature and signed data from the commit object
+            let (sig_buf, content_buf) = repo.extract_signature(oid, None)
+                .map_err(|_| SyncError::InvalidCommitSignature)?;
+
+            let sig_str = sig_buf.as_str()
+                .ok_or(SyncError::InvalidCommitSignature)?;
+            let signed_data = content_buf.as_str()
+                .ok_or(SyncError::InvalidCommitSignature)?;
+
+            // Parse the signature: extract base64 between header/footer
+            let sig_b64 = Self::extract_b64_from_sig_field(sig_str)?;
+            let sig_bytes = base64::engine::general_purpose::STANDARD
+                .decode(sig_b64)
+                .map_err(|_| SyncError::InvalidCommitSignature)?;
+
+            // Find a verifying key that validates this signature
+            let mut found = false;
+            for vk_hex in verifying_keys.values() {
+                let vk_bytes: [u8; 32] = hex::decode(vk_hex)
+                    .map_err(|_| SyncError::InvalidCommitSignature)?
+                    .try_into()
+                    .map_err(|_| SyncError::InvalidCommitSignature)?;
+                if crate::sync::commit::verify_commit_signature(
+                    &vk_bytes,
+                    signed_data.as_bytes(),
+                    &sig_bytes,
+                ).is_ok() {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return Err(SyncError::InvalidCommitSignature.into());
+            }
+            verified += 1;
+        }
+
+        Ok(verified)
+    }
+
+    /// Extract base64 payload from the "-----BEGIN IDTTY SIGNATURE-----\n<b64>\n-----END IDTTY SIGNATURE-----" format.
+    /// Strips git gpgsig continuation-line spaces (space-prefixed lines) from the raw field.
+    fn extract_b64_from_sig_field(sig_str: &str) -> Result<String, SyncError> {
+        // Strip leading spaces from continuation lines (git gpgsig format)
+        let normalized: String = sig_str
+            .lines()
+            .map(|line| line.strip_prefix(' ').unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let begin = "-----BEGIN IDTTY SIGNATURE-----\n";
+        let end = "\n-----END IDTTY SIGNATURE-----";
+        let start = normalized.find(begin).ok_or(SyncError::InvalidCommitSignature)? + begin.len();
+        let rest = &normalized[start..];
+        let end_pos = rest.find(end).ok_or(SyncError::InvalidCommitSignature)?;
+        Ok(rest[..end_pos].to_string())
+    }
+
+    /// Load device verifying keys from meta/device-registry.json.
+    fn load_verifying_keys(vault_path: &Path) -> Result<std::collections::HashMap<String, String>, IdttyError> {
+        let registry_path = vault_path.join("meta/device-registry.json");
+        if !registry_path.exists() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let data = std::fs::read_to_string(&registry_path)
+            .map_err(|e| SyncError::Git(format!("read registry: {e}")))?;
+        let reg: serde_json::Value = serde_json::from_str(&data)
+            .map_err(|e| SyncError::Git(format!("parse registry: {e}")))?;
+        let keys = reg["devices"].as_array()
+            .map(|arr| {
+                arr.iter().filter_map(|d| {
+                    let name = d["name"].as_str()?.to_string();
+                    let pk = d["signing_public_key"].as_str()?.to_string();
+                    Some((name, pk))
+                }).collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+            .into_iter().collect();
+        Ok(keys)
     }
 }
 
@@ -859,5 +1107,63 @@ mod tests {
             PullResult::FastForward | PullResult::Merged
         ));
         assert!(dir.path().join("b.enc").exists());
+    }
+
+    #[test]
+    fn commit_signing_with_privkey() {
+        let (dir, engine) = make_test_repo();
+
+        // Create signing key file (simulating vault ceremony output)
+        let (signing, verifying) = crate::crypto::signature::generate_ed25519_keypair();
+        let privkey_data = serde_json::json!({
+            "x25519_private": hex::encode([0u8; 32]),
+            "ed25519_private": hex::encode(signing.to_bytes()),
+        });
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(
+            dir.path().join("meta/device-privkey.json"),
+            serde_json::to_string_pretty(&privkey_data).unwrap(),
+        ).unwrap();
+
+        // Recreate engine so it loads the signing key
+        let engine = SyncEngine::new(dir.path(), "test-device");
+
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("data.enc"), b"test").unwrap();
+        let oid = engine.commit_all(&repo, "").unwrap();
+
+        // Verify signature is embedded in the commit object via gpgsig header
+        let (sig_buf, content_buf) = repo.extract_signature(&oid, None).unwrap();
+        let sig_str = sig_buf.as_str().unwrap();
+        let signed_data = content_buf.as_str().unwrap();
+
+        // Extract base64 signature
+        let begin = "-----BEGIN IDTTY SIGNATURE-----\n";
+        let end = "\n-----END IDTTY SIGNATURE-----";
+        let start = sig_str.find(begin).unwrap() + begin.len();
+        let rest = &sig_str[start..];
+        let end_pos = rest.find(end).unwrap();
+        let sig_b64 = &rest[..end_pos];
+        let sig_bytes = base64::engine::general_purpose::STANDARD.decode(sig_b64).unwrap();
+
+        // Verify the signature with the verifying key
+        crate::sync::commit::verify_commit_signature(
+            &verifying.to_bytes(),
+            signed_data.as_bytes(),
+            &sig_bytes,
+        ).unwrap();
+
+        // Verify: tampered data should fail
+        let mut tampered = signed_data.as_bytes().to_vec();
+        if !tampered.is_empty() {
+            tampered[0] ^= 0xFF;
+        }
+        assert!(
+            crate::sync::commit::verify_commit_signature(
+                &verifying.to_bytes(),
+                &tampered,
+                &sig_bytes,
+            ).is_err()
+        );
     }
 }

@@ -152,7 +152,7 @@ impl DeviceRegistry {
         if n == 0 {
             return 0;
         }
-        (n + 1) / 2 // ceil(N/2)
+        n.div_ceil(2)
     }
 }
 

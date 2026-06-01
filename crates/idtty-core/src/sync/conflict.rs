@@ -215,8 +215,7 @@ fn merge_3way_field(
         // Only remote changed
         *local = remote.to_string();
     } else if remote == base && local != base {
-        // Only local changed
-        return;
+        // Only local changed: nothing to do
     } else {
         // Both changed to different things: conflict!
         conflicts.push(FieldConflict {
@@ -241,8 +240,7 @@ fn merge_3way_field_opt(
         // Only remote changed
         *local = remote.clone();
     } else if remote == base && local != base {
-        // Only local changed
-        return;
+        // Only local changed: nothing to do
     } else {
         // Both changed to different things: conflict!
         conflicts.push(FieldConflict {

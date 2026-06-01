@@ -26,6 +26,9 @@ pub enum IdttyError {
     #[error("provider error: {0}")]
     Provider(#[from] ProviderError),
 
+    #[error("integrity error: {0}")]
+    Integrity(#[from] IntegrityError),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -229,4 +232,24 @@ pub enum ProviderError {
 
     #[error("token expired or revoked")]
     TokenInvalid,
+}
+
+/// Integrity check errors (sequence manifest, rollback detection).
+#[derive(Error, Debug)]
+pub enum IntegrityError {
+    #[error("rollback detected: {object} seq went from {old_seq} to {new_seq}")]
+    RollbackDetected {
+        object: String,
+        old_seq: u64,
+        new_seq: u64,
+    },
+
+    #[error("checkpoint signature invalid for device {device_id}")]
+    InvalidCheckpointSignature { device_id: String },
+
+    #[error("manifest corrupted: {0}")]
+    Corrupt(String),
+
+    #[error("IO error: {0}")]
+    Io(String),
 }
