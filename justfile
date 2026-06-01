@@ -110,11 +110,22 @@ _sidecar:
 	set -euo pipefail
 	TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
 	mkdir -p desktop/src-tauri/binaries
+
+	# Staleness check: skip cargo+copy if sidecar is newer than all Rust sources
+	SIDECAR="desktop/src-tauri/binaries/idtty-daemon-$TRIPLE"
+	if [ -f "$SIDECAR" ]; then
+	  # Find any .rs file newer than the sidecar binary
+	  NEWEST_SRC=$(find crates -name '*.rs' -newer "$SIDECAR" -print -quit 2>/dev/null || true)
+	  if [ -z "$NEWEST_SRC" ]; then
+	    echo "Sidecar up-to-date (no Rust changes detected)"
+	    exit 0
+	  fi
+	fi
+
 	{{ linuxbrew_env }} cargo build --release -p idtty-daemon -p idtty-cli
-	cp target/release/idtty-daemon desktop/src-tauri/binaries/idtty-daemon-"$TRIPLE"
-	cp target/release/idtty desktop/src-tauri/binaries/idtty-"$TRIPLE"
-	echo "Sidecar: desktop/src-tauri/binaries/idtty-daemon-$TRIPLE"
-	echo "CLI:     desktop/src-tauri/binaries/idtty-$TRIPLE"
+	cp target/release/idtty-daemon "$SIDECAR"
+	cp target/release/idtty "desktop/src-tauri/binaries/idtty-$TRIPLE"
+	echo "Sidecar rebuilt: $SIDECAR"
 
 # Install desktop npm dependencies
 desktop-deps:
