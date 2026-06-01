@@ -330,6 +330,20 @@ pub fn handle_get(
                                 json_obj["last_name"] = serde_json::json!(data.last_name);
                                 json_obj["email"] = serde_json::json!(data.email);
                             }
+                            idtty_core::types::CipherKind::BankAccount(data) => {
+                                json_obj["bank_name"] = serde_json::json!(data.bank_name);
+                                json_obj["account_number"] = serde_json::json!(data.account_number);
+                            }
+                            idtty_core::types::CipherKind::DriversLicense(data) => {
+                                json_obj["license_number"] = serde_json::json!(data.license_number);
+                            }
+                            idtty_core::types::CipherKind::Passport(data) => {
+                                json_obj["passport_number"] =
+                                    serde_json::json!(data.passport_number);
+                            }
+                            idtty_core::types::CipherKind::CountryId(data) => {
+                                json_obj["id_number"] = serde_json::json!(data.id_number);
+                            }
                             _ => {}
                         }
                         println!("{json_obj}");
@@ -381,6 +395,29 @@ pub fn handle_get(
                                 }
                                 if let Some(ref v) = data.key_fingerprint {
                                     println!("  Fingerprint: {v}");
+                                }
+                            }
+                            idtty_core::types::CipherKind::BankAccount(data) => {
+                                if let Some(ref v) = data.bank_name {
+                                    println!("  Bank Name: {v}");
+                                }
+                                if let Some(ref v) = data.account_number {
+                                    println!("  Account:   {v}");
+                                }
+                            }
+                            idtty_core::types::CipherKind::DriversLicense(data) => {
+                                if let Some(ref v) = data.license_number {
+                                    println!("  License:   {v}");
+                                }
+                            }
+                            idtty_core::types::CipherKind::Passport(data) => {
+                                if let Some(ref v) = data.passport_number {
+                                    println!("  Passport:  {v}");
+                                }
+                            }
+                            idtty_core::types::CipherKind::CountryId(data) => {
+                                if let Some(ref v) = data.id_number {
+                                    println!("  ID Number: {v}");
                                 }
                             }
                             idtty_core::types::CipherKind::SecureNote => {}

@@ -257,6 +257,20 @@ impl VaultState {
                         json["private_key"] = serde_json::json!(data.private_key);
                         json["fingerprint"] = serde_json::json!(data.key_fingerprint);
                     }
+                    idtty_core::types::CipherKind::BankAccount(data) => {
+                        json["bank_name"] = serde_json::json!(data.bank_name);
+                        json["account_number"] = serde_json::json!(data.account_number);
+                        json["routing_number"] = serde_json::json!(data.routing_number);
+                    }
+                    idtty_core::types::CipherKind::DriversLicense(data) => {
+                        json["license_number"] = serde_json::json!(data.license_number);
+                    }
+                    idtty_core::types::CipherKind::Passport(data) => {
+                        json["passport_number"] = serde_json::json!(data.passport_number);
+                    }
+                    idtty_core::types::CipherKind::CountryId(data) => {
+                        json["id_number"] = serde_json::json!(data.id_number);
+                    }
                     idtty_core::types::CipherKind::SecureNote => {}
                 }
                 Ok(json.to_string())

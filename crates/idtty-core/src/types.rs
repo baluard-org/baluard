@@ -275,6 +275,10 @@ pub enum CipherType {
     Card,
     Identity,
     SshKey,
+    BankAccount,
+    DriversLicense,
+    Passport,
+    CountryId,
 }
 
 /// Login-specific cipher data.
@@ -363,6 +367,110 @@ pub struct SshKeyData {
     pub key_fingerprint: Option<String>,
 }
 
+/// Bank Account-specific cipher data.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BankAccountData {
+    #[serde(default)]
+    pub bank_name: Option<String>,
+    #[serde(default)]
+    pub name_on_account: Option<String>,
+    #[serde(default)]
+    pub account_type: Option<String>,
+    #[serde(default)]
+    pub account_number: Option<String>,
+    #[serde(default)]
+    pub routing_number: Option<String>,
+    #[serde(default)]
+    pub branch_number: Option<String>,
+    #[serde(default)]
+    pub pin: Option<String>,
+    #[serde(default)]
+    pub swift_code: Option<String>,
+    #[serde(default)]
+    pub iban: Option<String>,
+    #[serde(default)]
+    pub bank_contact_phone: Option<String>,
+}
+
+/// Driver's License-specific cipher data.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DriversLicenseData {
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub middle_name: Option<String>,
+    #[serde(default)]
+    pub last_name: Option<String>,
+    #[serde(default)]
+    pub date_of_birth: Option<String>,
+    #[serde(default)]
+    pub license_number: Option<String>,
+    #[serde(default)]
+    pub issuing_country: Option<String>,
+    #[serde(default)]
+    pub issuing_state: Option<String>,
+    #[serde(default)]
+    pub issue_date: Option<String>,
+    #[serde(default)]
+    pub expiration_date: Option<String>,
+    #[serde(default)]
+    pub issuing_authority: Option<String>,
+    #[serde(default)]
+    pub license_class: Option<String>,
+}
+
+/// Passport-specific cipher data.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PassportData {
+    #[serde(default)]
+    pub surname: Option<String>,
+    #[serde(default)]
+    pub given_name: Option<String>,
+    #[serde(default)]
+    pub date_of_birth: Option<String>,
+    #[serde(default)]
+    pub sex: Option<String>,
+    #[serde(default)]
+    pub birth_place: Option<String>,
+    #[serde(default)]
+    pub nationality: Option<String>,
+    #[serde(default)]
+    pub issuing_country: Option<String>,
+    #[serde(default)]
+    pub passport_number: Option<String>,
+    #[serde(default)]
+    pub passport_type: Option<String>,
+    #[serde(default)]
+    pub national_identification_number: Option<String>,
+    #[serde(default)]
+    pub issuing_authority: Option<String>,
+    #[serde(default)]
+    pub issue_date: Option<String>,
+    #[serde(default)]
+    pub expiration_date: Option<String>,
+}
+
+/// Country ID-specific cipher data.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CountryIdData {
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub last_name: Option<String>,
+    #[serde(default)]
+    pub id_number: Option<String>,
+    #[serde(default)]
+    pub issuing_country: Option<String>,
+    #[serde(default)]
+    pub date_of_birth: Option<String>,
+    #[serde(default)]
+    pub sex: Option<String>,
+    #[serde(default)]
+    pub issue_date: Option<String>,
+    #[serde(default)]
+    pub expiration_date: Option<String>,
+}
+
 /// Type-safe cipher kind. Makes invalid states unrepresentable.
 /// Card(LoginData) is a compile error.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -375,6 +483,10 @@ pub enum CipherKind {
     Card(CardData),
     Identity(IdentityData),
     SshKey(SshKeyData),
+    BankAccount(BankAccountData),
+    DriversLicense(DriversLicenseData),
+    Passport(PassportData),
+    CountryId(CountryIdData),
 }
 
 impl CipherKind {
@@ -386,6 +498,10 @@ impl CipherKind {
             CipherKind::Card(_) => CipherType::Card,
             CipherKind::Identity(_) => CipherType::Identity,
             CipherKind::SshKey(_) => CipherType::SshKey,
+            CipherKind::BankAccount(_) => CipherType::BankAccount,
+            CipherKind::DriversLicense(_) => CipherType::DriversLicense,
+            CipherKind::Passport(_) => CipherType::Passport,
+            CipherKind::CountryId(_) => CipherType::CountryId,
         }
     }
 }
@@ -761,6 +877,72 @@ mod tests {
                 assert_eq!(data.key_fingerprint.as_deref(), Some("SHA256:abc123"));
             }
             _ => panic!("expected SshKey"),
+        }
+
+        // Bank Account
+        let bank = CipherKind::BankAccount(BankAccountData {
+            bank_name: Some("Chase".into()),
+            account_number: Some("123456789".into()),
+            routing_number: Some("987654321".into()),
+            ..Default::default()
+        });
+        let json = serde_json::to_string(&bank).unwrap();
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        match back {
+            CipherKind::BankAccount(data) => {
+                assert_eq!(data.bank_name.as_deref(), Some("Chase"));
+                assert_eq!(data.account_number.as_deref(), Some("123456789"));
+                assert_eq!(data.routing_number.as_deref(), Some("987654321"));
+            }
+            _ => panic!("expected BankAccount"),
+        }
+
+        // Driver's License
+        let dl = CipherKind::DriversLicense(DriversLicenseData {
+            first_name: Some("Jane".into()),
+            license_number: Some("D55555".into()),
+            ..Default::default()
+        });
+        let json = serde_json::to_string(&dl).unwrap();
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        match back {
+            CipherKind::DriversLicense(data) => {
+                assert_eq!(data.first_name.as_deref(), Some("Jane"));
+                assert_eq!(data.license_number.as_deref(), Some("D55555"));
+            }
+            _ => panic!("expected DriversLicense"),
+        }
+
+        // Passport
+        let passport = CipherKind::Passport(PassportData {
+            surname: Some("Smith".into()),
+            passport_number: Some("P12345".into()),
+            ..Default::default()
+        });
+        let json = serde_json::to_string(&passport).unwrap();
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        match back {
+            CipherKind::Passport(data) => {
+                assert_eq!(data.surname.as_deref(), Some("Smith"));
+                assert_eq!(data.passport_number.as_deref(), Some("P12345"));
+            }
+            _ => panic!("expected Passport"),
+        }
+
+        // Country ID
+        let cid = CipherKind::CountryId(CountryIdData {
+            first_name: Some("Esteban".into()),
+            id_number: Some("ID-888".into()),
+            ..Default::default()
+        });
+        let json = serde_json::to_string(&cid).unwrap();
+        let back: CipherKind = serde_json::from_str(&json).unwrap();
+        match back {
+            CipherKind::CountryId(data) => {
+                assert_eq!(data.first_name.as_deref(), Some("Esteban"));
+                assert_eq!(data.id_number.as_deref(), Some("ID-888"));
+            }
+            _ => panic!("expected CountryId"),
         }
     }
 
