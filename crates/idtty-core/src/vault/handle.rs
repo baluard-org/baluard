@@ -19,6 +19,7 @@ use crate::error::{IdttyError, VaultError};
 use crate::keys::hierarchy::{ItemKey, RootKey};
 use crate::types::{Cipher, CipherInput, KdfParams, Tier};
 use crate::vault::cipher;
+use crate::vault::index;
 
 use zeroize::Zeroize;
 
@@ -570,13 +571,30 @@ impl VaultHandle {
     }
 
     /// List cipher metadata (requires unlocked vault for full CipherMeta).
-    /// Decrypts each cipher to extract name, type, favorite, username.
+    /// Decrypts from index.enc if available, otherwise auto-heals by scanning directory.
     pub fn list_cipher_meta(&self) -> Result<Vec<crate::types::CipherMeta>, IdttyError> {
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
+        // Try reading from index.enc
+        let index_path = self.path.join("meta/index.enc");
+        if index_path.exists() {
+            if let Ok(index_key) =
+                crate::crypto::hkdf_derive::derive_index_key(unlocked.root_key.as_bytes())
+            {
+                if let Ok(envelope_bytes) = std::fs::read(&index_path) {
+                    if let Ok(ciphers) =
+                        index::decrypt_index(self.vault_id, &envelope_bytes, &index_key)
+                    {
+                        return Ok(ciphers);
+                    }
+                }
+            }
+        }
+
+        // Auto-heal: rebuild index and save
         let ids = self.list_cipher_ids()?;
         let mut metas = Vec::with_capacity(ids.len());
 
@@ -611,6 +629,20 @@ impl VaultHandle {
                 update_seq: c.update_seq,
                 updated_at: c.updated_at,
             });
+        }
+
+        // Save healed index
+        if let Ok(index_key) =
+            crate::crypto::hkdf_derive::derive_index_key(unlocked.root_key.as_bytes())
+        {
+            if let Ok(enc_bytes) =
+                index::encrypt_index(self.vault_id, &metas, &index_key, unlocked.current_epoch)
+            {
+                let tmp_path = index_path.with_extension("enc.tmp");
+                if std::fs::write(&tmp_path, enc_bytes).is_ok() {
+                    let _ = std::fs::rename(tmp_path, &index_path);
+                }
+            }
         }
 
         Ok(metas)
@@ -795,9 +827,11 @@ impl VaultHandle {
             let envelope_bytes = std::fs::read(&active_path)?;
             std::fs::write(&trash_path, &envelope_bytes)?;
             std::fs::remove_file(&active_path)?;
+            self.rebuild_index()?;
             Ok(())
         } else if trash_path.exists() {
             std::fs::remove_file(&trash_path)?;
+            self.rebuild_index()?;
             Ok(())
         } else {
             Err(VaultError::CipherNotFound(cipher_id.to_string()).into())
@@ -838,6 +872,7 @@ impl VaultHandle {
         let envelope_bytes = std::fs::read(&trash_path)?;
         std::fs::write(&active_path, &envelope_bytes)?;
         std::fs::remove_file(&trash_path)?;
+        self.rebuild_index()?;
         Ok(())
     }
 
@@ -895,6 +930,7 @@ impl VaultHandle {
 
         let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
         std::fs::write(&file_path, &file.envelope_bytes)?;
+        self.rebuild_index()?;
 
         Ok(cipher_id)
     }
@@ -987,6 +1023,7 @@ impl VaultHandle {
         )?;
 
         std::fs::write(&file_path, &file.envelope_bytes)?;
+        self.rebuild_index()?;
 
         Ok(())
     }
@@ -1502,6 +1539,63 @@ impl VaultHandle {
         // M6 fix: sync registry after recovery
         self.sync_registry_from_device_manager();
         Ok(result)
+    }
+
+    /// Rebuild index.enc from active ciphers on disk.
+    pub fn rebuild_index(&self) -> Result<(), IdttyError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+
+        let ids = self.list_cipher_ids()?;
+        let mut metas = Vec::with_capacity(ids.len());
+
+        for id in ids {
+            let file_path = self.path.join(format!("ciphers/{}.enc", id));
+            if !file_path.exists() {
+                continue;
+            }
+            let envelope_bytes = std::fs::read(&file_path)?;
+            let file = cipher::CipherFile { id, envelope_bytes };
+
+            let c = match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &file) {
+                Ok(c) => c,
+                Err(_) => continue, // skip undecryptable entries
+            };
+
+            let username = match &c.kind {
+                crate::types::CipherKind::Login(data) => data.username.clone(),
+                _ => None,
+            };
+
+            metas.push(crate::types::CipherMeta {
+                id: c.id,
+                name: c.name,
+                folder_id: c.folder_id,
+                cipher_type: c.kind.cipher_type(),
+                favorite: c.favorite,
+                reprompt: c.reprompt,
+                username,
+                tier: c.tier,
+                key_epoch: c.key_epoch,
+                update_seq: c.update_seq,
+                updated_at: c.updated_at,
+            });
+        }
+
+        let index_key = hkdf_derive::derive_index_key(unlocked.root_key.as_bytes())?;
+        let enc_bytes =
+            index::encrypt_index(self.vault_id, &metas, &index_key, unlocked.current_epoch)?;
+
+        let index_dir = self.path.join("meta");
+        std::fs::create_dir_all(&index_dir)?;
+        let index_path = index_dir.join("index.enc");
+        let tmp_path = index_path.with_extension("enc.tmp");
+        std::fs::write(&tmp_path, enc_bytes)?;
+        std::fs::rename(tmp_path, index_path)?;
+
+        Ok(())
     }
 }
 
@@ -2293,5 +2387,59 @@ mod tests {
             CipherRead::Decrypted(c) => assert_eq!(c.name, "GitHub"),
             CipherRead::Locked(_) => panic!("expected decrypted after re-open"),
         }
+    }
+
+    #[test]
+    fn test_index_fast_lookup_and_auto_heal() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // 1. Initial empty index is created on unlock/load/add
+        let metas = handle.list_cipher_meta().unwrap();
+        assert_eq!(metas.len(), 0);
+
+        // Verify index.enc exists
+        let index_path = handle.path.join("meta/index.enc");
+        assert!(index_path.exists());
+
+        // 2. Add some ciphers - should automatically update index
+        let _id1 = handle
+            .add_cipher(&CipherInput {
+                name: "GH1".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let _id2 = handle
+            .add_cipher(&CipherInput {
+                name: "AWS1".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // List metadata - should read from index.enc
+        let metas = handle.list_cipher_meta().unwrap();
+        assert_eq!(metas.len(), 2);
+        assert!(metas.iter().any(|m| m.name == "GH1"));
+        assert!(metas.iter().any(|m| m.name == "AWS1"));
+
+        // 3. Test Auto-Heal: corrupt the index.enc by writing junk bytes to it
+        std::fs::write(&index_path, b"corrupted-junk-bytes").unwrap();
+
+        // List metadata should trigger decryption failure on index, then auto-heal,
+        // scan ciphers folder, rebuild index, and return valid metadata
+        let metas_healed = handle.list_cipher_meta().unwrap();
+        assert_eq!(metas_healed.len(), 2);
+        assert!(metas_healed.iter().any(|m| m.name == "GH1"));
+        assert!(metas_healed.iter().any(|m| m.name == "AWS1"));
+
+        // Verify that index.enc was automatically rewritten and is now healthy again
+        let envelope_bytes = std::fs::read(&index_path).unwrap();
+        let unlocked = handle.unlocked();
+        let index_key =
+            crate::crypto::hkdf_derive::derive_index_key(unlocked.root_key.as_bytes()).unwrap();
+        let decoded = index::decrypt_index(handle.vault_id, &envelope_bytes, &index_key).unwrap();
+        assert_eq!(decoded.len(), 2);
     }
 }
