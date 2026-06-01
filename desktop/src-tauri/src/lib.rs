@@ -346,7 +346,9 @@ pub fn run() {
 
             // Set window size dynamically to 70% width and 85% height of screen size
             if let Some(window) = app.get_webview_window("main") {
-                if let Ok(Some(monitor)) = window.primary_monitor() {
+                let monitor = app.primary_monitor().ok().flatten()
+                    .or_else(|| window.primary_monitor().ok().flatten());
+                if let Some(monitor) = monitor {
                     let monitor_size = monitor.size();
                     let scale_factor = monitor.scale_factor();
                     let width = (monitor_size.width as f64 * 0.70) / scale_factor;
