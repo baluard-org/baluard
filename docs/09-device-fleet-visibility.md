@@ -20,12 +20,12 @@
 ### Signed commits (partial)
 - Sync engine signs every commit with Ed25519 device key (`create_signed_commit` in `sync/engine.rs`)
 - Signature embedded as `gpgsig` header: `-----BEGIN IDTTY SIGNATURE-----\n<base64>\n-----END IDTTY SIGNATURE-----`
-- `verify_commit_signatures()` validates incoming commits against `meta/device-registry.json` verifying keys
+- `verify_commit_signatures()` validates incoming commits against device signing keys from `meta/devices.json`
 - **Gap**: Verification rejects ANY commit from an unknown key. But it reads from a plaintext `device-registry.json` (name -> key map), NOT from the encrypted `meta/devices.json`. This needs reconciliation with the encrypted registry.
 
 ### Device registry
 - `DeviceRegistry` in `devices.rs`: enroll, revoke, force-evict, quorum calculation
-- Stored encrypted in `meta/devices.json` via `DeviceManager`
+- Stored in `meta/devices.json` (plaintext, per D1) via `DeviceManager`
 - `DeviceEntry`: UUID, name, X25519 pubkey, Ed25519 pubkey, `enrolled_at`
 - **Missing**: No `last_seen`, `last_sync`, `enrolled_by`, `last_seen_epoch` fields
 
@@ -40,7 +40,7 @@
 
 ### New file: `meta/device_activity.json`
 
-Plaintext, UUID-only activity index. No device names (those stay encrypted in `devices.json`). One file, merged on every push. Last-writer-wins per UUID key.
+Plaintext, UUID-only activity index. Device names are in `devices.json` (also plaintext, per D1). One file, merged on every push. Last-writer-wins per UUID key.
 
 ```json
 {
@@ -93,7 +93,7 @@ pub struct DeviceEntry {
 
 ### Signed commit verification (hardening)
 
-Current `verify_commit_signatures()` reads from `meta/device-registry.json` (plaintext name -> key map). This should read from the encrypted `DeviceRegistry` instead (or cross-check both). A revoked device's signing key must be rejected even if the plaintext file is stale.
+Current `verify_commit_signatures()` reads from `meta/device-registry.json` (legacy, to be consolidated in Phase 2 per D2). This should read from the encrypted `DeviceRegistry` instead (or cross-check both). A revoked device's signing key must be rejected even if the plaintext file is stale.
 
 Flow on pull:
 1. Decrypt `meta/devices.json` -> get current `DeviceRegistry` with valid signing keys
@@ -196,10 +196,10 @@ Rules:
 1. Create `meta/device_activity.json` read/write functions in `device_manager.rs`
    - `read_activity_index(vault_path) -> DeviceActivityIndex`
    - `update_activity_index(vault_path, device_id, commit_sha, epoch) -> Result<()>`
-   - Merge strategy: union of keys, latest timestamp wins
+   - Merge strategy: last-writer-wins (git default, per D5)
 2. Hook into sync engine: call `update_activity_index()` after every `commit_all()`
-3. Add daemon route: `vault.device_activity` -> returns `{devices: [{id, last_push, last_commit, push_count, epoch}]}`
-4. Tests: activity index merge, concurrent updates, missing file fallback
+3. Add daemon route: `vault.device_activity` -> returns `{devices: [{id, last_push, last_commit, epoch}]}`
+4. Tests: activity index read/write, missing file fallback
 
 Files changed:
 - `crates/idtty-core/src/device_manager.rs` (activity index read/write/update)
@@ -214,8 +214,8 @@ Files changed:
 2. Update `enroll()` to accept `enrolled_by` parameter
 3. Update `commit_all` hook to write `last_seen_epoch` to activity index
 4. Update `revoke()` and `force_evict()` to also clean `meta/device_activity.json`
-5. Cross-check: `verify_commit_signatures()` should read from encrypted registry, not plaintext
-6. Tests: new fields serialize/deserialize, revocation cleans activity index
+5. Update `verify_commit_signatures()` to read from `meta/devices.json` (per D2). Deprecate and remove `meta/device-registry.json` and `meta/device-pks`
+6. Tests: new fields serialize/deserialize, revocation cleans activity index, old files no longer read
 
 Files changed:
 - `crates/idtty-core/src/vault/manifest.rs` (DeviceEntry fields)
