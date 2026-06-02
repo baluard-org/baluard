@@ -3463,8 +3463,8 @@ function DeviceFleetPanel() {
           </p>
           <ol class="text-xs text-red-300 list-decimal list-inside space-y-1">
             <li>Go to your GitHub/GitLab repository settings</li>
-            <li>Remove the revoked device\'s deploy key or PAT</li>
-            <li>Optionally regenerate your remaining device\'s key</li>
+            <li>Remove the revoked device's deploy key or PAT</li>
+            <li>Optionally regenerate your remaining device's key</li>
           </ol>
           <label class="flex items-center gap-2 mt-3 cursor-pointer">
             <input type="checkbox" onChange={(e) => { if (e.target.checked) app.setRevokeWarning(null); }} class="accent-red-500" />

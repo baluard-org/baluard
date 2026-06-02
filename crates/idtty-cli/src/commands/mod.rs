@@ -717,7 +717,7 @@ pub fn handle_rotation_abort(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
-            Err("rotation-abort requires --direct mode".into())
+            Err("rotation-abort requires --direct mode. Use: idtty --direct devices rotation-abort".into())
         }
         ConnectMode::Direct => {
             let path = Path::new(vault_path);
@@ -730,7 +730,7 @@ pub fn handle_rotation_abort(
                 return Ok(());
             }
 
-            let elapsed = dm.rotation_stalled_secs(0).unwrap_or(0);
+            let elapsed = dm.rotation_stalled_secs(3600).unwrap_or(0);
             println!("Rotation has been in ROTATING state for {}s", elapsed);
 
             // Safety: abort only if no cipher files at new epoch
@@ -758,7 +758,7 @@ pub fn handle_rotation_status(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
-            Err("rotation-status requires --direct mode".into())
+            Err("rotation-status requires --direct mode. Use: idtty --direct devices rotation-status".into())
         }
         ConnectMode::Direct => {
             let path = Path::new(vault_path);
@@ -770,7 +770,7 @@ pub fn handle_rotation_status(
             println!("Writes: {}", if dm.writes_allowed() { "allowed" } else { "BLOCKED" });
 
             if dm.epoch_state() == idtty_core::keys::epoch::EpochState::Rotating {
-                if let Some(elapsed) = dm.rotation_stalled_secs(0) {
+                if let Some(elapsed) = dm.rotation_stalled_secs(3600) {
                     println!("Rotation elapsed: {}s", elapsed);
                 }
                 if let Some(tx) = dm.pending_transaction() {
@@ -791,7 +791,7 @@ pub fn handle_device_info(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
-            Err("device info requires --direct mode".into())
+            Err("device info requires --direct mode. Use: idtty --direct devices info".into())
         }
         ConnectMode::Direct => {
             let path = Path::new(vault_path);
@@ -836,7 +836,7 @@ pub fn handle_device_revoke(
 
     match mode {
         ConnectMode::Daemon => {
-            Err("device revoke requires --direct mode".into())
+            Err("device revoke requires --direct mode. Use: idtty --direct devices revoke <UUID>".into())
         }
         ConnectMode::Direct => {
             let path = Path::new(vault_path);
