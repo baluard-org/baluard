@@ -316,11 +316,18 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| Encrypted JSON export | IDtty-native format with Argon2id + AES-256-GCM. BW-compatible JSON export exists already. NOT compatible with BW's encrypted export (different KDF/AEAD). Format needs documentation | Not started |
 | Archive entries | Hide from main list (distinct from trash). BW has this | Not started |
-| FIDO2 credential storage | On Login cipher type. Requires hardware auth infrastructure | Not started |
 | Extra cipher types | Bank Account (10 fields), Driver's License (12 fields), Passport (13 fields). BW recently added these | Deferred |
 | Additional import formats | Dashlane, Enpass, NordPass, Avast, Avira, Keeper, RoboForm, Myki, mSecure, Blur | Not started |
+
+### Nice to Have / Future
+
+Features parked for the far future. Do not start without explicit confirmation.
+
+| Item | Description | Blocker |
+|------|-------------|---------|
+| Encrypted JSON export | IDtty-native format (Argon2id + AES-256-GCM). Vendor-locked: needs idtty installed to decrypt. Git clone + recovery phrase already covers disaster recovery | Low priority, needs format documentation |
+| FIDO2 credential storage | On Login cipher type. Requires hardware auth infrastructure | Needs FIDO2-compatible hardware (e.g. YubiKey, Titan) for testing |
 
 ### Out of Scope (No Server)
 
