@@ -1112,6 +1112,10 @@ impl VaultState {
             eprintln!("warning: failed to clean activity index: {e}");
         }
 
+        // TODO: Write new keywrap file using result.new_root_key.
+        // Without this, vault unlock requires recovery phrase on next launch.
+        eprintln!("warning: keywrap file not yet written for new epoch. Recovery phrase may be needed.");
+
         let json = serde_json::json!({
             "revoked_device": result.revoked_device_id.to_string(),
             "revoked_name": result.revoked_name,

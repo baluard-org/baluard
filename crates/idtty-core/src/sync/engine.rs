@@ -438,7 +438,7 @@ impl SyncEngine {
             eprintln!("warning: failed to update activity index: {e}");
         }
 
-        // Update last_seen_epoch on the DeviceEntry
+        // Update last_seen_epoch on the DeviceEntry (atomic write)
         let reg_path = self.vault_path.join("meta/devices.json");
         if let Ok(data) = std::fs::read_to_string(&reg_path) {
             if let Ok(mut reg) = serde_json::from_str::<crate::devices::DeviceRegistry>(&data) {
@@ -446,7 +446,13 @@ impl SyncEngine {
                     entry.last_seen_epoch = epoch;
                 }
                 if let Ok(json) = serde_json::to_string_pretty(&reg) {
-                    let _ = std::fs::write(&reg_path, json);
+                    let tmp_path = reg_path.with_file_name(format!(
+                        "{}.tmp",
+                        reg_path.file_name().unwrap_or_default().to_string_lossy()
+                    ));
+                    if std::fs::write(&tmp_path, &json).is_ok() {
+                        let _ = std::fs::rename(&tmp_path, &reg_path);
+                    }
                 }
             }
         }
