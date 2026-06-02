@@ -1753,6 +1753,7 @@ mod tests {
                 "this-device".into(),
                 pub_enc.to_bytes(),
                 verifying.to_bytes(),
+                None,
             )
             .unwrap();
         std::fs::write(

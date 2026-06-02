@@ -727,6 +727,7 @@ impl DeviceManager {
             payload.name.clone(),
             enc_arr,
             sig_arr,
+            approval.map(|a| a.approver_device_id),
         )?;
 
         // MISS-4: auto-persist enrollment
@@ -1092,6 +1093,7 @@ impl DeviceManager {
             new_device_name.to_string(),
             x25519_public.to_bytes(),
             crate::crypto::signature::verifying_key_bytes(&ed25519_verifying),
+            None, // Recovery: no approver
         )?;
 
         // Step 8: Set epoch to match existing vault data
@@ -1458,7 +1460,8 @@ mod tests {
                 "D1".into(),
                 x_pk.to_bytes(),
                 sig::verifying_key_bytes(&e_pk),
-            )
+            None,
+        )
             .unwrap();
 
         let (_root_key, tx) = mgr.initiate_rotation(device_id).unwrap();
@@ -1482,7 +1485,8 @@ mod tests {
                 "Solo".into(),
                 x_pk.to_bytes(),
                 sig::verifying_key_bytes(&e_pk),
-            )
+            None,
+        )
             .unwrap();
 
         let result = mgr.force_evict_and_rotate(device_id).unwrap();
@@ -1499,15 +1503,15 @@ mod tests {
 
         let d1 = mgr
             .registry
-            .enroll("D1".into(), [1u8; 32], [2u8; 32])
+            .enroll("D1".into(), [1u8; 32], [2u8; 32], None)
             .unwrap();
         let d2 = mgr
             .registry
-            .enroll("D2".into(), [3u8; 32], [4u8; 32])
+            .enroll("D2".into(), [3u8; 32], [4u8; 32], None)
             .unwrap();
         let d3 = mgr
             .registry
-            .enroll("D3".into(), [5u8; 32], [6u8; 32])
+            .enroll("D3".into(), [5u8; 32], [6u8; 32], None)
             .unwrap();
 
         // Note: force_evict keeps ONLY surviving device, removes all others.
@@ -1525,7 +1529,7 @@ mod tests {
         mgr.epoch.activate().unwrap();
         let device_id = Uuid::new_v4();
         mgr.registry
-            .enroll_with_id(device_id, "D1".into(), [1u8; 32], [2u8; 32])
+            .enroll_with_id(device_id, "D1".into(), [1u8; 32], [2u8; 32], None)
             .unwrap();
 
         mgr.initiate_rotation(device_id).unwrap();
@@ -1547,7 +1551,8 @@ mod tests {
                 "D1".into(),
                 x_pk.to_bytes(),
                 sig::verifying_key_bytes(&verifying_key),
-            )
+            None,
+        )
             .unwrap();
 
         let (_, _) = mgr.initiate_rotation(device_id).unwrap();
@@ -1581,7 +1586,8 @@ mod tests {
                 "D1".into(),
                 x_pk.to_bytes(),
                 sig::verifying_key_bytes(&real_verifying),
-            )
+            None,
+        )
             .unwrap();
 
         let (_, tx) = mgr.initiate_rotation(device_id).unwrap();
@@ -1609,15 +1615,15 @@ mod tests {
         // 3 devices: need ceil(3/2) = 2 acks
         let _d1 = mgr
             .registry
-            .enroll("D1".into(), [1u8; 32], [2u8; 32])
+            .enroll("D1".into(), [1u8; 32], [2u8; 32], None)
             .unwrap();
         let _d2 = mgr
             .registry
-            .enroll("D2".into(), [3u8; 32], [4u8; 32])
+            .enroll("D2".into(), [3u8; 32], [4u8; 32], None)
             .unwrap();
         let _d3 = mgr
             .registry
-            .enroll("D3".into(), [5u8; 32], [6u8; 32])
+            .enroll("D3".into(), [5u8; 32], [6u8; 32], None)
             .unwrap();
 
         // Can't initiate with real rotation (need real keypairs for HPKE wrapping)
@@ -1655,7 +1661,8 @@ mod tests {
                 "D1".into(),
                 x_pk1.to_bytes(),
                 sig::verifying_key_bytes(&vk1),
-            )
+            None,
+        )
             .unwrap();
 
         let (_, x_pk2) = hpke_wrap::generate_x25519_keypair();
@@ -1667,7 +1674,8 @@ mod tests {
                 "D2".into(),
                 x_pk2.to_bytes(),
                 sig::verifying_key_bytes(&e_pk2),
-            )
+            None,
+        )
             .unwrap();
 
         let (_, tx) = mgr.initiate_rotation(d1).unwrap();
@@ -1705,7 +1713,8 @@ mod tests {
                 "D1".into(),
                 x_pk1.to_bytes(),
                 sig::verifying_key_bytes(&vk1),
-            )
+            None,
+        )
             .unwrap();
 
         let (_, x_pk2) = hpke_wrap::generate_x25519_keypair();
@@ -1716,7 +1725,8 @@ mod tests {
                 "D2".into(),
                 x_pk2.to_bytes(),
                 sig::verifying_key_bytes(&e_pk2),
-            )
+            None,
+        )
             .unwrap();
 
         let (_, x_pk3) = hpke_wrap::generate_x25519_keypair();
@@ -1727,7 +1737,8 @@ mod tests {
                 "D3".into(),
                 x_pk3.to_bytes(),
                 sig::verifying_key_bytes(&e_pk3),
-            )
+            None,
+        )
             .unwrap();
 
         assert_eq!(mgr.registry.quorum_required(), 2);
@@ -1798,7 +1809,7 @@ mod tests {
         // Fill beyond capacity using direct registry enrollment + nonce recording
         for i in 0..=MAX_SEEN_NONCES {
             mgr.registry
-                .enroll_with_id(Uuid::new_v4(), format!("Dev{i}"), [0u8; 32], [0u8; 32])
+                .enroll_with_id(Uuid::new_v4(), format!("Dev{i}"), [0u8; 32], [0u8; 32], None)
                 .unwrap();
             mgr.record_nonce(format!("nonce-{i}"));
         }
@@ -1857,7 +1868,8 @@ mod tests {
                     "Solo".into(),
                     x_pk.to_bytes(),
                     sig::verifying_key_bytes(&vk),
-                )
+            None,
+        )
                 .unwrap();
 
             // Initiate rotation - auto_save should persist ROTATING state
