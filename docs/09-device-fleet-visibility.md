@@ -1,6 +1,6 @@
 # Device Fleet Visibility & Revocation
 
-**Status**: Plan
+**Status**: Implemented
 **Last updated**: 2026-06-02
 **Reviewers**: Esteban (lead architect), peer review (security architecture review)
 
