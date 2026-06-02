@@ -135,10 +135,12 @@ Prerequisites: >= 2 devices enrolled, quorum can be reached.
 
 Already built. Enhances with:
 
-1. `force_evict(surviving_id)` rewrites registry with only surviving device
-2. Root key rotation + full re-encryption
-3. `meta/device_activity.json` rewritten with only surviving device
+1. `revoke_device_and_rotate(target_id, self_id)` removes only the target device, preserves all other enrolled devices
+2. Root key rotation (epoch increment)
+3. `meta/device_activity.json` cleaned for revoked device
 4. Push with signed commit
+
+**Fallback**: `force_evict(surviving_id)` for emergency single-survivor scenario (all other devices lost). Kept for disaster recovery.
 
 ### What the revoked device experiences
 
@@ -263,11 +265,11 @@ Files changed:
    - Enrolled by (if available, "Founding device" for `None`)
    - Last sync time
    - Current epoch vs device epoch
-   - Push count (label as "self-reported, unverified" or derive from git log)
-5. "Revoke" button per device (triggers daemon revocation flow)
-6. Post-revocation warning banner: persistent checkbox acknowledgment "I have rotated git credentials on GitHub/GitLab". Parse remote URL for direct link to `github.com/<repo>/settings/keys`
+5. "Revoke" button per device (triggers daemon `device.revoke` route)
+6. Post-revocation warning banner: persistent checkbox acknowledgment "I have rotated git credentials on GitHub/GitLab".
 7. Stale device prompt: "Review devices" notification
-8. Tests: manual verification with multi-device setup
+8. "This device" badge on current device, revoke hidden for self
+9. Tests: manual verification with multi-device setup
 
 Files changed:
 - `desktop/src/App.jsx` (Devices tab, device cards, revoke UI, warnings)

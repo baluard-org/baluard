@@ -208,6 +208,19 @@ CREATED → ACTIVE → ROTATING → RETIRED → DESTROYED
 
 When a device is lost or compromised, the surviving device(s) must evict it and rekey.
 
+**Selective revocation** (preferred, multi-device vaults):
+```
+1. User authenticates on surviving device
+2. DeviceManager.revoke_device_and_rotate(target_id, self_id)
+3. Only target device removed from registry (others preserved)
+4. Epoch rotation initiated immediately
+5. New Root Key generated, HPKE-wrapped for all remaining devices
+6. Self-ack, immediate commit
+7. Activity index cleaned for revoked device
+8. Vault writes re-enabled under new epoch
+```
+
+**Emergency force-evict** (single-survivor disaster recovery):
 ```
 1. User authenticates on surviving device
 2. DeviceManager.force_evict_and_rotate(surviving_device_id)
@@ -219,7 +232,7 @@ When a device is lost or compromised, the surviving device(s) must evict it and 
 8. Vault writes re-enabled under new epoch
 ```
 
-Force eviction without rotation is NOT eviction. The evicted device can decrypt everything until rekey happens. `force_evict_and_rotate` is atomic.
+Force eviction without rotation is NOT eviction. The evicted device can decrypt everything until rekey happens. Both paths are atomic.
 
 ---
 

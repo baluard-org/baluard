@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-05-31 | **Updated:** 2026-06-01
+**Generated:** 2026-05-31 | **Updated:** 2026-06-02
 
 ## OVERVIEW
 Project: **IDtty** (Git-native password manager / Space Manager)
@@ -112,6 +112,8 @@ idtty/
 * **Desktop frontend**: `desktop/src/App.jsx` (all UI components)
 * **Design docs**: `docs/01-architecture-decisions.md` (authoritative for all decisions)
 * **Protobuf schemas**: `proto/` (compiled by prost-build in daemon + CLI)
+* **Device fleet visibility**: `crates/idtty-core/src/device_manager.rs` (activity index, abort markers, selective revoke)
+* **Fleet visibility plan**: `docs/09-device-fleet-visibility.md`
 
 ## NOTES
 * **Single Rust core**: All crypto, vault format, padding, key lifecycle, and git sync live in `idtty-core`. No duplicate implementations.
@@ -143,6 +145,7 @@ idtty/
 * **Nested Folders (Phase G)**: `create_folder_with_parent` with depth limit (16). `delete_folder` cascades via `collect_descendant_ids` (BFS). Desktop FolderTree/FolderNode recursive components.
 * **Device Lifecycle (MISS-1 through MISS-5)**: `device_manager.rs` owns registry, epoch state machine, rotation coordinator. VaultHandle holds a DeviceManager instance. `rotate_root_key()` performs atomic re-encryption with staged `.tmp` writes. `recover_from_phrase()` returns `RecoveryResult` with private keys. `RotationObserver` trait for sync engine hooks. Epoch state machine: CREATED→ACTIVE→ROTATING→RETIRED→DESTROYED. Cipher writes blocked during ROTATING.
 * **ItemKey derivation**: `HKDF(SGK, "idtty-item-v1" || epoch || cipher_id)`. SGK derived from RootKey via `HKDF(RootKey, "idtty-sgk-v1" || epoch)`. Epoch-bound: rotation forces full re-encryption. Space Group Key is the intermediate layer between RootKey and ItemKeys.
+* **Device Fleet Visibility (Phase 1-5, done)**: Activity index at `meta/device_activity.json` updated on every commit. `last_seen_epoch` on DeviceEntry. Selective revoke via `revoke_device_and_rotate()` (not force-evict). Daemon routes: `device.revoke`, `vault.device_activity`. Abort marker: `.idtty/rekey/{new_epoch}.aborted` (cleaned after detection). Desktop: Devices tab with status badges, "This device" indicator, revoke button (hidden for self). **Known gap**: keywrap file not written after revocation; recovery phrase is fallback.
 * **Full gap analysis**: See `docs/full-gaps.md` for comprehensive docs-vs-code diff.
 
 ## UX PRINCIPLES
@@ -165,9 +168,9 @@ idtty/
 | `idtty-core` Space Group Key | RootKey → SGK → ItemKey hierarchy, tested (7 new tests) |
 | `idtty-core` DeviceManager refactoring | DESIGN-1 (pub(crate)), DESIGN-2 (DeviceManagerStore trait), DESIGN-3 (SGK layer) complete |
 | `idtty-cli` (dual-mode) | Daemon-first + `--direct` fallback. CRUD + folders + edit + import/export + health + attachments |
-| `idtty-daemon` socket server | Protobuf wire, VaultState, full CRUD, TOTP, auto-lock, attachments, biometric, import/export, health, archive. SIGTERM safe |
+| `idtty-daemon` socket server | Protobuf wire, VaultState, full CRUD, TOTP, auto-lock, attachments, biometric, import/export, health, archive, device fleet activity, device revocation. SIGTERM safe |
 | Protobuf codegen | Compiled via prost in daemon + CLI build.rs |
-| Desktop Tauri app | Full CRUD, 8 cipher types, generator, TOTP widget, auto-lock, nested folders, attachments, biometric unlock, custom fields (incl linked), reprompt, import/export, health, archive, dark/light themes |
+| Desktop Tauri app | Full CRUD, 8 cipher types, generator, TOTP widget, auto-lock, nested folders, attachments, biometric unlock, custom fields (incl linked), reprompt, import/export, health, archive, device fleet dashboard, dark/light themes |
 | UniFFI annotations | Not yet applied to idtty-core |
 | Mobile KMP app | Placeholder |
 | Browser extension | Placeholder |
