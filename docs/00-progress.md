@@ -312,6 +312,18 @@ Confirmed clean. Native git2 signing: signature embedded in commit object `gpgsi
 
 All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
+### Device Fleet Visibility
+
+**Plan**: `docs/09-device-fleet-visibility.md`
+
+| Phase | Description | Effort | Status |
+|-------|-------------|--------|--------|
+| 1 | Activity index (`meta/device_activity.json`) + daemon route | 1-2 days | Not started |
+| 2 | Enhanced DeviceEntry (`enrolled_by`, `last_seen_epoch`) + revocation cleanup | 1 day | Not started |
+| 3 | Epoch timeout + deterministic coordinator election | 1 day | Not started |
+| 4 | Fleet dashboard (desktop: devices tab, status badges, revoke UI) | 2-3 days | Not started |
+| 5 | CLI fleet commands (`devices list/revoke/info`) | 0.5 days | Not started |
+
 ### Desktop Features
 
 | Item | Description | Status |
@@ -348,7 +360,7 @@ Features parked for the far future. Do not start without explicit confirmation.
 | 2FA Tier 3 | OS keychain sync gate (separate auth for git push/pull) | Days |
 | 2FA Tier 4 | TOTP for device enrollment confirmation (ephemeral liveness check) | Days |
 | 2FA Tier 5 | FIDO2-only mode (no master password) | Weeks |
-| Residual Risk 3 | Force-evict quorum override requires hardware proof | Partial |
+| Residual Risk 3 | Force-evict quorum override requires hardware proof. **Superseded by device fleet visibility plan** (see `docs/09-device-fleet-visibility.md`) | Superseded |
 
 #### 2FA Open Questions
 
@@ -384,12 +396,6 @@ peer review of DESIGN-1/2/3: 12 findings (4C, 4H, 3M, 1L). All fixed.
 | 10 | Low | `fire()` was `pub(crate)` but only called within `device_manager.rs` | Made private, added `notify_rotation_committed()` wrapper |
 | 11 | Low | Trait missing `exists()` method (resolved by #3) | — |
 | 12 | Low | Double-zeroize pattern (explicit + Drop) | Clean with `Zeroize` trait (idempotent volatile writes) |
-
-### Dev Experience
-
-| Item | Description | Blockers |
-|------|-------------|----------|
-| Mock Engine | `MOCK_BACKEND=true` build flag for frontend contributors. Bypasses native compilation, feeds hardcoded Protobuf payloads. Referenced in `04-software-architecture.md` | Not started (~1 day) |
 
 ---
 
