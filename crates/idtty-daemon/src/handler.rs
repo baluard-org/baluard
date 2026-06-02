@@ -179,6 +179,7 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.export",
     "vault.reprompt_verify",
     "vault.health",
+    "vault.device_activity",
     "vault.attach_upload",
     "vault.attach_download",
     "vault.attach_delete",
@@ -608,6 +609,12 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
         // ── Password health report (token required) ──
         "vault.health" => match state.health_report().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        // ── Device fleet activity (token required) ──
+        "vault.device_activity" => match state.device_activity().await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
