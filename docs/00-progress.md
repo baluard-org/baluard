@@ -321,8 +321,8 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 | 1 | Activity index (`meta/device_activity.json`) + daemon route | 1-2 days | Not started |
 | 2 | Enhanced DeviceEntry (`enrolled_by`, `last_seen_epoch`) + revocation cleanup | 1 day | Not started |
 | 3 | Epoch timeout + deterministic coordinator election | 1 day | Not started |
-| 4 | Fleet dashboard (desktop: devices tab, status badges, revoke UI) | 2-3 days | Not started |
-| 5 | CLI fleet commands (`devices list/revoke/info`) | 0.5 days | Not started |
+| 4 | CLI fleet commands (`devices list/revoke/info`) | 0.5 days | Not started |
+| 5 | Fleet dashboard (desktop: devices tab, status badges, revoke UI) | 2-3 days | Not started |
 
 ### Desktop Features
 
