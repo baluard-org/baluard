@@ -742,17 +742,22 @@ fn sync_pull(vault_path: &std::path::Path) -> Result<String, String> {
     engine.recover_state().map_err(|e| format!("{e}"))?;
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let result = engine.pull(&repo, "origin").map_err(|e| format!("{e}"))?;
-    Ok(match result {
-        idtty_core::sync::engine::PullResult::AlreadyUpToDate => "Already up to date.".into(),
-        idtty_core::sync::engine::PullResult::FastForward => "Fast-forwarded to latest.".into(),
-        idtty_core::sync::engine::PullResult::Merged => "Merged remote changes.".into(),
+    let mut msg = match result {
+        idtty_core::sync::engine::PullResult::AlreadyUpToDate => "Already up to date.".to_string(),
+        idtty_core::sync::engine::PullResult::FastForward => "Fast-forwarded to latest.".to_string(),
+        idtty_core::sync::engine::PullResult::Merged => "Merged remote changes.".to_string(),
         idtty_core::sync::engine::PullResult::Conflict { files, .. } => {
             let file_list = files.join(", ");
             return Err(format!(
                 "Merge conflict in {file_list}. Resolution required."
             ));
         }
-    })
+    };
+    // Check for abort markers from other devices
+    if let Some(aborted_epoch) = engine.check_abort_marker() {
+        msg.push_str(&format!(" WARNING: Rotation for epoch {aborted_epoch} was aborted by another device."));
+    }
+    Ok(msg)
 }
 
 #[cfg(feature = "git-sync")]
