@@ -205,6 +205,10 @@ enum Commands {
 enum DeviceCommands {
     /// List enrolled devices.
     List,
+    /// Show rotation status.
+    RotationStatus,
+    /// Abort a stalled rotation (requires --direct).
+    RotationAbort,
 }
 
 #[derive(Subcommand)]
@@ -366,6 +370,12 @@ fn main() {
         Commands::Devices { action } => match action {
             DeviceCommands::List => {
                 commands::handle_devices(mode, &cli.vault_path, cli.socket.as_deref())
+            }
+            DeviceCommands::RotationStatus => {
+                commands::handle_rotation_status(mode, &cli.vault_path, cli.socket.as_deref())
+            }
+            DeviceCommands::RotationAbort => {
+                commands::handle_rotation_abort(mode, &cli.vault_path, cli.socket.as_deref())
             }
         },
 
