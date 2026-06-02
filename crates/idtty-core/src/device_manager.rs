@@ -636,6 +636,69 @@ impl DeviceManager {
         matches!(self.epoch.state, EpochState::Active)
     }
 
+    /// Check if rotation has been stalled longer than the timeout.
+    /// Returns elapsed seconds if stalled, None if not rotating or no timeout set.
+    pub fn rotation_stalled_secs(&self, timeout_secs: u64) -> Option<u64> {
+        let elapsed = self.epoch.rotation_elapsed_secs()?;
+        if elapsed > timeout_secs {
+            Some(elapsed)
+        } else {
+            None
+        }
+    }
+
+    /// Determine if this device should be the coordinator for abort election.
+    /// Coordinator = enrolled device with the numerically lowest UUID (big-endian).
+    /// Deterministic: no coordination needed between devices.
+    pub fn is_abort_coordinator(&self, self_device_id: &Uuid) -> bool {
+        let lowest = self
+            .registry
+            .devices
+            .keys()
+            .min_by_key(|id| id.as_bytes())
+            .copied();
+        lowest.as_ref() == Some(self_device_id)
+    }
+
+    /// Abort a stalled rotation. Resets epoch to ACTIVE.
+    /// Caller must verify:
+    /// 1. rotation_stalled_secs() returned Some
+    /// 2. is_abort_coordinator() returned true
+    /// 3. No cipher files written at the new epoch (safety check)
+    pub fn abort_stalled_rotation(&mut self) -> Result<(), IdttyError> {
+        self.epoch.abort_rotation().map_err(|e| {
+            IdttyError::Device(DeviceError::Keystore(format!("abort_rotation: {e}")))
+        })?;
+        self.pending_transaction = None;
+        self.collected_acks.clear();
+        self.auto_save_result()?;
+
+        // Write abort marker for other devices to detect
+        if let Some(ref store) = self.store {
+            if let Some(vp) = store.vault_path() {
+                let rekey_dir = vp.join(".idtty/rekey");
+                let _ = std::fs::create_dir_all(&rekey_dir);
+                let abort_epoch = self.epoch.epoch;
+                let abort_path = rekey_dir.join(format!("{}.aborted", abort_epoch));
+                let _ = std::fs::write(&abort_path, format!("aborted at {}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check for an abort marker from another device.
+    /// Returns true if the current epoch was aborted.
+    pub fn has_abort_marker(&self, epoch: u64) -> bool {
+        if let Some(ref store) = self.store {
+            if let Some(vp) = store.vault_path() {
+                let abort_path = vp.join(format!(".idtty/rekey/{}.aborted", epoch));
+                return abort_path.exists();
+            }
+        }
+        false
+    }
+
     // ── Enrollment (D14: approval required) ──
 
     /// Enroll a new device with approval from an existing device.

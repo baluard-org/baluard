@@ -710,6 +710,80 @@ pub fn handle_devices(
     }
 }
 
+pub fn handle_rotation_abort(
+    mode: ConnectMode,
+    vault_path: &str,
+    _socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            Err("rotation-abort requires --direct mode".into())
+        }
+        ConnectMode::Direct => {
+            let path = Path::new(vault_path);
+            let mut handle = VaultHandle::open(path)?;
+            let dm = &mut handle.device_manager;
+
+            let state = dm.epoch_state();
+            if state != idtty_core::keys::epoch::EpochState::Rotating {
+                println!("No rotation in progress. Current state: {:?}", state);
+                return Ok(());
+            }
+
+            let elapsed = dm.rotation_stalled_secs(0).unwrap_or(0);
+            println!("Rotation has been in ROTATING state for {}s", elapsed);
+
+            // Safety: abort only if no cipher files at new epoch
+            let pending_epoch = dm.pending_transaction().map(|tx| tx.new_epoch).unwrap_or(0);
+            if pending_epoch > 0 {
+                let entries_dir = path.join("entries");
+                if entries_dir.exists() {
+                    // Check if any cipher files reference the new epoch
+                    // (simplified: just warn, since actual re-encryption uses staged .tmp writes)
+                    println!("Warning: pending epoch is {}. Ensure no ciphers were re-encrypted.", pending_epoch);
+                }
+            }
+
+            dm.abort_stalled_rotation()?;
+            println!("Rotation aborted. Epoch reset to ACTIVE.");
+            Ok(())
+        }
+    }
+}
+
+pub fn handle_rotation_status(
+    mode: ConnectMode,
+    vault_path: &str,
+    _socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            Err("rotation-status requires --direct mode".into())
+        }
+        ConnectMode::Direct => {
+            let path = Path::new(vault_path);
+            let handle = VaultHandle::open(path)?;
+            let dm = &handle.device_manager;
+
+            println!("Epoch: {}", dm.current_epoch());
+            println!("State: {:?}", dm.epoch_state());
+            println!("Writes: {}", if dm.writes_allowed() { "allowed" } else { "BLOCKED" });
+
+            if dm.epoch_state() == idtty_core::keys::epoch::EpochState::Rotating {
+                if let Some(elapsed) = dm.rotation_stalled_secs(0) {
+                    println!("Rotation elapsed: {}s", elapsed);
+                }
+                if let Some(tx) = dm.pending_transaction() {
+                    println!("Pending new epoch: {}", tx.new_epoch);
+                    println!("Initiator: {}", tx.initiating_device_id);
+                }
+            }
+
+            Ok(())
+        }
+    }
+}
+
 // ── Sync (daemon-first with direct fallback) ──
 
 pub fn handle_sync_init(

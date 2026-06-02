@@ -34,6 +34,10 @@ pub struct EpochInfo {
     pub retired_at: Option<u64>,
     /// Devices that have acknowledged this epoch.
     pub acknowledged_devices: Vec<Uuid>,
+    /// Timestamp (unix seconds) when rotation started (ROTATING state entered).
+    /// Used for timeout-based coordinator election.
+    #[serde(default)]
+    pub rotation_started_at: Option<u64>,
 }
 
 impl EpochInfo {
@@ -45,6 +49,7 @@ impl EpochInfo {
             created_at: now_secs(),
             retired_at: None,
             acknowledged_devices: Vec::new(),
+            rotation_started_at: None,
         }
     }
 
@@ -60,10 +65,12 @@ impl EpochInfo {
     }
 
     /// Transition to ROTATING. Only valid from ACTIVE.
+    /// Records timestamp for timeout-based coordinator election.
     pub fn begin_rotation(&mut self) -> Result<(), String> {
         match self.state {
             EpochState::Active => {
                 self.state = EpochState::Rotating;
+                self.rotation_started_at = Some(now_secs());
                 Ok(())
             }
             _ => Err(format!("cannot begin rotation from {:?}", self.state)),
@@ -91,6 +98,29 @@ impl EpochInfo {
             }
             _ => Err(format!("cannot destroy from {:?}", self.state)),
         }
+    }
+
+    /// Abort a stalled rotation. Only valid from ROTATING.
+    /// Resets to ACTIVE state, clears rotation timestamp and acks.
+    pub fn abort_rotation(&mut self) -> Result<(), String> {
+        match self.state {
+            EpochState::Rotating => {
+                self.state = EpochState::Active;
+                self.rotation_started_at = None;
+                self.acknowledged_devices.clear();
+                Ok(())
+            }
+            _ => Err(format!("cannot abort rotation from {:?}", self.state)),
+        }
+    }
+
+    /// How long has the current rotation been running (seconds).
+    /// Returns None if not in ROTATING state or no start timestamp.
+    pub fn rotation_elapsed_secs(&self) -> Option<u64> {
+        if self.state != EpochState::Rotating {
+            return None;
+        }
+        self.rotation_started_at.map(|started| now_secs().saturating_sub(started))
     }
 
     /// Record a device's acknowledgment of this epoch.
@@ -159,5 +189,35 @@ mod tests {
         assert!(!e.quorum_met(2)); // 0 of 2, need 1
         e.acknowledge(Uuid::new_v4());
         assert!(e.quorum_met(2)); // 1 of 2, met
+    }
+
+    #[test]
+    fn rotation_started_at_recorded() {
+        let mut e = EpochInfo::new(0);
+        e.activate().unwrap();
+        assert!(e.rotation_started_at.is_none());
+        e.begin_rotation().unwrap();
+        assert!(e.rotation_started_at.is_some());
+        assert!(e.rotation_elapsed_secs().unwrap() < 5); // just started
+    }
+
+    #[test]
+    fn abort_rotation_resets_to_active() {
+        let mut e = EpochInfo::new(0);
+        e.activate().unwrap();
+        e.begin_rotation().unwrap();
+        assert_eq!(e.state, EpochState::Rotating);
+
+        e.abort_rotation().unwrap();
+        assert_eq!(e.state, EpochState::Active);
+        assert!(e.rotation_started_at.is_none());
+        assert!(e.acknowledged_devices.is_empty());
+    }
+
+    #[test]
+    fn abort_from_non_rotating_fails() {
+        let mut e = EpochInfo::new(0);
+        e.activate().unwrap();
+        assert!(e.abort_rotation().is_err());
     }
 }
