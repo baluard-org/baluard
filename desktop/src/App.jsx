@@ -92,6 +92,7 @@ createEffect(() => {
   const [trashCiphers, setTrashCiphers] = createSignal([]);
   const [archivedCiphers, setArchivedCiphers] = createSignal([]);
   const [deviceFleet, setDeviceFleet] = createSignal([]);
+const [selfDeviceId, setSelfDeviceId] = createSignal(null);
   const [revokeWarning, setRevokeWarning] = createSignal(null);
   const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
   const [createPassword, setCreatePassword] = createSignal("");
@@ -111,6 +112,7 @@ createEffect(() => {
     trashCiphers, setTrashCiphers,
     archivedCiphers, setArchivedCiphers,
     deviceFleet, setDeviceFleet,
+    selfDeviceId, setSelfDeviceId,
     revokeWarning, setRevokeWarning,
     error, setError,
     vaultInfo, setVaultInfo,
@@ -188,6 +190,7 @@ function useActions() {
       app.setViewCipher(null);
       app.setActivePane("welcome");
       app.setShowDeleteConfirm(false);
+      app.setRevokeWarning(null);
     } catch (e) {
       app.setError(sanitizeError(e, t));
     }
@@ -257,6 +260,7 @@ function useActions() {
       const resp = await invoke("daemon_request", { action: "vault.device_activity", payload: "" });
       const data = typeof resp === "string" ? JSON.parse(resp) : resp;
       app.setDeviceFleet(data.devices || []);
+      if (data.self_device_id) app.setSelfDeviceId(data.self_device_id);
     } catch (e) {
       // Non-critical
     }
@@ -290,7 +294,6 @@ function useActions() {
 
       await refreshTrashCiphers();
       await refreshArchivedCiphers();
-      await refreshDeviceFleet();
     } catch (e) {
       app.setError(sanitizeError(e, t));
     }
@@ -3030,7 +3033,7 @@ function FolderNode(props) {
 }
 
 function VaultView() {
-  const { ciphers, trashCiphers, archivedCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator, showSettingsModal, setShowSettingsModal, deviceFleet, setDeviceFleet, revokeWarning, setRevokeWarning } = useApp();
+  const { ciphers, trashCiphers, archivedCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator, showSettingsModal, setShowSettingsModal, deviceFleet, setDeviceFleet, selfDeviceId, revokeWarning, setRevokeWarning } = useApp();
   const { lock, refreshDeviceFleet } = useActions();
   const { t } = useI18n();
 
@@ -3489,7 +3492,7 @@ function DeviceFleetPanel() {
                       <svg class="w-5 h-5 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                     </div>
                     <div>
-                      <p class="text-sm font-bold text-[var(--color-text)]">{device.name}</p>
+                      <p class="text-sm font-bold text-[var(--color-text)]">{device.name} <Show when={device.id === app.selfDeviceId()}><span class="text-[10px] font-normal text-[var(--color-primary)] bg-[var(--color-primary)]/10 px-1.5 py-0.5 rounded-md ml-1">This device</span></Show></p>
                       <p class="text-xs text-[var(--color-muted)] font-mono">{device.id?.substring(0, 8)}...</p>
                     </div>
                   </div>
@@ -3510,12 +3513,14 @@ function DeviceFleetPanel() {
                   </div>
                 </div>
                 <div class="flex justify-end pt-1">
-                  <button
-                    onClick={() => revokeDevice(device.id, device.name)}
-                    class="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 transition-all cursor-pointer"
-                  >
-                    Revoke
-                  </button>
+                  <Show when={device.id !== app.selfDeviceId()}>
+                    <button
+                      onClick={() => revokeDevice(device.id, device.name)}
+                      class="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 transition-all cursor-pointer"
+                    >
+                      Revoke
+                    </button>
+                  </Show>
                 </div>
               </div>
             );

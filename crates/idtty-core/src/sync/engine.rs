@@ -406,8 +406,7 @@ impl SyncEngine {
                         .devices
                         .iter()
                         .find(|(_, e)| e.name == self.device_name)
-                        .map(|(id, _)| *id)
-                        .or_else(|| reg.devices.keys().next().copied()),
+                        .map(|(id, _)| *id),
                     Err(_) => None,
                 }
             }
@@ -437,6 +436,19 @@ impl SyncEngine {
             epoch,
         ) {
             eprintln!("warning: failed to update activity index: {e}");
+        }
+
+        // Update last_seen_epoch on the DeviceEntry
+        let reg_path = self.vault_path.join("meta/devices.json");
+        if let Ok(data) = std::fs::read_to_string(&reg_path) {
+            if let Ok(mut reg) = serde_json::from_str::<crate::devices::DeviceRegistry>(&data) {
+                if let Some(entry) = reg.devices.get_mut(&device_id) {
+                    entry.last_seen_epoch = epoch;
+                }
+                if let Ok(json) = serde_json::to_string_pretty(&reg) {
+                    let _ = std::fs::write(&reg_path, json);
+                }
+            }
         }
     }
 
