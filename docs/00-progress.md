@@ -316,7 +316,7 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| Extra cipher types | Bank Account (10 fields), Driver's License (12 fields), Passport/ID (13 fields, covers national ID documents) | **Done** |
+| Extra cipher types | Bank Account (10 fields), Driver's License (12 fields), Passport & ID (13 fields, covers passports and national ID documents) | **Done** |
 | Additional import formats | Dashlane, Enpass, NordPass, Avast, Avira, Keeper, RoboForm, Myki, mSecure, Blur | Not started |
 
 ### Nice to Have / Future
