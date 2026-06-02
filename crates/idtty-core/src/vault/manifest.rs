@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::types::DeviceId;
 
-/// Device registry entry (stored encrypted in meta/devices.enc).
+/// Device registry entry (stored in meta/devices.json).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceEntry {
     pub device_id: DeviceId,
@@ -20,6 +20,12 @@ pub struct DeviceEntry {
     pub signing_public_key: String,
     /// Unix timestamp of enrollment.
     pub enrolled_at: u64,
+    /// Which device approved enrollment. None for first (founding) device.
+    #[serde(default)]
+    pub enrolled_by: Option<DeviceId>,
+    /// Last epoch this device was seen in. 0 = unknown.
+    #[serde(default)]
+    pub last_seen_epoch: u64,
 }
 
 /// Plaintext device public keys (stored in meta/device-pks, quorum-signed).

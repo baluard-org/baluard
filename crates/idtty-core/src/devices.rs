@@ -35,12 +35,14 @@ impl DeviceRegistry {
         name: String,
         encryption_public_key: [u8; 32],
         signing_public_key: [u8; 32],
+        enrolled_by: Option<Uuid>,
     ) -> Result<DeviceEntry, DeviceError> {
         self.enroll_with_id(
             Uuid::new_v4(),
             name,
             encryption_public_key,
             signing_public_key,
+            enrolled_by,
         )
     }
 
@@ -51,6 +53,7 @@ impl DeviceRegistry {
         name: String,
         encryption_public_key: [u8; 32],
         signing_public_key: [u8; 32],
+        enrolled_by: Option<Uuid>,
     ) -> Result<DeviceEntry, DeviceError> {
         if self.devices.contains_key(&device_id) {
             return Err(DeviceError::AlreadyEnrolled(device_id.to_string()));
@@ -64,6 +67,8 @@ impl DeviceRegistry {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            enrolled_by,
+            last_seen_epoch: 0,
         };
 
         self.devices.insert(device_id, entry.clone());
@@ -169,7 +174,7 @@ mod tests {
     #[test]
     fn enroll_first_device() {
         let mut reg = DeviceRegistry::new();
-        let entry = reg.enroll("MacBook".into(), [1u8; 32], [2u8; 32]).unwrap();
+        let entry = reg.enroll("MacBook".into(), [1u8; 32], [2u8; 32], None).unwrap();
         assert_eq!(reg.count(), 1);
         assert_eq!(entry.name, "MacBook");
     }
@@ -177,17 +182,17 @@ mod tests {
     #[test]
     fn enroll_multiple_devices() {
         let mut reg = DeviceRegistry::new();
-        reg.enroll("Device 1".into(), [1u8; 32], [2u8; 32]).unwrap();
-        reg.enroll("Device 2".into(), [3u8; 32], [4u8; 32]).unwrap();
-        reg.enroll("Device 3".into(), [5u8; 32], [6u8; 32]).unwrap();
+        reg.enroll("Device 1".into(), [1u8; 32], [2u8; 32], None).unwrap();
+        reg.enroll("Device 2".into(), [3u8; 32], [4u8; 32], None).unwrap();
+        reg.enroll("Device 3".into(), [5u8; 32], [6u8; 32], None).unwrap();
         assert_eq!(reg.count(), 3);
     }
 
     #[test]
     fn revoke_device() {
         let mut reg = DeviceRegistry::new();
-        let e1 = reg.enroll("D1".into(), [1u8; 32], [2u8; 32]).unwrap();
-        reg.enroll("D2".into(), [3u8; 32], [4u8; 32]).unwrap();
+        let e1 = reg.enroll("D1".into(), [1u8; 32], [2u8; 32], None).unwrap();
+        reg.enroll("D2".into(), [3u8; 32], [4u8; 32], None).unwrap();
         reg.revoke(e1.device_id).unwrap();
         assert_eq!(reg.count(), 1);
         assert!(!reg.is_enrolled(&e1.device_id));
@@ -202,9 +207,9 @@ mod tests {
     #[test]
     fn force_evict_keeps_surviving() {
         let mut reg = DeviceRegistry::new();
-        let surviving = reg.enroll("Survivor".into(), [1u8; 32], [2u8; 32]).unwrap();
-        reg.enroll("Lost".into(), [3u8; 32], [4u8; 32]).unwrap();
-        reg.enroll("Also Lost".into(), [5u8; 32], [6u8; 32])
+        let surviving = reg.enroll("Survivor".into(), [1u8; 32], [2u8; 32], None).unwrap();
+        reg.enroll("Lost".into(), [3u8; 32], [4u8; 32], None).unwrap();
+        reg.enroll("Also Lost".into(), [5u8; 32], [6u8; 32], None)
             .unwrap();
 
         let evicted = reg.force_evict(surviving.device_id).unwrap();
@@ -218,24 +223,24 @@ mod tests {
         let mut reg = DeviceRegistry::new();
         assert_eq!(reg.quorum_required(), 0); // 0 devices
 
-        reg.enroll("D1".into(), [1u8; 32], [2u8; 32]).unwrap();
+        reg.enroll("D1".into(), [1u8; 32], [2u8; 32], None).unwrap();
         assert_eq!(reg.quorum_required(), 1); // 1 device: need 1
 
-        reg.enroll("D2".into(), [3u8; 32], [4u8; 32]).unwrap();
+        reg.enroll("D2".into(), [3u8; 32], [4u8; 32], None).unwrap();
         assert_eq!(reg.quorum_required(), 1); // 2 devices: ceil(2/2)=1
 
-        reg.enroll("D3".into(), [5u8; 32], [6u8; 32]).unwrap();
+        reg.enroll("D3".into(), [5u8; 32], [6u8; 32], None).unwrap();
         assert_eq!(reg.quorum_required(), 2); // 3 devices: need 2
 
-        reg.enroll("D4".into(), [7u8; 32], [8u8; 32]).unwrap();
+        reg.enroll("D4".into(), [7u8; 32], [8u8; 32], None).unwrap();
         assert_eq!(reg.quorum_required(), 2); // 4 devices: ceil(4/2)=2
     }
 
     #[test]
     fn public_keys_match_devices() {
         let mut reg = DeviceRegistry::new();
-        reg.enroll("D1".into(), [1u8; 32], [2u8; 32]).unwrap();
-        reg.enroll("D2".into(), [3u8; 32], [4u8; 32]).unwrap();
+        reg.enroll("D1".into(), [1u8; 32], [2u8; 32], None).unwrap();
+        reg.enroll("D2".into(), [3u8; 32], [4u8; 32], None).unwrap();
 
         let pks = reg.to_public_keys();
         assert_eq!(pks.keys.len(), 2);

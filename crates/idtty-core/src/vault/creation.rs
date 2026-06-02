@@ -448,6 +448,7 @@ impl<'a> VaultCreator<'a> {
                     self.device_name.clone(),
                     pub_enc.to_bytes(),
                     verifying.to_bytes(),
+                    None, // First device: no approver
                 )?;
 
                 // Write Files
@@ -696,6 +697,7 @@ impl<'a> VaultCreator<'a> {
                     self.device_name.clone(),
                     device_x25519_public.to_bytes(),
                     device_ed25519_signing.verifying_key().to_bytes(),
+                    None, // First device: no approver
                 )?;
 
                 write_secret(
