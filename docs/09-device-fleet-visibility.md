@@ -49,13 +49,11 @@ Plaintext, UUID-only activity index. No device names (those stay encrypted in `d
     "a1b2c3d4-...": {
       "last_push": "2026-06-02T14:30:00Z",
       "last_commit": "abc123def456...",
-      "push_count": 42,
       "epoch": 7
     },
     "e5f6a7b8-...": {
       "last_push": "2026-05-15T09:00:00Z",
       "last_commit": "789abc012def...",
-      "push_count": 17,
       "epoch": 7
     }
   }
@@ -66,10 +64,9 @@ Plaintext, UUID-only activity index. No device names (those stay encrypted in `d
 |-------|--------|------------|---------|
 | `last_push` | Self-reported ISO-8601 (corroborated by git committer date) | Plaintext | Fleet dashboard freshness |
 | `last_commit` | SHA of the push commit | Plaintext | Verifiable: `git log` confirms |
-| `push_count` | Monotonic counter | Plaintext | Quick liveness indicator |
 | `epoch` | Current epoch at time of push | Plaintext | Shows if device is behind |
 
-**Why plaintext**: UUIDs are opaque. Without the encrypted `devices.json` (which maps UUID -> name), this file reveals nothing meaningful. The repo is already private (GitHub/GitLab). The exposure is: "two UUIDs sync at these times." Acceptable.
+**Why plaintext**: UUIDs are opaque. Device names are in `devices.json` (also plaintext, per D1). The file is in a private git repo. The exposure is: "two UUIDs sync at these times." Acceptable for single-user vaults.
 
 **Why not per-device files**: One file with merge-by-key is simpler than N files with directory fanout. Git merge conflicts on a single JSON file are easy to resolve (union of keys, latest timestamp wins). N files means N potential conflicts.
 
@@ -368,7 +365,45 @@ Not in scope for this plan. Documented for awareness:
 
 ---
 
-## Open Questions (Resolved)
+## Architectural Decisions (Resolved)
+
+Six decisions resolved with the security review. All prioritize simplicity and non-technical UX.
+
+### D1: devices.json stays plaintext
+
+Public keys are public by definition. Device names ("MacBook Pro") carry no secrets. The private git repo is the access boundary. Encrypting gains nothing while breaking the fleet dashboard's pre-unlock visibility. Don't add SGK re-encryption complexity to protect non-secret data.
+
+**Implication**: Activity index UUID-opacity argument is weakened (device names are already exposed in git history). Acceptable: the repo is private, names are low-sensitivity.
+
+### D2: Consolidate to devices.json as canonical key file
+
+`meta/devices.json` already has `signing_public_key`. Eliminate `device-registry.json` and `device-pks`. Fewer canonical sources = fewer consistency bugs. Update `verify_commit_signatures()` to read from `meta/devices.json` instead of `device-registry.json`.
+
+**Implication**: Deprecate and remove `meta/device-registry.json` and `meta/device-pks` in Phase 2.
+
+### D3: Remove push_count from activity index
+
+Self-reported data that can't be verified is worse than no data. "Approximate / self-reported" labels add disclaimers to misleading information. Git log derivation is expensive. Remove the field entirely.
+
+**Implication**: `meta/device_activity.json` entries are `{last_push, last_commit, epoch}` only. No push_count.
+
+### D4: No enrollment approval signature persistence
+
+IDtty is a single-user password manager. The enrollment ceremony requires the approver's vault to be unlocked. `enrolled_by: Option<DeviceId>` is the right level of UX truth ("Added by MacBook"). On-disk cryptographic proof adds serialization complexity with zero practical benefit. The attacker who can tamper with DeviceEntry on disk can also tamper with the approval signature.
+
+**Implication**: Only `enrolled_by` and `last_seen_epoch` are added to DeviceEntry. No approval_signature field.
+
+### D5: Last-writer-wins for activity index conflicts
+
+Activity index entries are ephemeral timestamps. No secrets, no access control. A lost `last_push` timestamp self-heals on the next sync. Custom git merge drivers add install complexity. Inline union-merge adds Rust complexity. Neither justified for ephemeral metadata.
+
+**Implication**: No `.gitattributes` merge driver needed. Standard git last-writer-wins is sufficient.
+
+### D6: Persistent step-by-step banner with parsed link for git credential rotation
+
+A revoked device with stale git credentials can still clone/pull the repo. Parse the remote URL, construct direct link to `github.com/<repo>/settings/keys`, show numbered steps. Dismiss only after explicit user confirmation (checkbox). Non-technical users need a map, not a signpost.
+
+**Implication**: Phase 5 (desktop dashboard) includes URL parsing for GitHub/GitLab remote URLs + persistent acknowledgment banner.
 
 1. **Activity index prune**: Keep indefinitely, prune from UI after 180 days (not 90). Never auto-delete from the file. **Resolved**.
 2. **Push count**: Monotonic, no reset. Adds cross-epoch evidence of device continuity. **Resolved**.
@@ -386,7 +421,7 @@ Reviewed against: `devices.rs`, `device_manager.rs`, `sync/engine.rs`, `vault/ma
 
 | # | Finding | Resolution |
 |---|---------|------------|
-| C1 | `devices.json` written as raw JSON (no encryption). manifest.rs comment says "encrypted" but code writes plaintext. UUID-opacity argument for activity index depends on registry encryption. | **Confirmed**: code audit verifies raw `serde_json::to_string_pretty` with no encryption. Privacy analysis for activity index is valid (device names ARE exposed). Two paths: (a) encrypt `devices.json` and keep activity index as designed, or (b) accept plaintext registry and remove UUID-opacity argument. Recommend (a): encrypt with SGK before write. |
+| C1 | `devices.json` written as raw JSON (no encryption). manifest.rs comment says "encrypted" but code writes plaintext. | **Resolved (D1)**: Keep plaintext. Public keys are public. Device names are low-sensitivity. Private git repo is the access boundary. Encrypting would break pre-unlock fleet dashboard. |
 | C2 | `abort_rotation` + partial re-encryption = irrecoverable data loss. If rotating device re-encrypted some ciphers with new epoch keys before going offline, abort back to old epoch leaves those ciphers undecryptable by any device. | Abort path must scan for any cipher files written at the new epoch. If found, abort is unsafe. Only recovery: different device re-does the key wrap. Add `abort_is_safe()` check before allowing abort. |
 | C3 | Original OQ4 "cross-check both" creates revocation bypass (OR gate). If plaintext `device-registry.json` is stale and still has revoked key, commits pass via plaintext path. | **Resolved in Open Questions**: plaintext ONLY pre-unlock, encrypted ONLY post-unlock. No cross-checking. |
 
@@ -394,9 +429,9 @@ Reviewed against: `devices.rs`, `device_manager.rs`, `sync/engine.rs`, `vault/ma
 
 | # | Finding | Resolution |
 |---|---------|------------|
-| H1 | Three conflicting plaintext key files: `device-registry.json`, `devices.json`, `device-pks`. No canonical source for commit verification. | Define single canonical file. Recommend: `meta/device-pks` with real quorum signatures, deprecate `device-registry.json`. |
-| H2 | `push_count` is self-reported and unverifiable. Displayed alongside security fields creates false confidence. | Derive from `git log --author=<device>` at display time, or relabel as "self-reported, unverified." |
-| H3 | Enrollment approval signature not persisted in `DeviceEntry`. No on-disk proof that Device A approved Device B. | Store `approver_device_id` + `approval_signature_bytes` in `DeviceEntry`. |
+| H1 | Three conflicting plaintext key files: `device-registry.json`, `devices.json`, `device-pks`. No canonical source for commit verification. | **Resolved (D2)**: Consolidate to `meta/devices.json`. Deprecate and remove `device-registry.json` and `device-pks` in Phase 2. |
+| H2 | `push_count` is self-reported and unverifiable. Displayed alongside security fields creates false confidence. | **Resolved (D3)**: Removed from activity index entirely. |
+| H3 | Enrollment approval signature not persisted in `DeviceEntry`. No on-disk proof that Device A approved Device B. | **Resolved (D4)**: No signature persistence. `enrolled_by` UUID reference is sufficient for single-user threat model. |
 | H4 | Original coordinator returning after abort creates split-brain. Device A has persisted ROTATING state, B aborts. A cannot know B aborted. | Define abort marker file: `.idtty/rekey/<epoch>.aborted`. A detects on pull and transitions out of ROTATING. |
 | H5 | Per-user registries in org-mode incompatible with admin revocation without key escrow. | Flag for org-mode architecture. Requires key hierarchy or escrow mechanism. |
 
@@ -407,7 +442,7 @@ Reviewed against: `devices.rs`, `device_manager.rs`, `sync/engine.rs`, `vault/ma
 | M1 | New `DeviceEntry` fields need `#[serde(default)]` for backward compat with existing `devices.json` files. | Add `#[serde(default)]` on `enrolled_by` (None) and `last_seen_epoch` (0). |
 | M2 | Phase 5 (CLI) should precede Phase 4 (Desktop). CLI is simpler, provides early integration testing. | Swap Phase 4 and 5. |
 | M3 | `keys/epoch.rs` missing from Phase 3 file change list. | Add `crates/idtty-core/src/keys/epoch.rs` to Phase 3 changes. |
-| M4 | Activity index merge requires custom strategy before `PullResult::Conflict`. Need `.gitattributes` merge driver or inline conflict detection. | Specify: `.gitattributes` merge driver for `meta/device_activity.json` with custom union-merge script. |
+| M4 | Activity index merge requires custom strategy before `PullResult::Conflict`. | **Resolved (D5)**: Last-writer-wins (git default). No custom merge driver needed. Ephemeral metadata self-heals on next sync. |
 | M5 | Coordinator election spec incomplete: "lowest UUID hash" undefined. | Use UUID big-endian comparison (no hash needed). UUIDs already random 128-bit. Sort by byte order, elect lowest. |
 | M6 | 24h default timeout too long for compromise scenarios. Must be configurable in Phase 3. | **Resolved**: default 1h, range 15min-24h, stored in VaultSettings. |
 | M7 | Single activity file leaks cross-user coordination in org mode. | Flag for org-mode: split per user, acknowledge UUID-timing correlation. |
