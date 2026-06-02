@@ -16,7 +16,7 @@
 
 ## Current Status
 
-**Phase**: Desktop BW parity complete (phases 1-8 + A-G). Device lifecycle complete (MISS-1 through MISS-5, peer review fixes). Security hardening complete (Round 13). **188 tests, 0 clippy errors workspace-wide**, 13 security review rounds. Full desktop feature set: CRUD, 5 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders.
+**Phase**: Desktop BW parity complete (phases 1-8 + A-G). Device lifecycle complete (MISS-1 through MISS-5, peer review fixes). Security hardening complete (Round 13). Archive entries feature complete. **190 tests, 0 clippy errors workspace-wide**, 13 security review rounds. Full desktop feature set: CRUD, 5 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries.
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
@@ -103,7 +103,7 @@
 
 ### BW Parity Phases 1-8
 
-All 8 phases complete, peer-reviewed, and merged. **130 tests (now 188 workspace-wide), 0 clippy errors.**
+All 8 phases complete, peer-reviewed, and merged. **130 tests (now 190 workspace-wide), 0 clippy errors.**
 
 | Phase | Description | Key Changes |
 |-------|-------------|-------------|
@@ -129,7 +129,7 @@ All 8 phases complete, peer-reviewed, and merged. **130 tests (now 188 workspace
 
 ### BW Parity Phases A-G (Final Push)
 
-All 7 phases complete, individually peer reviewed, fixes applied. **184 idtty-core tests (188 workspace), 0 clippy errors.**
+All 7 phases complete, individually peer reviewed, fixes applied. **186 idtty-core tests (190 workspace), 0 clippy errors.**
 
 | Phase | Description | Key Changes | Review Findings |
 |-------|-------------|-------------|----------------|
@@ -316,7 +316,6 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| Archive entries | Hide from main list (distinct from trash). BW has this | Not started |
 | Extra cipher types | Bank Account (10 fields), Driver's License (12 fields), Passport (13 fields). BW recently added these | Deferred |
 | Additional import formats | Dashlane, Enpass, NordPass, Avast, Avira, Keeper, RoboForm, Myki, mSecure, Blur | Not started |
 
@@ -448,6 +447,9 @@ Durable architectural decisions from the Bitwarden parity implementation. Preser
 | `list` | Daemon/Direct | List all cipher UUIDs |
 | `edit <id> --name/--favorite/--folder` | Daemon/Direct | Edit cipher metadata |
 | `delete <id>` | Daemon/Direct | Delete cipher by UUID |
+| `archive <id>` | Daemon/Direct | Archive cipher (hide from main list) |
+| `unarchive <id>` | Daemon/Direct | Unarchive cipher (restore to main list) |
+| `list [--archived]` | Daemon/Direct | List ciphers (use --archived for archived only) |
 | `folders {create\|list\|rename\|delete}` | Daemon/Direct | Folder management |
 | `sync {init\|remote\|push\|pull\|...}` | Daemon/Direct | Git sync operations |
 | `import <format> <file>` | Daemon | Import entries (bw-json/bw-csv/chrome-csv/firefox-csv/lastpass-csv/1password-1pux/1password-csv/keepass-xml) |

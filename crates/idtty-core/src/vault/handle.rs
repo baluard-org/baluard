@@ -539,6 +539,7 @@ impl VaultHandle {
                     created_at: Some(existing_cipher.created_at),
                     password_history: existing_cipher.password_history.clone(),
                     attachments: existing_cipher.attachments.clone(),
+                    archived: existing_cipher.archived,
                 };
                 self.update_cipher(cipher_id, &input)?;
             }
@@ -572,7 +573,18 @@ impl VaultHandle {
 
     /// List cipher metadata (requires unlocked vault for full CipherMeta).
     /// Decrypts from index.enc if available, otherwise auto-heals by scanning directory.
+    /// List cipher metadata (non-archived only). Requires unlocked vault.
+    /// Decrypts from index.enc if available, otherwise auto-heals.
     pub fn list_cipher_meta(&self) -> Result<Vec<crate::types::CipherMeta>, IdttyError> {
+        Ok(self
+            .list_cipher_meta_full()?
+            .into_iter()
+            .filter(|m| !m.archived)
+            .collect())
+    }
+
+    /// List ALL cipher metadata (including archived). Exposed for export, health, and sync.
+    pub fn list_cipher_meta_full(&self) -> Result<Vec<crate::types::CipherMeta>, IdttyError> {
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -628,6 +640,7 @@ impl VaultHandle {
                 key_epoch: c.key_epoch,
                 update_seq: c.update_seq,
                 updated_at: c.updated_at,
+                archived: c.archived,
             });
         }
 
@@ -1060,10 +1073,105 @@ impl VaultHandle {
             created_at: None,         // fresh timestamp for the clone
             password_history: vec![], // empty history for clone
             attachments: existing.attachments.clone(),
+            archived: existing.archived,
         };
 
         // add_cipher handles new UUID + encryption
         self.add_cipher(&input)
+    }
+
+    /// Archive a cipher: sets `archived: true`, hides from main list.
+    /// Re-encrypts with updated flag.
+    pub fn archive_cipher(&mut self, cipher_id: Uuid) -> Result<(), IdttyError> {
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
+        }
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+
+        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
+        if !file_path.exists() {
+            return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
+        }
+
+        let existing_file = cipher::CipherFile {
+            id: cipher_id,
+            envelope_bytes: std::fs::read(&file_path)?,
+        };
+        let existing =
+            self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
+
+        if existing.archived {
+            return Ok(()); // Already archived, idempotent
+        }
+
+        let input = CipherInput {
+            name: existing.name,
+            folder_id: existing.folder_id,
+            kind: existing.kind,
+            favorite: existing.favorite,
+            reprompt: existing.reprompt,
+            notes: existing.notes,
+            custom_fields: existing.custom_fields,
+            created_at: Some(existing.created_at),
+            password_history: existing.password_history,
+            attachments: existing.attachments,
+            archived: true,
+        };
+        self.update_cipher(cipher_id, &input)
+    }
+
+    /// Unarchive a cipher: sets `archived: false`, restores to main list.
+    pub fn unarchive_cipher(&mut self, cipher_id: Uuid) -> Result<(), IdttyError> {
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
+        }
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+
+        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
+        if !file_path.exists() {
+            return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
+        }
+
+        let existing_file = cipher::CipherFile {
+            id: cipher_id,
+            envelope_bytes: std::fs::read(&file_path)?,
+        };
+        let existing =
+            self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
+
+        if !existing.archived {
+            return Ok(()); // Already unarchived, idempotent
+        }
+
+        let input = CipherInput {
+            name: existing.name,
+            folder_id: existing.folder_id,
+            kind: existing.kind,
+            favorite: existing.favorite,
+            reprompt: existing.reprompt,
+            notes: existing.notes,
+            custom_fields: existing.custom_fields,
+            created_at: Some(existing.created_at),
+            password_history: existing.password_history,
+            attachments: existing.attachments,
+            archived: false,
+        };
+        self.update_cipher(cipher_id, &input)
+    }
+
+    /// List archived cipher metadata (ciphers with `archived: true`).
+    pub fn list_archived_meta(&self) -> Result<Vec<crate::types::CipherMeta>, IdttyError> {
+        Ok(self
+            .list_cipher_meta_full()?
+            .into_iter()
+            .filter(|m| m.archived)
+            .collect())
     }
 
     fn find_device_id(path: &Path) -> Result<Uuid, IdttyError> {
@@ -1283,6 +1391,7 @@ impl VaultHandle {
                 created_at: Some(existing.created_at),
                 password_history: existing.password_history.clone(),
                 attachments: existing.attachments.clone(),
+                archived: existing.archived,
             };
 
             let new_item_key = Self::derive_item_key_static(&new_root_key, *cipher_id, new_epoch);
@@ -1581,6 +1690,7 @@ impl VaultHandle {
                 key_epoch: c.key_epoch,
                 update_seq: c.update_seq,
                 updated_at: c.updated_at,
+                archived: c.archived,
             });
         }
 
@@ -1733,6 +1843,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
 
@@ -1781,6 +1892,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
 
@@ -1820,6 +1932,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
 
@@ -1871,6 +1984,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         handle.add_cipher(&input).unwrap();
@@ -1889,6 +2003,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         handle.add_cipher(&card_input).unwrap();
@@ -1923,6 +2038,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
@@ -1937,6 +2053,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         handle.update_cipher(id, &updated).unwrap();
@@ -1973,6 +2090,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
@@ -1993,6 +2111,7 @@ mod tests {
                 created_at: None,
                 password_history: vec![],
                 attachments: vec![],
+            archived: false,
                 reprompt: false,
             };
             handle.update_cipher(id, &updated).unwrap();
@@ -2047,6 +2166,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
@@ -2066,6 +2186,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         handle.update_cipher(id, &updated).unwrap();
@@ -2124,6 +2245,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
@@ -2143,6 +2265,7 @@ mod tests {
                 created_at: None,
                 password_history: vec![],
                 attachments: vec![],
+            archived: false,
                 reprompt: false,
             };
             handle.update_cipher(id, &updated).unwrap();
@@ -2218,6 +2341,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         let cipher_id = handle.add_cipher(&input).unwrap();
@@ -2265,6 +2389,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         let cipher_id = handle.add_cipher(&input).unwrap();
@@ -2280,6 +2405,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         handle.update_cipher(cipher_id, &updated).unwrap();
@@ -2316,6 +2442,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         let id1 = handle.add_cipher(&input1).unwrap();
@@ -2334,6 +2461,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         let id2 = handle.add_cipher(&input2).unwrap();
@@ -2441,5 +2569,92 @@ mod tests {
             crate::crypto::hkdf_derive::derive_index_key(unlocked.root_key.as_bytes()).unwrap();
         let decoded = index::decrypt_index(handle.vault_id, &envelope_bytes, &index_key).unwrap();
         assert_eq!(decoded.len(), 2);
+    }
+
+    #[test]
+    fn archive_unarchive_roundtrip() {
+        let (dir, password) = create_test_vault();
+        let path = dir.path();
+        let mut handle = VaultHandle::open(path).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Add a cipher
+        let input = CipherInput {
+            name: "ArchiveMe".into(),
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("arch@example.com".into()),
+                password: Some("s3cret".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let cipher_id = handle.add_cipher(&input).unwrap();
+
+        // Verify it appears in list
+        let metas = handle.list_cipher_meta().unwrap();
+        assert_eq!(metas.len(), 1);
+        assert_eq!(metas[0].id, cipher_id);
+        assert!(!metas[0].archived);
+
+        // Archive it
+        handle.archive_cipher(cipher_id).unwrap();
+
+        // Should NOT appear in normal list
+        let metas = handle.list_cipher_meta().unwrap();
+        assert!(metas.is_empty(), "archived cipher should not appear in list");
+
+        // Should appear in archived list
+        let archived = handle.list_archived_meta().unwrap();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].id, cipher_id);
+        assert!(archived[0].archived);
+
+        // Verify cipher data still intact
+        let cipher = match handle.get_cipher(cipher_id).unwrap() {
+            CipherRead::Decrypted(c) => c,
+            _ => panic!("expected decrypted"),
+        };
+        assert_eq!(cipher.name, "ArchiveMe");
+        assert!(cipher.archived);
+
+        // Unarchive
+        handle.unarchive_cipher(cipher_id).unwrap();
+
+        // Should reappear in normal list
+        let metas = handle.list_cipher_meta().unwrap();
+        assert_eq!(metas.len(), 1);
+        assert!(!metas[0].archived);
+
+        // Archived list should be empty
+        let archived = handle.list_archived_meta().unwrap();
+        assert!(archived.is_empty());
+    }
+
+    #[test]
+    fn archive_idempotent() {
+        let (dir, password) = create_test_vault();
+        let path = dir.path();
+        let mut handle = VaultHandle::open(path).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let input = CipherInput {
+            name: "DoubleArchive".into(),
+            ..Default::default()
+        };
+        let cipher_id = handle.add_cipher(&input).unwrap();
+
+        // Archive twice should not error
+        handle.archive_cipher(cipher_id).unwrap();
+        handle.archive_cipher(cipher_id).unwrap();
+
+        let archived = handle.list_archived_meta().unwrap();
+        assert_eq!(archived.len(), 1);
+
+        // Unarchive twice should not error
+        handle.unarchive_cipher(cipher_id).unwrap();
+        handle.unarchive_cipher(cipher_id).unwrap();
+
+        let metas = handle.list_cipher_meta().unwrap();
+        assert_eq!(metas.len(), 1);
     }
 }

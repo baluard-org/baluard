@@ -462,6 +462,7 @@ mod tests {
             password_history: vec![],
             reprompt: false,
             attachments: vec![],
+            archived: false,
         }
     }
 

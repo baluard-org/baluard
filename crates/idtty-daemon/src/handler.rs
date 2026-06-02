@@ -164,6 +164,9 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.trash.list",
     "vault.trash.restore",
     "vault.trash.purge",
+    "vault.archive",
+    "vault.unarchive",
+    "vault.list_archived",
     "settings.get",
     "settings.set",
     "sync.init",
@@ -396,6 +399,34 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 }
                 Err(e) => err_response(e),
             }
+        }
+
+        "vault.archive" => {
+            if req.payload.is_empty() {
+                return err_response("Missing cipher UUID in payload");
+            }
+            match state.archive_cipher(&req.payload).await {
+                Ok(()) => ok_resp("archived", token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "vault.unarchive" => {
+            if req.payload.is_empty() {
+                return err_response("Missing cipher UUID in payload");
+            }
+            match state.unarchive_cipher(&req.payload).await {
+                Ok(()) => ok_resp("unarchived", token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "vault.list_archived" => match state.list_archived_meta().await {
+            Ok(metas) => {
+                let json = serde_json::json!({"ciphers": metas});
+                ok_resp(json.to_string(), token_str)
+            }
+            Err(e) => err_response(e),
         }
 
         "vault.devices" => match state.devices().await {

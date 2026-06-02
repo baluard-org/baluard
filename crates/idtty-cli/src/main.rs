@@ -89,10 +89,26 @@ enum Commands {
     },
 
     /// List all ciphers.
-    List,
+    List {
+        /// Show archived entries instead of active ones.
+        #[arg(long)]
+        archived: bool,
+    },
 
     /// Delete a cipher by ID.
     Delete {
+        /// Cipher ID.
+        id: String,
+    },
+
+    /// Archive a cipher (hide from main list).
+    Archive {
+        /// Cipher ID.
+        id: String,
+    },
+
+    /// Unarchive a cipher (restore to main list).
+    Unarchive {
         /// Cipher ID.
         id: String,
     },
@@ -318,9 +334,17 @@ fn main() {
             decrypt,
             &output,
         ),
-        Commands::List => commands::handle_list(mode, &cli.vault_path, cli.socket.as_deref()),
+        Commands::List { archived } => commands::handle_list(mode, &cli.vault_path, cli.socket.as_deref(), archived),
         Commands::Delete { id } => {
             commands::handle_delete(mode, &cli.vault_path, cli.socket.as_deref(), &id)
+        }
+
+        Commands::Archive { id } => {
+            commands::handle_archive(mode, &cli.vault_path, cli.socket.as_deref(), &id)
+        }
+
+        Commands::Unarchive { id } => {
+            commands::handle_unarchive(mode, &cli.vault_path, cli.socket.as_deref(), &id)
         }
 
         Commands::Edit {

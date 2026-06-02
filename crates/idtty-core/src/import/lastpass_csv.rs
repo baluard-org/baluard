@@ -73,6 +73,7 @@ pub fn parse(data: &str) -> ImportResult {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
 

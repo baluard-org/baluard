@@ -90,6 +90,7 @@ createEffect(() => {
   });
   
   const [trashCiphers, setTrashCiphers] = createSignal([]);
+  const [archivedCiphers, setArchivedCiphers] = createSignal([]);
   const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
   const [createPassword, setCreatePassword] = createSignal("");
 
@@ -106,6 +107,7 @@ createEffect(() => {
     status, setStatus,
     ciphers, setCiphers,
     trashCiphers, setTrashCiphers,
+    archivedCiphers, setArchivedCiphers,
     error, setError,
     vaultInfo, setVaultInfo,
     theme, setTheme,
@@ -226,6 +228,26 @@ function useActions() {
     }
   }
 
+  async function refreshArchivedCiphers() {
+    try {
+      const data = JSON.parse(await daemon("vault.list_archived"));
+      const metas = data.ciphers || [];
+      const fullCiphers = await Promise.all(
+        metas.map(async (meta) => {
+          try {
+            const detailStr = await daemon("vault.get", JSON.stringify({ id: meta.id, decrypt: true }));
+            return JSON.parse(detailStr);
+          } catch (e) {
+            return { id: meta.id, name: "Decryption Error", username: "", uris: [] };
+          }
+        })
+      );
+      app.setArchivedCiphers(fullCiphers);
+    } catch (e) {
+      // Non-critical
+    }
+  }
+
   async function refreshCiphers() {
     try {
       const data = JSON.parse(await daemon("vault.list"));
@@ -253,6 +275,7 @@ function useActions() {
       } catch (e) {}
 
       await refreshTrashCiphers();
+      await refreshArchivedCiphers();
     } catch (e) {
       app.setError(sanitizeError(e, t));
     }
@@ -463,11 +486,35 @@ function useActions() {
     }
   }
 
+  async function archiveCipher(id) {
+    try {
+      await daemon("vault.archive", id);
+      app.setViewCipher(null);
+      app.setActivePane("welcome");
+      await refreshCiphers();
+      await refreshArchivedCiphers();
+    } catch (e) {
+      app.setError(sanitizeError(e, t));
+    }
+  }
+
+  async function unarchiveCipher(id) {
+    try {
+      await daemon("vault.unarchive", id);
+      app.setViewCipher(null);
+      app.setActivePane("welcome");
+      await refreshCiphers();
+      await refreshArchivedCiphers();
+    } catch (e) {
+      app.setError(sanitizeError(e, t));
+    }
+  }
+
   function onKeyUnlock(e) {
     if (e.key === "Enter") unlock(useI18n().t);
   }
 
-  return { loginPasswordRef, setLoginPasswordRef: (r) => { loginPasswordRef = r; }, unlock, lock, createVault, refreshCiphers, addCipher, updateCipher, getCipher, deleteCipher, restoreCipher, onKeyUnlock };
+  return { loginPasswordRef, setLoginPasswordRef: (r) => { loginPasswordRef = r; }, unlock, lock, createVault, refreshCiphers, addCipher, updateCipher, getCipher, deleteCipher, restoreCipher, archiveCipher, unarchiveCipher, onKeyUnlock };
 }
 
 // ── Shared UI Utilities ──
@@ -1192,7 +1239,7 @@ function DeleteConfirmModal() {
               onClick={() => deleteCipher(viewCipher().id, t)}
               class="flex-1 py-3 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold transition-all text-xs outline-none focus:ring-2 focus:ring-red-400 cursor-pointer"
             >
-              {selectedCategory() === "Trash" ? "Delete permanently" : "Delete"}
+              {selectedCategory() === "Trash" ? t("entry.deletePermanently") : t("entry.delete")}
             </button>
           </div>
         </div>
@@ -1419,7 +1466,7 @@ function CopyableField(props) {
 
 function CipherDetail() {
   const { viewCipher, setViewCipher, setActivePane, setNewCipher, setShowDeleteConfirm, setShowReprompt, setRepromptCallback, selectedCategory } = useApp();
-  const { restoreCipher } = useActions();
+  const { restoreCipher, archiveCipher, unarchiveCipher } = useActions();
   const { t } = useI18n();
 
   const [revealPass, setRevealPass] = createSignal(false);
@@ -1773,13 +1820,38 @@ function CipherDetail() {
       {/* Footer Details Action bar */}
       <div class="p-6 bg-[var(--color-sidebar)] border-t border-[var(--color-border)] flex items-center justify-between gap-4">
         <Show when={selectedCategory() === "Trash"} fallback={
-          <>
+          <Show when={selectedCategory() === "Archive"} fallback={
+            <>
+              <button
+                onClick={startEdit}
+                class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                Edit
+              </button>
+              <button
+                onClick={() => archiveCipher(viewCipher().id)}
+                class="py-3 px-4 rounded-xl bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:bg-[var(--color-card)] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+                {t("entry.archive")}
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                class="py-3 px-4 rounded-xl bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                {t("entry.delete")}
+              </button>
+            </>
+          }>
+            {/* Archive category: Unarchive + Delete (moves to trash) */}
             <button
-              onClick={startEdit}
-              class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+              onClick={() => unarchiveCipher(viewCipher().id)}
+              class="flex-1 py-3 px-4 rounded-xl bg-emerald-950/20 text-emerald-400 border border-emerald-900/30 hover:bg-emerald-950/40 font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-              Edit
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.706 9H17"/></svg>
+              {t("entry.unarchive")}
             </button>
             <button
               onClick={() => setShowDeleteConfirm(true)}
@@ -1788,21 +1860,21 @@ function CipherDetail() {
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
               {t("entry.delete")}
             </button>
-          </>
+          </Show>
         }>
           <button
             onClick={() => restoreCipher(viewCipher().id, t)}
             class="flex-1 py-3 px-4 rounded-xl bg-emerald-950/20 text-emerald-400 border border-emerald-900/30 hover:bg-emerald-950/40 font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.706 9H17"/></svg>
-            Restore
+            {t("entry.restore")}
           </button>
           <button
             onClick={() => setShowDeleteConfirm(true)}
             class="py-3 px-4 rounded-xl bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            Delete permanently
+            {t("entry.deletePermanently")}
           </button>
         </Show>
       </div>
@@ -2481,7 +2553,7 @@ function FolderNode(props) {
 }
 
 function VaultView() {
-  const { ciphers, trashCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator, showSettingsModal, setShowSettingsModal } = useApp();
+  const { ciphers, trashCiphers, archivedCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator, showSettingsModal, setShowSettingsModal } = useApp();
   const { lock } = useActions();
   const { t } = useI18n();
 
@@ -2494,13 +2566,14 @@ function VaultView() {
     { name: "Identity", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg> },
     { name: "Secure note", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
     { name: "SSH key", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m0 0a2 2 0 01-2 2m2-2h2a2 2 0 002-2V5a2 2 0 00-2-2h-2a2 2 0 00-2 2v2m0 0h-2m-2 0A5 5 0 113 12a5 5 0 0110 0v1a2 2 0 002 2h2a2 2 0 002-2v-1a2 2 0 00-2-2h-2" /></svg> },
+    { name: "Archive", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg> },
     { name: "Trash", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg> }
   ];
 
   // Client-side filtering & search
   const filteredCiphers = () => {
     const cat = selectedCategory();
-    let list = cat === "Trash" ? (trashCiphers() || []) : (ciphers() || []);
+    let list = cat === "Trash" ? (trashCiphers() || []) : cat === "Archive" ? (archivedCiphers() || []) : (ciphers() || []);
     const query = searchQuery().toLowerCase();
 
     // Category filtering (using cipher.type from backend)
@@ -2621,6 +2694,11 @@ function VaultView() {
                       <Show when={cat.name === "Trash"}>
                         <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
                           {trashCiphers().length}
+                        </span>
+                      </Show>
+                      <Show when={cat.name === "Archive"}>
+                        <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
+                          {archivedCiphers().length}
                         </span>
                       </Show>
                     </button>

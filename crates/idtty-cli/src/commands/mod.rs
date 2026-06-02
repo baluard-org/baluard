@@ -184,6 +184,7 @@ pub fn handle_add(
         created_at: None,
         password_history: vec![],
         attachments: vec![],
+            archived: false,
         reprompt: false,
     };
 
@@ -471,10 +472,12 @@ pub fn handle_list(
     mode: ConnectMode,
     vault_path: &str,
     socket: Option<&str>,
+    archived: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
-            let resp = client::request_to("vault.list", "", socket)?;
+            let action = if archived { "vault.list_archived" } else { "vault.list" };
+            let resp = client::request_to(action, "", socket)?;
             if !resp.success {
                 return Err(resp.error_message.into());
             }
@@ -531,17 +534,21 @@ pub fn handle_list(
             }
             Ok(())
         }
-        ConnectMode::Direct => list_direct(vault_path),
+        ConnectMode::Direct => list_direct(vault_path, archived),
     }
 }
 
-fn list_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn list_direct(vault_path: &str, archived: bool) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
     let handle = VaultHandle::open(path)?;
 
     // Try CipherMeta listing (requires unlock)
     if handle.is_unlocked() {
-        let metas = handle.list_cipher_meta()?;
+        let metas = if archived {
+            handle.list_archived_meta()?
+        } else {
+            handle.list_cipher_meta()?
+        };
         if metas.is_empty() {
             println!("No ciphers found.");
             return Ok(());
@@ -594,6 +601,62 @@ pub fn handle_delete(
             let handle = VaultHandle::open(path)?;
             handle.delete_cipher(cipher_id)?;
             println!("Cipher deleted: {cipher_id}");
+            Ok(())
+        }
+    }
+}
+
+// ── Archive / Unarchive ──
+
+pub fn handle_archive(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("vault.archive", id, socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("Cipher archived: {id}");
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            let path = Path::new(vault_path);
+            let mut handle = VaultHandle::open(path)?;
+            let cipher_id = uuid::Uuid::parse_str(id).map_err(|_| "invalid UUID")?;
+            handle.archive_cipher(cipher_id)?;
+            println!("Cipher archived: {id}");
+            Ok(())
+        }
+    }
+}
+
+pub fn handle_unarchive(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("vault.unarchive", id, socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("Cipher unarchived: {id}");
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            let path = Path::new(vault_path);
+            let mut handle = VaultHandle::open(path)?;
+            let cipher_id = uuid::Uuid::parse_str(id).map_err(|_| "invalid UUID")?;
+            handle.unarchive_cipher(cipher_id)?;
+            println!("Cipher unarchived: {id}");
             Ok(())
         }
     }
@@ -1039,6 +1102,7 @@ pub fn handle_edit(
                 created_at: Some(existing_cipher.created_at),
                 password_history: existing_cipher.password_history.clone(),
                 attachments: existing_cipher.attachments.clone(),
+                archived: existing_cipher.archived,
             };
 
             handle.update_cipher(cipher_id, &input)?;
