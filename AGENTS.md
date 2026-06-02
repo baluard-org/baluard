@@ -163,14 +163,14 @@ idtty/
 | `idtty-core` biometric | OS keychain unlock via keyring crate, tested |
 | `idtty-core` attachments | AES-256-GCM encrypted file storage, tested |
 | `idtty-cli` (dual-mode) | Daemon-first + `--direct` fallback. CRUD + folders + edit + import/export + health + attachments |
-| `idtty-daemon` socket server | Protobuf wire, VaultState, full CRUD, TOTP, auto-lock, attachments, biometric, import/export, health. SIGTERM safe |
+| `idtty-daemon` socket server | Protobuf wire, VaultState, full CRUD, TOTP, auto-lock, attachments, biometric, import/export, health, archive. SIGTERM safe |
 | Protobuf codegen | Compiled via prost in daemon + CLI build.rs |
-| Desktop Tauri app | Full CRUD, 5 cipher types, generator, TOTP widget, auto-lock, nested folders, attachments, biometric unlock, custom fields (incl linked), reprompt, import/export, health, dark/light themes |
+| Desktop Tauri app | Full CRUD, 5 cipher types, generator, TOTP widget, auto-lock, nested folders, attachments, biometric unlock, custom fields (incl linked), reprompt, import/export, health, archive, dark/light themes |
 | UniFFI annotations | Not yet applied to idtty-core |
 | Mobile KMP app | Placeholder |
 | Browser extension | Placeholder |
 
-**Test counts**: 188 workspace-wide (184 idtty-core + 4 across CLI/daemon). 1 ignored. **0 clippy errors workspace-wide.**
+**Test counts**: 190 workspace-wide (186 idtty-core + 4 across CLI/daemon). 1 ignored. **0 clippy errors workspace-wide.**
 
 ### BW Parity Phases 1-8 (Original)
 | Phase | Description | Tests | Peer Reviewed |

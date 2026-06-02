@@ -418,6 +418,7 @@ impl VaultState {
             created_at: Some(existing_cipher.created_at),
             password_history: existing_cipher.password_history.clone(),
             attachments: existing_cipher.attachments.clone(),
+                archived: existing_cipher.archived,
         };
 
         handle
@@ -607,7 +608,7 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".into());
         }
 
-        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
+        let metas = handle.list_cipher_meta_full().map_err(|e| format!("{e}"))?;
         let mut ciphers = Vec::new();
         for meta in &metas {
             match handle.get_cipher(meta.id) {
@@ -634,7 +635,7 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".into());
         }
 
-        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
+        let metas = handle.list_cipher_meta_full().map_err(|e| format!("{e}"))?;
         let mut ciphers = Vec::new();
         for meta in &metas {
             match handle.get_cipher(meta.id) {
@@ -691,6 +692,29 @@ impl VaultState {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         handle.purge_old_trash(days).map_err(|e| format!("{e}"))
+    }
+
+    /// Archive a cipher (hide from main list).
+    pub async fn archive_cipher(&self, id_str: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        let cipher_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
+        handle.archive_cipher(cipher_id).map_err(|e| format!("{e}"))
+    }
+
+    /// Unarchive a cipher (restore to main list).
+    pub async fn unarchive_cipher(&self, id_str: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        let cipher_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
+        handle.unarchive_cipher(cipher_id).map_err(|e| format!("{e}"))
+    }
+
+    /// List archived cipher metadata.
+    pub async fn list_archived_meta(&self) -> Result<Vec<idtty_core::types::CipherMeta>, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        handle.list_archived_meta().map_err(|e| format!("{e}"))
     }
 
     /// Get biometric unlock status.
@@ -836,6 +860,7 @@ impl VaultState {
             created_at: Some(cipher.created_at),
             password_history: cipher.password_history.clone(),
             attachments,
+            archived: cipher.archived,
         };
         handle.update_cipher(cipher_id, &input).map_err(|e| {
             // Clean up orphaned encrypted file on update failure
@@ -962,6 +987,7 @@ impl VaultState {
             created_at: Some(cipher.created_at),
             password_history: cipher.password_history.clone(),
             attachments,
+            archived: cipher.archived,
         };
         handle
             .update_cipher(cipher_id, &input)
@@ -979,7 +1005,7 @@ impl VaultState {
             return Err("Vault is locked".into());
         }
 
-        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
+        let metas = handle.list_cipher_meta_full().map_err(|e| format!("{e}"))?;
         let mut ciphers = Vec::new();
         for meta in &metas {
             match handle.get_cipher(meta.id) {

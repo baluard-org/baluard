@@ -47,6 +47,10 @@
     "uri": "Website",
     "notes": "Notes",
     "delete": "Delete",
+    "deletePermanently": "Delete permanently",
+    "archive": "Archive",
+    "unarchive": "Unarchive",
+    "restore": "Restore",
     "selectPrompt": "Select an entry or add a new one"
   },
   "errors": {

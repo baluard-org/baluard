@@ -284,6 +284,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         }
     }
@@ -423,6 +424,7 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
             reprompt: false,
         };
         base.name = "Card".into();

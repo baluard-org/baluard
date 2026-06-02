@@ -241,6 +241,7 @@ mod tests {
             updated_at,
             password_history: vec![],
             attachments: vec![],
+            archived: false,
         }
     }
 

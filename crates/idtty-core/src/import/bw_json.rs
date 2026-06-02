@@ -338,6 +338,7 @@ pub fn parse(data: &str) -> ImportResult {
             password_history,
             reprompt: false,
             attachments: vec![],
+            archived: false,
         };
 
         result.add_with_folder(cipher, folder_name);
