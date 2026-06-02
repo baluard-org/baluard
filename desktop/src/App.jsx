@@ -337,6 +337,72 @@ function useActions() {
             key_fingerprint: c.fingerprint || null,
           },
         };
+      } else if (cipherType === "bankAccount") {
+        kind = {
+          type: "bankAccount",
+          data: {
+            bank_name: c.bankName || null,
+            name_on_account: c.nameOnAccount || null,
+            account_type: c.accountType || null,
+            account_number: c.accountNumber || null,
+            routing_number: c.routingNumber || null,
+            branch_number: c.branchNumber || null,
+            pin: c.bankPin || null,
+            swift_code: c.swiftCode || null,
+            iban: c.iban || null,
+            bank_contact_phone: c.bankPhone || null,
+          },
+        };
+      } else if (cipherType === "driversLicense") {
+        kind = {
+          type: "driversLicense",
+          data: {
+            first_name: c.dlFirstName || null,
+            middle_name: c.dlMiddleName || null,
+            last_name: c.dlLastName || null,
+            date_of_birth: c.dlDob || null,
+            license_number: c.dlNumber || null,
+            issuing_country: c.dlCountry || null,
+            issuing_state: c.dlState || null,
+            issue_date: c.dlIssueDate || null,
+            expiration_date: c.dlExpDate || null,
+            issuing_authority: c.dlAuthority || null,
+            license_class: c.dlClass || null,
+          },
+        };
+      } else if (cipherType === "passport") {
+        kind = {
+          type: "passport",
+          data: {
+            surname: c.ppSurname || null,
+            given_name: c.ppGivenName || null,
+            date_of_birth: c.ppDob || null,
+            sex: c.ppSex || null,
+            birth_place: c.ppBirthPlace || null,
+            nationality: c.ppNationality || null,
+            issuing_country: c.ppCountry || null,
+            passport_number: c.ppNumber || null,
+            passport_type: c.ppType || null,
+            national_identification_number: c.ppNationalId || null,
+            issuing_authority: c.ppAuthority || null,
+            issue_date: c.ppIssueDate || null,
+            expiration_date: c.ppExpDate || null,
+          },
+        };
+      } else if (cipherType === "countryId") {
+        kind = {
+          type: "countryId",
+          data: {
+            first_name: c.ciFirstName || null,
+            last_name: c.ciLastName || null,
+            id_number: c.ciNumber || null,
+            issuing_country: c.ciCountry || null,
+            date_of_birth: c.ciDob || null,
+            sex: c.ciSex || null,
+            issue_date: c.ciIssueDate || null,
+            expiration_date: c.ciExpDate || null,
+          },
+        };
       } else {
         // Login
         kind = {
@@ -419,6 +485,72 @@ function useActions() {
             public_key: c.publicKey || null,
             private_key: c.privateKey || null,
             key_fingerprint: c.fingerprint || null,
+          },
+        };
+      } else if (cipherType === "bankAccount") {
+        kind = {
+          type: "bankAccount",
+          data: {
+            bank_name: c.bankName || null,
+            name_on_account: c.nameOnAccount || null,
+            account_type: c.accountType || null,
+            account_number: c.accountNumber || null,
+            routing_number: c.routingNumber || null,
+            branch_number: c.branchNumber || null,
+            pin: c.bankPin || null,
+            swift_code: c.swiftCode || null,
+            iban: c.iban || null,
+            bank_contact_phone: c.bankPhone || null,
+          },
+        };
+      } else if (cipherType === "driversLicense") {
+        kind = {
+          type: "driversLicense",
+          data: {
+            first_name: c.dlFirstName || null,
+            middle_name: c.dlMiddleName || null,
+            last_name: c.dlLastName || null,
+            date_of_birth: c.dlDob || null,
+            license_number: c.dlNumber || null,
+            issuing_country: c.dlCountry || null,
+            issuing_state: c.dlState || null,
+            issue_date: c.dlIssueDate || null,
+            expiration_date: c.dlExpDate || null,
+            issuing_authority: c.dlAuthority || null,
+            license_class: c.dlClass || null,
+          },
+        };
+      } else if (cipherType === "passport") {
+        kind = {
+          type: "passport",
+          data: {
+            surname: c.ppSurname || null,
+            given_name: c.ppGivenName || null,
+            date_of_birth: c.ppDob || null,
+            sex: c.ppSex || null,
+            birth_place: c.ppBirthPlace || null,
+            nationality: c.ppNationality || null,
+            issuing_country: c.ppCountry || null,
+            passport_number: c.ppNumber || null,
+            passport_type: c.ppType || null,
+            national_identification_number: c.ppNationalId || null,
+            issuing_authority: c.ppAuthority || null,
+            issue_date: c.ppIssueDate || null,
+            expiration_date: c.ppExpDate || null,
+          },
+        };
+      } else if (cipherType === "countryId") {
+        kind = {
+          type: "countryId",
+          data: {
+            first_name: c.ciFirstName || null,
+            last_name: c.ciLastName || null,
+            id_number: c.ciNumber || null,
+            issuing_country: c.ciCountry || null,
+            date_of_birth: c.ciDob || null,
+            sex: c.ciSex || null,
+            issue_date: c.ciIssueDate || null,
+            expiration_date: c.ciExpDate || null,
           },
         };
       } else {
@@ -1556,6 +1688,52 @@ function CipherDetail() {
       publicKey: (kind.sshKey || kind.SshKey || {}).public_key || "",
       privateKey: (kind.sshKey || kind.SshKey || {}).private_key || "",
       fingerprint: (kind.sshKey || kind.SshKey || {}).key_fingerprint || "",
+      // Bank Account fields
+      bankName: c.bank_name || "",
+      nameOnAccount: c.name_on_account || "",
+      accountType: c.account_type || "",
+      accountNumber: c.account_number || "",
+      routingNumber: c.routing_number || "",
+      branchNumber: c.branch_number || "",
+      bankPin: c.pin || "",
+      swiftCode: c.swift_code || "",
+      iban: c.iban || "",
+      bankPhone: c.bank_contact_phone || "",
+      // Driver License fields
+      dlFirstName: c.first_name || "",
+      dlMiddleName: c.middle_name || "",
+      dlLastName: c.last_name || "",
+      dlDob: c.date_of_birth || "",
+      dlNumber: c.license_number || "",
+      dlCountry: c.issuing_country || "",
+      dlState: c.issuing_state || "",
+      dlIssueDate: c.issue_date || "",
+      dlExpDate: c.expiration_date || "",
+      dlAuthority: c.issuing_authority || "",
+      dlClass: c.license_class || "",
+      // Passport fields
+      ppSurname: c.surname || "",
+      ppGivenName: c.given_name || "",
+      ppDob: c.date_of_birth || "",
+      ppSex: c.sex || "",
+      ppBirthPlace: c.birth_place || "",
+      ppNationality: c.nationality || "",
+      ppCountry: c.issuing_country || "",
+      ppNumber: c.passport_number || "",
+      ppType: c.passport_type || "",
+      ppNationalId: c.national_identification_number || "",
+      ppAuthority: c.issuing_authority || "",
+      ppIssueDate: c.issue_date || "",
+      ppExpDate: c.expiration_date || "",
+      // Country ID fields
+      ciFirstName: c.first_name || "",
+      ciLastName: c.last_name || "",
+      ciNumber: c.id_number || "",
+      ciCountry: c.issuing_country || "",
+      ciDob: c.date_of_birth || "",
+      ciSex: c.sex || "",
+      ciIssueDate: c.issue_date || "",
+      ciExpDate: c.expiration_date || "",
     });
     setActivePane("edit");
   }
@@ -1572,7 +1750,7 @@ function CipherDetail() {
             <h3 class="text-2xl font-bold text-[var(--color-text)] truncate leading-tight select-all">{viewCipher()?.name || "Untitled"}</h3>
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] mt-2">
               <span class="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
-              {viewCipher()?.type === "card" ? "Card" : viewCipher()?.type === "identity" ? "Identity" : viewCipher()?.type === "secureNote" ? "Secure Note" : viewCipher()?.type === "sshKey" ? "SSH Key" : "Login"} Item
+              {viewCipher()?.type === "card" ? "Card" : viewCipher()?.type === "identity" ? "Identity" : viewCipher()?.type === "secureNote" ? "Secure Note" : viewCipher()?.type === "sshKey" ? "SSH Key" : viewCipher()?.type === "bankAccount" ? "Bank Account" : viewCipher()?.type === "driversLicense" ? "Driver License" : viewCipher()?.type === "passport" ? "Passport" : viewCipher()?.type === "countryId" ? "Country ID" : "Login"} Item
             </span>
           </div>
           <button
@@ -1670,6 +1848,72 @@ function CipherDetail() {
           </div>
         </Show>
 
+        {/* Bank Account fields */}
+        <Show when={viewCipher()?.type === "bankAccount"}>
+          <div class="space-y-4">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Bank account details</h4>
+            <CopyableField label="Bank Name" value={viewCipher()?.bank_name} />
+            <CopyableField label="Name on Account" value={viewCipher()?.name_on_account} />
+            <CopyableField label="Account Type" value={viewCipher()?.account_type} />
+            <CopyableField label="Account Number" value={viewCipher()?.account_number} />
+            <CopyableField label="Routing Number" value={viewCipher()?.routing_number} />
+            <CopyableField label="Branch Number" value={viewCipher()?.branch_number} />
+            <CopyableField label="SWIFT Code" value={viewCipher()?.swift_code} />
+            <CopyableField label="IBAN" value={viewCipher()?.iban} />
+            <CopyableField label="Bank Phone" value={viewCipher()?.bank_contact_phone} />
+            <CopyableField label="PIN" value={viewCipher()?.pin} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+          </div>
+        </Show>
+
+        {/* Driver License fields */}
+        <Show when={viewCipher()?.type === "driversLicense"}>
+          <div class="space-y-4">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Driver license details</h4>
+            <CopyableField label="Full Name" value={[viewCipher()?.first_name, viewCipher()?.middle_name, viewCipher()?.last_name].filter(Boolean).join(" ") || null} />
+            <CopyableField label="Date of Birth" value={viewCipher()?.date_of_birth} />
+            <CopyableField label="License Number" value={viewCipher()?.license_number} />
+            <CopyableField label="Issuing Country" value={viewCipher()?.issuing_country} />
+            <CopyableField label="Issuing State" value={viewCipher()?.issuing_state} />
+            <CopyableField label="Issue Date" value={viewCipher()?.issue_date} />
+            <CopyableField label="Expiration Date" value={viewCipher()?.expiration_date} />
+            <CopyableField label="Issuing Authority" value={viewCipher()?.issuing_authority} />
+            <CopyableField label="License Class" value={viewCipher()?.license_class} />
+          </div>
+        </Show>
+
+        {/* Passport fields */}
+        <Show when={viewCipher()?.type === "passport"}>
+          <div class="space-y-4">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Passport details</h4>
+            <CopyableField label="Full Name" value={[viewCipher()?.given_name, viewCipher()?.surname].filter(Boolean).join(" ") || null} />
+            <CopyableField label="Date of Birth" value={viewCipher()?.date_of_birth} />
+            <CopyableField label="Sex" value={viewCipher()?.sex} />
+            <CopyableField label="Birth Place" value={viewCipher()?.birth_place} />
+            <CopyableField label="Nationality" value={viewCipher()?.nationality} />
+            <CopyableField label="Issuing Country" value={viewCipher()?.issuing_country} />
+            <CopyableField label="Passport Number" value={viewCipher()?.passport_number} />
+            <CopyableField label="Passport Type" value={viewCipher()?.passport_type} />
+            <CopyableField label="National ID Number" value={viewCipher()?.national_identification_number} />
+            <CopyableField label="Issuing Authority" value={viewCipher()?.issuing_authority} />
+            <CopyableField label="Issue Date" value={viewCipher()?.issue_date} />
+            <CopyableField label="Expiration Date" value={viewCipher()?.expiration_date} />
+          </div>
+        </Show>
+
+        {/* Country ID fields */}
+        <Show when={viewCipher()?.type === "countryId"}>
+          <div class="space-y-4">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Country ID details</h4>
+            <CopyableField label="Full Name" value={[viewCipher()?.first_name, viewCipher()?.last_name].filter(Boolean).join(" ") || null} />
+            <CopyableField label="ID Number" value={viewCipher()?.id_number} />
+            <CopyableField label="Issuing Country" value={viewCipher()?.issuing_country} />
+            <CopyableField label="Date of Birth" value={viewCipher()?.date_of_birth} />
+            <CopyableField label="Sex" value={viewCipher()?.sex} />
+            <CopyableField label="Issue Date" value={viewCipher()?.issue_date} />
+            <CopyableField label="Expiration Date" value={viewCipher()?.expiration_date} />
+          </div>
+        </Show>
+
         {/* Website URI group */}
         <Show when={viewCipher()?.uris?.length}>
           <div class="space-y-4 pt-2">
@@ -1714,28 +1958,77 @@ function CipherDetail() {
                     const c = viewCipher();
                     if (!c) return field.value || "";
                     const map = {
-                      LoginUsername: c.username || c.kind?.login?.username,
-                      LoginPassword: c.password || c.kind?.login?.password,
-                      CardCardholderName: c.kind?.card?.cardholder_name,
-                      CardNumber: c.kind?.card?.number,
-                      CardExpMonth: c.kind?.card?.exp_month,
-                      CardExpYear: c.kind?.card?.exp_year,
-                      CardCvv: c.kind?.card?.code,
-                      IdentityTitle: c.kind?.identity?.title,
-                      IdentityFirstName: c.kind?.identity?.first_name,
-                      IdentityMiddleName: c.kind?.identity?.middle_name,
-                      IdentityLastName: c.kind?.identity?.last_name,
-                      IdentityUsername: c.kind?.identity?.username,
-                      IdentityCompany: c.kind?.identity?.company,
-                      IdentityEmail: c.kind?.identity?.email,
-                      IdentityPhone: c.kind?.identity?.phone,
-                      IdentityAddress1: c.kind?.identity?.address1,
-                      IdentityAddress2: c.kind?.identity?.address2,
-                      IdentityAddress3: c.kind?.identity?.address3,
-                      IdentityCity: c.kind?.identity?.city,
-                      IdentityState: c.kind?.identity?.state,
-                      IdentityPostalCode: c.kind?.identity?.postal_code,
-                      IdentityCountry: c.kind?.identity?.country,
+                      // Login
+                      LoginUsername: c.username,
+                      LoginPassword: c.password,
+                      // Card
+                      CardCardholderName: c.cardholder_name,
+                      CardNumber: c.number,
+                      CardExpMonth: c.exp_month,
+                      CardExpYear: c.exp_year,
+                      CardCvv: c.code,
+                      // Identity
+                      IdentityTitle: c.title,
+                      IdentityFirstName: c.first_name,
+                      IdentityMiddleName: c.middle_name,
+                      IdentityLastName: c.last_name,
+                      IdentityUsername: c.username,
+                      IdentityCompany: c.company,
+                      IdentityEmail: c.email,
+                      IdentityPhone: c.phone,
+                      IdentityAddress1: c.address1,
+                      IdentityAddress2: c.address2,
+                      IdentityAddress3: c.address3,
+                      IdentityCity: c.city,
+                      IdentityState: c.state,
+                      IdentityPostalCode: c.postal_code,
+                      IdentityCountry: c.country,
+                      // Bank Account
+                      BankAccountBankName: c.bank_name,
+                      BankAccountNameOnAccount: c.name_on_account,
+                      BankAccountAccountType: c.account_type,
+                      BankAccountAccountNumber: c.account_number,
+                      BankAccountRoutingNumber: c.routing_number,
+                      BankAccountBranchNumber: c.branch_number,
+                      BankAccountPin: c.pin,
+                      BankAccountSwiftCode: c.swift_code,
+                      BankAccountIban: c.iban,
+                      BankAccountBankContactPhone: c.bank_contact_phone,
+                      // Driver License
+                      DriversLicenseFirstName: c.first_name,
+                      DriversLicenseMiddleName: c.middle_name,
+                      DriversLicenseLastName: c.last_name,
+                      DriversLicenseDateOfBirth: c.date_of_birth,
+                      DriversLicenseLicenseNumber: c.license_number,
+                      DriversLicenseIssuingCountry: c.issuing_country,
+                      DriversLicenseIssuingState: c.issuing_state,
+                      DriversLicenseIssueDate: c.issue_date,
+                      DriversLicenseExpirationDate: c.expiration_date,
+                      DriversLicenseIssuingAuthority: c.issuing_authority,
+                      DriversLicenseLicenseClass: c.license_class,
+                      // Passport
+                      PassportSurname: c.surname,
+                      PassportGivenName: c.given_name,
+                      PassportDateOfBirth: c.date_of_birth,
+                      PassportSex: c.sex,
+                      PassportBirthPlace: c.birth_place,
+                      PassportNationality: c.nationality,
+                      PassportIssuingCountry: c.issuing_country,
+                      PassportPassportNumber: c.passport_number,
+                      PassportPassportType: c.passport_type,
+                      PassportNationalIdNumber: c.national_identification_number,
+                      PassportIssuingAuthority: c.issuing_authority,
+                      PassportIssueDate: c.issue_date,
+                      PassportExpirationDate: c.expiration_date,
+                      // Country ID
+                      CountryIdFirstName: c.first_name,
+                      CountryIdLastName: c.last_name,
+                      CountryIdIdNumber: c.id_number,
+                      CountryIdIssuingCountry: c.issuing_country,
+                      CountryIdDateOfBirth: c.date_of_birth,
+                      CountryIdSex: c.sex,
+                      CountryIdIssueDate: c.issue_date,
+                      CountryIdExpirationDate: c.expiration_date,
                     };
                     return map[lt] || "(linked field)";
                   }
@@ -2288,6 +2581,242 @@ function AddEditCipherForm(props) {
             </div>
           </Show>
 
+          {/* Bank Account fields */}
+          <Show when={cipherType() === "bankAccount"}>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Bank Name</label>
+                <input placeholder="Chase" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().bankName || ""} onInput={e => setNewCipher({ ...newCipher(), bankName: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Name on Account</label>
+                <input placeholder="John Doe" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().nameOnAccount || ""} onInput={e => setNewCipher({ ...newCipher(), nameOnAccount: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Account Type</label>
+                <select class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={newCipher().accountType || ""} onChange={e => setNewCipher({ ...newCipher(), accountType: e.target.value })}>
+                  <option value="">Select...</option>
+                  <option value="checking">Checking</option>
+                  <option value="savings">Savings</option>
+                  <option value="investment">Investment</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Account Number</label>
+                <input placeholder="123456789" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().accountNumber || ""} onInput={e => setNewCipher({ ...newCipher(), accountNumber: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Routing Number</label>
+                <input placeholder="987654321" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().routingNumber || ""} onInput={e => setNewCipher({ ...newCipher(), routingNumber: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Branch Number</label>
+                <input placeholder="001" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().branchNumber || ""} onInput={e => setNewCipher({ ...newCipher(), branchNumber: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">SWIFT Code</label>
+                <input placeholder="CHASUS33" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().swiftCode || ""} onInput={e => setNewCipher({ ...newCipher(), swiftCode: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">IBAN</label>
+                <input placeholder="US12 3456 7890" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().iban || ""} onInput={e => setNewCipher({ ...newCipher(), iban: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Bank Phone</label>
+                <input placeholder="+1 800 555 1234" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().bankPhone || ""} onInput={e => setNewCipher({ ...newCipher(), bankPhone: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">PIN</label>
+                <input placeholder="****" type="password" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().bankPin || ""} onInput={e => setNewCipher({ ...newCipher(), bankPin: e.target.value })} />
+              </div>
+            </div>
+          </Show>
+
+          {/* Driver License fields */}
+          <Show when={cipherType() === "driversLicense"}>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">First Name</label>
+                <input placeholder="Jane" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlFirstName || ""} onInput={e => setNewCipher({ ...newCipher(), dlFirstName: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Middle</label>
+                <input placeholder="A" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlMiddleName || ""} onInput={e => setNewCipher({ ...newCipher(), dlMiddleName: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Last Name</label>
+                <input placeholder="Doe" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlLastName || ""} onInput={e => setNewCipher({ ...newCipher(), dlLastName: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Date of Birth</label>
+                <input placeholder="1990-01-15" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlDob || ""} onInput={e => setNewCipher({ ...newCipher(), dlDob: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">License Number</label>
+                <input placeholder="D55555" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().dlNumber || ""} onInput={e => setNewCipher({ ...newCipher(), dlNumber: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing Country</label>
+                <input placeholder="US" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlCountry || ""} onInput={e => setNewCipher({ ...newCipher(), dlCountry: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing State</label>
+                <input placeholder="CA" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlState || ""} onInput={e => setNewCipher({ ...newCipher(), dlState: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issue Date</label>
+                <input placeholder="2020-06-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlIssueDate || ""} onInput={e => setNewCipher({ ...newCipher(), dlIssueDate: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Expiration</label>
+                <input placeholder="2028-06-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlExpDate || ""} onInput={e => setNewCipher({ ...newCipher(), dlExpDate: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Class</label>
+                <input placeholder="C" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlClass || ""} onInput={e => setNewCipher({ ...newCipher(), dlClass: e.target.value })} />
+              </div>
+            </div>
+            <div>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing Authority</label>
+              <input placeholder="DMV" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlAuthority || ""} onInput={e => setNewCipher({ ...newCipher(), dlAuthority: e.target.value })} />
+            </div>
+          </Show>
+
+          {/* Passport fields */}
+          <Show when={cipherType() === "passport"}>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Given Name</label>
+                <input placeholder="John" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppGivenName || ""} onInput={e => setNewCipher({ ...newCipher(), ppGivenName: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Surname</label>
+                <input placeholder="Doe" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppSurname || ""} onInput={e => setNewCipher({ ...newCipher(), ppSurname: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Date of Birth</label>
+                <input placeholder="1990-01-15" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppDob || ""} onInput={e => setNewCipher({ ...newCipher(), ppDob: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Sex</label>
+                <select class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={newCipher().ppSex || ""} onChange={e => setNewCipher({ ...newCipher(), ppSex: e.target.value })}>
+                  <option value="">--</option>
+                  <option value="M">M</option>
+                  <option value="F">F</option>
+                  <option value="X">X</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Birth Place</label>
+                <input placeholder="City" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppBirthPlace || ""} onInput={e => setNewCipher({ ...newCipher(), ppBirthPlace: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Nationality</label>
+                <input placeholder="US" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppNationality || ""} onInput={e => setNewCipher({ ...newCipher(), ppNationality: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing Country</label>
+                <input placeholder="US" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppCountry || ""} onInput={e => setNewCipher({ ...newCipher(), ppCountry: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Passport Number</label>
+                <input placeholder="P1234567" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().ppNumber || ""} onInput={e => setNewCipher({ ...newCipher(), ppNumber: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Type</label>
+                <input placeholder="P" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppType || ""} onInput={e => setNewCipher({ ...newCipher(), ppType: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">National ID Number</label>
+                <input placeholder="123-45-6789" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().ppNationalId || ""} onInput={e => setNewCipher({ ...newCipher(), ppNationalId: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing Authority</label>
+                <input placeholder="State Department" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppAuthority || ""} onInput={e => setNewCipher({ ...newCipher(), ppAuthority: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issue Date</label>
+                <input placeholder="2020-01-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppIssueDate || ""} onInput={e => setNewCipher({ ...newCipher(), ppIssueDate: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Expiration</label>
+                <input placeholder="2030-01-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppExpDate || ""} onInput={e => setNewCipher({ ...newCipher(), ppExpDate: e.target.value })} />
+              </div>
+            </div>
+          </Show>
+
+          {/* Country ID fields */}
+          <Show when={cipherType() === "countryId"}>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">First Name</label>
+                <input placeholder="Juan" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciFirstName || ""} onInput={e => setNewCipher({ ...newCipher(), ciFirstName: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Last Name</label>
+                <input placeholder="Garcia" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciLastName || ""} onInput={e => setNewCipher({ ...newCipher(), ciLastName: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">ID Number</label>
+                <input placeholder="123456789" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().ciNumber || ""} onInput={e => setNewCipher({ ...newCipher(), ciNumber: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing Country</label>
+                <input placeholder="MX" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciCountry || ""} onInput={e => setNewCipher({ ...newCipher(), ciCountry: e.target.value })} />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Date of Birth</label>
+                <input placeholder="1990-01-15" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciDob || ""} onInput={e => setNewCipher({ ...newCipher(), ciDob: e.target.value })} />
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Sex</label>
+                <select class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={newCipher().ciSex || ""} onChange={e => setNewCipher({ ...newCipher(), ciSex: e.target.value })}>
+                  <option value="">--</option>
+                  <option value="M">M</option>
+                  <option value="F">F</option>
+                  <option value="X">X</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issue Date</label>
+                <input placeholder="2020-01-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciIssueDate || ""} onInput={e => setNewCipher({ ...newCipher(), ciIssueDate: e.target.value })} />
+              </div>
+            </div>
+            <div>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Expiration Date</label>
+              <input placeholder="2030-01-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciExpDate || ""} onInput={e => setNewCipher({ ...newCipher(), ciExpDate: e.target.value })} />
+            </div>
+          </Show>
+
           {/* Notes (all types) */}
           <div>
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.notes")}</label>
@@ -2386,6 +2915,56 @@ function AddEditCipherForm(props) {
                         <option value="IdentityState">State</option>
                         <option value="IdentityPostalCode">Postal Code</option>
                         <option value="IdentityCountry">Country</option>
+                      </optgroup>
+                      <optgroup label="Bank Account">
+                        <option value="BankAccountBankName">Bank Name</option>
+                        <option value="BankAccountNameOnAccount">Name on Account</option>
+                        <option value="BankAccountAccountType">Account Type</option>
+                        <option value="BankAccountAccountNumber">Account Number</option>
+                        <option value="BankAccountRoutingNumber">Routing Number</option>
+                        <option value="BankAccountBranchNumber">Branch Number</option>
+                        <option value="BankAccountPin">PIN</option>
+                        <option value="BankAccountSwiftCode">SWIFT Code</option>
+                        <option value="BankAccountIban">IBAN</option>
+                        <option value="BankAccountBankContactPhone">Bank Phone</option>
+                      </optgroup>
+                      <optgroup label="Driver License">
+                        <option value="DriversLicenseFirstName">First Name</option>
+                        <option value="DriversLicenseMiddleName">Middle Name</option>
+                        <option value="DriversLicenseLastName">Last Name</option>
+                        <option value="DriversLicenseDateOfBirth">Date of Birth</option>
+                        <option value="DriversLicenseLicenseNumber">License Number</option>
+                        <option value="DriversLicenseIssuingCountry">Issuing Country</option>
+                        <option value="DriversLicenseIssuingState">Issuing State</option>
+                        <option value="DriversLicenseIssueDate">Issue Date</option>
+                        <option value="DriversLicenseExpirationDate">Expiration Date</option>
+                        <option value="DriversLicenseIssuingAuthority">Issuing Authority</option>
+                        <option value="DriversLicenseLicenseClass">License Class</option>
+                      </optgroup>
+                      <optgroup label="Passport">
+                        <option value="PassportSurname">Surname</option>
+                        <option value="PassportGivenName">Given Name</option>
+                        <option value="PassportDateOfBirth">Date of Birth</option>
+                        <option value="PassportSex">Sex</option>
+                        <option value="PassportBirthPlace">Birth Place</option>
+                        <option value="PassportNationality">Nationality</option>
+                        <option value="PassportIssuingCountry">Issuing Country</option>
+                        <option value="PassportPassportNumber">Passport Number</option>
+                        <option value="PassportPassportType">Passport Type</option>
+                        <option value="PassportNationalIdNumber">National ID Number</option>
+                        <option value="PassportIssuingAuthority">Issuing Authority</option>
+                        <option value="PassportIssueDate">Issue Date</option>
+                        <option value="PassportExpirationDate">Expiration Date</option>
+                      </optgroup>
+                      <optgroup label="Country ID">
+                        <option value="CountryIdFirstName">First Name</option>
+                        <option value="CountryIdLastName">Last Name</option>
+                        <option value="CountryIdIdNumber">ID Number</option>
+                        <option value="CountryIdIssuingCountry">Issuing Country</option>
+                        <option value="CountryIdDateOfBirth">Date of Birth</option>
+                        <option value="CountryIdSex">Sex</option>
+                        <option value="CountryIdIssueDate">Issue Date</option>
+                        <option value="CountryIdExpirationDate">Expiration Date</option>
                       </optgroup>
                     </select>
                   }>
@@ -2566,6 +3145,10 @@ function VaultView() {
     { name: "Identity", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg> },
     { name: "Secure note", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
     { name: "SSH key", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m0 0a2 2 0 01-2 2m2-2h2a2 2 0 002-2V5a2 2 0 00-2-2h-2a2 2 0 00-2 2v2m0 0h-2m-2 0A5 5 0 113 12a5 5 0 0110 0v1a2 2 0 002 2h2a2 2 0 002-2v-1a2 2 0 00-2-2h-2" /></svg> },
+    { name: "Bank account", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg> },
+    { name: "Driver license", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0h4" /></svg> },
+    { name: "Passport", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+    { name: "Country ID", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0l2-2m0 0l2 2m-2-2v8" /></svg> },
     { name: "Archive", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg> },
     { name: "Trash", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg> }
   ];
@@ -2589,6 +3172,14 @@ function VaultView() {
       list = list.filter(c => (c.type || c._meta?.type) === "secureNote");
     } else if (cat === "SSH key") {
       list = list.filter(c => (c.type || c._meta?.type) === "sshKey");
+    } else if (cat === "Bank account") {
+      list = list.filter(c => (c.type || c._meta?.type) === "bankAccount");
+    } else if (cat === "Driver license") {
+      list = list.filter(c => (c.type || c._meta?.type) === "driversLicense");
+    } else if (cat === "Passport") {
+      list = list.filter(c => (c.type || c._meta?.type) === "passport");
+    } else if (cat === "Country ID") {
+      list = list.filter(c => (c.type || c._meta?.type) === "countryId");
     }
 
     // Folder filtering (include subfolder ciphers)
@@ -2815,6 +3406,23 @@ function VaultView() {
                 <button onClick={() => startAdd("sshKey")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m0 0a2 2 0 01-2 2m2-2h2a2 2 0 002-2V5a2 2 0 00-2-2h-2a2 2 0 00-2 2v2m0 0h-2m-2 0A5 5 0 113 12a5 5 0 0110 0v1a2 2 0 002 2h2a2 2 0 002-2v-1a2 2 0 00-2-2h-2" /></svg>
                   SSH Key
+                </button>
+                <div class="border-t border-[var(--color-border)] my-1"></div>
+                <button onClick={() => startAdd("bankAccount")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg>
+                  Bank Account
+                </button>
+                <button onClick={() => startAdd("driversLicense")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0h4" /></svg>
+                  Driver License
+                </button>
+                <button onClick={() => startAdd("passport")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  Passport
+                </button>
+                <button onClick={() => startAdd("countryId")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0l2-2m0 0l2 2m-2-2v8" /></svg>
+                  Country ID
                 </button>
               </div>
             </div>
