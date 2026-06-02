@@ -1077,7 +1077,7 @@ impl VaultState {
             }));
         }
 
-        serde_json::to_string(&serde_json::json!({ "devices": devices }))
+        serde_json::to_string(&serde_json::json!({ "devices": devices, "self_device_id": handle.device_id.to_string() }))
             .map_err(|e| format!("{e}"))
     }
 

@@ -1419,7 +1419,10 @@ fn load_seen_nonces(vault_path: &Path) -> Vec<String> {
 /// Atomic file write: write to temp file then rename.
 /// Prevents corruption from crash mid-write. Sets 0600 permissions on Unix.
 fn atomic_write(path: &Path, data: &str) -> Result<(), IdttyError> {
-    let tmp_path = path.with_extension("tmp");
+    let tmp_path = path.with_file_name(format!(
+        "{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
     std::fs::write(&tmp_path, data)
         .map_err(|e| DeviceError::Keystore(format!("atomic write tmp: {e}")))?;
     #[cfg(unix)]
