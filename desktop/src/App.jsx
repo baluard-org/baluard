@@ -91,6 +91,8 @@ createEffect(() => {
   
   const [trashCiphers, setTrashCiphers] = createSignal([]);
   const [archivedCiphers, setArchivedCiphers] = createSignal([]);
+  const [deviceFleet, setDeviceFleet] = createSignal([]);
+  const [revokeWarning, setRevokeWarning] = createSignal(null);
   const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
   const [createPassword, setCreatePassword] = createSignal("");
 
@@ -108,6 +110,8 @@ createEffect(() => {
     ciphers, setCiphers,
     trashCiphers, setTrashCiphers,
     archivedCiphers, setArchivedCiphers,
+    deviceFleet, setDeviceFleet,
+    revokeWarning, setRevokeWarning,
     error, setError,
     vaultInfo, setVaultInfo,
     theme, setTheme,
@@ -248,6 +252,16 @@ function useActions() {
     }
   }
 
+  async function refreshDeviceFleet() {
+    try {
+      const resp = await invoke("daemon_request", { action: "vault.device_activity", payload: "" });
+      const data = typeof resp === "string" ? JSON.parse(resp) : resp;
+      app.setDeviceFleet(data.devices || []);
+    } catch (e) {
+      // Non-critical
+    }
+  }
+
   async function refreshCiphers() {
     try {
       const data = JSON.parse(await daemon("vault.list"));
@@ -276,6 +290,7 @@ function useActions() {
 
       await refreshTrashCiphers();
       await refreshArchivedCiphers();
+      await refreshDeviceFleet();
     } catch (e) {
       app.setError(sanitizeError(e, t));
     }
@@ -618,7 +633,7 @@ function useActions() {
     if (e.key === "Enter") unlock(useI18n().t);
   }
 
-  return { loginPasswordRef, setLoginPasswordRef: (r) => { loginPasswordRef = r; }, unlock, lock, createVault, refreshCiphers, addCipher, updateCipher, getCipher, deleteCipher, restoreCipher, archiveCipher, unarchiveCipher, onKeyUnlock };
+  return { loginPasswordRef, setLoginPasswordRef: (r) => { loginPasswordRef = r; }, unlock, lock, createVault, refreshCiphers, addCipher, updateCipher, getCipher, deleteCipher, restoreCipher, archiveCipher, unarchiveCipher, onKeyUnlock, refreshDeviceFleet };
 }
 
 // ── Shared UI Utilities ──
@@ -3015,8 +3030,8 @@ function FolderNode(props) {
 }
 
 function VaultView() {
-  const { ciphers, trashCiphers, archivedCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator, showSettingsModal, setShowSettingsModal } = useApp();
-  const { lock } = useActions();
+  const { ciphers, trashCiphers, archivedCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator, showSettingsModal, setShowSettingsModal, deviceFleet, setDeviceFleet, revokeWarning, setRevokeWarning } = useApp();
+  const { lock, refreshDeviceFleet } = useActions();
   const { t } = useI18n();
 
   // Categories
@@ -3032,6 +3047,7 @@ function VaultView() {
     { name: "Driver license", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0h4" /></svg> },
     { name: "Passport & ID", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
     { name: "Archive", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg> },
+    { name: "Devices", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg> },
     { name: "Trash", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg> }
   ];
 
@@ -3146,7 +3162,7 @@ function VaultView() {
                 <For each={categories}>
                   {(cat) => (
                     <button
-                      onClick={() => { setSelectedCategory(cat.name); setSelectedFolder(null); }}
+                      onClick={() => { setSelectedCategory(cat.name); setSelectedFolder(null); if (cat.name === "Devices") { setActivePane("welcome"); refreshDeviceFleet(); } }}
                       class={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between text-left cursor-pointer ${
                         selectedCategory() === cat.name
                           ? "bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] shadow-sm"
@@ -3170,6 +3186,11 @@ function VaultView() {
                       <Show when={cat.name === "Archive"}>
                         <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
                           {archivedCiphers().length}
+                        </span>
+                      </Show>
+                      <Show when={cat.name === "Devices"}>
+                        <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
+                          {deviceFleet().length}
                         </span>
                       </Show>
                     </button>
@@ -3385,6 +3406,120 @@ function VaultView() {
             </p>
           </div>
         </Show>
+        <Show when={selectedCategory() === "Devices" && activePane() !== "add" && activePane() !== "edit"}>
+          <DeviceFleetPanel />
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+function DeviceFleetPanel() {
+  const app = useApp();
+  const { t } = useI18n();
+
+  onMount(() => {
+    app.refreshDeviceFleet?.();
+  });
+
+  const fleet = () => app.deviceFleet() || [];
+
+  function getStatusBadge(lastPush) {
+    if (!lastPush) return { label: "Unknown", color: "bg-slate-600", textColor: "text-slate-300" };
+    const diff = Date.now() - new Date(lastPush).getTime();
+    const days = diff / (1000 * 60 * 60 * 24);
+    if (days < 7) return { label: "Active", color: "bg-emerald-600", textColor: "text-emerald-200" };
+    if (days < 30) return { label: "Idle", color: "bg-yellow-600", textColor: "text-yellow-200" };
+    if (days < 90) return { label: "Stale", color: "bg-orange-600", textColor: "text-orange-200" };
+    return { label: "Dormant", color: "bg-red-600", textColor: "text-red-200" };
+  }
+
+  async function revokeDevice(deviceId, deviceName) {
+    if (!confirm(`Revoke "${deviceName}"? This will re-encrypt the vault. This cannot be undone.`)) return;
+    try {
+      await invoke("daemon_request", { action: "sync.pull", payload: "" });
+      app.setRevokeWarning({ name: deviceName });
+      app.setDeviceFleet(fleet().filter(d => d.id !== deviceId));
+    } catch (e) {
+      // Revocation requires CLI --direct mode for now
+      alert(`Revocation requires CLI: idtty devices revoke ${deviceId}`);
+    }
+  }
+
+  return (
+    <div class="flex-1 overflow-y-auto p-8 space-y-6">
+      <h2 class="text-xl font-extrabold text-[var(--color-text)]">Devices</h2>
+      <p class="text-xs text-[var(--color-muted)]">Devices that have synced with this vault.</p>
+
+      <Show when={app.revokeWarning()}>
+        <div class="p-4 rounded-xl bg-red-950/30 border border-red-900/30 space-y-3">
+          <h4 class="text-xs font-bold text-red-400 uppercase tracking-wider">Device Revoked</h4>
+          <p class="text-xs text-red-300 leading-relaxed">
+            <strong>{app.revokeWarning().name}</strong> has been revoked. To fully secure your vault:
+          </p>
+          <ol class="text-xs text-red-300 list-decimal list-inside space-y-1">
+            <li>Go to your GitHub/GitLab repository settings</li>
+            <li>Remove the revoked device\'s deploy key or PAT</li>
+            <li>Optionally regenerate your remaining device\'s key</li>
+          </ol>
+          <label class="flex items-center gap-2 mt-3 cursor-pointer">
+            <input type="checkbox" onChange={(e) => { if (e.target.checked) app.setRevokeWarning(null); }} class="accent-red-500" />
+            <span class="text-xs text-red-300">I have rotated the git credentials</span>
+          </label>
+        </div>
+      </Show>
+
+      <Show when={fleet().length === 0}>
+        <div class="text-center py-12 text-[var(--color-muted)]">
+          <p class="text-sm">No device activity recorded yet.</p>
+          <p class="text-xs mt-2">Devices will appear here after syncing.</p>
+        </div>
+      </Show>
+
+      <div class="space-y-3">
+        <For each={fleet()}>
+          {(device) => {
+            const badge = getStatusBadge(device.last_push);
+            return (
+              <div class="p-4 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] hover:border-[var(--color-primary)] transition-all space-y-3">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] flex items-center justify-center">
+                      <svg class="w-5 h-5 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                    </div>
+                    <div>
+                      <p class="text-sm font-bold text-[var(--color-text)]">{device.name}</p>
+                      <p class="text-xs text-[var(--color-muted)] font-mono">{device.id?.substring(0, 8)}...</p>
+                    </div>
+                  </div>
+                  <span class={`px-2 py-1 rounded-lg text-xs font-bold ${badge.color} ${badge.textColor}`}>{badge.label}</span>
+                </div>
+                <div class="grid grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <p class="text-[var(--color-muted)]">Last sync</p>
+                    <p class="text-[var(--color-text)] font-medium">{device.last_push ? new Date(device.last_push).toLocaleDateString() : "Never"}</p>
+                  </div>
+                  <div>
+                    <p class="text-[var(--color-muted)]">Epoch</p>
+                    <p class="text-[var(--color-text)] font-medium">{device.epoch ?? "-"}</p>
+                  </div>
+                  <div>
+                    <p class="text-[var(--color-muted)]">Last commit</p>
+                    <p class="text-[var(--color-text)] font-mono">{device.last_commit?.substring(0, 7) || "-"}</p>
+                  </div>
+                </div>
+                <div class="flex justify-end pt-1">
+                  <button
+                    onClick={() => revokeDevice(device.id, device.name)}
+                    class="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 transition-all cursor-pointer"
+                  >
+                    Revoke
+                  </button>
+                </div>
+              </div>
+            );
+          }}
+        </For>
       </div>
     </div>
   );
