@@ -784,7 +784,93 @@ pub fn handle_rotation_status(
     }
 }
 
-// ── Sync (daemon-first with direct fallback) ──
+pub fn handle_device_info(
+    mode: ConnectMode,
+    vault_path: &str,
+    _socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            Err("device info requires --direct mode".into())
+        }
+        ConnectMode::Direct => {
+            let path = Path::new(vault_path);
+            let handle = VaultHandle::open(path)?;
+            let dm = &handle.device_manager;
+
+            println!("Current device: {}", handle.device_id);
+            println!("Epoch: {}", dm.current_epoch());
+            println!("State: {:?}", dm.epoch_state());
+
+            if let Some(entry) = handle.registry.devices.get(&handle.device_id) {
+                println!("Name: {}", entry.name);
+                println!("Enrolled at: {}", entry.enrolled_at);
+                println!(
+                    "Enrolled by: {}",
+                    entry.enrolled_by
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "(founding device)".into())
+                );
+                println!("Last seen epoch: {}", entry.last_seen_epoch);
+            }
+
+            // Show fleet activity
+            let activity = idtty_core::device_manager::DeviceActivityIndex::read(path);
+            if let Some(act) = activity.devices.get(&handle.device_id.to_string()) {
+                println!("Last push: {}", act.last_push);
+                println!("Last commit: {}", &act.last_commit[..7.min(act.last_commit.len())]);
+            }
+
+            Ok(())
+        }
+    }
+}
+
+pub fn handle_device_revoke(
+    mode: ConnectMode,
+    vault_path: &str,
+    _socket: Option<&str>,
+    device_id_str: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let device_id: uuid::Uuid = device_id_str.parse().map_err(|_| "Invalid UUID")?;
+
+    match mode {
+        ConnectMode::Daemon => {
+            Err("device revoke requires --direct mode".into())
+        }
+        ConnectMode::Direct => {
+            let path = Path::new(vault_path);
+            let mut handle = VaultHandle::open(path)?;
+
+            if device_id == handle.device_id {
+                return Err("Cannot revoke the current device. Use force-evict from another device.".into());
+            }
+
+            if !handle.registry.devices.contains_key(&device_id) {
+                return Err(format!("Device {} not found in registry", device_id).into());
+            }
+
+            let target_name = handle.registry.devices.get(&device_id)
+                .map(|e| e.name.clone())
+                .unwrap_or_else(|| "Unknown".into());
+
+            println!("Revoking device: {} ({})", target_name, device_id);
+
+            // Use force_evict_and_rotate for the surviving device (this one)
+            let result = handle.device_manager.force_evict_and_rotate(handle.device_id)?;
+
+            println!("Evicted {} device(s)", result.evicted_devices.len());
+            println!("New epoch: {}", handle.device_manager.current_epoch());
+
+            // Clean activity index
+            idtty_core::device_manager::DeviceActivityIndex::remove_device(path, &device_id)?;
+
+            println!("Device revoked. Vault re-encrypted with new keys.");
+            println!("IMPORTANT: Rotate git credentials (deploy key/PAT) on GitHub/GitLab.");
+            Ok(())
+        }
+    }
+}
 
 pub fn handle_sync_init(
     mode: ConnectMode,
