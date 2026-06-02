@@ -142,7 +142,7 @@ idtty/
 * **Linked Custom Fields (Phase F)**: `CustomFieldType::Linked(LinkedFieldType)` with 24 variants across Login/Card/Identity. `resolve_linked_field()` for type-safe resolution. Desktop custom field editor with type dropdown + linked field selector. Rust serde format: `"Text"`, `"Hidden"`, `"Boolean"`, `{"Linked":"LoginUsername"}`.
 * **Nested Folders (Phase G)**: `create_folder_with_parent` with depth limit (16). `delete_folder` cascades via `collect_descendant_ids` (BFS). Desktop FolderTree/FolderNode recursive components.
 * **Device Lifecycle (MISS-1 through MISS-5)**: `device_manager.rs` owns registry, epoch state machine, rotation coordinator. VaultHandle holds a DeviceManager instance. `rotate_root_key()` performs atomic re-encryption with staged `.tmp` writes. `recover_from_phrase()` returns `RecoveryResult` with private keys. `RotationObserver` trait for sync engine hooks. Epoch state machine: CREATED→ACTIVE→ROTATING→RETIRED→DESTROYED. Cipher writes blocked during ROTATING.
-* **ItemKey derivation**: `HKDF(root_key, "idtty-item-v1" || epoch || cipher_id)`. Epoch-bound: rotation forces full re-encryption. No Space Group Key layer.
+* **ItemKey derivation**: `HKDF(SGK, "idtty-item-v1" || epoch || cipher_id)`. SGK derived from RootKey via `HKDF(RootKey, "idtty-sgk-v1" || epoch)`. Epoch-bound: rotation forces full re-encryption. Space Group Key is the intermediate layer between RootKey and ItemKeys.
 * **Full gap analysis**: See `docs/full-gaps.md` for comprehensive docs-vs-code diff.
 
 ## UX PRINCIPLES
@@ -162,6 +162,8 @@ idtty/
 | `idtty-core` health | Weak/reused/old password detection, tested |
 | `idtty-core` biometric | OS keychain unlock via keyring crate, tested |
 | `idtty-core` attachments | AES-256-GCM encrypted file storage, tested |
+| `idtty-core` Space Group Key | RootKey → SGK → ItemKey hierarchy, tested (7 new tests) |
+| `idtty-core` DeviceManager refactoring | DESIGN-1 (pub(crate)), DESIGN-2 (DeviceManagerStore trait), DESIGN-3 (SGK layer) complete |
 | `idtty-cli` (dual-mode) | Daemon-first + `--direct` fallback. CRUD + folders + edit + import/export + health + attachments |
 | `idtty-daemon` socket server | Protobuf wire, VaultState, full CRUD, TOTP, auto-lock, attachments, biometric, import/export, health, archive. SIGTERM safe |
 | Protobuf codegen | Compiled via prost in daemon + CLI build.rs |
@@ -170,7 +172,7 @@ idtty/
 | Mobile KMP app | Placeholder |
 | Browser extension | Placeholder |
 
-**Test counts**: 190 workspace-wide (186 idtty-core + 4 across CLI/daemon). 1 ignored. **0 clippy errors workspace-wide.**
+**Test counts**: 197 workspace-wide (193 idtty-core + 4 across CLI/daemon). 1 ignored. **0 clippy errors workspace-wide.**
 
 ### BW Parity Phases 1-8 (Original)
 | Phase | Description | Tests | Peer Reviewed |
