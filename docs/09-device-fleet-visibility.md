@@ -167,18 +167,25 @@ The app CANNOT do this automatically (no GitHub API access from the vault). The 
 **Solution**: Deterministic coordinator election after timeout.
 
 ```
-if epoch.state == ROTATING && elapsed > 24h && no_progress_commit:
-    candidates = sorted(enrolled_devices, by=uuid)
-    new_coordinator = candidates[0]  // deterministic
+if epoch.state == ROTATING && elapsed > configured_timeout && no_progress_commit:
+    // Safety check: abort is only safe if no ciphers were re-encrypted at new epoch
+    if cipher_files_written_at(new_epoch) > 0:
+        // Cannot abort. Must complete rotation with different device.
+        // Re-initiate rotation as new coordinator.
+        return
+    candidates = sorted(enrolled_devices, by=uuid_bigendian)
+    new_coordinator = candidates[0]  // lowest UUID, deterministic
     if self.device_id == new_coordinator:
-        // Abort the stalled rotation, reset to ACTIVE with current epoch
+        // Safe to abort: no ciphers at new epoch
         epoch.abort_rotation()
+        // Write abort marker for other devices to detect
+        write_abort_marker(new_epoch)
         // Re-attempt rotation (or wait for user action)
 ```
 
 Rules:
-- 24-hour timeout before election
-- Lowest UUID hash wins (deterministic, no coordination needed)
+- Configurable timeout (default 1h, range 15min-24h) before election
+- UUID big-endian comparison: sort enrolled UUIDs as 128-bit integers, elect lowest. No hash needed.
 - The elected device aborts the stalled rotation (epoch -> ACTIVE) and can re-initiate
 - User confirmation required before aborting another device's rotation
 
@@ -230,35 +237,12 @@ Files changed:
 6. Tests: timeout detection, deterministic election, abort resets state
 
 Files changed:
-- `crates/idtty-core/src/device_manager.rs` (abort_rotation, timeout check)
-- `crates/idtty-core/src/sync/engine.rs` (stall detection on pull)
+- `crates/idtty-core/src/keys/epoch.rs` (rotation_started_at field, abort_rotation)
+- `crates/idtty-core/src/device_manager.rs` (abort_rotation, timeout check, abort marker)
+- `crates/idtty-core/src/sync/engine.rs` (stall detection on pull, abort marker detection)
 - `crates/idtty-cli/src/commands/mod.rs` (rotation-abort command)
 
-### Phase 4: Fleet Dashboard (desktop)
-**Effort**: 2-3 days
-
-1. New "Devices" tab in sidebar (below Trash/Archive)
-2. Call `vault.device_activity` on open
-3. Cross-reference with decrypted `DeviceRegistry` (UUID -> name mapping)
-4. Device cards showing:
-   - Name (from encrypted registry)
-   - Status badge (active/idle/stale/dormant based on `last_push`)
-   - Enrolled date
-   - Enrolled by (if available)
-   - Last sync time
-   - Current epoch vs device epoch
-   - Push count
-5. "Revoke" button per device (triggers daemon revocation flow)
-6. Post-revocation warning banner: "Rotate git credentials on GitHub/GitLab"
-7. Stale device prompt: "Review devices" notification
-8. Tests: manual verification with multi-device setup
-
-Files changed:
-- `desktop/src/App.jsx` (Devices tab, device cards, revoke UI, warnings)
-- `crates/idtty-daemon/src/handler.rs` (device_activity route)
-- `crates/idtty-daemon/src/state.rs` (device fleet data, revoke endpoint)
-
-### Phase 5: CLI Fleet Commands
+### Phase 4: CLI Fleet Commands
 **Effort**: 0.5 days
 
 1. `idtty devices list` - table output: name, status, last sync, epoch
@@ -268,6 +252,30 @@ Files changed:
 
 Files changed:
 - `crates/idtty-cli/src/commands/mod.rs` (devices subcommands)
+
+### Phase 5: Fleet Dashboard (desktop)
+**Effort**: 2-3 days
+
+1. New "Devices" tab in sidebar (below Trash/Archive)
+2. Call `vault.device_activity` on open
+3. Cross-reference with decrypted `DeviceRegistry` (UUID -> name mapping)
+4. Device cards showing:
+   - Name (from encrypted registry)
+   - Status badge (active/idle/stale/dormant based on `last_push`)
+   - Enrolled date
+   - Enrolled by (if available, "Founding device" for `None`)
+   - Last sync time
+   - Current epoch vs device epoch
+   - Push count (label as "self-reported, unverified" or derive from git log)
+5. "Revoke" button per device (triggers daemon revocation flow)
+6. Post-revocation warning banner: persistent checkbox acknowledgment "I have rotated git credentials on GitHub/GitLab". Parse remote URL for direct link to `github.com/<repo>/settings/keys`
+7. Stale device prompt: "Review devices" notification
+8. Tests: manual verification with multi-device setup
+
+Files changed:
+- `desktop/src/App.jsx` (Devices tab, device cards, revoke UI, warnings)
+- `crates/idtty-daemon/src/handler.rs` (device_activity route)
+- `crates/idtty-daemon/src/state.rs` (device fleet data, revoke endpoint)
 
 ---
 
@@ -346,7 +354,7 @@ Not in scope for this plan. Documented for awareness:
 | No real-time revocation | Eventual consistency via git pull | Fundamental to serverless model |
 | Revoked device retains epoch N data | Root key rotation limits damage to stale snapshot | Cannot remote-wipe without a server |
 | Git credentials not auto-rotated | Post-revocation warning + documentation | No GitHub API access from vault |
-| Plaintext activity index (UUIDs) | UUIDs opaque without encrypted registry | Low-sensitivity metadata in private repo |
+| Plaintext activity index (UUIDs) | UUIDs opaque; device names in `devices.json` also plaintext (see C1). Low-sensitivity metadata in private repo. Acceptable for single-user. |
 | Self-reported timestamps | Corroborated by git committer date + commit SHA | Display from git log, not from file |
 
 ### New attack surfaces
@@ -356,14 +364,57 @@ Not in scope for this plan. Documented for awareness:
 | Malicious activity index (forged timestamps) | Commit SHA is verifiable. UI derives freshness from git log, not self-reported `last_push` |
 | Revoked device pushes garbage commits | `verify_commit_signatures()` rejects unknown keys. Garbage commits visible in git history but ignored by all devices |
 | Activity index merge conflicts | Union merge, latest timestamp wins. No data loss possible (only timestamps) |
-| Epoch stall (ROTATING forever) | 24h timeout + deterministic coordinator election (Phase 3) |
+| Epoch stall (ROTATING forever) | Configurable timeout (default 1h) + deterministic coordinator election (Phase 3) |
 
 ---
 
-## Open Questions
+## Open Questions (Resolved)
 
-1. **Activity index prune**: Should dormant devices (no push in 90+ days) be removed from the activity index, or kept indefinitely? Recommend: keep indefinitely, prune from UI only.
-2. **Push count overflow**: `push_count` is u64. Will never overflow. But should it reset on epoch rotation? Recommend: no, monotonic.
-3. **First device enrolled_by**: First device self-enrolls. `enrolled_by` is `None`. Should it be `Some(self)` instead? Recommend: `None` is clearer.
-4. **Verification key source**: `verify_commit_signatures()` currently reads plaintext `device-registry.json`. Should we switch entirely to encrypted `devices.json`? Recommend: yes, but needs vault unlocked to sync. Chicken-and-egg if vault is locked. Keep plaintext as fallback, cross-check both.
-5. **Coordinator election timing**: 24h timeout. Too aggressive? Too lenient? Recommend: configurable via vault settings (15min / 1h / 6h / 24h / never).
+1. **Activity index prune**: Keep indefinitely, prune from UI after 180 days (not 90). Never auto-delete from the file. **Resolved**.
+2. **Push count**: Monotonic, no reset. Adds cross-epoch evidence of device continuity. **Resolved**.
+3. **First device enrolled_by**: `None`. Dashboard renders as "Founding device." **Resolved**.
+4. **Verification key source**: Plaintext ONLY pre-unlock (when vault is locked, no decryption possible). Encrypted registry ONLY post-unlock. Never allow plaintext to override encrypted after unlock. **Resolved (changed from original cross-check recommendation)**.
+5. **Coordinator election timing**: Configurable in Phase 3. Default 1h (not 24h). Range: 15min / 1h / 6h / 24h / never. Stored in VaultSettings. **Resolved (changed from 24h default)**.
+
+---
+
+## Peer Review (peer review, Round 1)
+
+Reviewed against: `devices.rs`, `device_manager.rs`, `sync/engine.rs`, `vault/manifest.rs`. 17 findings total.
+
+### Critical
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| C1 | `devices.json` written as raw JSON (no encryption). manifest.rs comment says "encrypted" but code writes plaintext. UUID-opacity argument for activity index depends on registry encryption. | **Confirmed**: code audit verifies raw `serde_json::to_string_pretty` with no encryption. Privacy analysis for activity index is valid (device names ARE exposed). Two paths: (a) encrypt `devices.json` and keep activity index as designed, or (b) accept plaintext registry and remove UUID-opacity argument. Recommend (a): encrypt with SGK before write. |
+| C2 | `abort_rotation` + partial re-encryption = irrecoverable data loss. If rotating device re-encrypted some ciphers with new epoch keys before going offline, abort back to old epoch leaves those ciphers undecryptable by any device. | Abort path must scan for any cipher files written at the new epoch. If found, abort is unsafe. Only recovery: different device re-does the key wrap. Add `abort_is_safe()` check before allowing abort. |
+| C3 | Original OQ4 "cross-check both" creates revocation bypass (OR gate). If plaintext `device-registry.json` is stale and still has revoked key, commits pass via plaintext path. | **Resolved in Open Questions**: plaintext ONLY pre-unlock, encrypted ONLY post-unlock. No cross-checking. |
+
+### High
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| H1 | Three conflicting plaintext key files: `device-registry.json`, `devices.json`, `device-pks`. No canonical source for commit verification. | Define single canonical file. Recommend: `meta/device-pks` with real quorum signatures, deprecate `device-registry.json`. |
+| H2 | `push_count` is self-reported and unverifiable. Displayed alongside security fields creates false confidence. | Derive from `git log --author=<device>` at display time, or relabel as "self-reported, unverified." |
+| H3 | Enrollment approval signature not persisted in `DeviceEntry`. No on-disk proof that Device A approved Device B. | Store `approver_device_id` + `approval_signature_bytes` in `DeviceEntry`. |
+| H4 | Original coordinator returning after abort creates split-brain. Device A has persisted ROTATING state, B aborts. A cannot know B aborted. | Define abort marker file: `.idtty/rekey/<epoch>.aborted`. A detects on pull and transitions out of ROTATING. |
+| H5 | Per-user registries in org-mode incompatible with admin revocation without key escrow. | Flag for org-mode architecture. Requires key hierarchy or escrow mechanism. |
+
+### Medium
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| M1 | New `DeviceEntry` fields need `#[serde(default)]` for backward compat with existing `devices.json` files. | Add `#[serde(default)]` on `enrolled_by` (None) and `last_seen_epoch` (0). |
+| M2 | Phase 5 (CLI) should precede Phase 4 (Desktop). CLI is simpler, provides early integration testing. | Swap Phase 4 and 5. |
+| M3 | `keys/epoch.rs` missing from Phase 3 file change list. | Add `crates/idtty-core/src/keys/epoch.rs` to Phase 3 changes. |
+| M4 | Activity index merge requires custom strategy before `PullResult::Conflict`. Need `.gitattributes` merge driver or inline conflict detection. | Specify: `.gitattributes` merge driver for `meta/device_activity.json` with custom union-merge script. |
+| M5 | Coordinator election spec incomplete: "lowest UUID hash" undefined. | Use UUID big-endian comparison (no hash needed). UUIDs already random 128-bit. Sort by byte order, elect lowest. |
+| M6 | 24h default timeout too long for compromise scenarios. Must be configurable in Phase 3. | **Resolved**: default 1h, range 15min-24h, stored in VaultSettings. |
+| M7 | Single activity file leaks cross-user coordination in org mode. | Flag for org-mode: split per user, acknowledge UUID-timing correlation. |
+
+### Low
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| L1 | `enrolled_by: None` for founding device needs explicit "Founding device" UI copy, not empty/null. | Add to Phase 4 dashboard spec. |
+| L2 | Post-revocation warning must be persistent (require checkbox acknowledgment), not dismissible on first click. Parse remote URL for direct GitHub settings link. | Add to Phase 4 dashboard spec. |
