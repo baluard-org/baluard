@@ -856,16 +856,16 @@ pub fn handle_device_revoke(
 
             println!("Revoking device: {} ({})", target_name, device_id);
 
-            // Use force_evict_and_rotate for the surviving device (this one)
-            let result = handle.device_manager.force_evict_and_rotate(handle.device_id)?;
+            // Selective revoke: removes only the target, preserves other devices
+            let result = handle.device_manager.revoke_device_and_rotate(device_id, handle.device_id)?;
 
-            println!("Evicted {} device(s)", result.evicted_devices.len());
-            println!("New epoch: {}", handle.device_manager.current_epoch());
+            println!("Revoked device: {}", result.revoked_name);
+            println!("New epoch: {}", result.new_epoch);
 
             // Clean activity index
             idtty_core::device_manager::DeviceActivityIndex::remove_device(path, &device_id)?;
 
-            println!("Device revoked. Vault re-encrypted with new keys.");
+            println!("Device revoked. Keys rotated.");
             println!("IMPORTANT: Rotate git credentials (deploy key/PAT) on GitHub/GitLab.");
             Ok(())
         }
