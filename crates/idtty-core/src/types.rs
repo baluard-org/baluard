@@ -591,6 +591,56 @@ pub enum LinkedFieldType {
     IdentityState,
     IdentityPostalCode,
     IdentityCountry,
+
+    // Bank Account fields
+    BankAccountBankName,
+    BankAccountNameOnAccount,
+    BankAccountAccountType,
+    BankAccountAccountNumber,
+    BankAccountRoutingNumber,
+    BankAccountBranchNumber,
+    BankAccountPin,
+    BankAccountSwiftCode,
+    BankAccountIban,
+    BankAccountBankContactPhone,
+
+    // Driver's License fields
+    DriversLicenseFirstName,
+    DriversLicenseMiddleName,
+    DriversLicenseLastName,
+    DriversLicenseDateOfBirth,
+    DriversLicenseLicenseNumber,
+    DriversLicenseIssuingCountry,
+    DriversLicenseIssuingState,
+    DriversLicenseIssueDate,
+    DriversLicenseExpirationDate,
+    DriversLicenseIssuingAuthority,
+    DriversLicenseLicenseClass,
+
+    // Passport fields
+    PassportSurname,
+    PassportGivenName,
+    PassportDateOfBirth,
+    PassportSex,
+    PassportBirthPlace,
+    PassportNationality,
+    PassportIssuingCountry,
+    PassportPassportNumber,
+    PassportPassportType,
+    PassportNationalIdNumber,
+    PassportIssuingAuthority,
+    PassportIssueDate,
+    PassportExpirationDate,
+
+    // Country ID fields
+    CountryIdFirstName,
+    CountryIdLastName,
+    CountryIdIdNumber,
+    CountryIdIssuingCountry,
+    CountryIdDateOfBirth,
+    CountryIdSex,
+    CountryIdIssueDate,
+    CountryIdExpirationDate,
 }
 
 /// A single password history entry.
@@ -761,6 +811,140 @@ pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<
             data.postal_code.clone()
         }
         (CipherKind::Identity(data), LinkedFieldType::IdentityCountry) => data.country.clone(),
+
+        // Bank Account fields
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountBankName) => {
+            data.bank_name.clone()
+        }
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountNameOnAccount) => {
+            data.name_on_account.clone()
+        }
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountAccountType) => {
+            data.account_type.clone()
+        }
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountAccountNumber) => {
+            data.account_number.clone()
+        }
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountRoutingNumber) => {
+            data.routing_number.clone()
+        }
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountBranchNumber) => {
+            data.branch_number.clone()
+        }
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountPin) => {
+            data.pin.clone()
+        }
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountSwiftCode) => {
+            data.swift_code.clone()
+        }
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountIban) => {
+            data.iban.clone()
+        }
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountBankContactPhone) => {
+            data.bank_contact_phone.clone()
+        }
+
+        // Driver's License fields
+        (CipherKind::DriversLicense(data), LinkedFieldType::DriversLicenseFirstName) => {
+            data.first_name.clone()
+        }
+        (CipherKind::DriversLicense(data), LinkedFieldType::DriversLicenseMiddleName) => {
+            data.middle_name.clone()
+        }
+        (CipherKind::DriversLicense(data), LinkedFieldType::DriversLicenseLastName) => {
+            data.last_name.clone()
+        }
+        (CipherKind::DriversLicense(data), LinkedFieldType::DriversLicenseDateOfBirth) => {
+            data.date_of_birth.clone()
+        }
+        (CipherKind::DriversLicense(data), LinkedFieldType::DriversLicenseLicenseNumber) => {
+            data.license_number.clone()
+        }
+        (CipherKind::DriversLicense(data), LinkedFieldType::DriversLicenseIssuingCountry) => {
+            data.issuing_country.clone()
+        }
+        (CipherKind::DriversLicense(data), LinkedFieldType::DriversLicenseIssuingState) => {
+            data.issuing_state.clone()
+        }
+        (CipherKind::DriversLicense(data), LinkedFieldType::DriversLicenseIssueDate) => {
+            data.issue_date.clone()
+        }
+        (CipherKind::DriversLicense(data), LinkedFieldType::DriversLicenseExpirationDate) => {
+            data.expiration_date.clone()
+        }
+        (CipherKind::DriversLicense(data), LinkedFieldType::DriversLicenseIssuingAuthority) => {
+            data.issuing_authority.clone()
+        }
+        (CipherKind::DriversLicense(data), LinkedFieldType::DriversLicenseLicenseClass) => {
+            data.license_class.clone()
+        }
+
+        // Passport fields
+        (CipherKind::Passport(data), LinkedFieldType::PassportSurname) => {
+            data.surname.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportGivenName) => {
+            data.given_name.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportDateOfBirth) => {
+            data.date_of_birth.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportSex) => {
+            data.sex.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportBirthPlace) => {
+            data.birth_place.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportNationality) => {
+            data.nationality.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportIssuingCountry) => {
+            data.issuing_country.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportPassportNumber) => {
+            data.passport_number.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportPassportType) => {
+            data.passport_type.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportNationalIdNumber) => {
+            data.national_identification_number.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportIssuingAuthority) => {
+            data.issuing_authority.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportIssueDate) => {
+            data.issue_date.clone()
+        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportExpirationDate) => {
+            data.expiration_date.clone()
+        }
+
+        // Country ID fields
+        (CipherKind::CountryId(data), LinkedFieldType::CountryIdFirstName) => {
+            data.first_name.clone()
+        }
+        (CipherKind::CountryId(data), LinkedFieldType::CountryIdLastName) => {
+            data.last_name.clone()
+        }
+        (CipherKind::CountryId(data), LinkedFieldType::CountryIdIdNumber) => {
+            data.id_number.clone()
+        }
+        (CipherKind::CountryId(data), LinkedFieldType::CountryIdIssuingCountry) => {
+            data.issuing_country.clone()
+        }
+        (CipherKind::CountryId(data), LinkedFieldType::CountryIdDateOfBirth) => {
+            data.date_of_birth.clone()
+        }
+        (CipherKind::CountryId(data), LinkedFieldType::CountryIdSex) => {
+            data.sex.clone()
+        }
+        (CipherKind::CountryId(data), LinkedFieldType::CountryIdIssueDate) => {
+            data.issue_date.clone()
+        }
+        (CipherKind::CountryId(data), LinkedFieldType::CountryIdExpirationDate) => {
+            data.expiration_date.clone()
+        }
 
         // Type mismatch: field doesn't match cipher kind
         _ => None,
@@ -1163,5 +1347,136 @@ mod tests {
             let back: LoginUri = serde_json::from_str(&json).unwrap();
             assert_eq!(back.match_strategy, strategy);
         }
+    }
+
+    fn make_cipher(kind: CipherKind) -> Cipher {
+        Cipher {
+            id: Uuid::new_v4(),
+            name: "Test".into(),
+            folder_id: None,
+            kind,
+            favorite: false,
+            reprompt: false,
+            notes: None,
+            custom_fields: vec![],
+            key_epoch: 1,
+            update_seq: 1,
+            tier: Tier::Xs,
+            created_at: 0,
+            updated_at: 0,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+        }
+    }
+
+    #[test]
+    fn resolve_linked_field_bank_account() {
+        let cipher = make_cipher(CipherKind::BankAccount(BankAccountData {
+            bank_name: Some("Chase".into()),
+            account_number: Some("123456789".into()),
+            pin: Some("9999".into()),
+            ..Default::default()
+        }));
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::BankAccountBankName),
+            Some("Chase".into())
+        );
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::BankAccountAccountNumber),
+            Some("123456789".into())
+        );
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::BankAccountPin),
+            Some("9999".into())
+        );
+        // Empty field returns None
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::BankAccountIban),
+            None
+        );
+        // Cross-type mismatch returns None
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::LoginUsername),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_linked_field_drivers_license() {
+        let cipher = make_cipher(CipherKind::DriversLicense(DriversLicenseData {
+            first_name: Some("Jane".into()),
+            license_number: Some("D55555".into()),
+            issuing_state: Some("CA".into()),
+            ..Default::default()
+        }));
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::DriversLicenseFirstName),
+            Some("Jane".into())
+        );
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::DriversLicenseLicenseNumber),
+            Some("D55555".into())
+        );
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::DriversLicenseIssuingState),
+            Some("CA".into())
+        );
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::DriversLicenseDateOfBirth),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_linked_field_passport() {
+        let cipher = make_cipher(CipherKind::Passport(PassportData {
+            surname: Some("Smith".into()),
+            passport_number: Some("P12345".into()),
+            nationality: Some("US".into()),
+            ..Default::default()
+        }));
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::PassportSurname),
+            Some("Smith".into())
+        );
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::PassportPassportNumber),
+            Some("P12345".into())
+        );
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::PassportNationality),
+            Some("US".into())
+        );
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::PassportSex),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_linked_field_country_id() {
+        let cipher = make_cipher(CipherKind::CountryId(CountryIdData {
+            first_name: Some("Juan".into()),
+            id_number: Some("ID-888".into()),
+            issuing_country: Some("MX".into()),
+            ..Default::default()
+        }));
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::CountryIdFirstName),
+            Some("Juan".into())
+        );
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::CountryIdIdNumber),
+            Some("ID-888".into())
+        );
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::CountryIdIssuingCountry),
+            Some("MX".into())
+        );
+        assert_eq!(
+            resolve_linked_field(&cipher, &LinkedFieldType::CountryIdSex),
+            None
+        );
     }
 }

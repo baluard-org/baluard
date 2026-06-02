@@ -259,17 +259,53 @@ impl VaultState {
                     }
                     idtty_core::types::CipherKind::BankAccount(data) => {
                         json["bank_name"] = serde_json::json!(data.bank_name);
+                        json["name_on_account"] = serde_json::json!(data.name_on_account);
+                        json["account_type"] = serde_json::json!(data.account_type);
                         json["account_number"] = serde_json::json!(data.account_number);
                         json["routing_number"] = serde_json::json!(data.routing_number);
+                        json["branch_number"] = serde_json::json!(data.branch_number);
+                        json["pin"] = serde_json::json!(data.pin);
+                        json["swift_code"] = serde_json::json!(data.swift_code);
+                        json["iban"] = serde_json::json!(data.iban);
+                        json["bank_contact_phone"] = serde_json::json!(data.bank_contact_phone);
                     }
                     idtty_core::types::CipherKind::DriversLicense(data) => {
+                        json["first_name"] = serde_json::json!(data.first_name);
+                        json["middle_name"] = serde_json::json!(data.middle_name);
+                        json["last_name"] = serde_json::json!(data.last_name);
+                        json["date_of_birth"] = serde_json::json!(data.date_of_birth);
                         json["license_number"] = serde_json::json!(data.license_number);
+                        json["issuing_country"] = serde_json::json!(data.issuing_country);
+                        json["issuing_state"] = serde_json::json!(data.issuing_state);
+                        json["issue_date"] = serde_json::json!(data.issue_date);
+                        json["expiration_date"] = serde_json::json!(data.expiration_date);
+                        json["issuing_authority"] = serde_json::json!(data.issuing_authority);
+                        json["license_class"] = serde_json::json!(data.license_class);
                     }
                     idtty_core::types::CipherKind::Passport(data) => {
+                        json["surname"] = serde_json::json!(data.surname);
+                        json["given_name"] = serde_json::json!(data.given_name);
+                        json["date_of_birth"] = serde_json::json!(data.date_of_birth);
+                        json["sex"] = serde_json::json!(data.sex);
+                        json["birth_place"] = serde_json::json!(data.birth_place);
+                        json["nationality"] = serde_json::json!(data.nationality);
+                        json["issuing_country"] = serde_json::json!(data.issuing_country);
                         json["passport_number"] = serde_json::json!(data.passport_number);
+                        json["passport_type"] = serde_json::json!(data.passport_type);
+                        json["national_identification_number"] = serde_json::json!(data.national_identification_number);
+                        json["issuing_authority"] = serde_json::json!(data.issuing_authority);
+                        json["issue_date"] = serde_json::json!(data.issue_date);
+                        json["expiration_date"] = serde_json::json!(data.expiration_date);
                     }
                     idtty_core::types::CipherKind::CountryId(data) => {
+                        json["first_name"] = serde_json::json!(data.first_name);
+                        json["last_name"] = serde_json::json!(data.last_name);
                         json["id_number"] = serde_json::json!(data.id_number);
+                        json["issuing_country"] = serde_json::json!(data.issuing_country);
+                        json["date_of_birth"] = serde_json::json!(data.date_of_birth);
+                        json["sex"] = serde_json::json!(data.sex);
+                        json["issue_date"] = serde_json::json!(data.issue_date);
+                        json["expiration_date"] = serde_json::json!(data.expiration_date);
                     }
                     idtty_core::types::CipherKind::SecureNote => {}
                 }
