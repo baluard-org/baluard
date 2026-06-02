@@ -278,7 +278,6 @@ pub enum CipherType {
     BankAccount,
     DriversLicense,
     Passport,
-    CountryId,
 }
 
 /// Login-specific cipher data.
@@ -451,26 +450,6 @@ pub struct PassportData {
 }
 
 /// Country ID-specific cipher data.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CountryIdData {
-    #[serde(default)]
-    pub first_name: Option<String>,
-    #[serde(default)]
-    pub last_name: Option<String>,
-    #[serde(default)]
-    pub id_number: Option<String>,
-    #[serde(default)]
-    pub issuing_country: Option<String>,
-    #[serde(default)]
-    pub date_of_birth: Option<String>,
-    #[serde(default)]
-    pub sex: Option<String>,
-    #[serde(default)]
-    pub issue_date: Option<String>,
-    #[serde(default)]
-    pub expiration_date: Option<String>,
-}
-
 /// Type-safe cipher kind. Makes invalid states unrepresentable.
 /// Card(LoginData) is a compile error.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -486,7 +465,6 @@ pub enum CipherKind {
     BankAccount(BankAccountData),
     DriversLicense(DriversLicenseData),
     Passport(PassportData),
-    CountryId(CountryIdData),
 }
 
 impl CipherKind {
@@ -501,7 +479,6 @@ impl CipherKind {
             CipherKind::BankAccount(_) => CipherType::BankAccount,
             CipherKind::DriversLicense(_) => CipherType::DriversLicense,
             CipherKind::Passport(_) => CipherType::Passport,
-            CipherKind::CountryId(_) => CipherType::CountryId,
         }
     }
 }
@@ -633,14 +610,7 @@ pub enum LinkedFieldType {
     PassportExpirationDate,
 
     // Country ID fields
-    CountryIdFirstName,
-    CountryIdLastName,
-    CountryIdIdNumber,
-    CountryIdIssuingCountry,
-    CountryIdDateOfBirth,
-    CountryIdSex,
-    CountryIdIssueDate,
-    CountryIdExpirationDate,
+    // Country ID fields merged into Passport
 }
 
 /// A single password history entry.
@@ -921,31 +891,6 @@ pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<
         }
 
         // Country ID fields
-        (CipherKind::CountryId(data), LinkedFieldType::CountryIdFirstName) => {
-            data.first_name.clone()
-        }
-        (CipherKind::CountryId(data), LinkedFieldType::CountryIdLastName) => {
-            data.last_name.clone()
-        }
-        (CipherKind::CountryId(data), LinkedFieldType::CountryIdIdNumber) => {
-            data.id_number.clone()
-        }
-        (CipherKind::CountryId(data), LinkedFieldType::CountryIdIssuingCountry) => {
-            data.issuing_country.clone()
-        }
-        (CipherKind::CountryId(data), LinkedFieldType::CountryIdDateOfBirth) => {
-            data.date_of_birth.clone()
-        }
-        (CipherKind::CountryId(data), LinkedFieldType::CountryIdSex) => {
-            data.sex.clone()
-        }
-        (CipherKind::CountryId(data), LinkedFieldType::CountryIdIssueDate) => {
-            data.issue_date.clone()
-        }
-        (CipherKind::CountryId(data), LinkedFieldType::CountryIdExpirationDate) => {
-            data.expiration_date.clone()
-        }
-
         // Type mismatch: field doesn't match cipher kind
         _ => None,
     }
@@ -1119,22 +1064,6 @@ mod tests {
                 assert_eq!(data.passport_number.as_deref(), Some("P12345"));
             }
             _ => panic!("expected Passport"),
-        }
-
-        // Country ID
-        let cid = CipherKind::CountryId(CountryIdData {
-            first_name: Some("Esteban".into()),
-            id_number: Some("ID-888".into()),
-            ..Default::default()
-        });
-        let json = serde_json::to_string(&cid).unwrap();
-        let back: CipherKind = serde_json::from_str(&json).unwrap();
-        match back {
-            CipherKind::CountryId(data) => {
-                assert_eq!(data.first_name.as_deref(), Some("Esteban"));
-                assert_eq!(data.id_number.as_deref(), Some("ID-888"));
-            }
-            _ => panic!("expected CountryId"),
         }
     }
 
@@ -1450,32 +1379,6 @@ mod tests {
         );
         assert_eq!(
             resolve_linked_field(&cipher, &LinkedFieldType::PassportSex),
-            None
-        );
-    }
-
-    #[test]
-    fn resolve_linked_field_country_id() {
-        let cipher = make_cipher(CipherKind::CountryId(CountryIdData {
-            first_name: Some("Juan".into()),
-            id_number: Some("ID-888".into()),
-            issuing_country: Some("MX".into()),
-            ..Default::default()
-        }));
-        assert_eq!(
-            resolve_linked_field(&cipher, &LinkedFieldType::CountryIdFirstName),
-            Some("Juan".into())
-        );
-        assert_eq!(
-            resolve_linked_field(&cipher, &LinkedFieldType::CountryIdIdNumber),
-            Some("ID-888".into())
-        );
-        assert_eq!(
-            resolve_linked_field(&cipher, &LinkedFieldType::CountryIdIssuingCountry),
-            Some("MX".into())
-        );
-        assert_eq!(
-            resolve_linked_field(&cipher, &LinkedFieldType::CountryIdSex),
             None
         );
     }

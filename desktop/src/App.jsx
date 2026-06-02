@@ -389,20 +389,6 @@ function useActions() {
             expiration_date: c.ppExpDate || null,
           },
         };
-      } else if (cipherType === "countryId") {
-        kind = {
-          type: "countryId",
-          data: {
-            first_name: c.ciFirstName || null,
-            last_name: c.ciLastName || null,
-            id_number: c.ciNumber || null,
-            issuing_country: c.ciCountry || null,
-            date_of_birth: c.ciDob || null,
-            sex: c.ciSex || null,
-            issue_date: c.ciIssueDate || null,
-            expiration_date: c.ciExpDate || null,
-          },
-        };
       } else {
         // Login
         kind = {
@@ -537,20 +523,6 @@ function useActions() {
             issuing_authority: c.ppAuthority || null,
             issue_date: c.ppIssueDate || null,
             expiration_date: c.ppExpDate || null,
-          },
-        };
-      } else if (cipherType === "countryId") {
-        kind = {
-          type: "countryId",
-          data: {
-            first_name: c.ciFirstName || null,
-            last_name: c.ciLastName || null,
-            id_number: c.ciNumber || null,
-            issuing_country: c.ciCountry || null,
-            date_of_birth: c.ciDob || null,
-            sex: c.ciSex || null,
-            issue_date: c.ciIssueDate || null,
-            expiration_date: c.ciExpDate || null,
           },
         };
       } else {
@@ -1725,15 +1697,6 @@ function CipherDetail() {
       ppAuthority: c.issuing_authority || "",
       ppIssueDate: c.issue_date || "",
       ppExpDate: c.expiration_date || "",
-      // Country ID fields
-      ciFirstName: c.first_name || "",
-      ciLastName: c.last_name || "",
-      ciNumber: c.id_number || "",
-      ciCountry: c.issuing_country || "",
-      ciDob: c.date_of_birth || "",
-      ciSex: c.sex || "",
-      ciIssueDate: c.issue_date || "",
-      ciExpDate: c.expiration_date || "",
     });
     setActivePane("edit");
   }
@@ -1750,7 +1713,7 @@ function CipherDetail() {
             <h3 class="text-2xl font-bold text-[var(--color-text)] truncate leading-tight select-all">{viewCipher()?.name || "Untitled"}</h3>
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] mt-2">
               <span class="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
-              {viewCipher()?.type === "card" ? "Card" : viewCipher()?.type === "identity" ? "Identity" : viewCipher()?.type === "secureNote" ? "Secure Note" : viewCipher()?.type === "sshKey" ? "SSH Key" : viewCipher()?.type === "bankAccount" ? "Bank Account" : viewCipher()?.type === "driversLicense" ? "Driver License" : viewCipher()?.type === "passport" ? "Passport" : viewCipher()?.type === "countryId" ? "Country ID" : "Login"} Item
+              {viewCipher()?.type === "card" ? "Card" : viewCipher()?.type === "identity" ? "Identity" : viewCipher()?.type === "secureNote" ? "Secure Note" : viewCipher()?.type === "sshKey" ? "SSH Key" : viewCipher()?.type === "bankAccount" ? "Bank Account" : viewCipher()?.type === "driversLicense" ? "Driver License" : viewCipher()?.type === "passport" ? "Passport / ID" : "Login"} Item
             </span>
           </div>
           <button
@@ -1900,20 +1863,6 @@ function CipherDetail() {
           </div>
         </Show>
 
-        {/* Country ID fields */}
-        <Show when={viewCipher()?.type === "countryId"}>
-          <div class="space-y-4">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Country ID details</h4>
-            <CopyableField label="Full Name" value={[viewCipher()?.first_name, viewCipher()?.last_name].filter(Boolean).join(" ") || null} />
-            <CopyableField label="ID Number" value={viewCipher()?.id_number} />
-            <CopyableField label="Issuing Country" value={viewCipher()?.issuing_country} />
-            <CopyableField label="Date of Birth" value={viewCipher()?.date_of_birth} />
-            <CopyableField label="Sex" value={viewCipher()?.sex} />
-            <CopyableField label="Issue Date" value={viewCipher()?.issue_date} />
-            <CopyableField label="Expiration Date" value={viewCipher()?.expiration_date} />
-          </div>
-        </Show>
-
         {/* Website URI group */}
         <Show when={viewCipher()?.uris?.length}>
           <div class="space-y-4 pt-2">
@@ -2020,15 +1969,6 @@ function CipherDetail() {
                       PassportIssuingAuthority: c.issuing_authority,
                       PassportIssueDate: c.issue_date,
                       PassportExpirationDate: c.expiration_date,
-                      // Country ID
-                      CountryIdFirstName: c.first_name,
-                      CountryIdLastName: c.last_name,
-                      CountryIdIdNumber: c.id_number,
-                      CountryIdIssuingCountry: c.issuing_country,
-                      CountryIdDateOfBirth: c.date_of_birth,
-                      CountryIdSex: c.sex,
-                      CountryIdIssueDate: c.issue_date,
-                      CountryIdExpirationDate: c.expiration_date,
                     };
                     return map[lt] || "(linked field)";
                   }
@@ -2770,53 +2710,6 @@ function AddEditCipherForm(props) {
             </div>
           </Show>
 
-          {/* Country ID fields */}
-          <Show when={cipherType() === "countryId"}>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">First Name</label>
-                <input placeholder="Juan" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciFirstName || ""} onInput={e => setNewCipher({ ...newCipher(), ciFirstName: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Last Name</label>
-                <input placeholder="Garcia" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciLastName || ""} onInput={e => setNewCipher({ ...newCipher(), ciLastName: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">ID Number</label>
-                <input placeholder="123456789" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().ciNumber || ""} onInput={e => setNewCipher({ ...newCipher(), ciNumber: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing Country</label>
-                <input placeholder="MX" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciCountry || ""} onInput={e => setNewCipher({ ...newCipher(), ciCountry: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-3 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Date of Birth</label>
-                <input placeholder="1990-01-15" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciDob || ""} onInput={e => setNewCipher({ ...newCipher(), ciDob: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Sex</label>
-                <select class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={newCipher().ciSex || ""} onChange={e => setNewCipher({ ...newCipher(), ciSex: e.target.value })}>
-                  <option value="">--</option>
-                  <option value="M">M</option>
-                  <option value="F">F</option>
-                  <option value="X">X</option>
-                </select>
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issue Date</label>
-                <input placeholder="2020-01-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciIssueDate || ""} onInput={e => setNewCipher({ ...newCipher(), ciIssueDate: e.target.value })} />
-              </div>
-            </div>
-            <div>
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Expiration Date</label>
-              <input placeholder="2030-01-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ciExpDate || ""} onInput={e => setNewCipher({ ...newCipher(), ciExpDate: e.target.value })} />
-            </div>
-          </Show>
-
           {/* Notes (all types) */}
           <div>
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.notes")}</label>
@@ -2955,16 +2848,6 @@ function AddEditCipherForm(props) {
                         <option value="PassportIssuingAuthority">Issuing Authority</option>
                         <option value="PassportIssueDate">Issue Date</option>
                         <option value="PassportExpirationDate">Expiration Date</option>
-                      </optgroup>
-                      <optgroup label="Country ID">
-                        <option value="CountryIdFirstName">First Name</option>
-                        <option value="CountryIdLastName">Last Name</option>
-                        <option value="CountryIdIdNumber">ID Number</option>
-                        <option value="CountryIdIssuingCountry">Issuing Country</option>
-                        <option value="CountryIdDateOfBirth">Date of Birth</option>
-                        <option value="CountryIdSex">Sex</option>
-                        <option value="CountryIdIssueDate">Issue Date</option>
-                        <option value="CountryIdExpirationDate">Expiration Date</option>
                       </optgroup>
                     </select>
                   }>
@@ -3148,7 +3031,6 @@ function VaultView() {
     { name: "Bank account", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg> },
     { name: "Driver license", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0h4" /></svg> },
     { name: "Passport", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
-    { name: "Country ID", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0l2-2m0 0l2 2m-2-2v8" /></svg> },
     { name: "Archive", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg> },
     { name: "Trash", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg> }
   ];
@@ -3178,8 +3060,6 @@ function VaultView() {
       list = list.filter(c => (c.type || c._meta?.type) === "driversLicense");
     } else if (cat === "Passport") {
       list = list.filter(c => (c.type || c._meta?.type) === "passport");
-    } else if (cat === "Country ID") {
-      list = list.filter(c => (c.type || c._meta?.type) === "countryId");
     }
 
     // Folder filtering (include subfolder ciphers)
@@ -3419,10 +3299,6 @@ function VaultView() {
                 <button onClick={() => startAdd("passport")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                   Passport
-                </button>
-                <button onClick={() => startAdd("countryId")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0l2-2m0 0l2 2m-2-2v8" /></svg>
-                  Country ID
                 </button>
               </div>
             </div>
