@@ -449,7 +449,6 @@ pub struct PassportData {
     pub expiration_date: Option<String>,
 }
 
-/// Country ID-specific cipher data.
 /// Type-safe cipher kind. Makes invalid states unrepresentable.
 /// Card(LoginData) is a compile error.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -608,9 +607,6 @@ pub enum LinkedFieldType {
     PassportIssuingAuthority,
     PassportIssueDate,
     PassportExpirationDate,
-
-    // Country ID fields
-    // Country ID fields merged into Passport
 }
 
 /// A single password history entry.
@@ -890,7 +886,6 @@ pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<
             data.expiration_date.clone()
         }
 
-        // Country ID fields
         // Type mismatch: field doesn't match cipher kind
         _ => None,
     }
