@@ -1081,6 +1081,45 @@ impl VaultState {
             .map_err(|e| format!("{e}"))
     }
 
+    /// Revoke a device by UUID. Removes it from the registry and rotates keys.
+    /// Only works for the current (self) device initiating the revoke.
+    pub async fn device_revoke(&self, device_id_str: &str) -> Result<String, String> {
+        let device_id: uuid::Uuid = device_id_str.parse().map_err(|_| "Invalid UUID")?;
+
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".into());
+        }
+
+        if device_id == handle.device_id {
+            return Err("Cannot revoke the current device".into());
+        }
+
+        if !handle.registry.devices.contains_key(&device_id) {
+            return Err(format!("Device {device_id} not found in registry"));
+        }
+
+        let result = handle.device_manager
+            .revoke_device_and_rotate(device_id, handle.device_id)
+            .map_err(|e| format!("Revocation failed: {e}"))?;
+
+        // Clean activity index
+        if let Err(e) = idtty_core::device_manager::DeviceActivityIndex::remove_device(
+            &self.vault_path, &device_id,
+        ) {
+            eprintln!("warning: failed to clean activity index: {e}");
+        }
+
+        let json = serde_json::json!({
+            "revoked_device": result.revoked_device_id.to_string(),
+            "revoked_name": result.revoked_name,
+            "new_epoch": result.new_epoch,
+        });
+        Ok(json.to_string())
+    }
+
     /// Verify master password for reprompt. Opens a temporary handle and attempts unlock.
     /// Returns a short-lived grant. Does NOT change the main vault state.
     pub async fn reprompt_verify(&self, master_password: &str) -> Result<String, String> {

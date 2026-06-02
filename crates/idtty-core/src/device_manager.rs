@@ -1003,13 +1003,55 @@ impl DeviceManager {
         Ok(())
     }
 
-    // ── Force Evict ──
+    // ── Selective Revocation ──
 
-    /// Emergency force evict: removes all devices except survivor,
-    /// then immediately initiates epoch rotation.
-    ///
-    /// Security: evicted device retains wrapped key until rekey.
-    /// This method triggers rotation synchronously to close that window.
+    /// Selective revocation: remove one device and rotate keys.
+    /// Unlike force_evict_and_rotate (which keeps only the survivor),
+    /// this preserves all other enrolled devices.
+    pub fn revoke_device_and_rotate(
+        &mut self,
+        target_device_id: Uuid,
+        self_device_id: Uuid,
+    ) -> Result<RevokeDeviceResult, IdttyError> {
+        if target_device_id == self_device_id {
+            return Err(IdttyError::Device(DeviceError::Keystore(
+                "Cannot revoke the current device. Use force-evict from another device.".into()
+            )));
+        }
+
+        let revoked = self.registry.revoke(target_device_id)?;
+        let revoked_name = revoked.name.clone();
+
+        // Initiate rotation with self as initiator
+        let (new_root, tx) = self.initiate_rotation(self_device_id)?;
+        let new_epoch = tx.new_epoch;
+
+        // Self-acknowledge (immediate commit for single-user)
+        self.epoch.acknowledge(self_device_id);
+        self.commit_rotation()?;
+
+        let result = RevokeDeviceResult {
+            revoked_device_id: target_device_id,
+            revoked_name,
+            new_epoch,
+            new_root_key: Some(new_root),
+        };
+
+        // Auto-persist
+        self.auto_save_result()?;
+
+        // Notify observer
+        if let Some(ref store) = self.store {
+            if let Some(vp) = store.vault_path() {
+                self.fire(|obs| obs.on_devices_evicted(1, vp));
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Emergency Force Evict (D14): single surviving device rewrites registry.
+    /// All devices except the survivor are evicted. Epoch is rotated.
     pub fn force_evict_and_rotate(
         &mut self,
         surviving_device_id: Uuid,
@@ -1320,6 +1362,18 @@ pub struct ForceEvictResult {
     pub new_epoch: u64,
     /// New Root Key. Present only when rotation_committed = true.
     /// Caller MUST write a new keywrap file for the surviving device.
+    pub new_root_key: Option<RootKey>,
+}
+
+/// Result of selective device revocation.
+pub struct RevokeDeviceResult {
+    /// ID of the revoked device.
+    pub revoked_device_id: Uuid,
+    /// Name of the revoked device.
+    pub revoked_name: String,
+    /// New epoch after rotation.
+    pub new_epoch: u64,
+    /// New Root Key. Caller MUST write keywrap file.
     pub new_root_key: Option<RootKey>,
 }
 

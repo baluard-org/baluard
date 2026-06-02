@@ -3435,14 +3435,15 @@ function DeviceFleetPanel() {
   }
 
   async function revokeDevice(deviceId, deviceName) {
-    if (!confirm(`Revoke "${deviceName}"? This will re-encrypt the vault. This cannot be undone.`)) return;
+    if (!confirm(`Revoke "${deviceName}"? This will rotate vault keys. This cannot be undone.`)) return;
     try {
-      await invoke("daemon_request", { action: "sync.pull", payload: "" });
+      const resp = await invoke("daemon_request", { action: "device.revoke", payload: deviceId });
+      const data = typeof resp === "string" ? JSON.parse(resp) : resp;
       app.setRevokeWarning({ name: deviceName });
-      app.setDeviceFleet(fleet().filter(d => d.id !== deviceId));
+      // Refresh fleet to reflect revocation
+      refreshDeviceFleet();
     } catch (e) {
-      // Revocation requires CLI --direct mode for now
-      alert(`Revocation requires CLI: idtty devices revoke ${deviceId}`);
+      alert(`Revocation failed: ${e}. Try CLI: idtty --direct devices revoke ${deviceId}`);
     }
   }
 

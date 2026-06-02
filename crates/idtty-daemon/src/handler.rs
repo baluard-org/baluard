@@ -619,6 +619,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        // ── Device revocation (token required) ──
+        "device.revoke" => {
+            let did = req.payload.trim().to_string();
+            match state.device_revoke(&did).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
         // ── Attachment upload (token required) ──
         "vault.attach_upload" => match state.attach_upload(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
