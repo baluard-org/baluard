@@ -440,6 +440,25 @@ impl SyncEngine {
         }
     }
 
+    /// Check for abort markers after pulling from another device.
+    /// Returns the aborted epoch if a marker was found, None otherwise.
+    /// Caller (daemon) should check this after pull and surface to user.
+    pub fn check_abort_marker(&self) -> Option<u64> {
+        // Read current epoch from epoch.json
+        let epoch_path = self.vault_path.join("meta/epoch.json");
+        let data = std::fs::read_to_string(&epoch_path).ok()?;
+        let val: serde_json::Value = serde_json::from_str(&data).ok()?;
+        let epoch = val["epoch"].as_u64()?;
+
+        // Check if new_epoch (epoch + 1) has an abort marker
+        let new_epoch = epoch + 1;
+        let abort_path = self.vault_path.join(format!(".idtty/rekey/{new_epoch}.aborted"));
+        if abort_path.exists() {
+            return Some(new_epoch);
+        }
+        None
+    }
+
     /// Get the remote URL (defaults to "origin").
     pub fn get_remote_url(&self, repo: &Repository, name: &str) -> Result<String, IdttyError> {
         let remote = repo
