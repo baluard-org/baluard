@@ -1713,7 +1713,7 @@ function CipherDetail() {
             <h3 class="text-2xl font-bold text-[var(--color-text)] truncate leading-tight select-all">{viewCipher()?.name || "Untitled"}</h3>
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] mt-2">
               <span class="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
-              {viewCipher()?.type === "card" ? "Card" : viewCipher()?.type === "identity" ? "Identity" : viewCipher()?.type === "secureNote" ? "Secure Note" : viewCipher()?.type === "sshKey" ? "SSH Key" : viewCipher()?.type === "bankAccount" ? "Bank Account" : viewCipher()?.type === "driversLicense" ? "Driver License" : viewCipher()?.type === "passport" ? "Passport / ID" : "Login"} Item
+              {viewCipher()?.type === "card" ? "Card" : viewCipher()?.type === "identity" ? "Identity" : viewCipher()?.type === "secureNote" ? "Secure Note" : viewCipher()?.type === "sshKey" ? "SSH Key" : viewCipher()?.type === "bankAccount" ? "Bank Account" : viewCipher()?.type === "driversLicense" ? "Driver License" : viewCipher()?.type === "passport" ? "Passport & ID" : "Login"} Item
             </span>
           </div>
           <button
