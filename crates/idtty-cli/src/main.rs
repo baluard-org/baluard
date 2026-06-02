@@ -209,6 +209,13 @@ enum DeviceCommands {
     RotationStatus,
     /// Abort a stalled rotation (requires --direct).
     RotationAbort,
+    /// Show current device enrollment details.
+    Info,
+    /// Revoke a device by UUID.
+    Revoke {
+        /// Device UUID to revoke.
+        device_id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -376,6 +383,12 @@ fn main() {
             }
             DeviceCommands::RotationAbort => {
                 commands::handle_rotation_abort(mode, &cli.vault_path, cli.socket.as_deref())
+            }
+            DeviceCommands::Info => {
+                commands::handle_device_info(mode, &cli.vault_path, cli.socket.as_deref())
+            }
+            DeviceCommands::Revoke { device_id } => {
+                commands::handle_device_revoke(mode, &cli.vault_path, cli.socket.as_deref(), &device_id)
             }
         },
 
