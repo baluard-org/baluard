@@ -16,7 +16,7 @@
 
 ## Current Status
 
-**201 tests, 0 clippy errors workspace-wide.**
+**0 clippy errors workspace-wide.**
 
 Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries.
 

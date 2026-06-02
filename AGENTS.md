@@ -172,7 +172,6 @@ idtty/
 | Mobile KMP app | Placeholder |
 | Browser extension | Placeholder |
 
-**Test counts**: 201 workspace-wide (197 idtty-core + 4 across CLI/daemon). 1 ignored. **0 clippy errors workspace-wide.**
 
 ### BW Parity Phases 1-8 (Original)
 | Phase | Description | Tests | Peer Reviewed |
