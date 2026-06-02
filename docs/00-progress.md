@@ -16,14 +16,14 @@
 
 ## Current Status
 
-**Phase**: Desktop BW parity complete (phases 1-8 + A-G). Device lifecycle complete (MISS-1 through MISS-5, peer review fixes). Security hardening complete (Round 13). Archive entries feature complete. Architecture refactoring complete (DESIGN-1/2/3 + peer review). **198 tests, 0 clippy errors workspace-wide**, 13 security review rounds. Full desktop feature set: CRUD, 5 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries.
+**Phase**: Desktop BW parity complete (phases 1-8 + A-G). Device lifecycle complete (MISS-1 through MISS-5, peer review fixes). Security hardening complete (Round 13). Archive entries feature complete. Architecture refactoring complete (DESIGN-1/2/3 + peer review). Extra cipher types complete (BankAccount, DriversLicense, Passport, CountryId). **202 tests, 0 clippy errors workspace-wide**, 13 security review rounds. Full desktop feature set: CRUD, 9 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries.
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
 - `/crates/idtty-core` - Rust core engine: crypto, keys, vault, padding, git sync
 - `/crates/idtty-cli` - Terminal CLI client (clap, daemon-first with `--direct` fallback)
 - `/crates/idtty-daemon` - Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state)
-- `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 5 cipher types, generator, TOTP, auto-lock, dark/light themes)
+- `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 9 cipher types, generator, TOTP, auto-lock, dark/light themes)
 
 ---
 
@@ -316,7 +316,7 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| Extra cipher types | Bank Account (10 fields), Driver's License (12 fields), Passport (13 fields). BW recently added these | Deferred |
+| Extra cipher types | Bank Account (10 fields), Driver's License (12 fields), Passport (13 fields), Country ID (8 fields, national ID) | **Done** |
 | Additional import formats | Dashlane, Enpass, NordPass, Avast, Avira, Keeper, RoboForm, Myki, mSecure, Blur | Not started |
 
 ### Nice to Have / Future
@@ -400,7 +400,7 @@ Durable architectural decisions from the Bitwarden parity implementation. Preser
 ### Cipher Model
 
 - **CipherKind is a Rust sum type** (`enum` with associated data). Invalid states unrepresentable at compile time. Serialized as `#[serde(tag = "type", content = "data")]` producing `{"type": "Login", "data": {...}}`
-- **CipherType enum**: `Login`, `SecureNote`, `Card`, `Identity`, `SshKey`. Bank/DriversLicense/Passport deferred
+- **CipherType enum**: `Login`, `SecureNote`, `Card`, `Identity`, `SshKey`, `BankAccount`, `DriversLicense`, `Passport`, `CountryId` (9 types total)
 - **Identity has three address lines**: `address1`, `address2`, `address3`. Not singular. Matters for BW import fidelity
 - **Multi-URI**: `Vec<LoginUri>` where `LoginUri { uri, match_strategy }`. Ordered, reorderable
 - **UriMatchStrategy**: Domain(0), Host(1), StartsWith(2), Exact(3), Regex(4), Never(5). Global default from `VaultSettings.default_uri_match`, per-URI override
@@ -494,7 +494,7 @@ idtty/
 │   ├── idtty-core/               # Rust Core: crypto (AES-256-GCM, Argon2id, TOTP), keys, vault, padding, sync, import/export, health, biometric, attachments
 │   ├── idtty-cli/                # Terminal CLI (daemon-first + --direct fallback, import/export, health, attachments)
 │   └── idtty-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState, auto-lock, TOTP, attachments, biometric, import/export, health)
-├── desktop/                      # Tauri v2 Desktop app (full CRUD, 5 cipher types, generator, TOTP, import/export, reprompt, health, attachments, biometric, custom fields, nested folders)
+├── desktop/                      # Tauri v2 Desktop app (full CRUD, 9 cipher types, generator, TOTP, import/export, reprompt, health, attachments, biometric, custom fields, nested folders)
 
 └── docs/                         # Architecture Blueprint Docs
 ```
