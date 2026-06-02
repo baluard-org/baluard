@@ -1044,6 +1044,43 @@ impl VaultState {
         serde_json::to_string(&report).map_err(|e| format!("{e}"))
     }
 
+    /// Return device fleet activity data.
+    /// Reads meta/device_activity.json and cross-references with the device registry.
+    pub async fn device_activity(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".into());
+        }
+
+        let index = idtty_core::device_manager::DeviceActivityIndex::read(&self.vault_path);
+        let registry = handle.device_manager.registry();
+
+        let mut devices = Vec::new();
+        for (uuid_str, entry) in &index.devices {
+            let uuid: uuid::Uuid = match uuid_str.parse() {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            let name = registry
+                .devices
+                .get(&uuid)
+                .map(|d| d.name.clone())
+                .unwrap_or_else(|| "Unknown".into());
+            devices.push(serde_json::json!({
+                "id": uuid_str,
+                "name": name,
+                "last_push": entry.last_push,
+                "last_commit": entry.last_commit,
+                "epoch": entry.epoch,
+            }));
+        }
+
+        serde_json::to_string(&serde_json::json!({ "devices": devices }))
+            .map_err(|e| format!("{e}"))
+    }
+
     /// Verify master password for reprompt. Opens a temporary handle and attempts unlock.
     /// Returns a short-lived grant. Does NOT change the main vault state.
     pub async fn reprompt_verify(&self, master_password: &str) -> Result<String, String> {

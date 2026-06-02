@@ -20,7 +20,157 @@ use crate::keys::hierarchy::RootKey;
 use crate::keys::rotation::{CommitBarrierSig, RekeyTransaction};
 use crate::vault::manifest::DeviceEntry;
 
-// ── Rotation Observer (MISS-3) ──
+// ── Helpers ──
+
+/// Format a Unix timestamp as RFC 3339 (UTC, second precision).
+/// Avoids chrono dependency.
+fn format_rfc3339(secs: u64) -> String {
+    // Days from epoch
+    let days = secs / 86400;
+    let time_secs = (secs % 86400) as u32;
+    let hour = time_secs / 3600;
+    let minute = (time_secs % 3600) / 60;
+    let second = time_secs % 60;
+
+    // Compute year/month/day from days since epoch
+    let (year, month, day) = days_to_ymd(days);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hour, minute, second
+    )
+}
+
+/// Convert days since Unix epoch to (year, month, day).
+fn days_to_ymd(mut days: u64) -> (u64, u32, u32) {
+    let mut year = 1970u64;
+    loop {
+        let days_in_year = if is_leap(year) { 366 } else { 365 };
+        if days < days_in_year {
+            break;
+        }
+        days -= days_in_year;
+        year += 1;
+    }
+    let leap = is_leap(year);
+    let month_days: [u32; 12] = if leap {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut month = 1u32;
+    for &md in &month_days {
+        if days < md as u64 {
+            break;
+        }
+        days -= md as u64;
+        month += 1;
+    }
+    (year, month, days as u32 + 1)
+}
+
+fn is_leap(year: u64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+// ── Device Activity Index ──
+
+/// Activity index entry (per device).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceActivityEntry {
+    /// ISO-8601 timestamp of last push.
+    pub last_push: String,
+    /// SHA of the last push commit.
+    pub last_commit: String,
+    /// Current epoch at time of push.
+    pub epoch: u64,
+}
+
+/// Activity index: maps device UUID -> last activity metadata.
+/// Stored as `meta/device_activity.json` (plaintext, git-synced).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceActivityIndex {
+    /// Format version. Must be 1.
+    pub v: u32,
+    pub devices: std::collections::HashMap<String, DeviceActivityEntry>,
+}
+
+impl DeviceActivityIndex {
+    /// Create an empty activity index.
+    pub fn new() -> Self {
+        Self {
+            v: 1,
+            devices: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Read activity index from `meta/device_activity.json`.
+    /// Returns empty index if file doesn't exist.
+    pub fn read(vault_path: &Path) -> Self {
+        let path = vault_path.join("meta/device_activity.json");
+        if !path.exists() {
+            return Self::new();
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(data) => serde_json::from_str(&data).unwrap_or_else(|_| Self::new()),
+            Err(_) => Self::new(),
+        }
+    }
+
+    /// Update (or add) a device's activity entry and write to disk.
+    pub fn update(
+        vault_path: &Path,
+        device_id: &Uuid,
+        commit_sha: &str,
+        epoch: u64,
+    ) -> Result<(), IdttyError> {
+        let mut index = Self::read(vault_path);
+        let now = {
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            // Format as ISO-8601 without chrono
+            format_rfc3339(secs)
+        };
+        index.devices.insert(
+            device_id.to_string(),
+            DeviceActivityEntry {
+                last_push: now,
+                last_commit: commit_sha.to_string(),
+                epoch,
+            },
+        );
+        index.write(vault_path)
+    }
+
+    /// Remove a device from the activity index.
+    pub fn remove_device(vault_path: &Path, device_id: &Uuid) -> Result<(), IdttyError> {
+        let mut index = Self::read(vault_path);
+        if index.devices.remove(&device_id.to_string()).is_some() {
+            index.write(vault_path)?;
+        }
+        Ok(())
+    }
+
+    /// Write activity index to disk (atomic).
+    fn write(&self, vault_path: &Path) -> Result<(), IdttyError> {
+        let meta = vault_path.join("meta");
+        std::fs::create_dir_all(&meta)
+            .map_err(|e| DeviceError::Keystore(format!("create meta dir: {e}")))?;
+        let path = meta.join("device_activity.json");
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| DeviceError::Keystore(format!("serialize activity index: {e}")))?;
+        atomic_write(&path, &json)
+    }
+}
+
+impl Default for DeviceActivityIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ── Rotation Observer ──
 
 /// Hook for observing rotation state transitions.
 /// Implementations can trigger git sync, notifications, or other side effects.
@@ -464,6 +614,11 @@ impl DeviceManager {
     /// Current epoch number.
     pub fn current_epoch(&self) -> u64 {
         self.epoch.epoch
+    }
+
+    /// Get a reference to the device registry.
+    pub fn registry(&self) -> &DeviceRegistry {
+        &self.registry
     }
 
     /// Current epoch state.
@@ -1778,5 +1933,82 @@ mod tests {
         // Verify: state persisted to disk
         let loaded = DeviceManager::load_from_vault(vault_path).unwrap();
         assert_eq!(loaded.registry.count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use super::*;
+    use tempfile::TempDir;
+    use uuid::Uuid;
+
+    #[test]
+    fn activity_index_new_is_empty() {
+        let idx = DeviceActivityIndex::new();
+        assert_eq!(idx.v, 1);
+        assert!(idx.devices.is_empty());
+    }
+
+    #[test]
+    fn activity_index_update_and_read() {
+        let dir = TempDir::new().unwrap();
+        let vault_path = dir.path();
+        let device_id = Uuid::new_v4();
+
+        DeviceActivityIndex::update(vault_path, &device_id, "abc123", 5).unwrap();
+
+        let idx = DeviceActivityIndex::read(vault_path);
+        assert_eq!(idx.devices.len(), 1);
+        let entry = &idx.devices[&device_id.to_string()];
+        assert_eq!(entry.last_commit, "abc123");
+        assert_eq!(entry.epoch, 5);
+        assert!(entry.last_push.ends_with('Z'));
+    }
+
+    #[test]
+    fn activity_index_missing_file_returns_empty() {
+        let dir = TempDir::new().unwrap();
+        let idx = DeviceActivityIndex::read(dir.path());
+        assert!(idx.devices.is_empty());
+    }
+
+    #[test]
+    fn activity_index_remove_device() {
+        let dir = TempDir::new().unwrap();
+        let vault_path = dir.path();
+        let device_a = Uuid::new_v4();
+        let device_b = Uuid::new_v4();
+
+        DeviceActivityIndex::update(vault_path, &device_a, "aaa", 1).unwrap();
+        DeviceActivityIndex::update(vault_path, &device_b, "bbb", 1).unwrap();
+
+        DeviceActivityIndex::remove_device(vault_path, &device_a).unwrap();
+
+        let idx = DeviceActivityIndex::read(vault_path);
+        assert_eq!(idx.devices.len(), 1);
+        assert!(idx.devices.contains_key(&device_b.to_string()));
+    }
+
+    #[test]
+    fn activity_index_overwrite_on_update() {
+        let dir = TempDir::new().unwrap();
+        let vault_path = dir.path();
+        let device_id = Uuid::new_v4();
+
+        DeviceActivityIndex::update(vault_path, &device_id, "first", 1).unwrap();
+        DeviceActivityIndex::update(vault_path, &device_id, "second", 2).unwrap();
+
+        let idx = DeviceActivityIndex::read(vault_path);
+        assert_eq!(idx.devices.len(), 1);
+        assert_eq!(idx.devices[&device_id.to_string()].last_commit, "second");
+        assert_eq!(idx.devices[&device_id.to_string()].epoch, 2);
+    }
+
+    #[test]
+    fn format_rfc3339_correctness() {
+        // 2026-01-01T00:00:00Z = 1767225600
+        assert_eq!(format_rfc3339(1767225600), "2026-01-01T00:00:00Z");
+        // Known: 2026-06-02T14:30:00Z (152 days from Jan 1)
+        assert_eq!(format_rfc3339(1767225600 + 152 * 86400 + 14 * 3600 + 30 * 60), "2026-06-02T14:30:00Z");
     }
 }

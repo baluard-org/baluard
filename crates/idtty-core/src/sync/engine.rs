@@ -165,6 +165,8 @@ impl SyncEngine {
 
         let parents: Vec<_> = parent_commits.iter().collect();
         let commit_id = self.create_signed_commit(repo, &sig, COMMIT_MESSAGE, &tree, &parents)?;
+        // Update device activity index
+        self.update_activity_index(&commit_id.to_string());
         // Update HEAD to point to the new commit
         let branch = Self::resolve_default_branch(repo);
         repo.reference(
@@ -387,6 +389,55 @@ impl SyncEngine {
         }
         // Fallback
         "main".to_string()
+    }
+
+    /// Update device activity index after a commit.
+    /// Reads device_id from the registry (matched by device_name) and epoch from epoch.json.
+    /// Best-effort: logs warning on failure, does not fail the commit.
+    fn update_activity_index(&self, commit_sha: &str) {
+        use crate::device_manager::DeviceActivityIndex;
+
+        // Read device_id from registry (match by device_name)
+        let reg_path = self.vault_path.join("meta/devices.json");
+        let device_id = match std::fs::read_to_string(&reg_path) {
+            Ok(data) => {
+                match serde_json::from_str::<crate::devices::DeviceRegistry>(&data) {
+                    Ok(reg) => reg
+                        .devices
+                        .iter()
+                        .find(|(_, e)| e.name == self.device_name)
+                        .map(|(id, _)| *id)
+                        .or_else(|| reg.devices.keys().next().copied()),
+                    Err(_) => None,
+                }
+            }
+            Err(_) => None,
+        };
+        let device_id = match device_id {
+            Some(id) => id,
+            None => return, // No registry, skip activity update
+        };
+
+        // Read epoch from epoch.json
+        let epoch_path = self.vault_path.join("meta/epoch.json");
+        let epoch = match std::fs::read_to_string(&epoch_path) {
+            Ok(data) => {
+                serde_json::from_str::<serde_json::Value>(&data)
+                    .ok()
+                    .and_then(|v| v["current_epoch"].as_u64())
+                    .unwrap_or(0)
+            }
+            Err(_) => 0,
+        };
+
+        if let Err(e) = DeviceActivityIndex::update(
+            &self.vault_path,
+            &device_id,
+            commit_sha,
+            epoch,
+        ) {
+            eprintln!("warning: failed to update activity index: {e}");
+        }
     }
 
     /// Get the remote URL (defaults to "origin").
