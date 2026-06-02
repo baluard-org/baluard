@@ -342,9 +342,6 @@ pub fn handle_get(
                                 json_obj["passport_number"] =
                                     serde_json::json!(data.passport_number);
                             }
-                            idtty_core::types::CipherKind::CountryId(data) => {
-                                json_obj["id_number"] = serde_json::json!(data.id_number);
-                            }
                             _ => {}
                         }
                         println!("{json_obj}");
@@ -414,11 +411,6 @@ pub fn handle_get(
                             idtty_core::types::CipherKind::Passport(data) => {
                                 if let Some(ref v) = data.passport_number {
                                     println!("  Passport:  {v}");
-                                }
-                            }
-                            idtty_core::types::CipherKind::CountryId(data) => {
-                                if let Some(ref v) = data.id_number {
-                                    println!("  ID Number: {v}");
                                 }
                             }
                             idtty_core::types::CipherKind::SecureNote => {}

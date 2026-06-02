@@ -297,16 +297,6 @@ impl VaultState {
                         json["issue_date"] = serde_json::json!(data.issue_date);
                         json["expiration_date"] = serde_json::json!(data.expiration_date);
                     }
-                    idtty_core::types::CipherKind::CountryId(data) => {
-                        json["first_name"] = serde_json::json!(data.first_name);
-                        json["last_name"] = serde_json::json!(data.last_name);
-                        json["id_number"] = serde_json::json!(data.id_number);
-                        json["issuing_country"] = serde_json::json!(data.issuing_country);
-                        json["date_of_birth"] = serde_json::json!(data.date_of_birth);
-                        json["sex"] = serde_json::json!(data.sex);
-                        json["issue_date"] = serde_json::json!(data.issue_date);
-                        json["expiration_date"] = serde_json::json!(data.expiration_date);
-                    }
                     idtty_core::types::CipherKind::SecureNote => {}
                 }
                 Ok(json.to_string())

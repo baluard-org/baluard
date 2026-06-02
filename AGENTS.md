@@ -42,7 +42,7 @@ idtty/
 │           ├── main.rs         # Socket listener, SIGINT/SIGTERM, 0600 perms, auto-lock timer
 │           ├── handler.rs      # Protobuf routing, password zeroize, varint framing, token-gated actions
 │           └── state.rs        # VaultState (Arc<RwLock<Option<VaultHandle>>>), auto-lock, activity tracking
-├── desktop/                    # Tauri v2 desktop app (full CRUD, 9 cipher types, generator, auto-lock, TOTP, attachments, nested folders, biometric, custom fields)
+├── desktop/                    # Tauri v2 desktop app (full CRUD, 8 cipher types, generator, auto-lock, TOTP, attachments, nested folders, biometric, custom fields)
 │   └── src/
 │       ├── App.jsx             # SolidJS frontend (2500+ lines)
 │       ├── i18n/               # Internationalization (en.json + template)
@@ -115,7 +115,7 @@ idtty/
 
 ## NOTES
 * **Single Rust core**: All crypto, vault format, padding, key lifecycle, and git sync live in `idtty-core`. No duplicate implementations.
-* **CipherKind sum type**: `CipherKind` is a serde-tagged enum (`Login(LoginData)`, `Card(CardData)`, `Identity(IdentityData)`, `SshKey(SshKeyData)`, `BankAccount(BankAccountData)`, `DriversLicense(DriversLicenseData)`, `Passport(PassportData)`, `CountryId(CountryIdData)`, `SecureNote`). 9 variants. Invalid states are unrepresentable at compile time. Tagged JSON: `{type: "login", data: {...}}`.
+* **CipherKind sum type**: `CipherKind` is a serde-tagged enum (`Login(LoginData)`, `Card(CardData)`, `Identity(IdentityData)`, `SshKey(SshKeyData)`, `BankAccount(BankAccountData)`, `DriversLicense(DriversLicenseData)`, `Passport(PassportData)`, `SecureNote`). 8 variants. Invalid states are unrepresentable at compile time. Tagged JSON: `{type: "login", data: {...}}`.
 * **CipherMeta for list rendering**: `vault.list` returns `{ciphers: [CipherMeta]}` with `id`, `name`, `cipher_type`, `favorite`, `username`. Frontend renders the list without decrypting full cipher data.
 * **Daemon get_cipher response**: Returns BOTH nested `kind` object AND flat top-level fields for backward compat. Frontend reads `kind.card.*`, `kind.identity.*`, etc.
 * **update_cipher parses kind from payload**: Does NOT clone existing kind. Allows type-aware field edits through the daemon.
@@ -167,12 +167,12 @@ idtty/
 | `idtty-cli` (dual-mode) | Daemon-first + `--direct` fallback. CRUD + folders + edit + import/export + health + attachments |
 | `idtty-daemon` socket server | Protobuf wire, VaultState, full CRUD, TOTP, auto-lock, attachments, biometric, import/export, health, archive. SIGTERM safe |
 | Protobuf codegen | Compiled via prost in daemon + CLI build.rs |
-| Desktop Tauri app | Full CRUD, 9 cipher types, generator, TOTP widget, auto-lock, nested folders, attachments, biometric unlock, custom fields (incl linked), reprompt, import/export, health, archive, dark/light themes |
+| Desktop Tauri app | Full CRUD, 8 cipher types, generator, TOTP widget, auto-lock, nested folders, attachments, biometric unlock, custom fields (incl linked), reprompt, import/export, health, archive, dark/light themes |
 | UniFFI annotations | Not yet applied to idtty-core |
 | Mobile KMP app | Placeholder |
 | Browser extension | Placeholder |
 
-**Test counts**: 202 workspace-wide (198 idtty-core + 4 across CLI/daemon). 1 ignored. **0 clippy errors workspace-wide.**
+**Test counts**: 201 workspace-wide (197 idtty-core + 4 across CLI/daemon). 1 ignored. **0 clippy errors workspace-wide.**
 
 ### BW Parity Phases 1-8 (Original)
 | Phase | Description | Tests | Peer Reviewed |
