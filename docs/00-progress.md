@@ -16,7 +16,7 @@
 
 ## Current Status
 
-**Phase**: Desktop BW parity complete (phases 1-8 + A-G). Device lifecycle complete (MISS-1 through MISS-5, peer review fixes). Security hardening complete (Round 13). Archive entries feature complete. **190 tests, 0 clippy errors workspace-wide**, 13 security review rounds. Full desktop feature set: CRUD, 5 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries.
+**Phase**: Desktop BW parity complete (phases 1-8 + A-G). Device lifecycle complete (MISS-1 through MISS-5, peer review fixes). Security hardening complete (Round 13). Archive entries feature complete. Architecture refactoring complete (DESIGN-1/2/3 + peer review). **198 tests, 0 clippy errors workspace-wide**, 13 security review rounds. Full desktop feature set: CRUD, 5 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries.
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
@@ -360,11 +360,30 @@ Features parked for the far future. Do not start without explicit confirmation.
 
 ### Architecture
 
-| Item | Description | Effort |
-|------|-------------|--------|
-| Space Group Key layer | Doc specifies per-Space symmetric key wrapped per member in `access_list.json`. Currently ItemKeys derive from RootKey directly. Orgs use HPKE wrapping but not the full SGK layer as documented | Weeks |
-| DESIGN-1: `pub` fields | `DeviceManager` fields are `pub`. Any caller can bypass invariant gates via `registry.enroll()` directly. Fix: `pub(crate)` + `#[cfg(test)]` accessors | ~30 min |
-| DESIGN-2: I/O coupling | Persistence (`save_to_vault`/`load_from_vault`) mixed into `DeviceManager` lifecycle. Fix: split into `DeviceManagerStore` | ~2-3 hours |
+| Item | Description | Effort | Status |
+|------|-------------|--------|--------|
+| Space Group Key layer | RootKey → SpaceGroupKey → ItemKey hierarchy. SGK derived via HKDF for single-user, random for multi-user/org. Breaking change from direct RootKey→ItemKey derivation. `SpaceGroupKey` carries bound epoch with debug_assert guard. Volatile zeroize via `zeroize` crate. 8 tests | Weeks | **Done** |
+| DESIGN-1: `pub` fields | `DeviceManager` fields changed to `pub(crate)`. Accessor methods added for read-only queries. `single_device_commit_rotation()` method replaces direct field mutation from handle.rs | ~30 min | **Done** |
+| DESIGN-2: I/O coupling | `DeviceManagerStore` trait + `FileDeviceManagerStore` impl + `DeviceManagerState` snapshot struct. `DeviceManager` holds `Arc<dyn Store>`. Backward compat via `set_vault_path()` / `load_from_vault()`. Trait includes `exists()` method. Atomicity gap documented | ~2-3 hours | **Done** |
+
+#### Peer Review (Round 14)
+
+peer review of DESIGN-1/2/3: 12 findings (4C, 4H, 3M, 1L). All fixed.
+
+| # | Severity | Finding | Fix |
+|---|----------|---------|-----|
+| 1 | High | Manual zeroize loops may be optimized out by compiler in release builds | All key types now use `zeroize::Zeroize` trait (volatile writes) |
+| 2 | High | Cached `space_group_key` in `UnlockedState` never read; redundant SGK derived on every cipher op | Split into `derive_item_key_from_sgk` (uses cached) and `derive_item_key_from_root` (fallback) |
+| 3 | High | `vault_files_exist()` hardcoded `FileDeviceManagerStore`, bypassed trait | Added `exists()` to `DeviceManagerStore` trait |
+| 4 | High | `save_state()` multi-file writes not collectively atomic | Documented atomicity gap in trait doc comment |
+| 5 | Medium | `handle.rs::rotate_root_key()` directly mutated DeviceManager fields | Added `single_device_commit_rotation()` method |
+| 6 | Medium | Stale `.txn`/`.ack.*` files accumulate after rotation commit | Noted for future cleanup; not a correctness issue |
+| 7 | Medium | `atomic_write()` took `&PathBuf` not `&Path` | Changed to `&Path` |
+| 8 | Medium | Wrong `Vec::with_capacity()` hints in SGK/ItemKey derivation | Fixed to match actual byte counts |
+| 9 | Medium | `SpaceGroupKey` carried no epoch tag; misuse possible | Added `epoch` field + `debug_assert_eq!` guard |
+| 10 | Low | `fire()` was `pub(crate)` but only called within `device_manager.rs` | Made private, added `notify_rotation_committed()` wrapper |
+| 11 | Low | Trait missing `exists()` method (resolved by #3) | — |
+| 12 | Low | Double-zeroize pattern (explicit + Drop) | Clean with `Zeroize` trait (idempotent volatile writes) |
 
 ### Dev Experience
 

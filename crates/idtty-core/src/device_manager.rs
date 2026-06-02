@@ -131,25 +131,227 @@ pub struct RotationAck {
     pub signature: Vec<u8>,
 }
 
+// ── DeviceManager Persistence ──
+
+/// Serializable DeviceManager state snapshot.
+/// Used to decouple the state machine from its persistence backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceManagerState {
+    pub registry: DeviceRegistry,
+    pub epoch: EpochInfo,
+    pub seen_nonces: Vec<String>,
+    pub pending_transaction: Option<RekeyTransaction>,
+    pub collected_acks: Vec<RotationAck>,
+}
+
+/// Persistence backend for DeviceManager state.
+///
+/// Implementations handle reading/writing the registry, epoch, nonces,
+/// and rotation artifacts (txn, acks, committed files) to storage.
+///
+/// DESIGN-2: Separates I/O from the DeviceManager state machine,
+/// enabling in-memory stores for testing and alternative backends.
+pub trait DeviceManagerStore: Send + Sync {
+    /// Save complete DeviceManager state.
+    ///
+    /// **Atomicity note**: The default filesystem implementation performs
+    /// multiple `atomic_write` calls (registry, epoch, nonces, txn, acks).
+    /// Each individual file write is atomic, but the *combination* is not.
+    /// A crash between writes may leave partially updated state.
+    /// Implementors should consider a single-file or WAL pattern for stronger guarantees.
+    fn save_state(&self, state: &DeviceManagerState) -> Result<(), IdttyError>;
+
+    /// Load complete DeviceManager state. Returns None if no state exists.
+    fn load_state(&self) -> Result<Option<DeviceManagerState>, IdttyError>;
+
+    /// Check if persisted state exists.
+    fn exists(&self) -> bool;
+
+    /// Write a finalized .committed file for a rotation epoch.
+    fn save_committed(&self, epoch: u64, data: &str) -> Result<(), IdttyError>;
+
+    /// Get the vault path (for observer hooks and recovery I/O).
+    /// Returns None for non-filesystem stores.
+    fn vault_path(&self) -> Option<&Path>;
+}
+
+// ── FileDeviceManagerStore ──
+
+/// Filesystem-backed DeviceManager store.
+/// Persists to `meta/devices.json`, `meta/epoch.json`, `meta/seen-nonces.json`,
+/// and `.idtty/rekey/` for rotation artifacts.
+pub struct FileDeviceManagerStore {
+    vault_path: std::path::PathBuf,
+}
+
+impl FileDeviceManagerStore {
+    pub fn new(vault_path: &Path) -> Self {
+        Self {
+            vault_path: vault_path.to_path_buf(),
+        }
+    }
+}
+
+impl DeviceManagerStore for FileDeviceManagerStore {
+    fn save_state(&self, state: &DeviceManagerState) -> Result<(), IdttyError> {
+        let meta = self.vault_path.join("meta");
+        std::fs::create_dir_all(&meta)
+            .map_err(|e| DeviceError::Keystore(format!("create meta dir: {e}")))?;
+
+        // Save registry
+        let registry_path = meta.join("devices.json");
+        let registry_json = serde_json::to_string_pretty(&state.registry)
+            .map_err(|e| DeviceError::Keystore(format!("serialize registry: {e}")))?;
+        atomic_write(&registry_path, &registry_json)?;
+
+        // Save epoch
+        let epoch_path = meta.join("epoch.json");
+        let epoch_json = serde_json::to_string_pretty(&state.epoch)
+            .map_err(|e| KeyError::InvalidEpochState(format!("serialize epoch: {e}")))?;
+        atomic_write(&epoch_path, &epoch_json)?;
+
+        // Save seen nonces
+        let nonces_path = meta.join("seen-nonces.json");
+        let nonces_json = serde_json::to_string(&state.seen_nonces)
+            .map_err(|e| DeviceError::Keystore(format!("serialize nonces: {e}")))?;
+        atomic_write(&nonces_path, &nonces_json)?;
+
+        // Save pending transaction and acks if in ROTATING state
+        if let Some(ref tx) = state.pending_transaction {
+            let rekey_dir = self.vault_path.join(".idtty/rekey");
+            std::fs::create_dir_all(&rekey_dir)
+                .map_err(|e| SyncError::Git(format!("create rekey dir: {e}")))?;
+
+            let txn_path = rekey_dir.join(format!("{}.txn", tx.new_epoch));
+            let txn_json = serde_json::to_string_pretty(tx)
+                .map_err(|e| KeyError::InvalidEpochState(format!("serialize txn: {e}")))?;
+            atomic_write(&txn_path, &txn_json)?;
+
+            for ack in &state.collected_acks {
+                let ack_json = serde_json::to_string_pretty(ack)
+                    .map_err(|e| KeyError::InvalidEpochState(format!("serialize ack: {e}")))?;
+                let ack_path = rekey_dir.join(format!("{}.ack.{}", ack.epoch, ack.device_id));
+                atomic_write(&ack_path, &ack_json)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn exists(&self) -> bool {
+        Self::exists_at(&self.vault_path)
+    }
+
+    fn load_state(&self) -> Result<Option<DeviceManagerState>, IdttyError> {
+        if !Self::exists_at(&self.vault_path) {
+            return Ok(None);
+        }
+
+        let registry_path = self.vault_path.join("meta/devices.json");
+        let registry = if registry_path.exists() {
+            let data = std::fs::read_to_string(&registry_path)
+                .map_err(|e| DeviceError::Keystore(format!("read devices: {e}")))?;
+            serde_json::from_str(&data)
+                .map_err(|e| DeviceError::Keystore(format!("parse devices: {e}")))?
+        } else {
+            DeviceRegistry::new()
+        };
+
+        let epoch_path = self.vault_path.join("meta/epoch.json");
+        let epoch = if epoch_path.exists() {
+            let data = std::fs::read_to_string(&epoch_path)
+                .map_err(|e| KeyError::InvalidEpochState(format!("read epoch: {e}")))?;
+            serde_json::from_str(&data)
+                .map_err(|e| KeyError::InvalidEpochState(format!("parse epoch: {e}")))?
+        } else {
+            EpochInfo::new(0)
+        };
+
+        let mut pending_transaction = None;
+        let mut collected_acks = Vec::new();
+        let rekey_dir = self.vault_path.join(".idtty/rekey");
+        if rekey_dir.exists() {
+            let next_epoch = epoch.epoch + 1;
+            let txn_path = rekey_dir.join(format!("{next_epoch}.txn"));
+            if txn_path.exists() {
+                let data = std::fs::read_to_string(&txn_path)
+                    .map_err(|e| SyncError::Git(format!("read txn: {e}")))?;
+                pending_transaction = Some(
+                    serde_json::from_str(&data)
+                        .map_err(|e| KeyError::InvalidEpochState(format!("parse txn: {e}")))?,
+                );
+
+                for entry in std::fs::read_dir(&rekey_dir)
+                    .map_err(|e| SyncError::Git(format!("read rekey dir: {e}")))?
+                {
+                    let entry = entry.map_err(|e| SyncError::Git(format!("dir entry: {e}")))?;
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with(&format!("{next_epoch}.ack.")) {
+                        let ack_data = std::fs::read_to_string(entry.path())
+                            .map_err(|e| SyncError::Git(format!("read ack: {e}")))?;
+                        if let Ok(ack) = serde_json::from_str(&ack_data) {
+                            collected_acks.push(ack);
+                        }
+                    }
+                }
+            }
+        }
+
+        let seen_nonces = load_seen_nonces(&self.vault_path);
+
+        Ok(Some(DeviceManagerState {
+            registry,
+            epoch,
+            seen_nonces,
+            pending_transaction,
+            collected_acks,
+        }))
+    }
+
+    fn save_committed(&self, epoch: u64, data: &str) -> Result<(), IdttyError> {
+        let rekey_dir = self.vault_path.join(".idtty/rekey");
+        std::fs::create_dir_all(&rekey_dir)
+            .map_err(|e| SyncError::Git(format!("create rekey dir: {e}")))?;
+        let committed_path = rekey_dir.join(format!("{}.committed", epoch));
+        atomic_write(&committed_path, data)
+    }
+
+    fn vault_path(&self) -> Option<&Path> {
+        Some(&self.vault_path)
+    }
+}
+
+impl FileDeviceManagerStore {
+    /// Check if persisted state exists at a given vault path.
+    pub fn exists_at(vault_path: &Path) -> bool {
+        vault_path.join("meta/devices.json").exists() || vault_path.join("meta/epoch.json").exists()
+    }
+}
+
 // ── DeviceManager Aggregate ──
 
 /// Maximum number of enrollment nonces to retain (FIFO eviction beyond this).
 const MAX_SEEN_NONCES: usize = 10_000;
 
 /// Device lifecycle coordinator. Owns registry, epoch state, and rotation logic.
+///
+/// DESIGN-2: Persistence is delegated to a `DeviceManagerStore` backend,
+/// injected via `set_store()` or `set_vault_path()`. The state machine
+/// itself is I/O-free and testable in isolation.
 pub struct DeviceManager {
     /// Device registry (enrolled devices, keys, quorum).
-    pub registry: DeviceRegistry,
+    pub(crate) registry: DeviceRegistry,
     /// Current epoch metadata.
-    pub epoch: EpochInfo,
+    pub(crate) epoch: EpochInfo,
     /// Pending rekey transaction (Some during ROTATING state).
-    pub pending_transaction: Option<RekeyTransaction>,
+    pub(crate) pending_transaction: Option<RekeyTransaction>,
     /// Collected acks for current rotation.
-    pub collected_acks: Vec<RotationAck>,
+    pub(crate) collected_acks: Vec<RotationAck>,
     /// Seen enrollment nonces (anti-replay). Persisted to meta/seen-nonces.json.
     seen_nonces: Vec<String>,
-    /// Path to vault directory (for file I/O).
-    vault_path: Option<std::path::PathBuf>,
+    /// Persistence backend (injected). None = no auto-persist.
+    store: Option<std::sync::Arc<dyn DeviceManagerStore>>,
     /// Rotation observer for side effects (MISS-3).
     observer: Option<Box<dyn RotationObserver>>,
 }
@@ -163,7 +365,7 @@ impl DeviceManager {
             pending_transaction: None,
             collected_acks: Vec::new(),
             seen_nonces: Vec::new(),
-            vault_path: None,
+            store: None,
             observer: None,
         }
     }
@@ -176,7 +378,7 @@ impl DeviceManager {
             pending_transaction: None,
             collected_acks: Vec::new(),
             seen_nonces: Vec::new(),
-            vault_path: None,
+            store: None,
             observer: None,
         }
     }
@@ -187,17 +389,54 @@ impl DeviceManager {
     }
 
     /// Fire observer hook if set.
-    pub(crate) fn fire<F: Fn(&dyn RotationObserver)>(&self, f: F) {
+    fn fire<F: Fn(&dyn RotationObserver)>(&self, f: F) {
         if let Some(ref obs) = self.observer {
             f(obs.as_ref());
         }
     }
 
-    /// Auto-save to vault directory if vault_path is configured.
+    /// Notify observer of rotation committed.
+    /// Used by VaultHandle::rotate_root_key after epoch transition.
+    pub fn notify_rotation_committed(&self, epoch: u64, vault_path: &Path) {
+        self.fire(|obs| obs.on_rotation_committed(epoch, vault_path));
+    }
+
+    /// Single-device epoch transition: set new epoch, clear rotation state.
+    /// Used by VaultHandle::rotate_root_key for the single-device shortcut
+    /// where HPKE wrapping + quorum are skipped.
+    ///
+    /// Validates: current epoch state is ACTIVE (not mid-rotation).
+    pub fn single_device_commit_rotation(&mut self, new_epoch: u64) -> Result<(), IdttyError> {
+        if self.epoch.state != EpochState::Active {
+            return Err(KeyError::InvalidEpochState(format!(
+                "cannot commit rotation from {:?}",
+                self.epoch.state
+            ))
+            .into());
+        }
+        self.epoch = EpochInfo::new(new_epoch);
+        self.epoch.activate().map_err(KeyError::InvalidEpochState)?;
+        self.pending_transaction = None;
+        self.collected_acks.clear();
+        self.auto_save_result()
+    }
+
+    /// Snapshot current state for persistence.
+    fn snapshot_state(&self) -> DeviceManagerState {
+        DeviceManagerState {
+            registry: self.registry.clone(),
+            epoch: self.epoch.clone(),
+            seen_nonces: self.seen_nonces.clone(),
+            pending_transaction: self.pending_transaction.clone(),
+            collected_acks: self.collected_acks.clone(),
+        }
+    }
+
+    /// Auto-save to persistence backend if configured.
     /// Returns error on failure. Use for security-critical mutations.
     pub(crate) fn auto_save_result(&self) -> Result<(), IdttyError> {
-        if self.vault_path.is_some() {
-            self.save_to_vault()
+        if let Some(ref store) = self.store {
+            store.save_state(&self.snapshot_state())
         } else {
             Ok(())
         }
@@ -211,9 +450,15 @@ impl DeviceManager {
         self.seen_nonces.push(nonce);
     }
 
-    /// Set the vault path for file I/O operations.
+    /// Set the persistence backend to filesystem at the given vault path.
+    /// Convenience wrapper for `set_store(Arc::new(FileDeviceManagerStore::new(path)))`.
     pub fn set_vault_path(&mut self, path: &Path) {
-        self.vault_path = Some(path.to_path_buf());
+        self.store = Some(std::sync::Arc::new(FileDeviceManagerStore::new(path)));
+    }
+
+    /// Set the persistence backend directly.
+    pub fn set_store(&mut self, store: std::sync::Arc<dyn DeviceManagerStore>) {
+        self.store = Some(store);
     }
 
     /// Current epoch number.
@@ -224,6 +469,11 @@ impl DeviceManager {
     /// Current epoch state.
     pub fn epoch_state(&self) -> EpochState {
         self.epoch.state
+    }
+
+    /// Get a reference to the pending transaction, if any.
+    pub fn pending_transaction(&self) -> Option<&RekeyTransaction> {
+        self.pending_transaction.as_ref()
     }
 
     /// Check if vault writes are allowed (not during ROTATING).
@@ -329,8 +579,10 @@ impl DeviceManager {
 
         // MISS-3: notify observer of enrollment
         let enrolled_id = payload.device_id;
-        if let Some(ref vp) = self.vault_path {
-            self.fire(|obs| obs.on_device_enrolled(&enrolled_id, vp));
+        if let Some(ref store) = self.store {
+            if let Some(vp) = store.vault_path() {
+                self.fire(|obs| obs.on_device_enrolled(&enrolled_id, vp));
+            }
         }
 
         Ok(entry)
@@ -383,8 +635,10 @@ impl DeviceManager {
         self.auto_save_result()?;
 
         // MISS-3: notify observer of rotation proposal
-        if let Some(ref vp) = self.vault_path {
-            self.fire(|obs| obs.on_rotation_proposed(proposed_epoch, vp));
+        if let Some(ref store) = self.store {
+            if let Some(vp) = store.vault_path() {
+                self.fire(|obs| obs.on_rotation_proposed(proposed_epoch, vp));
+            }
         }
 
         Ok((new_root, self.pending_transaction.as_ref().unwrap()))
@@ -470,8 +724,10 @@ impl DeviceManager {
         self.auto_save_result()?;
 
         // MISS-3: notify observer of ack recorded
-        if let Some(ref vp) = self.vault_path {
-            self.fire(|obs| obs.on_ack_recorded(notify_epoch, &notify_device, vp));
+        if let Some(ref store) = self.store {
+            if let Some(vp) = store.vault_path() {
+                self.fire(|obs| obs.on_ack_recorded(notify_epoch, &notify_device, vp));
+            }
         }
 
         Ok(false) // ack recorded, not yet committed
@@ -500,13 +756,11 @@ impl DeviceManager {
             })
             .collect();
 
-        // Write finalized .committed file before transitioning state
-        if let Some(ref vault_path) = self.vault_path {
-            let rekey_dir = vault_path.join(".idtty/rekey");
-            let committed_path = rekey_dir.join(format!("{}.committed", tx.new_epoch));
+        // Write finalized .committed file via store
+        if let Some(ref store) = self.store {
             let committed_json = serde_json::to_string_pretty(&tx)
                 .map_err(|e| KeyError::InvalidEpochState(format!("serialize committed: {e}")))?;
-            atomic_write(&committed_path, &committed_json)?;
+            store.save_committed(tx.new_epoch, &committed_json)?;
         }
 
         // Transition epoch: ROTATING → RETIRED (old) → create new ACTIVE
@@ -521,8 +775,10 @@ impl DeviceManager {
         self.auto_save_result()?;
 
         // MISS-3: notify observer of rotation committed
-        if let Some(ref vp) = self.vault_path {
-            self.fire(|obs| obs.on_rotation_committed(committed_epoch, vp));
+        if let Some(ref store) = self.store {
+            if let Some(vp) = store.vault_path() {
+                self.fire(|obs| obs.on_rotation_committed(committed_epoch, vp));
+            }
         }
 
         Ok(())
@@ -582,8 +838,10 @@ impl DeviceManager {
         }
 
         // MISS-3: notify observer of eviction
-        if let Some(ref vp) = self.vault_path {
-            self.fire(|obs| obs.on_devices_evicted(evicted_count, vp));
+        if let Some(ref store) = self.store {
+            if let Some(vp) = store.vault_path() {
+                self.fire(|obs| obs.on_devices_evicted(evicted_count, vp));
+            }
         }
 
         Ok(result)
@@ -626,9 +884,11 @@ impl DeviceManager {
 
         // Step 3: Load recovery.json from vault
         let vault_path = self
-            .vault_path
+            .store
             .as_ref()
+            .and_then(|s| s.vault_path())
             .ok_or_else(|| DeviceError::Keystore("vault_path not set for recovery".into()))?;
+        let vault_path = vault_path.to_path_buf(); // own the path for the rest of the method;
         let recovery_json_path = vault_path.join("meta/recovery.json");
         if !recovery_json_path.exists() {
             return Err(DeviceError::Keystore("meta/recovery.json not found".into()).into());
@@ -661,7 +921,7 @@ impl DeviceManager {
         let root_key = RootKey::from_bytes(rk_arr);
 
         // Step 5: Determine current epoch from vault data (H7 fix)
-        let current_epoch = Self::determine_epoch_from_vault(vault_path);
+        let current_epoch = Self::determine_epoch_from_vault(&vault_path);
 
         // Step 6: Reset registry — old devices abandoned
         self.registry = DeviceRegistry::new();
@@ -777,126 +1037,49 @@ impl DeviceManager {
 
     /// Check if DeviceManager vault files exist (meta/devices.json or meta/epoch.json).
     pub fn vault_files_exist(vault_path: &Path) -> bool {
-        vault_path.join("meta/devices.json").exists() || vault_path.join("meta/epoch.json").exists()
+        let store = FileDeviceManagerStore::new(vault_path);
+        store.exists()
     }
 
-    /// Load DeviceManager from vault directory.
+    /// Load DeviceManager from vault directory using a FileDeviceManagerStore.
+    /// Convenience wrapper for `load_from_store()`.
     pub fn load_from_vault(vault_path: &Path) -> Result<Self, IdttyError> {
-        let registry_path = vault_path.join("meta/devices.json");
-        let registry = if registry_path.exists() {
-            let data = std::fs::read_to_string(&registry_path)
-                .map_err(|e| DeviceError::Keystore(format!("read devices: {e}")))?;
-            serde_json::from_str(&data)
-                .map_err(|e| DeviceError::Keystore(format!("parse devices: {e}")))?
+        let store = std::sync::Arc::new(FileDeviceManagerStore::new(vault_path));
+        Self::load_from_store(store)
+    }
+
+    /// Load DeviceManager from any store backend.
+    pub fn load_from_store(store: std::sync::Arc<dyn DeviceManagerStore>) -> Result<Self, IdttyError> {
+        let state = if store.exists() {
+            store.load_state()?
         } else {
-            DeviceRegistry::new()
+            None
         };
-
-        let epoch_path = vault_path.join("meta/epoch.json");
-        let epoch = if epoch_path.exists() {
-            let data = std::fs::read_to_string(&epoch_path)
-                .map_err(|e| KeyError::InvalidEpochState(format!("read epoch: {e}")))?;
-            serde_json::from_str(&data)
-                .map_err(|e| KeyError::InvalidEpochState(format!("parse epoch: {e}")))?
-        } else {
-            EpochInfo::new(0)
-        };
-
-        // Check for pending rotation transaction
-        let mut pending_transaction = None;
-        let mut collected_acks = Vec::new();
-        let rekey_dir = vault_path.join(".idtty/rekey");
-        if rekey_dir.exists() {
-            // Look for .txn file matching current epoch+1
-            let next_epoch = epoch.epoch + 1;
-            let txn_path = rekey_dir.join(format!("{next_epoch}.txn"));
-            if txn_path.exists() {
-                let data = std::fs::read_to_string(&txn_path)
-                    .map_err(|e| SyncError::Git(format!("read txn: {e}")))?;
-                pending_transaction = Some(
-                    serde_json::from_str(&data)
-                        .map_err(|e| KeyError::InvalidEpochState(format!("parse txn: {e}")))?,
-                );
-
-                // Load existing acks
-                for entry in std::fs::read_dir(&rekey_dir)
-                    .map_err(|e| SyncError::Git(format!("read rekey dir: {e}")))?
-                {
-                    let entry = entry.map_err(|e| SyncError::Git(format!("dir entry: {e}")))?;
-                    let name = entry.file_name();
-                    let name_str = name.to_string_lossy();
-                    if name_str.starts_with(&format!("{next_epoch}.ack.")) {
-                        let ack_data = std::fs::read_to_string(entry.path())
-                            .map_err(|e| SyncError::Git(format!("read ack: {e}")))?;
-                        if let Ok(ack) = serde_json::from_str(&ack_data) {
-                            collected_acks.push(ack);
-                        }
-                    }
-                }
+        Ok(match state {
+            Some(s) => Self {
+                registry: s.registry,
+                epoch: s.epoch,
+                pending_transaction: s.pending_transaction,
+                collected_acks: s.collected_acks,
+                seen_nonces: s.seen_nonces,
+                store: Some(store),
+                observer: None,
+            },
+            None => {
+                let mut dm = Self::new();
+                dm.store = Some(store);
+                dm
             }
-        }
-
-        Ok(Self {
-            registry,
-            epoch,
-            pending_transaction,
-            collected_acks,
-            seen_nonces: load_seen_nonces(vault_path),
-            vault_path: Some(vault_path.to_path_buf()),
-            observer: None,
         })
     }
 
-    /// Save registry and epoch state to vault directory.
+    /// Save registry and epoch state via the configured store.
     pub fn save_to_vault(&self) -> Result<(), IdttyError> {
-        let vault_path = self
-            .vault_path
+        let store = self
+            .store
             .as_ref()
-            .ok_or_else(|| DeviceError::Keystore("no vault path set".into()))?;
-
-        let meta = vault_path.join("meta");
-        std::fs::create_dir_all(&meta)
-            .map_err(|e| DeviceError::Keystore(format!("create meta dir: {e}")))?;
-
-        // Save registry
-        let registry_path = meta.join("devices.json");
-        let registry_json = serde_json::to_string_pretty(&self.registry)
-            .map_err(|e| DeviceError::Keystore(format!("serialize registry: {e}")))?;
-        atomic_write(&registry_path, &registry_json)?;
-
-        // Save epoch
-        let epoch_path = meta.join("epoch.json");
-        let epoch_json = serde_json::to_string_pretty(&self.epoch)
-            .map_err(|e| KeyError::InvalidEpochState(format!("serialize epoch: {e}")))?;
-        atomic_write(&epoch_path, &epoch_json)?;
-
-        // BUG-2 fix: persist seen nonces
-        let nonces_path = meta.join("seen-nonces.json");
-        let nonces_json = serde_json::to_string(&self.seen_nonces)
-            .map_err(|e| DeviceError::Keystore(format!("serialize nonces: {e}")))?;
-        atomic_write(&nonces_path, &nonces_json)?;
-
-        // Save pending transaction if in ROTATING state
-        if let Some(ref tx) = self.pending_transaction {
-            let rekey_dir = vault_path.join(".idtty/rekey");
-            std::fs::create_dir_all(&rekey_dir)
-                .map_err(|e| SyncError::Git(format!("create rekey dir: {e}")))?;
-
-            let txn_path = rekey_dir.join(format!("{}.txn", tx.new_epoch));
-            let txn_json = serde_json::to_string_pretty(tx)
-                .map_err(|e| KeyError::InvalidEpochState(format!("serialize txn: {e}")))?;
-            atomic_write(&txn_path, &txn_json)?;
-
-            // Save acks
-            for ack in &self.collected_acks {
-                let ack_json = serde_json::to_string_pretty(ack)
-                    .map_err(|e| KeyError::InvalidEpochState(format!("serialize ack: {e}")))?;
-                let ack_path = rekey_dir.join(format!("{}.ack.{}", ack.epoch, ack.device_id));
-                atomic_write(&ack_path, &ack_json)?;
-            }
-        }
-
-        Ok(())
+            .ok_or_else(|| DeviceError::Keystore("no store configured".into()))?;
+        store.save_state(&self.snapshot_state())
     }
 }
 
@@ -949,7 +1132,7 @@ fn load_seen_nonces(vault_path: &Path) -> Vec<String> {
 
 /// Atomic file write: write to temp file then rename.
 /// Prevents corruption from crash mid-write. Sets 0600 permissions on Unix.
-fn atomic_write(path: &std::path::PathBuf, data: &str) -> Result<(), IdttyError> {
+fn atomic_write(path: &Path, data: &str) -> Result<(), IdttyError> {
     let tmp_path = path.with_extension("tmp");
     std::fs::write(&tmp_path, data)
         .map_err(|e| DeviceError::Keystore(format!("atomic write tmp: {e}")))?;

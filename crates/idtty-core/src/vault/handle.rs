@@ -74,6 +74,9 @@ pub enum VaultState {
 pub struct UnlockedState {
     /// Root Key (512-bit, per-epoch).
     pub root_key: RootKey,
+    /// Space Group Key (256-bit, per-space). DESIGN-3: intermediate layer.
+    /// Derived from RootKey for single-user; random for multi-user/org.
+    pub space_group_key: crate::keys::hierarchy::SpaceGroupKey,
     /// Session Key (for local cache encryption).
     pub session_key: [u8; 32],
     /// Sync-Only Key (for locked background sync).
@@ -88,6 +91,7 @@ pub struct UnlockedState {
 impl Drop for UnlockedState {
     fn drop(&mut self) {
         self.root_key.zeroize();
+        self.space_group_key.zeroize();
         self.session_key.zeroize();
         self.sync_key.zeroize();
     }
@@ -279,7 +283,8 @@ impl VaultHandle {
         let current_epoch = self.determine_current_epoch();
 
         self.state = VaultState::Unlocked(UnlockedState {
-            root_key,
+            root_key: root_key.clone(),
+            space_group_key: crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(&root_key, current_epoch),
             session_key,
             sync_key,
             item_keys: HashMap::new(),
@@ -726,7 +731,7 @@ impl VaultHandle {
     ) -> Result<Cipher, IdttyError> {
         let item_key = {
             let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
-            Self::derive_item_key_static(root_key, file.id, envelope.header.key_epoch)
+            Self::derive_item_key_from_root(root_key, file.id, envelope.header.key_epoch)
         };
         crate::vault::cipher::decrypt_cipher(self.vault_id, file.id, file, &item_key)
     }
@@ -744,22 +749,17 @@ impl VaultHandle {
         key
     }
 
-    /// Static version for borrow-friendly calls.
-    fn derive_item_key_static(root_key: &RootKey, cipher_id: Uuid, epoch: u64) -> ItemKey {
-        use hkdf::Hkdf;
-        use sha2::Sha256;
+    /// Derive an item key from the cached Space Group Key in UnlockedState.
+    /// DESIGN-3: Uses the SGK already held in UnlockedState, avoiding redundant derivation.
+    fn derive_item_key_from_sgk(sgk: &crate::keys::hierarchy::SpaceGroupKey, cipher_id: Uuid, epoch: u64) -> ItemKey {
+        sgk.derive_item_key(cipher_id, epoch)
+    }
 
-        let mut info = Vec::with_capacity(32 + 8 + 16);
-        info.extend_from_slice(b"idtty-item-v1");
-        info.extend_from_slice(&epoch.to_le_bytes());
-        info.extend_from_slice(cipher_id.as_bytes());
-
-        let hkdf = Hkdf::<Sha256>::new(None, root_key.as_bytes());
-        let mut key = [0u8; 32];
-        hkdf.expand(&info, &mut key)
-            .expect("32 bytes is valid output length for HKDF-SHA256");
-
-        ItemKey::from_bytes(key)
+    /// Fallback: derive item key from RootKey by first deriving an SGK.
+    /// Used only when we have a RootKey but no cached SGK (e.g., verify_root_key).
+    fn derive_item_key_from_root(root_key: &RootKey, cipher_id: Uuid, epoch: u64) -> ItemKey {
+        let sgk = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(root_key, epoch);
+        sgk.derive_item_key(cipher_id, epoch)
     }
 
     /// Derive item key for a cipher (requires unlocked vault).
@@ -768,11 +768,11 @@ impl VaultHandle {
         cipher_id: Uuid,
         key_epoch: u64,
     ) -> crate::keys::hierarchy::ItemKey {
-        let root_key = match &self.state {
-            VaultState::Unlocked(u) => &u.root_key,
+        let sgk = match &self.state {
+            VaultState::Unlocked(u) => &u.space_group_key,
             VaultState::Locked => panic!("derive_item_key called on locked vault"),
         };
-        Self::derive_item_key_static(root_key, cipher_id, key_epoch)
+        Self::derive_item_key_from_sgk(sgk, cipher_id, key_epoch)
     }
 
     /// Get a cipher (decrypts if unlocked, returns metadata only if locked).
@@ -799,8 +799,8 @@ impl VaultHandle {
             VaultState::Unlocked(unlocked) => {
                 // Read epoch from envelope header for correct Item Key derivation
                 let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
-                let item_key = Self::derive_item_key_static(
-                    &unlocked.root_key,
+                let item_key = Self::derive_item_key_from_sgk(
+                    &unlocked.space_group_key,
                     cipher_id,
                     envelope.header.key_epoch,
                 );
@@ -929,7 +929,7 @@ impl VaultHandle {
 
         let cipher_id = Uuid::new_v4();
         let item_key =
-            Self::derive_item_key_static(&unlocked.root_key, cipher_id, unlocked.current_epoch);
+            Self::derive_item_key_from_sgk(&unlocked.space_group_key, cipher_id, unlocked.current_epoch);
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -1023,7 +1023,7 @@ impl VaultHandle {
             input_owned.password_history = existing_cipher.password_history.clone();
         }
 
-        let item_key = Self::derive_item_key_static(&unlocked.root_key, cipher_id, key_epoch);
+        let item_key = Self::derive_item_key_from_sgk(&unlocked.space_group_key, cipher_id, key_epoch);
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -1394,7 +1394,7 @@ impl VaultHandle {
                 archived: existing.archived,
             };
 
-            let new_item_key = Self::derive_item_key_static(&new_root_key, *cipher_id, new_epoch);
+            let new_item_key = Self::derive_item_key_from_root(&new_root_key, *cipher_id, new_epoch);
             let new_file = cipher::encrypt_cipher(
                 self.vault_id,
                 *cipher_id,
@@ -1501,7 +1501,9 @@ impl VaultHandle {
         match &mut self.state {
             VaultState::Unlocked(u) => {
                 u.root_key.zeroize();
-                u.root_key = new_root_key;
+                u.root_key = new_root_key.clone();
+                u.space_group_key.zeroize();
+                u.space_group_key = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(&new_root_key, new_epoch);
                 u.current_epoch = new_epoch;
                 u.item_keys.clear();
             }
@@ -1510,19 +1512,12 @@ impl VaultHandle {
 
         // H4 fix: proper epoch lifecycle through DeviceManager
         // Clean transition: old ACTIVE -> new ACTIVE (single-device shortcut)
-        self.device_manager.epoch = crate::keys::epoch::EpochInfo::new(new_epoch);
-        self.device_manager
-            .epoch
-            .activate()
-            .map_err(crate::error::KeyError::InvalidEpochState)?;
-        self.device_manager.pending_transaction = None;
-        self.device_manager.collected_acks.clear();
-        self.device_manager.auto_save_result()?;
+        self.device_manager.single_device_commit_rotation(new_epoch)?;
 
         // Fire observer hook
         if let Some(vp) = self.vault_path_as_ref() {
             self.device_manager
-                .fire(|obs| obs.on_rotation_committed(new_epoch, vp));
+                .notify_rotation_committed(new_epoch, vp);
         }
 
         // Clean up rotation-pending marker
@@ -1573,7 +1568,7 @@ impl VaultHandle {
         }
 
         let _epoch = self.device_manager.current_epoch();
-        let tx_ref = self.device_manager.pending_transaction.as_ref();
+        let tx_ref = self.device_manager.pending_transaction();
         let tx = match tx_ref {
             Some(tx) => tx,
             None => return Err(VaultError::Corrupt("no pending rotation".into()).into()),

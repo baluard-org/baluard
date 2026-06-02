@@ -543,7 +543,8 @@ impl<'a> VaultCreator<'a> {
                     device_id,
                     device_manager,
                     state: VaultState::Unlocked(UnlockedState {
-                        root_key,
+                        root_key: root_key.clone(),
+                        space_group_key: crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(&root_key, 1),
                         session_key,
                         sync_key,
                         item_keys: HashMap::new(),
@@ -760,7 +761,8 @@ impl<'a> VaultCreator<'a> {
                     device_id,
                     device_manager,
                     state: VaultState::Unlocked(UnlockedState {
-                        root_key,
+                        root_key: root_key.clone(),
+                        space_group_key: crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(&root_key, 1),
                         session_key,
                         sync_key,
                         item_keys: HashMap::new(),
