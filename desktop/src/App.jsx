@@ -3440,8 +3440,7 @@ function DeviceFleetPanel() {
   async function revokeDevice(deviceId, deviceName) {
     if (!confirm(`Revoke "${deviceName}"? This will rotate vault keys. This cannot be undone.`)) return;
     try {
-      const resp = await invoke("daemon_request", { action: "device.revoke", payload: deviceId });
-      const data = typeof resp === "string" ? JSON.parse(resp) : resp;
+      await invoke("daemon_request", { action: "device.revoke", payload: deviceId });
       app.setRevokeWarning({ name: deviceName });
       // Refresh fleet to reflect revocation
       refreshDeviceFleet();
@@ -3513,7 +3512,7 @@ function DeviceFleetPanel() {
                   </div>
                 </div>
                 <div class="flex justify-end pt-1">
-                  <Show when={device.id !== app.selfDeviceId()}>
+                  <Show when={app.selfDeviceId() && device.id !== app.selfDeviceId()}>
                     <button
                       onClick={() => revokeDevice(device.id, device.name)}
                       class="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 transition-all cursor-pointer"

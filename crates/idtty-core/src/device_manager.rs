@@ -1020,6 +1020,15 @@ impl DeviceManager {
     /// Selective revocation: remove one device and rotate keys.
     /// Unlike force_evict_and_rotate (which keeps only the survivor),
     /// this preserves all other enrolled devices.
+    ///
+    /// Note: Caller MUST write a new keywrap file using new_root_key
+    /// after this returns. Without it, the vault cannot be unlocked
+    /// with the master password (only via recovery phrase).
+    ///
+    /// Quorum note: self-acknowledges immediately. Designed for 2-device
+    /// vaults (quorum=1 after revoke). For 4+ device vaults, the rotation
+    /// commits without full quorum verification. Other devices will
+    /// accept the new epoch on next pull.
     pub fn revoke_device_and_rotate(
         &mut self,
         target_device_id: Uuid,

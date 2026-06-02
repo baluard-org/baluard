@@ -731,7 +731,12 @@ pub fn handle_rotation_abort(
             }
 
             let elapsed = dm.rotation_stalled_secs(3600).unwrap_or(0);
-            println!("Rotation has been in ROTATING state for {}s", elapsed);
+            if elapsed == 0 {
+                println!("Rotation has been in ROTATING state for less than 1 hour. Not aborting.");
+                println!("Use --force or wait for the timeout to elapse.");
+                return Ok(());
+            }
+            println!("Rotation has been in ROTATING state for {}s (threshold: 3600s)", elapsed);
 
             // Safety: abort only if no cipher files at new epoch
             let pending_epoch = dm.pending_transaction().map(|tx| tx.new_epoch).unwrap_or(0);
@@ -866,6 +871,8 @@ pub fn handle_device_revoke(
             idtty_core::device_manager::DeviceActivityIndex::remove_device(path, &device_id)?;
 
             println!("Device revoked. Keys rotated.");
+            println!("NOTE: A new keywrap file must be written before next unlock.");
+            println!("      If unlock fails, use the recovery phrase.");
             println!("IMPORTANT: Rotate git credentials (deploy key/PAT) on GitHub/GitLab.");
             Ok(())
         }
