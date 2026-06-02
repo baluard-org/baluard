@@ -666,6 +666,12 @@ impl DeviceManager {
     /// 2. is_abort_coordinator() returned true
     /// 3. No cipher files written at the new epoch (safety check)
     pub fn abort_stalled_rotation(&mut self) -> Result<(), IdttyError> {
+        // Capture the pending new_epoch BEFORE clearing state.
+        // The rotation was for new_epoch, not self.epoch.epoch (which is the old one).
+        let aborted_new_epoch = self.pending_transaction
+            .as_ref()
+            .map(|tx| tx.new_epoch);
+
         self.epoch.abort_rotation().map_err(|e| {
             IdttyError::Device(DeviceError::Keystore(format!("abort_rotation: {e}")))
         })?;
@@ -673,14 +679,20 @@ impl DeviceManager {
         self.collected_acks.clear();
         self.auto_save_result()?;
 
-        // Write abort marker for other devices to detect
+        // Write abort marker for other devices to detect.
+        // Uses the new_epoch that was aborted, not the current epoch.
         if let Some(ref store) = self.store {
             if let Some(vp) = store.vault_path() {
-                let rekey_dir = vp.join(".idtty/rekey");
-                let _ = std::fs::create_dir_all(&rekey_dir);
-                let abort_epoch = self.epoch.epoch;
-                let abort_path = rekey_dir.join(format!("{}.aborted", abort_epoch));
-                let _ = std::fs::write(&abort_path, format!("aborted at {}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()));
+                if let Some(new_epoch) = aborted_new_epoch {
+                    let rekey_dir = vp.join(".idtty/rekey");
+                    let _ = std::fs::create_dir_all(&rekey_dir);
+                    let abort_path = rekey_dir.join(format!("{}.aborted", new_epoch));
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let _ = std::fs::write(&abort_path, format!("aborted at {ts}"));
+                }
             }
         }
 
