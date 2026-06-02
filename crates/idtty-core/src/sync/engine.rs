@@ -424,7 +424,7 @@ impl SyncEngine {
             Ok(data) => {
                 serde_json::from_str::<serde_json::Value>(&data)
                     .ok()
-                    .and_then(|v| v["current_epoch"].as_u64())
+                    .and_then(|v| v["epoch"].as_u64())
                     .unwrap_or(0)
             }
             Err(_) => 0,
