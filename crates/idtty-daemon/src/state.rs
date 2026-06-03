@@ -1101,8 +1101,8 @@ impl VaultState {
             return Err(format!("Device {device_id} not found in registry"));
         }
 
-        let result = handle.device_manager
-            .revoke_device_and_rotate(device_id, handle.device_id)
+        // Revoke + rekey: rotates root key, re-encrypts ciphers, writes keywrap
+        let result = handle.revoke_device_and_rekey(device_id)
             .map_err(|e| format!("Revocation failed: {e}"))?;
 
         // Clean activity index
@@ -1111,10 +1111,6 @@ impl VaultState {
         ) {
             eprintln!("warning: failed to clean activity index: {e}");
         }
-
-        // TODO: Write new keywrap file using result.new_root_key.
-        // Without this, vault unlock requires recovery phrase on next launch.
-        eprintln!("warning: keywrap file not yet written for new epoch. Recovery phrase may be needed.");
 
         let json = serde_json::json!({
             "revoked_device": result.revoked_device_id.to_string(),

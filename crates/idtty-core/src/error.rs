@@ -106,6 +106,9 @@ pub enum VaultError {
     #[error("vault is locked")]
     Locked,
 
+    #[error("invalid operation: {0}")]
+    InvalidOperation(String),
+
     #[error("vault is not initialized")]
     NotInitialized,
 
