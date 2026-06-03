@@ -1,6 +1,13 @@
-# IDtty Brand Colors
+# IDtty Brand
 
-**Source of truth:** `desktop/src/app.css`
+> Central reference for visual identity: colors, tokens, and design rules.
+
+**Machine-readable tokens:** [design-language-tokens.json](design-language-tokens.json)
+**CSS source of truth:** `desktop/src/app.css`
+
+---
+
+## Colors
 
 Do not introduce ad-hoc colors. Extend tokens here first, then reference the CSS variable.
 

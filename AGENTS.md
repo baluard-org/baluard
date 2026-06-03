@@ -56,16 +56,16 @@ idtty/
 │   ├── space.proto
 │   └── auth.proto
 ├── plans/                      # Implementation plans (bw-parity.md)
-├── docs/                       # Architecture & design docs (authoritative)
-│   ├── 00-progress.md          # Master progress document
-│   ├── 01-architecture-decisions.md
-│   ├── 02-threat-model.md
-│   ├── 03-key-lifecycle.md
-│   ├── 04-software-architecture.md
-│   ├── 05-dev-setup.md
-│   ├── 06-device-lifecycle.md
-│   ├── 07-2fa-analysis.md
-│   ├── full-gaps.md              # Gap analysis: docs vs code
+├── docs/                       # Architecture & design docs (see docs/index.md)
+│   ├── index.md                # Documentation TOC
+│   ├── progress.md             # Master progress document
+│   ├── architecture-decisions.md  # Design rationale (DOMAIN 1-6)
+│   ├── threat-model.md         # Adversaries, attack surfaces, mitigations
+│   ├── software-architecture.md   # Components, IPC, key lifecycle, ceremonies
+│   ├── dev-setup.md            # Prerequisites, build commands, troubleshooting
+│   ├── 2fa-analysis.md         # TOTP RFC 6238/4226, second-factor roadmap
+│   ├── brand-guidelines.md   # Color palette, design tokens, visual identity rules
+│   ├── full-gaps.md            # Gap analysis: docs vs code
 │   ├── prd-bitwarden-parity.md # BW parity PRD (43 user stories)
 │   └── bw-parity.md            # Original analysis
 └── justfile                    # Build system (just, cargo install just)
@@ -110,10 +110,10 @@ idtty/
 * **Daemon IPC handler**: `crates/idtty-daemon/src/handler.rs` (token-gated routes)
 * **Daemon vault state**: `crates/idtty-daemon/src/state.rs` (CRUD, auto-lock, TOTP code gen)
 * **Desktop frontend**: `desktop/src/App.jsx` (all UI components)
-* **Design docs**: `docs/01-architecture-decisions.md` (authoritative for all decisions)
+* **Design docs**: `docs/architecture-decisions.md` (authoritative for all decisions)
 * **Protobuf schemas**: `proto/` (compiled by prost-build in daemon + CLI)
 * **Device fleet visibility**: `crates/idtty-core/src/device_manager.rs` (activity index, abort markers, selective revoke)
-* **Fleet visibility plan**: `docs/09-device-fleet-visibility.md`
+* **Device fleet architecture**: DOMAIN 5 in `docs/architecture-decisions.md`
 
 ## NOTES
 * **Single Rust core**: All crypto, vault format, padding, key lifecycle, and git sync live in `idtty-core`. No duplicate implementations.

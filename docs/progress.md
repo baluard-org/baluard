@@ -10,7 +10,7 @@
 **What**: Git-backed password manager. Encrypted vault stored as a git repo. No server.
 **Stack**: Rust Core Engine (`idtty-core` crypto/keys/vault/sync + `idtty-daemon` IPC socket server + `idtty-cli` terminal client) + Tauri v2 Desktop (SolidJS/Tailwind) + Single-String Protobuf Gateway.
 **Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell.
-**Architecture docs**: `docs/01-architecture-decisions.md` through `docs/04-software-architecture.md`.
+**Architecture docs**: `docs/architecture-decisions.md` through `docs/software-architecture.md`.
 
 ---
 
@@ -102,7 +102,7 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 ### Device Fleet Visibility
 
-**Plan**: `docs/09-device-fleet-visibility.md`
+**Architecture**: See DOMAIN 5 in `docs/architecture-decisions.md`
 
 | Phase | Description | Effort | Status |
 |-------|-------------|--------|--------|
@@ -215,7 +215,7 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 ### Device Registry
 
 - `DeviceRegistry`: enroll, revoke, force-evict, quorum (ceil(N/2))
-- Stored in `meta/devices.json` (plaintext, per fleet visibility plan D1)
+- Stored in `meta/devices.json` (plaintext, per DOMAIN 5/D1 in architecture decisions)
 - Epoch rotation with two-phase commit via git-mediated ack files
 
 ---

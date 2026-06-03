@@ -12,7 +12,7 @@ just                    # List all targets
 just check              # Full CI parity (fmt + clippy + test + build)
 ```
 
-See **[docs/05-dev-setup.md](docs/05-dev-setup.md)** for prerequisites, platform-specific setup, and all build commands.
+See **[docs/dev-setup.md](docs/dev-setup.md)** for prerequisites, platform-specific setup, and all build commands.
 
 ## Guidelines
 
