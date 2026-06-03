@@ -414,7 +414,11 @@ function useActions() {
           data: {
             username: c.username || null,
             password: c.password || null,
-            uris: (c.uris || []).map(u => ({ uri: u.uri || u, match_strategy: u.match_strategy || null })),
+            uris: (c.uris || []).map(u => {
+              const obj = { uri: u.uri || u };
+              if (u.match_strategy) obj.match_strategy = u.match_strategy;
+              return obj;
+            }),
             totp_uri: c.totp_uri || null,
           },
         };
@@ -549,7 +553,11 @@ function useActions() {
           data: {
             username: c.username || null,
             password: c.password || null,
-            uris: (c.uris || []).map(u => ({ uri: u.uri || u, match_strategy: u.match_strategy || null })),
+            uris: (c.uris || []).map(u => {
+              const obj = { uri: u.uri || u };
+              if (u.match_strategy) obj.match_strategy = u.match_strategy;
+              return obj;
+            }),
             totp_uri: c.totp_uri || null,
           },
         };

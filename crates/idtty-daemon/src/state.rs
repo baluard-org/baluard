@@ -83,7 +83,7 @@ impl VaultState {
                 let timeout_secs = (timeout_minutes as u64) * 60;
 
                 if elapsed >= timeout_secs && timeout_secs > 0 {
-                    eprintln!(
+                    log::info!(
                         "Auto-lock: {}s idle >= {}s timeout, locking vault",
                         elapsed, timeout_secs
                     );
@@ -640,7 +640,7 @@ impl VaultState {
             match handle.get_cipher(meta.id) {
                 Ok(CipherRead::Decrypted(c)) => ciphers.push(*c),
                 Ok(CipherRead::Locked(_)) => continue,
-                Err(e) => eprintln!("[export] skipping {}: {e}", meta.id),
+                Err(e) => log::warn!("[export] skipping {}: {e}", meta.id),
             }
         }
 
@@ -667,7 +667,7 @@ impl VaultState {
             match handle.get_cipher(meta.id) {
                 Ok(CipherRead::Decrypted(c)) => ciphers.push(*c),
                 Ok(CipherRead::Locked(_)) => continue,
-                Err(e) => eprintln!("[export] skipping {}: {e}", meta.id),
+                Err(e) => log::warn!("[export] skipping {}: {e}", meta.id),
             }
         }
 
@@ -1109,7 +1109,7 @@ impl VaultState {
         if let Err(e) = idtty_core::device_manager::DeviceActivityIndex::remove_device(
             &self.vault_path, &device_id,
         ) {
-            eprintln!("warning: failed to clean activity index: {e}");
+            log::warn!("failed to clean activity index: {e}");
         }
 
         let json = serde_json::json!({

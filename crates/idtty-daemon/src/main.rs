@@ -27,7 +27,90 @@ use tokio::signal::unix::{SignalKind, signal};
 
 const DEFAULT_VAULT_PATH: &str = ".";
 
+/// Initialize debug logging. When IDTTY_DEBUG=1:
+/// - Daemon logs to stderr (captured by Tauri sidecar) AND to ~/.config/idtty/debug.log
+/// - Level: Debug for idtty crates, Warn for dependencies
+/// When IDTTY_DEBUG is unset: only errors to stderr.
+fn init_debug_logging() {
+    use env_logger::Builder;
+    use log::LevelFilter;
+    use std::io::Write;
+
+    let debug = std::env::var("IDTTY_DEBUG").unwrap_or_default() == "1";
+
+    if debug {
+        // Determine log file path (same dir as socket)
+        let log_path = dirs::debug_log_path();
+        if let Some(parent) = log_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            Ok(file) => {
+                let file = Box::new(file) as Box<dyn Write + Send>;
+                // Multi-target: write to both stderr and file
+                let target = env_logger::Target::Pipe(Box::new(
+                    std::io::LineWriter::new(std::io::BufWriter::new(MultiWriter {
+                        a: std::io::stderr(),
+                        b: file,
+                    })),
+                ));
+                Builder::new()
+                    .target(target)
+                    .filter_level(LevelFilter::Warn)
+                    .filter(Some("idtty_core"), LevelFilter::Debug)
+                    .filter(Some("idtty_daemon"), LevelFilter::Debug)
+                    .format_timestamp_secs()
+                    .init();
+                log::info!("=== idtty-daemon debug session started ===");
+                log::info!("Log file: {}", log_path.display());
+            }
+            Err(e) => {
+                eprintln!("Could not open debug log {}: {e}", log_path.display());
+                // Fallback to stderr-only
+                Builder::new()
+                    .filter_level(LevelFilter::Warn)
+                    .filter(Some("idtty_core"), LevelFilter::Debug)
+                    .filter(Some("idtty_daemon"), LevelFilter::Debug)
+                    .format_timestamp_secs()
+                    .init();
+            }
+        }
+    } else {
+        // Production: only errors
+        Builder::new()
+            .filter_level(LevelFilter::Error)
+            .init();
+    }
+}
+
+/// Writer that fans out to two sinks.
+struct MultiWriter<A: std::io::Write, B: std::io::Write> {
+    a: A,
+    b: B,
+}
+
+impl<A: std::io::Write, B: std::io::Write> std::io::Write for MultiWriter<A, B> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // Write to both, return the first successful result
+        let ra = self.a.write(buf);
+        let _ = self.b.write(buf);
+        ra
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.a.flush()?;
+        self.b.flush()?;
+        Ok(())
+    }
+}
+
 fn main() -> anyhow::Result<()> {
+    init_debug_logging();
+
     let matches = clap::Command::new("idtty-daemon")
         .arg(
             clap::Arg::new("vault-path")
@@ -92,8 +175,8 @@ async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
         }
     };
 
-    eprintln!("idtty-daemon listening on {socket_path} (0600)");
-    eprintln!("Vault path: {vault_path}");
+    log::info!("idtty-daemon listening on {socket_path} (0600)");
+    log::info!("Vault path: {vault_path}");
 
     // Graceful shutdown on SIGINT or SIGTERM
     #[cfg(unix)]
@@ -101,8 +184,8 @@ async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
         let mut sigint = signal(SignalKind::interrupt())?;
         let mut sigterm = signal(SignalKind::terminate())?;
         tokio::select! {
-            _ = sigint.recv() => eprintln!("Received SIGINT, shutting down..."),
-            _ = sigterm.recv() => eprintln!("Received SIGTERM, shutting down..."),
+            _ = sigint.recv() => log::warn!("Received SIGINT, shutting down..."),
+            _ = sigterm.recv() => log::warn!("Received SIGTERM, shutting down..."),
         }
         Result::<(), anyhow::Error>::Ok(())
     };
@@ -110,7 +193,7 @@ async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
     #[cfg(not(unix))]
     let shutdown = async {
         tokio::signal::ctrl_c().await?;
-        eprintln!("Shutting down...");
+        log::warn!("Shutting down...");
         Result::<(), anyhow::Error>::Ok(())
     };
 
@@ -131,8 +214,26 @@ async fn accept_loop(listener: &UnixListener, vault_state: SharedVaultState) -> 
         let state = vault_state.clone();
         tokio::spawn(async move {
             if let Err(e) = handler::handle_connection(stream, state).await {
-                eprintln!("Connection error: {e}");
+                log::error!("Connection error: {e}");
             }
         });
+    }
+}
+
+/// Resolve debug log file path. Lives alongside the socket in ~/.config/idtty/.
+mod dirs {
+    use std::path::PathBuf;
+
+    pub fn debug_log_path() -> PathBuf {
+        #[cfg(unix)]
+        {
+            if let Ok(home) = std::env::var("HOME") {
+                return PathBuf::from(home)
+                    .join(".config")
+                    .join("idtty")
+                    .join("debug.log");
+            }
+        }
+        PathBuf::from("debug.log")
     }
 }

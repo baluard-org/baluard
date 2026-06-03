@@ -135,6 +135,11 @@ desktop-deps:
 desktop-dev: _sidecar desktop-deps
 	cd desktop && npm run tauri dev
 
+# Run desktop app with full debug logging (IDTTY_DEBUG=1)
+# Logs: ~/.config/idtty/desktop.log + daemon debug.log
+debug-dev: _sidecar desktop-deps
+	IDTTY_DEBUG=1 cd desktop && npm run tauri dev
+
 # Build desktop app (production bundle)
 desktop-build: _sidecar desktop-deps
 	cd desktop && npm run tauri build
