@@ -71,3 +71,4 @@ docs/reviews/
 bin/
 desktop/src-tauri/binaries/
 cache/
+logs/

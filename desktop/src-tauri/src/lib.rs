@@ -255,10 +255,14 @@ pub fn run() {
         .manage(SessionToken(Mutex::new(None::<zeroize::Zeroizing<String>>)))
         .setup(|app| {
             // Always log to file for debuggability.
+            // IDTTY_LOG_DIR overrides log directory; defaults to socket dir.
             // IDTTY_DEBUG=1 enables Debug level; otherwise Warn.
-            let log_dir = default_socket_path().parent()
-                .expect("socket path has parent").to_path_buf();
-            let log_file = log_dir.join("desktop.log");
+            let log_dir = if let Ok(dir) = std::env::var("IDTTY_LOG_DIR") {
+                std::path::PathBuf::from(dir)
+            } else {
+                default_socket_path().parent()
+                    .expect("socket path has parent").to_path_buf()
+            };
             let _ = std::fs::create_dir_all(&log_dir);
 
             let level = if std::env::var("IDTTY_DEBUG").unwrap_or_default() == "1" {

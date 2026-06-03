@@ -220,20 +220,27 @@ async fn accept_loop(listener: &UnixListener, vault_state: SharedVaultState) -> 
     }
 }
 
-/// Resolve debug log file path. Lives alongside the socket in ~/.config/idtty/.
+/// Resolve debug log directory.
+/// Priority: IDTTY_LOG_DIR env > ~/.config/idtty/
 mod dirs {
     use std::path::PathBuf;
 
-    pub fn debug_log_path() -> PathBuf {
+    pub fn log_dir() -> PathBuf {
+        if let Ok(dir) = std::env::var("IDTTY_LOG_DIR") {
+            return PathBuf::from(dir);
+        }
         #[cfg(unix)]
         {
             if let Ok(home) = std::env::var("HOME") {
                 return PathBuf::from(home)
                     .join(".config")
-                    .join("idtty")
-                    .join("debug.log");
+                    .join("idtty");
             }
         }
-        PathBuf::from("debug.log")
+        PathBuf::from(".")
+    }
+
+    pub fn debug_log_path() -> PathBuf {
+        log_dir().join("daemon.log")
     }
 }

@@ -136,9 +136,20 @@ desktop-dev: _sidecar desktop-deps
 	cd desktop && npm run tauri dev
 
 # Run desktop app with full debug logging (IDTTY_DEBUG=1)
-# Logs: ~/.config/idtty/desktop.log + daemon debug.log
+# Logs go to ./logs/ (daemon.log + desktop.log)
+# Share: zip logs/ or paste the relevant file
 debug-dev: _sidecar desktop-deps
-	IDTTY_DEBUG=1 cd desktop && npm run tauri dev
+	#!/usr/bin/env bash
+	set -euo pipefail
+	LOG_DIR="$(pwd)/logs"
+	mkdir -p "$LOG_DIR"
+	# Clear previous logs for a clean session
+	rm -f "$LOG_DIR/daemon.log" "$LOG_DIR/desktop.log"
+	echo "Logs → $LOG_DIR/"
+	echo "  daemon.log  — IPC routing, crypto, vault operations"
+	echo "  desktop.log — Tauri bridge, daemon requests/responses"
+	echo ""
+	IDTTY_DEBUG=1 IDTTY_LOG_DIR="$LOG_DIR" cd desktop && npm run tauri dev
 
 # Build desktop app (production bundle)
 desktop-build: _sidecar desktop-deps
