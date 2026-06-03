@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-05-31 | **Updated:** 2026-06-02
+**Generated:** 2026-05-31 | **Updated:** 2026-06-03
 
 ## OVERVIEW
 Project: **IDtty** (Git-native password manager / Space Manager)
@@ -18,13 +18,14 @@ idtty/
 │   ├── idtty-core/             # Core library: crypto, vault format, key lifecycle, git sync
 │   │   └── src/
 │   │       ├── crypto/         # KDF (Argon2id), AEAD (AES-256-GCM), HKDF, HPKE, Ed25519, TOTP (RFC 6238)
-│   │       ├── keys/           # Key hierarchy (Root/Item/Session), epochs, rotation, nonces
+│   │       ├── keys/           # Key hierarchy (Root/SGK/Item/Session), epochs, rotation, nonces
 │   │       ├── vault/          # Vault handle, cipher CRUD, envelope format, creation ceremony, padding, attachment encrypt/decrypt
 │   │       ├── sync/           # Git sync engine (git2-rs), commit, conflict resolution, state machine
 │   │       ├── import/         # Import parsers (8 formats) + export (2 formats)
 │   │       ├── health.rs       # Password health analysis (weak/reused/old)
 │   │       ├── biometric.rs    # OS keychain biometric unlock (keyring crate)
-│   │       ├── devices.rs      # Device registry (enrollment, public keys)
+│   │       ├── device_manager.rs # Device fleet: rotation coordinator, activity index, enrollment, abort markers
+│   │       ├── devices.rs      # Device registry, DeviceEntry (pure data, used by DeviceManager)
 │   │       ├── emergency.rs    # Emergency access / break-glass
 │   │       ├── integrity.rs    # Canary checks (KEK/RK verification)
 │   │       ├── orgs.rs         # Organization / team sharing
@@ -46,6 +47,7 @@ idtty/
 │   └── src/
 │       ├── App.jsx             # SolidJS frontend (2500+ lines)
 │       ├── i18n/               # Internationalization (en.json + template)
+│       │   └── locales/         # en.json, _template.json
 │       └── main.jsx            # Entry point
 ├── mobile/                     # Kotlin Multiplatform mobile app [PLACEHOLDER]
 │   └── build.gradle.kts        # KMP targets: Android, iOS (x64/arm64/sim)
@@ -55,7 +57,6 @@ idtty/
 │   ├── vault.proto             # VaultEntry, CustomField
 │   ├── space.proto
 │   └── auth.proto
-├── plans/                      # Implementation plans (bw-parity.md)
 ├── docs/                       # Architecture & design docs (see docs/index.md)
 │   ├── index.md                # Documentation TOC
 │   ├── progress.md             # Master progress document
@@ -65,9 +66,7 @@ idtty/
 │   ├── dev-setup.md            # Prerequisites, build commands, troubleshooting
 │   ├── 2fa-analysis.md         # TOTP RFC 6238/4226, second-factor roadmap
 │   ├── brand-guidelines.md   # Color palette, design tokens, visual identity rules
-│   ├── full-gaps.md            # Gap analysis: docs vs code
-│   ├── prd-bitwarden-parity.md # BW parity PRD (43 user stories)
-│   └── bw-parity.md            # Original analysis
+│   ├── design-language-tokens.json # Machine-readable color tokens
 └── justfile                    # Build system (just, cargo install just)
 ```
 
@@ -88,12 +87,19 @@ idtty/
 | Install to /usr/local/bin | `just install` |
 | Desktop dev server | `just desktop-dev` |
 | Desktop production build | `just desktop-build` |
-| Release archives | `just release` |
+| Cross-compile all targets | `just cross-compile` |
+| Format check | `just fmt-check` |
+| Lint fix | `just lint-fix` |
+| Test release mode | `just test-release` |
+| Test verbose | `just test-verbose` |
+| Uninstall ~/.local/bin | `just uninstall-local` |
+| Uninstall /usr/local/bin | `just uninstall` |
+| Desktop npm deps | `just desktop-deps` |
 | Clean | `just clean` |
 | Show version | `just version` |
 
 ## CODING STANDARDS
-* **Rust**: Edition 2024, MSRV 1.85. Workspace deps in root `Cargo.toml`. Feature flags: `git-sync`, `org`, `emergency`. `thiserror` for library errors, `anyhow` for CLI. `proptest` for property-based tests.
+* **Rust**: Edition 2024, MSRV 1.85. Workspace deps in root `Cargo.toml`. Feature flags: `full` (default) = `git-sync` + `org` + `emergency`. `thiserror` for library errors, `anyhow` for CLI. `proptest` for property-based tests.
 * **JS/TS**: ES modules, SolidJS, Vite. Tailwind utility classes for layout. `crypto.getRandomValues` for all random generation (never `Math.random`).
 * **Kotlin**: KMP 1.9.20, Android compileSdk 34, iOS multi-target. Compose Multiplatform for shared UI.
 * **Protobuf**: proto3 syntax, `idtty.vault` package. Compiled into Rust types via prost in idtty-daemon.
@@ -131,9 +137,9 @@ idtty/
 * **Protobuf schemas compiled**: `proto/*.proto` define the IPC message formats. Rust codegen via prost-build.
 * **Mobile via UniFFI (planned)**: Not yet annotated.
 * **Feature flags control sync**: `git-sync` feature gate; CLI enables it by default.
-* **Padded buckets**: All vault entries padded to uniform sizes (1KB/8KB/64KB/1MB) to prevent metadata leakage.
+* **Padded buckets**: All vault entries padded to uniform sizes (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB) via `Tier::fit()` to prevent metadata leakage.
 * **IPC via Unix sockets**: Platform-aware socket path. 0600 via umask. Peer credential verification (SO_PEERCRED/getpeereid). `--socket` overrides default.
-* **Key hierarchy**: Master Password -> KEK (Argon2id) -> Device Private Key (escrowed) -> Space Group Key -> Item Keys.
+* **Key hierarchy**: Master Password -> KEK (Argon2id) -> Device Private Key (X25519, HPKE-escrowed) -> Root Key (512-bit, per-epoch) -> Space Group Key (256-bit, per-space) -> Item Keys (256-bit, per-cipher, HKDF-derived).
 * **BIP-39 recovery**: Vault creation generates a recovery phrase for key recovery.
 * **CodeGraph available**: `.codegraph/` index exists for codebase navigation.
 * **Import/Export (Phase A)**: 8 import parsers in `import/` (bw_json, bw_csv, chrome_csv, firefox_csv, lastpass_csv, onepassword_1pux, onepassword_csv, keepass_xml). 2 export formats (bw_json, bw_csv). Daemon routes `vault.import`, `vault.export`. CLI `idtty import/export`. Desktop ImportExportButton.
@@ -141,12 +147,12 @@ idtty/
 * **Password Health (Phase C)**: `health.rs` detects weak (<8 chars, common, sequential), reused (same password across entries), old (>90 days). Daemon `vault.health`. CLI `idtty health`.
 * **Attachments (Phase D)**: `vault/attachment.rs` encrypts with cipher's item key (AES-256-GCM, random nonce). Max 2MB. Stored at `<vault>/entries/<cipher_id>/attachments/<id>.enc`. Daemon upload/download/delete routes. Plaintext zeroized in daemon and CLI after use. AttachmentMeta tracked in cipher JSON.
 * **Biometric Unlock (Phase E)**: `biometric.rs` stores master password in OS keychain (keyring crate: macOS Keychain, Windows Credential Manager, Linux libsecret). Daemon `biometric_unlock` performs vault unlock internally (secret never returns over IPC). `biometric_status/enable/disable` routes. Desktop Quick Unlock button + settings toggle.
-* **Linked Custom Fields (Phase F)**: `CustomFieldType::Linked(LinkedFieldType)` with 24 variants across Login/Card/Identity. `resolve_linked_field()` for type-safe resolution. Desktop custom field editor with type dropdown + linked field selector. Rust serde format: `"Text"`, `"Hidden"`, `"Boolean"`, `{"Linked":"LoginUsername"}`.
+* **Linked Custom Fields (Phase F)**: `CustomFieldType::Linked(LinkedFieldType)` with 56 variants across Login/Card/Identity/BankAccount/DriversLicense/Passport. `resolve_linked_field()` for type-safe resolution. Desktop custom field editor with type dropdown + linked field selector. Rust serde format: `"Text"`, `"Hidden"`, `"Boolean"`, `{"Linked":"LoginUsername"}`.
 * **Nested Folders (Phase G)**: `create_folder_with_parent` with depth limit (16). `delete_folder` cascades via `collect_descendant_ids` (BFS). Desktop FolderTree/FolderNode recursive components.
 * **Device Lifecycle (MISS-1 through MISS-5)**: `device_manager.rs` owns registry, epoch state machine, rotation coordinator. VaultHandle holds a DeviceManager instance. `rotate_root_key()` performs atomic re-encryption with staged `.tmp` writes. `recover_from_phrase()` returns `RecoveryResult` with private keys. `RotationObserver` trait for sync engine hooks. Epoch state machine: CREATED→ACTIVE→ROTATING→RETIRED→DESTROYED. Cipher writes blocked during ROTATING.
 * **ItemKey derivation**: `HKDF(SGK, "idtty-item-v1" || epoch || cipher_id)`. SGK derived from RootKey via `HKDF(RootKey, "idtty-sgk-v1" || epoch)`. Epoch-bound: rotation forces full re-encryption. Space Group Key is the intermediate layer between RootKey and ItemKeys.
 * **Device Fleet Visibility (Phase 1-5, done)**: Activity index at `meta/device_activity.json` updated on every commit. `last_seen_epoch` on DeviceEntry. Selective revoke via `revoke_device_and_rotate()` (not force-evict). Daemon routes: `device.revoke`, `vault.device_activity`. Abort marker: `.idtty/rekey/{new_epoch}.aborted` (cleaned after detection). Desktop: Devices tab with status badges, "This device" indicator, revoke button (hidden for self). **Known gap**: keywrap file not written after revocation; recovery phrase is fallback.
-* **Full gap analysis**: See `docs/full-gaps.md` for comprehensive docs-vs-code diff.
+* **Full gap analysis**: Known gaps tracked in `docs/progress.md` (Pending Work section).
 
 ## UX PRINCIPLES
 * **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden, "session token" -> invisible.
@@ -198,5 +204,5 @@ idtty/
 | C | Password Health Reports | 162 | N/A (self-contained) | - |
 | D | Attachments (encrypted file storage) | 168 | Yes (2C, 3H, 5M, 3L) | Yes |
 | E | Biometric/Quick Unlock via OS Keychain | 170 | Yes (3C, 4H, 3M, 2L) | Yes |
-| F | Linked Custom Fields (24 variants) | 170 | Yes (2C, 2H, 2M, 1L) | Yes |
+| F | Linked Custom Fields (56 variants) | 170 | Yes (2C, 2H, 2M, 1L) | Yes |
 | G | Nested Folders UI (tree + cascade delete) | 170 | Yes (1C, 2H, 2M) | Yes |
