@@ -229,6 +229,6 @@ Requires hardware token or platform authenticator. No password to remember. No p
 
 ## Cross-References
 
-- [06-device-lifecycle.md](06-device-lifecycle.md) — enrollment, pairing, epoch rotation
-- [02-threat-model.md](02-threat-model.md) — formal threat model
-- [03-key-lifecycle.md](03-key-lifecycle.md) — key hierarchy and derivation
+- [architecture-decisions.md](architecture-decisions.md) — device lifecycle, enrollment, epoch rotation (DOMAIN 6)
+- [threat-model.md](threat-model.md) — formal threat model
+- [software-architecture.md](software-architecture.md) — key hierarchy, derivation, and cryptographic ceremonies

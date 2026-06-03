@@ -1,0 +1,566 @@
+# IDtty: Architecture Decisions Record
+
+> Master Blueprint for the Git-backed Password Manager (Space Manager).
+> Pure Rust core, Single-String Protobuf Gateway, Padded Buckets, UniFFI mobile bridge, SolidJS/KMP UI layers.
+
+---
+
+## DOMAIN 1: CRYPTO, STORAGE & KEY HIERARCHY
+
+### D1. Rust Core & Memory Security
+
+**Decision: Compiled Rust Core with `zeroize`-protected memory**
+
+All cryptographic operations, Git operations (git2-rs), padding, and secret loading are handled entirely in the `idtty-core` Rust crate. Secrets (decrypted keys, entries) are held in `Zeroize`-derived structs. The daemon process keeps vault data in locked memory regions via `memsec`/`zeroize` to prevent paging to disk or leaking via core dumps.
+
+---
+
+### D2. Storage Engine: Padded Buckets & Hashed Filenames
+
+**Decision: Hashed files-per-entry system padded into uniform size buckets**
+
+To eliminate metadata leaks (website names, usernames, specific file sizes) and prevent Git merge conflicts:
+1. **Entries Folder**: Located under `entries/`. All entries are named using a random UUID hash.
+2. **Padding Engine**: Plaintext Protobuf payloads are padded with random bytes before AES-256-GCM encryption to fit exact bucket sizes:
+   - **1 KB Bucket**: Standard Logins, TOTPs, Passkeys
+   - **8 KB Bucket**: Extended Secure Notes
+   - **64 KB Bucket**: Small Attachments, Scanned IDs
+   - **1 MB Bucket**: Larger documents or media files
+3. **Index Lookup (`index.enc`)**: An encrypted lookup table mapping human-readable metadata (URLs, Titles) to their corresponding hashed filenames under `entries/`. Decrypted on demand by idtty-core.
+
+---
+
+### D3. Key Hierarchy & Device Bootstrapping
+
+**Decision: Envelope encryption + Private Key Escrow**
+
+```
+Master Password
+    |
+    v (Argon2id derivation)
+Master KEK
+    |
+    v (decrypts Identity key)
+Private Key Escrow (metadata/identity.enc)
+    |
+    v (yields Device Private Key)
+Decrypts Space Group Key (metadata/access_list.json)
+    |
+    v
+Decrypts Entries (entries/*.enc)
+```
+
+- **Device Digital Identity**: Each device has an asymmetric keypair (X25519 for HPKE wrapping, Ed25519 for commit signatures).
+- **Private Key Escrow**: The user's device-specific asymmetric private key is symmetrically encrypted by their Master Password and committed to the repository at `metadata/identity.enc`.
+- **OAuth Bootstrapping**: Logging into a new device utilizes GitHub/GitLab OAuth to clone the repository. The user then enters their Master Password to decrypt their device private key from `metadata/identity.enc` and escrow it into the local hardware enclave (Keychain, Secret Service, Android Keystore).
+- **OAuth Token Storage**: The OAuth Personal Access Token (PAT) used for background git2-rs sync is stored securely in the host OS keyring (Apple Keychain / Secret Service), never committed to Git.
+
+---
+
+## DOMAIN 2: CONFLICT RESOLUTION & SYNCHRONIZATION
+
+### D4. Index & Conflict Auto-Healing
+
+**Decision: Automatic Index Rebuild & File Conflict Resolution**
+
+- **Index Auto-Heal**: If `index.enc` experiences a Git conflict due to concurrent multi-device updates, idtty-core resolves the conflict programmatically. It decrypts the entire local `entries/` folder, reconstructs the index table from scratch, and silently force-pushes the clean resolution.
+- **Entry Conflict Healing**: If a single padded file (`entries/3a7f82...enc`) experiences a conflict, idtty-core renames the local version, accepts the remote commit, and flags a notification to the UI layer: *"Two updates happened at once. Which do you keep?"*
+
+---
+
+### D5. Mobile JIT Sync
+
+**Decision: Just-In-Time (JIT) sync fetch before biometric challenge**
+
+To circumvent mobile OS sandboxes that aggressively terminate background synchronization loops:
+1. **JIT Hook**: Triggered immediately when the mobile browser or credential provider requests autofill.
+2. **Micro-Fetch**: idtty-core (via UniFFI binding) initiates a rapid `git fetch` to evaluate the remote branch SHA delta.
+3. **Pulls Delta**: If a delta is present, idtty-core pulls changes, decrypts entries, and updates the local cache *before* prompting the user for biometrics (FaceID/Fingerprint).
+
+---
+
+## DOMAIN 3: PLATFORM ECOSYSTEMS & INTEGRATIONS
+
+### D6. Single-String Protobuf Gateway
+
+**Decision: Unification via `HandleRequest(action, payload)`**
+
+**Current state**: Protobuf wire protocol fully implemented. Daemon compiles all 3 protos via prost-build. CLI compiles auth.proto. Length-delimited framing (varint prefix) on Unix sockets. 16 daemon routes operational.
+
+**Target**: All layers will communicate with idtty-core through a unified, serialized gateway interface:
+- **Input**: A single Protobuf serialized string containing the action command and its parameters.
+- **Output**: A serialized response string.
+- This decoupling allows front-end tiers to compile with `MOCK_BACKEND=true` to skip native builds during UI development, feeding hardcoded mock Protobuf payloads directly to components.
+
+---
+
+### D7. Desktop Tier: Client-Server IPC Socket
+
+**Decision: Rust Daemon (Server) + CLI Client (socket) + Tauri v2 (SolidJS/Tailwind UI)**
+
+- **Rust Daemon (`idtty-daemon`)**: Started on boot by Tauri. Unlocks the vault into `zeroize`-protected memory. Listens on a platform-aware domain socket (Linux: `~/.config/idtty/idtty.sock`, macOS: `~/.config/idtty/idtty.sock`, Windows: Named Pipes) with `0600` permissions via umask before bind. Built on tokio for async I/O. Handles both SIGINT and SIGTERM for graceful shutdown. SO_PEERCRED peer UID verification on Linux. **Current state: fully implemented with 16 routes, vault state, sync, devices.**
+- **CLI (`idtty-cli`)**: Dual-mode socket client. Default: serializes flags into Protobuf, transmits to daemon via Unix socket, prints response. `--direct` fallback links idtty-core in-process. `--socket <path>` for custom daemon socket. All vault, sync, and devices commands implemented.
+- **Tauri v2 UI**: SolidJS/Tailwind v4 webview scaffolded via `tauri init`. Communicates with the daemon via a `daemon_request` Tauri command that proxies Protobuf over Unix sockets. System tray with Show/Quit menu. Login screen + vault view (cipher list, add, get, delete). Dark theme. All platform icons via `tauri icon`. Rust edition 2024.**
+
+---
+
+### D8. Mobile Tier: UniFFI Bindings (Planned)
+
+**Decision: Mozilla UniFFI for Rust-to-Kotlin/Swift bridge**
+
+Mobile apps will bind directly to idtty-core via UniFFI-generated native bindings:
+- **Kotlin (Android)**: UniFFI generates Kotlin data classes and function bindings from `#[uniffi::export]` proc-macros on idtty-core's public API. Compiled into the KMP project as a static library.
+- **Swift (iOS)**: UniFFI generates Swift bindings compiled into an xcframework.
+- **No intermediate language**: The Rust core is the single source of truth. No Go, no cgo, no gomobile. UniFFI's serialization-based FFI provides a clean security boundary between Rust memory and foreign memory.
+- **JIT Autofill**: The UniFFI-exposed `sync::fetch_and_decrypt()` method will be called directly from the Kotlin/Swift autofill adapter before biometric prompt.
+- **Current state**: idtty-core has no `#[uniffi::export]` annotations yet. Mobile app is a placeholder scaffold.
+
+---
+
+### D9. Zero-Knowledge RBAC B2B & Family Sharing
+
+**Decision: Envelope Asymmetric Key Wrapping via `metadata/access_list.json`**
+
+1. **Space Invitation**: An Admin enters an invitee's email. idtty-core fetches their public key from the Git host.
+2. **Group Key wrapping**: idtty-core encrypts the Space's AES-GCM **Group Key** with the recipient's public key and appends the wrapped payload to `metadata/access_list.json`.
+3. **Acceptance**: Invitee decrypts the group key with their local device private key.
+4. **Revocation / Offboarding**: The Admin rotates the Group Key. idtty-core re-encrypts the `entries/` directory, updates `access_list.json` for remaining members, and pushes the changes. The evicted user's local instance is instantly locked out of new commits, and all local entries are reduced to unreadable ciphertext.
+
+---
+
+## DOMAIN 4: CONSUMER-FRIENDLY TERMINOLOGY
+
+To optimize accessibility and eliminate user-facing cryptographic jargon:
+
+| Technical Cryptographic Term | Consumer UI Translation |
+|------------------------------|-------------------------|
+| Git Repository / Remote URL | **Space** (e.g., Personal Space, Work Space) |
+| Git Clone / SSH / PAT Setup  | **"Sign in with GitHub"** (Silent OAuth) |
+| Git Merge Conflict           | **"Two updates happened at once. Which do you keep?"** |
+| Asymmetric Device Keypair     | **"Your Device Digital Identity"** |
+
+---
+
+## DOMAIN 5: DEVICE FLEET & REVOCATION
+
+### Hard Constraints
+
+1. **No server backend.** The git repository IS the coordination channel. No WebSocket, no ping endpoint, no real-time anything.
+2. **Git commits are the heartbeat.** A device is "alive" if it has recently pushed. There is no other signal.
+3. **Revocation is eventual, not instant.** A revoked device can continue reading locally until it pulls and sees the revocation. Inherent to serverless, non-negotiable.
+4. **Git credentials are out-of-band.** Revoking vault access does NOT revoke git push access. Users must rotate deploy keys / PATs on GitHub/GitLab separately. Documented, not solved.
+
+### Activity Index
+
+**File**: `meta/device_activity.json` — Plaintext, UUID-only activity index. Last-writer-wins per UUID key. One file, merged on every push.
+
+```json
+{
+  "v": 1,
+  "devices": {
+    "a1b2c3d4-...": {
+      "last_push": "2026-06-02T14:30:00Z",
+      "last_commit": "abc123def456...",
+      "epoch": 7
+    }
+  }
+}
+```
+
+| Field | Source | Purpose |
+|-------|--------|----------|
+| `last_push` | Self-reported ISO-8601 (corroborated by git committer date) | Fleet dashboard freshness |
+| `last_commit` | SHA of the push commit | Verifiable via `git log` |
+| `epoch` | Current epoch at push time | Shows if device is behind |
+
+Why plaintext: UUIDs are opaque. Device names in `devices.json` are also plaintext (per D1). File lives in a private git repo. Exposure is "two UUIDs sync at these times." Acceptable for single-user vaults.
+
+Why single file: One file with merge-by-key is simpler than N files with directory fanout. Git merge conflicts on a single JSON file resolve via union of keys, latest timestamp wins.
+
+### Device Registry
+
+`DeviceRegistry` in `devices.rs`: enroll, revoke, force-evict, quorum calculation. Stored in `meta/devices.json` (plaintext).
+
+```rust
+pub struct DeviceEntry {
+    pub device_id: DeviceId,
+    pub name: String,
+    pub encryption_public_key: String,
+    pub signing_public_key: String,
+    pub enrolled_at: u64,
+    pub enrolled_by: Option<DeviceId>,   // Which device approved enrollment (None for founding device)
+    pub last_seen_epoch: u64,            // Last epoch this device was active in
+}
+```
+
+### Stale Device Thresholds
+
+Never auto-revoke. UI badges only:
+
+| Threshold | Label | Color | UI Action |
+|-----------|-------|-------|----------|
+| < 7 days | Active | Green | None |
+| 7-30 days | Idle | Yellow | None |
+| 30-90 days | Stale | Orange | "Review devices" prompt |
+| > 90 days | Dormant | Red | "Consider revoking" prompt |
+
+Stale and dormant are prompts, not actions. A laptop in a drawer for 3 months is the common case. Compromise response is the existing `force_evict` flow.
+
+### Revocation Flow
+
+**Normal revocation** (quorum available, >= 2 devices):
+
+1. Device A pulls latest, verifies all incoming commit signatures
+2. User opens fleet dashboard, selects Device B, clicks "Revoke"
+3. `device_manager.revoke(B)` removes B from `DeviceRegistry`
+4. Epoch advances: N -> N+1 (ROTATING)
+5. Root key rotation: new RootKey -> new SGK -> all ItemKeys re-derived -> all entries re-encrypted
+6. KEK re-wrapped only for surviving devices (B excluded)
+7. `meta/device_activity.json` updated: B's entry removed
+8. A commits + pushes: `[device-revoke] removed <B-uuid>, epoch N+1`
+
+**Force-evict** (single surviving device, emergency):
+
+1. `revoke_device_and_rotate(target_id, self_id)` removes only the target, preserves all other enrolled devices
+2. Root key rotation (epoch increment)
+3. `meta/device_activity.json` cleaned for revoked device
+4. Push with signed commit
+5. Fallback: `force_evict(surviving_id)` for disaster recovery (all other devices lost)
+
+**Revoked device experience**:
+
+- Online: B pulls. Sync engine detects its signing key is no longer in registry. B enters read-only mode. Cannot decrypt epoch N+1 entries. Pushes rejected (signature verification fails on other devices).
+- Offline: B retains readable copy at epoch N. Root key rotation ensures B's copy becomes stale.
+- Git credential rotation is out-of-band. Fleet dashboard shows persistent warning after revocation: "Rotate git credentials for full security."
+
+### ROTATING Epoch Timeout
+
+If the device initiating rotation goes offline mid-ROTATING, cipher writes are blocked indefinitely. Solution: deterministic coordinator election after timeout.
+
+```
+if epoch.state == ROTATING && elapsed > configured_timeout && no_progress_commit:
+    if cipher_files_written_at(new_epoch) > 0:
+        // Cannot abort. Re-initiate rotation as new coordinator.
+        return
+    candidates = sorted(enrolled_devices, by=uuid_bigendian)
+    new_coordinator = candidates[0]  // lowest UUID, deterministic
+    if self.device_id == new_coordinator:
+        epoch.abort_rotation()
+        write_abort_marker(new_epoch)
+```
+
+Rules:
+- Configurable timeout (default 1h, range 15min-24h). Stored in VaultSettings.
+- UUID big-endian comparison: sort enrolled UUIDs as 128-bit integers, elect lowest.
+- Elected device aborts stalled rotation (epoch -> ACTIVE) and can re-initiate.
+- User confirmation required before aborting another device's rotation.
+- Abort marker: `.idtty/rekey/{new_epoch}.aborted`
+
+### Signed Commits
+
+- Sync engine signs every commit with Ed25519 device key. Signature in `gpgsig` header.
+- `verify_commit_signatures()` validates incoming commits against device signing keys.
+- Pre-unlock: reads from plaintext `meta/devices.json`. Post-unlock: reads from encrypted `DeviceRegistry`. Plaintext never overrides encrypted after unlock.
+
+### Architectural Decisions
+
+**D1: `devices.json` stays plaintext.** Public keys are public. Device names carry no secrets. Private git repo is the access boundary. Encrypting gains nothing while breaking pre-unlock fleet visibility.
+
+**D2: `devices.json` is the canonical key file.** Eliminates `device-registry.json` and `device-pks`. Single source of truth for signing keys.
+
+**D3: No `push_count` in activity index.** Self-reported, unverifiable. Entries are `{last_push, last_commit, epoch}` only.
+
+**D4: No enrollment approval signature.** Single-user tool. `enrolled_by: Option<DeviceId>` is the right level. Attacker who can tamper with DeviceEntry on disk can also tamper with a signature.
+
+**D5: Last-writer-wins for activity index conflicts.** Ephemeral timestamps, no secrets. No custom git merge driver needed.
+
+**D6: Persistent git credential rotation banner.** Parse remote URL, construct direct link to `github.com/<repo>/settings/keys`, show numbered steps. Dismiss only after explicit checkbox confirmation.
+
+### Security Considerations
+
+| Risk | Mitigation | Accepted because |
+|------|-----------|------------------|
+| No real-time revocation | Eventual consistency via git pull | Fundamental to serverless model |
+| Revoked device retains epoch N data | Root key rotation limits to stale snapshot | Cannot remote-wipe without server |
+| Git credentials not auto-rotated | Post-revocation warning + documentation | No GitHub API access from vault |
+| Plaintext activity index (UUIDs) | UUIDs opaque; private repo boundary | Low-sensitivity metadata |
+| Self-reported timestamps | Corroborated by git committer date + commit SHA | Display from git log, not file |
+
+### Multi-User / Org Considerations (Future)
+
+Not in scope for current implementation:
+
+1. Per-user device registries: `meta/users/<user_id>/devices.json`
+2. Role-based revocation: Admin revokes any, users self-revoke only
+3. Per-collection SGKs: Separate Space Group Keys per collection
+4. Activity privacy: Split `device_activity.json` per user
+5. M-of-N root key recovery: Shamir secret sharing for multi-owner vaults
+6. Admin fleet dashboard: Admin sees all users' devices
+
+---
+
+## DOMAIN 6: DEVICE LIFECYCLE & ROOT KEY ROTATION
+
+### Hard Constraints
+
+1. **No server backend.** Desktop and mobile apps work standalone, fully offline. Git sync with GitHub/GitLab is optional.
+2. **Single-device is the default.** Multi-device is opt-in via git sync or local transport.
+3. **All crypto is local.** Rust core via UniFFI. Zero platform-native crypto on mobile.
+
+### DeviceManager Aggregate
+
+```
+DeviceManager
+├── DeviceRegistry      (pure data: HashMap<Uuid, DeviceEntry>, serializable)
+├── EpochInfo           (pure state machine: CREATED→ACTIVE→ROTATING→RETIRED→DESTROYED)
+└── RotationCoordinator (two-phase commit logic, owns the transaction)
+```
+
+`DeviceManager` lives in `crates/idtty-core/src/device_manager.rs`. It owns the coordination between registry, epoch state, and rotation. Individual components remain independently testable pure structs. `VaultHandle` holds a `DeviceManager`. All vault ops check epoch state through it.
+
+### Three Operational Modes
+
+#### Mode 1: Single Device, No Network
+
+The default. 90%+ of users.
+
+```
+1. Generate new Root Key (RK')
+2. HPKE(RK', this_device_x25519_pk) → write new keywrap file
+3. Re-derive Space Group Keys under RK'
+4. Re-encrypt all space headers under new SGKs
+5. Self-acknowledge → epoch ROTATING → RETIRED → new ACTIVE
+6. Zeroize old RK, old SGKs
+7. Commit to local git repo (no remote push)
+```
+
+Single atomic local transaction. No `.ack` files. No quorum wait. `quorum_required()` returns 1 for N=1.
+
+#### Mode 2: Multi-Device, Git Remote Configured
+
+Multiple devices sharing a vault via GitHub/GitLab/self-hosted git.
+
+**Rotation flow (two-phase commit via git):**
+
+```
+Phase 1 — PROPOSE (initiating device, online now):
+  1. Generate RK'
+  2. For each enrolled device:
+     HPKE(RK', device_x25519_pk) → wrapped_keys[device_id]
+  3. Build RekeyTransaction:
+     { old_epoch, new_epoch, wrapped_keys, initiator, timestamp }
+  4. Write .idtty/rekey/{new_epoch}.txn
+  5. Git commit + push
+  6. Transition epoch → ROTATING
+  7. Vault: READS allowed (old epoch), WRITES blocked
+
+Phase 2 — ACKNOWLEDGE (each device, async, on next sync):
+  1. Pull from remote
+  2. Read .idtty/rekey/{new_epoch}.txn
+  3. Unwrap own HPKE(RK', my_pk) → verify RK' is sane
+  4. Compute txn_hash = SHA-256(serialized .txn file)
+  5. Sign: Ed25519(my_signing_sk, "ack" || epoch || device_id || txn_hash)
+  6. Write .idtty/rekey/{new_epoch}.ack.{device_id}
+  7. Git commit + push
+
+Phase 3 — COMMIT (any device observing quorum):
+  1. Pull from remote
+  2. Collect all .ack.* files for this epoch
+  3. For each ack:
+     - Verify Ed25519 signature against enrolled device's signing key
+     - Verify txn_hash matches the .txn file (prevents ack transplant)
+  4. If verified ack count >= quorum (ceil(N/2)):
+     - Re-derive SGKs under new RK'
+     - Write .idtty/rekey/{new_epoch}.committed
+     - Transition: old epoch → RETIRED, new epoch → ACTIVE
+     - Delete old keywrap files for evicted devices
+     - Vault WRITES re-enabled
+     - Git commit + push
+```
+
+**Quorum rules:**
+
+| Enrolled devices | Quorum required | Rationale |
+|---|---|---|
+| 0 | 0 | Empty vault |
+| 1 | 1 | Self-ack, immediate |
+| 2 | 1 | Unilateral rotation accepted (single-user) |
+| 3 | 2 | Majority |
+| 4 | 2 | Majority |
+| 5 | 3 | Majority |
+
+#### Mode 3: Multi-Device, No Git Remote (Local Transport)
+
+Two devices on the same desk, no cloud.
+
+**Transport options** (priority order):
+1. **QR codes** — small payloads (enrollment, ack bundles)
+2. **File export/import** — larger payloads (pairing bundle, git bundle)
+3. **USB drive** — `git bundle` for full vault sync
+
+Rotation uses the same two-phase commit as Mode 2, but ack delivery is physical. The `ROTATING` epoch state persists between transfers.
+
+### Enrollment
+
+#### First Device
+
+Automatic. No approval needed. The empty registry auto-approves the first enrollment.
+
+#### Additional Devices
+
+Requires physical presence + master password confirmation on an existing enrolled device.
+
+**Transfer methods:**
+
+| Method | How | Best for |
+|--------|-----|----------|
+| **QR code** | Display string as QR, scan with camera | Phones, tablets |
+| **Manual copy** | Display string as text, user copies/types on other device | No camera, accessibility needs, terminals |
+| **File export** | Save as .json file, transfer via USB/LAN | Large payloads, batch enrollment |
+
+**Two-way pairing flow:**
+
+```
+New device                          Existing device
+   |                                      |
+   | 1. Generate keypair                  |
+   | 2. Display QR #1:                    |
+   |    {device_id, x25519_pk,            |
+   |     ed25519_pk, nonce, timestamp,    |
+   |     name: "Esteban's iPhone"}        |
+   |                                      |
+   | ------- QR #1 scanned ------->       |
+   |                                      | 3. Validate timestamp/nonce/keys
+   |                                      | 4. Prompt: "Approve device?"
+   |                                      | 5. User enters master password
+   |                                      | 6. Sign approval + HPKE wrap RK
+   |                                      | 7. Build pairing bundle
+   |                                      |
+   | <---- QR #2 / file export --------  |
+   |                                      |
+   | 8. Import pairing bundle             |
+   | 9. Verify approval_sig               |
+   | 10. Unwrap RK via own x25519_sk     |
+   | 11. Enrollment complete              |
+```
+
+**Anti-replay:**
+- Nonce: 32 random bytes, unique per enrollment attempt
+- Nonces stored in `meta/seen-nonces.json` (persisted across restarts)
+- Timestamp: ±5 minute window
+
+### Epoch State Machine
+
+```
+CREATED → ACTIVE → ROTATING → RETIRED → DESTROYED
+                      ↑           │
+                      └───────────┘
+                    (new epoch becomes ACTIVE)
+```
+
+| State | Reads | Writes | Description |
+|-------|-------|--------|-------------|
+| CREATED | No | No | New epoch initiated, not yet pushed |
+| ACTIVE | Yes | Yes | Normal operation |
+| ROTATING | Yes (old epoch) | **No** | Rotation in progress. Writes blocked. |
+| RETIRED | No | No | Old epoch deprecated. Keys purged. |
+| DESTROYED | No | No | Old epoch key material zeroized. |
+
+### Force Eviction
+
+**Selective revocation** (preferred, multi-device vaults):
+
+1. User authenticates on surviving device
+2. `DeviceManager.revoke_device_and_rotate(target_id, self_id)` removes only target, preserves others
+3. Epoch rotation initiated immediately
+4. New Root Key generated, HPKE-wrapped for all remaining devices
+5. Self-ack, immediate commit
+6. Activity index cleaned for revoked device
+7. Vault writes re-enabled under new epoch
+
+**Emergency force-evict** (single-survivor disaster recovery):
+
+1. `DeviceManager.force_evict_and_rotate(surviving_device_id)` clears all non-surviving devices
+2. Epoch rotation initiated immediately
+3. New Root Key generated, HPKE-wrapped only for surviving device(s)
+4. Self-ack, immediate commit
+5. Old keywrap files for evicted devices deleted
+6. Vault writes re-enabled under new epoch
+
+Force eviction without rotation is NOT eviction. The evicted device can decrypt everything until rekey happens. Both paths are atomic.
+
+### Recovery Phrase (BIP-39)
+
+The offline backup mechanism. When all devices are lost.
+
+1. User enters BIP-39 recovery phrase on new device
+2. Derive master key from phrase
+3. Re-derive Root Key from master key
+4. Create new single-device vault
+5. Old device registry abandoned
+
+Recovery bypasses DeviceManager enrollment entirely. The recovery phrase IS the root of trust. No quorum, no approval, no other device needed.
+
+### File Layout
+
+```
+.idtty/
+  rekey/
+    {epoch}.txn            # Rotation proposal (HPKE-wrapped RK' per device)
+    {epoch}.ack.{device}   # Device acknowledgment (signed, with txn_hash binding)
+    {epoch}.committed      # Finalized rotation (populated commit_barrier)
+
+meta/
+  devices.json             # DeviceRegistry (enrolled devices, keys)
+  epoch.json               # EpochInfo (current epoch state)
+  seen-nonces.json         # Anti-replay enrollment nonces
+  keywrap/
+    {device_id}.json       # HPKE-wrapped Root Key per device
+```
+
+### Sequence Diagram: Full Rotation (Multi-Device, Git Remote)
+
+```
+Device A (initiator)          Git Remote           Device B
+     |                            |                    |
+     |-- initiate_rotation() ---->|                    |
+     |   (epoch → ROTATING)       |                    |
+     |   (writes .txn)            |                    |
+     |-- git push --------------->|                    |
+     |                            |                    |
+     |                            |-- git pull ------->|
+     |                            |                    |
+     |                            |   read .txn
+     |                            |   unwrap RK'
+     |                            |   sign ack
+     |                            |   write .ack.B
+     |                            |<-- git push -------|
+     |                            |                    |
+     |-- git pull --------------->|                    |
+     |                            |                    |
+     |   read .ack.B              |                    |
+     |   verify signature         |                    |
+     |   verify txn_hash          |                    |
+     |   ack count >= quorum?     |                    |
+     |   commit_rotation()        |                    |
+     |   (epoch → new ACTIVE)     |                    |
+     |   write .committed         |                    |
+     |-- git push --------------->|                    |
+     |                            |                    |
+     |                            |-- git pull ------->|
+     |                            |                    |
+     |                            |   read .committed
+     |                            |   unwrap new RK'
+     |                            |   update local epoch
+     |                            |   vault WRITES re-enabled
+```
+
+---
+
+## Staged Implementation Roadmap
+
+- **Phase 1: Cryptographic Core & Padding Engine**: Rust idtty-core (crypto, keys, vault, padding). Protobuf schemas. DONE.
+- **Phase 2: Git Sync Engine**: git2-rs sync, conflict auto-healing, state machine. DONE.
+- **Phase 3: IPC Daemon & CLI**: idtty-daemon (tokio Unix socket server), idtty-cli (socket client), Protobuf gateway handler.
+- **Phase 4: Desktop UI & Open-Source Launch**: SolidJS/Tailwind Tauri v2 app, system tray, GPL-3.0 license.
+- **Phase 5: Mobile & Extension**: UniFFI Kotlin/Swift bindings, KMP mobile app, MV3 browser extension with native messaging.

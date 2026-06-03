@@ -23,21 +23,21 @@ just build
 just test
 ```
 
-See **[docs/05-dev-setup.md](docs/05-dev-setup.md)** for prerequisites, platform setup, and all build commands.
+See **[docs/dev-setup.md](docs/dev-setup.md)** for prerequisites, platform setup, and all build commands.
 
 ## Documentation
 
-| Doc | Description |
-|-----|-------------|
-| [Dev Setup & Workflow](docs/05-dev-setup.md) | Prerequisites, build commands, architecture, testing, troubleshooting |
-| [Architecture Decisions](docs/01-architecture-decisions.md) | Design rationale and tradeoffs |
-| [Threat Model](docs/02-threat-model.md) | Adversaries, attack surfaces, mitigations |
-| [Key Lifecycle](docs/03-key-lifecycle.md) | Key hierarchy, derivation, rotation |
-| [Software Architecture](docs/04-software-architecture.md) | Component diagram, data flows, IPC protocol |
-| [Device Lifecycle](docs/06-device-lifecycle.md) | Device enrollment, pairing, key rotation |
-| [2FA Analysis](docs/07-2fa-analysis.md) | TOTP implementation, RFC 6238/4226 compliance |
-| [BW Parity PRD](docs/prd-bitwarden-parity.md) | Bitwarden desktop feature parity requirements |
-| [Progress](docs/00-progress.md) | Implementation status and review history |
+For full documentation, see **[docs/index.md](docs/index.md)**.
+
+| Document | Description |
+|----------|-------------|
+| [Architecture Decisions](docs/architecture-decisions.md) | Design rationale, device fleet (DOMAIN 5), device lifecycle & rotation (DOMAIN 6) |
+| [Software Architecture](docs/software-architecture.md) | Component diagram, data flows, IPC protocol, key lifecycle, cryptographic ceremonies |
+| [Threat Model](docs/threat-model.md) | Adversaries, attack surfaces, mitigations |
+| [2FA Analysis](docs/2fa-analysis.md) | TOTP implementation, RFC 6238/4226 compliance |
+| [Dev Setup & Workflow](docs/dev-setup.md) | Prerequisites, build commands, architecture, testing, troubleshooting |
+| [Brand Guidelines](docs/brand-guidelines.md) | Color palette, design tokens, visual identity rules |
+| [Progress](docs/progress.md) | Implementation status and review history |
 
 ## Contributing
 
