@@ -138,7 +138,7 @@ desktop-dev: _sidecar desktop-deps
 # Run desktop app with full debug logging (IDTTY_DEBUG=1)
 # Logs go to ./logs/ (daemon.log + desktop.log)
 # Share: zip logs/ or paste the relevant file
-debug-dev: _sidecar desktop-deps
+desktop-debug: _sidecar desktop-deps
 	#!/usr/bin/env bash
 	set -euo pipefail
 	LOG_DIR="$(pwd)/logs"
