@@ -802,6 +802,7 @@ function GeneratorModal() {
 
 function SettingsModal() {
   const { showSettingsModal, setShowSettingsModal, theme, setTheme, deviceFleet, selfDeviceId, revokeWarning, setRevokeWarning } = useApp();
+  const { refreshCiphers } = useActions();
   const { t } = useI18n();
 
   const [activeTab, setActiveTab] = createSignal("general"); // "general" or "data"
@@ -834,6 +835,7 @@ function SettingsModal() {
   createEffect(() => {
     if (showSettingsModal()) {
       loadSettings();
+      setImportSource("");
     }
   });
 
@@ -899,7 +901,7 @@ function SettingsModal() {
         const resp = await daemon("vault.import", payload);
         const result = JSON.parse(resp);
         setMessage(`Imported ${result.imported || 0} entries` + (result.skipped ? `, skipped ${result.skipped}` : ""));
-        const { refreshCiphers } = useActions();
+        setImportSource("");
         await refreshCiphers();
       } catch (e) {
         setMessage("Import failed: " + sanitizeError(e, t));
@@ -915,12 +917,14 @@ function SettingsModal() {
     setMessage(null);
     try {
       const resp = await daemon("vault.export", JSON.stringify({ format }));
-      const blob = new Blob([resp], { type: "application/json;charset=utf-8" });
+      const isCsv = format === "bw-csv";
+      const blob = new Blob([resp], { type: isCsv ? "text/csv;charset=utf-8" : "application/json;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `idtty_export_${format === "bw-csv" ? "export.csv" : "export.json"}`;
+      a.download = `idtty_export.${isCsv ? "csv" : "json"}`;
       a.click();
+      URL.revokeObjectURL(url);
       setMessage("Exported successfully");
     } catch (e) {
       setMessage("Export failed: " + sanitizeError(e, t));
@@ -2171,26 +2175,27 @@ function AddEditCipherForm(props) {
   const [genNums, setGenNums] = createSignal(true);
   const [genSyms, setGenSyms] = createSignal(true);
 
+  // Local uris signal to avoid <For> tear-down on every keystroke.
+  // Synced back to newCipher on save.
+  const [uris, setUris] = createSignal(newCipher().uris || []);
+
   function handleGenerate() {
     const pw = generateSecurePassword(genLen(), genUpper(), genNums(), genSyms());
     setNewCipher({ ...newCipher(), password: pw });
   }
 
   function addUri() {
-    const c = newCipher();
-    setNewCipher({ ...c, uris: [...(c.uris || []), { uri: "", match_strategy: null }] });
+    setUris([...uris(), { uri: "", match_strategy: null }]);
   }
 
   function removeUri(index) {
-    const c = newCipher();
-    setNewCipher({ ...c, uris: (c.uris || []).filter((_, i) => i !== index) });
+    setUris(uris().filter((_, i) => i !== index));
   }
 
   function updateUri(index, field, value) {
-    const c = newCipher();
-    const uris = [...(c.uris || [])];
-    uris[index] = { ...uris[index], [field]: value };
-    setNewCipher({ ...c, uris });
+    const list = [...uris()];
+    list[index] = { ...list[index], [field]: value };
+    setUris(list);
   }
 
   function toggleFavorite() {
@@ -2202,6 +2207,8 @@ function AddEditCipherForm(props) {
   }
 
   function handleSave() {
+    // Sync local uris back to newCipher before saving
+    setNewCipher({ ...newCipher(), uris: uris() });
     if (props.isEdit) {
       updateCipher(viewCipher().id, t);
     } else {
@@ -2322,11 +2329,14 @@ function AddEditCipherForm(props) {
                 <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">URIs</label>
                 <button onClick={addUri} class="text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer">+ Add URI</button>
               </div>
-              <For each={newCipher().uris || []}>
+              <For each={uris()}>
                 {(uriObj, index) => (
                   <div class="flex gap-2 mb-2">
                     <input
                       placeholder="https://example.com"
+                      autocapitalize="off"
+                      autocomplete="off"
+                      spellcheck="false"
                       class="flex-1 px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
                       value={uriObj.uri || ""}
                       onInput={e => updateUri(index(), "uri", e.target.value)}
@@ -2350,7 +2360,7 @@ function AddEditCipherForm(props) {
                   </div>
                 )}
               </For>
-              <Show when={!(newCipher().uris || []).length}>
+              <Show when={!uris().length}>
                 <button onClick={addUri} class="w-full py-3 rounded-xl bg-[var(--color-card)] border border-dashed border-[var(--color-border)] text-sm text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] transition-all cursor-pointer">
                   + Add URI
                 </button>
@@ -3058,17 +3068,20 @@ function FolderNode(props) {
 
 function VaultView() {
   const { ciphers, trashCiphers, archivedCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator, showSettingsModal, setShowSettingsModal } = useApp();
-  const { lock, refreshDeviceFleet } = useActions();
+  const { lock } = useActions();
   const { t } = useI18n();
 
   const [showAddMenu, setShowAddMenu] = createSignal(false);
 
   // Close add menu on outside click
   let addMenuRef;
-  function handleAddMenuClick(e) {
-    if (addMenuRef && !addMenuRef.contains(e.target)) setShowAddMenu(false);
-  }
-  document.addEventListener("click", handleAddMenuClick);
+  onMount(() => {
+    const handler = (e) => {
+      if (addMenuRef && !addMenuRef.contains(e.target)) setShowAddMenu(false);
+    };
+    document.addEventListener("click", handler);
+    onCleanup(() => document.removeEventListener("click", handler));
+  });
 
   // Categories
   const categories = [
