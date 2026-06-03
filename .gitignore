@@ -70,3 +70,4 @@ docs/reviews/
 .codegraph/
 bin/
 desktop/src-tauri/binaries/
+cache/
