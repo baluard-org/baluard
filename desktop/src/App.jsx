@@ -801,7 +801,7 @@ function GeneratorModal() {
 }
 
 function SettingsModal() {
-  const { showSettingsModal, setShowSettingsModal, theme, setTheme } = useApp();
+  const { showSettingsModal, setShowSettingsModal, theme, setTheme, deviceFleet, selfDeviceId, revokeWarning, setRevokeWarning } = useApp();
   const { t } = useI18n();
 
   const [activeTab, setActiveTab] = createSignal("general"); // "general" or "data"
@@ -816,6 +816,7 @@ function SettingsModal() {
 
   // Import/Export state
   const [importing, setImporting] = createSignal(false);
+  const [importSource, setImportSource] = createSignal("");
   const [exporting, setExporting] = createSignal(false);
   const [message, setMessage] = createSignal(null);
 
@@ -918,7 +919,7 @@ function SettingsModal() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `idtty_export_${format === "bw-json" ? "bitwarden.json" : "bitwarden.csv"}`;
+      a.download = `idtty_export_${format === "bw-csv" ? "export.csv" : "export.json"}`;
       a.click();
       setMessage("Exported successfully");
     } catch (e) {
@@ -957,6 +958,15 @@ function SettingsModal() {
             >
               Data Import / Export
               <Show when={activeTab() === "data"}>
+                <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
+              </Show>
+            </button>
+            <button
+              onClick={() => setActiveTab("devices")}
+              class={`py-3 text-xs font-bold transition-all relative cursor-pointer ${activeTab() === "devices" ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
+            >
+              Devices
+              <Show when={activeTab() === "devices"}>
                 <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
               </Show>
             </button>
@@ -1037,20 +1047,30 @@ function SettingsModal() {
             <Show when={activeTab() === "data"}>
               {/* Import Section */}
               <div class="space-y-3">
-                <label class="text-xs font-bold text-[var(--color-text)]">Import Vault Data</label>
-                <div class="grid grid-cols-2 gap-2">
-                  <For each={formats}>
-                    {(f) => (
-                      <button
-                        onClick={() => doImport(f.id)}
-                        disabled={importing()}
-                        class="text-left px-3 py-2.5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50 flex items-center justify-between group"
-                      >
-                        <span class="font-medium">{f.label}</span>
-                        <svg class="w-3.5 h-3.5 text-[var(--color-muted)] group-hover:text-[var(--color-primary)] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                      </button>
-                    )}
-                  </For>
+                <div class="flex flex-col">
+                  <span class="text-xs font-bold text-[var(--color-text)]">Import Vault Data</span>
+                  <span class="text-[10px] text-[var(--color-muted)] mt-0.5">Select a source to import entries from.</span>
+                </div>
+                <div class="flex items-end gap-3">
+                  <div class="flex-1">
+                    <select
+                      value={importSource() || ""}
+                      onChange={e => setImportSource(e.target.value)}
+                      class="w-full px-3 py-2.5 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all cursor-pointer"
+                    >
+                      <option value="" disabled>Choose source...</option>
+                      <For each={formats}>
+                        {(f) => <option value={f.id}>{f.label}</option>}
+                      </For>
+                    </select>
+                  </div>
+                  <button
+                    onClick={() => doImport(importSource())}
+                    disabled={!importSource() || importing()}
+                    class="px-5 py-2.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                  >
+                    {importing() ? "Importing..." : "Import"}
+                  </button>
                 </div>
               </div>
 
@@ -1064,7 +1084,7 @@ function SettingsModal() {
                     class="flex items-center justify-center gap-2 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
                   >
                     <svg class="w-4 h-4 text-[var(--color-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                    Bitwarden JSON
+                    JSON
                   </button>
                   <button
                     onClick={() => doExport("bw-csv")}
@@ -1072,7 +1092,7 @@ function SettingsModal() {
                     class="flex items-center justify-center gap-2 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
                   >
                     <svg class="w-4 h-4 text-[var(--color-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                    Bitwarden CSV
+                    CSV
                   </button>
                 </div>
               </div>
@@ -1083,6 +1103,10 @@ function SettingsModal() {
                   {message()}
                 </div>
               </Show>
+            </Show>
+
+            <Show when={activeTab() === "devices"}>
+              <DeviceFleetPanel />
             </Show>
           </div>
         </div>
@@ -1280,14 +1304,14 @@ function ImportExportButton() {
               disabled={exporting()}
               class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer disabled:opacity-50"
             >
-              Bitwarden JSON
+              JSON
             </button>
             <button
               onClick={() => doExport("bw-csv")}
               disabled={exporting()}
               class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer disabled:opacity-50"
             >
-              Bitwarden CSV
+              CSV
             </button>
           </div>
           <Show when={message()}>
@@ -3033,9 +3057,18 @@ function FolderNode(props) {
 }
 
 function VaultView() {
-  const { ciphers, trashCiphers, archivedCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator, showSettingsModal, setShowSettingsModal, deviceFleet, setDeviceFleet, selfDeviceId, revokeWarning, setRevokeWarning } = useApp();
+  const { ciphers, trashCiphers, archivedCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator, showSettingsModal, setShowSettingsModal } = useApp();
   const { lock, refreshDeviceFleet } = useActions();
   const { t } = useI18n();
+
+  const [showAddMenu, setShowAddMenu] = createSignal(false);
+
+  // Close add menu on outside click
+  let addMenuRef;
+  function handleAddMenuClick(e) {
+    if (addMenuRef && !addMenuRef.contains(e.target)) setShowAddMenu(false);
+  }
+  document.addEventListener("click", handleAddMenuClick);
 
   // Categories
   const categories = [
@@ -3050,7 +3083,6 @@ function VaultView() {
     { name: "Driver license", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0h4" /></svg> },
     { name: "Passport & ID", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
     { name: "Archive", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg> },
-    { name: "Devices", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg> },
     { name: "Trash", icon: <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg> }
   ];
 
@@ -3110,6 +3142,7 @@ function VaultView() {
   function startAdd(type = "login") {
     setNewCipher({ name: "", username: "", password: "", uris: [], notes: "", cipherType: type, favorite: false, reprompt: false, attachments: [], folder_id: null, custom_fields: [], totp_uri: "" });
     setActivePane("add");
+    setShowAddMenu(false);
   }
 
   return (
@@ -3165,7 +3198,7 @@ function VaultView() {
                 <For each={categories}>
                   {(cat) => (
                     <button
-                      onClick={() => { setSelectedCategory(cat.name); setSelectedFolder(null); if (cat.name === "Devices") { setActivePane("welcome"); refreshDeviceFleet(); } }}
+                      onClick={() => { setSelectedCategory(cat.name); setSelectedFolder(null); }}
                       class={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between text-left cursor-pointer ${
                         selectedCategory() === cat.name
                           ? "bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] shadow-sm"
@@ -3189,11 +3222,6 @@ function VaultView() {
                       <Show when={cat.name === "Archive"}>
                         <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
                           {archivedCiphers().length}
-                        </span>
-                      </Show>
-                      <Show when={cat.name === "Devices"}>
-                        <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
-                          {deviceFleet().length}
                         </span>
                       </Show>
                     </button>
@@ -3282,15 +3310,16 @@ function VaultView() {
               </div>
             </div>
             
-            <div class="relative group">
+            <div class="relative" ref={addMenuRef}>
               <button
-                onClick={() => startAdd("login")}
+                onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu()); }}
                 class="px-4 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center gap-1"
               >
                 + New
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <svg class={`w-3 h-3 transition-transform ${showAddMenu() ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
               </button>
-              <div class="absolute right-0 top-full mt-1 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl py-1 w-40 z-50 hidden group-hover:block">
+              <Show when={showAddMenu()}>
+              <div class="absolute right-0 top-full mt-1 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl py-1 w-40 z-50">
                 <button onClick={() => startAdd("login")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
                   Login
@@ -3325,6 +3354,7 @@ function VaultView() {
                   Passport & ID
                 </button>
               </div>
+              </Show>
             </div>
             <button
               onClick={() => setShowGenerator(true)}
@@ -3408,9 +3438,6 @@ function VaultView() {
               {t("entry.selectPrompt")}
             </p>
           </div>
-        </Show>
-        <Show when={selectedCategory() === "Devices" && activePane() !== "add" && activePane() !== "edit"}>
-          <DeviceFleetPanel />
         </Show>
       </div>
     </div>
