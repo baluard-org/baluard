@@ -2175,9 +2175,17 @@ function AddEditCipherForm(props) {
   const [genNums, setGenNums] = createSignal(true);
   const [genSyms, setGenSyms] = createSignal(true);
 
-  // Local uris signal to avoid <For> tear-down on every keystroke.
+  // Mutable uris ref: no signal writes on keystroke.
+  // Signal only updated on add/remove to re-render the list.
   // Synced back to newCipher on save.
-  const [uris, setUris] = createSignal(newCipher().uris || []);
+  const initialUris = newCipher().uris || [];
+  let urisRef = initialUris.map(u => ({ ...u }));
+  const [uris, setUris] = createSignal([...urisRef]);
+
+  // Mutable custom fields ref: same pattern.
+  const initialFields = newCipher().custom_fields || [];
+  let fieldsRef = initialFields.map(f => ({ ...f }));
+  const [fields, setFields] = createSignal([...fieldsRef]);
 
   function handleGenerate() {
     const pw = generateSecurePassword(genLen(), genUpper(), genNums(), genSyms());
@@ -2185,17 +2193,17 @@ function AddEditCipherForm(props) {
   }
 
   function addUri() {
-    setUris([...uris(), { uri: "", match_strategy: null }]);
+    urisRef = [...urisRef, { uri: "", match_strategy: null }];
+    setUris([...urisRef]);
   }
 
   function removeUri(index) {
-    setUris(uris().filter((_, i) => i !== index));
+    urisRef = urisRef.filter((_, i) => i !== index);
+    setUris([...urisRef]);
   }
 
   function updateUri(index, field, value) {
-    const list = [...uris()];
-    list[index] = { ...list[index], [field]: value };
-    setUris(list);
+    Object.assign(urisRef[index], { [field]: value });
   }
 
   function toggleFavorite() {
@@ -2207,8 +2215,8 @@ function AddEditCipherForm(props) {
   }
 
   function handleSave() {
-    // Sync local uris back to newCipher before saving
-    setNewCipher({ ...newCipher(), uris: uris() });
+    // Sync local refs back to newCipher before saving
+    setNewCipher({ ...newCipher(), uris: urisRef, custom_fields: fieldsRef });
     if (props.isEdit) {
       updateCipher(viewCipher().id, t);
     } else {
@@ -2781,13 +2789,13 @@ function AddEditCipherForm(props) {
               <button
                 type="button"
                 onClick={() => {
-                  const fields = [...(newCipher().custom_fields || []), { name: "", value: "", field_type: "Text" }];
-                  setNewCipher({ ...newCipher(), custom_fields: fields });
+                  fieldsRef = [...fieldsRef, { name: "", value: "", field_type: "Text" }];
+                  setFields([...fieldsRef]);
                 }}
                 class="text-[10px] font-bold text-[var(--color-primary)] hover:underline cursor-pointer"
               >+ Add field</button>
             </div>
-            <For each={newCipher().custom_fields || []}>
+            <For each={fields()}>
               {(field, i) => {
                 const ft = () => {
                   const t = field.field_type;
@@ -2803,19 +2811,16 @@ function AddEditCipherForm(props) {
                     class="w-1/3 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
                     value={field.name}
                     onInput={e => {
-                      const fields = [...newCipher().custom_fields];
-                      fields[i()] = { ...fields[i()], name: e.target.value };
-                      setNewCipher({ ...newCipher(), custom_fields: fields });
+                      Object.assign(fieldsRef[i()], { name: e.target.value });
                     }}
                   />
                   <select
                     class="px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer"
                     value={ft()}
                     onChange={e => {
-                      const fields = [...newCipher().custom_fields];
                       const v = e.target.value;
-                      fields[i()] = { ...fields[i()], field_type: v === "Linked" ? { Linked: "LoginUsername" } : v };
-                      setNewCipher({ ...newCipher(), custom_fields: fields });
+                      fieldsRef[i()] = { ...fieldsRef[i()], field_type: v === "Linked" ? { Linked: "LoginUsername" } : v };
+                      setFields([...fieldsRef]);
                     }}
                   >
                     <option value="Text">Text</option>
@@ -2828,9 +2833,8 @@ function AddEditCipherForm(props) {
                       class="flex-1 px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer"
                       value={linkedVal()}
                       onChange={e => {
-                        const fields = [...newCipher().custom_fields];
-                        fields[i()] = { ...fields[i()], field_type: { Linked: e.target.value }, value: "" };
-                        setNewCipher({ ...newCipher(), custom_fields: fields });
+                        fieldsRef[i()] = { ...fieldsRef[i()], field_type: { Linked: e.target.value }, value: "" };
+                        setFields([...fieldsRef]);
                       }}
                     >
                       <optgroup label="Login">
@@ -2908,17 +2912,15 @@ function AddEditCipherForm(props) {
                       class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
                       value={field.value}
                       onInput={e => {
-                        const fields = [...newCipher().custom_fields];
-                        fields[i()] = { ...fields[i()], value: e.target.value };
-                        setNewCipher({ ...newCipher(), custom_fields: fields });
+                        Object.assign(fieldsRef[i()], { value: e.target.value });
                       }}
                     />
                   </Show>
                   <button
                     type="button"
                     onClick={() => {
-                      const fields = newCipher().custom_fields.filter((_, j) => j !== i());
-                      setNewCipher({ ...newCipher(), custom_fields: fields });
+                      fieldsRef = fieldsRef.filter((_, j) => j !== i());
+                      setFields([...fieldsRef]);
                     }}
                     class="p-1.5 rounded-lg text-red-400 hover:bg-red-950/20 cursor-pointer shrink-0"
                     title="Remove"
