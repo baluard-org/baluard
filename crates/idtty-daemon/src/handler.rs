@@ -201,7 +201,7 @@ fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
 ///
 /// R7-2: Protected actions require a valid session token obtained at unlock.
 async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
-    eprintln!(
+    log::debug!(
         "[daemon] <- action={} has_token={}",
         req.action,
         !req.session_token.is_empty()
@@ -673,7 +673,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
     // Zeroize any remaining sensitive data in the request
     req.payload.zeroize();
 
-    eprintln!("[daemon] -> action={} success={}", req.action, resp.success);
+    log::debug!("[daemon] -> action={} success={}", req.action, resp.success);
     resp
 }
 

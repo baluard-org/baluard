@@ -197,12 +197,15 @@ fn daemon_request(
     payload: String,
     token: State<SessionToken>,
 ) -> DaemonResponse {
+    log::debug!("[desktop] -> action={action} payload_len={}", payload.len());
+
     // Inject stored session token into request
     let stored_token = token.0.lock().unwrap()
         .as_ref().map(|z| z.as_str().to_owned()).unwrap_or_default();
 
     match send_request_with_token(&action, &payload, &stored_token) {
         Ok((data, new_token)) => {
+            log::debug!("[desktop] <- action={action} success=true payload_len={}", data.len());
             // On lock, clear the session token
             if action == "vault.lock" {
                 *token.0.lock().unwrap() = None;
@@ -217,6 +220,7 @@ fn daemon_request(
             }
         }
         Err(ref e) => {
+            log::warn!("[desktop] <- action={action} error={e}");
             // Clear stale token on session/auth errors so next request
             // doesn't keep sending an invalid token
             if e.contains("session token") || e.contains("locked") || e.contains("Vault is") {
@@ -250,13 +254,29 @@ pub fn run() {
         .manage(Mutex::new(None::<Daemon>))
         .manage(SessionToken(Mutex::new(None::<zeroize::Zeroizing<String>>)))
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Debug)
-                        .build(),
-                )?;
-            }
+            // Always log to file for debuggability.
+            // IDTTY_DEBUG=1 enables Debug level; otherwise Warn.
+            let log_dir = default_socket_path().parent()
+                .expect("socket path has parent").to_path_buf();
+            let log_file = log_dir.join("desktop.log");
+            let _ = std::fs::create_dir_all(&log_dir);
+
+            let level = if std::env::var("IDTTY_DEBUG").unwrap_or_default() == "1" {
+                log::LevelFilter::Debug
+            } else {
+                log::LevelFilter::Warn
+            };
+
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(level)
+                    .target(tauri_plugin_log::Target::Folder {
+                        path: log_dir,
+                        file_name: "desktop.log".into(),
+                    })
+                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+                    .build(),
+            )?;
 
             // Start daemon if not already running
             #[cfg(unix)]
