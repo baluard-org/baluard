@@ -861,18 +861,15 @@ pub fn handle_device_revoke(
 
             println!("Revoking device: {} ({})", target_name, device_id);
 
-            // Selective revoke: removes only the target, preserves other devices
-            let result = handle.device_manager.revoke_device_and_rotate(device_id, handle.device_id)?;
-
-            println!("Revoked device: {}", result.revoked_name);
-            println!("New epoch: {}", result.new_epoch);
+            // Revoke + rekey: rotates root key, re-encrypts ciphers, writes keywrap
+            let result = handle.revoke_device_and_rekey(device_id)?;
 
             // Clean activity index
             idtty_core::device_manager::DeviceActivityIndex::remove_device(path, &device_id)?;
 
-            println!("Device revoked. Keys rotated.");
-            println!("NOTE: A new keywrap file must be written before next unlock.");
-            println!("      If unlock fails, use the recovery phrase.");
+            println!("Revoked device: {}", result.revoked_name);
+            println!("New epoch: {}", result.new_epoch);
+            println!("Device revoked. All ciphers re-encrypted. Keywrap written.");
             println!("IMPORTANT: Rotate git credentials (deploy key/PAT) on GitHub/GitLab.");
             Ok(())
         }
