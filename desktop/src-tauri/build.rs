@@ -11,5 +11,7 @@ fn main() {
         .compile_protos(&[&proto_file], &[&proto_dir])
         .expect("Failed to compile auth.proto");
 
+    println!("cargo:rerun-if-changed=icons");
+    println!("cargo:rerun-if-changed=tauri.conf.json");
     tauri_build::build()
 }
