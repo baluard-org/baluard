@@ -6,6 +6,21 @@ import { setError } from "./errorSignal.js";
 
 const VaultContext = createContext();
 
+// Valid pane transitions. Dev-only guard.
+const VALID_PANE_TRANSITIONS = {
+  welcome: ["detail", "add"],
+  detail:  ["welcome", "edit"],
+  edit:    ["detail", "welcome"],
+  add:     ["welcome"],
+};
+
+function guardedSetPane(setActivePane, from, to) {
+  if (!VALID_PANE_TRANSITIONS[from]?.includes(to)) {
+    console.warn(`[vault] Invalid pane transition: ${from} → ${to}`);
+  }
+  setActivePane(to);
+}
+
 const EMPTY_CIPHER = {
   name: "", username: "", password: "", uris: [], notes: "",
   cipherType: "login", favorite: false, reprompt: false,
@@ -107,7 +122,7 @@ function VaultProvider(props) {
     if (!cipherData.name) { setError(t("entry.namePlaceholder") + " required"); return; }
     try {
       await daemon("vault.add", JSON.stringify(buildAddPayload(cipherData)));
-      setActivePane("welcome");
+      guardedSetPane(setActivePane, activePane(), "welcome");
       await refreshCiphers(t);
       return true;
     } catch (e) {
@@ -141,7 +156,7 @@ function VaultProvider(props) {
   async function deleteCipher(id, t) {
     try {
       await daemon("vault.delete", id);
-      setActivePane("welcome");
+      guardedSetPane(setActivePane, activePane(), "welcome");
       await refreshCiphers(t);
       return true;
     } catch (e) {
@@ -153,7 +168,7 @@ function VaultProvider(props) {
   async function restoreCipher(id, t) {
     try {
       await daemon("vault.trash.restore", id);
-      setActivePane("welcome");
+      guardedSetPane(setActivePane, activePane(), "welcome");
       await refreshCiphers(t);
       return true;
     } catch (e) {
@@ -165,7 +180,7 @@ function VaultProvider(props) {
   async function archiveCipher(id, t) {
     try {
       await daemon("vault.archive", id);
-      setActivePane("welcome");
+      guardedSetPane(setActivePane, activePane(), "welcome");
       await refreshCiphers(t);
       // refreshCiphers already calls refreshArchivedCiphers internally
       return true;
@@ -178,7 +193,7 @@ function VaultProvider(props) {
   async function unarchiveCipher(id, t) {
     try {
       await daemon("vault.unarchive", id);
-      setActivePane("welcome");
+      guardedSetPane(setActivePane, activePane(), "welcome");
       await refreshCiphers(t);
       // refreshCiphers already calls refreshArchivedCiphers internally
       return true;
