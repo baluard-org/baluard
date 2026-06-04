@@ -68,7 +68,7 @@ All commands run from the project root. `just` reads the `justfile`.
 | `just build` | Debug build of all Rust crates |
 | `just build-release` | Optimized release build |
 | `just build-signed` | Release build + codesign (macOS only; no-op on Linux) |
-| `just test` | Run all tests (Rust suites + 96 desktop vitest tests) |
+| `just test` | Run all tests (Rust suites + desktop vitest) |
 | `just test-core` | Run `idtty-core` tests only |
 | `just test-release` | Tests in release mode |
 | `just test-verbose` | Tests with `--nocapture` (see println output) |
