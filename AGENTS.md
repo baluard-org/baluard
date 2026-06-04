@@ -62,6 +62,7 @@ idtty/
 | Install to ~/.local/bin | `just install-local` |
 | Install to /usr/local/bin | `just install` |
 | Desktop dev server | `just desktop-dev` |
+| Desktop debug mode | `just desktop-debug` |
 | Desktop production build | `just desktop-build` |
 | Desktop npm deps | `just desktop-deps` |
 | Clean | `just clean` |
@@ -71,6 +72,17 @@ idtty/
 * **JS/TS**: ES modules, SolidJS, Vite. Tailwind for layout. `crypto.getRandomValues` only (never `Math.random`).
 * **Protobuf**: proto3, `idtty.vault` package. Compiled via prost in daemon + CLI.
 * **Security**: AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket 0600. Zeroize on drop for key material and TOTP secrets.
+
+## DEBUG LOGGING
+`just desktop-debug` runs the desktop app with `IDTTY_DEBUG=1`. Logs go to `./logs/` at cwd.
+* `daemon.log` -- IPC routing, vault CRUD, serde errors, crypto ops (via `env_logger`)
+* `desktop.log` -- Tauri bridge: every daemon request with action, payload size, success/error (via `tauri-plugin-log`)
+
+Env vars (set automatically by `just desktop-debug`):
+* `IDTTY_DEBUG=1` -- enables Debug level (otherwise Warn only)
+* `IDTTY_LOG_DIR=<path>` -- overrides log directory (defaults to `~/.config/idtty/`)
+
+Share logs: paste the file contents or `zip logs/ logs.zip`.
 
 ## WHERE TO LOOK
 * **Crypto primitives**: `crates/idtty-core/src/crypto/`

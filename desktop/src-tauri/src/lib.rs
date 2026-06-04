@@ -274,10 +274,12 @@ pub fn run() {
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .level(level)
-                    .target(tauri_plugin_log::Target::Folder {
-                        path: log_dir,
-                        file_name: "desktop.log".into(),
-                    })
+                    .target(tauri_plugin_log::Target::new(
+                        tauri_plugin_log::TargetKind::Folder {
+                            path: log_dir,
+                            file_name: Some("desktop.log".into()),
+                        },
+                    ))
                     .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
                     .build(),
             )?;
