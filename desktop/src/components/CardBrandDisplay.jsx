@@ -1,7 +1,7 @@
 import { Show } from "solid-js";
 import { detectCardBrand } from "../lib/utils.js";
 
-function CardBrandDisplay(props) {
+export default function CardBrandDisplay(props) {
   const brand = () => detectCardBrand(props.number);
   const brandColors = { Visa: "bg-blue-600", Mastercard: "bg-orange-500", Amex: "bg-blue-800", Discover: "bg-orange-600", JCB: "bg-green-600" };
   return (
@@ -13,4 +13,3 @@ function CardBrandDisplay(props) {
   );
 }
 
-export { CardBrandDisplay };
