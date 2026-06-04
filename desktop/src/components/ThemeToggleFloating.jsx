@@ -1,7 +1,7 @@
 import { Show } from "solid-js";
 import { useApp } from "../context/AppContext.jsx";
 
-function ThemeToggleFloating() {
+export default function ThemeToggleFloating() {
   const { theme, setTheme } = useApp();
   return (
     <div class="absolute top-4 right-4 z-50">
@@ -20,4 +20,3 @@ function ThemeToggleFloating() {
   );
 }
 
-export { ThemeToggleFloating };
