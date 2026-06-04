@@ -560,7 +560,7 @@ Device A (initiator)          Git Remote           Device B
 
 ## DOMAIN 7: FRONTEND ARCHITECTURE (SolidJS + Tauri v2)
 
-The desktop frontend is a SolidJS + Tailwind v4 app inside Tauri v2. ~4,800 lines across 19 components + 3 utility modules. All IPC via `daemon(action, payload)` through Tauri's `invoke("daemon_request")`. Request/response. No SSE, no streaming.
+The desktop frontend is a SolidJS + Tailwind v4 app inside Tauri v2. All IPC via `daemon(action, payload)` through Tauri's `invoke("daemon_request")`. Request/response. No SSE, no streaming.
 
 ### D10. Store Split (Completed 2026-06-04)
 
