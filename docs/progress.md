@@ -1,7 +1,7 @@
 # IDtty: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-06-02
+> Last updated: 2026-06-04
 
 ---
 

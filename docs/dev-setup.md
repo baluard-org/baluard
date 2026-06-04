@@ -199,7 +199,7 @@ All commands route through the daemon by default. Use `--direct` to run in-proce
 
 - **AES-256-GCM** encryption with Argon2id key derivation
 - **Padded buckets** (1KB/8KB/64KB/1MB) prevent metadata leakage
-- **5 cipher types**: Login, Card, Identity, SSH Key, Secure Note
+- **8 cipher types**: Login, Card, Identity, SSH Key, Secure Note, Bank Account, Driver's License, Passport/ID
 - **TOTP code generation** (RFC 6238, SHA1/256/512, 6/8 digits)
 - **Password generator** with CSPRNG + EFF 7776-word passphrase
 - **Password history** (auto-tracked, 10 entries FIFO)
