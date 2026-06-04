@@ -1,6 +1,5 @@
 import { onMount, Show } from "solid-js";
 import { useI18n } from "./i18n/index.jsx";
-import { ERROR_PATTERNS } from "./lib/utils.js";
 import { daemon } from "./lib/daemon.js";
 import { AppProvider, useApp } from "./context/AppContext.jsx";
 import { useActions } from "./hooks/useActions.js";
@@ -27,13 +26,11 @@ function AppInner() {
     try {
       await daemon("vault.open");
     } catch (e) {
-      if (ERROR_PATTERNS.some(({ pattern }) => pattern.test(e.message))) {
-        if (/Cannot connect/i.test(e.message)) {
-          setError("");
-          return;
-        }
+      if (/Cannot connect/i.test(e.message)) {
+        setError("");
+      } else {
+        setStatus("init");
       }
-      setStatus("init");
       return;
     }
     try {
