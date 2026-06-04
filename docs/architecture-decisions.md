@@ -557,6 +557,107 @@ Device A (initiator)          Git Remote           Device B
 
 ---
 
+## DOMAIN 7: FRONTEND ARCHITECTURE (SolidJS + Tauri v2)
+
+The desktop frontend is a SolidJS + Tailwind v4 app inside Tauri v2. ~3,500 lines across 18 components. All IPC via `daemon(action, payload)` through Tauri's `invoke("daemon_request")`. Request/response. No SSE, no streaming.
+
+### D10. Store Split (Completed 2026-06-04)
+
+**Decision: 2-provider split with standalone signals. No external state library.**
+
+Replaced monolithic `AppContext` (30 signals) + `useActions` hook (243 lines) with:
+
+| Module | Type | Signals | Scope |
+|---|---|---|---|
+| `context/AuthContext.jsx` | Provider | status, vaultInfo, biometricAvailable | App lifecycle. Outermost. Wraps entire app. |
+| `context/VaultContext.jsx` | Provider | 12 signals: cipher data, navigation, device fleet, settings modal | Cipher CRUD. Only mounts inside `<Show when={status() === "unlocked"}>`. |
+| `context/errorSignal.js` | Standalone `createSignal` | error | Global. Consumed by both auth and vault layers. |
+| `context/themeSignal.js` | Standalone `createSignal` | theme | Survives lock/unlock. Syncs `<body>` class + localStorage. |
+| Local state in components | `createSignal` in owning component | viewCipher, newCipher, showDeleteConfirm, showGenerator (VaultView); showReprompt (RepromptModal) | Single-consumer signals. Not in any provider. |
+
+**Provider nesting:**
+
+```
+<I18nProvider>
+  <AuthProvider>           // 3 signals, co-located lock/unlock/createVault
+    <App />
+  </AuthProvider>
+</I18nProvider>
+
+App renders:
+  locked   → <LoginScreen />         (useAuth + errorSignal)
+  init     → <CreateVaultScreen />   (useAuth + errorSignal)
+  recovery → <RecoveryScreen />      (useAuth + errorSignal)
+  unlocked → <VaultProvider>          // 12 signals, co-located cipher CRUD
+                <VaultView />        (useAuth + useVault + local signals)
+             </VaultProvider>
+```
+
+**Structural reset on lock:** VaultProvider mounts inside `<Show when={status() === "unlocked"}>`. On `lock()`, setting `status="locked"` causes VaultProvider to unmount, destroying all 12 vault signals + 6 local signals automatically. `lock()` went from 7 manual resets to 2 (`setStatus`, `setVaultInfo`). Impossible to forget a signal.
+
+**Actions co-located.** `useActions.js` deleted. Every store owns its own actions. No cross-store compound actions exist after the split.
+
+**Key principle:** If a signal is consumed by exactly one component subtree, it's local state. Context is for cross-component communication.
+
+### D11. Future Refactor Candidates
+
+Analyzed but not yet implemented. Priority-ordered.
+
+#### Candidate A: Mega-Form (High priority)
+
+**Cluster:** `AddEditCipherForm.jsx` (800 lines) + `lib/payload.js` + `CipherDetail.startEdit()` (~100 lines).
+
+8 cipher types with ~10 fields each, all in a single 800-line component. Writes into a flat `newCipher` signal with 60+ keys. The mapping between flat buffer and structured CipherKind format lives in 3 places that must agree on exact field names:
+
+1. `buildKind(c)` in payload.js: flat → structured
+2. `CipherDetail.startEdit()`: structured → flat (100 lines)
+3. `AddEditCipherForm`: reads flat buffer for input values
+
+**Proposed:** Typed `CipherForm` model encapsulating the mapping:
+```
+CipherForm
+  ├─ fromCipher(cipherResponse) → CipherForm   (replaces startEdit)
+  ├─ toPayload() → { name, kind, ... }          (replaces buildKind + buildAddPayload)
+  ├─ updateField(path, value)                    (replaces setNewCipher spread)
+  └─ validate() → errors[]
+```
+Each cipher type defines its own field schema. Adding a new type becomes "add a schema entry" instead of editing 3 files.
+
+#### Candidate B: Filter Pipeline (Medium priority)
+
+**Cluster:** VaultView.jsx ~60 lines of inline filtering.
+
+Source selection (trash/archive/active), category filtering (hardcoded string if/else chain), folder descent (BFS through folder tree), text search (4 fields). Category-to-type mapping duplicated in VaultView, CipherRow, and CipherDetail. Zero tests.
+
+**Proposed:** Extract to `lib/filters.js` as pure functions: `filterByCategory()`, `filterByFolder()`, `searchCiphers()`. Category-to-type mapping becomes a single lookup table.
+
+#### Candidate C: Screen State Machine (Medium priority)
+
+Two parallel state machines with no formal definition:
+1. **App status:** locked → unlocking → unlocked; init → creating → recovery
+2. **VaultView activePane:** welcome → detail → edit; welcome → add
+
+Transitions scattered across 8+ call sites. `lock()` already simplified by structural reset, but `activePane` transitions are still ad-hoc.
+
+**Proposed:** Explicit transition functions: `appTransition(status, event)` and `vaultTransition(pane, event)`. Invalid transitions throw in dev mode.
+
+#### Candidate D: SVG Icon Sprawl (Low priority)
+
+~200 lines of inline SVG across components. Categories array in VaultView is 60% SVG markup by line count. Same icons duplicated 2-5 times.
+
+**Proposed:** `components/Icon.jsx` with named icon components. Categories array drops from 40 to 12 lines.
+
+### Frontend Constraints
+
+1. **SolidJS stays.** No framework migration.
+2. **No external state library.** Pure SolidJS primitives (`createSignal`, `createContext`, `createEffect`).
+3. **No behavioral changes in refactors.** Same UI, same IPC, same daemon protocol.
+4. **Incremental.** Each refactor independently verifiable (build + test).
+5. **daemon.js, payload.js, utils.js, app.css, i18n keys are touch-free zones.**
+6. **Tests must grow.** Each refactor adds tests for previously untested logic.
+
+---
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust idtty-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

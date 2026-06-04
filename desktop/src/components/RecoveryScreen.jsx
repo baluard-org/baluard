@@ -1,19 +1,18 @@
 import { createSignal, Show } from "solid-js";
-import { useApp } from "../context/AppContext.jsx";
-import { useActions } from "../hooks/useActions.js";
+import { useAuth } from "../context/AuthContext.jsx";
+import { setError } from "../context/errorSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 
 export default function RecoveryScreen() {
-  const app = useApp();
-  const { refreshCiphers } = useActions();
+  const auth = useAuth();
   const { t } = useI18n();
   const [copied, setCopied] = createSignal(false);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(app.recoveryPhrase());
+    navigator.clipboard.writeText(auth.recoveryPhrase());
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -32,7 +31,7 @@ export default function RecoveryScreen() {
         </div>
 
         <div class="relative group p-5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm leading-relaxed text-[var(--color-text)] break-words select-all mb-6 text-center select-all shadow-inner pr-12">
-          {app.recoveryPhrase()}
+          {auth.recoveryPhrase()}
           <button
             onClick={handleCopy}
             class="absolute top-2 right-2 p-1.5 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-detail)] transition-all cursor-pointer shadow-sm flex items-center gap-1 text-xs"
@@ -49,16 +48,14 @@ export default function RecoveryScreen() {
 
         <form onSubmit={async (e) => {
           e.preventDefault();
-          app.setStatus("unlocking");
-          const pw = app.createPassword();
+          auth.setStatus("unlocking");
+          const pw = auth.createPassword();
           if (pw) {
             try {
               await daemon("vault.unlock", pw);
-              app.setStatus("unlocked");
-              app.setCreatePassword("");
-              await refreshCiphers();
-            } catch (err) { app.setError(sanitizeError(err, t)); app.setStatus("locked"); }
-          } else { app.setStatus("locked"); }
+              auth.setStatus("unlocked");
+            } catch (err) { setError(sanitizeError(err, t)); auth.setStatus("locked"); }
+          } else { auth.setStatus("locked"); }
         }} class="space-y-4">
           <button
             type="submit"

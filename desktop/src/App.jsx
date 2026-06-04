@@ -1,8 +1,9 @@
 import { onMount, Show } from "solid-js";
 import { useI18n } from "./i18n/index.jsx";
 import { daemon } from "./lib/daemon.js";
-import { AppProvider, useApp } from "./context/AppContext.jsx";
-import { useActions } from "./hooks/useActions.js";
+import { useAuth } from "./context/AuthContext.jsx";
+import { setError } from "./context/errorSignal.js";
+import { VaultProvider } from "./context/VaultContext.jsx";
 
 import LoginScreen from "./components/LoginScreen.jsx";
 import RecoveryScreen from "./components/RecoveryScreen.jsx";
@@ -10,16 +11,7 @@ import CreateVaultScreen from "./components/CreateVaultScreen.jsx";
 import VaultView from "./components/VaultView.jsx";
 
 export default function App() {
-  return (
-    <AppProvider>
-      <AppInner />
-    </AppProvider>
-  );
-}
-
-function AppInner() {
-  const { setStatus, setError, setVaultInfo, status } = useApp();
-  const { refreshCiphers } = useActions();
+  const auth = useAuth();
   const { t } = useI18n();
 
   onMount(async () => {
@@ -29,31 +21,32 @@ function AppInner() {
       if (/Cannot connect/i.test(e.message)) {
         setError("");
       } else {
-        setStatus("init");
+        auth.setStatus("init");
       }
       return;
     }
     try {
       const info = JSON.parse(await daemon("vault.info"));
       if (info.unlocked) {
-        setStatus("unlocked");
-        setVaultInfo(info);
-        await refreshCiphers();
+        auth.setStatus("unlocked");
+        auth.setVaultInfo(info);
       }
     } catch {}
   });
 
   return (
-    <Show when={status() === "unlocked"} fallback={
-      <Show when={status() === "init" || status() === "creating"} fallback={
-        <Show when={status() === "recovery"} fallback={<LoginScreen />}>
+    <Show when={auth.status() === "unlocked"} fallback={
+      <Show when={auth.status() === "init" || auth.status() === "creating"} fallback={
+        <Show when={auth.status() === "recovery"} fallback={<LoginScreen />}>
           <RecoveryScreen />
         </Show>
       }>
         <CreateVaultScreen />
       </Show>
     }>
-      <VaultView />
+      <VaultProvider>
+        <VaultView />
+      </VaultProvider>
     </Show>
   );
 }

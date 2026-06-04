@@ -1,13 +1,13 @@
 import { Show } from "solid-js";
-import { useApp } from "../context/AppContext.jsx";
-import { useActions } from "../hooks/useActions.js";
+import { useAuth } from "../context/AuthContext.jsx";
+import { error } from "../context/errorSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 
 export default function CreateVaultScreen() {
-  const app = useApp();
-  const { createVault } = useActions();
+  const auth = useAuth();
   const { t } = useI18n();
+
   return (
     <div class="flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 relative">
       <ThemeToggleFloating />
@@ -21,19 +21,20 @@ export default function CreateVaultScreen() {
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("create.subtitle")}</p>
         </div>
 
-        <Show when={app.error()}>
+        <Show when={error()}>
           <div class="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300 text-sm flex items-center gap-2">
             <svg class="w-5 h-5 shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-            {app.error()}
+            {error()}
           </div>
         </Show>
 
-        <form onSubmit={(e) => { e.preventDefault(); createVault(t); }} class="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); auth.createVault(t); }} class="space-y-4">
           <input
             id="create-password"
+            data-create-password
             type="password"
             placeholder={t("create.passwordPlaceholder")}
-            onInput={e => app.setCreatePassword(e.target.value)}
+            onInput={e => auth.setCreatePassword(e.target.value)}
             class="w-full px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
           />
           <input
@@ -44,16 +45,16 @@ export default function CreateVaultScreen() {
           />
           <button
             type="submit"
-            disabled={app.status() === "creating"}
+            disabled={auth.status() === "creating"}
             class="w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all shadow-lg active:scale-[0.99] disabled:opacity-50 cursor-pointer"
           >
-            {app.status() === "creating" ? t("create.creating") : t("create.submit")}
+            {auth.status() === "creating" ? t("create.creating") : t("create.submit")}
           </button>
         </form>
 
         <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4">
           <button
-            onClick={() => app.setStatus("locked")}
+            onClick={() => auth.setStatus("locked")}
             class="text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
           >
             {t("create.alreadyHaveVault")}
