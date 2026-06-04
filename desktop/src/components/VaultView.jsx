@@ -1,4 +1,4 @@
-import { createSignal, onMount, onCleanup, Show, For } from "solid-js";
+import { createSignal, createMemo, onMount, onCleanup, Show, For } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useVault } from "../context/VaultContext.jsx";
 import { error } from "../context/errorSignal.js";
@@ -65,14 +65,14 @@ export default function VaultView() {
   ];
 
   // Client-side filtering & search (composed from lib/filters.js)
-  const filteredCiphers = () => {
+  const filteredCiphers = createMemo(() => {
     const cat = vault.selectedCategory();
     let list = selectSource(cat, vault.ciphers(), vault.trashCiphers(), vault.archivedCiphers());
     list = filterByCategory(list, cat);
     list = filterByFolder(list, vault.folders(), vault.selectedFolder());
     list = searchCiphers(list, vault.searchQuery());
     return list;
-  };
+  });
 
   function startAdd(type = "login") {
     setNewCipher({ ...EMPTY_CIPHER, cipherType: type });

@@ -97,6 +97,13 @@ export const CIPHER_SCHEMAS = {
       { key: "passportNumber", label: "Passport #", placeholder: "AB1234567", type: "password", mono: true },
       { key: "licenseNumber", label: "License #", placeholder: "D123-456-78-901", type: "password", mono: true },
     ],
+    layout: [
+      ["idTitle", "firstName", "middleName", "lastName"],
+      ["username", "company"],
+      ["email", "phone"],
+      ["city", "state", "postalCode", "country"],
+      ["ssn", "passportNumber", "licenseNumber"],
+    ],
     fromKind(kind) {
       const d = kind.identity || kind.Identity || {};
       return {
@@ -195,6 +202,13 @@ export const CIPHER_SCHEMAS = {
       { key: "bankPhone", label: "Bank Phone", placeholder: "+1 800 555 1234" },
       { key: "bankPin", label: "PIN", placeholder: "****", type: "password", mono: true },
     ],
+    layout: [
+      ["bankName", "nameOnAccount"],
+      ["accountType", "accountNumber"],
+      ["routingNumber", "branchNumber"],
+      ["swiftCode", "iban"],
+      ["bankPhone", "bankPin"],
+    ],
     fromKind(kind) {
       const d = kind.bankAccount || kind.BankAccount || {};
       return {
@@ -243,6 +257,12 @@ export const CIPHER_SCHEMAS = {
       { key: "dlExpDate", label: "Expiration", placeholder: "2028-06-01" },
       { key: "dlAuthority", label: "Issuing Authority", placeholder: "DMV" },
       { key: "dlClass", label: "Class", placeholder: "C" },
+    ],
+    layout: [
+      ["dlFirstName", "dlMiddleName", "dlLastName"],
+      ["dlDob", "dlNumber"],
+      ["dlCountry", "dlState"],
+      ["dlIssueDate", "dlExpDate", "dlClass"],
     ],
     fromKind(kind) {
       const d = kind.driversLicense || kind.DriversLicense || {};
@@ -296,6 +316,14 @@ export const CIPHER_SCHEMAS = {
       { key: "ppAuthority", label: "Issuing Authority", placeholder: "State Department" },
       { key: "ppIssueDate", label: "Issue Date", placeholder: "2020-01-01" },
       { key: "ppExpDate", label: "Expiration", placeholder: "2030-01-01" },
+    ],
+    layout: [
+      ["ppGivenName", "ppSurname"],
+      ["ppDob", "ppSex", "ppBirthPlace"],
+      ["ppNationality", "ppCountry"],
+      ["ppNumber", "ppType"],
+      ["ppNationalId", "ppAuthority"],
+      ["ppIssueDate", "ppExpDate"],
     ],
     fromKind(kind) {
       const d = kind.passport || kind.Passport || {};
