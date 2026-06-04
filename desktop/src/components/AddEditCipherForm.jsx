@@ -7,9 +7,10 @@ import CardBrandDisplay from "./CardBrandDisplay.jsx";
 
 const INPUT_CLS = "w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all";
 const MONO_CLS = INPUT_CLS + " font-mono";
+const GRID_CLS = { 1: "grid grid-cols-1 gap-3", 2: "grid grid-cols-2 gap-3", 3: "grid grid-cols-3 gap-3", 4: "grid grid-cols-4 gap-3" };
 
 function fieldCls(f) {
-  return (f.mono ? MONO_CLS : INPUT_CLS) + (f.type === "password" ? " " + "type-password" : "");
+  return f.mono ? MONO_CLS : INPUT_CLS;
 }
 
 export default function AddEditCipherForm(props) {
@@ -71,7 +72,7 @@ export default function AddEditCipherForm(props) {
 
   function renderField(f) {
     const val = () => newCipher()[f.key] || "";
-    const cls = () => fieldCls(f);
+    const cls = fieldCls(f);
 
     if (f.type === "select") {
       return (
@@ -115,7 +116,6 @@ export default function AddEditCipherForm(props) {
   }
 
   // Renders all fields for schema-driven types, respecting layout grids
-  const GRID_CLS = { 2: "grid grid-cols-2 gap-3", 3: "grid grid-cols-3 gap-3", 4: "grid grid-cols-4 gap-3" };
 
   function renderSchemaFields() {
     const s = schema();
@@ -305,7 +305,7 @@ export default function AddEditCipherForm(props) {
           {/* Type-specific fields */}
           <Show when={cipherType() === "login"}>{renderLoginFields()}</Show>
           <Show when={cipherType() === "card"}>{renderCardFields()}</Show>
-          <Show when={cipherType() !== "login" && cipherType() !== "card"}>{renderSchemaFields()}</Show>
+          <Show when={cipherType() !== "login" && cipherType() !== "card"}>{() => renderSchemaFields()}</Show>
 
           {/* Notes (all types) */}
           <div>
