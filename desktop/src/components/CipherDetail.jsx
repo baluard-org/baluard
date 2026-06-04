@@ -56,50 +56,52 @@ export default function CipherDetail() {
     const c = viewCipher();
     if (!c) return;
     const kind = c.kind || {};
-    const loginData = kind.login || kind.Login || {};
-    const cardData = kind.card || kind.Card || {};
-    const idData = kind.identity || kind.Identity || {};
+    const isTagged = typeof kind.type === "string" && kind.data !== undefined;
+    const loginData = isTagged && kind.type === "login" ? kind.data : (kind.login || kind.Login || {});
+    const cardData = isTagged && kind.type === "card" ? kind.data : (kind.card || kind.Card || {});
+    const idData = isTagged && kind.type === "identity" ? kind.data : (kind.identity || kind.Identity || {});
+    const sshData = isTagged && kind.type === "sshKey" ? kind.data : (kind.sshKey || kind.SshKey || {});
     const cipherType = c.type || "login";
     setNewCipher({
       name: c.name || "",
       cipherType,
-      username: loginData.username || idData.username || "",
-      password: loginData.password || "",
-      uris: (loginData.uris || c.uris || []).map(u => typeof u === "string" ? { uri: u, match_strategy: null } : u),
+      username: c.username || loginData.username || idData.username || "",
+      password: c.password || loginData.password || "",
+      uris: (c.uris || loginData.uris || []).map(u => typeof u === "string" ? { uri: u, match_strategy: null } : u),
       notes: c.notes || "",
       favorite: c.favorite || false,
       folder_id: c.folder_id || null,
       custom_fields: c.custom_fields || [],
-      totp_uri: loginData.totp_uri || "",
+      totp_uri: c.totp_uri || loginData.totp_uri || "",
       // Card fields
-      cardholder: cardData.cardholder_name || "",
-      cardNumber: cardData.number || "",
-      cardBrand: cardData.brand || "",
-      expMonth: cardData.exp_month || "",
-      expYear: cardData.exp_year || "",
-      cvv: cardData.code || "",
+      cardholder: c.cardholder_name || cardData.cardholder_name || "",
+      cardNumber: c.number || cardData.number || "",
+      cardBrand: c.brand || cardData.brand || "",
+      expMonth: c.exp_month || cardData.exp_month || "",
+      expYear: c.exp_year || cardData.exp_year || "",
+      cvv: c.code || cardData.code || "",
       // Identity fields
-      idTitle: idData.title || "",
-      firstName: idData.first_name || "",
-      middleName: idData.middle_name || "",
-      lastName: idData.last_name || "",
-      company: idData.company || "",
-      email: idData.email || "",
-      phone: idData.phone || "",
-      address1: idData.address1 || "",
-      address2: idData.address2 || "",
-      address3: idData.address3 || "",
-      city: idData.city || "",
-      state: idData.state || "",
-      postalCode: idData.postal_code || "",
-      country: idData.country || "",
-      ssn: idData.ssn || "",
-      passportNumber: idData.passport_number || "",
-      licenseNumber: idData.license_number || "",
+      idTitle: idData.title || c.title || "",
+      firstName: idData.first_name || c.first_name || "",
+      middleName: idData.middle_name || c.middle_name || "",
+      lastName: idData.last_name || c.last_name || "",
+      company: idData.company || c.company || "",
+      email: idData.email || c.email || "",
+      phone: idData.phone || c.phone || "",
+      address1: idData.address1 || c.address1 || "",
+      address2: idData.address2 || c.address2 || "",
+      address3: idData.address3 || c.address3 || "",
+      city: idData.city || c.city || "",
+      state: idData.state || c.state || "",
+      postalCode: idData.postal_code || c.postalCode || c.postal_code || "",
+      country: idData.country || c.country || "",
+      ssn: idData.ssn || c.ssn || "",
+      passportNumber: idData.passport_number || c.passport_number || "",
+      licenseNumber: idData.license_number || c.license_number || "",
       // SSH Key fields
-      publicKey: (kind.sshKey || kind.SshKey || {}).public_key || "",
-      privateKey: (kind.sshKey || kind.SshKey || {}).private_key || "",
-      fingerprint: (kind.sshKey || kind.SshKey || {}).key_fingerprint || "",
+      publicKey: sshData.public_key || c.public_key || "",
+      privateKey: sshData.private_key || c.private_key || "",
+      fingerprint: sshData.key_fingerprint || c.fingerprint || "",
       // Bank Account fields
       bankName: c.bank_name || "",
       nameOnAccount: c.name_on_account || "",
@@ -158,10 +160,10 @@ export default function CipherDetail() {
           </div>
           <button
             onClick={() => setActivePane("welcome")}
-            class="p-2 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-xl transition-colors cursor-pointer"
+            class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg border border-transparent hover:border-[var(--color-border)] transition-all cursor-pointer flex items-center justify-center"
             title="Close details"
           >
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
 

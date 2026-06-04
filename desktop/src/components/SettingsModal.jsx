@@ -147,9 +147,13 @@ export default function SettingsModal() {
           {/* Header */}
           <div class="p-6 pb-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
             <h3 class="text-lg font-bold text-[var(--color-text)]">App Settings</h3>
-            <button onClick={() => setShowSettingsModal(false)} class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
+            <button
+               onClick={() => setShowSettingsModal(false)}
+               class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg border border-transparent hover:border-[var(--color-border)] transition-all cursor-pointer flex items-center justify-center"
+               title="Close"
+             >
+               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+             </button>
           </div>
 
           {/* Navigation Tabs */}

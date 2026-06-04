@@ -340,10 +340,12 @@ export default function VaultView() {
               />
               <Show when={searchQuery()}>
                 <button
+                  type="button"
                   onClick={() => setSearchQuery("")}
-                  class="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-muted)] hover:text-[var(--color-text)]"
+                  class="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                  title="Clear search"
                 >
-                  ✕
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </Show>
             </div>
