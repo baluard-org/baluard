@@ -18,6 +18,7 @@ export default function AddEditCipherForm(props) {
   const [genUpper, setGenUpper] = createSignal(true);
   const [genNums, setGenNums] = createSignal(true);
   const [genSyms, setGenSyms] = createSignal(true);
+  const [showPassword, setShowPassword] = createSignal(false);
 
   // Mutable uris ref: no signal writes on keystroke.
   // Signal only updated on add/remove to re-render the list.
@@ -77,10 +78,12 @@ export default function AddEditCipherForm(props) {
             {props.isEdit ? "Edit Entry" : t("entry.addTitle")}
           </h3>
           <button 
+            type="button"
             onClick={() => setActivePane(props.isEdit ? "detail" : "welcome")} 
-            class="p-2 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-xl transition-colors cursor-pointer"
+            class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg border border-transparent hover:border-[var(--color-border)] transition-all cursor-pointer flex items-center justify-center"
+            title="Close"
           >
-            ✕
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
 
@@ -105,7 +108,22 @@ export default function AddEditCipherForm(props) {
               onClick={toggleReprompt}
               class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().reprompt ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-primary)]"}`}
             >
-              <svg class="w-5 h-5" fill={newCipher().reprompt ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+              <svg class="w-5 h-5" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  fill={newCipher().reprompt ? "currentColor" : "none"}
+                  d="M20.618 4.984A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  stroke={newCipher().reprompt ? "var(--color-primary-text)" : "currentColor"}
+                  d="M9 12l2 2 4-4"
+                />
+              </svg>
             </button>
           </div>
 
@@ -133,23 +151,38 @@ export default function AddEditCipherForm(props) {
 
             {/* Password generator */}
             <div>
-              <div class="flex items-center justify-between mb-1.5">
+              <div class="mb-1.5">
                 <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.pass")}</label>
-                <button
-                  onClick={() => { setShowGen(!showGen()); if (!newCipher().password) handleGenerate(); }}
-                  class="text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-                >
-                  {showGen() ? "Close Generator" : "Generate Password"}
-                </button>
               </div>
-              <div class="relative">
+              <div class="relative flex items-center">
                 <input
                   placeholder={t("entry.passwordPlaceholder")}
-                  type="text"
-                  class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
+                  type={showPassword() ? "text" : "password"}
+                  class="w-full pl-4 pr-44 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
                   value={newCipher().password}
                   onInput={e => setNewCipher({ ...newCipher(), password: e.target.value })}
                 />
+                <div class="absolute right-2 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword())}
+                    class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer border border-transparent hover:border-[var(--color-border)]"
+                    title={showPassword() ? "Hide password" : "Show password"}
+                  >
+                    <Show when={showPassword()} fallback={
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                    }>
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" /></svg>
+                    </Show>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowGen(!showGen()); if (!newCipher().password) handleGenerate(); }}
+                    class="px-3 py-1.5 rounded-lg text-xs font-bold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] transition-all cursor-pointer shadow-sm"
+                  >
+                    {showGen() ? "Close" : "Generate"}
+                  </button>
+                </div>
               </div>
 
               <Show when={showGen()}>
@@ -179,7 +212,14 @@ export default function AddEditCipherForm(props) {
             <div>
               <div class="flex items-center justify-between mb-1.5">
                 <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">URIs</label>
-                <button onClick={addUri} class="text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer">+ Add URI</button>
+                <button
+                  type="button"
+                  onClick={addUri}
+                  class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-sidebar)] hover:bg-[var(--color-border)] border border-[var(--color-border)] text-[var(--color-text)] transition-all cursor-pointer flex items-center gap-1"
+                >
+                  <svg class="w-3 h-3 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                  Add URI
+                </button>
               </div>
               <For each={uris()}>
                 {(uriObj, index) => (
@@ -206,16 +246,28 @@ export default function AddEditCipherForm(props) {
                       <option value="regex">Regex</option>
                       <option value="never">Never</option>
                     </select>
-                    <button onClick={() => removeUri(index())} class="p-3 text-[var(--color-muted)] hover:text-red-500 transition-colors cursor-pointer">
+                    <button
+                      type="button"
+                      onClick={() => removeUri(index())}
+                      class="px-3 py-3 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-xl border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in"
+                      title="Remove URI"
+                    >
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                   </div>
                 )}
               </For>
               <Show when={!uris().length}>
-                <button onClick={addUri} class="w-full py-3 rounded-xl bg-[var(--color-card)] border border-dashed border-[var(--color-border)] text-sm text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] transition-all cursor-pointer">
-                  + Add URI
-                </button>
+                <div class="flex justify-center p-6 rounded-xl bg-[var(--color-card)] border border-dashed border-[var(--color-border)]">
+                  <button
+                    type="button"
+                    onClick={addUri}
+                    class="px-4 py-2 rounded-lg text-xs font-bold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                    Add URI
+                  </button>
+                </div>
               </Show>
             </div>
 
@@ -636,8 +688,11 @@ export default function AddEditCipherForm(props) {
                   fieldsRef = [...fieldsRef, { name: "", value: "", field_type: "Text" }];
                   setFields([...fieldsRef]);
                 }}
-                class="text-[10px] font-bold text-[var(--color-primary)] hover:underline cursor-pointer"
-              >+ Add field</button>
+                class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-sidebar)] hover:bg-[var(--color-border)] border border-[var(--color-border)] text-[var(--color-text)] transition-all cursor-pointer flex items-center gap-1"
+              >
+                <svg class="w-3 h-3 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                Add Field
+              </button>
             </div>
             <For each={fields()}>
               {(field, i) => {
@@ -766,10 +821,10 @@ export default function AddEditCipherForm(props) {
                       fieldsRef = fieldsRef.filter((_, j) => j !== i());
                       setFields([...fieldsRef]);
                     }}
-                    class="p-1.5 rounded-lg text-red-400 hover:bg-red-950/20 cursor-pointer shrink-0"
-                    title="Remove"
+                    class="px-3 py-2 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in"
+                    title="Remove field"
                   >
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                   </button>
                 </div>
               );
