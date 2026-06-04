@@ -1,6 +1,7 @@
 import { render } from "solid-js/web";
 import { I18nProvider } from "./i18n/index.jsx";
+import { AuthProvider } from "./context/AuthContext.jsx";
 import App from "./App";
 import "./app.css";
 
-render(() => <I18nProvider><App /></I18nProvider>, document.getElementById("root"));
+render(() => <I18nProvider><AuthProvider><App /></AuthProvider></I18nProvider>, document.getElementById("root"));

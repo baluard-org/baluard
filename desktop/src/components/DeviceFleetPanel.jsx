@@ -1,16 +1,17 @@
 import { onMount, Show, For } from "solid-js";
-import { useApp } from "../context/AppContext.jsx";
+import { useVault } from "../context/VaultContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
+import { daemon } from "../lib/daemon.js";
 
 export default function DeviceFleetPanel() {
-  const app = useApp();
+  const vault = useVault();
   const { t } = useI18n();
 
   onMount(() => {
-    app.refreshDeviceFleet?.();
+    vault.refreshDeviceFleet?.();
   });
 
-  const fleet = () => app.deviceFleet() || [];
+  const fleet = () => vault.deviceFleet() || [];
 
   function getStatusBadge(lastPush) {
     if (!lastPush) return { label: "Unknown", color: "bg-slate-600", textColor: "text-slate-300" };
@@ -25,10 +26,10 @@ export default function DeviceFleetPanel() {
   async function revokeDevice(deviceId, deviceName) {
     if (!confirm(`Revoke "${deviceName}"? This will rotate vault keys. This cannot be undone.`)) return;
     try {
-      await invoke("daemon_request", { action: "device.revoke", payload: deviceId });
-      app.setRevokeWarning({ name: deviceName });
+      await daemon("device.revoke", deviceId);
+      vault.setRevokeWarning({ name: deviceName });
       // Refresh fleet to reflect revocation
-      refreshDeviceFleet();
+      vault.refreshDeviceFleet();
     } catch (e) {
       alert(`Revocation failed: ${e}. Try CLI: idtty --direct devices revoke ${deviceId}`);
     }
@@ -39,11 +40,11 @@ export default function DeviceFleetPanel() {
       <h2 class="text-xl font-extrabold text-[var(--color-text)]">Devices</h2>
       <p class="text-xs text-[var(--color-muted)]">Devices that have synced with this vault.</p>
 
-      <Show when={app.revokeWarning()}>
+      <Show when={vault.revokeWarning()}>
         <div class="p-4 rounded-xl bg-red-950/30 border border-red-900/30 space-y-3">
           <h4 class="text-xs font-bold text-red-400 uppercase tracking-wider">Device Revoked</h4>
           <p class="text-xs text-red-300 leading-relaxed">
-            <strong>{app.revokeWarning().name}</strong> has been revoked. To fully secure your vault:
+            <strong>{vault.revokeWarning().name}</strong> has been revoked. To fully secure your vault:
           </p>
           <ol class="text-xs text-red-300 list-decimal list-inside space-y-1">
             <li>Go to your GitHub/GitLab repository settings</li>
@@ -51,7 +52,7 @@ export default function DeviceFleetPanel() {
             <li>Optionally regenerate your remaining device's key</li>
           </ol>
           <label class="flex items-center gap-2 mt-3 cursor-pointer">
-            <input type="checkbox" onChange={(e) => { if (e.target.checked) app.setRevokeWarning(null); }} class="accent-red-500" />
+            <input type="checkbox" onChange={(e) => { if (e.target.checked) vault.setRevokeWarning(null); }} class="accent-red-500" />
             <span class="text-xs text-red-300">I have rotated the git credentials</span>
           </label>
         </div>
@@ -76,7 +77,7 @@ export default function DeviceFleetPanel() {
                       <svg class="w-5 h-5 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                     </div>
                     <div>
-                      <p class="text-sm font-bold text-[var(--color-text)]">{device.name} <Show when={device.id === app.selfDeviceId()}><span class="text-[10px] font-normal text-[var(--color-primary)] bg-[var(--color-primary)]/10 px-1.5 py-0.5 rounded-md ml-1">This device</span></Show></p>
+                      <p class="text-sm font-bold text-[var(--color-text)]">{device.name} <Show when={device.id === vault.selfDeviceId()}><span class="text-[10px] font-normal text-[var(--color-primary)] bg-[var(--color-primary)]/10 px-1.5 py-0.5 rounded-md ml-1">This device</span></Show></p>
                       <p class="text-xs text-[var(--color-muted)] font-mono">{device.id?.substring(0, 8)}...</p>
                     </div>
                   </div>
@@ -97,7 +98,7 @@ export default function DeviceFleetPanel() {
                   </div>
                 </div>
                 <div class="flex justify-end pt-1">
-                  <Show when={app.selfDeviceId() && device.id !== app.selfDeviceId()}>
+                  <Show when={vault.selfDeviceId() && device.id !== vault.selfDeviceId()}>
                     <button
                       onClick={() => revokeDevice(device.id, device.name)}
                       class="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 transition-all cursor-pointer"

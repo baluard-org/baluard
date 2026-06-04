@@ -1,14 +1,14 @@
 import { createSignal, Show, For } from "solid-js";
-import { useApp } from "../context/AppContext.jsx";
-import { useActions } from "../hooks/useActions.js";
 import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword } from "../lib/utils.js";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
 
 export default function AddEditCipherForm(props) {
-  const { newCipher, setNewCipher, setActivePane, viewCipher } = useApp();
-  const { addCipher, updateCipher } = useActions();
   const { t } = useI18n();
+
+  const newCipher = () => props.newCipher();
+  const setNewCipher = props.setNewCipher;
+  const setActivePane = props.setActivePane || (() => {});
 
   const cipherType = () => newCipher().cipherType || "login";
 
@@ -62,11 +62,7 @@ export default function AddEditCipherForm(props) {
   function handleSave() {
     // Sync local refs back to newCipher before saving
     setNewCipher({ ...newCipher(), uris: urisRef, custom_fields: fieldsRef });
-    if (props.isEdit) {
-      updateCipher(viewCipher().id, t);
-    } else {
-      addCipher(t);
-    }
+    props.onSave?.();
   }
 
   return (

@@ -1,6 +1,6 @@
 import { createSignal, createEffect, Show, For } from "solid-js";
-import { useApp } from "../context/AppContext.jsx";
-import { useActions } from "../hooks/useActions.js";
+import { useVault } from "../context/VaultContext.jsx";
+import { theme, setTheme } from "../context/themeSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -8,8 +8,7 @@ import { buildImportPayload, buildExportPayload, buildBiometricEnablePayload } f
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 
 export default function SettingsModal() {
-  const { showSettingsModal, setShowSettingsModal, theme, setTheme, deviceFleet, selfDeviceId, revokeWarning, setRevokeWarning } = useApp();
-  const { refreshCiphers } = useActions();
+  const vault = useVault();
   const { t } = useI18n();
 
   const [activeTab, setActiveTab] = createSignal("general"); // "general" or "data"
@@ -40,7 +39,7 @@ export default function SettingsModal() {
   ];
 
   createEffect(() => {
-    if (showSettingsModal()) {
+    if (vault.showSettingsModal()) {
       loadSettings();
       setImportSource("");
     }
@@ -109,7 +108,7 @@ export default function SettingsModal() {
         const result = JSON.parse(resp);
         setMessage(`Imported ${result.imported || 0} entries` + (result.skipped ? `, skipped ${result.skipped}` : ""));
         setImportSource("");
-        await refreshCiphers();
+        await vault.refreshCiphers(t);
       } catch (e) {
         setMessage("Import failed: " + sanitizeError(e, t));
       } finally {
@@ -141,14 +140,14 @@ export default function SettingsModal() {
   }
 
   return (
-    <Show when={showSettingsModal()}>
-      <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]" onClick={() => setShowSettingsModal(false)}>
+    <Show when={vault.showSettingsModal()}>
+      <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]" onClick={() => vault.setShowSettingsModal(false)}>
         <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[500px] max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
           {/* Header */}
           <div class="p-6 pb-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
             <h3 class="text-lg font-bold text-[var(--color-text)]">App Settings</h3>
             <button
-               onClick={() => setShowSettingsModal(false)}
+               onClick={() => vault.setShowSettingsModal(false)}
                class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg border border-transparent hover:border-[var(--color-border)] transition-all cursor-pointer flex items-center justify-center"
                title="Close"
              >

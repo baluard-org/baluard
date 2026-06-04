@@ -1,4 +1,4 @@
-import { createSignal, createContext, useContext, createEffect } from "solid-js";
+import { createSignal, createContext, useContext, onMount } from "solid-js";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { buildCreatePayload } from "../lib/payload.js";
@@ -10,8 +10,10 @@ function AuthProvider(props) {
   const [status, setStatus] = createSignal("locked");
   const [vaultInfo, setVaultInfo] = createSignal(null);
   const [biometricAvailable, setBiometricAvailable] = createSignal(false);
+  const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
+  const [createPassword, setCreatePassword] = createSignal("");
 
-  createEffect(() => {
+  onMount(() => {
     daemon("vault.biometric_status").then(r => {
       const s = JSON.parse(r);
       setBiometricAvailable(s.available && s.enabled);
@@ -49,20 +51,20 @@ function AuthProvider(props) {
   }
 
   async function createVault(t) {
-    const pw = document.querySelector('[data-create-password]')?.value;
+    const pw = createPassword();
     const confirm = document.getElementById("create-confirm")?.value;
-    if (!pw || pw.length < 8) { setError(t("create.errorMinLength")); return null; }
-    if (pw !== confirm) { setError(t("create.errorMismatch")); return null; }
+    if (!pw || pw.length < 8) { setError(t("create.errorMinLength")); return; }
+    if (pw !== confirm) { setError(t("create.errorMismatch")); return; }
+    setCreatePassword(pw);
     setStatus("creating");
     setError("");
     try {
       const result = JSON.parse(await daemon("vault.create", JSON.stringify(buildCreatePayload(pw))));
+      setRecoveryPhrase(result.recovery_phrase);
       setStatus("recovery");
-      return result.recovery_phrase;
     } catch (e) {
       setError(sanitizeError(e, t));
       setStatus("init");
-      return null;
     }
   }
 
@@ -70,6 +72,7 @@ function AuthProvider(props) {
     status, setStatus,
     vaultInfo, setVaultInfo,
     biometricAvailable,
+    recoveryPhrase, createPassword,
     setLoginPasswordRef: (r) => { loginPasswordRef = r; },
     unlock, lock, createVault,
   };
