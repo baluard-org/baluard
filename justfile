@@ -118,14 +118,25 @@ _sidecar:
 	  NEWEST_SRC=$(find crates -name '*.rs' -newer "$SIDECAR" -print -quit 2>/dev/null || true)
 	  if [ -z "$NEWEST_SRC" ]; then
 	    echo "Sidecar up-to-date (no Rust changes detected)"
-	    exit 0
+	  else
+	    {{ linuxbrew_env }} cargo build --release -p idtty-daemon -p idtty-cli
+	    cp target/release/idtty-daemon "$SIDECAR"
+	    cp target/release/idtty "desktop/src-tauri/binaries/idtty-$TRIPLE"
+	    echo "Sidecar rebuilt: $SIDECAR"
 	  fi
+	else
+	    {{ linuxbrew_env }} cargo build --release -p idtty-daemon -p idtty-cli
+	    cp target/release/idtty-daemon "$SIDECAR"
+	    cp target/release/idtty "desktop/src-tauri/binaries/idtty-$TRIPLE"
+	    echo "Sidecar rebuilt: $SIDECAR"
 	fi
 
-	{{ linuxbrew_env }} cargo build --release -p idtty-daemon -p idtty-cli
-	cp target/release/idtty-daemon "$SIDECAR"
-	cp target/release/idtty "desktop/src-tauri/binaries/idtty-$TRIPLE"
-	echo "Sidecar rebuilt: $SIDECAR"
+	# Force-refresh sidecar in tauri target/debug (tauri-build copies from binaries/
+	# to target/debug/ during compilation, but a stale cross-platform binary from
+	# another host's cargo build can cause "cannot execute binary file" on exec).
+	mkdir -p desktop/src-tauri/target/debug
+	cp "desktop/src-tauri/binaries/idtty-daemon-$TRIPLE" "desktop/src-tauri/target/debug/idtty-daemon"
+	cp "desktop/src-tauri/binaries/idtty-$TRIPLE" "desktop/src-tauri/target/debug/idtty"
 
 # Install desktop npm dependencies
 desktop-deps:

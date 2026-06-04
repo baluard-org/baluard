@@ -250,6 +250,7 @@ struct SessionToken(Mutex<Option<zeroize::Zeroizing<String>>>);
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .manage(Mutex::new(None::<Daemon>))
         .manage(SessionToken(Mutex::new(None::<zeroize::Zeroizing<String>>)))
@@ -307,21 +308,46 @@ pub fn run() {
                         .args(["--vault-path", vault_path.to_str().unwrap_or("."),
                                "--socket", default_socket_path().to_str().unwrap_or("/tmp/idtty.sock")]);
 
-                    let (_rx, child) = sidecar_command.spawn()
+                    // Spawn the daemon. We MUST keep the stdout/stderr receiver alive
+                    // — dropping it closes the pipe and the daemon can fail on EPIPE
+                    // (or, more importantly, we lose the daemon's startup error output).
+                    // Forward events to the desktop log in Tauri's async runtime.
+                    let (mut rx, child) = sidecar_command.spawn()
                         .map_err(|e| format!("Failed to start daemon: {e}"))?;
+
+                    tauri::async_runtime::spawn(async move {
+                        use tauri_plugin_shell::process::CommandEvent;
+                        while let Some(event) = rx.recv().await {
+                            match event {
+                                CommandEvent::Stdout(b) => {
+                                    log::info!("[daemon] {}", String::from_utf8_lossy(&b).trim_end());
+                                }
+                                CommandEvent::Stderr(b) => {
+                                    log::warn!("[daemon] {}", String::from_utf8_lossy(&b).trim_end());
+                                }
+                                CommandEvent::Error(e) => log::error!("[daemon] {e}"),
+                                CommandEvent::Terminated(t) => {
+                                    log::warn!("[daemon] terminated code={:?} signal={:?}", t.code, t.signal);
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                    });
 
                     let state = app.state::<Mutex<Option<Daemon>>>();
                     *state.lock().unwrap() = Some(Daemon(Some(child)));
                     log::info!("Daemon started via sidecar");
 
-                    // Wait for daemon readiness (up to 2s)
-                    for attempt in 0..20 {
+                    // Wait for daemon readiness (up to 5s — first launch may
+                    // spend time on Argon2id KDF when initializing the vault).
+                    for attempt in 0..50 {
                         if send_request("ping", "").is_ok() {
                             log::info!("Daemon ready after {}ms", attempt * 100);
                             break;
                         }
-                        if attempt == 19 {
-                            return Err("Daemon failed to start within 2s".into());
+                        if attempt == 49 {
+                            return Err("Daemon failed to start within 5s. Check logs/daemon.log and logs/desktop.log for the daemon's error output.".into());
                         }
                         std::thread::sleep(Duration::from_millis(100));
                     }
