@@ -1,8 +1,16 @@
 import { createSignal, Show, For } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword } from "../lib/utils.js";
+import { getSchema } from "../lib/cipherSchema.js";
 import { IconX, IconStar, IconEye, IconEyeOff, IconPlus } from "./Icon.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
+
+const INPUT_CLS = "w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all";
+const MONO_CLS = INPUT_CLS + " font-mono";
+
+function fieldCls(f) {
+  return (f.mono ? MONO_CLS : INPUT_CLS) + (f.type === "password" ? " " + "type-password" : "");
+}
 
 export default function AddEditCipherForm(props) {
   const { t } = useI18n();
@@ -12,6 +20,7 @@ export default function AddEditCipherForm(props) {
   const setActivePane = props.setActivePane || (() => {});
 
   const cipherType = () => newCipher().cipherType || "login";
+  const schema = () => getSchema(cipherType());
 
   // Generator states
   const [genLen, setGenLen] = createSignal(16);
@@ -22,8 +31,6 @@ export default function AddEditCipherForm(props) {
   const [showPassword, setShowPassword] = createSignal(false);
 
   // Mutable uris ref: no signal writes on keystroke.
-  // Signal only updated on add/remove to re-render the list.
-  // Synced back to newCipher on save.
   const initialUris = newCipher().uris || [];
   let urisRef = initialUris.map(u => ({ ...u }));
   const [uris, setUris] = createSignal([...urisRef]);
@@ -33,9 +40,12 @@ export default function AddEditCipherForm(props) {
   let fieldsRef = initialFields.map(f => ({ ...f }));
   const [fields, setFields] = createSignal([...fieldsRef]);
 
+  function update(key, value) {
+    setNewCipher({ ...newCipher(), [key]: value });
+  }
+
   function handleGenerate() {
-    const pw = generateSecurePassword(genLen(), genUpper(), genNums(), genSyms());
-    setNewCipher({ ...newCipher(), password: pw });
+    update("password", generateSecurePassword(genLen(), genUpper(), genNums(), genSyms()));
   }
 
   function addUri() {
@@ -52,18 +62,201 @@ export default function AddEditCipherForm(props) {
     Object.assign(urisRef[index], { [field]: value });
   }
 
-  function toggleFavorite() {
-    setNewCipher({ ...newCipher(), favorite: !newCipher().favorite });
-  }
-
-  function toggleReprompt() {
-    setNewCipher({ ...newCipher(), reprompt: !newCipher().reprompt });
-  }
-
   function handleSave() {
-    // Sync local refs back to newCipher before saving
     setNewCipher({ ...newCipher(), uris: urisRef, custom_fields: fieldsRef });
     props.onSave?.();
+  }
+
+  // ── Schema-driven field renderer ──
+
+  function renderField(f) {
+    const val = () => newCipher()[f.key] || "";
+    const cls = () => fieldCls(f);
+
+    if (f.type === "select") {
+      return (
+        <div>
+          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{f.label}</label>
+          <select class={cls()} value={val()} onChange={e => update(f.key, e.target.value)}>
+            <option value="">--</option>
+            <For each={f.options}>{o => <option value={o}>{o}</option>}</For>
+          </select>
+        </div>
+      );
+    }
+
+    if (f.type === "textarea") {
+      return (
+        <div>
+          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{f.label}</label>
+          <textarea
+            placeholder={f.placeholder || ""}
+            rows={f.rows || 4}
+            class={cls() + " resize-none"}
+            value={val()}
+            onInput={e => update(f.key, e.target.value)}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{f.label}</label>
+        <input
+          type={f.type === "password" ? "password" : f.type === "email" ? "email" : "text"}
+          placeholder={f.placeholder || ""}
+          class={cls()}
+          value={val()}
+          onInput={e => update(f.key, e.target.value)}
+        />
+      </div>
+    );
+  }
+
+  // Renders all fields for schema-driven types, respecting layout grids
+  const GRID_CLS = { 2: "grid grid-cols-2 gap-3", 3: "grid grid-cols-3 gap-3", 4: "grid grid-cols-4 gap-3" };
+
+  function renderSchemaFields() {
+    const s = schema();
+    if (!s.fields.length) return null;
+
+    const layoutRows = s.layout || [];
+    const laidOut = new Set(layoutRows.flat());
+    const standalone = s.fields.filter(f => !laidOut.has(f.key));
+
+    return (
+      <>
+        <For each={layoutRows}>
+          {row => {
+            const rowFields = row.map(k => s.fields.find(f => f.key === k)).filter(Boolean);
+            return (
+              <div class={GRID_CLS[row.length] || GRID_CLS[2]}>
+                <For each={rowFields}>{f => renderField(f)}</For>
+              </div>
+            );
+          }}
+        </For>
+        <For each={standalone}>{f => renderField(f)}</For>
+      </>
+    );
+  }
+
+  // ── Type-specific sections ──
+
+  function renderLoginFields() {
+    return (
+      <>
+        <div>
+          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.user")}</label>
+          <input placeholder={t("entry.usernamePlaceholder")} class={INPUT_CLS} value={newCipher().username} onInput={e => update("username", e.target.value)} />
+        </div>
+
+        {/* Password generator */}
+        <div>
+          <div class="mb-1.5"><label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.pass")}</label></div>
+          <div class="relative flex items-center">
+            <input placeholder={t("entry.passwordPlaceholder")} type={showPassword() ? "text" : "password"} class={MONO_CLS + " pr-44"} value={newCipher().password} onInput={e => update("password", e.target.value)} />
+            <div class="absolute right-2 flex items-center gap-1.5">
+              <button type="button" onClick={() => setShowPassword(!showPassword())} class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer border border-transparent hover:border-[var(--color-border)]" title={showPassword() ? "Hide password" : "Show password"}>
+                <Show when={showPassword()} fallback={<IconEye class="w-4 h-4" />}><IconEyeOff class="w-4 h-4" /></Show>
+              </button>
+              <button type="button" onClick={() => { setShowGen(!showGen()); if (!newCipher().password) handleGenerate(); }} class="px-3 py-1.5 rounded-lg text-xs font-bold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] transition-all cursor-pointer shadow-sm">
+                {showGen() ? "Close" : "Generate"}
+              </button>
+            </div>
+          </div>
+          <Show when={showGen()}>
+            <div class="mt-3 p-4 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-4">
+              <div class="flex items-center justify-between text-xs text-[var(--color-text)]">
+                <span>Length: <strong class="text-[var(--color-primary)] text-sm">{genLen()}</strong></span>
+                <input type="range" min="8" max="64" value={genLen()} onInput={e => { setGenLen(parseInt(e.target.value)); handleGenerate(); }} class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer" />
+              </div>
+              <div class="grid grid-cols-3 gap-2">
+                <button onClick={() => { setGenUpper(!genUpper()); handleGenerate(); }} class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${genUpper() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>A-Z</button>
+                <button onClick={() => { setGenNums(!genNums()); handleGenerate(); }} class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${genNums() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>0-9</button>
+                <button onClick={() => { setGenSyms(!genSyms()); handleGenerate(); }} class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${genSyms() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>!@#</button>
+              </div>
+              <button onClick={handleGenerate} class="w-full py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] hover:bg-[var(--color-sidebar)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer">Generate New</button>
+            </div>
+          </Show>
+        </div>
+
+        {/* Multi-URI list */}
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">URIs</label>
+            <button type="button" onClick={addUri} class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-sidebar)] hover:bg-[var(--color-border)] border border-[var(--color-border)] text-[var(--color-text)] transition-all cursor-pointer flex items-center gap-1">
+              <IconPlus class="w-3 h-3 text-[var(--color-primary)]" /> Add URI
+            </button>
+          </div>
+          <For each={uris()}>
+            {(uriObj, index) => (
+              <div class="flex gap-2 mb-2">
+                <input placeholder="https://example.com" autocapitalize="off" autocomplete="off" spellcheck="false" class={INPUT_CLS + " flex-1"} value={uriObj.uri || ""} onInput={e => updateUri(index(), "uri", e.target.value)} />
+                <select class="px-2 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-muted)] outline-none" value={uriObj.match_strategy || ""} onChange={e => updateUri(index(), "match_strategy", e.target.value || null)}>
+                  <option value="">Default</option>
+                  <option value="domain">Domain</option>
+                  <option value="host">Host</option>
+                  <option value="startsWith">Starts with</option>
+                  <option value="exact">Exact</option>
+                  <option value="regex">Regex</option>
+                  <option value="never">Never</option>
+                </select>
+                <button type="button" onClick={() => removeUri(index())} class="px-3 py-3 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-xl border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in" title="Remove URI">
+                  <IconX class="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </For>
+          <Show when={!uris().length}>
+            <div class="flex justify-center p-6 rounded-xl bg-[var(--color-card)] border border-dashed border-[var(--color-border)]">
+              <button type="button" onClick={addUri} class="px-4 py-2 rounded-lg text-xs font-bold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] transition-all cursor-pointer shadow-sm flex items-center gap-1.5">
+                <IconPlus class="w-3.5 h-3.5" /> Add URI
+              </button>
+            </div>
+          </Show>
+        </div>
+
+        <div>
+          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">TOTP URI</label>
+          <input placeholder="otpauth://totp/..." class={MONO_CLS} value={newCipher().totp_uri || ""} onInput={e => update("totp_uri", e.target.value)} />
+        </div>
+      </>
+    );
+  }
+
+  function renderCardFields() {
+    return (
+      <>
+        <CardBrandDisplay number={newCipher().cardNumber || ""} />
+        <div>
+          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Cardholder Name</label>
+          <input placeholder="Full name on card" class={INPUT_CLS} value={newCipher().cardholder_name || ""} onInput={e => update("cardholder_name", e.target.value)} />
+        </div>
+        <div>
+          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Card Number</label>
+          <input placeholder="1234 5678 9012 3456" class={MONO_CLS} value={newCipher().cardNumber || ""} onInput={e => update("cardNumber", e.target.value)} />
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Month</label>
+            <select class={INPUT_CLS} value={newCipher().expMonth || ""} onChange={e => update("expMonth", e.target.value)}>
+              <option value="">MM</option>
+              {["01","02","03","04","05","06","07","08","09","10","11","12"].map(m => <option value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Year</label>
+            <input placeholder="2028" class={MONO_CLS} value={newCipher().expYear || ""} onInput={e => update("expYear", e.target.value)} />
+          </div>
+          <div>
+            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">CVV</label>
+            <input placeholder="123" type="password" class={MONO_CLS} value={newCipher().cvv || ""} onInput={e => update("cvv", e.target.value)} />
+          </div>
+        </div>
+      </>
+    );
   }
 
   return (
@@ -74,9 +267,9 @@ export default function AddEditCipherForm(props) {
             <span class="w-3 h-3 rounded-full bg-[var(--color-primary)]"></span>
             {props.isEdit ? "Edit Entry" : t("entry.addTitle")}
           </h3>
-          <button 
+          <button
             type="button"
-            onClick={() => setActivePane(props.isEdit ? "detail" : "welcome")} 
+            onClick={() => setActivePane(props.isEdit ? "detail" : "welcome")}
             class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg border border-transparent hover:border-[var(--color-border)] transition-all cursor-pointer flex items-center justify-center"
             title="Close"
           >
@@ -88,10 +281,7 @@ export default function AddEditCipherForm(props) {
           {/* Favorite toggle */}
           <div class="flex items-center justify-between">
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">Favorite</label>
-            <button
-              onClick={toggleFavorite}
-              class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().favorite ? "text-yellow-500" : "text-[var(--color-muted)] hover:text-yellow-500"}`}
-            >
+            <button onClick={() => update("favorite", !newCipher().favorite)} class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().favorite ? "text-yellow-500" : "text-[var(--color-muted)] hover:text-yellow-500"}`}>
               <IconStar class="w-5 h-5" fill={newCipher().favorite ? "currentColor" : "none"} />
             </button>
           </div>
@@ -99,567 +289,23 @@ export default function AddEditCipherForm(props) {
           {/* Reprompt toggle */}
           <div class="flex items-center justify-between">
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">Require password to view</label>
-            <button
-              onClick={toggleReprompt}
-              class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().reprompt ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-primary)]"}`}
-            >
+            <button onClick={() => update("reprompt", !newCipher().reprompt)} class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().reprompt ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-primary)]"}`}>
               <svg class="w-5 h-5" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  fill={newCipher().reprompt ? "currentColor" : "none"}
-                  d="M20.618 4.984A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                />
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  stroke={newCipher().reprompt ? "var(--color-primary-text)" : "currentColor"}
-                  d="M9 12l2 2 4-4"
-                />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" fill={newCipher().reprompt ? "currentColor" : "none"} d="M20.618 4.984A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke={newCipher().reprompt ? "var(--color-primary-text)" : "currentColor"} d="M9 12l2 2 4-4" />
               </svg>
             </button>
           </div>
 
           <div>
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Item Name</label>
-            <input
-              placeholder={t("entry.namePlaceholder")}
-              class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
-              value={newCipher().name}
-              onInput={e => setNewCipher({ ...newCipher(), name: e.target.value })}
-            />
+            <input placeholder={t("entry.namePlaceholder")} class={INPUT_CLS} value={newCipher().name} onInput={e => update("name", e.target.value)} />
           </div>
 
-          {/* Login-specific fields */}
-          <Show when={cipherType() === "login"}>
-            <div>
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.user")}</label>
-              <input
-                placeholder={t("entry.usernamePlaceholder")}
-                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
-                value={newCipher().username}
-                onInput={e => setNewCipher({ ...newCipher(), username: e.target.value })}
-              />
-            </div>
-
-            {/* Password generator */}
-            <div>
-              <div class="mb-1.5">
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.pass")}</label>
-              </div>
-              <div class="relative flex items-center">
-                <input
-                  placeholder={t("entry.passwordPlaceholder")}
-                  type={showPassword() ? "text" : "password"}
-                  class="w-full pl-4 pr-44 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
-                  value={newCipher().password}
-                  onInput={e => setNewCipher({ ...newCipher(), password: e.target.value })}
-                />
-                <div class="absolute right-2 flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword())}
-                    class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer border border-transparent hover:border-[var(--color-border)]"
-                    title={showPassword() ? "Hide password" : "Show password"}
-                  >
-                    <Show when={showPassword()} fallback={
-                      <IconEye class="w-4 h-4" />
-                    }>
-                      <IconEyeOff class="w-4 h-4" />
-                    </Show>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowGen(!showGen()); if (!newCipher().password) handleGenerate(); }}
-                    class="px-3 py-1.5 rounded-lg text-xs font-bold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] transition-all cursor-pointer shadow-sm"
-                  >
-                    {showGen() ? "Close" : "Generate"}
-                  </button>
-                </div>
-              </div>
-
-              <Show when={showGen()}>
-                <div class="mt-3 p-4 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-4">
-                  <div class="flex items-center justify-between text-xs text-[var(--color-text)]">
-                    <span>Length: <strong class="text-[var(--color-primary)] text-sm">{genLen()}</strong></span>
-                    <input
-                      type="range"
-                      min="8"
-                      max="64"
-                      value={genLen()}
-                      onInput={(e) => { setGenLen(parseInt(e.target.value)); handleGenerate(); }}
-                      class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer"
-                    />
-                  </div>
-                  <div class="grid grid-cols-3 gap-2">
-                    <button onClick={() => { setGenUpper(!genUpper()); handleGenerate(); }} class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${genUpper() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>A-Z</button>
-                    <button onClick={() => { setGenNums(!genNums()); handleGenerate(); }} class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${genNums() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>0-9</button>
-                    <button onClick={() => { setGenSyms(!genSyms()); handleGenerate(); }} class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${genSyms() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>!@#</button>
-                  </div>
-                  <button onClick={handleGenerate} class="w-full py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] hover:bg-[var(--color-sidebar)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer">Generate New</button>
-                </div>
-              </Show>
-            </div>
-
-            {/* Multi-URI list */}
-            <div>
-              <div class="flex items-center justify-between mb-1.5">
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">URIs</label>
-                <button
-                  type="button"
-                  onClick={addUri}
-                  class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-sidebar)] hover:bg-[var(--color-border)] border border-[var(--color-border)] text-[var(--color-text)] transition-all cursor-pointer flex items-center gap-1"
-                >
-                  <IconPlus class="w-3 h-3 text-[var(--color-primary)]" />
-                  Add URI
-                </button>
-              </div>
-              <For each={uris()}>
-                {(uriObj, index) => (
-                  <div class="flex gap-2 mb-2">
-                    <input
-                      placeholder="https://example.com"
-                      autocapitalize="off"
-                      autocomplete="off"
-                      spellcheck="false"
-                      class="flex-1 px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
-                      value={uriObj.uri || ""}
-                      onInput={e => updateUri(index(), "uri", e.target.value)}
-                    />
-                    <select
-                      class="px-2 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-muted)] outline-none"
-                      value={uriObj.match_strategy || ""}
-                      onChange={e => updateUri(index(), "match_strategy", e.target.value || null)}
-                    >
-                      <option value="">Default</option>
-                      <option value="domain">Domain</option>
-                      <option value="host">Host</option>
-                      <option value="startsWith">Starts with</option>
-                      <option value="exact">Exact</option>
-                      <option value="regex">Regex</option>
-                      <option value="never">Never</option>
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => removeUri(index())}
-                      class="px-3 py-3 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-xl border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in"
-                      title="Remove URI"
-                    >
-                      <IconX class="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-              </For>
-              <Show when={!uris().length}>
-                <div class="flex justify-center p-6 rounded-xl bg-[var(--color-card)] border border-dashed border-[var(--color-border)]">
-                  <button
-                    type="button"
-                    onClick={addUri}
-                    class="px-4 py-2 rounded-lg text-xs font-bold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
-                  >
-                    <IconPlus class="w-3.5 h-3.5" />
-                    Add URI
-                  </button>
-                </div>
-              </Show>
-            </div>
-
-            {/* TOTP URI */}
-            <div>
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">TOTP URI</label>
-              <input
-                placeholder="otpauth://totp/..."
-                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
-                value={newCipher().totp_uri || ""}
-                onInput={e => setNewCipher({ ...newCipher(), totp_uri: e.target.value })}
-              />
-            </div>
-          </Show>
-
-          {/* Card fields */}
-          <Show when={cipherType() === "card"}>
-            {/* Brand auto-detect */}
-            <CardBrandDisplay number={newCipher().cardNumber || ""} />
-
-            <div>
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Cardholder Name</label>
-              <input
-                placeholder="Full name on card"
-                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
-                value={newCipher().cardholder_name || ""}
-                onInput={e => setNewCipher({ ...newCipher(), cardholder_name: e.target.value })}
-              />
-            </div>
-
-            <div>
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Card Number</label>
-              <input
-                placeholder="1234 5678 9012 3456"
-                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
-                value={newCipher().cardNumber || ""}
-                onInput={e => setNewCipher({ ...newCipher(), cardNumber: e.target.value })}
-              />
-            </div>
-
-            <div class="grid grid-cols-3 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Month</label>
-                <select
-                  class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
-                  value={newCipher().expMonth || ""}
-                  onChange={e => setNewCipher({ ...newCipher(), expMonth: e.target.value })}
-                >
-                  <option value="">MM</option>
-                  {["01","02","03","04","05","06","07","08","09","10","11","12"].map(m => <option value={m}>{m}</option>)}
-                </select>
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Year</label>
-                <input
-                  placeholder="2028"
-                  class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
-                  value={newCipher().expYear || ""}
-                  onInput={e => setNewCipher({ ...newCipher(), expYear: e.target.value })}
-                />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">CVV</label>
-                <input
-                  placeholder="123"
-                  type="password"
-                  class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
-                  value={newCipher().cvv || ""}
-                  onInput={e => setNewCipher({ ...newCipher(), cvv: e.target.value })}
-                />
-              </div>
-            </div>
-          </Show>
-
-          {/* Identity fields */}
-          <Show when={cipherType() === "identity"}>
-            <div class="grid grid-cols-4 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Title</label>
-                <select
-                  class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
-                  value={newCipher().idTitle || ""}
-                  onChange={e => setNewCipher({ ...newCipher(), idTitle: e.target.value })}
-                >
-                  <option value="">--</option>
-                  {["Mr","Mrs","Ms","Dr"].map(t => <option value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">First Name</label>
-                <input placeholder="John" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().firstName || ""} onInput={e => setNewCipher({ ...newCipher(), firstName: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Middle</label>
-                <input placeholder="A" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().middleName || ""} onInput={e => setNewCipher({ ...newCipher(), middleName: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Last Name</label>
-                <input placeholder="Doe" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().lastName || ""} onInput={e => setNewCipher({ ...newCipher(), lastName: e.target.value })} />
-              </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Username</label>
-                <input placeholder="johndoe" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().username || ""} onInput={e => setNewCipher({ ...newCipher(), username: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Company</label>
-                <input placeholder="Acme Inc" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().company || ""} onInput={e => setNewCipher({ ...newCipher(), company: e.target.value })} />
-              </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Email</label>
-                <input placeholder="john@example.com" type="email" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().email || ""} onInput={e => setNewCipher({ ...newCipher(), email: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Phone</label>
-                <input placeholder="+1 555 123 4567" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().phone || ""} onInput={e => setNewCipher({ ...newCipher(), phone: e.target.value })} />
-              </div>
-            </div>
-
-            <div>
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Address Line 1</label>
-              <input placeholder="123 Main St" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().address1 || ""} onInput={e => setNewCipher({ ...newCipher(), address1: e.target.value })} />
-            </div>
-            <div>
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Address Line 2</label>
-              <input placeholder="Apt 4B" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().address2 || ""} onInput={e => setNewCipher({ ...newCipher(), address2: e.target.value })} />
-            </div>
-            <div>
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Address Line 3</label>
-              <input placeholder="Care of" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().address3 || ""} onInput={e => setNewCipher({ ...newCipher(), address3: e.target.value })} />
-            </div>
-
-            <div class="grid grid-cols-4 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">City</label>
-                <input placeholder="New York" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().city || ""} onInput={e => setNewCipher({ ...newCipher(), city: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">State</label>
-                <input placeholder="NY" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().state || ""} onInput={e => setNewCipher({ ...newCipher(), state: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Postal</label>
-                <input placeholder="10001" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().postalCode || ""} onInput={e => setNewCipher({ ...newCipher(), postalCode: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Country</label>
-                <input placeholder="US" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().country || ""} onInput={e => setNewCipher({ ...newCipher(), country: e.target.value })} />
-              </div>
-            </div>
-
-            {/* Sensitive fields */}
-            <div class="grid grid-cols-3 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">SSN</label>
-                <input placeholder="123-45-6789" type="password" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().ssn || ""} onInput={e => setNewCipher({ ...newCipher(), ssn: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Passport #</label>
-                <input placeholder="AB1234567" type="password" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().passportNumber || ""} onInput={e => setNewCipher({ ...newCipher(), passportNumber: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">License #</label>
-                <input placeholder="D123-456-78-901" type="password" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().licenseNumber || ""} onInput={e => setNewCipher({ ...newCipher(), licenseNumber: e.target.value })} />
-              </div>
-            </div>
-          </Show>
-
-          {/* SSH Key fields */}
-          <Show when={cipherType() === "sshKey"}>
-            <div>
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Public Key</label>
-              <textarea
-                placeholder="ssh-rsa AAAA..."
-                rows="4"
-                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all resize-none font-mono"
-                value={newCipher().publicKey || ""}
-                onInput={e => setNewCipher({ ...newCipher(), publicKey: e.target.value })}
-              />
-            </div>
-            <div>
-              <div class="flex items-center justify-between mb-1.5">
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">Private Key</label>
-                <span class="text-[10px] text-[var(--color-muted)]">Hidden by default</span>
-              </div>
-              <textarea
-                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                rows="6"
-                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all resize-none font-mono"
-                value={newCipher().privateKey || ""}
-                onInput={e => setNewCipher({ ...newCipher(), privateKey: e.target.value })}
-              />
-            </div>
-            <div>
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Fingerprint</label>
-              <input
-                placeholder="SHA256:abc123..."
-                class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono"
-                value={newCipher().fingerprint || ""}
-                onInput={e => setNewCipher({ ...newCipher(), fingerprint: e.target.value })}
-              />
-            </div>
-          </Show>
-
-          {/* Bank Account fields */}
-          <Show when={cipherType() === "bankAccount"}>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Bank Name</label>
-                <input placeholder="Chase" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().bankName || ""} onInput={e => setNewCipher({ ...newCipher(), bankName: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Name on Account</label>
-                <input placeholder="John Doe" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().nameOnAccount || ""} onInput={e => setNewCipher({ ...newCipher(), nameOnAccount: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Account Type</label>
-                <select class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={newCipher().accountType || ""} onChange={e => setNewCipher({ ...newCipher(), accountType: e.target.value })}>
-                  <option value="">Select...</option>
-                  <option value="checking">Checking</option>
-                  <option value="savings">Savings</option>
-                  <option value="investment">Investment</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Account Number</label>
-                <input placeholder="123456789" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().accountNumber || ""} onInput={e => setNewCipher({ ...newCipher(), accountNumber: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Routing Number</label>
-                <input placeholder="987654321" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().routingNumber || ""} onInput={e => setNewCipher({ ...newCipher(), routingNumber: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Branch Number</label>
-                <input placeholder="001" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().branchNumber || ""} onInput={e => setNewCipher({ ...newCipher(), branchNumber: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">SWIFT Code</label>
-                <input placeholder="CHASUS33" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().swiftCode || ""} onInput={e => setNewCipher({ ...newCipher(), swiftCode: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">IBAN</label>
-                <input placeholder="US12 3456 7890" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().iban || ""} onInput={e => setNewCipher({ ...newCipher(), iban: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Bank Phone</label>
-                <input placeholder="+1 800 555 1234" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().bankPhone || ""} onInput={e => setNewCipher({ ...newCipher(), bankPhone: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">PIN</label>
-                <input placeholder="****" type="password" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().bankPin || ""} onInput={e => setNewCipher({ ...newCipher(), bankPin: e.target.value })} />
-              </div>
-            </div>
-          </Show>
-
-          {/* Driver License fields */}
-          <Show when={cipherType() === "driversLicense"}>
-            <div class="grid grid-cols-3 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">First Name</label>
-                <input placeholder="Jane" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlFirstName || ""} onInput={e => setNewCipher({ ...newCipher(), dlFirstName: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Middle</label>
-                <input placeholder="A" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlMiddleName || ""} onInput={e => setNewCipher({ ...newCipher(), dlMiddleName: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Last Name</label>
-                <input placeholder="Doe" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlLastName || ""} onInput={e => setNewCipher({ ...newCipher(), dlLastName: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Date of Birth</label>
-                <input placeholder="1990-01-15" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlDob || ""} onInput={e => setNewCipher({ ...newCipher(), dlDob: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">License Number</label>
-                <input placeholder="D55555" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().dlNumber || ""} onInput={e => setNewCipher({ ...newCipher(), dlNumber: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing Country</label>
-                <input placeholder="US" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlCountry || ""} onInput={e => setNewCipher({ ...newCipher(), dlCountry: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing State</label>
-                <input placeholder="CA" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlState || ""} onInput={e => setNewCipher({ ...newCipher(), dlState: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-3 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issue Date</label>
-                <input placeholder="2020-06-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlIssueDate || ""} onInput={e => setNewCipher({ ...newCipher(), dlIssueDate: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Expiration</label>
-                <input placeholder="2028-06-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlExpDate || ""} onInput={e => setNewCipher({ ...newCipher(), dlExpDate: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Class</label>
-                <input placeholder="C" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlClass || ""} onInput={e => setNewCipher({ ...newCipher(), dlClass: e.target.value })} />
-              </div>
-            </div>
-            <div>
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing Authority</label>
-              <input placeholder="DMV" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().dlAuthority || ""} onInput={e => setNewCipher({ ...newCipher(), dlAuthority: e.target.value })} />
-            </div>
-          </Show>
-
-          {/* Passport fields */}
-          <Show when={cipherType() === "passport"}>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Given Name</label>
-                <input placeholder="John" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppGivenName || ""} onInput={e => setNewCipher({ ...newCipher(), ppGivenName: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Surname</label>
-                <input placeholder="Doe" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppSurname || ""} onInput={e => setNewCipher({ ...newCipher(), ppSurname: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-3 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Date of Birth</label>
-                <input placeholder="1990-01-15" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppDob || ""} onInput={e => setNewCipher({ ...newCipher(), ppDob: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Sex</label>
-                <select class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={newCipher().ppSex || ""} onChange={e => setNewCipher({ ...newCipher(), ppSex: e.target.value })}>
-                  <option value="">--</option>
-                  <option value="M">M</option>
-                  <option value="F">F</option>
-                  <option value="X">X</option>
-                </select>
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Birth Place</label>
-                <input placeholder="City" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppBirthPlace || ""} onInput={e => setNewCipher({ ...newCipher(), ppBirthPlace: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Nationality</label>
-                <input placeholder="US" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppNationality || ""} onInput={e => setNewCipher({ ...newCipher(), ppNationality: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing Country</label>
-                <input placeholder="US" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppCountry || ""} onInput={e => setNewCipher({ ...newCipher(), ppCountry: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Passport Number</label>
-                <input placeholder="P1234567" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().ppNumber || ""} onInput={e => setNewCipher({ ...newCipher(), ppNumber: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Type</label>
-                <input placeholder="P" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppType || ""} onInput={e => setNewCipher({ ...newCipher(), ppType: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">National ID Number</label>
-                <input placeholder="123-45-6789" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all font-mono" value={newCipher().ppNationalId || ""} onInput={e => setNewCipher({ ...newCipher(), ppNationalId: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issuing Authority</label>
-                <input placeholder="State Department" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppAuthority || ""} onInput={e => setNewCipher({ ...newCipher(), ppAuthority: e.target.value })} />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Issue Date</label>
-                <input placeholder="2020-01-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppIssueDate || ""} onInput={e => setNewCipher({ ...newCipher(), ppIssueDate: e.target.value })} />
-              </div>
-              <div>
-                <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Expiration</label>
-                <input placeholder="2030-01-01" class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all" value={newCipher().ppExpDate || ""} onInput={e => setNewCipher({ ...newCipher(), ppExpDate: e.target.value })} />
-              </div>
-            </div>
-          </Show>
+          {/* Type-specific fields */}
+          <Show when={cipherType() === "login"}>{renderLoginFields()}</Show>
+          <Show when={cipherType() === "card"}>{renderCardFields()}</Show>
+          <Show when={cipherType() !== "login" && cipherType() !== "card"}>{renderSchemaFields()}</Show>
 
           {/* Notes (all types) */}
           <div>
@@ -667,9 +313,9 @@ export default function AddEditCipherForm(props) {
             <textarea
               placeholder={t("entry.notesPlaceholder")}
               rows={cipherType() === "secureNote" ? "8" : "4"}
-              class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all resize-none"
+              class={INPUT_CLS + " resize-none"}
               value={newCipher().notes}
-              onInput={e => setNewCipher({ ...newCipher(), notes: e.target.value })}
+              onInput={e => update("notes", e.target.value)}
             />
           </div>
 
@@ -700,37 +346,15 @@ export default function AddEditCipherForm(props) {
                 const linkedVal = () => typeof field.field_type === "object" && field.field_type?.Linked ? field.field_type.Linked : "LoginUsername";
                 return (
                 <div class="flex gap-2 mb-2 items-center">
-                  <input
-                    placeholder="Name"
-                    class="w-1/3 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
-                    value={field.name}
-                    onInput={e => {
-                      Object.assign(fieldsRef[i()], { name: e.target.value });
-                    }}
-                  />
-                  <select
-                    class="px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer"
-                    value={ft()}
-                    onChange={e => {
-                      const v = e.target.value;
-                      fieldsRef[i()] = { ...fieldsRef[i()], field_type: v === "Linked" ? { Linked: "LoginUsername" } : v };
-                      setFields([...fieldsRef]);
-                    }}
-                  >
+                  <input placeholder="Name" class="w-1/3 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.name} onInput={e => { Object.assign(fieldsRef[i()], { name: e.target.value }); }} />
+                  <select class="px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer" value={ft()} onChange={e => { const v = e.target.value; fieldsRef[i()] = { ...fieldsRef[i()], field_type: v === "Linked" ? { Linked: "LoginUsername" } : v }; setFields([...fieldsRef]); }}>
                     <option value="Text">Text</option>
                     <option value="Hidden">Hidden</option>
                     <option value="Boolean">Boolean</option>
                     <option value="Linked">Linked</option>
                   </select>
                   <Show when={ft() !== "Linked"} fallback={
-                    <select
-                      class="flex-1 px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer"
-                      value={linkedVal()}
-                      onChange={e => {
-                        fieldsRef[i()] = { ...fieldsRef[i()], field_type: { Linked: e.target.value }, value: "" };
-                        setFields([...fieldsRef]);
-                      }}
-                    >
+                    <select class="flex-1 px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer" value={linkedVal()} onChange={e => { fieldsRef[i()] = { ...fieldsRef[i()], field_type: { Linked: e.target.value }, value: "" }; setFields([...fieldsRef]); }}>
                       <optgroup label="Login">
                         <option value="LoginUsername">Username</option>
                         <option value="LoginPassword">Password</option>
@@ -801,24 +425,9 @@ export default function AddEditCipherForm(props) {
                       </optgroup>
                     </select>
                   }>
-                    <input
-                      placeholder="Value"
-                      class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
-                      value={field.value}
-                      onInput={e => {
-                        Object.assign(fieldsRef[i()], { value: e.target.value });
-                      }}
-                    />
+                    <input placeholder="Value" class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.value} onInput={e => { Object.assign(fieldsRef[i()], { value: e.target.value }); }} />
                   </Show>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      fieldsRef = fieldsRef.filter((_, j) => j !== i());
-                      setFields([...fieldsRef]);
-                    }}
-                    class="px-3 py-2 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in"
-                    title="Remove field"
-                  >
+                  <button type="button" onClick={() => { fieldsRef = fieldsRef.filter((_, j) => j !== i()); setFields([...fieldsRef]); }} class="px-3 py-2 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in" title="Remove field">
                     <IconX class="w-4 h-4" />
                   </button>
                 </div>
@@ -829,20 +438,13 @@ export default function AddEditCipherForm(props) {
         </div>
       </div>
       <div class="flex gap-3 p-8 pt-0">
-        <button
-          onClick={handleSave}
-          class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99]"
-        >
+        <button onClick={handleSave} class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99]">
           Save
         </button>
-        <button
-          onClick={() => setActivePane(props.isEdit ? "detail" : "welcome")}
-          class="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all cursor-pointer active:scale-[0.99]"
-        >
+        <button onClick={() => setActivePane(props.isEdit ? "detail" : "welcome")} class="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all cursor-pointer active:scale-[0.99]">
           Cancel
         </button>
       </div>
     </div>
   );
 }
-
