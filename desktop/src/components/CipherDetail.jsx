@@ -1,4 +1,5 @@
 import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { cipherToFlat } from "../lib/cipherSchema.js";
 import { useVault } from "../context/VaultContext.jsx";
 import { error } from "../context/errorSignal.js";
@@ -217,31 +218,40 @@ export default function CipherDetail(props) {
 
         {/* Website URI group */}
         <Show when={cipher()?.uris?.length}>
-          <div class="space-y-4 pt-2">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Website</h4>
-            <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] flex items-center justify-between group hover:border-[var(--color-primary)] transition-all">
-              <div class="min-w-0 flex-1">
-                <label class="text-[10px] text-[var(--color-muted)] font-extrabold uppercase tracking-wider block">Website URL</label>
-                <a
-                  href={(() => { const u = uriStr(cipher()?.uris?.[0]); return u.startsWith("http") ? u : `https://${u}`; })()}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="text-sm text-[var(--color-accent)] hover:underline font-semibold mt-0.5 inline-block"
-                >
-                  {uriStr(cipher()?.uris?.[0])}
-                </a>
+          {(() => {
+            const uri = () => uriStr(cipher()?.uris?.[0]);
+            const launchHref = () => { const u = uri(); return u.startsWith("http") ? u : `https://${u}`; };
+            const launch = (e) => { e.preventDefault(); openUrl(launchHref()); };
+            return (
+              <div class="space-y-4 pt-2">
+                <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Website</h4>
+                <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] flex items-center justify-between group hover:border-[var(--color-primary)] transition-all">
+                  <div class="min-w-0 flex-1">
+                    <label class="text-[10px] text-[var(--color-muted)] font-extrabold uppercase tracking-wider block">Website URL</label>
+                    <a
+                      href={launchHref()}
+                      onClick={launch}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="text-sm text-[var(--color-accent)] hover:underline font-semibold mt-0.5 inline-block"
+                    >
+                      {uri()}
+                    </a>
+                  </div>
+                  <a
+                    href={launchHref()}
+                    onClick={launch}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
+                    title="Launch website"
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                  </a>
+                </div>
               </div>
-              <a
-                href={(() => { const u = uriStr(cipher()?.uris?.[0]); return u.startsWith("http") ? u : `https://${u}`; })()}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
-                title="Launch website"
-              >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-              </a>
-            </div>
-          </div>
+            );
+          })()}
         </Show>
 
         {/* Custom Fields */}
