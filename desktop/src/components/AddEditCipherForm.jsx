@@ -1,6 +1,7 @@
 import { createSignal, Show, For } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword } from "../lib/utils.js";
+import { IconX, IconStar, IconEye, IconEyeOff, IconPlus } from "./Icon.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
 
 export default function AddEditCipherForm(props) {
@@ -79,7 +80,7 @@ export default function AddEditCipherForm(props) {
             class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg border border-transparent hover:border-[var(--color-border)] transition-all cursor-pointer flex items-center justify-center"
             title="Close"
           >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            <IconX class="w-4 h-4" />
           </button>
         </div>
 
@@ -91,9 +92,7 @@ export default function AddEditCipherForm(props) {
               onClick={toggleFavorite}
               class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().favorite ? "text-yellow-500" : "text-[var(--color-muted)] hover:text-yellow-500"}`}
             >
-              <svg class="w-5 h-5" fill={newCipher().favorite ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-              </svg>
+              <IconStar class="w-5 h-5" fill={newCipher().favorite ? "currentColor" : "none"} />
             </button>
           </div>
 
@@ -166,9 +165,9 @@ export default function AddEditCipherForm(props) {
                     title={showPassword() ? "Hide password" : "Show password"}
                   >
                     <Show when={showPassword()} fallback={
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                      <IconEye class="w-4 h-4" />
                     }>
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" /></svg>
+                      <IconEyeOff class="w-4 h-4" />
                     </Show>
                   </button>
                   <button
@@ -213,7 +212,7 @@ export default function AddEditCipherForm(props) {
                   onClick={addUri}
                   class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-sidebar)] hover:bg-[var(--color-border)] border border-[var(--color-border)] text-[var(--color-text)] transition-all cursor-pointer flex items-center gap-1"
                 >
-                  <svg class="w-3 h-3 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                  <IconPlus class="w-3 h-3 text-[var(--color-primary)]" />
                   Add URI
                 </button>
               </div>
@@ -248,7 +247,7 @@ export default function AddEditCipherForm(props) {
                       class="px-3 py-3 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-xl border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in"
                       title="Remove URI"
                     >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                      <IconX class="w-4 h-4" />
                     </button>
                   </div>
                 )}
@@ -260,7 +259,7 @@ export default function AddEditCipherForm(props) {
                     onClick={addUri}
                     class="px-4 py-2 rounded-lg text-xs font-bold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
                   >
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                    <IconPlus class="w-3.5 h-3.5" />
                     Add URI
                   </button>
                 </div>
@@ -686,7 +685,7 @@ export default function AddEditCipherForm(props) {
                 }}
                 class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-sidebar)] hover:bg-[var(--color-border)] border border-[var(--color-border)] text-[var(--color-text)] transition-all cursor-pointer flex items-center gap-1"
               >
-                <svg class="w-3 h-3 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                <IconPlus class="w-3 h-3 text-[var(--color-primary)]" />
                 Add Field
               </button>
             </div>
@@ -820,7 +819,7 @@ export default function AddEditCipherForm(props) {
                     class="px-3 py-2 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in"
                     title="Remove field"
                   >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    <IconX class="w-4 h-4" />
                   </button>
                 </div>
               );

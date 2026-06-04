@@ -1,3 +1,4 @@
+import { IconFolder } from "./Icon.jsx";
 import { createSignal, Show, For } from "solid-js";
 
 export function FolderTree(props) {
@@ -37,7 +38,7 @@ export function FolderNode(props) {
             <svg class={`w-3 h-3 transition-transform ${expanded() ? "rotate-90" : ""}`} fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
           </button>
         ) : <span class="w-4 shrink-0" />}
-        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+        <IconFolder class="w-3.5 h-3.5 shrink-0" />
         <span class="truncate">{props.node.name}</span>
       </div>
       <Show when={hasChildren() && expanded()}>

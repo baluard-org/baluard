@@ -1,10 +1,12 @@
 import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
+import { cipherToFlat } from "../lib/cipherSchema.js";
 import { useVault } from "../context/VaultContext.jsx";
 import { error } from "../context/errorSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { getCuratedColor, getDomainInitials, uriStr } from "../lib/utils.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
+import { IconX, IconCopy, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
 
@@ -55,84 +57,7 @@ export default function CipherDetail(props) {
   function startEdit() {
     const c = cipher();
     if (!c) return;
-    const kind = c.kind || {};
-    const loginData = kind.login || kind.Login || {};
-    const cardData = kind.card || kind.Card || {};
-    const idData = kind.identity || kind.Identity || {};
-    const cipherType = c.type || "login";
-    props.onEdit({
-      name: c.name || "",
-      cipherType,
-      username: loginData.username || idData.username || "",
-      password: loginData.password || "",
-      uris: (loginData.uris || c.uris || []).map(u => typeof u === "string" ? { uri: u, match_strategy: null } : u),
-      notes: c.notes || "",
-      favorite: c.favorite || false,
-      folder_id: c.folder_id || null,
-      custom_fields: c.custom_fields || [],
-      totp_uri: loginData.totp_uri || "",
-      cardholder_name: cardData.cardholder_name || "",
-      cardNumber: cardData.number || "",
-      cardBrand: cardData.brand || "",
-      expMonth: cardData.exp_month || "",
-      expYear: cardData.exp_year || "",
-      cvv: cardData.code || "",
-      idTitle: idData.title || "",
-      firstName: idData.first_name || "",
-      middleName: idData.middle_name || "",
-      lastName: idData.last_name || "",
-      company: idData.company || "",
-      email: idData.email || "",
-      phone: idData.phone || "",
-      address1: idData.address1 || "",
-      address2: idData.address2 || "",
-      address3: idData.address3 || "",
-      city: idData.city || "",
-      state: idData.state || "",
-      postalCode: idData.postal_code || "",
-      country: idData.country || "",
-      ssn: idData.ssn || "",
-      passportNumber: idData.passport_number || "",
-      licenseNumber: idData.license_number || "",
-      publicKey: (kind.sshKey || kind.SshKey || {}).public_key || "",
-      privateKey: (kind.sshKey || kind.SshKey || {}).private_key || "",
-      fingerprint: (kind.sshKey || kind.SshKey || {}).key_fingerprint || "",
-      bankName: c.bank_name || "",
-      nameOnAccount: c.name_on_account || "",
-      accountType: c.account_type || "",
-      accountNumber: c.account_number || "",
-      routingNumber: c.routing_number || "",
-      branchNumber: c.branch_number || "",
-      bankPin: c.pin || "",
-      swiftCode: c.swift_code || "",
-      iban: c.iban || "",
-      bankPhone: c.bank_contact_phone || "",
-      dlFirstName: c.first_name || "",
-      dlMiddleName: c.middle_name || "",
-      dlLastName: c.last_name || "",
-      dlDob: c.date_of_birth || "",
-      dlNumber: c.license_number || "",
-      dlCountry: c.issuing_country || "",
-      dlState: c.issuing_state || "",
-      dlIssueDate: c.issue_date || "",
-      dlExpDate: c.expiration_date || "",
-      dlAuthority: c.issuing_authority || "",
-      dlClass: c.license_class || "",
-      ppSurname: c.surname || "",
-      ppGivenName: c.given_name || "",
-      ppDob: c.date_of_birth || "",
-      ppSex: c.sex || "",
-      ppBirthPlace: c.birth_place || "",
-      ppNationality: c.nationality || "",
-      ppCountry: c.issuing_country || "",
-      ppNumber: c.passport_number || "",
-      ppType: c.passport_type || "",
-      ppNationalId: c.national_identification_number || "",
-      ppAuthority: c.issuing_authority || "",
-      ppIssueDate: c.issue_date || "",
-      ppExpDate: c.expiration_date || "",
-      reprompt: c.reprompt || false,
-    });
+    props.onEdit(cipherToFlat(c));
   }
 
   return (
@@ -155,7 +80,7 @@ export default function CipherDetail(props) {
             class="p-2 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-xl transition-colors cursor-pointer"
             title="Close details"
           >
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            <IconX class="w-6 h-6" />
           </button>
         </div>
 
@@ -185,7 +110,7 @@ export default function CipherDetail(props) {
                       title="Copy code"
                     >
                       <Show when={!totpCopied()} fallback={<span class="text-xs text-green-500">Copied</span>}>
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
+                        <IconCopy class="w-4 h-4" />
                       </Show>
                     </button>
                   </div>
@@ -382,7 +307,7 @@ export default function CipherDetail(props) {
                 return (
                   <div class="flex items-center justify-between p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
                     <div class="flex items-center gap-2 min-w-0">
-                      <svg class="w-4 h-4 text-[var(--color-muted)] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                      <IconLinkSimple class="w-4 h-4 text-[var(--color-muted)] shrink-0" />
                       <div class="min-w-0">
                         <div class="text-sm font-semibold text-[var(--color-text)] truncate">{attach.filename}</div>
                         <div class="text-[10px] text-[var(--color-muted)]">{sizeStr()}</div>
@@ -390,7 +315,7 @@ export default function CipherDetail(props) {
                     </div>
                     <div class="flex items-center gap-1 shrink-0 ml-2">
                       <button onClick={handleDownload} class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer" title="Download">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                        <IconDownload class="w-4 h-4" />
                       </button>
                     </div>
                   </div>
@@ -410,21 +335,21 @@ export default function CipherDetail(props) {
                 onClick={startEdit}
                 class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
               >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                <IconPencil class="w-4 h-4" />
                 Edit
               </button>
               <button
                 onClick={() => vault.archiveCipher(cipher().id, t)}
                 class="py-3 px-4 rounded-xl bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:bg-[var(--color-card)] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
               >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+                <IconArchive class="w-4 h-4" />
                 {t("entry.archive")}
               </button>
               <button
                 onClick={() => props.onDelete?.(cipher().id)}
                 class="py-3 px-4 rounded-xl bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
               >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                <IconTrash class="w-4 h-4" />
                 {t("entry.delete")}
               </button>
             </>
@@ -433,14 +358,14 @@ export default function CipherDetail(props) {
               onClick={() => vault.unarchiveCipher(cipher().id, t).then(() => { props.setViewCipher(null); props.setActivePane("welcome"); })}
               class="flex-1 py-3 px-4 rounded-xl bg-emerald-950/20 text-emerald-400 border border-emerald-900/30 hover:bg-emerald-950/40 font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.706 9H17"/></svg>
+              <IconRefresh class="w-4 h-4" />
               {t("entry.unarchive")}
             </button>
             <button
               onClick={() => props.onDelete?.(cipher().id)}
               class="py-3 px-4 rounded-xl bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              <IconTrash class="w-4 h-4" />
               {t("entry.delete")}
             </button>
           </Show>
@@ -449,14 +374,14 @@ export default function CipherDetail(props) {
             onClick={() => vault.restoreCipher(cipher().id, t).then(() => { props.setViewCipher(null); props.setActivePane("welcome"); })}
             class="flex-1 py-3 px-4 rounded-xl bg-emerald-950/20 text-emerald-400 border border-emerald-900/30 hover:bg-emerald-950/40 font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
           >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.706 9H17"/></svg>
+            <IconRefresh class="w-4 h-4" />
             {t("entry.restore")}
           </button>
           <button
             onClick={() => props.onDelete?.(cipher().id)}
             class="py-3 px-4 rounded-xl bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
           >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            <IconTrash class="w-4 h-4" />
             {t("entry.deletePermanently")}
           </button>
         </Show>

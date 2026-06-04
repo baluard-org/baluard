@@ -5,6 +5,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { buildImportPayload, buildExportPayload, buildBiometricEnablePayload } from "../lib/payload.js";
+import { IconX, IconMoon, IconSunFull, IconDownload } from "./Icon.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 
 export default function SettingsModal() {
@@ -151,7 +152,7 @@ export default function SettingsModal() {
                class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg border border-transparent hover:border-[var(--color-border)] transition-all cursor-pointer flex items-center justify-center"
                title="Close"
              >
-               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+               <IconX class="w-4 h-4" />
              </button>
           </div>
 
@@ -197,14 +198,14 @@ export default function SettingsModal() {
                     onClick={() => setTheme("dark")}
                     class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "dark" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
                   >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                    <IconMoon class="w-4 h-4" />
                     <span class="text-xs font-bold">Dark Mode</span>
                   </button>
                   <button
                     onClick={() => setTheme("light")}
                     class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "light" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
                   >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+                    <IconSunFull class="w-4 h-4" />
                     <span class="text-xs font-bold">Light Mode</span>
                   </button>
                 </div>
@@ -297,7 +298,7 @@ export default function SettingsModal() {
                     disabled={exporting()}
                     class="flex items-center justify-center gap-2 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
                   >
-                    <svg class="w-4 h-4 text-[var(--color-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    <IconDownload class="w-4 h-4 text-[var(--color-muted)]" />
                     JSON
                   </button>
                   <button
@@ -305,7 +306,7 @@ export default function SettingsModal() {
                     disabled={exporting()}
                     class="flex items-center justify-center gap-2 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50"
                   >
-                    <svg class="w-4 h-4 text-[var(--color-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    <IconDownload class="w-4 h-4 text-[var(--color-muted)]" />
                     CSV
                   </button>
                 </div>

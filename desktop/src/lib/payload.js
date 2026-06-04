@@ -1,3 +1,5 @@
+import { getSchema } from "./cipherSchema.js";
+
 // ── Payload builders for daemon IPC ──
 //
 // Rule: NEVER send null for fields the Rust backend expects as enum/struct.
@@ -21,132 +23,19 @@ export function buildUris(uris) {
  * Build the CipherKind tagged union object from form state.
  * { type: "login", data: { ... } }
  */
+/**
+ * Build the structured kind object from a flat cipher buffer.
+ * Uses cipherSchema.toKind for each type.
+ */
 export function buildKind(c) {
   const cipherType = c.cipherType || "login";
-
-  if (cipherType === "secureNote") {
-    return { type: "secureNote", data: {} };
+  const schema = getSchema(cipherType);
+  const kind = schema.toKind(c);
+  // Ensure login URIs use the buildUris helper for proper format
+  if (cipherType === "login" && kind.data.uris?.length) {
+    kind.data.uris = buildUris(kind.data.uris);
   }
-
-  if (cipherType === "card") {
-    return {
-      type: "card",
-      data: {
-        cardholder_name: c.cardholder_name || null,
-        number: c.cardNumber || null,
-        brand: c.cardBrand || null,
-        exp_month: c.expMonth || null,
-        exp_year: c.expYear || null,
-        code: c.cvv || null,
-      },
-    };
-  }
-
-  if (cipherType === "identity") {
-    return {
-      type: "identity",
-      data: {
-        title: c.idTitle || null,
-        first_name: c.firstName || null,
-        middle_name: c.middleName || null,
-        last_name: c.lastName || null,
-        username: c.username || null,
-        company: c.company || null,
-        email: c.email || null,
-        phone: c.phone || null,
-        address1: c.address1 || null,
-        address2: c.address2 || null,
-        address3: c.address3 || null,
-        city: c.city || null,
-        state: c.state || null,
-        postal_code: c.postalCode || null,
-        country: c.country || null,
-        ssn: c.ssn || null,
-        passport_number: c.passportNumber || null,
-        license_number: c.licenseNumber || null,
-      },
-    };
-  }
-
-  if (cipherType === "sshKey") {
-    return {
-      type: "sshKey",
-      data: {
-        public_key: c.publicKey || null,
-        private_key: c.privateKey || null,
-        key_fingerprint: c.fingerprint || null,
-      },
-    };
-  }
-
-  if (cipherType === "bankAccount") {
-    return {
-      type: "bankAccount",
-      data: {
-        bank_name: c.bankName || null,
-        name_on_account: c.nameOnAccount || null,
-        account_type: c.accountType || null,
-        account_number: c.accountNumber || null,
-        routing_number: c.routingNumber || null,
-        branch_number: c.branchNumber || null,
-        pin: c.bankPin || null,
-        swift_code: c.swiftCode || null,
-        iban: c.iban || null,
-        bank_contact_phone: c.bankPhone || null,
-      },
-    };
-  }
-
-  if (cipherType === "driversLicense") {
-    return {
-      type: "driversLicense",
-      data: {
-        first_name: c.dlFirstName || null,
-        middle_name: c.dlMiddleName || null,
-        last_name: c.dlLastName || null,
-        date_of_birth: c.dlDob || null,
-        license_number: c.dlNumber || null,
-        issuing_country: c.dlCountry || null,
-        issuing_state: c.dlState || null,
-        issue_date: c.dlIssueDate || null,
-        expiration_date: c.dlExpDate || null,
-        issuing_authority: c.dlAuthority || null,
-        license_class: c.dlClass || null,
-      },
-    };
-  }
-
-  if (cipherType === "passport") {
-    return {
-      type: "passport",
-      data: {
-        surname: c.ppSurname || null,
-        given_name: c.ppGivenName || null,
-        date_of_birth: c.ppDob || null,
-        sex: c.ppSex || null,
-        birth_place: c.ppBirthPlace || null,
-        nationality: c.ppNationality || null,
-        issuing_country: c.ppCountry || null,
-        passport_number: c.ppNumber || null,
-        passport_type: c.ppType || null,
-        national_identification_number: c.ppNationalId || null,
-        issuing_authority: c.ppAuthority || null,
-        issue_date: c.ppIssueDate || null,
-        expiration_date: c.ppExpDate || null,
-      },
-    };
-  }
-
-  // Login (default)
-  return {
-    type: "login",
-    data: {
-      username: c.username || null,
-      password: c.password || null,
-      uris: buildUris(c.uris),
-      totp_uri: c.totp_uri || null,
-    },
-  };
+  return kind;
 }
 
 /**

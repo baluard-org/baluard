@@ -6,6 +6,23 @@ import { setError } from "./errorSignal.js";
 
 const AuthContext = createContext();
 
+// Valid auth state transitions. Dev-only guard.
+const VALID_AUTH_TRANSITIONS = {
+  locked:    ["unlocking", "init"],
+  unlocking: ["unlocked", "locked"],
+  unlocked:  ["locked"],
+  init:      ["creating"],
+  creating:  ["recovery", "init"],
+  recovery:  ["init", "locked"],
+};
+
+function guardedSetStatus(setStatus, from, to) {
+  if (!VALID_AUTH_TRANSITIONS[from]?.includes(to)) {
+    console.warn(`[auth] Invalid transition: ${from} → ${to}`);
+  }
+  setStatus(to);
+}
+
 function AuthProvider(props) {
   const [status, setStatus] = createSignal("locked");
   const [vaultInfo, setVaultInfo] = createSignal(null);
@@ -25,23 +42,23 @@ function AuthProvider(props) {
   async function unlock(t) {
     const password = loginPasswordRef?.value;
     if (!password) return;
-    setStatus("unlocking");
+    guardedSetStatus(setStatus, status(), "unlocking");
     setError("");
     try {
       await daemon("vault.open");
       await daemon("vault.unlock", password);
       if (loginPasswordRef) loginPasswordRef.value = "";
-      setStatus("unlocked");
+      guardedSetStatus(setStatus, status(), "unlocked");
     } catch (e) {
       setError(sanitizeError(e, t));
-      setStatus("locked");
+      guardedSetStatus(setStatus, status(), "locked");
     }
   }
 
   async function lock(t) {
     try {
       await daemon("vault.lock");
-      setStatus("locked");
+      guardedSetStatus(setStatus, status(), "locked");
       setVaultInfo(null);
       setError("");
       // VaultProvider unmounts via <Show>. All vault signals destroyed.
@@ -56,15 +73,15 @@ function AuthProvider(props) {
     if (!pw || pw.length < 8) { setError(t("create.errorMinLength")); return; }
     if (pw !== confirm) { setError(t("create.errorMismatch")); return; }
     setCreatePassword(pw);
-    setStatus("creating");
+    guardedSetStatus(setStatus, status(), "creating");
     setError("");
     try {
       const result = JSON.parse(await daemon("vault.create", JSON.stringify(buildCreatePayload(pw))));
       setRecoveryPhrase(result.recovery_phrase);
-      setStatus("recovery");
+      guardedSetStatus(setStatus, status(), "recovery");
     } catch (e) {
       setError(sanitizeError(e, t));
-      setStatus("init");
+      guardedSetStatus(setStatus, status(), "init");
     }
   }
 
