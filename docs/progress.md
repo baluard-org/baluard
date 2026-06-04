@@ -47,7 +47,6 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | `cli/dual-mode` | Done | All commands: daemon-first + `--direct` fallback. `--socket <path>` override |
 | `desktop` | Done | SolidJS/Tailwind v4 + Tauri v2. 3-column layout, dark/light themes, tray, daemon spawn |
 | Uniform bucket padding | Done | 5 tiers (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB). Auto-selected via `Tier::fit()` |
-| `index.enc` fast lookup | Done | Encrypted lookup table. O(1) list_cipher_meta. Auto-healing on corruption |
 | Git commit signing | Done | Ed25519 signatures in commit `gpgsig` header. Verified on pull. Merge commits signed |
 | Cover commits / jitter | Done | No-op cover commits + CSPRNG-backed timing jitter on push/pull |
 | Integrity manifest | Done | Ed25519-signed checkpoints, rollback detection, bootstrap for fresh devices |
@@ -224,7 +223,7 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 
 1. **No real-time revocation**: Revoked device retains data until it pulls. Root key rotation limits damage to stale snapshot.
 2. **Git credentials out-of-band**: Revoking vault access does NOT revoke git push access. User must rotate deploy keys / PATs manually.
-3. **Metadata leakage via bucket sizes**: Standard logans mapped to 1KB, notes to 8KB, attachments to 64KB/1MB.
+3. **Metadata leakage via bucket sizes**: Standard logins mapped to 5KB, notes to 30KB/100KB, attachments to 250KB/2MB.
 4. **Offline sharing limitation**: Invites and revokes require push to remote git host.
 5. **Sync routed through daemon**: All sync commands default to daemon with `--direct` fallback.
 
@@ -265,7 +264,13 @@ idtty/
 │   ├── idtty-core/               # Rust Core: crypto, keys, vault, padding, sync, import/export, health, biometric, attachments
 │   ├── idtty-cli/                # Terminal CLI (daemon-first + --direct fallback)
 │   └── idtty-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState, auto-lock, TOTP, attachments, biometric)
-├── desktop/                      # Tauri v2 Desktop (8 cipher types, generator, TOTP, import/export, custom fields, nested folders)
+├── desktop/                      # Tauri v2 Desktop (SolidJS/Tailwind)
+│   ├── src/
+│   │   ├── components/         # 19 components (Icon.jsx, VaultView, CipherDetail, etc.)
+│   │   ├── context/             # AuthContext, VaultContext, errorSignal, themeSignal
+│   │   ├── lib/                 # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js
+│   │   ├── __tests__/           # 96 vitest tests (payload, utils, filters, cipherSchema)
+│   │   └── App.jsx               # Root component (thin provider wrapper)
 ├── docs/                         # Architecture & design docs
 ├── plans/                        # Implementation plans
 └── justfile                      # Build system

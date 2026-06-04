@@ -22,10 +22,11 @@ All cryptographic operations, Git operations (git2-rs), padding, and secret load
 To eliminate metadata leaks (website names, usernames, specific file sizes) and prevent Git merge conflicts:
 1. **Entries Folder**: Located under `entries/`. All entries are named using a random UUID hash.
 2. **Padding Engine**: Plaintext Protobuf payloads are padded with random bytes before AES-256-GCM encryption to fit exact bucket sizes:
-   - **1 KB Bucket**: Standard Logins, TOTPs, Passkeys
-   - **8 KB Bucket**: Extended Secure Notes
-   - **64 KB Bucket**: Small Attachments, Scanned IDs
-   - **1 MB Bucket**: Larger documents or media files
+   - **Xs Bucket (5 KB)**: Standard Logins
+   - **S Bucket (30 KB)**: Extended logins, TOTPs
+   - **M Bucket (100 KB)**: Extended Secure Notes
+   - **L Bucket (250 KB)**: Small Attachments, Scanned IDs
+   - **XL Bucket (2 MB)**: Larger documents or media files
 3. **Index Lookup (`index.enc`)**: An encrypted lookup table mapping human-readable metadata (URLs, Titles) to their corresponding hashed filenames under `entries/`. Decrypted on demand by idtty-core.
 
 ---
@@ -85,7 +86,7 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 
 **Decision: Unification via `HandleRequest(action, payload)`**
 
-**Current state**: Protobuf wire protocol fully implemented. Daemon compiles all 3 protos via prost-build. CLI compiles auth.proto. Length-delimited framing (varint prefix) on Unix sockets. 16 daemon routes operational.
+**Current state**: Protobuf wire protocol fully implemented. Daemon compiles all 3 protos via prost-build. CLI compiles auth.proto. Length-delimited framing (varint prefix) on Unix sockets. 30+ daemon routes operational.
 
 **Target**: All layers will communicate with idtty-core through a unified, serialized gateway interface:
 - **Input**: A single Protobuf serialized string containing the action command and its parameters.
@@ -98,7 +99,7 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 
 **Decision: Rust Daemon (Server) + CLI Client (socket) + Tauri v2 (SolidJS/Tailwind UI)**
 
-- **Rust Daemon (`idtty-daemon`)**: Started on boot by Tauri. Unlocks the vault into `zeroize`-protected memory. Listens on a platform-aware domain socket (Linux: `~/.config/idtty/idtty.sock`, macOS: `~/.config/idtty/idtty.sock`, Windows: Named Pipes) with `0600` permissions via umask before bind. Built on tokio for async I/O. Handles both SIGINT and SIGTERM for graceful shutdown. SO_PEERCRED peer UID verification on Linux. **Current state: fully implemented with 16 routes, vault state, sync, devices.**
+- **Rust Daemon (`idtty-daemon`)**: Started on boot by Tauri. Unlocks the vault into `zeroize`-protected memory. Listens on a platform-aware domain socket (Linux: `~/.config/idtty/idtty.sock`, macOS: `~/.config/idtty/idtty.sock`, Windows: Named Pipes) with `0600` permissions via umask before bind. Built on tokio for async I/O. Handles both SIGINT and SIGTERM for graceful shutdown. SO_PEERCRED peer UID verification on Linux. **Current state: fully implemented with 30+ routes, vault state, sync, devices.**
 - **CLI (`idtty-cli`)**: Dual-mode socket client. Default: serializes flags into Protobuf, transmits to daemon via Unix socket, prints response. `--direct` fallback links idtty-core in-process. `--socket <path>` for custom daemon socket. All vault, sync, and devices commands implemented.
 - **Tauri v2 UI**: SolidJS/Tailwind v4 webview. Communicates with the daemon via a `daemon_request` Tauri command that proxies Protobuf over Unix sockets. System tray with Show/Quit menu. Full cipher CRUD with 8 types (Login, Card, Identity, SSH Key, Secure Note, Bank Account, Driver's License, Passport/ID). Password generator (CSPRNG + EFF 7776-word passphrase). TOTP widget with boundary-aligned refresh. Auto-lock settings. Dark/light themes. Import/export (8 formats). Nested folders. Device fleet dashboard. Biometric unlock. **Current state: fully implemented.**
 
@@ -559,7 +560,7 @@ Device A (initiator)          Git Remote           Device B
 
 ## DOMAIN 7: FRONTEND ARCHITECTURE (SolidJS + Tauri v2)
 
-The desktop frontend is a SolidJS + Tailwind v4 app inside Tauri v2. ~3,500 lines across 18 components. All IPC via `daemon(action, payload)` through Tauri's `invoke("daemon_request")`. Request/response. No SSE, no streaming.
+The desktop frontend is a SolidJS + Tailwind v4 app inside Tauri v2. ~4,800 lines across 19 components + 3 utility modules. All IPC via `daemon(action, payload)` through Tauri's `invoke("daemon_request")`. Request/response. No SSE, no streaming.
 
 ### D10. Store Split (Completed 2026-06-04)
 
@@ -599,53 +600,31 @@ App renders:
 
 **Key principle:** If a signal is consumed by exactly one component subtree, it's local state. Context is for cross-component communication.
 
-### D11. Future Refactor Candidates
+### D11. Refactor Candidates (Completed 2026-06-04)
 
-Analyzed but not yet implemented. Priority-ordered.
+Four candidates analyzed, prioritized, and executed.
 
-#### Candidate A: Mega-Form (High priority)
+#### Candidate D: SVG Icon Component (Completed)
 
-**Cluster:** `AddEditCipherForm.jsx` (800 lines) + `lib/payload.js` + `CipherDetail.startEdit()` (~100 lines).
+Created `components/Icon.jsx` with 40+ named SVG icon exports. Migrated 67/70 inline SVGs across 12 components. Categories array in VaultView: 13 lines of SVG markup → clean named imports.
 
-8 cipher types with ~10 fields each, all in a single 800-line component. Writes into a flat `newCipher` signal with 60+ keys. The mapping between flat buffer and structured CipherKind format lives in 3 places that must agree on exact field names:
+#### Candidate B: Filter Pipeline (Completed)
 
-1. `buildKind(c)` in payload.js: flat → structured
-2. `CipherDetail.startEdit()`: structured → flat (100 lines)
-3. `AddEditCipherForm`: reads flat buffer for input values
+Created `lib/filters.js` with pure functions: `selectSource`, `filterByCategory`, `filterByFolder`, `searchCiphers`. `CATEGORY_TYPE_MAP` as single source of truth mapping UI category names to daemon cipher type strings. VaultView inline 45-line filter replaced with 6-line composed pipeline. 18 new vitest tests.
 
-**Proposed:** Typed `CipherForm` model encapsulating the mapping:
-```
-CipherForm
-  ├─ fromCipher(cipherResponse) → CipherForm   (replaces startEdit)
-  ├─ toPayload() → { name, kind, ... }          (replaces buildKind + buildAddPayload)
-  ├─ updateField(path, value)                    (replaces setNewCipher spread)
-  └─ validate() → errors[]
-```
-Each cipher type defines its own field schema. Adding a new type becomes "add a schema entry" instead of editing 3 files.
+#### Candidate C: State Transition Guards (Completed)
 
-#### Candidate B: Filter Pipeline (Medium priority)
+`VALID_AUTH_TRANSITIONS` table in AuthContext (6 states, documented valid edges including `init → locked`). `VALID_PANE_TRANSITIONS` table in VaultContext (4 states). `guardedSetStatus`/`guardedSetPane` wrap all internal state transitions. Dev-only `console.warn` on invalid transitions.
 
-**Cluster:** VaultView.jsx ~60 lines of inline filtering.
+#### Candidate A: Cipher Schema (Completed)
 
-Source selection (trash/archive/active), category filtering (hardcoded string if/else chain), folder descent (BFS through folder tree), text search (4 fields). Category-to-type mapping duplicated in VaultView, CipherRow, and CipherDetail. Zero tests.
+Created `lib/cipherSchema.js` with schemas for all 8 cipher types. Each schema defines: `fields[]`, `fromKind(structured→flat)`, `toKind(flat→structured)`. Replaced `CipherDetail.startEdit()` 80-line manual field mapping with `cipherToFlat()`. Replaced `payload.buildKind()` 100-line if/else chain with `schema.toKind()`. 14 new vitest tests including roundtrip tests for all 8 types. Single source of truth for field name mappings (was 3-file implicit contract). `AddEditCipherForm.jsx` still uses 8 `<Show>` blocks for field rendering — schema-driven form rendering is future work.
 
-**Proposed:** Extract to `lib/filters.js` as pure functions: `filterByCategory()`, `filterByFolder()`, `searchCiphers()`. Category-to-type mapping becomes a single lookup table.
+#### Future Work
 
-#### Candidate C: Screen State Machine (Medium priority)
-
-Two parallel state machines with no formal definition:
-1. **App status:** locked → unlocking → unlocked; init → creating → recovery
-2. **VaultView activePane:** welcome → detail → edit; welcome → add
-
-Transitions scattered across 8+ call sites. `lock()` already simplified by structural reset, but `activePane` transitions are still ad-hoc.
-
-**Proposed:** Explicit transition functions: `appTransition(status, event)` and `vaultTransition(pane, event)`. Invalid transitions throw in dev mode.
-
-#### Candidate D: SVG Icon Sprawl (Low priority)
-
-~200 lines of inline SVG across components. Categories array in VaultView is 60% SVG markup by line count. Same icons duplicated 2-5 times.
-
-**Proposed:** `components/Icon.jsx` with named icon components. Categories array drops from 40 to 12 lines.
+- Schema-driven form rendering: replace 8 `<Show>` blocks in AddEditCipherForm with schema-driven field iteration (would reduce ~850 lines to ~300)
+- `filteredCiphers` in VaultView could use `createMemo` for caching (called twice per render)
+- Transition guards are advisory-only — raw setters still exported for external navigation
 
 ### Frontend Constraints
 

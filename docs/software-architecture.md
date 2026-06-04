@@ -16,7 +16,7 @@ idtty/
 │   │   └── src/
 │   │       ├── crypto/         # AES-256-GCM, KDF (Argon2id), HKDF, HPKE, Ed25519, TOTP (RFC 6238)
 │   │       ├── keys/           # Key hierarchy, epochs, rotation, nonces
-│   │       ├── vault/          # Padding engine (1KB/8KB/64KB/1MB), envelope, manifest, CRUD
+│   │       ├── vault/          # Padding engine (5KB/30KB/100KB/250KB/2MB tiers), envelope, manifest, CRUD
 │   │       ├── sync/           # git2-rs sync engine, conflict auto-heal, state machine
 │   │       ├── devices.rs      # Device registry
 │   │       ├── emergency.rs    # Break-glass access
@@ -183,7 +183,7 @@ Sharing a Space relies on envelope encryption:
 When a member is removed from a Space:
 
 1. **Group Key Rotation**: idtty-core generates a brand new 256-bit Space Group Key.
-2. **Re-encryption**: idtty-core decrypts all entries under `entries/` using the old Group Key, pads them to their respective uniform buckets (1KB, 8KB, 64KB, 1MB), and re-encrypts them using the new Group Key.
+2. **Re-encryption**: idtty-core decrypts all entries under `entries/` using the old Group Key, pads them to their respective uniform buckets (5KB, 30KB, 100KB, 250KB, 2MB), and re-encrypts them using the new Group Key.
 3. **Access List Update**: idtty-core removes the revoked member's public key and entry from `metadata/access_list.json`. It re-encrypts the new Group Key for all remaining members using their public keys.
 4. **Index Rebuild**: Re-encrypts the lookup index `index.enc` with the new Group Key.
 5. **Git Push**: idtty-core commits the re-encrypted entries and the modified metadata files, then pushes the state to the Git provider. The revoked user's local instance is completely locked out of updates, and their local clone contains outdated, unreadable entries.

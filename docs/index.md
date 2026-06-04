@@ -6,7 +6,7 @@
 
 | Document | Description |
 |----------|-------------|
-| [Architecture Decisions](architecture-decisions.md) | Design rationale, tradeoffs, device fleet (DOMAIN 5), device lifecycle & rotation (DOMAIN 6) |
+| [Architecture Decisions](architecture-decisions.md) | Design rationale, tradeoffs, device fleet (DOMAIN 5), device lifecycle & rotation (DOMAIN 6), frontend architecture (DOMAIN 7) |
 | [Software Architecture](software-architecture.md) | Component diagram, data flows, IPC protocol, key lifecycle, cryptographic ceremonies |
 | [Threat Model](threat-model.md) | Adversaries, attack surfaces, mitigations |
 
@@ -20,7 +20,7 @@
 
 | Document | Description |
 |----------|-------------|
-| [Dev Setup & Workflow](dev-setup.md) | Prerequisites, platform-specific setup, build commands, testing, troubleshooting |
+| [Dev Setup & Workflow](dev-setup.md) | Prerequisites, platform-specific setup, build commands, testing (96 desktop tests), troubleshooting |
 | [Progress](progress.md) | Implementation status, review history, pending work |
 
 ## Design

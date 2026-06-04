@@ -68,7 +68,7 @@ All commands run from the project root. `just` reads the `justfile`.
 | `just build` | Debug build of all Rust crates |
 | `just build-release` | Optimized release build |
 | `just build-signed` | Release build + codesign (macOS only; no-op on Linux) |
-| `just test` | Run all tests (187 tests across suites) |
+| `just test` | Run all tests (Rust suites + 96 desktop vitest tests) |
 | `just test-core` | Run `idtty-core` tests only |
 | `just test-release` | Tests in release mode |
 | `just test-verbose` | Tests with `--nocapture` (see println output) |
@@ -106,6 +106,10 @@ crates/idtty-daemon/   # Background IPC daemon
 desktop/               # Tauri v2 + SolidJS + Tailwind
   src-tauri/           # Rust backend (sidecar daemon management)
   src/                 # SolidJS frontend
+    __tests__/          # Vitest tests (96 tests: payload, utils, filters, cipherSchema)
+    components/         # 19 components including Icon.jsx (40+ SVG icons)
+    context/            # AuthContext, VaultContext, errorSignal, themeSignal
+    lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, eff-words.js
 proto/                 # Protobuf schemas (compiled via prost)
 docs/                  # Architecture & design docs
 ```
@@ -142,7 +146,7 @@ The desktop app:
 1. Spawns `idtty-daemon` as a sidecar on startup
 2. Communicates via the same Protobuf-over-Unix-socket as the CLI
 3. Sends SIGTERM on quit (daemon zeroizes keys before exit)
-4. SolidJS frontend in `desktop/src/App.jsx`, Rust backend in `desktop/src-tauri/src/lib.rs`
+4. SolidJS frontend in `desktop/src/`, Rust backend in `desktop/src-tauri/src/lib.rs`
 
 ## Release Process
 
@@ -198,7 +202,7 @@ All commands route through the daemon by default. Use `--direct` to run in-proce
 ## Key Features
 
 - **AES-256-GCM** encryption with Argon2id key derivation
-- **Padded buckets** (1KB/8KB/64KB/1MB) prevent metadata leakage
+- **Padded buckets** (5KB/30KB/100KB/250KB/2MB tiers) prevent metadata leakage
 - **8 cipher types**: Login, Card, Identity, SSH Key, Secure Note, Bank Account, Driver's License, Passport/ID
 - **TOTP code generation** (RFC 6238, SHA1/256/512, 6/8 digits)
 - **Password generator** with CSPRNG + EFF 7776-word passphrase
