@@ -1,4 +1,5 @@
-import { createSignal, createMemo, onMount, onCleanup, Show, For } from "solid-js";
+import { createSignal, createMemo, onMount, onCleanup, Show, For, Switch, Match } from "solid-js";
+import { Transition } from "solid-transition-group";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useVault } from "../context/VaultContext.jsx";
 import { error } from "../context/errorSignal.js";
@@ -84,7 +85,7 @@ export default function VaultView() {
     <div class="flex h-full overflow-hidden">
       <DeleteConfirmModal
         viewCipher={viewCipher()}
-        showDeleteConfirm={showDeleteConfirm}
+        showDeleteConfirm={showDeleteConfirm()}
         setShowDeleteConfirm={setShowDeleteConfirm}
         selectedCategory={vault.selectedCategory()}
         onDelete={async (id) => {
@@ -92,7 +93,7 @@ export default function VaultView() {
           if (ok) { setViewCipher(null); }
         }}
       />
-      <GeneratorModal showGenerator={showGenerator} setShowGenerator={setShowGenerator} />
+      <GeneratorModal showGenerator={showGenerator()} setShowGenerator={setShowGenerator} />
       <RepromptModal />
       <SettingsModal />
 
@@ -339,51 +340,55 @@ export default function VaultView() {
           </div>
         </Show>
 
-        <Show when={vault.activePane() === "detail" && viewCipher()}>
-          <CipherDetail
-            cipher={viewCipher()}
-            onEdit={(cipherData) => { setNewCipher(cipherData); vault.setActivePane("edit"); }}
-            onClose={() => vault.setActivePane("welcome")}
-            setViewCipher={setViewCipher}
-            setActivePane={vault.setActivePane}
-            selectedCategory={vault.selectedCategory()}
-            onDelete={(id) => setShowDeleteConfirm(true)}
-          />
-        </Show>
-        <Show when={vault.activePane() === "add"}>
-          <AddEditCipherForm
-            isEdit={false}
-            newCipher={newCipher}
-            setNewCipher={setNewCipher}
-            onSave={async () => {
-              const ok = await vault.addCipher(newCipher(), t);
-              if (ok) { setNewCipher({ ...EMPTY_CIPHER }); }
-            }}
-            onCancel={() => vault.setActivePane("welcome")}
-          />
-        </Show>
-        <Show when={vault.activePane() === "edit"}>
-          <AddEditCipherForm
-            isEdit={true}
-            newCipher={newCipher}
-            setNewCipher={setNewCipher}
-            onSave={async () => {
-              const updated = await vault.updateCipher(viewCipher().id, newCipher(), t);
-              if (updated) { setViewCipher(updated); vault.setActivePane("detail"); }
-            }}
-            onCancel={() => vault.setActivePane("detail")}
-          />
-        </Show>
-        <Show when={vault.activePane() === "welcome"}>
-          <div class="flex-1 flex flex-col items-center justify-center text-[var(--color-muted)] p-8">
-            <div class="w-20 h-20 rounded-3xl bg-[var(--color-sidebar)] border border-[var(--color-border)] flex items-center justify-center text-slate-500 mb-6 shadow-inner">
-              <IconLock class="w-10 h-10 text-[var(--color-primary)] opacity-85" />
-            </div>
-            <p class="text-xs text-[var(--color-muted)] mt-2 max-w-xs text-center leading-relaxed font-semibold">
-              {t("entry.selectPrompt")}
-            </p>
-          </div>
-        </Show>
+        <Transition name="slide" mode="out-in">
+          <Switch>
+            <Match when={vault.activePane() === "detail" && viewCipher()}>
+              <CipherDetail
+                cipher={viewCipher()}
+                onEdit={(cipherData) => { setNewCipher(cipherData); vault.setActivePane("edit"); }}
+                onClose={() => vault.setActivePane("welcome")}
+                setViewCipher={setViewCipher}
+                setActivePane={vault.setActivePane}
+                selectedCategory={vault.selectedCategory()}
+                onDelete={(id) => setShowDeleteConfirm(true)}
+              />
+            </Match>
+            <Match when={vault.activePane() === "add"}>
+              <AddEditCipherForm
+                isEdit={false}
+                newCipher={newCipher}
+                setNewCipher={setNewCipher}
+                onSave={async () => {
+                  const ok = await vault.addCipher(newCipher(), t);
+                  if (ok) { setNewCipher({ ...EMPTY_CIPHER }); }
+                }}
+                onCancel={() => vault.setActivePane("welcome")}
+              />
+            </Match>
+            <Match when={vault.activePane() === "edit"}>
+              <AddEditCipherForm
+                isEdit={true}
+                newCipher={newCipher}
+                setNewCipher={setNewCipher}
+                onSave={async () => {
+                  const updated = await vault.updateCipher(viewCipher().id, newCipher(), t);
+                  if (updated) { setViewCipher(updated); vault.setActivePane("detail"); }
+                }}
+                onCancel={() => vault.setActivePane("detail")}
+              />
+            </Match>
+            <Match when={vault.activePane() === "welcome"}>
+              <div class="flex-1 flex flex-col items-center justify-center text-[var(--color-muted)] p-8">
+                <div class="w-20 h-20 rounded-3xl bg-[var(--color-sidebar)] border border-[var(--color-border)] flex items-center justify-center text-slate-500 mb-6 shadow-inner">
+                  <IconLock class="w-10 h-10 text-[var(--color-primary)] opacity-85" />
+                </div>
+                <p class="text-xs text-[var(--color-muted)] mt-2 max-w-xs text-center leading-relaxed font-semibold">
+                  {t("entry.selectPrompt")}
+                </p>
+              </div>
+            </Match>
+          </Switch>
+        </Transition>
       </div>
     </div>
   );

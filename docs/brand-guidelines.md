@@ -74,3 +74,21 @@ When adding a token, follow this checklist:
 - [ ] Added to both `:root` (dark) and `.light-theme` blocks in `app.css`
 - [ ] Documented in the tables above
 - [ ] Contrast ratio verified against the surface it sits on
+
+## Animation Guidelines
+
+Keep animations subtle, micro, and composited (relying on `opacity` and `transform`). Avoid layout-shifts and heavy JS runtimes.
+
+### Standard Conventions
+
+1. **Screen/Page Transitions**
+   - Use `<Transition name="fade" mode="out-in">` (200ms cubic-bezier).
+   - Class triggers defined in `desktop/src/app.css` under `.fade-*`.
+2. **Details & Editor Panes**
+   - Use `<Transition name="slide" mode="out-in">` (150ms cubic-bezier).
+   - Keeps side panel context changes smooth without jarring state jumps.
+3. **Modal/Dialog Overlays**
+   - Use `<Transition name="fade">` to smoothly dim screen backing and pop container.
+4. **Entrance/Welcome Animations**
+   - Use `.animate-fade-in-up` (450ms cubic-bezier(0.16, 1, 0.3, 1)) for initial screens like `LoginScreen`.
+

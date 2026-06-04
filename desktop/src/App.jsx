@@ -1,4 +1,5 @@
-import { onMount, Show } from "solid-js";
+import { onMount, Switch, Match } from "solid-js";
+import { Transition } from "solid-transition-group";
 import { useI18n } from "./i18n/index.jsx";
 import { daemon } from "./lib/daemon.js";
 import { useAuth } from "./context/AuthContext.jsx";
@@ -35,18 +36,24 @@ export default function App() {
   });
 
   return (
-    <Show when={auth.status() === "unlocked"} fallback={
-      <Show when={auth.status() === "init" || auth.status() === "creating"} fallback={
-        <Show when={auth.status() === "recovery"} fallback={<LoginScreen />}>
+    <Transition name="fade" mode="out-in">
+      <Switch>
+        <Match when={auth.status() === "unlocked"}>
+          <VaultProvider>
+            <VaultView />
+          </VaultProvider>
+        </Match>
+        <Match when={auth.status() === "init" || auth.status() === "creating"}>
+          <CreateVaultScreen />
+        </Match>
+        <Match when={auth.status() === "recovery"}>
           <RecoveryScreen />
-        </Show>
-      }>
-        <CreateVaultScreen />
-      </Show>
-    }>
-      <VaultProvider>
-        <VaultView />
-      </VaultProvider>
-    </Show>
+        </Match>
+        <Match when={true}>
+          <LoginScreen />
+        </Match>
+      </Switch>
+    </Transition>
   );
 }
+
