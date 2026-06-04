@@ -3078,7 +3078,7 @@ function FolderNode(props) {
 
 function VaultView() {
   const { ciphers, trashCiphers, archivedCiphers, vaultInfo, error, selectedCategory, setSelectedCategory, selectedFolder, setSelectedFolder, folders, searchQuery, setSearchQuery, activePane, setActivePane, viewCipher, setNewCipher, theme, setTheme, showGenerator, setShowGenerator, showSettingsModal, setShowSettingsModal } = useApp();
-  const { lock } = useActions();
+  const { lock, refreshCiphers } = useActions();
   const { t } = useI18n();
 
   const [showAddMenu, setShowAddMenu] = createSignal(false);
