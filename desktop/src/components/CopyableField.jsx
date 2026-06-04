@@ -1,6 +1,6 @@
 import { createSignal, Show } from "solid-js";
 
-import { IconEye, IconLink, IconCopy } from "./Icon.jsx";
+import { IconEye, IconEyeOff, IconCopy } from "./Icon.jsx";
 
 export default function CopyableField(props) {
   const [copied, setCopied] = createSignal(false);
@@ -33,7 +33,7 @@ export default function CopyableField(props) {
             <Show when={props.showPassword} fallback={
               <IconEye class="w-4 h-4" />
             }>
-              <IconLink class="w-4 h-4" />
+              <IconEyeOff class="w-4 h-4" />
             </Show>
           </button>
         </Show>

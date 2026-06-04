@@ -11,7 +11,7 @@ const VALID_AUTH_TRANSITIONS = {
   locked:    ["unlocking", "init"],
   unlocking: ["unlocked", "locked"],
   unlocked:  ["locked"],
-  init:      ["creating"],
+  init:      ["creating", "locked"],
   creating:  ["recovery", "init"],
   recovery:  ["init", "locked"],
 };
