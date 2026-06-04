@@ -5,14 +5,6 @@
  */
 
 /**
- * Build URI list for wire format.
- */
-function buildUris(uris) {
-  if (!uris || !uris.length) return null;
-  return uris.map(u => typeof u === "string" ? { uri: u, match_strategy: null } : u);
-}
-
-/**
  * Each schema defines:
  * - fields: array of { key, label, placeholder?, type?, mono?, sensitive?, options? }
  * - fromKind(kind): structured daemon response → flat buffer keys
@@ -371,6 +363,7 @@ export function cipherToFlat(cipher) {
     favorite: cipher.favorite || false,
     folder_id: cipher.folder_id || null,
     custom_fields: cipher.custom_fields || [],
+    attachments: cipher.attachments || [],
     reprompt: cipher.reprompt || false,
   };
 
