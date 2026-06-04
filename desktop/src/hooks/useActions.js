@@ -3,7 +3,6 @@ import { useApp } from "../context/AppContext.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { buildAddPayload, buildUpdatePayload, buildGetPayload, buildCreatePayload } from "../lib/payload.js";
-import { invoke } from "@tauri-apps/api/core";
 
 function useActions() {
   const app = useApp();
@@ -103,8 +102,7 @@ function useActions() {
 
   async function refreshDeviceFleet() {
     try {
-      const resp = await invoke("daemon_request", { action: "vault.device_activity", payload: "" });
-      const data = typeof resp === "string" ? JSON.parse(resp) : resp;
+      const data = JSON.parse(await daemon("vault.device_activity"));
       app.setDeviceFleet(data.devices || []);
       if (data.self_device_id) app.setSelfDeviceId(data.self_device_id);
     } catch (e) {
@@ -239,7 +237,7 @@ function useActions() {
     if (e.key === "Enter") unlock(useI18n().t);
   }
 
-  return { loginPasswordRef, setLoginPasswordRef: (r) => { loginPasswordRef = r; }, unlock, lock, createVault, refreshCiphers, addCipher, updateCipher, getCipher, deleteCipher, restoreCipher, archiveCipher, unarchiveCipher, onKeyUnlock, refreshDeviceFleet };
+  return { setLoginPasswordRef: (r) => { loginPasswordRef = r; }, unlock, lock, createVault, refreshCiphers, addCipher, updateCipher, getCipher, deleteCipher, restoreCipher, archiveCipher, unarchiveCipher, onKeyUnlock, refreshDeviceFleet };
 }
 
 export { useActions };

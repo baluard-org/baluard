@@ -242,7 +242,7 @@ export default function AddEditCipherForm(props) {
                 placeholder="Full name on card"
                 class="w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
                 value={newCipher().cardholder_name || ""}
-                onInput={e => setNewCipher({ ...newCipher(), cardholder: e.target.value })}
+                onInput={e => setNewCipher({ ...newCipher(), cardholder_name: e.target.value })}
               />
             </div>
 
