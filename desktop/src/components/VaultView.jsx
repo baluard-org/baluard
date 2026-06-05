@@ -332,9 +332,9 @@ export default function VaultView() {
       </div>
 
       {/* Column 3: Main Details / Edit Panel */}
-      <div class="flex-1 bg-[var(--color-detail)] flex flex-col min-w-0">
+      <div class="flex-1 bg-[var(--color-detail)] flex flex-col min-w-0 relative">
         <Show when={error()}>
-          <div class="m-6 p-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300 text-sm shrink-0 flex items-center gap-2">
+          <div class="absolute top-4 left-4 right-4 z-10 p-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300 text-sm flex items-center gap-2 animate-fade-in-up shadow-lg">
             <IconAlert class="w-5 h-5 shrink-0 text-red-400" />
             {error()}
           </div>
