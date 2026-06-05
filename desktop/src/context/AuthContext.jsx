@@ -2,6 +2,7 @@ import { createSignal, createContext, useContext, onMount } from "solid-js";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { buildCreatePayload } from "../lib/payload.js";
+import { startVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { setError } from "./errorSignal.js";
 
 const AuthContext = createContext();
@@ -46,8 +47,10 @@ function AuthProvider(props) {
     setError("");
     try {
       await daemon("vault.open");
-      await daemon("vault.unlock", password);
+      const infoStr = await daemon("vault.unlock", password);
       if (loginPasswordRef) loginPasswordRef.value = "";
+      try { setVaultInfo(JSON.parse(infoStr)); } catch {}
+      startVaultPrefetch();
       guardedSetStatus(setStatus, status(), "unlocked");
     } catch (e) {
       setError(sanitizeError(e, t));

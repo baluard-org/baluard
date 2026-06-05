@@ -150,6 +150,7 @@ fn err_response(msg: impl Into<String>) -> GatewayResponse {
 /// ensure_unlocked_daemon() which runs before the token is available.
 const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.list",
+    "vault.list_full",
     "vault.get",
     "vault.add",
     "vault.update",
@@ -271,6 +272,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 let json = serde_json::json!({"ciphers": metas});
                 ok_resp(json.to_string(), token_str)
             }
+            Err(e) => err_response(e),
+        },
+
+        "vault.list_full" => match state.list_all().await {
+            Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
 

@@ -2,6 +2,7 @@ import { createSignal, createContext, useContext } from "solid-js";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { buildAddPayload, buildUpdatePayload, buildGetPayload } from "../lib/payload.js";
+import { consumeVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { setError } from "./errorSignal.js";
 
 const VaultContext = createContext();
@@ -50,57 +51,18 @@ function VaultProvider(props) {
 
   // ── Data fetchers ──
 
-  async function refreshTrashCiphers() {
-    try {
-      const data = JSON.parse(await daemon("vault.trash.list"));
-      const ids = data.cipher_ids || [];
-      const full = await Promise.all(
-        ids.map(async (id) => {
-          try {
-            return JSON.parse(await daemon("vault.get", JSON.stringify(buildGetPayload(id))));
-          } catch { return { id, name: "Decryption Error", username: "", uris: [] }; }
-        })
-      );
-      setTrashCiphers(full);
-    } catch { /* non-critical */ }
-  }
-
-  async function refreshArchivedCiphers() {
-    try {
-      const data = JSON.parse(await daemon("vault.list_archived"));
-      const metas = data.ciphers || [];
-      const full = await Promise.all(
-        metas.map(async (meta) => {
-          try {
-            return JSON.parse(await daemon("vault.get", JSON.stringify(buildGetPayload(meta.id))));
-          } catch { return { id: meta.id, name: "Decryption Error", username: "", uris: [] }; }
-        })
-      );
-      setArchivedCiphers(full);
-    } catch { /* non-critical */ }
-  }
-
   async function refreshCiphers(t) {
     try {
-      const data = JSON.parse(await daemon("vault.list"));
-      const metas = data.ciphers || [];
-      const full = await Promise.all(
-        metas.map(async (meta) => {
-          try {
-            const detailStr = await daemon("vault.get", JSON.stringify(buildGetPayload(meta.id)));
-            return { ...JSON.parse(detailStr), _meta: meta };
-          } catch { return { ...meta, name: meta.name || "Decryption Error", username: "", uris: [] }; }
-        })
-      );
-      setCiphers(full);
+      const prefetch = consumeVaultPrefetch();
+      const data = prefetch
+        ? (await prefetch)
+        : JSON.parse(await daemon("vault.list_full"));
 
-      try {
-        const folderData = JSON.parse(await daemon("folder.list"));
-        setFolders(Array.isArray(folderData) ? folderData : []);
-      } catch {}
-
-      await refreshTrashCiphers();
-      await refreshArchivedCiphers();
+      if (!data) throw new Error("empty response");
+      setCiphers(data.ciphers || []);
+      setFolders(Array.isArray(data.folders) ? data.folders : []);
+      setTrashCiphers(data.trash || []);
+      setArchivedCiphers(data.archived || []);
     } catch (e) {
       setError(sanitizeError(e, t));
     }
@@ -182,7 +144,7 @@ function VaultProvider(props) {
       await daemon("vault.archive", id);
       guardedSetPane(setActivePane, activePane(), "welcome");
       await refreshCiphers(t);
-      // refreshCiphers already calls refreshArchivedCiphers internally
+      // refreshCiphers fetches everything via vault.list_full batch call
       return true;
     } catch (e) {
       setError(sanitizeError(e, t));
@@ -195,7 +157,7 @@ function VaultProvider(props) {
       await daemon("vault.unarchive", id);
       guardedSetPane(setActivePane, activePane(), "welcome");
       await refreshCiphers(t);
-      // refreshCiphers already calls refreshArchivedCiphers internally
+      // refreshCiphers fetches everything via vault.list_full batch call
       return true;
     } catch (e) {
       setError(sanitizeError(e, t));
