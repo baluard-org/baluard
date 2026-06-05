@@ -15,7 +15,7 @@
         "title": "IDtty",
         "width": 1000,
         "height": 700,
-        "minWidth": 700,
+        "minWidth": 900,
         "minHeight": 400,
         "resizable": true,
         "fullscreen": false
