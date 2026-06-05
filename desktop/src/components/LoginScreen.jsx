@@ -20,9 +20,9 @@ export default function LoginScreen() {
       <ThemeToggleFloating />
 
       <div class="w-full max-w-md p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative overflow-hidden transition-all-fast animate-fade-in-up">
-        {/* Glow accents */}
-        <div class="absolute -top-10 -left-10 w-40 h-40 bg-[var(--color-primary)] rounded-full blur-3xl opacity-10 pointer-events-none"></div>
-        <div class="absolute -bottom-10 -right-10 w-40 h-40 bg-[var(--color-accent)] rounded-full blur-3xl opacity-10 pointer-events-none"></div>
+        {/* Static gradient accents (contained glow, replaces expensive blur-3xl for GPU performance) */}
+        <div class="absolute -top-10 -left-10 w-40 h-40 rounded-full opacity-10 pointer-events-none" style={{"background": "radial-gradient(circle, var(--color-primary) 0%, transparent 70%)"}}></div>
+        <div class="absolute -bottom-10 -right-10 w-40 h-40 rounded-full opacity-10 pointer-events-none" style={{"background": "radial-gradient(circle, var(--color-accent) 0%, transparent 70%)"}}></div>
 
         <div class="text-center mb-8">
           <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-tr from-[var(--color-sidebar)] to-[var(--color-border)] border border-[var(--color-border)] flex items-center justify-center shadow-lg">

@@ -30,12 +30,8 @@ export default function VaultView() {
   const [showGenerator, setShowGenerator] = createSignal(false);
   const [showAddMenu, setShowAddMenu] = createSignal(false);
 
-  // Init: load vault info + ciphers on first mount
+  // Init: load ciphers on first mount
   onMount(async () => {
-    try {
-      const info = JSON.parse(await daemon("vault.info"));
-      auth.setVaultInfo(info);
-    } catch {}
     await vault.refreshCiphers(t);
   });
 

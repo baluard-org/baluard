@@ -186,6 +186,78 @@ impl VaultState {
         handle.list_cipher_meta().map_err(|e| format!("{e}"))
     }
 
+    /// Batch-fetch all decrypted ciphers, folders, trash, and archived items.
+    /// Returns a single JSON blob to eliminate N+1 IPC round-trips from the frontend.
+    pub async fn list_all(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+
+        // Folders
+        let folders = handle.list_folders().map_err(|e| format!("{e}"))?;
+
+        // Main ciphers (excludes archived)
+        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
+        let mut ciphers = Vec::with_capacity(metas.len());
+        for meta in &metas {
+            match handle.get_cipher(meta.id) {
+                Ok(CipherRead::Decrypted(ref c)) => {
+                    let mut json = cipher_to_json(c);
+                    json["_meta"] = serde_json::json!({
+                        "id": meta.id.to_string(),
+                        "name": meta.name,
+                        "cipher_type": meta.cipher_type,
+                        "favorite": meta.favorite,
+                        "username": meta.username,
+                    });
+                    ciphers.push(json);
+                }
+                _ => continue,
+            }
+        }
+
+        // Trash
+        let trash_ids = handle.list_trash_ids().map_err(|e| format!("{e}"))?;
+        let mut trash = Vec::with_capacity(trash_ids.len());
+        for id in &trash_ids {
+            match handle.get_cipher(*id) {
+                Ok(CipherRead::Decrypted(ref c)) => trash.push(cipher_to_json(c)),
+                _ => continue,
+            }
+        }
+
+        // Archived
+        let archived_metas = handle.list_archived_meta().map_err(|e| format!("{e}"))?;
+        let mut archived = Vec::with_capacity(archived_metas.len());
+        for meta in &archived_metas {
+            match handle.get_cipher(meta.id) {
+                Ok(CipherRead::Decrypted(ref c)) => {
+                    let mut json = cipher_to_json(c);
+                    json["_meta"] = serde_json::json!({
+                        "id": meta.id.to_string(),
+                        "name": meta.name,
+                        "cipher_type": meta.cipher_type,
+                        "favorite": meta.favorite,
+                        "username": meta.username,
+                    });
+                    archived.push(json);
+                }
+                _ => continue,
+            }
+        }
+
+        let result = serde_json::json!({
+            "ciphers": ciphers,
+            "folders": folders,
+            "trash": trash,
+            "archived": archived,
+        });
+        serde_json::to_string(&result).map_err(|e| format!("Serialization: {e}"))
+    }
+
     /// Get a cipher by ID. Requires vault to be unlocked for decryption.
     pub async fn get_cipher(&self, id_str: &str, decrypt: bool) -> Result<String, String> {
         let guard = self.inner.read().await;
@@ -197,109 +269,7 @@ impl VaultState {
 
         match result {
             idtty_core::vault::handle::CipherRead::Decrypted(c) => {
-                let mut json = serde_json::json!({
-                    "id": c.id.to_string(),
-                    "name": c.name,
-                    "type": serde_json::to_value(c.kind.cipher_type()).unwrap_or(serde_json::Value::Null),
-                    "favorite": c.favorite,
-                    "reprompt": c.reprompt,
-                    "notes": c.notes,
-                    "tier": format!("{:?}", c.tier),
-                    "epoch": c.key_epoch,
-                    "seq": c.update_seq,
-                    "folder_id": c.folder_id,
-                    "created_at": c.created_at,
-                    "updated_at": c.updated_at,
-                    "password_history": c.password_history,
-                    "attachments": c.attachments,
-                    "custom_fields": c.custom_fields,
-                });
-                // Emit kind as nested object matching CipherKind serde format
-                json["kind"] = serde_json::to_value(&c.kind).unwrap_or(serde_json::Value::Null);
-                // Also emit flat top-level fields for backward compat
-                match &c.kind {
-                    idtty_core::types::CipherKind::Login(data) => {
-                        json["username"] = serde_json::json!(data.username);
-                        json["password"] = serde_json::json!(data.password);
-                        json["uris"] = serde_json::json!(data.uris);
-                        json["totp"] = serde_json::json!(data.totp_uri);
-                    }
-                    idtty_core::types::CipherKind::Card(data) => {
-                        json["cardholder_name"] = serde_json::json!(data.cardholder_name);
-                        json["brand"] = serde_json::json!(data.brand);
-                        json["number"] = serde_json::json!(data.number);
-                        json["exp_month"] = serde_json::json!(data.exp_month);
-                        json["exp_year"] = serde_json::json!(data.exp_year);
-                        json["code"] = serde_json::json!(data.code);
-                    }
-                    idtty_core::types::CipherKind::Identity(data) => {
-                        json["title"] = serde_json::json!(data.title);
-                        json["first_name"] = serde_json::json!(data.first_name);
-                        json["middle_name"] = serde_json::json!(data.middle_name);
-                        json["last_name"] = serde_json::json!(data.last_name);
-                        json["username"] = serde_json::json!(data.username);
-                        json["company"] = serde_json::json!(data.company);
-                        json["email"] = serde_json::json!(data.email);
-                        json["phone"] = serde_json::json!(data.phone);
-                        json["address1"] = serde_json::json!(data.address1);
-                        json["address2"] = serde_json::json!(data.address2);
-                        json["address3"] = serde_json::json!(data.address3);
-                        json["city"] = serde_json::json!(data.city);
-                        json["state"] = serde_json::json!(data.state);
-                        json["postal_code"] = serde_json::json!(data.postal_code);
-                        json["country"] = serde_json::json!(data.country);
-                        json["ssn"] = serde_json::json!(data.ssn);
-                        json["passport_number"] = serde_json::json!(data.passport_number);
-                        json["license_number"] = serde_json::json!(data.license_number);
-                    }
-                    idtty_core::types::CipherKind::SshKey(data) => {
-                        json["public_key"] = serde_json::json!(data.public_key);
-                        json["private_key"] = serde_json::json!(data.private_key);
-                        json["fingerprint"] = serde_json::json!(data.key_fingerprint);
-                    }
-                    idtty_core::types::CipherKind::BankAccount(data) => {
-                        json["bank_name"] = serde_json::json!(data.bank_name);
-                        json["name_on_account"] = serde_json::json!(data.name_on_account);
-                        json["account_type"] = serde_json::json!(data.account_type);
-                        json["account_number"] = serde_json::json!(data.account_number);
-                        json["routing_number"] = serde_json::json!(data.routing_number);
-                        json["branch_number"] = serde_json::json!(data.branch_number);
-                        json["pin"] = serde_json::json!(data.pin);
-                        json["swift_code"] = serde_json::json!(data.swift_code);
-                        json["iban"] = serde_json::json!(data.iban);
-                        json["bank_contact_phone"] = serde_json::json!(data.bank_contact_phone);
-                    }
-                    idtty_core::types::CipherKind::DriversLicense(data) => {
-                        json["first_name"] = serde_json::json!(data.first_name);
-                        json["middle_name"] = serde_json::json!(data.middle_name);
-                        json["last_name"] = serde_json::json!(data.last_name);
-                        json["date_of_birth"] = serde_json::json!(data.date_of_birth);
-                        json["license_number"] = serde_json::json!(data.license_number);
-                        json["issuing_country"] = serde_json::json!(data.issuing_country);
-                        json["issuing_state"] = serde_json::json!(data.issuing_state);
-                        json["issue_date"] = serde_json::json!(data.issue_date);
-                        json["expiration_date"] = serde_json::json!(data.expiration_date);
-                        json["issuing_authority"] = serde_json::json!(data.issuing_authority);
-                        json["license_class"] = serde_json::json!(data.license_class);
-                    }
-                    idtty_core::types::CipherKind::Passport(data) => {
-                        json["surname"] = serde_json::json!(data.surname);
-                        json["given_name"] = serde_json::json!(data.given_name);
-                        json["date_of_birth"] = serde_json::json!(data.date_of_birth);
-                        json["sex"] = serde_json::json!(data.sex);
-                        json["birth_place"] = serde_json::json!(data.birth_place);
-                        json["nationality"] = serde_json::json!(data.nationality);
-                        json["issuing_country"] = serde_json::json!(data.issuing_country);
-                        json["passport_number"] = serde_json::json!(data.passport_number);
-                        json["passport_type"] = serde_json::json!(data.passport_type);
-                        json["national_identification_number"] = serde_json::json!(data.national_identification_number);
-                        json["issuing_authority"] = serde_json::json!(data.issuing_authority);
-                        json["issue_date"] = serde_json::json!(data.issue_date);
-                        json["expiration_date"] = serde_json::json!(data.expiration_date);
-                    }
-                    idtty_core::types::CipherKind::SecureNote => {}
-                }
-                Ok(json.to_string())
+                Ok(cipher_to_json(&c).to_string())
             }
             idtty_core::vault::handle::CipherRead::Locked(info) => {
                 if decrypt {
@@ -1283,6 +1253,111 @@ impl VaultState {
 
 /// Shared vault state type.
 pub type SharedVaultState = Arc<VaultState>;
+
+/// Serialize a decrypted cipher to JSON, matching the format returned by `get_cipher`.
+fn cipher_to_json(c: &idtty_core::types::Cipher) -> serde_json::Value {
+    let mut json = serde_json::json!({
+        "id": c.id.to_string(),
+        "name": c.name,
+        "type": serde_json::to_value(c.kind.cipher_type()).unwrap_or(serde_json::Value::Null),
+        "favorite": c.favorite,
+        "reprompt": c.reprompt,
+        "notes": c.notes,
+        "tier": format!("{:?}", c.tier),
+        "epoch": c.key_epoch,
+        "seq": c.update_seq,
+        "folder_id": c.folder_id,
+        "created_at": c.created_at,
+        "updated_at": c.updated_at,
+        "password_history": c.password_history,
+        "attachments": c.attachments,
+        "custom_fields": c.custom_fields,
+    });
+    json["kind"] = serde_json::to_value(&c.kind).unwrap_or(serde_json::Value::Null);
+    match &c.kind {
+        idtty_core::types::CipherKind::Login(data) => {
+            json["username"] = serde_json::json!(data.username);
+            json["password"] = serde_json::json!(data.password);
+            json["uris"] = serde_json::json!(data.uris);
+            json["totp"] = serde_json::json!(data.totp_uri);
+        }
+        idtty_core::types::CipherKind::Card(data) => {
+            json["cardholder_name"] = serde_json::json!(data.cardholder_name);
+            json["brand"] = serde_json::json!(data.brand);
+            json["number"] = serde_json::json!(data.number);
+            json["exp_month"] = serde_json::json!(data.exp_month);
+            json["exp_year"] = serde_json::json!(data.exp_year);
+            json["code"] = serde_json::json!(data.code);
+        }
+        idtty_core::types::CipherKind::Identity(data) => {
+            json["title"] = serde_json::json!(data.title);
+            json["first_name"] = serde_json::json!(data.first_name);
+            json["middle_name"] = serde_json::json!(data.middle_name);
+            json["last_name"] = serde_json::json!(data.last_name);
+            json["username"] = serde_json::json!(data.username);
+            json["company"] = serde_json::json!(data.company);
+            json["email"] = serde_json::json!(data.email);
+            json["phone"] = serde_json::json!(data.phone);
+            json["address1"] = serde_json::json!(data.address1);
+            json["address2"] = serde_json::json!(data.address2);
+            json["address3"] = serde_json::json!(data.address3);
+            json["city"] = serde_json::json!(data.city);
+            json["state"] = serde_json::json!(data.state);
+            json["postal_code"] = serde_json::json!(data.postal_code);
+            json["country"] = serde_json::json!(data.country);
+            json["ssn"] = serde_json::json!(data.ssn);
+            json["passport_number"] = serde_json::json!(data.passport_number);
+            json["license_number"] = serde_json::json!(data.license_number);
+        }
+        idtty_core::types::CipherKind::SshKey(data) => {
+            json["public_key"] = serde_json::json!(data.public_key);
+            json["private_key"] = serde_json::json!(data.private_key);
+            json["fingerprint"] = serde_json::json!(data.key_fingerprint);
+        }
+        idtty_core::types::CipherKind::BankAccount(data) => {
+            json["bank_name"] = serde_json::json!(data.bank_name);
+            json["name_on_account"] = serde_json::json!(data.name_on_account);
+            json["account_type"] = serde_json::json!(data.account_type);
+            json["account_number"] = serde_json::json!(data.account_number);
+            json["routing_number"] = serde_json::json!(data.routing_number);
+            json["branch_number"] = serde_json::json!(data.branch_number);
+            json["pin"] = serde_json::json!(data.pin);
+            json["swift_code"] = serde_json::json!(data.swift_code);
+            json["iban"] = serde_json::json!(data.iban);
+            json["bank_contact_phone"] = serde_json::json!(data.bank_contact_phone);
+        }
+        idtty_core::types::CipherKind::DriversLicense(data) => {
+            json["first_name"] = serde_json::json!(data.first_name);
+            json["middle_name"] = serde_json::json!(data.middle_name);
+            json["last_name"] = serde_json::json!(data.last_name);
+            json["date_of_birth"] = serde_json::json!(data.date_of_birth);
+            json["license_number"] = serde_json::json!(data.license_number);
+            json["issuing_country"] = serde_json::json!(data.issuing_country);
+            json["issuing_state"] = serde_json::json!(data.issuing_state);
+            json["issue_date"] = serde_json::json!(data.issue_date);
+            json["expiration_date"] = serde_json::json!(data.expiration_date);
+            json["issuing_authority"] = serde_json::json!(data.issuing_authority);
+            json["license_class"] = serde_json::json!(data.license_class);
+        }
+        idtty_core::types::CipherKind::Passport(data) => {
+            json["surname"] = serde_json::json!(data.surname);
+            json["given_name"] = serde_json::json!(data.given_name);
+            json["date_of_birth"] = serde_json::json!(data.date_of_birth);
+            json["sex"] = serde_json::json!(data.sex);
+            json["birth_place"] = serde_json::json!(data.birth_place);
+            json["nationality"] = serde_json::json!(data.nationality);
+            json["issuing_country"] = serde_json::json!(data.issuing_country);
+            json["passport_number"] = serde_json::json!(data.passport_number);
+            json["passport_type"] = serde_json::json!(data.passport_type);
+            json["national_identification_number"] = serde_json::json!(data.national_identification_number);
+            json["issuing_authority"] = serde_json::json!(data.issuing_authority);
+            json["issue_date"] = serde_json::json!(data.issue_date);
+            json["expiration_date"] = serde_json::json!(data.expiration_date);
+        }
+        idtty_core::types::CipherKind::SecureNote => {}
+    }
+    json
+}
 
 /// R7-2: Generate a cryptographically random session token (32 bytes hex = 64 chars).
 fn generate_session_token() -> String {

@@ -106,10 +106,11 @@ select option {
   color: var(--color-text);
 }
 
-/* Page/View Transitions (Fade and slight lift) */
+/* Modal / overlay fade transitions */
 .fade-enter-active,
 .fade-exit-active {
-  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform, opacity;
+  transition: opacity 0.12s cubic-bezier(0.4, 0, 0.2, 1), transform 0.12s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .fade-enter {
   opacity: 0;
@@ -120,10 +121,28 @@ select option {
   transform: scale(0.99) translateY(-4px);
 }
 
+/* Vault entrance — slides up into view, no exit animation needed */
+@keyframes vaultEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.vault-enter {
+  will-change: transform, opacity;
+  animation: vaultEnter 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* Slide Transition for forms and details in Column 3 */
 .slide-enter-active,
 .slide-exit-active {
-  transition: opacity 0.15s cubic-bezier(0.4, 0, 0.2, 1), transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform, opacity;
+  transition: opacity 0.1s cubic-bezier(0.4, 0, 0.2, 1), transform 0.1s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .slide-enter {
   opacity: 0;
@@ -147,7 +166,7 @@ select option {
 }
 
 .animate-fade-in-up {
-  animation: fadeInUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: fadeInUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 

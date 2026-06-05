@@ -1,5 +1,4 @@
-import { onMount, Switch, Match } from "solid-js";
-import { Transition } from "solid-transition-group";
+import { onMount, Show } from "solid-js";
 import { useI18n } from "./i18n/index.jsx";
 import { daemon } from "./lib/daemon.js";
 import { useAuth } from "./context/AuthContext.jsx";
@@ -36,24 +35,29 @@ export default function App() {
   });
 
   return (
-    <Transition name="fade" mode="out-in">
-      <Switch>
-        <Match when={auth.status() === "unlocked"}>
+    <div class="relative w-full h-full overflow-hidden">
+      {/* Auth screens — covered by vault when unlocked */}
+      <Show when={auth.status() !== "unlocked"}>
+        <div class="absolute inset-0">
+          <Show when={auth.status() === "recovery"} fallback={
+            <Show when={auth.status() === "init" || auth.status() === "creating"}
+              fallback={<LoginScreen />}>
+              <CreateVaultScreen />
+            </Show>
+          }>
+            <RecoveryScreen />
+          </Show>
+        </div>
+      </Show>
+
+      {/* Vault — mounts instantly, animates its own entrance */}
+      <Show when={auth.status() === "unlocked"}>
+        <div class="absolute inset-0 vault-enter">
           <VaultProvider>
             <VaultView />
           </VaultProvider>
-        </Match>
-        <Match when={auth.status() === "init" || auth.status() === "creating"}>
-          <CreateVaultScreen />
-        </Match>
-        <Match when={auth.status() === "recovery"}>
-          <RecoveryScreen />
-        </Match>
-        <Match when={true}>
-          <LoginScreen />
-        </Match>
-      </Switch>
-    </Transition>
+        </div>
+      </Show>
+    </div>
   );
 }
-
