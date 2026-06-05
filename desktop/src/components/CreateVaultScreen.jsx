@@ -34,6 +34,10 @@ export default function CreateVaultScreen() {
             id="create-password"
             data-create-password
             type="password"
+            autocomplete="new-password"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
             placeholder={t("create.passwordPlaceholder")}
             onInput={e => auth.setCreatePassword(e.target.value)}
             class="w-full px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
@@ -41,6 +45,10 @@ export default function CreateVaultScreen() {
           <input
             id="create-confirm"
             type="password"
+            autocomplete="new-password"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
             placeholder={t("create.confirmPlaceholder")}
             class="w-full px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
           />

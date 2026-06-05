@@ -43,6 +43,10 @@ export default function RepromptModal(props) {
             </Show>
             <input
               type="password"
+              autocomplete="current-password"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
               placeholder="Master password"
               value={password()}
               onInput={e => { setPassword(e.target.value); setFailed(false); }}

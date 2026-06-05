@@ -9,6 +9,10 @@ const INPUT_CLS = "w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border bor
 const MONO_CLS = INPUT_CLS + " font-mono";
 const GRID_CLS = { 1: "grid grid-cols-1 gap-3", 2: "grid grid-cols-2 gap-3", 3: "grid grid-cols-3 gap-3", 4: "grid grid-cols-4 gap-3" };
 
+// Security attrs for all sensitive inputs — prevent browser autocomplete,
+// autocorrect, spellcheck, and input history in a password manager.
+const SECURE_INPUT = { autocomplete: "off", autocorrect: "off", autocapitalize: "off", spellcheck: "false" };
+
 function fieldCls(f) {
   return f.mono ? MONO_CLS : INPUT_CLS;
 }
@@ -96,6 +100,7 @@ export default function AddEditCipherForm(props) {
             class={cls() + " resize-none"}
             value={val()}
             onInput={e => update(f.key, e.target.value)}
+            {...SECURE_INPUT}
           />
         </div>
       );
@@ -110,6 +115,7 @@ export default function AddEditCipherForm(props) {
           class={cls()}
           value={val()}
           onInput={e => update(f.key, e.target.value)}
+          {...SECURE_INPUT}
         />
       </div>
     );
@@ -149,14 +155,14 @@ export default function AddEditCipherForm(props) {
       <>
         <div>
           <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.user")}</label>
-          <input placeholder={t("entry.usernamePlaceholder")} class={INPUT_CLS} value={newCipher().username} onInput={e => update("username", e.target.value)} />
+          <input placeholder={t("entry.usernamePlaceholder")} class={INPUT_CLS} value={newCipher().username} onInput={e => update("username", e.target.value)} {...SECURE_INPUT} />
         </div>
 
         {/* Password generator */}
         <div>
           <div class="mb-1.5"><label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.pass")}</label></div>
           <div class="relative flex items-center">
-            <input placeholder={t("entry.passwordPlaceholder")} type={showPassword() ? "text" : "password"} class={MONO_CLS + " pr-44"} value={newCipher().password} onInput={e => update("password", e.target.value)} />
+            <input placeholder={t("entry.passwordPlaceholder")} type={showPassword() ? "text" : "password"} class={MONO_CLS + " pr-44"} value={newCipher().password} onInput={e => update("password", e.target.value)} {...SECURE_INPUT} />
             <div class="absolute right-2 flex items-center gap-1.5">
               <button type="button" onClick={() => setShowPassword(!showPassword())} class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer border border-transparent hover:border-[var(--color-border)]" title={showPassword() ? "Hide password" : "Show password"}>
                 <Show when={showPassword()} fallback={<IconEye class="w-4 h-4" />}><IconEyeOff class="w-4 h-4" /></Show>
@@ -193,7 +199,7 @@ export default function AddEditCipherForm(props) {
           <For each={uris()}>
             {(uriObj, index) => (
               <div class="flex gap-2 mb-2">
-                <input placeholder="https://example.com" autocapitalize="off" autocomplete="off" spellcheck="false" class={INPUT_CLS + " flex-1"} value={uriObj.uri || ""} onInput={e => updateUri(index(), "uri", e.target.value)} />
+                <input placeholder="https://example.com" class={INPUT_CLS + " flex-1"} value={uriObj.uri || ""} onInput={e => updateUri(index(), "uri", e.target.value)} {...SECURE_INPUT} />
                 <select class="px-2 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-muted)] outline-none" value={uriObj.match_strategy || ""} onChange={e => updateUri(index(), "match_strategy", e.target.value || null)}>
                   <option value="">Default</option>
                   <option value="domain">Domain</option>
@@ -220,7 +226,7 @@ export default function AddEditCipherForm(props) {
 
         <div>
           <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">TOTP URI</label>
-          <input placeholder="otpauth://totp/..." class={MONO_CLS} value={newCipher().totp_uri || ""} onInput={e => update("totp_uri", e.target.value)} />
+          <input placeholder="otpauth://totp/..." class={MONO_CLS} value={newCipher().totp_uri || ""} onInput={e => update("totp_uri", e.target.value)} {...SECURE_INPUT} />
         </div>
       </>
     );
@@ -232,11 +238,11 @@ export default function AddEditCipherForm(props) {
         <CardBrandDisplay number={newCipher().cardNumber || ""} />
         <div>
           <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Cardholder Name</label>
-          <input placeholder="Full name on card" class={INPUT_CLS} value={newCipher().cardholder_name || ""} onInput={e => update("cardholder_name", e.target.value)} />
+          <input placeholder="Full name on card" class={INPUT_CLS} value={newCipher().cardholder_name || ""} onInput={e => update("cardholder_name", e.target.value)} {...SECURE_INPUT} />
         </div>
         <div>
           <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Card Number</label>
-          <input placeholder="1234 5678 9012 3456" class={MONO_CLS} value={newCipher().cardNumber || ""} onInput={e => update("cardNumber", e.target.value)} />
+          <input placeholder="1234 5678 9012 3456" class={MONO_CLS} value={newCipher().cardNumber || ""} onInput={e => update("cardNumber", e.target.value)} {...SECURE_INPUT} />
         </div>
         <div class="grid grid-cols-3 gap-3">
           <div>
@@ -248,11 +254,11 @@ export default function AddEditCipherForm(props) {
           </div>
           <div>
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Year</label>
-            <input placeholder="2028" class={MONO_CLS} value={newCipher().expYear || ""} onInput={e => update("expYear", e.target.value)} />
+            <input placeholder="2028" class={MONO_CLS} value={newCipher().expYear || ""} onInput={e => update("expYear", e.target.value)} {...SECURE_INPUT} />
           </div>
           <div>
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">CVV</label>
-            <input placeholder="123" type="password" class={MONO_CLS} value={newCipher().cvv || ""} onInput={e => update("cvv", e.target.value)} />
+            <input placeholder="123" type="password" class={MONO_CLS} value={newCipher().cvv || ""} onInput={e => update("cvv", e.target.value)} {...SECURE_INPUT} />
           </div>
         </div>
       </>
@@ -299,7 +305,7 @@ export default function AddEditCipherForm(props) {
 
           <div>
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Item Name</label>
-            <input placeholder={t("entry.namePlaceholder")} class={INPUT_CLS} value={newCipher().name} onInput={e => update("name", e.target.value)} />
+            <input placeholder={t("entry.namePlaceholder")} class={INPUT_CLS} value={newCipher().name} onInput={e => update("name", e.target.value)} {...SECURE_INPUT} />
           </div>
 
           {/* Type-specific fields */}
@@ -316,6 +322,7 @@ export default function AddEditCipherForm(props) {
               class={INPUT_CLS + " resize-none"}
               value={newCipher().notes}
               onInput={e => update("notes", e.target.value)}
+              {...SECURE_INPUT}
             />
           </div>
 
@@ -346,7 +353,7 @@ export default function AddEditCipherForm(props) {
                 const linkedVal = () => typeof field.field_type === "object" && field.field_type?.Linked ? field.field_type.Linked : "LoginUsername";
                 return (
                 <div class="flex gap-2 mb-2 items-center">
-                  <input placeholder="Name" class="w-1/3 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.name} onInput={e => { Object.assign(fieldsRef[i()], { name: e.target.value }); }} />
+                  <input placeholder="Name" class="w-1/3 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.name} onInput={e => { Object.assign(fieldsRef[i()], { name: e.target.value }); }} {...SECURE_INPUT} />
                   <select class="px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer" value={ft()} onChange={e => { const v = e.target.value; fieldsRef[i()] = { ...fieldsRef[i()], field_type: v === "Linked" ? { Linked: "LoginUsername" } : v }; setFields([...fieldsRef]); }}>
                     <option value="Text">Text</option>
                     <option value="Hidden">Hidden</option>
@@ -425,7 +432,7 @@ export default function AddEditCipherForm(props) {
                       </optgroup>
                     </select>
                   }>
-                    <input placeholder="Value" class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.value} onInput={e => { Object.assign(fieldsRef[i()], { value: e.target.value }); }} />
+                    <input placeholder="Value" class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.value} onInput={e => { Object.assign(fieldsRef[i()], { value: e.target.value }); }} {...SECURE_INPUT} />
                   </Show>
                   <button type="button" onClick={() => { fieldsRef = fieldsRef.filter((_, j) => j !== i()); setFields([...fieldsRef]); }} class="px-3 py-2 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in" title="Remove field">
                     <IconX class="w-4 h-4" />
