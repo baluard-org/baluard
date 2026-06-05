@@ -22,7 +22,7 @@ export default function AddEditCipherForm(props) {
 
   const newCipher = () => props.newCipher();
   const setNewCipher = props.setNewCipher;
-  const setActivePane = props.setActivePane || (() => {});
+  const cancel = () => (props.onCancel || (() => {}))();
 
   const cipherType = () => newCipher().cipherType || "login";
   const schema = () => getSchema(cipherType());
@@ -275,7 +275,7 @@ export default function AddEditCipherForm(props) {
           </h3>
           <button
             type="button"
-            onClick={() => setActivePane(props.isEdit ? "detail" : "welcome")}
+            onClick={cancel}
             class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg border border-transparent hover:border-[var(--color-border)] transition-all cursor-pointer flex items-center justify-center"
             title="Close"
           >
@@ -448,7 +448,7 @@ export default function AddEditCipherForm(props) {
         <button onClick={handleSave} class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99]">
           Save
         </button>
-        <button onClick={() => setActivePane(props.isEdit ? "detail" : "welcome")} class="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all cursor-pointer active:scale-[0.99]">
+        <button onClick={cancel} class="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all cursor-pointer active:scale-[0.99]">
           Cancel
         </button>
       </div>
