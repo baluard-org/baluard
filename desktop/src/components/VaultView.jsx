@@ -289,6 +289,10 @@ export default function VaultView() {
               </span>
               <input
                 type="text"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
                 placeholder="Search vault..."
                 value={vault.searchQuery()}
                 onInput={(e) => vault.setSearchQuery(e.target.value)}
