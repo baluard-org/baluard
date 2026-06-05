@@ -49,13 +49,6 @@ export default function GeneratorModal(props) {
     setTimeout(() => setCopied(false), 1800);
   }
 
-  const TAB_CLS = (active) =>
-    `flex-1 py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
-      active
-        ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
-        : "bg-[var(--color-card)] text-[var(--color-muted)] border border-[var(--color-border)]"
-    }`;
-
   const TOGGLE_CLS = (active) =>
     `p-2 rounded-lg text-xs font-bold border cursor-pointer ${
       active
@@ -74,10 +67,26 @@ export default function GeneratorModal(props) {
               <button onClick={() => props.setShowGenerator(false)} class="p-1 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">✕</button>
             </div>
 
-            {/* Mode switch */}
-            <div class="flex gap-2 mb-4">
-              <button onClick={() => setMode(MODE_PASSWORD)} class={TAB_CLS(mode() === MODE_PASSWORD)}>Password</button>
-              <button onClick={() => setMode(MODE_PASSPHRASE)} class={TAB_CLS(mode() === MODE_PASSPHRASE)}>Passphrase</button>
+            {/* Mode tabs */}
+            <div class="flex gap-4 border-b border-[var(--color-border)] mb-4">
+              <button
+                onClick={() => setMode(MODE_PASSWORD)}
+                class={`py-2.5 text-xs font-bold transition-all relative cursor-pointer ${mode() === MODE_PASSWORD ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
+              >
+                Password
+                <Show when={mode() === MODE_PASSWORD}>
+                  <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
+                </Show>
+              </button>
+              <button
+                onClick={() => setMode(MODE_PASSPHRASE)}
+                class={`py-2.5 text-xs font-bold transition-all relative cursor-pointer ${mode() === MODE_PASSPHRASE ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
+              >
+                Passphrase
+                <Show when={mode() === MODE_PASSPHRASE}>
+                  <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
+                </Show>
+              </button>
             </div>
 
             {/* Result display */}
