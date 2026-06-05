@@ -44,6 +44,10 @@ export default function LoginScreen() {
             <input
               ref={(el) => { passwordRef = el; auth.setLoginPasswordRef(el); }}
               type="password"
+              autocomplete="current-password"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
               placeholder={t("login.passwordPlaceholder")}
               class="w-full px-4 py-3.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)] transition-all-fast"
               autofocus
