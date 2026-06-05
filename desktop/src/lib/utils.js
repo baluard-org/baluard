@@ -24,6 +24,47 @@ export function sanitizeError(raw, t) {
 export const uriStr = (u) => typeof u === "string" ? u : (u?.uri || "");
 
 // Cryptographically secure password generator
+import { WORDS_EN } from "./wordlist-en.js";
+import { WORDS_ES } from "./wordlist-es.js";
+
+const PASSPHRASE_POOL = [...WORDS_EN, ...WORDS_ES];
+
+/**
+ * Generate a passphrase from combined English (EFF 1296) + Spanish (BIP-39 2048) word lists.
+ * @param {number} wordCount - Number of words (default 5)
+ * @param {string} separator - Word separator (default "-")
+ * @param {object} opts - { upper: bool, number: bool, symbol: bool }
+ */
+export function generatePassphrase(wordCount = 5, separator = "-", opts = {}) {
+  const arr = new Uint32Array(wordCount);
+  crypto.getRandomValues(arr);
+  const words = [];
+  for (let i = 0; i < wordCount; i++) {
+    words.push(PASSPHRASE_POOL[arr[i] % PASSPHRASE_POOL.length]);
+  }
+
+  let result = words.join(separator);
+
+  if (opts.upper) {
+    const idx = crypto.getRandomValues(new Uint32Array(1))[0] % words.length;
+    words[idx] = words[idx].charAt(0).toUpperCase() + words[idx].slice(1);
+    result = words.join(separator);
+  }
+  if (opts.number) {
+    const n = crypto.getRandomValues(new Uint32Array(1))[0] % 100;
+    const idx = crypto.getRandomValues(new Uint32Array(1))[0] % (result.length + 1);
+    result = result.slice(0, idx) + n + result.slice(idx);
+  }
+  if (opts.symbol) {
+    const syms = "!@#$%&*+?";
+    const s = syms[crypto.getRandomValues(new Uint32Array(1))[0] % syms.length];
+    const idx = crypto.getRandomValues(new Uint32Array(1))[0] % (result.length + 1);
+    result = result.slice(0, idx) + s + result.slice(idx);
+  }
+
+  return result;
+}
+
 export function generateSecurePassword(length = 16, useUpper = true, useNumbers = true, useSymbols = true) {
   const lowercase = "abcdefghijklmnopqrstuvwxyz";
   const uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
