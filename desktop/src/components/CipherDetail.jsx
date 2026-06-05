@@ -11,6 +11,27 @@ import { IconX, IconCopy, IconLinkSimple, IconDownload, IconPencil, IconArchive,
 import CopyableField from "./CopyableField.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
 
+/** Small copy button for the notes header. Copies entire notes content. */
+function CopyNotesButton(props) {
+  const [copied, setCopied] = createSignal(false);
+  function handleCopy() {
+    navigator.clipboard.writeText(props.value || "");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer"
+      title="Copy notes"
+    >
+      <Show when={copied()} fallback={<IconCopy class="w-3.5 h-3.5" />}>
+        <span class="text-[9px] text-[var(--color-success)] font-extrabold uppercase tracking-wider">Copied</span>
+      </Show>
+    </button>
+  );
+}
+
 export default function CipherDetail(props) {
   const vault = useVault();
   const { t } = useI18n();
@@ -261,25 +282,28 @@ export default function CipherDetail(props) {
             <For each={cipher()?.custom_fields || []}>
               {(field) => {
                 const isHidden = () => field.field_type === "Hidden";
+                const [revealCustom, setRevealCustom] = createSignal(false);
                 return (
-                  <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
-                    <label class="text-[10px] text-[var(--color-muted)] block uppercase tracking-wider font-extrabold">{field.name}</label>
-                    <Show when={isHidden()} fallback={
-                      <div class="text-sm text-[var(--color-text)] font-semibold mt-0.5 select-all">{field.value || "\u2014"}</div>
-                    }>
-                      <div class="text-sm font-mono text-[var(--color-text)] tracking-widest mt-0.5 select-all">{"\u2022".repeat(8)}</div>
-                    </Show>
-                  </div>
+                  <CopyableField
+                    label={field.name}
+                    value={field.value}
+                    isPassword={isHidden()}
+                    showPassword={revealCustom()}
+                    onToggleShow={() => setRevealCustom(!revealCustom())}
+                  />
                 );
               }}
             </For>
           </div>
         </Show>
 
-        {/* Notes group */}
+        {/* Notes */}
         <Show when={cipher()?.notes}>
           <div class="space-y-4 pt-2">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">{t("entry.notes")}</h4>
+            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1 flex items-center justify-between">
+              <span>{t("entry.notes")}</span>
+              <CopyNotesButton value={cipher()?.notes || ""} />
+            </h4>
             <div class="p-4 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] leading-relaxed font-semibold whitespace-pre-wrap select-text">
               {cipher()?.notes}
             </div>
