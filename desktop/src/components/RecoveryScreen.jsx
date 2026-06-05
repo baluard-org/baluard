@@ -41,8 +41,7 @@ export default function RecoveryScreen() {
             <Show when={copied()} fallback={
               <IconCopy class="w-4 h-4" />
             }>
-              <span class="text-emerald-500 font-sans font-medium text-xs">Copied!</span>
-              <IconCheck class="w-4 h-4 text-emerald-500" />
+              <span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-success)]" /></span>
             </Show>
           </button>
         </div>
