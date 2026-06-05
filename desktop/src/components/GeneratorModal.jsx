@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, createEffect, Show } from "solid-js";
 import { Transition } from "solid-transition-group";
 import { generateSecurePassword } from "../lib/utils.js";
 
@@ -7,9 +7,22 @@ export default function GeneratorModal(props) {
   const [useUpper, setUseUpper] = createSignal(true);
   const [useNums, setUseNums] = createSignal(true);
   const [useSyms, setUseSyms] = createSignal(true);
+  const [copied, setCopied] = createSignal(false);
 
-  function gen() {
-    return generateSecurePassword(len(), useUpper(), useNums(), useSyms());
+  // Store the generated password so display and copy use the same value
+  const [password, setPassword] = createSignal("");
+
+  function regenerate() {
+    setPassword(generateSecurePassword(len(), useUpper(), useNums(), useSyms()));
+  }
+
+  // Generate on mount and whenever params change
+  createEffect(() => { len(); useUpper(); useNums(); useSyms(); regenerate(); });
+
+  function handleCopy() {
+    navigator.clipboard.writeText(password());
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
   return (
@@ -22,7 +35,7 @@ export default function GeneratorModal(props) {
               <button onClick={() => props.setShowGenerator(false)} class="p-1 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">✕</button>
             </div>
             <div class="p-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm text-[var(--color-text)] text-center mb-4 select-all break-all">
-              {gen()}
+              {password()}
             </div>
             <div class="space-y-3 mb-4">
               <div class="flex items-center justify-between text-xs">
@@ -35,11 +48,17 @@ export default function GeneratorModal(props) {
                 <button onClick={() => setUseSyms(!useSyms())} class={`p-2 rounded-lg text-xs font-bold border cursor-pointer ${useSyms() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>!@#</button>
               </div>
             </div>
-            <button onClick={() => { navigator.clipboard.writeText(gen()); }} class="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer">Copy Password</button>
+            <div class="flex gap-2">
+              <button onClick={regenerate} class="flex-1 py-2.5 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-bold cursor-pointer hover:border-[var(--color-primary)] transition-colors">Regenerate</button>
+              <button onClick={handleCopy} class="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer">
+                <Show when={copied()} fallback="Copy Password">
+                  Copied!
+                </Show>
+              </button>
+            </div>
           </div>
         </div>
       </Show>
     </Transition>
   );
 }
-
