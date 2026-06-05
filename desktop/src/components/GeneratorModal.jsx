@@ -1,58 +1,141 @@
 import { createSignal, createEffect, Show } from "solid-js";
 import { Transition } from "solid-transition-group";
-import { generateSecurePassword } from "../lib/utils.js";
-import { IconCopy, IconCheck } from "./Icon.jsx";
+import { generateSecurePassword, generatePassphrase } from "../lib/utils.js";
+import { IconCopy, IconCheck, IconRefresh } from "./Icon.jsx";
+
+const MODE_PASSWORD = "password";
+const MODE_PASSPHRASE = "passphrase";
 
 export default function GeneratorModal(props) {
+  const [mode, setMode] = createSignal(MODE_PASSWORD);
+  const [copied, setCopied] = createSignal(false);
+
+  // Password params
   const [len, setLen] = createSignal(16);
   const [useUpper, setUseUpper] = createSignal(true);
   const [useNums, setUseNums] = createSignal(true);
   const [useSyms, setUseSyms] = createSignal(true);
-  const [copied, setCopied] = createSignal(false);
 
-  // Store the generated password so display and copy use the same value
-  const [password, setPassword] = createSignal("");
+  // Passphrase params
+  const [wordCount, setWordCount] = createSignal(5);
+  const [separator, setSeparator] = createSignal("-");
+  const [ppUpper, setPpUpper] = createSignal(false);
+  const [ppNumber, setPpNumber] = createSignal(false);
+  const [ppSymbol, setPpSymbol] = createSignal(false);
+
+  const [result, setResult] = createSignal("");
 
   function regenerate() {
-    setPassword(generateSecurePassword(len(), useUpper(), useNums(), useSyms()));
+    if (mode() === MODE_PASSWORD) {
+      setResult(generateSecurePassword(len(), useUpper(), useNums(), useSyms()));
+    } else {
+      setResult(generatePassphrase(wordCount(), separator(), {
+        upper: ppUpper(),
+        number: ppNumber(),
+        symbol: ppSymbol(),
+      }));
+    }
   }
 
-  // Generate on mount and whenever params change
-  createEffect(() => { len(); useUpper(); useNums(); useSyms(); regenerate(); });
+  createEffect(() => {
+    mode(); len(); useUpper(); useNums(); useSyms();
+    wordCount(); separator(); ppUpper(); ppNumber(); ppSymbol();
+    regenerate();
+  });
 
   function handleCopy() {
-    navigator.clipboard.writeText(password());
+    navigator.clipboard.writeText(result());
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 1800);
   }
+
+  const TAB_CLS = (active) =>
+    `flex-1 py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+      active
+        ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
+        : "bg-[var(--color-card)] text-[var(--color-muted)] border border-[var(--color-border)]"
+    }`;
+
+  const TOGGLE_CLS = (active) =>
+    `p-2 rounded-lg text-xs font-bold border cursor-pointer ${
+      active
+        ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]"
+        : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"
+    }`;
 
   return (
     <Transition name="fade">
       <Show when={props.showGenerator}>
         <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            {/* Header */}
             <div class="flex items-center justify-between mb-4">
-              <h3 class="text-lg font-bold text-[var(--color-text)]">Password Generator</h3>
+              <h3 class="text-lg font-bold text-[var(--color-text)]">Generator</h3>
               <button onClick={() => props.setShowGenerator(false)} class="p-1 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">✕</button>
             </div>
-            <div class="p-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm text-[var(--color-text)] text-center mb-4 select-all break-all">
-              {password()}
+
+            {/* Mode switch */}
+            <div class="flex gap-2 mb-4">
+              <button onClick={() => setMode(MODE_PASSWORD)} class={TAB_CLS(mode() === MODE_PASSWORD)}>Password</button>
+              <button onClick={() => setMode(MODE_PASSPHRASE)} class={TAB_CLS(mode() === MODE_PASSPHRASE)}>Passphrase</button>
             </div>
-            <div class="space-y-3 mb-4">
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-[var(--color-muted)]">Length: <strong class="text-[var(--color-primary)]">{len()}</strong></span>
-                <input type="range" min="8" max="64" value={len()} onInput={e => setLen(parseInt(e.target.value))} class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer" />
-              </div>
-              <div class="grid grid-cols-3 gap-2">
-                <button onClick={() => setUseUpper(!useUpper())} class={`p-2 rounded-lg text-xs font-bold border cursor-pointer ${useUpper() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>A-Z</button>
-                <button onClick={() => setUseNums(!useNums())} class={`p-2 rounded-lg text-xs font-bold border cursor-pointer ${useNums() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>0-9</button>
-                <button onClick={() => setUseSyms(!useSyms())} class={`p-2 rounded-lg text-xs font-bold border cursor-pointer ${useSyms() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>!@#</button>
-              </div>
+
+            {/* Result display */}
+            <div class="p-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm text-[var(--color-text)] text-center mb-4 select-all break-all min-h-[3rem] flex items-center justify-center">
+              {result()}
             </div>
+
+            {/* Password settings */}
+            <Show when={mode() === MODE_PASSWORD}>
+              <div class="space-y-3 mb-4">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-[var(--color-muted)]">Length: <strong class="text-[var(--color-primary)]">{len()}</strong></span>
+                  <input type="range" min="8" max="64" value={len()} onInput={e => setLen(parseInt(e.target.value))} class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer" />
+                </div>
+                <div class="grid grid-cols-3 gap-2">
+                  <button onClick={() => setUseUpper(!useUpper())} class={TOGGLE_CLS(useUpper())}>A-Z</button>
+                  <button onClick={() => setUseNums(!useNums())} class={TOGGLE_CLS(useNums())}>0-9</button>
+                  <button onClick={() => setUseSyms(!useSyms())} class={TOGGLE_CLS(useSyms())}>!@#</button>
+                </div>
+              </div>
+            </Show>
+
+            {/* Passphrase settings */}
+            <Show when={mode() === MODE_PASSPHRASE}>
+              <div class="space-y-3 mb-4">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-[var(--color-muted)]">Words: <strong class="text-[var(--color-primary)]">{wordCount()}</strong></span>
+                  <input type="range" min="3" max="12" value={wordCount()} onInput={e => setWordCount(parseInt(e.target.value))} class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer" />
+                </div>
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-[var(--color-muted)]">Separator</span>
+                  <input
+                    type="text"
+                    value={separator()}
+                    onInput={e => setSeparator(e.target.value)}
+                    class="w-20 px-2 py-1 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-center text-[var(--color-text)] text-xs outline-none focus:border-[var(--color-primary)]"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                </div>
+                <div class="grid grid-cols-3 gap-2">
+                  <button onClick={() => setPpUpper(!ppUpper())} class={TOGGLE_CLS(ppUpper())}>Aa</button>
+                  <button onClick={() => setPpNumber(!ppNumber())} class={TOGGLE_CLS(ppNumber())}>0-9</button>
+                  <button onClick={() => setPpSymbol(!ppSymbol())} class={TOGGLE_CLS(ppSymbol())}>!@#</button>
+                </div>
+                <p class="text-[10px] text-[var(--color-muted)] leading-relaxed">
+                  3,344 words (EFF English + BIP-39 Spanish)
+                </p>
+              </div>
+            </Show>
+
+            {/* Actions */}
             <div class="flex gap-2">
-              <button onClick={regenerate} class="flex-1 py-2.5 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-bold cursor-pointer hover:border-[var(--color-primary)] transition-colors">Regenerate</button>
+              <button onClick={regenerate} class="flex-1 py-2.5 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-bold cursor-pointer hover:border-[var(--color-primary)] transition-colors flex items-center justify-center gap-1.5">
+                <IconRefresh class="w-3.5 h-3.5" /> Regenerate
+              </button>
               <button onClick={handleCopy} class="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5">
-                <Show when={copied()} fallback={<><IconCopy class="w-3.5 h-3.5" /> Copy Password</>}>
+                <Show when={copied()} fallback={<><IconCopy class="w-3.5 h-3.5" /> Copy</>}>
                   <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5" /></span> Copied!
                 </Show>
               </button>
