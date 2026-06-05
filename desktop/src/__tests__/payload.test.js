@@ -78,10 +78,10 @@ describe("buildKind", () => {
     expect(kind.data.uris[0]).toEqual({ uri: "https://x.com", match_strategy: "exact" });
   });
 
-  test("secureNote has empty data", () => {
+  test("secureNote has no data key", () => {
     const kind = buildKind({ cipherType: "secureNote" });
     expect(kind.type).toBe("secureNote");
-    expect(kind.data).toEqual({});
+    expect(kind.data).toBeUndefined();
   });
 
   test("card maps fields correctly", () => {

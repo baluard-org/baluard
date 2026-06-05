@@ -188,7 +188,7 @@ export const CIPHER_SCHEMAS = {
     typeKey: "secureNote",
     fields: [],
     fromKind() { return {}; },
-    toKind() { return { type: "secureNote", data: {} }; },
+    toKind() { return { type: "secureNote" }; },
   },
 
   bankAccount: {
