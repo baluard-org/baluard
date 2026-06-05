@@ -169,5 +169,17 @@ select option {
   animation: fadeInUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Copy feedback — checkmark pops in */
+@keyframes copyPop {
+  0% { transform: scale(0.5); opacity: 0; }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.copy-feedback {
+  display: inline-flex;
+  animation: copyPop 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 
 

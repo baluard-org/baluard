@@ -1,6 +1,5 @@
 import { createSignal, Show } from "solid-js";
-
-import { IconEye, IconEyeOff, IconCopy } from "./Icon.jsx";
+import { IconEye, IconEyeOff, IconCopy, IconCheck } from "./Icon.jsx";
 
 export default function CopyableField(props) {
   const [copied, setCopied] = createSignal(false);
@@ -8,7 +7,7 @@ export default function CopyableField(props) {
   function handleCopy() {
     navigator.clipboard.writeText(props.value || "");
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 1800);
   }
 
   return (
@@ -39,13 +38,15 @@ export default function CopyableField(props) {
         </Show>
         <button
           onClick={handleCopy}
-          class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer relative"
+          class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer"
           title="Copy to clipboard"
         >
           <Show when={copied()} fallback={
             <IconCopy class="w-4 h-4" />
           }>
-            <span class="text-[9px] text-[var(--color-success)] font-extrabold uppercase tracking-wider">Copied</span>
+            <span class="copy-feedback">
+              <IconCheck class="w-4 h-4 text-[var(--color-success)]" />
+            </span>
           </Show>
         </button>
       </div>

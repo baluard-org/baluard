@@ -1,6 +1,7 @@
 import { createSignal, createEffect, Show } from "solid-js";
 import { Transition } from "solid-transition-group";
 import { generateSecurePassword } from "../lib/utils.js";
+import { IconCopy, IconCheck } from "./Icon.jsx";
 
 export default function GeneratorModal(props) {
   const [len, setLen] = createSignal(16);
@@ -50,9 +51,9 @@ export default function GeneratorModal(props) {
             </div>
             <div class="flex gap-2">
               <button onClick={regenerate} class="flex-1 py-2.5 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-bold cursor-pointer hover:border-[var(--color-primary)] transition-colors">Regenerate</button>
-              <button onClick={handleCopy} class="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer">
-                <Show when={copied()} fallback="Copy Password">
-                  Copied!
+              <button onClick={handleCopy} class="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5">
+                <Show when={copied()} fallback={<><IconCopy class="w-3.5 h-3.5" /> Copy Password</>}>
+                  <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5" /></span> Copied!
                 </Show>
               </button>
             </div>

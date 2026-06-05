@@ -7,7 +7,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { getCuratedColor, getDomainInitials, uriStr } from "../lib/utils.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
-import { IconX, IconCopy, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh } from "./Icon.jsx";
+import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
 
@@ -17,7 +17,7 @@ function CopyNotesButton(props) {
   function handleCopy() {
     navigator.clipboard.writeText(props.value || "");
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 1800);
   }
   return (
     <button
@@ -26,7 +26,7 @@ function CopyNotesButton(props) {
       title="Copy notes"
     >
       <Show when={copied()} fallback={<IconCopy class="w-3.5 h-3.5" />}>
-        <span class="text-[9px] text-[var(--color-success)] font-extrabold uppercase tracking-wider">Copied</span>
+        <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5 text-[var(--color-success)]" /></span>
       </Show>
     </button>
   );
@@ -127,11 +127,11 @@ export default function CipherDetail(props) {
                   <div class="flex items-center gap-2">
                     <span class="text-2xl font-mono font-bold tracking-[0.3em] text-[var(--color-text)] select-all">{totpCode()?.code?.match(/.{1,3}/g)?.join(" ") || totpCode()?.code}</span>
                     <button
-                      onClick={() => { navigator.clipboard.writeText(totpCode()?.code || ""); setTotpCopied(true); setTimeout(() => setTotpCopied(false), 1500); }}
+                      onClick={() => { navigator.clipboard.writeText(totpCode()?.code || ""); setTotpCopied(true); setTimeout(() => setTotpCopied(false), 1800); }}
                       class="p-1.5 rounded-lg text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                       title="Copy code"
                     >
-                      <Show when={!totpCopied()} fallback={<span class="text-xs text-green-500">Copied</span>}>
+                      <Show when={!totpCopied()} fallback={<span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-success)]" /></span>}>
                         <IconCopy class="w-4 h-4" />
                       </Show>
                     </button>
