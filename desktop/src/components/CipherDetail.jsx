@@ -5,11 +5,13 @@ import { useVault } from "../context/VaultContext.jsx";
 import { error } from "../context/errorSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
-import { getCuratedColor, getDomainInitials, uriStr } from "../lib/utils.js";
+import { uriStr, formatCardNumber } from "../lib/utils.js";
+import { SECTION_LABEL, typeLabel } from "../lib/helpers.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
 import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
+import CipherAvatar from "./CipherAvatar.jsx";
 
 /** Small copy button for the notes header. Copies entire notes content. */
 function CopyNotesButton(props) {
@@ -47,7 +49,7 @@ export default function CipherDetail(props) {
   createEffect(() => {
     const c = cipher();
     if (!c) return;
-    const totpUri = c.kind?.login?.totp_uri || c.totp_uri;
+    const totpUri = c.totp_uri;
     if (!totpUri || !c.id) {
       setTotpCode(null);
       return;
@@ -87,14 +89,12 @@ export default function CipherDetail(props) {
       <div class="flex-1 overflow-y-auto p-8 space-y-6">
         {/* Title Header */}
         <div class="flex items-start gap-5 pb-6 border-b border-[var(--color-border)]">
-          <div class={`w-16 h-16 rounded-2xl flex items-center justify-center text-white text-3xl font-extrabold shadow-lg ${getCuratedColor(cipher()?.name)}`}>
-            {getDomainInitials(cipher()?.name)}
-          </div>
+          <CipherAvatar name={cipher()?.name} size="lg" />
           <div class="min-w-0 flex-1">
             <h3 class="text-2xl font-bold text-[var(--color-text)] truncate leading-tight select-all">{cipher()?.name || "Untitled"}</h3>
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] mt-2">
               <span class="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
-              {cipher()?.type === "card" ? "Card" : cipher()?.type === "identity" ? "Identity" : cipher()?.type === "secureNote" ? "Secure Note" : cipher()?.type === "sshKey" ? "SSH Key" : cipher()?.type === "bankAccount" ? "Bank Account" : cipher()?.type === "driversLicense" ? "Driver License" : cipher()?.type === "passport" ? "Passport & ID" : "Login"} Item
+              {typeLabel(cipher()?.type)} Item
             </span>
           </div>
           <button
@@ -109,11 +109,11 @@ export default function CipherDetail(props) {
         {/* Login credentials */}
         <Show when={cipher()?.type === "login" || (!cipher()?.type && cipher()?.username)}>
           <div class="space-y-4">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Login credentials</h4>
-            <CopyableField label={t("entry.user")} value={cipher()?.username || cipher()?.kind?.login?.username} />
+            <h4 class={SECTION_LABEL}>Login credentials</h4>
+            <CopyableField label={t("entry.user")} value={cipher()?.username} />
             <CopyableField
               label={t("entry.pass")}
-              value={cipher()?.password || cipher()?.kind?.login?.password}
+              value={cipher()?.password}
               isPassword={true}
               showPassword={revealPass()}
               onToggleShow={() => setRevealPass(!revealPass())}
@@ -146,49 +146,49 @@ export default function CipherDetail(props) {
         {/* Card fields */}
         <Show when={cipher()?.type === "card"}>
           <div class="space-y-4">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Card details</h4>
-            <Show when={cipher()?.kind?.card?.brand}>
-              <CardBrandDisplay number={cipher()?.kind?.card?.number || ""} />
+            <h4 class={SECTION_LABEL}>Card details</h4>
+            <Show when={cipher()?.brand}>
+              <CardBrandDisplay number={cipher()?.number || ""} />
             </Show>
-            <CopyableField label="Cardholder" value={cipher()?.kind?.card?.cardholder_name} />
-            <CopyableField label="Number" value={cipher()?.kind?.card?.number} />
-            <CopyableField label="Expiration" value={cipher()?.kind?.card?.exp_month && cipher()?.kind?.card?.exp_year ? `${cipher()?.kind?.card?.exp_month}/${cipher()?.kind?.card?.exp_year}` : null} />
-            <CopyableField label="CVV" value={cipher()?.kind?.card?.code} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+            <CopyableField label="Cardholder" value={cipher()?.cardholder_name} />
+            <CopyableField label="Number" value={formatCardNumber(cipher()?.number)} copyValue={cipher()?.number} />
+            <CopyableField label="Expiration" value={cipher()?.exp_month && cipher()?.exp_year ? `${cipher()?.exp_month}/${cipher()?.exp_year}` : null} />
+            <CopyableField label="CVV" value={cipher()?.code} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
           </div>
         </Show>
 
         {/* Identity fields */}
         <Show when={cipher()?.type === "identity"}>
           <div class="space-y-4">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Identity details</h4>
-            <CopyableField label="Full Name" value={[cipher()?.kind?.identity?.title, cipher()?.kind?.identity?.first_name, cipher()?.kind?.identity?.middle_name, cipher()?.kind?.identity?.last_name].filter(Boolean).join(" ") || null} />
-            <CopyableField label="Username" value={cipher()?.kind?.identity?.username} />
-            <CopyableField label="Company" value={cipher()?.kind?.identity?.company} />
-            <CopyableField label="Email" value={cipher()?.kind?.identity?.email} />
-            <CopyableField label="Phone" value={cipher()?.kind?.identity?.phone} />
-            <CopyableField label="Address" value={[cipher()?.kind?.identity?.address1, cipher()?.kind?.identity?.address2, cipher()?.kind?.identity?.address3].filter(Boolean).join(", ") || null} />
-            <CopyableField label="City/State/Postal" value={[cipher()?.kind?.identity?.city, cipher()?.kind?.identity?.state, cipher()?.kind?.identity?.postal_code].filter(Boolean).join(", ") || null} />
-            <CopyableField label="Country" value={cipher()?.kind?.identity?.country} />
-            <CopyableField label="SSN" value={cipher()?.kind?.identity?.ssn} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
-            <CopyableField label="Passport #" value={cipher()?.kind?.identity?.passport_number} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
-            <CopyableField label="License #" value={cipher()?.kind?.identity?.license_number} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+            <h4 class={SECTION_LABEL}>Identity details</h4>
+            <CopyableField label="Full Name" value={[cipher()?.title, cipher()?.first_name, cipher()?.middle_name, cipher()?.last_name].filter(Boolean).join(" ") || null} />
+            <CopyableField label="Username" value={cipher()?.username} />
+            <CopyableField label="Company" value={cipher()?.company} />
+            <CopyableField label="Email" value={cipher()?.email} />
+            <CopyableField label="Phone" value={cipher()?.phone} />
+            <CopyableField label="Address" value={[cipher()?.address1, cipher()?.address2, cipher()?.address3].filter(Boolean).join(", ") || null} />
+            <CopyableField label="City/State/Postal" value={[cipher()?.city, cipher()?.state, cipher()?.postal_code].filter(Boolean).join(", ") || null} />
+            <CopyableField label="Country" value={cipher()?.country} />
+            <CopyableField label="SSN" value={cipher()?.ssn} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+            <CopyableField label="Passport #" value={cipher()?.passport_number} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+            <CopyableField label="License #" value={cipher()?.license_number} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
           </div>
         </Show>
 
         {/* SSH Key fields */}
         <Show when={cipher()?.type === "sshKey"}>
           <div class="space-y-4">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">SSH Key details</h4>
-            <CopyableField label="Public Key" value={cipher()?.kind?.sshKey?.public_key} />
-            <CopyableField label="Fingerprint" value={cipher()?.kind?.sshKey?.key_fingerprint} />
-            <CopyableField label="Private Key" value={cipher()?.kind?.sshKey?.private_key} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
+            <h4 class={SECTION_LABEL}>SSH Key details</h4>
+            <CopyableField label="Public Key" value={cipher()?.public_key} />
+            <CopyableField label="Fingerprint" value={cipher()?.fingerprint} />
+            <CopyableField label="Private Key" value={cipher()?.private_key} isPassword={true} showPassword={revealPass()} onToggleShow={() => setRevealPass(!revealPass())} />
           </div>
         </Show>
 
         {/* Bank Account fields */}
         <Show when={cipher()?.type === "bankAccount"}>
           <div class="space-y-4">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Bank account details</h4>
+            <h4 class={SECTION_LABEL}>Bank account details</h4>
             <CopyableField label="Bank Name" value={cipher()?.bank_name} />
             <CopyableField label="Name on Account" value={cipher()?.name_on_account} />
             <CopyableField label="Account Type" value={cipher()?.account_type} />
@@ -205,7 +205,7 @@ export default function CipherDetail(props) {
         {/* Driver License fields */}
         <Show when={cipher()?.type === "driversLicense"}>
           <div class="space-y-4">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Driver license details</h4>
+            <h4 class={SECTION_LABEL}>Driver license details</h4>
             <CopyableField label="Full Name" value={[cipher()?.first_name, cipher()?.middle_name, cipher()?.last_name].filter(Boolean).join(" ") || null} />
             <CopyableField label="Date of Birth" value={cipher()?.date_of_birth} />
             <CopyableField label="License Number" value={cipher()?.license_number} />
@@ -221,7 +221,7 @@ export default function CipherDetail(props) {
         {/* Passport fields */}
         <Show when={cipher()?.type === "passport"}>
           <div class="space-y-4">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Passport & ID details</h4>
+            <h4 class={SECTION_LABEL}>Passport & ID details</h4>
             <CopyableField label="Full Name" value={[cipher()?.given_name, cipher()?.surname].filter(Boolean).join(" ") || null} />
             <CopyableField label="Date of Birth" value={cipher()?.date_of_birth} />
             <CopyableField label="Sex" value={cipher()?.sex} />
@@ -245,7 +245,7 @@ export default function CipherDetail(props) {
             const launch = (e) => { e.preventDefault(); openUrl(launchHref()); };
             return (
               <div class="space-y-4 pt-2">
-                <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Website</h4>
+                <h4 class={SECTION_LABEL}>Website</h4>
                 <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] flex items-center justify-between group hover:border-[var(--color-primary)] transition-all">
                   <div class="min-w-0 flex-1">
                     <label class="text-[10px] text-[var(--color-muted)] font-extrabold uppercase tracking-wider block">Website URL</label>
@@ -278,7 +278,7 @@ export default function CipherDetail(props) {
         {/* Custom Fields */}
         <Show when={cipher()?.custom_fields?.length > 0}>
           <div class="space-y-3 pt-2">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Custom Fields</h4>
+            <h4 class={SECTION_LABEL}>Custom Fields</h4>
             <For each={cipher()?.custom_fields || []}>
               {(field) => {
                 const isHidden = () => field.field_type === "Hidden";
@@ -311,7 +311,7 @@ export default function CipherDetail(props) {
         {/* Notes */}
         <Show when={cipher()?.notes}>
           <div class="space-y-4 pt-2">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1 flex items-center justify-between">
+            <h4 class={`${SECTION_LABEL} flex items-center justify-between`}>
               <span>{t("entry.notes")}</span>
               <CopyNotesButton value={cipher()?.notes || ""} />
             </h4>
@@ -324,7 +324,7 @@ export default function CipherDetail(props) {
         {/* Attachments */}
         <Show when={cipher()?.attachments?.length > 0}>
           <div class="space-y-3 pt-2">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] pl-1">Attachments</h4>
+            <h4 class={SECTION_LABEL}>Attachments</h4>
             <For each={cipher()?.attachments || []}>
               {(attach) => {
                 const sizeStr = () => {

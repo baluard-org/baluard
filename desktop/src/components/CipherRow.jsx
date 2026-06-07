@@ -1,4 +1,5 @@
 import { useVault } from "../context/VaultContext.jsx";
+import CipherAvatar from "./CipherAvatar.jsx";
 
 export default function CipherRow(props) {
   const vault = useVault();
@@ -12,9 +13,7 @@ export default function CipherRow(props) {
           : "hover:bg-[var(--color-sidebar)]"
       }`}
     >
-      <div class={`w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold shrink-0 ${getCuratedColor(props.cipher.name)}`}>
-        {getDomainInitials(props.cipher.name)}
-      </div>
+      <CipherAvatar name={props.cipher.name} />
       <div class="min-w-0 flex-1">
         <div class="text-sm font-semibold text-[var(--color-text)] truncate">{props.cipher.name || "Untitled"}</div>
         <div class="text-xs text-[var(--color-muted)] truncate">{props.cipher.username || props.cipher._meta?.username || ""}</div>
@@ -22,5 +21,3 @@ export default function CipherRow(props) {
     </button>
   );
 }
-
-import { getCuratedColor, getDomainInitials } from "../lib/utils.js";

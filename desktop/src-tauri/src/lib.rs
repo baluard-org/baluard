@@ -290,30 +290,24 @@ pub fn run() {
             // outdated code after a sidecar rebuild.
             #[cfg(unix)]
             {
-                // Kill any running daemon by socket activity check + SIGTERM
+                // Kill only processes whose binary is exactly "idtty-daemon".
+                // Do NOT use lsof -t -U — on macOS it can return PIDs of unrelated
+                // processes (OrbStack, Docker, Ice, Ghostty, etc.) that hold Unix sockets.
                 let socket = default_socket_path();
-                if socket.exists() {
-                    if let Ok(_stream) = std::os::unix::net::UnixStream::connect(&socket) {
-                        // Socket is live — find and kill the listener below.
-                        drop(_stream);
-                        // Find and kill the daemon process listening on our socket
-                        let sock_str = socket.to_string_lossy();
-                        if let Ok(output) = std::process::Command::new("lsof")
-                            .args(["-t", "-U", sock_str.as_ref()])
-                            .output()
-                        {
-                            let pids = String::from_utf8_lossy(&output.stdout);
-                            for pid in pids.split_whitespace() {
-                                if let Ok(p) = pid.parse::<i32>() {
-                                    unsafe { libc::kill(p, libc::SIGTERM); }
-                                    log::info!("Stopped old daemon pid={p}");
-                                }
-                            }
+                if let Ok(output) = std::process::Command::new("pgrep")
+                    .args(["-x", "idtty-daemon"])
+                    .output()
+                {
+                    let pids = String::from_utf8_lossy(&output.stdout);
+                    for pid in pids.split_whitespace() {
+                        if let Ok(p) = pid.parse::<i32>() {
+                            unsafe { libc::kill(p, libc::SIGTERM); }
+                            log::info!("Stopped old daemon pid={p}");
                         }
-                        std::thread::sleep(Duration::from_millis(300));
-                        let _ = std::fs::remove_file(&socket);
                     }
                 }
+                std::thread::sleep(Duration::from_millis(300));
+                let _ = std::fs::remove_file(&socket);
 
                 // Use tauri-plugin-shell sidecar for bundle-relative binary path.
                 // Binary must exist at src-tauri/binaries/idtty-daemon-{target-triple}
@@ -375,6 +369,15 @@ pub fn run() {
                         }
                         std::thread::sleep(Duration::from_millis(100));
                     }
+            }
+
+            // Set window icon explicitly so it shows correctly in alt+tab / cmd+tab
+            // even during dev mode (bundle icons only apply to installed apps).
+            if let Some(w) = app.get_webview_window("main") {
+                let icon = tauri::image::Image::from_bytes(
+                    include_bytes!("../icons/128x128.png")
+                )?;
+                w.set_icon(icon)?;
             }
 
             // System tray

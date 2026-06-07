@@ -1,6 +1,7 @@
 import { createSignal, Show, For } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
-import { generateSecurePassword } from "../lib/utils.js";
+import { generateSecurePassword, formatCardNumber } from "../lib/utils.js";
+import { FIELD_LABEL, handleCardInput } from "../lib/helpers.js";
 import { getSchema } from "../lib/cipherSchema.js";
 import { IconX, IconStar, IconEye, IconEyeOff, IconPlus } from "./Icon.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
@@ -81,7 +82,7 @@ export default function AddEditCipherForm(props) {
     if (f.type === "select") {
       return (
         <div>
-          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{f.label}</label>
+          <label class={FIELD_LABEL}>{f.label}</label>
           <select class={cls()} value={val()} onChange={e => update(f.key, e.target.value)}>
             <option value="">--</option>
             <For each={f.options}>{o => <option value={o}>{o}</option>}</For>
@@ -93,7 +94,7 @@ export default function AddEditCipherForm(props) {
     if (f.type === "textarea") {
       return (
         <div>
-          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{f.label}</label>
+          <label class={FIELD_LABEL}>{f.label}</label>
           <textarea
             placeholder={f.placeholder || ""}
             rows={f.rows || 4}
@@ -108,7 +109,7 @@ export default function AddEditCipherForm(props) {
 
     return (
       <div>
-        <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{f.label}</label>
+        <label class={FIELD_LABEL}>{f.label}</label>
         <input
           type={f.type === "password" ? "password" : f.type === "email" ? "email" : "text"}
           placeholder={f.placeholder || ""}
@@ -154,7 +155,7 @@ export default function AddEditCipherForm(props) {
     return (
       <>
         <div>
-          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.user")}</label>
+          <label class={FIELD_LABEL}>{t("entry.user")}</label>
           <input placeholder={t("entry.usernamePlaceholder")} class={INPUT_CLS} value={newCipher().username} onInput={e => update("username", e.target.value)} {...SECURE_INPUT} />
         </div>
 
@@ -225,7 +226,7 @@ export default function AddEditCipherForm(props) {
         </div>
 
         <div>
-          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">TOTP URI</label>
+          <label class={FIELD_LABEL}>TOTP URI</label>
           <input placeholder="otpauth://totp/..." class={MONO_CLS} value={newCipher().totp_uri || ""} onInput={e => update("totp_uri", e.target.value)} {...SECURE_INPUT} />
         </div>
       </>
@@ -237,27 +238,27 @@ export default function AddEditCipherForm(props) {
       <>
         <CardBrandDisplay number={newCipher().cardNumber || ""} />
         <div>
-          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Cardholder Name</label>
+          <label class={FIELD_LABEL}>Cardholder Name</label>
           <input placeholder="Full name on card" class={INPUT_CLS} value={newCipher().cardholder_name || ""} onInput={e => update("cardholder_name", e.target.value)} {...SECURE_INPUT} />
         </div>
         <div>
-          <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Card Number</label>
-          <input placeholder="1234 5678 9012 3456" class={MONO_CLS} value={newCipher().cardNumber || ""} onInput={e => update("cardNumber", e.target.value)} {...SECURE_INPUT} />
+          <label class={FIELD_LABEL}>Card Number</label>
+          <input placeholder="1234 5678 9012 3456" class={MONO_CLS} value={formatCardNumber(newCipher().cardNumber || "")} onInput={handleCardInput(update)} {...SECURE_INPUT} />
         </div>
         <div class="grid grid-cols-3 gap-3">
           <div>
-            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Month</label>
+            <label class={FIELD_LABEL}>Month</label>
             <select class={INPUT_CLS} value={newCipher().expMonth || ""} onChange={e => update("expMonth", e.target.value)}>
               <option value="">MM</option>
               {["01","02","03","04","05","06","07","08","09","10","11","12"].map(m => <option value={m}>{m}</option>)}
             </select>
           </div>
           <div>
-            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Year</label>
+            <label class={FIELD_LABEL}>Year</label>
             <input placeholder="2028" class={MONO_CLS} value={newCipher().expYear || ""} onInput={e => update("expYear", e.target.value)} {...SECURE_INPUT} />
           </div>
           <div>
-            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">CVV</label>
+            <label class={FIELD_LABEL}>CVV</label>
             <input placeholder="123" type="password" class={MONO_CLS} value={newCipher().cvv || ""} onInput={e => update("cvv", e.target.value)} {...SECURE_INPUT} />
           </div>
         </div>
@@ -304,7 +305,7 @@ export default function AddEditCipherForm(props) {
           </div>
 
           <div>
-            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">Item Name</label>
+            <label class={FIELD_LABEL}>Item Name</label>
             <input placeholder={t("entry.namePlaceholder")} class={INPUT_CLS} value={newCipher().name} onInput={e => update("name", e.target.value)} {...SECURE_INPUT} />
           </div>
 
@@ -315,7 +316,7 @@ export default function AddEditCipherForm(props) {
 
           {/* Notes (all types) */}
           <div>
-            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)] mb-1.5 block">{t("entry.notes")}</label>
+            <label class={FIELD_LABEL}>{t("entry.notes")}</label>
             <textarea
               placeholder={t("entry.notesPlaceholder")}
               rows={cipherType() === "secureNote" ? "8" : "4"}

@@ -103,6 +103,19 @@ export function getDomainInitials(name) {
   return cleanName.charAt(0).toUpperCase();
 }
 
+// Format card number with spaces (Amex: 4-6-5, others: groups of 4)
+export function formatCardNumber(raw) {
+  const digits = (raw || "").replace(/\D/g, "");
+  if (!digits) return raw || "";
+  // Amex: 15 digits → 4-6-5
+  if (/^3[47]/.test(digits)) {
+    const parts = [digits.slice(0, 4), digits.slice(4, 10), digits.slice(10, 15)];
+    return parts.filter(Boolean).join(" ");
+  }
+  // Default: groups of 4
+  return digits.replace(/(.{4})/g, "$1 ").trimEnd();
+}
+
 // Detect credit card brand from number prefix
 export function detectCardBrand(number) {
   const n = number.replace(/\s/g, "");
