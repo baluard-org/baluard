@@ -319,11 +319,99 @@ impl VaultState {
             settings.default_uri_match =
                 Some(idtty_core::types::UriMatchStrategy::from_str_strict(s)?);
         }
+        if let Some(v) = partial.get("fetch_favicons") {
+            settings.fetch_favicons =
+                serde_json::from_value(v.clone())
+                    .map_err(|e| format!("Invalid fetch_favicons: {e}"))?;
+        }
 
         handle
             .save_settings(&settings)
             .map_err(|e| format!("{e}"))?;
         Ok(())
+    }
+
+    /// Fetch a favicon for a given domain/URI.
+    /// Payload: plain string (domain or full URI).
+    /// Returns base64-encoded PNG on success, or empty string if disabled/failed.
+    pub async fn fetch_favicon(&self, payload: &str) -> Result<String, String> {
+        // Check if favicon fetching is enabled
+        {
+            let guard = self.inner.read().await;
+            if let Some(handle) = guard.as_ref() {
+                let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+                if matches!(settings.fetch_favicons, Some(false)) {
+                    return Ok(String::new());
+                }
+            }
+        }
+
+        // Extract domain from payload (could be full URI or bare domain)
+        let domain = Self::extract_domain(payload.trim());
+        if domain.is_empty() {
+            return Ok(String::new());
+        }
+
+        // Use Google's favicon service (reliable, no auth needed, returns PNG)
+        let url = format!("https://www.google.com/s2/favicons?domain={domain}&sz=32");
+
+        // Fetch via curl (consistent with providers.rs pattern)
+        let output = std::process::Command::new("curl")
+            .args(["-s", "-L", "--max-time", "5"])
+            .arg(&url)
+            .output()
+            .map_err(|e| format!("curl spawn failed: {e}"))?;
+
+        if !output.status.success() || output.stdout.is_empty() {
+            return Ok(String::new());
+        }
+
+        // Validate it looks like image data (PNG magic bytes or reasonable size)
+        let data = &output.stdout;
+        if data.len() < 4 {
+            return Ok(String::new());
+        }
+
+        // Accept PNG (89 50 4E 47), JPEG (FF D8 FF), ICO (00 00 01 00), or webp (52 49 46 46)
+        let is_image = (data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47)
+            || (data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
+            || (data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x01)
+            || (data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46);
+
+        if !is_image {
+            return Ok(String::new());
+        }
+
+        let b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            data,
+        );
+
+        // Determine mime type from magic bytes
+        let mime = if data[0] == 0x89 { "image/png" }
+            else if data[0] == 0xFF { "image/jpeg" }
+            else if data[0] == 0x52 { "image/webp" }
+            else { "image/x-icon" };
+
+        Ok(serde_json::json!({"data": b64, "mime": mime}).to_string())
+    }
+
+    /// Extract domain from a URI or bare string.
+    fn extract_domain(input: &str) -> String {
+        let stripped = input
+            .strip_prefix("https://")
+            .or_else(|| input.strip_prefix("http://"))
+            .unwrap_or(input);
+
+        // Remove path, query, fragment, port
+        let host = stripped.split('/').next().unwrap_or(stripped);
+        let host = host.split(':').next().unwrap_or(host);
+        let host = host.split('?').next().unwrap_or(host);
+
+        // Remove leading www.
+        let host = host.strip_prefix("www.").unwrap_or(host);
+
+        host.to_lowercase()
     }
 
     /// Add a new cipher. Requires vault to be unlocked.

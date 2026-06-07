@@ -1,8 +1,13 @@
 import { useVault } from "../context/VaultContext.jsx";
-import CipherAvatar from "./CipherAvatar.jsx";
+import CipherAvatar, { invalidateFaviconCache } from "./CipherAvatar.jsx";
+import { uriStr } from "../lib/utils.js";
 
 export default function CipherRow(props) {
   const vault = useVault();
+  const firstUri = () => {
+    const uris = props.cipher.uris || props.cipher._meta?.uris;
+    return uris?.length ? uriStr(uris[0]) : null;
+  };
 
   return (
     <button
@@ -13,7 +18,7 @@ export default function CipherRow(props) {
           : "hover:bg-[var(--color-sidebar)]"
       }`}
     >
-      <CipherAvatar name={props.cipher.name} />
+      <CipherAvatar name={props.cipher.name} uri={firstUri()} />
       <div class="min-w-0 flex-1">
         <div class="text-sm font-semibold text-[var(--color-text)] truncate">{props.cipher.name || "Untitled"}</div>
         <div class="text-xs text-[var(--color-muted)] truncate">{props.cipher.username || props.cipher._meta?.username || ""}</div>

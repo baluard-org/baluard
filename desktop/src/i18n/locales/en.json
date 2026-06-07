@@ -53,6 +53,10 @@
     "restore": "Restore",
     "selectPrompt": "Select an entry or add a new one"
   },
+  "settings": {
+    "faviconLabel": "Show website icons",
+    "faviconDesc": "Fetch favicons from third-party services for entries with website URIs."
+  },
   "errors": {
     "daemonNotRunning": "Daemon is not running",
     "vaultNotUnlocked": "Vault is not unlocked",

@@ -89,7 +89,7 @@ export default function CipherDetail(props) {
       <div class="flex-1 overflow-y-auto p-8 space-y-6">
         {/* Title Header */}
         <div class="flex items-start gap-5 pb-6 border-b border-[var(--color-border)]">
-          <CipherAvatar name={cipher()?.name} size="lg" />
+          <CipherAvatar name={cipher()?.name} size="lg" uri={cipher()?.uris?.length ? uriStr(cipher()?.uris?.[0]) : null} />
           <div class="min-w-0 flex-1">
             <h3 class="text-2xl font-bold text-[var(--color-text)] truncate leading-tight select-all">{cipher()?.name || "Untitled"}</h3>
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] mt-2">
