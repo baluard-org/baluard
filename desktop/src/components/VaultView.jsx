@@ -213,8 +213,7 @@ export default function VaultView() {
               </div>
               <div class="space-y-0.5 mt-1">
                 <Show when={showNewFolder()}>
-                  <div class="flex items-center gap-1 py-1.5 rounded-xl" style={{ "padding-left": "12px", "padding-right": "6px" }}>
-                    <span class="w-4 shrink-0" />
+                  <div class="flex items-center gap-1 py-1.5 rounded-xl" style={{ "padding-left": "14px", "padding-right": "6px" }}>
                     <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary)] opacity-50" />
                     <input
                       class="flex-1 min-w-0 bg-transparent border-b border-[var(--color-primary)] text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-muted)] pb-px"
@@ -243,9 +242,8 @@ export default function VaultView() {
                 <button
                   onClick={() => vault.setSelectedFolder(null)}
                   class={`flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${!vault.selectedFolder() ? "bg-[var(--color-sidebar)] text-[var(--color-text)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
-                  style={{ "padding-left": "12px", "padding-right": "6px" }}
+                  style={{ "padding-left": "14px", "padding-right": "6px" }}
                 >
-                  <span class="w-4 shrink-0" />
                   <IconFolder class="w-3.5 h-3.5 shrink-0" />
                   <span>No Folder</span>
                 </button>
