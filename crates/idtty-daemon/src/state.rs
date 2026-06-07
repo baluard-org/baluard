@@ -410,7 +410,16 @@ impl VaultState {
                     .and_then(|v| v.as_str().map(String::from))
                     .or(existing_cipher.notes.clone())
             },
-            custom_fields: existing_cipher.custom_fields.clone(),
+            custom_fields: {
+                match update.get("custom_fields") {
+                    Some(v) => serde_json::from_value::<Vec<idtty_core::types::CustomField>>(v.clone())
+                        .unwrap_or_else(|e| {
+                            log::error!("custom_fields deser failed: {e}");
+                            existing_cipher.custom_fields.clone()
+                        }),
+                    None => existing_cipher.custom_fields.clone(),
+                }
+            },
             created_at: Some(existing_cipher.created_at),
             password_history: existing_cipher.password_history.clone(),
             attachments: existing_cipher.attachments.clone(),

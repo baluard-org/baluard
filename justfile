@@ -104,6 +104,41 @@ check: fmt-check lint test build
 
 # ── Desktop (Tauri) ────────────────────────────────────────────────────────
 
+# Kill any running idtty-daemon process (by socket or by name)
+_kill_daemon:
+	#!/usr/bin/env bash
+	set +e
+	# Method 1: find process by socket file
+	SOCK="${XDG_RUNTIME_DIR:-/tmp}/idtty.sock"
+	[[ "$OSTYPE" == "darwin"* ]] && SOCK="$HOME/.config/idtty/idtty.sock"
+	if [ -S "$SOCK" ]; then
+		PID=$(lsof -t -U "$SOCK" 2>/dev/null || true)
+		if [ -n "$PID" ]; then
+			kill $PID 2>/dev/null
+			echo "Stopped daemon (pid=$PID) on socket $SOCK"
+			sleep 0.3
+		fi
+		rm -f "$SOCK"
+	fi
+	# Method 2: find by process name (fallback)
+	pkill -f 'idtty-daemon' 2>/dev/null && echo "Stopped idtty-daemon process" || true
+	sleep 0.2
+
+# Unconditionally rebuild sidecar binaries (no staleness check)
+_sidecar-force:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
+	mkdir -p desktop/src-tauri/binaries
+	{{ linuxbrew_env }} cargo build --release -p idtty-daemon -p idtty-cli
+	cp target/release/idtty-daemon "desktop/src-tauri/binaries/idtty-daemon-$TRIPLE"
+	cp target/release/idtty "desktop/src-tauri/binaries/idtty-$TRIPLE"
+	# Force-refresh sidecar in tauri target/debug
+	mkdir -p desktop/src-tauri/target/debug
+	cp "desktop/src-tauri/binaries/idtty-daemon-$TRIPLE" "desktop/src-tauri/target/debug/idtty-daemon"
+	cp "desktop/src-tauri/binaries/idtty-$TRIPLE" "desktop/src-tauri/target/debug/idtty"
+	echo "Sidecar rebuilt (forced): idtty-daemon-$TRIPLE"
+
 # Build daemon sidecar for current platform (Tauri needs target-triple suffix)
 _sidecar:
 	#!/usr/bin/env bash
@@ -143,15 +178,19 @@ desktop-deps:
 	cd desktop && npm install
 
 # Run desktop app in dev mode
-desktop-dev: _sidecar desktop-deps
+desktop-dev: _sidecar-force desktop-deps
+	#!/usr/bin/env bash
+	set -euo pipefail
+	just _kill_daemon
 	cd desktop && npm run tauri dev
 
 # Run desktop app with full debug logging (IDTTY_DEBUG=1)
 # Logs go to ./logs/ (daemon.log + desktop.log)
 # Share: zip logs/ or paste the relevant file
-desktop-debug: _sidecar desktop-deps
+desktop-debug: _sidecar-force desktop-deps
 	#!/usr/bin/env bash
 	set -euo pipefail
+	just _kill_daemon
 	LOG_DIR="$(pwd)/logs"
 	mkdir -p "$LOG_DIR"
 	# Clear previous logs for a clean session

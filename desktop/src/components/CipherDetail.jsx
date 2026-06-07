@@ -282,15 +282,26 @@ export default function CipherDetail(props) {
             <For each={cipher()?.custom_fields || []}>
               {(field) => {
                 const isHidden = () => field.field_type === "Hidden";
+                const isBoolean = () => field.field_type === "Boolean";
                 const [revealCustom, setRevealCustom] = createSignal(false);
                 return (
-                  <CopyableField
-                    label={field.name}
-                    value={field.value}
-                    isPassword={isHidden()}
-                    showPassword={revealCustom()}
-                    onToggleShow={() => setRevealCustom(!revealCustom())}
-                  />
+                  <Show when={!isBoolean()} fallback={
+                    <div class="flex items-center justify-between py-2">
+                      <span class="text-sm text-[var(--color-text)]">{field.name}</span>
+                      <span class={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${field.value === "true" ? "bg-emerald-500/15 text-emerald-400" : "bg-[var(--color-card)] text-[var(--color-muted)]"}`}>
+                        <span class={`w-2 h-2 rounded-full ${field.value === "true" ? "bg-emerald-400" : "bg-[var(--color-muted)]"}`} />
+                        {field.value === "true" ? "Yes" : "No"}
+                      </span>
+                    </div>
+                  }>
+                    <CopyableField
+                      label={field.name}
+                      value={field.value}
+                      isPassword={isHidden()}
+                      showPassword={revealCustom()}
+                      onToggleShow={() => setRevealCustom(!revealCustom())}
+                    />
+                  </Show>
                 );
               }}
             </For>

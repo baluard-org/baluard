@@ -354,7 +354,7 @@ export default function AddEditCipherForm(props) {
                 return (
                 <div class="flex gap-2 mb-2 items-center">
                   <input placeholder="Name" class="w-1/3 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.name} onInput={e => { Object.assign(fieldsRef[i()], { name: e.target.value }); }} {...SECURE_INPUT} />
-                  <select class="px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer" value={ft()} onChange={e => { const v = e.target.value; fieldsRef[i()] = { ...fieldsRef[i()], field_type: v === "Linked" ? { Linked: "LoginUsername" } : v }; setFields([...fieldsRef]); }}>
+                  <select class="px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer" value={ft()} onChange={e => { const v = e.target.value; fieldsRef[i()] = { ...fieldsRef[i()], field_type: v === "Linked" ? { Linked: "LoginUsername" } : v, value: v === "Boolean" ? (fieldsRef[i()].value || "false") : fieldsRef[i()].value }; setFields([...fieldsRef]); }}>
                     <option value="Text">Text</option>
                     <option value="Hidden">Hidden</option>
                     <option value="Boolean">Boolean</option>
@@ -432,7 +432,25 @@ export default function AddEditCipherForm(props) {
                       </optgroup>
                     </select>
                   }>
-                    <input placeholder="Value" class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.value} onInput={e => { Object.assign(fieldsRef[i()], { value: e.target.value }); }} {...SECURE_INPUT} />
+                    <Show when={ft() !== "Boolean"} fallback={
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={field.value === "true"}
+                        aria-label={field.name || "Boolean toggle"}
+                        onClick={() => { const nv = field.value === "true" ? "false" : "true"; fieldsRef[i()] = { ...fieldsRef[i()], value: nv }; setFields([...fieldsRef]); }}
+                        class="flex-1 relative h-10 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] transition-colors cursor-pointer"
+                      >
+                        <div class="flex items-center justify-between px-3 h-full">
+                          <span class="text-xs text-[var(--color-muted)]">{field.name || "Boolean"}</span>
+                          <div class={`w-9 h-5 rounded-full transition-colors relative ${field.value === "true" ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}>
+                            <div class={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${field.value === "true" ? "translate-x-5" : "translate-x-0.5"}`} />
+                          </div>
+                        </div>
+                      </button>
+                    }>
+                      <input placeholder="Value" class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.value} onInput={e => { Object.assign(fieldsRef[i()], { value: e.target.value }); }} {...SECURE_INPUT} />
+                    </Show>
                   </Show>
                   <button type="button" onClick={() => { fieldsRef = fieldsRef.filter((_, j) => j !== i()); setFields([...fieldsRef]); }} class="px-3 py-2 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in" title="Remove field">
                     <IconX class="w-4 h-4" />
