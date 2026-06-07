@@ -285,21 +285,45 @@ pub fn run() {
                     .build(),
             )?;
 
-            // Start daemon if not already running
+            // Always stop any existing daemon and start fresh.
+            // Prevents stale daemon from a previous Tauri session from serving
+            // outdated code after a sidecar rebuild.
             #[cfg(unix)]
             {
-                let daemon_running = send_request("ping", "").is_ok();
+                // Kill any running daemon by socket activity check + SIGTERM
+                let socket = default_socket_path();
+                if socket.exists() {
+                    if let Ok(_stream) = std::os::unix::net::UnixStream::connect(&socket) {
+                        // Socket is live — find and kill the listener below.
+                        drop(_stream);
+                        // Find and kill the daemon process listening on our socket
+                        let sock_str = socket.to_string_lossy();
+                        if let Ok(output) = std::process::Command::new("lsof")
+                            .args(["-t", "-U", sock_str.as_ref()])
+                            .output()
+                        {
+                            let pids = String::from_utf8_lossy(&output.stdout);
+                            for pid in pids.split_whitespace() {
+                                if let Ok(p) = pid.parse::<i32>() {
+                                    unsafe { libc::kill(p, libc::SIGTERM); }
+                                    log::info!("Stopped old daemon pid={p}");
+                                }
+                            }
+                        }
+                        std::thread::sleep(Duration::from_millis(300));
+                        let _ = std::fs::remove_file(&socket);
+                    }
+                }
 
-                if !daemon_running {
-                    // Use tauri-plugin-shell sidecar for bundle-relative binary path.
-                    // Binary must exist at src-tauri/binaries/idtty-daemon-{target-triple}
-                    //
-                    // Default vault path lives alongside the socket.
-                    let socket_dir = default_socket_path().parent()
-                        .expect("socket path has no parent").to_path_buf();
-                    let vault_path = socket_dir.join("vault");
-                    log::info!("Starting daemon with --vault-path {} --socket {}",
-                        vault_path.display(), default_socket_path().display());
+                // Use tauri-plugin-shell sidecar for bundle-relative binary path.
+                // Binary must exist at src-tauri/binaries/idtty-daemon-{target-triple}
+                //
+                // Default vault path lives alongside the socket.
+                let socket_dir = socket.parent()
+                    .expect("socket path has no parent").to_path_buf();
+                let vault_path = socket_dir.join("vault");
+                log::info!("Starting daemon with --vault-path {} --socket {}",
+                    vault_path.display(), socket.display());
 
                     let sidecar_command = app.shell().sidecar("idtty-daemon")
                         .map_err(|e| format!("Sidecar not found: {e}"))?;
@@ -351,9 +375,6 @@ pub fn run() {
                         }
                         std::thread::sleep(Duration::from_millis(100));
                     }
-                } else {
-                    log::info!("Daemon already running");
-                }
             }
 
             // System tray
