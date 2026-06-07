@@ -359,8 +359,12 @@ export default function VaultView() {
                 newCipher={newCipher}
                 setNewCipher={setNewCipher}
                 onSave={async () => {
-                  const ok = await vault.addCipher(newCipher(), t);
-                  if (ok) { setNewCipher({ ...EMPTY_CIPHER }); }
+                  const id = await vault.addCipher(newCipher(), t);
+                  if (id) {
+                    const added = await vault.getCipher(id, t);
+                    if (added) { setViewCipher(added); vault.setActivePane("detail"); }
+                    setNewCipher({ ...EMPTY_CIPHER });
+                  }
                 }}
                 onCancel={() => vault.setActivePane("welcome")}
               />
