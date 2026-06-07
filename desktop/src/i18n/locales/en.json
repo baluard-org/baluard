@@ -32,7 +32,9 @@
     "entryCount_plural": "{count} entries",
     "emptyList": "No entries yet",
     "addEntry": "+ Add Entry",
-    "lock": "Lock Vault"
+    "lock": "Lock Vault",
+    "emptyTrash": "Empty Trash",
+    "emptyTrashConfirm": "Permanently delete all entries in trash? This cannot be undone."
   },
   "entry": {
     "addTitle": "Add Entry",

@@ -7,6 +7,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { buildFolderCreatePayload } from "../lib/payload.js";
 import { selectSource, filterByCategory, filterByFolder, searchCiphers } from "../lib/filters.js";
+import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
 import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox, IconAlert } from "./Icon.jsx";
 import CipherRow from "./CipherRow.jsx";
@@ -30,6 +31,7 @@ export default function VaultView() {
   const [showDeleteConfirm, setShowDeleteConfirm] = createSignal(false);
   const [showGenerator, setShowGenerator] = createSignal(false);
   const [showAddMenu, setShowAddMenu] = createSignal(false);
+  const [showEmptyTrashConfirm, setShowEmptyTrashConfirm] = createSignal(false);
 
   // Init: load ciphers on first mount
   onMount(async () => {
@@ -90,6 +92,30 @@ export default function VaultView() {
           if (ok) { setViewCipher(null); }
         }}
       />
+      <Show when={showEmptyTrashConfirm()}>
+        <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]" onClick={() => setShowEmptyTrashConfirm(false)}>
+          <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+            <h3 class="text-lg font-bold text-[var(--color-text)] mb-2">{t("vault.emptyTrash")}</h3>
+            <p class="text-sm text-[var(--color-muted)] mb-6">{t("vault.emptyTrashConfirm")}</p>
+            <div class="flex gap-3">
+              <button
+                onClick={() => setShowEmptyTrashConfirm(false)}
+                class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] font-semibold transition-all cursor-pointer"
+              >Cancel</button>
+              <button
+                onClick={async () => {
+                  setShowEmptyTrashConfirm(false);
+                  try {
+                    await daemon("vault.trash.purge", "0");
+                    await vault.refreshCiphers(t);
+                  } catch (e) { error(sanitizeError(e, t)); }
+                }}
+                class="flex-1 py-2.5 rounded-xl bg-red-950/40 text-red-400 border border-red-900/30 hover:bg-red-950/60 font-semibold transition-all cursor-pointer"
+              >{t("vault.emptyTrash")}</button>
+            </div>
+          </div>
+        </div>
+      </Show>
       <GeneratorModal showGenerator={showGenerator()} setShowGenerator={setShowGenerator} />
       <RepromptModal />
       <SettingsModal />
@@ -251,35 +277,51 @@ export default function VaultView() {
               </div>
             </div>
 
-            <div class="relative" ref={addMenuRef}>
-              <button
-                onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu()); }}
-                class="px-4 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center gap-1"
-              >
-                + New
-                <IconChevronDown class={`w-3 h-3 transition-transform ${showAddMenu() ? "rotate-180" : ""}`} />
-              </button>
-              <Show when={showAddMenu()}>
-              <div class="absolute right-0 top-full mt-1 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl py-1 w-40 z-50">
-                <button onClick={() => startAdd("login")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Login</button>
-                <button onClick={() => startAdd("secureNote")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Secure Note</button>
-                <button onClick={() => startAdd("card")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Card</button>
-                <button onClick={() => startAdd("identity")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Identity</button>
-                <button onClick={() => startAdd("sshKey")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">SSH Key</button>
-                <div class="border-t border-[var(--color-border)] my-1"></div>
-                <button onClick={() => startAdd("bankAccount")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Bank Account</button>
-                <button onClick={() => startAdd("driversLicense")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Driver License</button>
-                <button onClick={() => startAdd("passport")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Passport & ID</button>
+            <Show when={vault.selectedCategory() === "Trash"} fallback={
+              <div class="relative" ref={addMenuRef}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu()); }}
+                  class="px-4 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center gap-1"
+                >
+                  + New
+                  <IconChevronDown class={`w-3 h-3 transition-transform ${showAddMenu() ? "rotate-180" : ""}`} />
+                </button>
+                <Show when={showAddMenu()}>
+                <div class="absolute right-0 top-full mt-1 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl py-1 w-40 z-50">
+                  <button onClick={() => startAdd("login")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Login</button>
+                  <button onClick={() => startAdd("secureNote")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Secure Note</button>
+                  <button onClick={() => startAdd("card")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Card</button>
+                  <button onClick={() => startAdd("identity")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Identity</button>
+                  <button onClick={() => startAdd("sshKey")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">SSH Key</button>
+                  <div class="border-t border-[var(--color-border)] my-1"></div>
+                  <button onClick={() => startAdd("bankAccount")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Bank Account</button>
+                  <button onClick={() => startAdd("driversLicense")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Driver License</button>
+                  <button onClick={() => startAdd("passport")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Passport & ID</button>
+                </div>
+                </Show>
               </div>
-              </Show>
-            </div>
-            <button
-              onClick={() => setShowGenerator(true)}
-              class="p-2 rounded-xl bg-[var(--color-sidebar)] hover:bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] text-sm transition-all cursor-pointer"
-              title="Password Generator"
-            >
-              <IconBolt class="w-4 h-4" />
-            </button>
+            }>
+              <button
+                onClick={async () => {
+                  if (!filteredCiphers().length) return;
+                  setShowEmptyTrashConfirm(true);
+                }}
+                class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                disabled={!filteredCiphers().length}
+              >
+                <IconTrash class="w-3.5 h-3.5" />
+                {t("vault.emptyTrash")}
+              </button>
+            </Show>
+            <Show when={vault.selectedCategory() !== "Trash"}>
+              <button
+                onClick={() => setShowGenerator(true)}
+                class="p-2 rounded-xl bg-[var(--color-sidebar)] hover:bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] text-sm transition-all cursor-pointer"
+                title="Password Generator"
+              >
+                <IconBolt class="w-4 h-4" />
+              </button>
+            </Show>
           </div>
 
           {/* Search Input bar */}
