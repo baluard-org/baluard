@@ -32,6 +32,7 @@ export default function VaultView() {
   const [showGenerator, setShowGenerator] = createSignal(false);
   const [showAddMenu, setShowAddMenu] = createSignal(false);
   const [showEmptyTrashConfirm, setShowEmptyTrashConfirm] = createSignal(false);
+  const [showNewFolder, setShowNewFolder] = createSignal(false);
 
   // Init: load ciphers on first mount
   onMount(async () => {
@@ -203,15 +204,7 @@ export default function VaultView() {
               <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between">
                 <span>Folders</span>
                 <button
-                  onClick={async () => {
-                    const name = prompt("Folder name:");
-                    if (name) {
-                      try {
-                        await daemon("folder.create", JSON.stringify(buildFolderCreatePayload(name)));
-                        await vault.refreshCiphers(t);
-                      } catch (e) { alert(e.message); }
-                    }
-                  }}
+                  onClick={() => setShowNewFolder(!showNewFolder())}
                   class="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] cursor-pointer"
                   title="New folder"
                 >
@@ -219,15 +212,42 @@ export default function VaultView() {
                 </button>
               </div>
               <div class="space-y-0.5 mt-1">
+                <Show when={showNewFolder()}>
+                  <div class="flex items-center gap-1 py-1.5 rounded-xl" style={{ "padding-left": "12px", "padding-right": "6px" }}>
+                    <span class="w-4 shrink-0" />
+                    <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary)] opacity-50" />
+                    <input
+                      class="flex-1 min-w-0 bg-transparent border-b border-[var(--color-primary)] text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-muted)] pb-px"
+                      placeholder="Folder name"
+                      autofocus
+                      onKeyDown={async (e) => {
+                        if (e.key === "Enter") {
+                          const name = e.target.value.trim();
+                          if (!name) return;
+                          try {
+                            await daemon("folder.create", JSON.stringify(buildFolderCreatePayload(name)));
+                            await vault.refreshCiphers(t);
+                          } catch (err) { error(sanitizeError(err, t)); }
+                          setShowNewFolder(false);
+                        } else if (e.key === "Escape") {
+                          setShowNewFolder(false);
+                        }
+                      }}
+                      onBlur={() => setShowNewFolder(false)}
+                    />
+                  </div>
+                </Show>
                 <Show when={vault.folders() && vault.folders().length > 0}>
                   <FolderTree folders={vault.folders() || []} selectedFolder={vault.selectedFolder} setSelectedFolder={vault.setSelectedFolder} />
                 </Show>
                 <button
                   onClick={() => vault.setSelectedFolder(null)}
-                  class={`w-full px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-3 text-left cursor-pointer ${!vault.selectedFolder() ? "bg-[var(--color-sidebar)] text-[var(--color-text)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
+                  class={`flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${!vault.selectedFolder() ? "bg-[var(--color-sidebar)] text-[var(--color-text)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
+                  style={{ "padding-left": "12px", "padding-right": "6px" }}
                 >
-                  <IconFolder class="w-4 h-4 text-[var(--color-muted)]" />
-                  No Folder
+                  <span class="w-4 shrink-0" />
+                  <IconFolder class="w-3.5 h-3.5 shrink-0" />
+                  <span>No Folder</span>
                 </button>
               </div>
             </div>
