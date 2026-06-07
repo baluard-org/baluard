@@ -104,24 +104,22 @@ check: fmt-check lint test build
 
 # ── Desktop (Tauri) ────────────────────────────────────────────────────────
 
-# Kill any running idtty-daemon process (by socket or by name)
+# Kill any running idtty-daemon process (exact binary match only)
 _kill_daemon:
 	#!/usr/bin/env bash
 	set +e
-	# Method 1: find process by socket file
 	SOCK="${XDG_RUNTIME_DIR:-/tmp}/idtty.sock"
 	[[ "$OSTYPE" == "darwin"* ]] && SOCK="$HOME/.config/idtty/idtty.sock"
-	if [ -S "$SOCK" ]; then
-		PID=$(lsof -t -U "$SOCK" 2>/dev/null || true)
-		if [ -n "$PID" ]; then
-			kill $PID 2>/dev/null
-			echo "Stopped daemon (pid=$PID) on socket $SOCK"
-			sleep 0.3
-		fi
-		rm -f "$SOCK"
-	fi
-	# Method 2: find by process name (fallback)
-	pkill -f 'idtty-daemon' 2>/dev/null && echo "Stopped idtty-daemon process" || true
+
+	# pgrep -x matches exact binary name only — no collateral damage
+	pgrep -x 'idtty-daemon' 2>/dev/null | while IFS= read -r pid; do
+		[ -z "$pid" ] && continue
+		kill "$pid" 2>/dev/null
+		echo "Stopped daemon (pid=$pid)"
+	done
+
+	# Clean up stale socket
+	rm -f "$SOCK"
 	sleep 0.2
 
 # Unconditionally rebuild sidecar binaries (no staleness check)

@@ -1,17 +1,18 @@
 import { createSignal, Show } from "solid-js";
 import { IconEye, IconEyeOff, IconCopy, IconCheck } from "./Icon.jsx";
+import { CARD_ROW } from "../lib/helpers.js";
 
 export default function CopyableField(props) {
   const [copied, setCopied] = createSignal(false);
 
   function handleCopy() {
-    navigator.clipboard.writeText(props.value || "");
+    navigator.clipboard.writeText(props.copyValue ?? (props.value || ""));
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
   }
 
   return (
-    <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] hover:border-[var(--color-primary)] transition-colors flex items-center justify-between group">
+    <div class={CARD_ROW}>
       <div class="min-w-0 flex-1">
         <label class="text-[10px] text-[var(--color-muted)] block uppercase tracking-wider font-extrabold">{props.label}</label>
         <Show when={props.isPassword} fallback={

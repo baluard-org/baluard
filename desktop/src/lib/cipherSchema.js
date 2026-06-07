@@ -19,7 +19,7 @@ export const CIPHER_SCHEMAS = {
       { key: "totp_uri", label: "TOTP URI", placeholder: "otpauth://totp/...", mono: true },
     ],
     fromKind(kind) {
-      const d = kind.login || kind.Login || {};
+      const d = kind.data || kind.login || kind.Login || {};
       return {
         username: d.username || "",
         password: d.password || "",
@@ -50,7 +50,7 @@ export const CIPHER_SCHEMAS = {
       { key: "cvv", label: "CVV", placeholder: "123", type: "password", mono: true },
     ],
     fromKind(kind) {
-      const d = kind.card || kind.Card || {};
+      const d = kind.data || kind.card || kind.Card || {};
       return {
         cardholder_name: d.cardholder_name || "",
         cardNumber: d.number || "",
@@ -108,7 +108,7 @@ export const CIPHER_SCHEMAS = {
       ["ssn", "passportNumber", "licenseNumber"],
     ],
     fromKind(kind) {
-      const d = kind.identity || kind.Identity || {};
+      const d = kind.data || kind.identity || kind.Identity || {};
       return {
         idTitle: d.title || "",
         firstName: d.first_name || "",
@@ -165,7 +165,7 @@ export const CIPHER_SCHEMAS = {
       { key: "fingerprint", label: "Fingerprint", placeholder: "SHA256:abc123...", mono: true },
     ],
     fromKind(kind) {
-      const d = kind.sshKey || kind.SshKey || {};
+      const d = kind.data || kind.sshKey || kind.SshKey || {};
       return {
         publicKey: d.public_key || "",
         privateKey: d.private_key || "",
@@ -213,7 +213,7 @@ export const CIPHER_SCHEMAS = {
       ["bankPhone", "bankPin"],
     ],
     fromKind(kind) {
-      const d = kind.bankAccount || kind.BankAccount || {};
+      const d = kind.data || kind.bankAccount || kind.BankAccount || {};
       return {
         bankName: d.bank_name || "",
         nameOnAccount: d.name_on_account || "",
@@ -268,7 +268,7 @@ export const CIPHER_SCHEMAS = {
       ["dlIssueDate", "dlExpDate", "dlClass"],
     ],
     fromKind(kind) {
-      const d = kind.driversLicense || kind.DriversLicense || {};
+      const d = kind.data || kind.driversLicense || kind.DriversLicense || {};
       return {
         dlFirstName: d.first_name || "",
         dlMiddleName: d.middle_name || "",
@@ -329,7 +329,7 @@ export const CIPHER_SCHEMAS = {
       ["ppIssueDate", "ppExpDate"],
     ],
     fromKind(kind) {
-      const d = kind.passport || kind.Passport || {};
+      const d = kind.data || kind.passport || kind.Passport || {};
       return {
         ppSurname: d.surname || "",
         ppGivenName: d.given_name || "",
