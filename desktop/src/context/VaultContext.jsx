@@ -12,7 +12,7 @@ const VALID_PANE_TRANSITIONS = {
   welcome: ["detail", "add"],
   detail:  ["welcome", "edit"],
   edit:    ["detail", "welcome"],
-  add:     ["welcome"],
+  add:     ["welcome", "detail"],
 };
 
 function guardedSetPane(setActivePane, from, to) {
@@ -81,15 +81,14 @@ function VaultProvider(props) {
   // because those are local state in VaultView, not global context.
 
   async function addCipher(cipherData, t) {
-    if (!cipherData.name) { setError(t("entry.namePlaceholder") + " required"); return; }
+    if (!cipherData.name) { setError(t("entry.namePlaceholder") + " required"); return null; }
     try {
-      await daemon("vault.add", JSON.stringify(buildAddPayload(cipherData)));
-      guardedSetPane(setActivePane, activePane(), "welcome");
+      const id = await daemon("vault.add", JSON.stringify(buildAddPayload(cipherData)));
       await refreshCiphers(t);
-      return true;
+      return id; // new cipher ID as string
     } catch (e) {
       setError(sanitizeError(e, t));
-      return false;
+      return null;
     }
   }
 
