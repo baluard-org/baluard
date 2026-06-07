@@ -1,5 +1,5 @@
 import { useVault } from "../context/VaultContext.jsx";
-import CipherAvatar, { invalidateFaviconCache } from "./CipherAvatar.jsx";
+import CipherAvatar from "./CipherAvatar.jsx";
 import { uriStr } from "../lib/utils.js";
 
 export default function CipherRow(props) {
