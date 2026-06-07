@@ -83,7 +83,7 @@ export default function AddEditCipherForm(props) {
       return (
         <div>
           <label class={FIELD_LABEL}>{f.label}</label>
-          <select class={cls()} value={val()} onChange={e => update(f.key, e.target.value)}>
+          <select class={cls} value={val()} onChange={e => update(f.key, e.target.value)}>
             <option value="">--</option>
             <For each={f.options}>{o => <option value={o}>{o}</option>}</For>
           </select>
@@ -98,7 +98,7 @@ export default function AddEditCipherForm(props) {
           <textarea
             placeholder={f.placeholder || ""}
             rows={f.rows || 4}
-            class={cls() + " resize-none"}
+            class={cls + " resize-none"}
             value={val()}
             onInput={e => update(f.key, e.target.value)}
             {...SECURE_INPUT}
@@ -113,7 +113,7 @@ export default function AddEditCipherForm(props) {
         <input
           type={f.type === "password" ? "password" : f.type === "email" ? "email" : "text"}
           placeholder={f.placeholder || ""}
-          class={cls()}
+          class={cls}
           value={val()}
           onInput={e => update(f.key, e.target.value)}
           {...SECURE_INPUT}
