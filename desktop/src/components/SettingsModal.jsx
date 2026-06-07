@@ -23,6 +23,9 @@ export default function SettingsModal() {
   const [biometricEnabled, setBiometricEnabled] = createSignal(false);
   const [biometricAvailable, setBiometricAvailable] = createSignal(false);
 
+  // Favicon state
+  const [fetchFavicons, setFetchFavicons] = createSignal(true);
+
   // Import/Export state
   const [importing, setImporting] = createSignal(false);
   const [importSource, setImportSource] = createSignal("");
@@ -52,6 +55,8 @@ export default function SettingsModal() {
       // Load auto lock
       const data = JSON.parse(await daemon("settings.get"));
       if (data.auto_lock_minutes) setLockMinutes(data.auto_lock_minutes);
+      // Favicon setting (default: enabled)
+      setFetchFavicons(data.fetch_favicons !== false);
 
       // Load biometric status
       const status = JSON.parse(await daemon("vault.biometric_status"));
@@ -66,6 +71,16 @@ export default function SettingsModal() {
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {}
+  }
+
+  async function toggleFetchFavicons() {
+    const next = !fetchFavicons();
+    setFetchFavicons(next);
+    try {
+      await daemon("settings.set", JSON.stringify({ fetch_favicons: next }));
+    } catch (e) {
+      setFetchFavicons(!next);
+    }
   }
 
   async function toggleBiometric() {
@@ -257,6 +272,22 @@ export default function SettingsModal() {
                         {biometricEnabled() ? "Enabled" : "Enable"}
                       </button>
                     </Show>
+                  </div>
+                </div>
+
+                {/* Favicon Settings */}
+                <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
+                  <div class="flex items-center justify-between">
+                    <div class="flex flex-col flex-1 pr-4">
+                      <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.faviconLabel")}</span>
+                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.faviconDesc")}</span>
+                    </div>
+                    <button
+                      onClick={toggleFetchFavicons}
+                      class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${fetchFavicons() ? "bg-green-950/20 text-green-400 border-green-900/50 hover:bg-green-950/30" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                    >
+                      {fetchFavicons() ? "Enabled" : "Disabled"}
+                    </button>
                   </div>
                 </div>
               </Show>

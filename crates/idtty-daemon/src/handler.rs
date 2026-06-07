@@ -170,6 +170,7 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.list_archived",
     "settings.get",
     "settings.set",
+    "favicon.get",
     "sync.init",
     "sync.remote",
     "sync.push",
@@ -504,6 +505,14 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
             match state.settings_set(&req.payload).await {
                 Ok(()) => ok_resp("settings updated", token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        // ── Favicon (token required) ──
+        "favicon.get" => {
+            match state.fetch_favicon(&req.payload).await {
+                Ok(data) => ok_resp(data, token_str),
                 Err(e) => err_response(e),
             }
         }

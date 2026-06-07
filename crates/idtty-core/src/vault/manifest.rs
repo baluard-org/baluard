@@ -78,6 +78,10 @@ pub struct VaultSettings {
     /// URI match strategy global default. Typed enum with hard error on unknown values.
     #[serde(default, deserialize_with = "deserialize_uri_match_strategy")]
     pub default_uri_match: Option<crate::types::UriMatchStrategy>,
+    /// Whether to fetch favicons from third-party sites for entries with URIs.
+    /// `None` or `Some(true)` = enabled (default). `Some(false)` = disabled.
+    #[serde(default)]
+    pub fetch_favicons: Option<bool>,
 }
 
 fn deserialize_uri_match_strategy<'de, D>(
