@@ -355,12 +355,16 @@ impl VaultState {
         // Use Google's favicon service (reliable, no auth needed, returns PNG)
         let url = format!("https://www.google.com/s2/favicons?domain={domain}&sz=32");
 
-        // Fetch via curl (consistent with providers.rs pattern)
-        let output = std::process::Command::new("curl")
-            .args(["-s", "-L", "--max-time", "5"])
-            .arg(&url)
-            .output()
-            .map_err(|e| format!("curl spawn failed: {e}"))?;
+        // Run curl in a blocking thread to avoid stalling the tokio runtime
+        let output = tokio::task::spawn_blocking(move || {
+            std::process::Command::new("curl")
+                .args(["-s", "-L", "--max-time", "5"])
+                .arg(&url)
+                .output()
+        })
+        .await
+        .map_err(|e| format!("curl task failed: {e}"))?
+        .map_err(|e| format!("curl spawn failed: {e}"))?;
 
         if !output.status.success() || output.stdout.is_empty() {
             return Ok(String::new());
