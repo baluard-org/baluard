@@ -34,7 +34,7 @@ export function FolderNode(props) {
 
   const hasChildren = () => (props.node.children || []).length > 0;
   const depth = () => props.depth;
-  const indent = () => 12 + depth() * 16;
+  const indent = () => 14 + depth() * 16;
 
   async function refreshFolders() {
     try { await vault.refreshCiphers(t); } catch {}
@@ -88,7 +88,7 @@ export function FolderNode(props) {
           >
             <svg class={`w-3 h-3 transition-transform ${expanded() ? "rotate-90" : ""}`} fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
           </button>
-        ) : <span class="w-4 shrink-0" />}
+        ) : (depth() > 0 ? <span class="w-4 shrink-0" /> : null)}
         <IconFolder class="w-3.5 h-3.5 shrink-0" />
 
         <Show when={renaming()} fallback={
@@ -141,7 +141,7 @@ export function FolderNode(props) {
       <Show when={addingChild()}>
         <div
           class="flex items-center gap-1 py-1.5 rounded-xl pr-1.5"
-          style={{ "padding-left": `${12 + (depth() + 1) * 16}px` }}
+          style={{ "padding-left": `${14 + (depth() + 1) * 16}px` }}
         >
           <span class="w-4 shrink-0" />
           <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary)] opacity-50" />
