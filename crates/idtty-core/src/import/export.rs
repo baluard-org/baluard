@@ -439,6 +439,7 @@ mod tests {
             reprompt: false,
             attachments: vec![],
             archived: false,
+            tags: vec![],
         }
     }
 

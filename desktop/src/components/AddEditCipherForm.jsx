@@ -18,6 +18,24 @@ function fieldCls(f) {
   return f.mono ? MONO_CLS : INPUT_CLS;
 }
 
+/** Flatten nested folder tree into a list with depth for indentation.
+ *  Guards against cycles via a seen Set. */
+function flatFolderTree(folders) {
+  const result = [];
+  const roots = folders.filter(f => !f.parent_id);
+  function walk(list, depth, seen) {
+    for (const folder of list) {
+      if (seen.has(folder.id)) continue;
+      seen.add(folder.id);
+      result.push({ id: folder.id, name: folder.name, depth });
+      const children = folders.filter(f => f.parent_id === folder.id);
+      if (children.length) walk(children, depth + 1, seen);
+    }
+  }
+  walk(roots, 0, new Set());
+  return result;
+}
+
 export default function AddEditCipherForm(props) {
   const { t } = useI18n();
 
@@ -46,6 +64,37 @@ export default function AddEditCipherForm(props) {
   let fieldsRef = initialFields.map(f => ({ ...f }));
   const [fields, setFields] = createSignal([...fieldsRef]);
 
+  // Mutable tags ref: same pattern as uris/fields.
+  const initialTags = newCipher().tags || [];
+  let tagsRef = initialTags.map(t => t);
+  const [tags, setTags] = createSignal([...tagsRef]);
+  const [tagInput, setTagInput] = createSignal("");
+
+  function addTag() {
+    const val = tagInput().trim().toLowerCase().replace(/,$/, "");
+    if (!val || tagsRef.length >= 20) return;
+    if (tagsRef.some(t => t.toLowerCase() === val)) { setTagInput(""); return; }
+    tagsRef = [...tagsRef, val];
+    setTags([...tagsRef]);
+    setTagInput("");
+  }
+
+  function addTagFromString(s) {
+    if (!s || tagsRef.length >= 20) return;
+    if (tagsRef.some(t => t.toLowerCase() === s.toLowerCase())) return;
+    tagsRef = [...tagsRef, s];
+    setTags([...tagsRef]);
+  }
+
+  const suggestions = () => {
+    const q = tagInput().trim().toLowerCase();
+    if (!q) return [];
+    const allTags = props.tags || [];
+    return allTags.filter(t =>
+      t.toLowerCase().includes(q) && !tagsRef.some(ot => ot.toLowerCase() === t.toLowerCase())
+    ).slice(0, 5);
+  };
+
   function update(key, value) {
     setNewCipher({ ...newCipher(), [key]: value });
   }
@@ -69,7 +118,7 @@ export default function AddEditCipherForm(props) {
   }
 
   function handleSave() {
-    setNewCipher({ ...newCipher(), uris: urisRef, custom_fields: fieldsRef });
+    setNewCipher({ ...newCipher(), uris: urisRef, custom_fields: fieldsRef, tags: tagsRef });
     props.onSave?.();
   }
 
@@ -307,6 +356,57 @@ export default function AddEditCipherForm(props) {
           <div>
             <label class={FIELD_LABEL}>Item Name</label>
             <input placeholder={t("entry.namePlaceholder")} class={INPUT_CLS} value={newCipher().name} onInput={e => update("name", e.target.value)} {...SECURE_INPUT} />
+          </div>
+
+          {/* Folder selector */}
+          <div>
+            <label class={FIELD_LABEL}>{t("entry.folder")}</label>
+            <select class={INPUT_CLS} value={newCipher().folder_id || ""} onChange={e => update("folder_id", e.target.value || null)}>
+              <option value="">{t("entry.noFolder")}</option>
+              <For each={flatFolderTree(props.folders || [])}>
+                {f => <option value={f.id}>{"\u00A0\u00A0".repeat(f.depth)}{f.name}</option>}
+              </For>
+            </select>
+          </div>
+
+          {/* Tags */}
+          <div>
+            <label class={FIELD_LABEL}>{t("entry.tags")}</label>
+            <div class="flex flex-wrap gap-1.5 mb-2">
+              <For each={tags()}>
+                {(tag, i) => (
+                  <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20">
+                    {tag}
+                    <button type="button" onClick={() => { tagsRef = tagsRef.filter((_, j) => j !== i()); setTags([...tagsRef]); }} class="text-[var(--color-primary)] hover:text-red-500 cursor-pointer">&times;</button>
+                  </span>
+                )}
+              </For>
+            </div>
+            <div class="relative">
+              <input
+                placeholder={t("entry.tagPlaceholder")}
+                class={INPUT_CLS}
+                value={tagInput()}
+                onInput={e => setTagInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" || e.key === ",") {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    addTag();
+                  }
+                }}
+                {...SECURE_INPUT}
+              />
+              <Show when={tagInput() && suggestions().length > 0}>
+                <div class="absolute z-10 mt-1 w-full rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] shadow-lg max-h-32 overflow-y-auto">
+                  <For each={suggestions()}>
+                    {s => (
+                      <button type="button" class="w-full text-left px-4 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-sidebar)] cursor-pointer" onClick={() => { setTagInput(""); addTagFromString(s); }}>{s}</button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
           </div>
 
           {/* Type-specific fields */}

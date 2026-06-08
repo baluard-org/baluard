@@ -49,6 +49,7 @@ export function buildAddPayload(c) {
     notes: c.notes || null,
     folder_id: c.folder_id || null,
     custom_fields: c.custom_fields || [],
+    tags: c.tags || [],
   };
 }
 
@@ -64,6 +65,7 @@ export function buildUpdatePayload(id, c) {
     notes: c.notes || null,
     folder_id: c.folder_id || null,
     custom_fields: c.custom_fields || [],
+    tags: c.tags || [],
   };
 }
 

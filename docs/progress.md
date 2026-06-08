@@ -99,6 +99,33 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 
 All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
+### Resolved Code TODOs (2026-06-08)
+
+| File | Item | Resolution |
+|------|------|------------|
+| `crypto/kdf.rs` | Iterative Argon2 calibration loop | **Done**: `auto_calibrate()` now ramps memory/time_cost within profile bounds via timed derivation benchmarks |
+| `sync/engine.rs` | Local push/pull roundtrip test | **Done**: Fixed `#[ignore]` test; allow `file://` URLs in `validate_git_url`, ensure `save_last_head` creates `meta/` dir |
+| `vault/handle.rs` | Store vault_id in meta file | **Done**: `derive_vault_id()` deterministically derives UUID from KDF salt; no persistence needed. Stale TODO removed |
+
+### Tags
+
+**Storage**: Encrypted `tags: Vec<String>` on cipher envelope + `meta/tag_index.json` plaintext cache. See `docs/plan-tags.md`.
+
+| Component | Description | Status |
+|-----------|-------------|--------|
+| Core data model | `tags` field on CipherInput, CipherEnvelopeData, Cipher, CipherMeta | **Done** |
+| Tag validation | 64-char max (chars), UTF-8, lowercase-normalized, max 20 per cipher | **Done** |
+| Tag index cache | `meta/tag_index.json` rebuilt on vault.list_full | **Done** |
+| Tag CRUD | create_tag, rename_tag, delete_tag, list_tags in VaultHandle | **Done** |
+| Daemon IPC routes | tag.list, tag.create, tag.rename, tag.delete, tag.rebuild_index | **Done** |
+| CLI commands | `idtty tags list/create/rename/delete` | **Done** |
+| Desktop: tag input | Free-text + autocomplete in Add/Edit form | **Done** |
+| Desktop: tag pills | CipherDetail header badges | **Done** |
+| Desktop: tag sidebar | Tag section in sidebar with click-to-filter | **Done** |
+| Desktop: filter | filterByTag in filters.js | **Done** |
+| Import: 1Password | Preserve all tags from 1PUX import | **Done** |
+| Import: BW export | Tags skipped (no BW field). Preserved in git. | **Done** |
+
 ### Device Fleet Visibility
 
 **Architecture**: See DOMAIN 5 in `docs/architecture-decisions.md`

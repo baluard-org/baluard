@@ -25,7 +25,7 @@ function guardedSetPane(setActivePane, from, to) {
 const EMPTY_CIPHER = {
   name: "", username: "", password: "", uris: [], notes: "",
   cipherType: "login", favorite: false, reprompt: false,
-  attachments: [], folder_id: null, custom_fields: [], totp_uri: "",
+  attachments: [], folder_id: null, custom_fields: [], totp_uri: "", tags: [],
 };
 
 function VaultProvider(props) {
@@ -34,6 +34,7 @@ function VaultProvider(props) {
   const [trashCiphers, setTrashCiphers] = createSignal([]);
   const [archivedCiphers, setArchivedCiphers] = createSignal([]);
   const [folders, setFolders] = createSignal([]);
+  const [tags, setTags] = createSignal([]);
 
   // Device fleet
   const [deviceFleet, setDeviceFleet] = createSignal([]);
@@ -43,6 +44,7 @@ function VaultProvider(props) {
   // Navigation & filters
   const [selectedCategory, setSelectedCategory] = createSignal("All items");
   const [selectedFolder, setSelectedFolder] = createSignal(null);
+  const [selectedTag, setSelectedTag] = createSignal(null);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [activePane, setActivePane] = createSignal("welcome");
 
@@ -61,6 +63,7 @@ function VaultProvider(props) {
       if (!data) throw new Error("empty response");
       setCiphers(data.ciphers || []);
       setFolders(Array.isArray(data.folders) ? data.folders : []);
+      setTags(Array.isArray(data.tags) ? data.tags : []);
       setTrashCiphers(data.trash || []);
       setArchivedCiphers(data.archived || []);
     } catch (e) {
@@ -170,6 +173,7 @@ function VaultProvider(props) {
     trashCiphers, setTrashCiphers,
     archivedCiphers, setArchivedCiphers,
     folders, setFolders,
+    tags, setTags,
     // Device fleet
     deviceFleet, setDeviceFleet,
     selfDeviceId, setSelfDeviceId,
@@ -177,6 +181,7 @@ function VaultProvider(props) {
     // Navigation
     selectedCategory, setSelectedCategory,
     selectedFolder, setSelectedFolder,
+    selectedTag, setSelectedTag,
     searchQuery, setSearchQuery,
     activePane, setActivePane,
     // Settings

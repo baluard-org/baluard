@@ -160,6 +160,11 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "folder.create",
     "folder.rename",
     "folder.delete",
+"tag.list",
+"tag.create",
+"tag.rename",
+"tag.delete",
+"tag.rebuild_index",
     "vault.delete",
     "vault.devices",
     "vault.trash.list",
@@ -368,6 +373,42 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(()) => ok_resp("deleted", token_str),
                 Err(e) => err_response(e),
             }
+        }
+
+        "tag.list" => match state.list_tags().await {
+            Ok(resp) => ok_resp(&resp, token_str),
+            Err(e) => err_response(e),
+        },
+        "tag.create" => {
+            if req.payload.is_empty() {
+                return err_response("Missing tag name in payload");
+            }
+            match state.create_tag(&req.payload).await {
+                Ok(resp) => ok_resp(&resp, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "tag.rename" => {
+            if req.payload.is_empty() {
+                return err_response("Missing tag rename JSON in payload");
+            }
+            match state.rename_tag(&req.payload).await {
+                Ok(()) => ok_resp("renamed", token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "tag.delete" => {
+            if req.payload.is_empty() {
+                return err_response("Missing tag name in payload");
+            }
+            match state.delete_tag(&req.payload).await {
+                Ok(resp) => ok_resp(&resp, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "tag.rebuild_index" => match state.rebuild_tag_index().await {
+            Ok(resp) => ok_resp(&resp, token_str),
+            Err(e) => err_response(e),
         }
 
         "vault.delete" => {

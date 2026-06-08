@@ -90,6 +90,7 @@ pub fn parse(data: &str) -> ImportResult {
             attachments: vec![],
             archived: false,
             reprompt: false,
+            tags: vec![],
         };
 
         result.add(cipher);

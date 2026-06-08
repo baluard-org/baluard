@@ -157,6 +157,7 @@ pub fn decrypt_cipher(
         password_history: data.password_history,
         attachments: data.attachments,
         archived: data.archived,
+        tags: data.tags,
     })
 }
 
@@ -194,6 +195,8 @@ struct CipherData {
     pub attachments: Vec<crate::vault::attachment::AttachmentMeta>,
     #[serde(default)]
     pub archived: bool,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 impl CipherData {
@@ -234,6 +237,7 @@ impl CipherData {
             password_history: input.password_history.clone(),
             attachments: input.attachments.clone(),
             archived: input.archived,
+            tags: input.tags.clone(),
         }
     }
 }
@@ -258,6 +262,7 @@ impl From<CipherEnvelopeData> for CipherData {
             password_history: migrated.password_history,
             attachments: migrated.attachments,
             archived: migrated.archived,
+            tags: migrated.tags,
         }
     }
 }
@@ -292,6 +297,7 @@ mod tests {
             attachments: vec![],
             reprompt: false,
             archived: false,
+            tags: vec![],
         };
 
         let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
@@ -340,6 +346,7 @@ mod tests {
             attachments: vec![],
             reprompt: false,
             archived: false,
+            tags: vec![],
         };
 
         let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
@@ -375,6 +382,7 @@ mod tests {
             attachments: vec![],
             reprompt: false,
             archived: false,
+            tags: vec![],
         };
 
         // Encrypt for cipher A

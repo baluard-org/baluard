@@ -92,10 +92,25 @@ export default function CipherDetail(props) {
           <CipherAvatar name={cipher()?.name} size="lg" uri={cipher()?.uris?.length ? uriStr(cipher()?.uris?.[0]) : null} />
           <div class="min-w-0 flex-1">
             <h3 class="text-2xl font-bold text-[var(--color-text)] truncate leading-tight select-all">{cipher()?.name || "Untitled"}</h3>
-            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] mt-2">
-              <span class="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
-              {typeLabel(cipher()?.type)} Item
-            </span>
+            <div class="flex flex-wrap items-center gap-2 mt-2">
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)]">
+                <span class="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
+                {typeLabel(cipher()?.type)} Item
+              </span>
+              <Show when={(vault.folders() || []).find(f => f.id === cipher()?.folder_id)}>
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)]">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+                  {(vault.folders() || []).find(f => f.id === cipher()?.folder_id)?.name}
+                </span>
+              </Show>
+              <For each={cipher()?.tags || []}>
+                {tag => (
+                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20">
+                    {tag}
+                  </span>
+                )}
+              </For>
+            </div>
           </div>
           <button
             onClick={props.onClose}

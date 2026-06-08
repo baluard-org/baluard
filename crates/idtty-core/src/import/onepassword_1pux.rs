@@ -145,8 +145,9 @@ pub fn parse(data: &[u8]) -> ImportResult {
                 // Extract custom fields (non-standard ones)
                 let custom_fields = extract_custom_fields(&all_fields);
 
-                // Use first tag as folder hint
+                // Use first tag as folder hint, preserve all tags on cipher
                 let folder = item.tags.as_ref().and_then(|t| t.first().cloned());
+                let imported_tags = item.tags.clone().unwrap_or_default();
 
                 let cipher = CipherInput {
                     name,
@@ -160,6 +161,7 @@ pub fn parse(data: &[u8]) -> ImportResult {
                     attachments: vec![],
             archived: false,
                     reprompt: false,
+                    tags: imported_tags,
                 };
 
                 result.add_with_folder(cipher, folder);

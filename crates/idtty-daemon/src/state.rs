@@ -249,11 +249,16 @@ impl VaultState {
             }
         }
 
+        // Rebuild tag index from decrypted cipher data
+        let _ = handle.rebuild_tag_index();
+        let tags = handle.list_tags().unwrap_or_default();
+
         let result = serde_json::json!({
             "ciphers": ciphers,
             "folders": folders,
             "trash": trash,
             "archived": archived,
+            "tags": tags,
         });
         serde_json::to_string(&result).map_err(|e| format!("Serialization: {e}"))
     }
@@ -516,6 +521,7 @@ impl VaultState {
             password_history: existing_cipher.password_history.clone(),
             attachments: existing_cipher.attachments.clone(),
                 archived: existing_cipher.archived,
+                tags: existing_cipher.tags.clone(),
         };
 
         handle
@@ -758,6 +764,65 @@ impl VaultState {
         handle.delete_folder(folder_id).map_err(|e| format!("{e}"))
     }
 
+    // ── Tag operations ──
+
+    pub async fn list_tags(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let tags = handle.list_tags().map_err(|e| format!("{e}"))?;
+        serde_json::to_string(&tags).map_err(|e| format!("{e}"))
+    }
+
+    pub async fn create_tag(&self, name: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        handle.create_tag(name).map_err(|e| format!("{e}"))?;
+        Ok(name.to_string())
+    }
+
+    pub async fn rename_tag(&self, payload: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let data: serde_json::Value = serde_json::from_str(payload)
+            .map_err(|e| format!("Invalid JSON: {e}"))?;
+        let old = data["old"].as_str().ok_or("Missing 'old' field")?;
+        let new = data["new"].as_str().ok_or("Missing 'new' field")?;
+        handle.rename_tag(old, new).map_err(|e| format!("{e}"))?;
+        Ok(())
+    }
+
+    pub async fn delete_tag(&self, name: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let count = handle.delete_tag(name).map_err(|e| format!("{e}"))?;
+        serde_json::to_string(&serde_json::json!({"updated": count}))
+            .map_err(|e| format!("{e}"))
+    }
+
+    pub async fn rebuild_tag_index(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        handle.rebuild_tag_index().map_err(|e| format!("{e}"))?;
+        let tags = handle.list_tags().map_err(|e| format!("{e}"))?;
+        serde_json::to_string(&serde_json::json!({"tags": tags.len()}))
+            .map_err(|e| format!("{e}"))
+    }
+
     /// Delete a cipher by ID. Uses write lock for filesystem mutation.
     pub async fn delete_cipher(&self, id_str: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;
@@ -958,6 +1023,7 @@ impl VaultState {
             password_history: cipher.password_history.clone(),
             attachments,
             archived: cipher.archived,
+            tags: cipher.tags.clone(),
         };
         handle.update_cipher(cipher_id, &input).map_err(|e| {
             // Clean up orphaned encrypted file on update failure
@@ -1085,6 +1151,7 @@ impl VaultState {
             password_history: cipher.password_history.clone(),
             attachments,
             archived: cipher.archived,
+            tags: cipher.tags.clone(),
         };
         handle
             .update_cipher(cipher_id, &input)
@@ -1368,6 +1435,7 @@ fn cipher_to_json(c: &idtty_core::types::Cipher) -> serde_json::Value {
         "epoch": c.key_epoch,
         "seq": c.update_seq,
         "folder_id": c.folder_id,
+        "tags": c.tags,
         "created_at": c.created_at,
         "updated_at": c.updated_at,
         "password_history": c.password_history,
