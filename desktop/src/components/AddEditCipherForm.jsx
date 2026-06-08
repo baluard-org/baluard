@@ -89,6 +89,7 @@ export default function AddEditCipherForm(props) {
     if (tagsRef.some(t => t.toLowerCase() === val)) { setTagInput(""); return; }
     tagsRef = [...tagsRef, val];
     setTags([...tagsRef]);
+    setNewCipher({ ...newCipher(), tags: tagsRef });
     setTagInput("");
   }
 
@@ -97,6 +98,7 @@ export default function AddEditCipherForm(props) {
     if (tagsRef.some(t => t.toLowerCase() === s.toLowerCase())) return;
     tagsRef = [...tagsRef, s];
     setTags([...tagsRef]);
+    setNewCipher({ ...newCipher(), tags: tagsRef });
   }
 
   const suggestions = () => {
