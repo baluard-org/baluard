@@ -2,6 +2,7 @@ import { createSignal, Show } from "solid-js";
 import { Transition } from "solid-transition-group";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
+import FocusTrap from "./FocusTrap.jsx";
 
 let repromptCallback = null;
 
@@ -9,6 +10,7 @@ export function requestReprompt(cb) { repromptCallback = cb; }
 
 export default function RepromptModal(props) {
   const { t } = useI18n();
+  let dialogRef;
   const [show, setShow] = createSignal(false);
   const [password, setPassword] = createSignal("");
   const [failed, setFailed] = createSignal(false);
@@ -36,9 +38,16 @@ export default function RepromptModal(props) {
   return (
     <Transition name="fade">
       <Show when={show()}>
-        <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reprompt-title"
+          class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+        >
+          <FocusTrap containerRef={dialogRef} onEscape={() => { setShow(false); setPassword(""); setFailed(false); }} />
           <div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-            <h3 class="text-lg font-bold text-[var(--color-text)] mb-2">{t("entry.confirmPassword")}</h3>
+            <h3 id="reprompt-title" class="text-lg font-bold text-[var(--color-text)] mb-2">{t("entry.confirmPassword")}</h3>
             <p class="text-sm text-[var(--color-muted)] mb-4">{t("entry.enterMasterPasswordToContinue")}</p>
             <Show when={failed()}>
               <div class="mb-3 p-2 rounded-lg bg-red-950/40 border border-red-900/30 text-red-300 text-xs">{t("errors.invalidPassword")}</div>

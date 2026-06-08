@@ -9,11 +9,13 @@ import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { buildImportPayload, buildExportPayload } from "../lib/payload.js";
 import { biometryAvailable } from "../lib/biometry.js";
 import { IconX, IconMoon, IconSunFull, IconDownload } from "./Icon.jsx";
+import FocusTrap from "./FocusTrap.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 
 export default function SettingsModal() {
   const vault = useVault();
   const { t } = useI18n();
+  let dialogRef;
 
   const [activeTab, setActiveTab] = createSignal("general"); // "general" or "data"
   
@@ -187,11 +189,19 @@ export default function SettingsModal() {
   return (
     <Transition name="fade">
       <Show when={vault.showSettingsModal()}>
-        <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]" onClick={() => vault.setShowSettingsModal(false)}>
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-title"
+          class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
+          onClick={() => vault.setShowSettingsModal(false)}
+        >
+          <FocusTrap containerRef={dialogRef} onEscape={() => vault.setShowSettingsModal(false)} />
           <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[500px] max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div class="p-6 pb-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
-              <h3 class="text-lg font-bold text-[var(--color-text)]">{t("settings.title")}</h3>
+              <h3 id="settings-title" class="text-lg font-bold text-[var(--color-text)]">{t("settings.title")}</h3>
               <button
                  onClick={() => vault.setShowSettingsModal(false)}
                  class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg border border-transparent hover:border-[var(--color-border)] transition-all cursor-pointer flex items-center justify-center"

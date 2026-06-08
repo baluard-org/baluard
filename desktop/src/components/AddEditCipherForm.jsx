@@ -70,6 +70,18 @@ export default function AddEditCipherForm(props) {
   const [tags, setTags] = createSignal([...tagsRef]);
   const [tagInput, setTagInput] = createSignal("");
 
+  function removeTag(val) {
+    tagsRef = tagsRef.filter(t => t !== val);
+    setTags([...tagsRef]);
+    setNewCipher({ ...newCipher(), tags: tagsRef });
+  }
+
+  // Schema-driven layout rows (reactive)
+  const layoutRows = () => {
+    const s = schema();
+    return s.layout || s.fields.length ? (s.layout || []) : [];
+  };
+
   function addTag() {
     const val = tagInput().trim().toLowerCase().replace(/,$/, "");
     if (!val || tagsRef.length >= 20) return;
@@ -413,8 +425,9 @@ export default function AddEditCipherForm(props) {
             </div>
           </div>
 
-          {/* Dynamic layout schema fields */}
-          <For each={layoutRows}>
+          {/* Type-specific fields */}
+          <Show when={cipherType() === "login"}>{renderLoginFields()}</Show>
+          <Show when={cipherType() !== "login" && cipherType() !== "card"}><For each={layoutRows()}>
             {row => (
               <div class={GRID_CLS[row.length] || GRID_CLS[1]}>
                 <For each={row}>
@@ -470,35 +483,10 @@ export default function AddEditCipherForm(props) {
                 </For>
               </div>
             )}
-          </For>
+          </For></Show>
 
-          {/* Type-specific inputs outside standard layout (Card expiry, Custom Notes) */}
-          <Show when={cipherType() === "card"}>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class={FIELD_LABEL}>Cardholder Name</label>
-                <input placeholder="John Doe" class={INPUT_CLS} value={newCipher().cardholder_name || ""} onInput={e => update("cardholder_name", e.target.value)} {...SECURE_INPUT} />
-              </div>
-              <div>
-                <label class={FIELD_LABEL}>Card Number</label>
-                <input placeholder="1234 5678 9012 3456" class={MONO_CLS} value={formatCardNumber(newCipher().cardNumber || "")} onInput={handleCardInput(update)} {...SECURE_INPUT} />
-              </div>
-            </div>
-            <div class="grid grid-cols-3 gap-3">
-              <div>
-                <label class={FIELD_LABEL}>Exp Month</label>
-                <input placeholder="MM" class={MONO_CLS} value={newCipher().exp_month || ""} onInput={e => update("exp_month", e.target.value)} maxLength="2" {...SECURE_INPUT} />
-              </div>
-              <div>
-                <label class={FIELD_LABEL}>Exp Year</label>
-                <input placeholder="YYYY" class={MONO_CLS} value={newCipher().exp_year || ""} onInput={e => update("exp_year", e.target.value)} maxLength="4" {...SECURE_INPUT} />
-              </div>
-              <div>
-                <label class={FIELD_LABEL}>{t("fields.cvv")}</label>
-                <input placeholder="123" type="password" class={MONO_CLS} value={newCipher().code || ""} onInput={e => update("code", e.target.value)} maxLength="4" {...SECURE_INPUT} />
-              </div>
-            </div>
-          </Show>
+          {/* Card fields (dedicated renderer) */}
+          <Show when={cipherType() === "card"}>{renderCardFields()}</Show>
 
           {/* Notes (all types) */}
           <div>

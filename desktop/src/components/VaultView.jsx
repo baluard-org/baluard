@@ -15,6 +15,8 @@ import CipherDetail from "./CipherDetail.jsx";
 import AddEditCipherForm from "./AddEditCipherForm.jsx";
 import { invalidateFaviconCache } from "./CipherAvatar.jsx";
 import DeleteConfirmModal from "./DeleteConfirmModal.jsx";
+import ArchiveConfirmModal from "./ArchiveConfirmModal.jsx";
+import FocusTrap from "./FocusTrap.jsx";
 import GeneratorModal from "./GeneratorModal.jsx";
 import RepromptModal from "./RepromptModal.jsx";
 import SettingsModal from "./SettingsModal.jsx";
@@ -29,6 +31,8 @@ export default function VaultView() {
   const [viewCipher, setViewCipher] = createSignal(null);
   const [newCipher, setNewCipher] = createSignal({ ...EMPTY_CIPHER });
   const [showDeleteConfirm, setShowDeleteConfirm] = createSignal(false);
+  const [showArchiveConfirm, setShowArchiveConfirm] = createSignal(false);
+  let emptyTrashRef;
   const [showGenerator, setShowGenerator] = createSignal(false);
   const [showAddMenu, setShowAddMenu] = createSignal(false);
   const [showEmptyTrashConfirm, setShowEmptyTrashConfirm] = createSignal(false);
@@ -94,10 +98,25 @@ export default function VaultView() {
           if (ok) { setViewCipher(null); }
         }}
       />
+      <ArchiveConfirmModal
+        show={showArchiveConfirm()}
+        setShow={setShowArchiveConfirm}
+        onConfirm={async () => {
+          const ok = await vault.archiveCipher(viewCipher()?.id, t);
+          if (ok) { setViewCipher(null); }
+        }}
+      />
       <Show when={showEmptyTrashConfirm()}>
-        <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]" onClick={() => setShowEmptyTrashConfirm(false)}>
+        <div
+          ref={emptyTrashRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="empty-trash-title"
+          class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
+        >
+          <FocusTrap containerRef={emptyTrashRef} onEscape={() => setShowEmptyTrashConfirm(false)} />
           <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
-            <h3 class="text-lg font-bold text-[var(--color-text)] mb-2">{t("vault.emptyTrash")}</h3>
+            <h3 id="empty-trash-title" class="text-lg font-bold text-[var(--color-text)] mb-2">{t("vault.emptyTrash")}</h3>
             <p class="text-sm text-[var(--color-muted)] mb-6">{t("vault.emptyTrashConfirm")}</p>
             <div class="flex gap-3">
               <button
@@ -416,7 +435,8 @@ export default function VaultView() {
                 setViewCipher={setViewCipher}
                 setActivePane={vault.setActivePane}
                 selectedCategory={vault.selectedCategory()}
-                onDelete={(id) => setShowDeleteConfirm(true)}
+                onArchive={() => setShowArchiveConfirm(true)}
+onDelete={(id) => setShowDeleteConfirm(true)}
               />
             </Match>
             <Match when={vault.activePane() === "add"}>
