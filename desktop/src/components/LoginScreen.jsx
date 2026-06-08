@@ -76,7 +76,7 @@ export default function LoginScreen() {
               class="w-full mt-2 py-3 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
             >
               <IconUser class="w-4 h-4" />
-              Quick Unlock
+              {t("login.quickUnlock")}
             </button>
           </Show>
         </form>

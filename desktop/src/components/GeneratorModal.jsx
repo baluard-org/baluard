@@ -1,5 +1,6 @@
 import { createSignal, createEffect, Show } from "solid-js";
 import { Transition } from "solid-transition-group";
+import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword, generatePassphrase } from "../lib/utils.js";
 import { IconCopy, IconCheck, IconRefresh } from "./Icon.jsx";
 
@@ -7,6 +8,7 @@ const MODE_PASSWORD = "password";
 const MODE_PASSPHRASE = "passphrase";
 
 export default function GeneratorModal(props) {
+  const { t } = useI18n();
   const [mode, setMode] = createSignal(MODE_PASSWORD);
   const [copied, setCopied] = createSignal(false);
 
@@ -63,7 +65,7 @@ export default function GeneratorModal(props) {
           <div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl">
             {/* Header */}
             <div class="flex items-center justify-between mb-4">
-              <h3 class="text-lg font-bold text-[var(--color-text)]">Generator</h3>
+              <h3 class="text-lg font-bold text-[var(--color-text)]">{t("generator.title")}</h3>
               <button onClick={() => props.setShowGenerator(false)} class="p-1 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">✕</button>
             </div>
 
@@ -73,7 +75,7 @@ export default function GeneratorModal(props) {
                 onClick={() => setMode(MODE_PASSWORD)}
                 class={`py-2.5 text-xs font-bold transition-all relative cursor-pointer ${mode() === MODE_PASSWORD ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
               >
-                Password
+                {t("generator.passwordTab")}
                 <Show when={mode() === MODE_PASSWORD}>
                   <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
                 </Show>
@@ -82,7 +84,7 @@ export default function GeneratorModal(props) {
                 onClick={() => setMode(MODE_PASSPHRASE)}
                 class={`py-2.5 text-xs font-bold transition-all relative cursor-pointer ${mode() === MODE_PASSPHRASE ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
               >
-                Passphrase
+                {t("generator.passphraseTab")}
                 <Show when={mode() === MODE_PASSPHRASE}>
                   <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
                 </Show>
@@ -98,7 +100,7 @@ export default function GeneratorModal(props) {
             <Show when={mode() === MODE_PASSWORD}>
               <div class="space-y-3 mb-4">
                 <div class="flex items-center justify-between text-xs">
-                  <span class="text-[var(--color-muted)]">Length: <strong class="text-[var(--color-primary)]">{len()}</strong></span>
+                  <span class="text-[var(--color-muted)]">{t("generator.length")}: <strong class="text-[var(--color-primary)]">{len()}</strong></span>
                   <input type="range" min="8" max="64" value={len()} onInput={e => setLen(parseInt(e.target.value))} class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer" />
                 </div>
                 <div class="grid grid-cols-3 gap-2">
@@ -113,11 +115,11 @@ export default function GeneratorModal(props) {
             <Show when={mode() === MODE_PASSPHRASE}>
               <div class="space-y-3 mb-4">
                 <div class="flex items-center justify-between text-xs">
-                  <span class="text-[var(--color-muted)]">Words: <strong class="text-[var(--color-primary)]">{wordCount()}</strong></span>
+                  <span class="text-[var(--color-muted)]">{t("generator.words")}: <strong class="text-[var(--color-primary)]">{wordCount()}</strong></span>
                   <input type="range" min="3" max="12" value={wordCount()} onInput={e => setWordCount(parseInt(e.target.value))} class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer" />
                 </div>
                 <div class="flex items-center justify-between text-xs">
-                  <span class="text-[var(--color-muted)]">Separator</span>
+                  <span class="text-[var(--color-muted)]">{t("generator.separator")}</span>
                   <input
                     type="text"
                     value={separator()}
@@ -133,7 +135,7 @@ export default function GeneratorModal(props) {
                   <button onClick={() => setPpSymbol(!ppSymbol())} class={TOGGLE_CLS(ppSymbol())}>!@#</button>
                 </div>
                 <p class="text-[10px] text-[var(--color-muted)] leading-relaxed">
-                  3,344 words (EFF English + BIP-39 Spanish)
+                  {t("generator.wordlistDesc")}
                 </p>
               </div>
             </Show>
@@ -141,11 +143,11 @@ export default function GeneratorModal(props) {
             {/* Actions */}
             <div class="flex gap-2">
               <button onClick={regenerate} class="flex-1 py-2.5 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-bold cursor-pointer hover:border-[var(--color-primary)] transition-colors flex items-center justify-center gap-1.5">
-                <IconRefresh class="w-3.5 h-3.5" /> Regenerate
+                <IconRefresh class="w-3.5 h-3.5" /> {t("generator.regenerate")}
               </button>
               <button onClick={handleCopy} class="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5">
-                <Show when={copied()} fallback={<><IconCopy class="w-3.5 h-3.5" /> Copy</>}>
-                  <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5" /></span> Copied!
+                <Show when={copied()} fallback={<><IconCopy class="w-3.5 h-3.5" /> {t("generator.copy")}</>}>
+                  <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5" /></span> {t("generator.copied")}
                 </Show>
               </button>
             </div>

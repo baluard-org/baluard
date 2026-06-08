@@ -160,11 +160,11 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "folder.create",
     "folder.rename",
     "folder.delete",
-"tag.list",
-"tag.create",
-"tag.rename",
-"tag.delete",
-"tag.rebuild_index",
+    "tag.list",
+    "tag.create",
+    "tag.rename",
+    "tag.delete",
+    "tag.rebuild_index",
     "vault.delete",
     "vault.devices",
     "vault.trash.list",
@@ -409,7 +409,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         "tag.rebuild_index" => match state.rebuild_tag_index().await {
             Ok(resp) => ok_resp(&resp, token_str),
             Err(e) => err_response(e),
-        }
+        },
 
         "vault.delete" => {
             if req.payload.is_empty() {
@@ -476,7 +476,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 ok_resp(json.to_string(), token_str)
             }
             Err(e) => err_response(e),
-        }
+        },
 
         "vault.devices" => match state.devices().await {
             Ok(json) => ok_resp(json, token_str),
@@ -551,12 +551,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
 
         // ── Favicon (token required) ──
-        "favicon.get" => {
-            match state.fetch_favicon(&req.payload).await {
-                Ok(data) => ok_resp(data, token_str),
-                Err(e) => err_response(e),
-            }
-        }
+        "favicon.get" => match state.fetch_favicon(&req.payload).await {
+            Ok(data) => ok_resp(data, token_str),
+            Err(e) => err_response(e),
+        },
 
         // ── Import (token required) ──
         "vault.import" => {
@@ -800,7 +798,9 @@ fn sync_pull(vault_path: &std::path::Path) -> Result<String, String> {
     let result = engine.pull(&repo, "origin").map_err(|e| format!("{e}"))?;
     let mut msg = match result {
         idtty_core::sync::engine::PullResult::AlreadyUpToDate => "Already up to date.".to_string(),
-        idtty_core::sync::engine::PullResult::FastForward => "Fast-forwarded to latest.".to_string(),
+        idtty_core::sync::engine::PullResult::FastForward => {
+            "Fast-forwarded to latest.".to_string()
+        }
         idtty_core::sync::engine::PullResult::Merged => "Merged remote changes.".to_string(),
         idtty_core::sync::engine::PullResult::Conflict { files, .. } => {
             let file_list = files.join(", ");
@@ -811,7 +811,9 @@ fn sync_pull(vault_path: &std::path::Path) -> Result<String, String> {
     };
     // Check for abort markers from other devices
     if let Some(aborted_epoch) = engine.check_abort_marker() {
-        msg.push_str(&format!(" WARNING: Rotation for epoch {aborted_epoch} was aborted by another device."));
+        msg.push_str(&format!(
+            " WARNING: Rotation for epoch {aborted_epoch} was aborted by another device."
+        ));
         // Clean up the marker so it doesn't fire on every pull
         let abort_path = vault_path.join(format!(".idtty/rekey/{aborted_epoch}.aborted"));
         let _ = std::fs::remove_file(&abort_path);

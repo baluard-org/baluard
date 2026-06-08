@@ -805,15 +805,11 @@ pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<
         (CipherKind::BankAccount(data), LinkedFieldType::BankAccountBranchNumber) => {
             data.branch_number.clone()
         }
-        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountPin) => {
-            data.pin.clone()
-        }
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountPin) => data.pin.clone(),
         (CipherKind::BankAccount(data), LinkedFieldType::BankAccountSwiftCode) => {
             data.swift_code.clone()
         }
-        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountIban) => {
-            data.iban.clone()
-        }
+        (CipherKind::BankAccount(data), LinkedFieldType::BankAccountIban) => data.iban.clone(),
         (CipherKind::BankAccount(data), LinkedFieldType::BankAccountBankContactPhone) => {
             data.bank_contact_phone.clone()
         }
@@ -854,18 +850,12 @@ pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<
         }
 
         // Passport fields
-        (CipherKind::Passport(data), LinkedFieldType::PassportSurname) => {
-            data.surname.clone()
-        }
-        (CipherKind::Passport(data), LinkedFieldType::PassportGivenName) => {
-            data.given_name.clone()
-        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportSurname) => data.surname.clone(),
+        (CipherKind::Passport(data), LinkedFieldType::PassportGivenName) => data.given_name.clone(),
         (CipherKind::Passport(data), LinkedFieldType::PassportDateOfBirth) => {
             data.date_of_birth.clone()
         }
-        (CipherKind::Passport(data), LinkedFieldType::PassportSex) => {
-            data.sex.clone()
-        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportSex) => data.sex.clone(),
         (CipherKind::Passport(data), LinkedFieldType::PassportBirthPlace) => {
             data.birth_place.clone()
         }
@@ -887,9 +877,7 @@ pub fn resolve_linked_field(cipher: &Cipher, field: &LinkedFieldType) -> Option<
         (CipherKind::Passport(data), LinkedFieldType::PassportIssuingAuthority) => {
             data.issuing_authority.clone()
         }
-        (CipherKind::Passport(data), LinkedFieldType::PassportIssueDate) => {
-            data.issue_date.clone()
-        }
+        (CipherKind::Passport(data), LinkedFieldType::PassportIssueDate) => data.issue_date.clone(),
         (CipherKind::Passport(data), LinkedFieldType::PassportExpirationDate) => {
             data.expiration_date.clone()
         }

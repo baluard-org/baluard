@@ -668,9 +668,7 @@ impl DeviceManager {
     pub fn abort_stalled_rotation(&mut self) -> Result<(), IdttyError> {
         // Capture the pending new_epoch BEFORE clearing state.
         // The rotation was for new_epoch, not self.epoch.epoch (which is the old one).
-        let aborted_new_epoch = self.pending_transaction
-            .as_ref()
-            .map(|tx| tx.new_epoch);
+        let aborted_new_epoch = self.pending_transaction.as_ref().map(|tx| tx.new_epoch);
 
         self.epoch.abort_rotation().map_err(|e| {
             IdttyError::Device(DeviceError::Keystore(format!("abort_rotation: {e}")))
@@ -1036,7 +1034,7 @@ impl DeviceManager {
     ) -> Result<RevokeDeviceResult, IdttyError> {
         if target_device_id == self_device_id {
             return Err(IdttyError::Device(DeviceError::Keystore(
-                "Cannot revoke the current device. Use force-evict from another device.".into()
+                "Cannot revoke the current device. Use force-evict from another device.".into(),
             )));
         }
 
@@ -1332,7 +1330,9 @@ impl DeviceManager {
     }
 
     /// Load DeviceManager from any store backend.
-    pub fn load_from_store(store: std::sync::Arc<dyn DeviceManagerStore>) -> Result<Self, IdttyError> {
+    pub fn load_from_store(
+        store: std::sync::Arc<dyn DeviceManagerStore>,
+    ) -> Result<Self, IdttyError> {
         let state = if store.exists() {
             store.load_state()?
         } else {
@@ -1601,8 +1601,8 @@ mod tests {
                 "D1".into(),
                 x_pk.to_bytes(),
                 sig::verifying_key_bytes(&e_pk),
-            None,
-        )
+                None,
+            )
             .unwrap();
 
         let (_root_key, tx) = mgr.initiate_rotation(device_id).unwrap();
@@ -1626,8 +1626,8 @@ mod tests {
                 "Solo".into(),
                 x_pk.to_bytes(),
                 sig::verifying_key_bytes(&e_pk),
-            None,
-        )
+                None,
+            )
             .unwrap();
 
         let result = mgr.force_evict_and_rotate(device_id).unwrap();
@@ -1692,8 +1692,8 @@ mod tests {
                 "D1".into(),
                 x_pk.to_bytes(),
                 sig::verifying_key_bytes(&verifying_key),
-            None,
-        )
+                None,
+            )
             .unwrap();
 
         let (_, _) = mgr.initiate_rotation(device_id).unwrap();
@@ -1727,8 +1727,8 @@ mod tests {
                 "D1".into(),
                 x_pk.to_bytes(),
                 sig::verifying_key_bytes(&real_verifying),
-            None,
-        )
+                None,
+            )
             .unwrap();
 
         let (_, tx) = mgr.initiate_rotation(device_id).unwrap();
@@ -1802,8 +1802,8 @@ mod tests {
                 "D1".into(),
                 x_pk1.to_bytes(),
                 sig::verifying_key_bytes(&vk1),
-            None,
-        )
+                None,
+            )
             .unwrap();
 
         let (_, x_pk2) = hpke_wrap::generate_x25519_keypair();
@@ -1815,8 +1815,8 @@ mod tests {
                 "D2".into(),
                 x_pk2.to_bytes(),
                 sig::verifying_key_bytes(&e_pk2),
-            None,
-        )
+                None,
+            )
             .unwrap();
 
         let (_, tx) = mgr.initiate_rotation(d1).unwrap();
@@ -1854,8 +1854,8 @@ mod tests {
                 "D1".into(),
                 x_pk1.to_bytes(),
                 sig::verifying_key_bytes(&vk1),
-            None,
-        )
+                None,
+            )
             .unwrap();
 
         let (_, x_pk2) = hpke_wrap::generate_x25519_keypair();
@@ -1866,8 +1866,8 @@ mod tests {
                 "D2".into(),
                 x_pk2.to_bytes(),
                 sig::verifying_key_bytes(&e_pk2),
-            None,
-        )
+                None,
+            )
             .unwrap();
 
         let (_, x_pk3) = hpke_wrap::generate_x25519_keypair();
@@ -1878,8 +1878,8 @@ mod tests {
                 "D3".into(),
                 x_pk3.to_bytes(),
                 sig::verifying_key_bytes(&e_pk3),
-            None,
-        )
+                None,
+            )
             .unwrap();
 
         assert_eq!(mgr.registry.quorum_required(), 2);
@@ -1950,7 +1950,13 @@ mod tests {
         // Fill beyond capacity using direct registry enrollment + nonce recording
         for i in 0..=MAX_SEEN_NONCES {
             mgr.registry
-                .enroll_with_id(Uuid::new_v4(), format!("Dev{i}"), [0u8; 32], [0u8; 32], None)
+                .enroll_with_id(
+                    Uuid::new_v4(),
+                    format!("Dev{i}"),
+                    [0u8; 32],
+                    [0u8; 32],
+                    None,
+                )
                 .unwrap();
             mgr.record_nonce(format!("nonce-{i}"));
         }
@@ -2009,8 +2015,8 @@ mod tests {
                     "Solo".into(),
                     x_pk.to_bytes(),
                     sig::verifying_key_bytes(&vk),
-            None,
-        )
+                    None,
+                )
                 .unwrap();
 
             // Initiate rotation - auto_save should persist ROTATING state
@@ -2162,6 +2168,9 @@ mod activity_tests {
         // 2026-01-01T00:00:00Z = 1767225600
         assert_eq!(format_rfc3339(1767225600), "2026-01-01T00:00:00Z");
         // Known: 2026-06-02T14:30:00Z (152 days from Jan 1)
-        assert_eq!(format_rfc3339(1767225600 + 152 * 86400 + 14 * 3600 + 30 * 60), "2026-06-02T14:30:00Z");
+        assert_eq!(
+            format_rfc3339(1767225600 + 152 * 86400 + 14 * 3600 + 30 * 60),
+            "2026-06-02T14:30:00Z"
+        );
     }
 }

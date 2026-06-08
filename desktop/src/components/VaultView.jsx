@@ -51,18 +51,18 @@ export default function VaultView() {
 
   // Categories
   const categories = [
-    { name: "All items", icon: <IconGrid class="w-4 h-4 shrink-0" /> },
-    { name: "Favorites", icon: <IconHeart class="w-4 h-4 shrink-0" /> },
-    { name: "Login", icon: <IconLock class="w-4 h-4 shrink-0" /> },
-    { name: "Card", icon: <IconCard class="w-4 h-4 shrink-0" /> },
-    { name: "Identity", icon: <IconIdentity class="w-4 h-4 shrink-0" /> },
-    { name: "Secure note", icon: <IconNote class="w-4 h-4 shrink-0" /> },
-    { name: "SSH key", icon: <IconKey class="w-4 h-4 shrink-0" /> },
-    { name: "Bank account", icon: <IconBank class="w-4 h-4 shrink-0" /> },
-    { name: "Driver license", icon: <IconLicense class="w-4 h-4 shrink-0" /> },
-    { name: "Passport & ID", icon: <IconPassport class="w-4 h-4 shrink-0" /> },
-    { name: "Archive", icon: <IconArchive class="w-4 h-4 shrink-0" /> },
-    { name: "Trash", icon: <IconTrash class="w-4 h-4 shrink-0" /> },
+    { id: "allItems", name: "All items", icon: <IconGrid class="w-4 h-4 shrink-0" /> },
+    { id: "favorites", name: "Favorites", icon: <IconHeart class="w-4 h-4 shrink-0" /> },
+    { id: "login", name: "Login", icon: <IconLock class="w-4 h-4 shrink-0" /> },
+    { id: "card", name: "Card", icon: <IconCard class="w-4 h-4 shrink-0" /> },
+    { id: "identity", name: "Identity", icon: <IconIdentity class="w-4 h-4 shrink-0" /> },
+    { id: "secureNote", name: "Secure note", icon: <IconNote class="w-4 h-4 shrink-0" /> },
+    { id: "sshKey", name: "SSH key", icon: <IconKey class="w-4 h-4 shrink-0" /> },
+    { id: "bankAccount", name: "Bank account", icon: <IconBank class="w-4 h-4 shrink-0" /> },
+    { id: "driversLicense", name: "Driver license", icon: <IconLicense class="w-4 h-4 shrink-0" /> },
+    { id: "passport", name: "Passport & ID", icon: <IconPassport class="w-4 h-4 shrink-0" /> },
+    { id: "archive", name: "Archive", icon: <IconArchive class="w-4 h-4 shrink-0" /> },
+    { id: "trash", name: "Trash", icon: <IconTrash class="w-4 h-4 shrink-0" /> },
   ];
 
   // Client-side filtering & search (composed from lib/filters.js)
@@ -103,7 +103,7 @@ export default function VaultView() {
               <button
                 onClick={() => setShowEmptyTrashConfirm(false)}
                 class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] font-semibold transition-all cursor-pointer"
-              >Cancel</button>
+              >{t("entry.cancel")}</button>
               <button
                 onClick={async () => {
                   setShowEmptyTrashConfirm(false);
@@ -144,17 +144,17 @@ export default function VaultView() {
             {/* Vault List dropdown */}
             <div>
               <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between">
-                <span>Vaults</span>
+                <span>{t("vault.vaultsTitle")}</span>
                 <IconChevronDown class="w-3 h-3 text-[var(--color-muted)]" />
               </div>
               <div class="space-y-0.5 mt-1">
                 <button class="w-full px-3 py-2 rounded-xl text-xs font-bold text-[var(--color-text)] bg-transparent hover:bg-slate-800/10 hover:text-[var(--color-text)] transition-colors flex items-center gap-2.5 text-left cursor-pointer">
                   <span class="w-2 h-2 rounded-full bg-[var(--color-primary)]"></span>
-                  My vault
+                  {t("vault.myVault")}
                 </button>
                 <button class="w-full px-3 py-2 rounded-xl text-xs font-bold text-[var(--color-muted)] bg-transparent hover:bg-slate-800/10 hover:text-[var(--color-text)] transition-colors flex items-center gap-2.5 text-left cursor-pointer">
                   <span class="w-2 h-2 rounded-full bg-[var(--color-accent)]"></span>
-                  Family
+                  {t("vault.familyVault")}
                 </button>
               </div>
             </div>
@@ -162,7 +162,7 @@ export default function VaultView() {
             {/* Categories */}
             <div>
               <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">
-                Categories
+                {t("vault.categoriesTitle")}
               </div>
               <div class="space-y-0.5 mt-1">
                 <For each={categories}>
@@ -177,7 +177,7 @@ export default function VaultView() {
                     >
                       <div class="flex items-center gap-3">
                         {cat.icon}
-                        <span>{cat.name}</span>
+                        <span>{t("categories." + cat.id)}</span>
                       </div>
                       <Show when={cat.name === "All items"}>
                         <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
@@ -203,11 +203,11 @@ export default function VaultView() {
             {/* Folders */}
             <div>
               <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between">
-                <span>Folders</span>
+                <span>{t("vault.foldersTitle")}</span>
                 <button
                   onClick={() => setShowNewFolder(!showNewFolder())}
                   class="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] cursor-pointer"
-                  title="New folder"
+                  title={t("vault.newFolder")}
                 >
                   <IconPlus class="w-3.5 h-3.5" />
                 </button>
@@ -218,7 +218,7 @@ export default function VaultView() {
                     <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary)] opacity-50" />
                     <input
                       class="flex-1 min-w-0 bg-transparent border-b border-[var(--color-primary)] text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-muted)] pb-px"
-                      placeholder="Folder name"
+                      placeholder={t("vault.folderNamePlaceholder")}
                       autofocus
                       onKeyDown={async (e) => {
                         if (e.key === "Enter") {
@@ -246,7 +246,7 @@ export default function VaultView() {
                   style={{ "padding-left": "14px", "padding-right": "6px" }}
                 >
                   <IconFolder class="w-3.5 h-3.5 shrink-0" />
-                  <span>No Folder</span>
+                  <span>{t("entry.noFolder")}</span>
                 </button>
                 <Show when={vault.tags() && vault.tags().length > 0}>
                   <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
@@ -290,7 +290,7 @@ export default function VaultView() {
           <div class="flex items-center gap-1.5 shrink-0">
             <button
               onClick={() => vault.setShowSettingsModal(true)}
-              title="Open Settings"
+              title={t("settings.openSettings")}
               class="p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)]"
             >
               <IconCog class="w-4 h-4" />
@@ -313,7 +313,9 @@ export default function VaultView() {
           {/* Header Action Bar */}
           <div class="p-6 pb-4 flex items-center justify-between gap-4 shrink-0">
             <div>
-              <h2 class="text-xl font-bold tracking-tight text-[var(--color-text)]">{vault.selectedCategory()}</h2>
+              <h2 class="text-xl font-bold tracking-tight text-[var(--color-text)]">
+                {t("categories." + (categories.find(c => c.name === vault.selectedCategory())?.id || "allItems"))}
+              </h2>
               <div class="text-xs text-[var(--color-muted)] mt-0.5">
                 {t("vault.entryCount", { count: filteredCiphers().length })}
               </div>
@@ -325,20 +327,20 @@ export default function VaultView() {
                   onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu()); }}
                   class="px-4 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center gap-1"
                 >
-                  + New
+                  + {t("vault.newButton")}
                   <IconChevronDown class={`w-3 h-3 transition-transform ${showAddMenu() ? "rotate-180" : ""}`} />
                 </button>
                 <Show when={showAddMenu()}>
                 <div class="absolute right-0 top-full mt-1 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl py-1 w-40 z-50">
-                  <button onClick={() => startAdd("login")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Login</button>
-                  <button onClick={() => startAdd("secureNote")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Secure Note</button>
-                  <button onClick={() => startAdd("card")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Card</button>
-                  <button onClick={() => startAdd("identity")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Identity</button>
-                  <button onClick={() => startAdd("sshKey")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">SSH Key</button>
+                  <button onClick={() => startAdd("login")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.login")}</button>
+                  <button onClick={() => startAdd("secureNote")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.secureNote")}</button>
+                  <button onClick={() => startAdd("card")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.card")}</button>
+                  <button onClick={() => startAdd("identity")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.identity")}</button>
+                  <button onClick={() => startAdd("sshKey")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.sshKey")}</button>
                   <div class="border-t border-[var(--color-border)] my-1"></div>
-                  <button onClick={() => startAdd("bankAccount")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Bank Account</button>
-                  <button onClick={() => startAdd("driversLicense")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Driver License</button>
-                  <button onClick={() => startAdd("passport")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">Passport & ID</button>
+                  <button onClick={() => startAdd("bankAccount")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.bankAccount")}</button>
+                  <button onClick={() => startAdd("driversLicense")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.driversLicense")}</button>
+                  <button onClick={() => startAdd("passport")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.passport")}</button>
                 </div>
                 </Show>
               </div>
@@ -359,7 +361,7 @@ export default function VaultView() {
               <button
                 onClick={() => setShowGenerator(true)}
                 class="p-2 rounded-xl bg-[var(--color-sidebar)] hover:bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] text-sm transition-all cursor-pointer"
-                title="Password Generator"
+                title={t("generator.title")}
               >
                 <IconBolt class="w-4 h-4" />
               </button>
@@ -378,7 +380,7 @@ export default function VaultView() {
                 autocorrect="off"
                 autocapitalize="off"
                 spellcheck="false"
-                placeholder="Search vault..."
+                placeholder={t("vault.searchPlaceholder")}
                 value={vault.searchQuery()}
                 onInput={(e) => vault.setSearchQuery(e.target.value)}
                 class="w-full pl-9 pr-4 py-2.5 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-text)] placeholder-slate-500 outline-none focus:border-[var(--color-primary)] transition-all"
@@ -396,8 +398,8 @@ export default function VaultView() {
 
           {/* Table headers */}
           <div class="px-6 py-2 border-b border-[var(--color-border)] text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between shrink-0">
-            <span>Name</span>
-            <span>Options</span>
+            <span>{t("vault.headerName")}</span>
+            <span>{t("vault.headerOptions")}</span>
           </div>
 
           {/* Scrollable list items */}

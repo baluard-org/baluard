@@ -85,7 +85,8 @@ impl VaultState {
                 if elapsed >= timeout_secs && timeout_secs > 0 {
                     log::info!(
                         "Auto-lock: {}s idle >= {}s timeout, locking vault",
-                        elapsed, timeout_secs
+                        elapsed,
+                        timeout_secs
                     );
                     let mut guard = state.inner.write().await;
                     if let Some(handle) = guard.as_mut() {
@@ -325,9 +326,8 @@ impl VaultState {
                 Some(idtty_core::types::UriMatchStrategy::from_str_strict(s)?);
         }
         if let Some(v) = partial.get("fetch_favicons") {
-            settings.fetch_favicons =
-                serde_json::from_value(v.clone())
-                    .map_err(|e| format!("Invalid fetch_favicons: {e}"))?;
+            settings.fetch_favicons = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid fetch_favicons: {e}"))?;
         }
 
         handle
@@ -391,16 +391,18 @@ impl VaultState {
             return Ok(String::new());
         }
 
-        let b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            data,
-        );
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, data);
 
         // Determine mime type from magic bytes
-        let mime = if data[0] == 0x89 { "image/png" }
-            else if data[0] == 0xFF { "image/jpeg" }
-            else if data[0] == 0x52 { "image/webp" }
-            else { "image/x-icon" };
+        let mime = if data[0] == 0x89 {
+            "image/png"
+        } else if data[0] == 0xFF {
+            "image/jpeg"
+        } else if data[0] == 0x52 {
+            "image/webp"
+        } else {
+            "image/x-icon"
+        };
 
         Ok(serde_json::json!({"data": b64, "mime": mime}).to_string())
     }
@@ -510,24 +512,25 @@ impl VaultState {
             },
             custom_fields: {
                 match update.get("custom_fields") {
-                    Some(v) => serde_json::from_value::<Vec<idtty_core::types::CustomField>>(v.clone())
-                        .unwrap_or_else(|e| {
-                            log::error!("custom_fields deser failed: {e}");
-                            existing_cipher.custom_fields.clone()
-                        }),
+                    Some(v) => {
+                        serde_json::from_value::<Vec<idtty_core::types::CustomField>>(v.clone())
+                            .unwrap_or_else(|e| {
+                                log::error!("custom_fields deser failed: {e}");
+                                existing_cipher.custom_fields.clone()
+                            })
+                    }
                     None => existing_cipher.custom_fields.clone(),
                 }
             },
             created_at: Some(existing_cipher.created_at),
             password_history: existing_cipher.password_history.clone(),
             attachments: existing_cipher.attachments.clone(),
-                archived: existing_cipher.archived,
-                tags: match update.get("tags") {
-                Some(v) => serde_json::from_value::<Vec<String>>(v.clone())
-                    .unwrap_or_else(|e| {
-                        log::error!("tags deser failed: {e}");
-                        existing_cipher.tags.clone()
-                    }),
+            archived: existing_cipher.archived,
+            tags: match update.get("tags") {
+                Some(v) => serde_json::from_value::<Vec<String>>(v.clone()).unwrap_or_else(|e| {
+                    log::error!("tags deser failed: {e}");
+                    existing_cipher.tags.clone()
+                }),
                 None => existing_cipher.tags.clone(),
             },
         };
@@ -802,8 +805,8 @@ impl VaultState {
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
         }
-        let data: serde_json::Value = serde_json::from_str(payload)
-            .map_err(|e| format!("Invalid JSON: {e}"))?;
+        let data: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let old = data["old"].as_str().ok_or("Missing 'old' field")?;
         let new = data["new"].as_str().ok_or("Missing 'new' field")?;
         handle.rename_tag(old, new).map_err(|e| format!("{e}"))?;
@@ -817,8 +820,7 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".into());
         }
         let count = handle.delete_tag(name).map_err(|e| format!("{e}"))?;
-        serde_json::to_string(&serde_json::json!({"updated": count}))
-            .map_err(|e| format!("{e}"))
+        serde_json::to_string(&serde_json::json!({"updated": count})).map_err(|e| format!("{e}"))
     }
 
     pub async fn rebuild_tag_index(&self) -> Result<String, String> {
@@ -829,8 +831,7 @@ impl VaultState {
         }
         handle.rebuild_tag_index().map_err(|e| format!("{e}"))?;
         let tags = handle.list_tags().map_err(|e| format!("{e}"))?;
-        serde_json::to_string(&serde_json::json!({"tags": tags.len()}))
-            .map_err(|e| format!("{e}"))
+        serde_json::to_string(&serde_json::json!({"tags": tags.len()})).map_err(|e| format!("{e}"))
     }
 
     /// Delete a cipher by ID. Uses write lock for filesystem mutation.
@@ -879,7 +880,9 @@ impl VaultState {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         let cipher_id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
-        handle.unarchive_cipher(cipher_id).map_err(|e| format!("{e}"))
+        handle
+            .unarchive_cipher(cipher_id)
+            .map_err(|e| format!("{e}"))
     }
 
     /// List archived cipher metadata.
@@ -1250,12 +1253,14 @@ impl VaultState {
         }
 
         // Revoke + rekey: rotates root key, re-encrypts ciphers, writes keywrap
-        let result = handle.revoke_device_and_rekey(device_id)
+        let result = handle
+            .revoke_device_and_rekey(device_id)
             .map_err(|e| format!("Revocation failed: {e}"))?;
 
         // Clean activity index
         if let Err(e) = idtty_core::device_manager::DeviceActivityIndex::remove_device(
-            &self.vault_path, &device_id,
+            &self.vault_path,
+            &device_id,
         ) {
             log::warn!("failed to clean activity index: {e}");
         }
@@ -1528,7 +1533,8 @@ fn cipher_to_json(c: &idtty_core::types::Cipher) -> serde_json::Value {
             json["issuing_country"] = serde_json::json!(data.issuing_country);
             json["passport_number"] = serde_json::json!(data.passport_number);
             json["passport_type"] = serde_json::json!(data.passport_type);
-            json["national_identification_number"] = serde_json::json!(data.national_identification_number);
+            json["national_identification_number"] =
+                serde_json::json!(data.national_identification_number);
             json["issuing_authority"] = serde_json::json!(data.issuing_authority);
             json["issue_date"] = serde_json::json!(data.issue_date);
             json["expiration_date"] = serde_json::json!(data.expiration_date);

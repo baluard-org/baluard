@@ -174,7 +174,9 @@ mod tests {
     #[test]
     fn enroll_first_device() {
         let mut reg = DeviceRegistry::new();
-        let entry = reg.enroll("MacBook".into(), [1u8; 32], [2u8; 32], None).unwrap();
+        let entry = reg
+            .enroll("MacBook".into(), [1u8; 32], [2u8; 32], None)
+            .unwrap();
         assert_eq!(reg.count(), 1);
         assert_eq!(entry.name, "MacBook");
     }
@@ -182,9 +184,12 @@ mod tests {
     #[test]
     fn enroll_multiple_devices() {
         let mut reg = DeviceRegistry::new();
-        reg.enroll("Device 1".into(), [1u8; 32], [2u8; 32], None).unwrap();
-        reg.enroll("Device 2".into(), [3u8; 32], [4u8; 32], None).unwrap();
-        reg.enroll("Device 3".into(), [5u8; 32], [6u8; 32], None).unwrap();
+        reg.enroll("Device 1".into(), [1u8; 32], [2u8; 32], None)
+            .unwrap();
+        reg.enroll("Device 2".into(), [3u8; 32], [4u8; 32], None)
+            .unwrap();
+        reg.enroll("Device 3".into(), [5u8; 32], [6u8; 32], None)
+            .unwrap();
         assert_eq!(reg.count(), 3);
     }
 
@@ -207,8 +212,11 @@ mod tests {
     #[test]
     fn force_evict_keeps_surviving() {
         let mut reg = DeviceRegistry::new();
-        let surviving = reg.enroll("Survivor".into(), [1u8; 32], [2u8; 32], None).unwrap();
-        reg.enroll("Lost".into(), [3u8; 32], [4u8; 32], None).unwrap();
+        let surviving = reg
+            .enroll("Survivor".into(), [1u8; 32], [2u8; 32], None)
+            .unwrap();
+        reg.enroll("Lost".into(), [3u8; 32], [4u8; 32], None)
+            .unwrap();
         reg.enroll("Also Lost".into(), [5u8; 32], [6u8; 32], None)
             .unwrap();
 

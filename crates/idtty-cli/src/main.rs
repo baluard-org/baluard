@@ -374,7 +374,9 @@ fn main() {
             decrypt,
             &output,
         ),
-        Commands::List { archived } => commands::handle_list(mode, &cli.vault_path, cli.socket.as_deref(), archived),
+        Commands::List { archived } => {
+            commands::handle_list(mode, &cli.vault_path, cli.socket.as_deref(), archived)
+        }
         Commands::Delete { id } => {
             commands::handle_delete(mode, &cli.vault_path, cli.socket.as_deref(), &id)
         }
@@ -416,9 +418,12 @@ fn main() {
             DeviceCommands::Info => {
                 commands::handle_device_info(mode, &cli.vault_path, cli.socket.as_deref())
             }
-            DeviceCommands::Revoke { device_id } => {
-                commands::handle_device_revoke(mode, &cli.vault_path, cli.socket.as_deref(), &device_id)
-            }
+            DeviceCommands::Revoke { device_id } => commands::handle_device_revoke(
+                mode,
+                &cli.vault_path,
+                cli.socket.as_deref(),
+                &device_id,
+            ),
         },
 
         // Settings

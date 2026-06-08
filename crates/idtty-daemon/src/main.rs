@@ -53,12 +53,12 @@ fn init_debug_logging() {
             Ok(file) => {
                 let file = Box::new(file) as Box<dyn Write + Send>;
                 // Multi-target: write to both stderr and file
-                let target = env_logger::Target::Pipe(Box::new(
-                    std::io::LineWriter::new(std::io::BufWriter::new(MultiWriter {
+                let target = env_logger::Target::Pipe(Box::new(std::io::LineWriter::new(
+                    std::io::BufWriter::new(MultiWriter {
                         a: std::io::stderr(),
                         b: file,
-                    })),
-                ));
+                    }),
+                )));
                 Builder::new()
                     .target(target)
                     .filter_level(LevelFilter::Warn)
@@ -82,9 +82,7 @@ fn init_debug_logging() {
         }
     } else {
         // Production: only errors
-        Builder::new()
-            .filter_level(LevelFilter::Error)
-            .init();
+        Builder::new().filter_level(LevelFilter::Error).init();
     }
 }
 
@@ -232,9 +230,7 @@ mod dirs {
         #[cfg(unix)]
         {
             if let Ok(home) = std::env::var("HOME") {
-                return PathBuf::from(home)
-                    .join(".config")
-                    .join("idtty");
+                return PathBuf::from(home).join(".config").join("idtty");
             }
         }
         PathBuf::from(".")

@@ -14,17 +14,17 @@ const ACCOUNT_NAME: &str = "quick-unlock";
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use super::SERVICE_NAME;
     use super::ACCOUNT_NAME;
-    use security_framework::passwords::{
-        generic_password, set_generic_password_options,
-        delete_generic_password, AccessControlOptions, PasswordOptions,
-    };
-    use security_framework_sys::base::errSecItemNotFound;
+    use super::SERVICE_NAME;
     use core_foundation::base::TCFType;
     use core_foundation::boolean::CFBoolean;
     use core_foundation::dictionary::CFDictionary;
     use core_foundation::string::CFString;
+    use security_framework::passwords::{
+        AccessControlOptions, PasswordOptions, delete_generic_password, generic_password,
+        set_generic_password_options,
+    };
+    use security_framework_sys::base::errSecItemNotFound;
     use zeroize::Zeroizing;
 
     /// Biometric constraint: Touch ID (any enrolled finger) OR device passcode fallback.
@@ -68,13 +68,30 @@ mod platform {
         //   errSecItemNotFound = no item
         let query: Vec<(CFString, core_foundation::base::CFType)> = unsafe {
             vec![
-                unsafe_pair(security_framework_sys::item::kSecClass,
-                            CFString::wrap_under_get_rule(security_framework_sys::item::kSecClassGenericPassword)),
-                unsafe_pair(security_framework_sys::item::kSecAttrService, CFString::from(SERVICE_NAME)),
-                unsafe_pair(security_framework_sys::item::kSecAttrAccount, CFString::from(ACCOUNT_NAME)),
-                unsafe_pair(security_framework_sys::item::kSecReturnAttributes, CFBoolean::from(true)),
-                unsafe_pair(security_framework_sys::item::kSecUseAuthenticationUI,
-                            CFString::wrap_under_get_rule(security_framework_sys::item::kSecUseAuthenticationUISkip)),
+                unsafe_pair(
+                    security_framework_sys::item::kSecClass,
+                    CFString::wrap_under_get_rule(
+                        security_framework_sys::item::kSecClassGenericPassword,
+                    ),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecAttrService,
+                    CFString::from(SERVICE_NAME),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecAttrAccount,
+                    CFString::from(ACCOUNT_NAME),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecReturnAttributes,
+                    CFBoolean::from(true),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecUseAuthenticationUI,
+                    CFString::wrap_under_get_rule(
+                        security_framework_sys::item::kSecUseAuthenticationUISkip,
+                    ),
+                ),
             ]
         };
 
@@ -101,8 +118,7 @@ mod platform {
         let opts = PasswordOptions::new_generic_password(SERVICE_NAME, ACCOUNT_NAME);
         // Zeroizing wrapper ensures master password bytes are cleared from heap on drop.
         let data = Zeroizing::new(
-            generic_password(opts)
-                .map_err(|e| format!("biometric unlock failed: {e}"))?,
+            generic_password(opts).map_err(|e| format!("biometric unlock failed: {e}"))?,
         );
         String::from_utf8(data.to_vec()).map_err(|e| format!("keychain data not utf8: {e}"))
     }
@@ -121,7 +137,10 @@ mod platform {
         key: core_foundation_sys::string::CFStringRef,
         value: V,
     ) -> (CFString, core_foundation::base::CFType) {
-        (unsafe { CFString::wrap_under_get_rule(key) }, value.into_CFType())
+        (
+            unsafe { CFString::wrap_under_get_rule(key) },
+            value.into_CFType(),
+        )
     }
 }
 
@@ -129,8 +148,8 @@ mod platform {
 
 #[cfg(not(target_os = "macos"))]
 mod platform {
-    use super::SERVICE_NAME;
     use super::ACCOUNT_NAME;
+    use super::SERVICE_NAME;
     use keyring::Entry;
 
     /// Check if the OS keyring is accessible.
@@ -140,8 +159,8 @@ mod platform {
 
     /// Store master password in OS keyring.
     pub fn enable(master_password: &str) -> Result<(), String> {
-        let entry = Entry::new(SERVICE_NAME, ACCOUNT_NAME)
-            .map_err(|e| format!("keyring entry: {e}"))?;
+        let entry =
+            Entry::new(SERVICE_NAME, ACCOUNT_NAME).map_err(|e| format!("keyring entry: {e}"))?;
         entry
             .set_password(master_password)
             .map_err(|e| format!("keyring store: {e}"))?;
@@ -150,8 +169,8 @@ mod platform {
 
     /// Delete stored master password. Ok if already deleted.
     pub fn disable() -> Result<(), String> {
-        let entry = Entry::new(SERVICE_NAME, ACCOUNT_NAME)
-            .map_err(|e| format!("keyring entry: {e}"))?;
+        let entry =
+            Entry::new(SERVICE_NAME, ACCOUNT_NAME).map_err(|e| format!("keyring entry: {e}"))?;
         match entry.delete_credential() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
@@ -169,8 +188,8 @@ mod platform {
 
     /// Retrieve stored master password. May trigger OS credential prompt.
     pub fn unlock() -> Result<String, String> {
-        let entry = Entry::new(SERVICE_NAME, ACCOUNT_NAME)
-            .map_err(|e| format!("keyring entry: {e}"))?;
+        let entry =
+            Entry::new(SERVICE_NAME, ACCOUNT_NAME).map_err(|e| format!("keyring entry: {e}"))?;
         entry
             .get_password()
             .map_err(|e| format!("biometric unlock failed: {e}"))

@@ -120,7 +120,8 @@ impl EpochInfo {
         if self.state != EpochState::Rotating {
             return None;
         }
-        self.rotation_started_at.map(|started| now_secs().saturating_sub(started))
+        self.rotation_started_at
+            .map(|started| now_secs().saturating_sub(started))
     }
 
     /// Record a device's acknowledgment of this epoch.
