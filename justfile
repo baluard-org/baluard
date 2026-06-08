@@ -175,6 +175,23 @@ _sidecar:
 desktop-deps:
 	cd desktop && npm install
 
+# Codesign the Tauri debug binary. Run after first desktop-debug or when Rust changes.
+codesign:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	BINARY="desktop/src-tauri/target/debug/idtty-desktop"
+	if [ ! -f "$BINARY" ]; then echo "Not found: $BINARY. Run desktop-debug first."; exit 1; fi
+	ENTITLEMENTS="desktop/src-tauri/idtty.entitlements"
+	IDENTITY=$(security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db 2>/dev/null \
+		| grep "Apple Development" | head -1 | sed 's/.*"\(.*\)".*/\1/' || true)
+	if [ -z "$IDENTITY" ]; then
+		echo "⚠ No 'Apple Development' signing identity."
+		echo "  Fix: Xcode → Settings → Accounts → add Apple ID"
+		exit 1
+	fi
+	codesign --force --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" --options runtime "$BINARY"
+	echo "Signed: $BINARY ($IDENTITY)"
+
 # Run desktop app in dev mode
 desktop-dev: _sidecar-force desktop-deps
 	#!/usr/bin/env bash

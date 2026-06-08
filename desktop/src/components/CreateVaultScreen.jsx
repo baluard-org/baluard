@@ -1,8 +1,6 @@
-import { Show } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
-import { error } from "../context/errorSignal.js";
 import { useI18n } from "../i18n/index.jsx";
-import { IconLock, IconAlert } from "./Icon.jsx";
+import { IconLock } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 
 export default function CreateVaultScreen() {
@@ -21,13 +19,6 @@ export default function CreateVaultScreen() {
           <h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)]">{t("create.title")}</h1>
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("create.subtitle")}</p>
         </div>
-
-        <Show when={error()}>
-          <div class="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300 text-sm flex items-center gap-2">
-            <IconAlert class="w-5 h-5 shrink-0 text-red-400" />
-            {error()}
-          </div>
-        </Show>
 
         <form onSubmit={(e) => { e.preventDefault(); auth.createVault(t); }} class="space-y-4">
           <input

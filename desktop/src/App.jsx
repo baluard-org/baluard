@@ -2,13 +2,13 @@ import { onMount, Show } from "solid-js";
 import { useI18n } from "./i18n/index.jsx";
 import { daemon } from "./lib/daemon.js";
 import { useAuth } from "./context/AuthContext.jsx";
-import { setError } from "./context/errorSignal.js";
 import { VaultProvider } from "./context/VaultContext.jsx";
 
 import LoginScreen from "./components/LoginScreen.jsx";
 import RecoveryScreen from "./components/RecoveryScreen.jsx";
 import CreateVaultScreen from "./components/CreateVaultScreen.jsx";
 import VaultView from "./components/VaultView.jsx";
+import ToastContainer from "./components/ToastContainer.jsx";
 
 export default function App() {
   const auth = useAuth();
@@ -19,7 +19,7 @@ export default function App() {
       await daemon("vault.open");
     } catch (e) {
       if (/Cannot connect/i.test(e.message)) {
-        setError("");
+    // no error signal to clear
       } else {
         auth.setStatus("init");
       }
@@ -36,6 +36,8 @@ export default function App() {
 
   return (
     <div class="relative w-full h-full overflow-hidden">
+      {/* Toast overlay — always rendered */}
+      <ToastContainer />
       {/* Auth screens — covered by vault when unlocked */}
       <Show when={auth.status() !== "unlocked"}>
         <div class="absolute inset-0">

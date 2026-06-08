@@ -39,8 +39,8 @@ uniffi.workspace = true
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3"
-security-framework-sys = "2"
+security-framework = { version = "3", features = ["OSX_10_15"] }
+security-framework-sys = { version = "2", features = ["OSX_10_15"] }
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
 

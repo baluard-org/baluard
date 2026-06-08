@@ -153,7 +153,9 @@
     "formatLastpassCsv": "LastPass CSV",
     "format1password1pux": "1Password (1PUX)",
     "format1passwordCsv": "1Password CSV",
-    "formatKeePassXml": "KeePass XML"
+    "formatKeePassXml": "KeePass XML",
+    "quickUnlockEnabled": "Quick Unlock enabled",
+    "quickUnlockDisabled": "Quick Unlock disabled"
   },
   "errors": {
     "daemonNotRunning": "Daemon is not running",

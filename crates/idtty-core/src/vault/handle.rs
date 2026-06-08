@@ -1896,7 +1896,7 @@ impl VaultHandle {
                 let attach_dir = self
                     .path
                     .join("entries")
-                    .join(&cipher_id.to_string())
+                    .join(cipher_id.to_string())
                     .join("attachments");
                 let attach_path = attach_dir.join(format!("{}.enc", attach_meta.id));
                 if !attach_path.exists() {
@@ -1943,19 +1943,33 @@ impl VaultHandle {
             )?;
 
             // Zeroize decrypted plaintext after use
-            existing.notes.as_mut().map(|n| n.zeroize());
+            if let Some(n) = existing.notes.as_mut() {
+                n.zeroize()
+            }
             match &mut existing.kind {
                 crate::types::CipherKind::Login(d) => {
-                    d.password.as_mut().map(|p| p.zeroize());
-                    d.username.as_mut().map(|u| u.zeroize());
-                    d.totp_uri.as_mut().map(|t| t.zeroize());
+                    if let Some(p) = d.password.as_mut() {
+                        p.zeroize()
+                    }
+                    if let Some(u) = d.username.as_mut() {
+                        u.zeroize()
+                    }
+                    if let Some(t) = d.totp_uri.as_mut() {
+                        t.zeroize()
+                    }
                 }
                 crate::types::CipherKind::Card(d) => {
-                    d.number.as_mut().map(|n| n.zeroize());
-                    d.code.as_mut().map(|c| c.zeroize());
+                    if let Some(n) = d.number.as_mut() {
+                        n.zeroize()
+                    }
+                    if let Some(c) = d.code.as_mut() {
+                        c.zeroize()
+                    }
                 }
                 crate::types::CipherKind::SshKey(d) => {
-                    d.private_key.as_mut().map(|k| k.zeroize());
+                    if let Some(k) = d.private_key.as_mut() {
+                        k.zeroize()
+                    }
                 }
                 crate::types::CipherKind::Identity(_)
                 | crate::types::CipherKind::BankAccount(_)
@@ -3312,7 +3326,7 @@ mod tests {
         let unlocked = handle.unlocked();
         let (eph, ct, tag) =
             crate::crypto::hpke_wrap::wrap_key(unlocked.root_key.as_bytes(), &dev2_x_pub).unwrap();
-        drop(unlocked);
+        let _ = unlocked;
         let kw = serde_json::json!({
             "device_id": dev2_id.to_string(),
             "ephemeral_public": hex::encode(eph),
@@ -3410,7 +3424,7 @@ mod tests {
             Err(IdttyError::Vault(VaultError::InvalidOperation(msg))) => {
                 assert!(msg.contains("cannot revoke the current device"));
             }
-            other => panic!("expected InvalidOperation"),
+            _other => panic!("expected InvalidOperation"),
         }
     }
 
@@ -3442,7 +3456,7 @@ mod tests {
         let unlocked = handle.unlocked();
         let (eph, ct, tag) =
             crate::crypto::hpke_wrap::wrap_key(unlocked.root_key.as_bytes(), &dev2_x_pub).unwrap();
-        drop(unlocked);
+        let _ = unlocked;
         let kw = serde_json::json!({
             "device_id": dev2_id.to_string(),
             "ephemeral_public": hex::encode(eph),
@@ -3487,7 +3501,7 @@ mod tests {
         let attach_dir = dir
             .path()
             .join("entries")
-            .join(&id1.to_string())
+            .join(id1.to_string())
             .join("attachments");
         std::fs::create_dir_all(&attach_dir).unwrap();
         let item_key = handle.derive_item_key(id1, handle.unlocked().current_epoch);
@@ -3550,7 +3564,7 @@ mod tests {
                         check_no_tmp(&p);
                     } else {
                         assert!(
-                            !p.extension().is_some_and(|e| e == "tmp"),
+                            p.extension().is_none_or(|e| e != "tmp"),
                             "leftover .tmp file: {}",
                             p.display()
                         );

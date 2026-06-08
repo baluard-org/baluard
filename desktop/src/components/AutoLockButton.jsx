@@ -2,7 +2,7 @@ import { IconClock, IconUser } from "./Icon.jsx";
 import { createSignal, Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
-import { buildBiometricEnablePayload } from "../lib/payload.js";
+import { toastError, toastSuccess } from "../context/toastSignal.js";
 
 export default function AutoLockButton() {
   const { t } = useI18n();
@@ -68,14 +68,15 @@ export default function AutoLockButton() {
                     const status = JSON.parse(await daemon("vault.biometric_status"));
                     if (status.enabled) {
                       await daemon("vault.biometric_disable");
+                      toastSuccess(t("settings.quickUnlockDisabled"));
                     } else {
                       const password = prompt(t("settings.promptQuickUnlock"));
                       if (password) {
-                        await daemon("vault.biometric_enable", JSON.stringify(buildBiometricEnablePayload(password)));
+                        await daemon("vault.biometric_enable", JSON.stringify({ password }));
+                        toastSuccess(t("settings.quickUnlockEnabled"));
                       }
                     }
-                    loadSetting();
-                  } catch (e) { alert(e.message); }
+                  } catch (e) { toastError(e.message); }
                 }}
                 class="p-1.5 rounded-lg transition-colors cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-primary)]"
                 title={t("settings.quickUnlockDesc")}

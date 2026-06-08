@@ -2,14 +2,14 @@ import { createSignal, createMemo, onMount, onCleanup, Show, For, Switch, Match 
 import { Transition } from "solid-transition-group";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useVault } from "../context/VaultContext.jsx";
-import { error } from "../context/errorSignal.js";
+import { toastError } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { buildFolderCreatePayload } from "../lib/payload.js";
 import { selectSource, filterByCategory, filterByFolder, filterByTag, searchCiphers } from "../lib/filters.js";
 import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
-import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox, IconAlert } from "./Icon.jsx";
+import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox } from "./Icon.jsx";
 import CipherRow from "./CipherRow.jsx";
 import CipherDetail from "./CipherDetail.jsx";
 import AddEditCipherForm from "./AddEditCipherForm.jsx";
@@ -110,7 +110,7 @@ export default function VaultView() {
                   try {
                     await daemon("vault.trash.purge", "0");
                     await vault.refreshCiphers(t);
-                  } catch (e) { error(sanitizeError(e, t)); }
+                  } catch (e) { toastError(sanitizeError(e, t)); }
                 }}
                 class="flex-1 py-2.5 rounded-xl bg-red-950/40 text-red-400 border border-red-900/30 hover:bg-red-950/60 font-semibold transition-all cursor-pointer"
               >{t("vault.emptyTrash")}</button>
@@ -209,7 +209,7 @@ export default function VaultView() {
                           try {
                             await daemon("folder.create", JSON.stringify(buildFolderCreatePayload(name)));
                             await vault.refreshCiphers(t);
-                          } catch (err) { error(sanitizeError(err, t)); }
+                          } catch (err) { toastError(sanitizeError(err, t)); }
                           setShowNewFolder(false);
                         } else if (e.key === "Escape") {
                           setShowNewFolder(false);
@@ -405,12 +405,6 @@ export default function VaultView() {
 
       {/* Column 3: Main Details / Edit Panel */}
       <div class="flex-1 bg-[var(--color-detail)] flex flex-col min-w-0 relative">
-        <Show when={error()}>
-          <div class="absolute top-4 left-4 right-4 z-10 p-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300 text-sm flex items-center gap-2 animate-fade-in-up shadow-lg">
-            <IconAlert class="w-5 h-5 shrink-0 text-red-400" />
-            {error()}
-          </div>
-        </Show>
 
         <Transition name="slide" mode="out-in">
           <Switch>
