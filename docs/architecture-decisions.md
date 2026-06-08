@@ -644,3 +644,46 @@ Created `lib/cipherSchema.js` with schemas for all 8 cipher types. Each schema d
 - **Phase 3: IPC Daemon & CLI**: idtty-daemon (tokio Unix socket server), idtty-cli (socket client), Protobuf gateway handler.
 - **Phase 4: Desktop UI & Open-Source Launch**: SolidJS/Tailwind Tauri v2 app, system tray, GPL-3.0 license.
 - **Phase 5: Mobile & Extension**: UniFFI Kotlin/Swift bindings, KMP mobile app, MV3 browser extension with native messaging.
+
+---
+
+## DOMAIN 7: TAGS & CIPHER CATEGORIZATION
+
+Tags are user-defined labels for organizing ciphers. Unlike folders (single assignment), a cipher can have up to 20 tags.
+
+### Storage Model
+
+- **Encrypted at rest**: `tags: Vec<String>` on the cipher envelope (`CipherEnvelopeData`). Tags are encrypted alongside cipher content.
+- **Plaintext cache**: `meta/tag_index.json` stores a sorted list of unique tags for fast autocomplete/filtering. Same visibility tradeoff as folder names (plaintext, committed to git).
+
+### Constraints
+
+- Max 20 tags per cipher
+- Max 64 chars per tag (`.chars().count()` for UTF-8 correctness)
+- Lowercase-normalized on storage; display preserves user input
+- No empty or whitespace-only tags
+- Case-insensitive dedup
+
+### Key Components
+
+| Component | Location | Role |
+|-----------|----------|------|
+| `CipherInput.tags` | `types.rs` | Input field with `#[serde(default)]` |
+| `CipherEnvelopeData.tags` | `types.rs` | Encrypted envelope field |
+| `Cipher.tags` | `types.rs` | Decrypted cipher field |
+| `CipherMeta.tags` | `types.rs` | Metadata for list views (post-decryption) |
+| `TagIndex` | `manifest.rs` | Cache struct for `meta/tag_index.json` |
+| `VaultHandle::validate_tag(s)` | `handle.rs` | Validation + normalization |
+| `VaultHandle::rebuild_tag_index` | `handle.rs` | Rebuilds cache from decrypted ciphers |
+| Daemon routes | `handler.rs`, `state.rs` | `tag.list/create/rename/delete/rebuild_index` |
+| CLI | `commands/mod.rs` | `idtty tags list/create/rename/delete` |
+
+### Validation Boundary
+
+`add_cipher` and `update_cipher` call `validate_tags` before writing. This enforces length, dedup, and normalization at the core library boundary regardless of caller (daemon, CLI, direct).
+
+### Index Rebuild
+
+- Triggered on every `vault.list_full` (desktop unlock) and after every `add_cipher`/`update_cipher` via daemon.
+- `tag_index.json` is rebuilt from decrypted cipher tags (ground truth).
+- Sync merge for `tag_index.json`: deferred to future phase. Current behavior: rebuild-from-truth after every pull.

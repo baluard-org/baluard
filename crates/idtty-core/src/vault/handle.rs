@@ -925,6 +925,8 @@ impl VaultHandle {
         if !self.device_manager.writes_allowed() {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
+        let validated_tags = Self::validate_tags(&input.tags)?;
+        let input = CipherInput { tags: validated_tags, ..input.clone() };
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -937,7 +939,7 @@ impl VaultHandle {
         let file = cipher::encrypt_cipher(
             self.vault_id,
             cipher_id,
-            input,
+            &input,
             &item_key,
             unlocked.current_epoch, // epoch
             1,                      // update_seq
@@ -961,6 +963,8 @@ impl VaultHandle {
         if !self.device_manager.writes_allowed() {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
+        let validated_tags = Self::validate_tags(&input.tags)?;
+        let input = CipherInput { tags: validated_tags, ..input.clone() };
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -1185,7 +1189,7 @@ impl VaultHandle {
     /// Validate a single tag name: trim, reject empty/whitespace, max 64 chars, lowercase.
     pub fn validate_tag(name: &str) -> Result<String, IdttyError> {
         let trimmed = name.trim();
-        if trimmed.is_empty() || trimmed.chars().all(|c| c.is_whitespace()) {
+        if trimmed.is_empty() {
             return Err(VaultError::Metadata("tag name cannot be empty or whitespace".into()).into());
         }
         if trimmed.chars().count() > 64 {
@@ -1196,17 +1200,16 @@ impl VaultHandle {
 
     /// Validate a slice of tags: each validated, case-insensitive dedup, max 20.
     pub fn validate_tags(tags: &[String]) -> Result<Vec<String>, IdttyError> {
-        if tags.len() > 20 {
-            return Err(VaultError::Metadata("cipher cannot have more than 20 tags".into()).into());
-        }
         let mut validated = Vec::with_capacity(tags.len());
         let mut seen = std::collections::HashSet::new();
         for tag in tags {
             let normalized = Self::validate_tag(tag)?;
-            let key = normalized.to_lowercase();
-            if seen.insert(key) {
+            if seen.insert(normalized.clone()) {
                 validated.push(normalized);
             }
+        }
+        if validated.len() > 20 {
+            return Err(VaultError::Metadata("cipher cannot have more than 20 tags".into()).into());
         }
         Ok(validated)
     }

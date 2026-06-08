@@ -57,6 +57,8 @@
     "folder": "Folder",
     "noFolder": "No folder",
     "tags": "Tags",
+    "tagsHeader": "Tags",
+    "clearTagFilter": "Clear tag filter",
     "addTag": "Add tag",
     "tagPlaceholder": "Type a tag..."
   },

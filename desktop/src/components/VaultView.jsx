@@ -250,7 +250,7 @@ export default function VaultView() {
                 </button>
                 <Show when={vault.tags() && vault.tags().length > 0}>
                   <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
-                    <h3 class="text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] mb-2" style={{ "padding-left": "14px" }}>Tags</h3>
+                    <h3 class="text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] mb-2" style={{ "padding-left": "14px" }}>{t("entry.tagsHeader")}</h3>
                     <div class="flex flex-wrap gap-1" style={{ "padding-left": "6px", "padding-right": "6px" }}>
                       <For each={vault.tags() || []}>
                         {tag => (
@@ -267,7 +267,7 @@ export default function VaultView() {
                       <button
                         onClick={() => vault.setSelectedTag(null)}
                         class="mt-1.5 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer ml-2"
-                      >Clear tag filter</button>
+                      >{t("entry.clearTagFilter")}</button>
                     </Show>
                   </div>
                 </Show>
