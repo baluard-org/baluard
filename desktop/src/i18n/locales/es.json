@@ -1,0 +1,74 @@
+{
+  "app": {
+    "name": "IDtty"
+  },
+  "login": {
+    "title": "IDtty",
+    "subtitle": "Ingresa la contraseña maestra",
+    "passwordPlaceholder": "Contraseña maestra",
+    "unlock": "Desbloquear",
+    "unlocking": "Desbloqueando...",
+    "createNew": "Crear nueva bóveda"
+  },
+  "create": {
+    "title": "Crear bóveda",
+    "subtitle": "Establece una contraseña maestra para tu nueva bóveda",
+    "passwordPlaceholder": "Contraseña maestra (8+ caracteres)",
+    "confirmPlaceholder": "Confirmar contraseña",
+    "submit": "Crear bóveda",
+    "creating": "Creando bóveda...",
+    "alreadyHaveVault": "Ya tengo una bóveda",
+    "errorMinLength": "La contraseña debe tener al menos 8 caracteres",
+    "errorMismatch": "Las contraseñas no coinciden"
+  },
+  "recovery": {
+    "title": "Frase de recuperación",
+    "warning": "Escribe esta frase. NO se volverá a mostrar.",
+    "confirm": "He guardado mi frase de recuperación"
+  },
+  "vault": {
+    "statusUnlocked": "Desbloqueada",
+    "entryCount": "{count} entrada",
+    "entryCount_plural": "{count} entradas",
+    "emptyList": "Aún no hay entradas",
+    "addEntry": "+ Agregar entrada",
+    "lock": "Bloquear bóveda",
+    "emptyTrash": "Vaciar papelera",
+    "emptyTrashConfirm": "¿Eliminar permanentemente todas las entradas de la papelera? Esta acción no se puede deshacer."
+  },
+  "entry": {
+    "addTitle": "Agregar entrada",
+    "namePlaceholder": "Nombre",
+    "usernamePlaceholder": "Usuario",
+    "passwordPlaceholder": "Contraseña",
+    "uriPlaceholder": "Sitio web",
+    "notesPlaceholder": "Notas",
+    "add": "Agregar",
+    "user": "Usuario",
+    "pass": "Contraseña",
+    "uri": "Sitio web",
+    "notes": "Notas",
+    "delete": "Eliminar",
+    "deletePermanently": "Eliminar permanentemente",
+    "archive": "Archivar",
+    "unarchive": "Desarchivar",
+    "restore": "Restaurar",
+    "selectPrompt": "Selecciona una entrada o agrega una nueva"
+  },
+  "settings": {
+    "faviconLabel": "Mostrar iconos de sitios web",
+    "faviconDesc": "Obtener favicons de servicios de terceros para las entradas con direcciones de sitios web."
+  },
+  "errors": {
+    "daemonNotRunning": "El demonio no se está ejecutando",
+    "vaultNotUnlocked": "La bóveda no está desbloqueada",
+    "timeout": "El tiempo de espera de la solicitud ha expirado",
+    "responseTooLarge": "La respuesta es demasiado grande",
+    "sessionExpired": "La sesión ha expirado. Por favor, desbloquea de nuevo.",
+    "integrityFailed": "La comprobación de integridad de los datos falló",
+    "corrupted": "Los datos de la bóveda están dañados",
+    "invalidPassword": "Contraseña maestra incorrecta",
+    "alreadyExists": "Ya existe una bóveda en esta ubicación",
+    "unexpected": "Ocurrió un error inesperado"
+  }
+}

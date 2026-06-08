@@ -62,7 +62,7 @@ base64 = { version = "0.22", features = ["alloc"] }
 zeroize = { version = "1", features = ["derive"] }
 
 # OS keychain (biometric unlock)
-keyring = "3"
+keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust", "windows-native"] }
 
 # Protobuf
 prost = "0.13"
