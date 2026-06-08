@@ -66,7 +66,7 @@
 
 ### T10: Biometric Unlock / OS Keychain Compromise
 - **Threat**: An attacker with access to the OS keychain extracts the stored master password, gaining full vault access without user interaction.
-- **Control**: Biometric unlock is opt-in (disabled by default). The master password stored in the OS keychain via the `keyring` crate is only as secure as the OS keychain itself (macOS Keychain, Windows Credential Manager, Linux libsecret). The daemon performs vault unlock server-side: the secret never returns over IPC. Users who distrust the OS keychain should not enable biometric unlock.
+- **Control**: Biometric unlock is opt-in (disabled by default). On macOS, the master password is stored using the native `security-framework` API with `SecAccessControl` configured for biometric validation (`AccessControlOptions::BIOMETRY_ANY`), ensuring Touch ID / Face ID is required on read. On other platforms, it uses the `keyring` crate (utilizing Windows Credential Manager, Linux libsecret, etc.). The daemon performs vault unlock server-side: the secret never returns over IPC. Users who distrust the OS keychain should not enable biometric unlock.
 - **Residual**: Keychain access typically requires OS-level authentication (TouchID, Windows Hello, Linux PAM). Compromise implies the attacker has already bypassed OS security.
 
 ### T11: Reprompt Grant Window Abuse

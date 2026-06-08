@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Updated:** 2026-06-03
+**Updated:** 2026-06-08
 
 ## OVERVIEW
 Project: **IDtty** (Git-native password manager)
@@ -66,6 +66,24 @@ idtty/
 | Desktop production build | `just desktop-build` |
 | Desktop npm deps | `just desktop-deps` |
 | Clean | `just clean` |
+
+## MINIMUM PLATFORM COMPATIBILITY
+
+All code must run on these platforms at minimum. No APIs, crates, or features that require newer versions.
+
+| Platform | Minimum Version | Notes |
+|----------|----------------|-------|
+| macOS | 15 (Sequoia) | Apple Silicon + Intel. Security framework SecAccessControl + Touch ID. |
+| Windows | 11 (2025 update) | Windows Hello (PIN + biometric). Credential Manager via keyring. |
+| Ubuntu | 26.04 | libsecret / Secret Service API for keyring. |
+| Fedora | 43 | libsecret / Secret Service API for keyring. |
+
+Implications:
+* Rust edition 2024, MSRV 1.85 (ships in all targets above).
+* macOS: `security-framework` v3 + SecAccessControl BIOMETRY_ANY. No APIs deprecated after macOS 15.
+* Linux: `keyring` crate with `linux-native` + `sync-secret-service` + `crypto-rust`. Requires `libsecret` dev packages at build time.
+* Windows: `keyring` crate with `windows-native`. Windows Credential Manager via DPAPI.
+* Tauri v2 WebView2: bundled on Windows, WebKit on macOS/Linux (system-provided on these versions).
 
 ## CODING STANDARDS
 * **Rust**: Edition 2024, MSRV 1.85. Feature flags: `full` (default) = `git-sync` + `org` + `emergency`. `thiserror` for library errors, `anyhow` for CLI. `proptest` for property-based tests.

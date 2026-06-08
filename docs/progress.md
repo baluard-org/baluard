@@ -59,7 +59,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | Reprompt | Done | Per-entry master password challenge with 30s grant |
 | Password Health | Done | Weak/reused/old password detection |
 | Attachments | Done | AES-256-GCM encrypted, max 2MB. Plaintext zeroized after use |
-| Biometric Unlock | Done | OS keychain (keyring crate). Daemon-side unlock, secret never over IPC |
+| Biometric Unlock | Done | OS keychain (macOS native security-framework with Touch ID, keyring for others). Daemon-side unlock, secret never over IPC |
 | Linked Custom Fields | Done | 24 LinkedFieldType variants with type-safe resolution |
 | Nested Folders | Done | Max depth 16. Cascade delete. BFS descendant collection |
 | Archive | Done | Archive/unarchive ciphers. Separate list view |
@@ -89,7 +89,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | B | Reprompt | Per-entry MP challenge. 30s grant. Shield icon |
 | C | Password Health | Weak/reused/old detection. CLI + desktop reports |
 | D | Attachments | AES-256-GCM encrypted files. Max 2MB. Zeroized after use |
-| E | Biometric Unlock | OS keychain via keyring. Daemon-side. Quick Unlock button |
+| E | Biometric Unlock | OS keychain (macOS security-framework, keyring for other platforms). Daemon-side. Quick Unlock button |
 | F | Linked Custom Fields | 24 variants. Type dropdown + linked field selector |
 | G | Nested Folders | Depth 16. Cascade delete. Recursive tree UI |
 
