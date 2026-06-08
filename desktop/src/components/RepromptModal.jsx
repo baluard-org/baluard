@@ -1,5 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import { Transition } from "solid-transition-group";
+import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 
 let repromptCallback = null;
@@ -7,6 +8,7 @@ let repromptCallback = null;
 export function requestReprompt(cb) { repromptCallback = cb; }
 
 export default function RepromptModal(props) {
+  const { t } = useI18n();
   const [show, setShow] = createSignal(false);
   const [password, setPassword] = createSignal("");
   const [failed, setFailed] = createSignal(false);
@@ -36,10 +38,10 @@ export default function RepromptModal(props) {
       <Show when={show()}>
         <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-            <h3 class="text-lg font-bold text-[var(--color-text)] mb-2">Confirm Password</h3>
-            <p class="text-sm text-[var(--color-muted)] mb-4">Enter your master password to continue.</p>
+            <h3 class="text-lg font-bold text-[var(--color-text)] mb-2">{t("entry.confirmPassword")}</h3>
+            <p class="text-sm text-[var(--color-muted)] mb-4">{t("entry.enterMasterPasswordToContinue")}</p>
             <Show when={failed()}>
-              <div class="mb-3 p-2 rounded-lg bg-red-950/40 border border-red-900/30 text-red-300 text-xs">Incorrect password</div>
+              <div class="mb-3 p-2 rounded-lg bg-red-950/40 border border-red-900/30 text-red-300 text-xs">{t("errors.invalidPassword")}</div>
             </Show>
             <input
               type="password"
@@ -47,7 +49,7 @@ export default function RepromptModal(props) {
               autocorrect="off"
               autocapitalize="off"
               spellcheck="false"
-              placeholder="Master password"
+              placeholder={t("login.passwordPlaceholder")}
               value={password()}
               onInput={e => { setPassword(e.target.value); setFailed(false); }}
               onKeyPress={e => { if (e.key === "Enter") handleConfirm(); }}
@@ -57,11 +59,11 @@ export default function RepromptModal(props) {
               <button
                 onClick={() => { setShow(false); setPassword(""); setFailed(false); }}
                 class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] font-semibold transition-all cursor-pointer"
-              >Cancel</button>
+              >{t("entry.cancel")}</button>
               <button
                 onClick={handleConfirm}
                 class="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] font-semibold transition-all cursor-pointer"
-              >Confirm</button>
+              >{t("entry.confirm")}</button>
             </div>
           </div>
         </div>
@@ -69,4 +71,3 @@ export default function RepromptModal(props) {
     </Transition>
   );
 }
-

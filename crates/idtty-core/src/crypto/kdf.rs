@@ -163,7 +163,13 @@ pub fn auto_calibrate(profile: KdfProfile) -> KdfParams {
 /// Measure Argon2id derivation latency as the minimum of 3 samples.
 /// Uses min (not average) to eliminate OS scheduler preemption outliers.
 /// Returns None if params are invalid (e.g. memory too low for parallelism).
-fn time_derive(pw: &str, salt: &[u8; 32], mem_kib: u32, time_cost: u32, parallelism: u32) -> Option<u64> {
+fn time_derive(
+    pw: &str,
+    salt: &[u8; 32],
+    mem_kib: u32,
+    time_cost: u32,
+    parallelism: u32,
+) -> Option<u64> {
     let argon2 = Argon2::new(
         Algorithm::Argon2id,
         Version::V0x13,

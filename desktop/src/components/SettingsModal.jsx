@@ -36,14 +36,14 @@ export default function SettingsModal() {
   const [message, setMessage] = createSignal(null);
 
   const formats = [
-    { id: "bw-json", label: "Bitwarden JSON" },
-    { id: "bw-csv", label: "Bitwarden CSV" },
-    { id: "chrome-csv", label: "Chrome CSV" },
-    { id: "firefox-csv", label: "Firefox CSV" },
-    { id: "lastpass-csv", label: "LastPass CSV" },
-    { id: "1password-1pux", label: "1Password (1PUX)" },
-    { id: "1password-csv", label: "1Password CSV" },
-    { id: "keepass-xml", label: "KeePass XML" },
+    { id: "bw-json", label: t("settings.formatBwJson") },
+    { id: "bw-csv", label: t("settings.formatBwCsv") },
+    { id: "chrome-csv", label: t("settings.formatChromeCsv") },
+    { id: "firefox-csv", label: t("settings.formatFirefoxCsv") },
+    { id: "lastpass-csv", label: t("settings.formatLastpassCsv") },
+    { id: "1password-1pux", label: t("settings.format1password1pux") },
+    { id: "1password-csv", label: t("settings.format1passwordCsv") },
+    { id: "keepass-xml", label: t("settings.formatKeePassXml") },
   ];
 
   createEffect(() => {
@@ -135,11 +135,15 @@ export default function SettingsModal() {
         const payload = JSON.stringify(buildImportPayload(format, data));
         const resp = await daemon("vault.import", payload);
         const result = JSON.parse(resp);
-        setMessage(`Imported ${result.imported || 0} entries` + (result.skipped ? `, skipped ${result.skipped}` : ""));
+        if (result.skipped) {
+          setMessage(t("settings.importSuccessSkipped", { imported: result.imported || 0, skipped: result.skipped }));
+        } else {
+          setMessage(t("settings.importSuccess", { imported: result.imported || 0 }));
+        }
         setImportSource("");
         await vault.refreshCiphers(t);
       } catch (e) {
-        setMessage("Import failed: " + sanitizeError(e, t));
+        setMessage(t("settings.importFailed", { error: sanitizeError(e, t) }));
       } finally {
         setImporting(false);
       }
@@ -160,9 +164,9 @@ export default function SettingsModal() {
       a.download = `idtty_export.${isCsv ? "csv" : "json"}`;
       a.click();
       URL.revokeObjectURL(url);
-      setMessage("Exported successfully");
+      setMessage(t("settings.exportComplete"));
     } catch (e) {
-      setMessage("Export failed: " + sanitizeError(e, t));
+      setMessage(t("settings.exportFailed", { error: sanitizeError(e, t) }));
     } finally {
       setExporting(false);
     }
@@ -175,11 +179,11 @@ export default function SettingsModal() {
           <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[500px] max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div class="p-6 pb-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
-              <h3 class="text-lg font-bold text-[var(--color-text)]">App Settings</h3>
+              <h3 class="text-lg font-bold text-[var(--color-text)]">{t("settings.title")}</h3>
               <button
                  onClick={() => vault.setShowSettingsModal(false)}
                  class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg border border-transparent hover:border-[var(--color-border)] transition-all cursor-pointer flex items-center justify-center"
-                 title="Close"
+                 title={t("entry.close")}
                >
                  <IconX class="w-4 h-4" />
                </button>
@@ -191,7 +195,7 @@ export default function SettingsModal() {
                 onClick={() => setActiveTab("general")}
                 class={`py-3 text-xs font-bold transition-all relative cursor-pointer ${activeTab() === "general" ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
               >
-                General & Security
+                {t("settings.tabGeneral")}
                 <Show when={activeTab() === "general"}>
                   <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
                 </Show>
@@ -200,7 +204,7 @@ export default function SettingsModal() {
                 onClick={() => setActiveTab("data")}
                 class={`py-3 text-xs font-bold transition-all relative cursor-pointer ${activeTab() === "data" ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
               >
-                Data Import / Export
+                {t("settings.tabData")}
                 <Show when={activeTab() === "data"}>
                   <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
                 </Show>
@@ -209,7 +213,7 @@ export default function SettingsModal() {
                 onClick={() => setActiveTab("devices")}
                 class={`py-3 text-xs font-bold transition-all relative cursor-pointer ${activeTab() === "devices" ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
               >
-                Devices
+                {t("settings.tabDevices")}
                 <Show when={activeTab() === "devices"}>
                   <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
                 </Show>
@@ -221,21 +225,21 @@ export default function SettingsModal() {
               <Show when={activeTab() === "general"}>
                 {/* Theme Settings */}
                 <div class="space-y-2">
-                  <label class="text-xs font-bold text-[var(--color-text)]">App Theme</label>
+                  <label class="text-xs font-bold text-[var(--color-text)]">{t("settings.appTheme")}</label>
                   <div class="grid grid-cols-2 gap-3">
                     <button
                       onClick={() => setTheme("dark")}
                       class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "dark" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
                     >
                       <IconMoon class="w-4 h-4" />
-                      <span class="text-xs font-bold">Dark Mode</span>
+                      <span class="text-xs font-bold">{t("settings.darkMode")}</span>
                     </button>
                     <button
                       onClick={() => setTheme("light")}
                       class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "light" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
                     >
                       <IconSunFull class="w-4 h-4" />
-                      <span class="text-xs font-bold">Light Mode</span>
+                      <span class="text-xs font-bold">{t("settings.lightMode")}</span>
                     </button>
                   </div>
                 </div>
@@ -243,8 +247,8 @@ export default function SettingsModal() {
                 {/* Auto-lock Settings */}
                 <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
                   <div class="flex flex-col">
-                    <span class="text-xs font-bold text-[var(--color-text)]">Auto-lock Timeout</span>
-                    <span class="text-[10px] text-[var(--color-muted)] mt-0.5">Automatically locks the vault after a period of inactivity.</span>
+                    <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.autolockTimeout")}</span>
+                    <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.autolockDesc")}</span>
                   </div>
                   <div class="flex items-center gap-3">
                     <div class="flex items-center gap-2 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-xl px-3 py-1.5 flex-1 max-w-[200px]">
@@ -256,13 +260,13 @@ export default function SettingsModal() {
                         onInput={e => setLockMinutes(parseInt(e.target.value) || 15)}
                         class="w-full bg-transparent text-sm text-[var(--color-text)] outline-none font-bold text-center"
                       />
-                      <span class="text-xs text-[var(--color-muted)]">minutes</span>
+                      <span class="text-xs text-[var(--color-muted)]">{t("settings.minutes")}</span>
                     </div>
                     <button
                       onClick={saveAutoLock}
                       class="px-5 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md"
                     >
-                      {saved() ? "Saved" : "Save"}
+                      {saved() ? t("settings.saved") : t("settings.save")}
                     </button>
                   </div>
                 </div>
@@ -271,32 +275,32 @@ export default function SettingsModal() {
                 <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
                   <div class="flex items-center justify-between">
                     <div class="flex flex-col flex-1 pr-4">
-                      <span class="text-xs font-bold text-[var(--color-text)]">Quick Unlock</span>
-                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">Store credentials securely in OS Keychain using device biometrics (fingerprint/face) or PIN code.</span>
+                      <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.quickUnlock")}</span>
+                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.quickUnlockLongDesc")}</span>
                     </div>
                     <Show when={biometricAvailable()} fallback={
-                      <div class="text-[10px] text-[var(--color-muted)] bg-[var(--color-sidebar)] px-2.5 py-1 rounded-lg border border-[var(--color-border)] font-bold">Unsupported</div>
+                      <div class="text-[10px] text-[var(--color-muted)] bg-[var(--color-sidebar)] px-2.5 py-1 rounded-lg border border-[var(--color-border)] font-bold">{t("settings.unsupported")}</div>
                     }>
                       <Show when={!biometricEnabled() && !showBiometricInput()} fallback={
                         <Show when={biometricEnabled()} fallback={
                           <div class="flex items-center gap-2">
                             <input
                               type="password"
-                              placeholder="Master password"
+                              placeholder={t("login.passwordPlaceholder")}
                               class="w-40 px-3 py-1.5 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
                               value={biometricPassword()}
                               onInput={e => setBiometricPassword(e.target.value)}
                               onKeyDown={e => { if (e.key === "Enter") confirmBiometricEnable(); if (e.key === "Escape") { setShowBiometricInput(false); setBiometricPassword(""); } }}
                               autofocus
                             />
-                            <button onClick={confirmBiometricEnable} class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer">Confirm</button>
-                            <button onClick={() => { setShowBiometricInput(false); setBiometricPassword(""); }} class="px-2 py-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">Cancel</button>
+                            <button onClick={confirmBiometricEnable} class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer">{t("entry.confirm")}</button>
+                            <button onClick={() => { setShowBiometricInput(false); setBiometricPassword(""); }} class="px-2 py-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">{t("entry.cancel")}</button>
                           </div>
                         }>
-                          <button onClick={toggleBiometric} class="px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer bg-green-950/20 text-green-400 border-green-900/50 hover:bg-green-950/30">Enabled</button>
+                          <button onClick={toggleBiometric} class="px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer bg-green-950/20 text-green-400 border-green-900/50 hover:bg-green-950/30">{t("settings.enabled")}</button>
                         </Show>
                       }>
-                        <button onClick={toggleBiometric} class="px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]">Enable</button>
+                        <button onClick={toggleBiometric} class="px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]">{t("settings.enable")}</button>
                       </Show>
                     </Show>
                   </div>
@@ -313,7 +317,7 @@ export default function SettingsModal() {
                       onClick={toggleFetchFavicons}
                       class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${fetchFavicons() ? "bg-green-950/20 text-green-400 border-green-900/50 hover:bg-green-950/30" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
                     >
-                      {fetchFavicons() ? "Enabled" : "Disabled"}
+                      {fetchFavicons() ? t("settings.enabled") : t("settings.disabled")}
                     </button>
                   </div>
                 </div>
@@ -323,8 +327,8 @@ export default function SettingsModal() {
                 {/* Import Section */}
                 <div class="space-y-3">
                   <div class="flex flex-col">
-                    <span class="text-xs font-bold text-[var(--color-text)]">Import Vault Data</span>
-                    <span class="text-[10px] text-[var(--color-muted)] mt-0.5">Select a source to import entries from.</span>
+                    <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.importTitle")}</span>
+                    <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.importDesc")}</span>
                   </div>
                   <div class="flex items-end gap-3">
                     <div class="flex-1">
@@ -333,7 +337,7 @@ export default function SettingsModal() {
                         onChange={e => setImportSource(e.target.value)}
                         class="w-full px-3 py-2.5 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all cursor-pointer"
                       >
-                        <option value="" disabled>Choose source...</option>
+                        <option value="" disabled>{t("settings.chooseSource")}</option>
                         <For each={formats}>
                           {(f) => <option value={f.id}>{f.label}</option>}
                         </For>
@@ -344,14 +348,14 @@ export default function SettingsModal() {
                       disabled={!importSource() || importing()}
                       class="px-5 py-2.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                     >
-                      {importing() ? "Importing..." : "Import"}
+                      {importing() ? t("settings.importing") : t("settings.import")}
                     </button>
                   </div>
                 </div>
 
                 {/* Export Section */}
                 <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
-                  <label class="text-xs font-bold text-[var(--color-text)]">Export Vault Data</label>
+                  <label class="text-xs font-bold text-[var(--color-text)]">{t("settings.exportTitle")}</label>
                   <div class="grid grid-cols-2 gap-3">
                     <button
                       onClick={() => doExport("bw-json")}
@@ -390,4 +394,3 @@ export default function SettingsModal() {
     </Transition>
   );
 }
-

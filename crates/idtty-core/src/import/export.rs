@@ -181,140 +181,111 @@ pub fn export_bw_json(
             CipherKind::Passport(_) => 8,
         };
 
-        let (
-            login,
-            secure_note,
-            card,
-            identity,
-            ssh_key,
-            bank_account,
-            drivers_license,
-            passport,
-        ) = match &cipher.kind {
-            CipherKind::Login(data) => (
-                Some(BwExportLogin {
-                    username: data.username.clone(),
-                    password: data.password.clone(),
-                    uris: data
-                        .uris
-                        .iter()
-                        .map(|u| BwExportUri {
-                            uri: u.uri.clone(),
-                            match_value: Some(strategy_to_bw(u.match_strategy)),
-                        })
-                        .collect(),
-                    totp: data.totp_uri.clone(),
-                    password_revision_date: data.password_revision_date.map(|d| d.to_string()),
-                }),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ),
-            CipherKind::SecureNote => (
-                None,
-                Some(BwExportSecureNote { r#type: 0 }),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ),
-            CipherKind::Card(data) => (
-                None,
-                None,
-                Some(BwExportCard {
-                    cardholder_name: data.cardholder_name.clone(),
-                    brand: data.brand.clone(),
-                    number: data.number.clone(),
-                    exp_month: data.exp_month.clone(),
-                    exp_year: data.exp_year.clone(),
-                    code: data.code.clone(),
-                }),
-                None,
-                None,
-                None,
-                None,
-                None,
-            ),
-            CipherKind::Identity(data) => (
-                None,
-                None,
-                None,
-                Some(BwExportIdentity {
-                    title: data.title.clone(),
-                    first_name: data.first_name.clone(),
-                    middle_name: data.middle_name.clone(),
-                    last_name: data.last_name.clone(),
-                    username: data.username.clone(),
-                    company: data.company.clone(),
-                    email: data.email.clone(),
-                    phone: data.phone.clone(),
-                    address1: data.address1.clone(),
-                    address2: data.address2.clone(),
-                    address3: data.address3.clone(),
-                    city: data.city.clone(),
-                    state: data.state.clone(),
-                    postal_code: data.postal_code.clone(),
-                    country: data.country.clone(),
-                    ssn: data.ssn.clone(),
-                    passport_number: data.passport_number.clone(),
-                    license_number: data.license_number.clone(),
-                }),
-                None,
-                None,
-                None,
-                None,
-            ),
-            CipherKind::SshKey(data) => (
-                None,
-                None,
-                None,
-                None,
-                Some(BwExportSshKey {
-                    private_key: data.private_key.clone(),
-                    public_key: data.public_key.clone(),
-                    key_fingerprint: data.key_fingerprint.clone(),
-                }),
-                None,
-                None,
-                None,
-            ),
-            CipherKind::BankAccount(data) => (
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(data.clone()),
-                None,
-                None,
-            ),
-            CipherKind::DriversLicense(data) => (
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(data.clone()),
-                None,
-            ),
-            CipherKind::Passport(data) => (
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(data.clone()),
-            ),
-        };
+        let (login, secure_note, card, identity, ssh_key, bank_account, drivers_license, passport) =
+            match &cipher.kind {
+                CipherKind::Login(data) => (
+                    Some(BwExportLogin {
+                        username: data.username.clone(),
+                        password: data.password.clone(),
+                        uris: data
+                            .uris
+                            .iter()
+                            .map(|u| BwExportUri {
+                                uri: u.uri.clone(),
+                                match_value: Some(strategy_to_bw(u.match_strategy)),
+                            })
+                            .collect(),
+                        totp: data.totp_uri.clone(),
+                        password_revision_date: data.password_revision_date.map(|d| d.to_string()),
+                    }),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                CipherKind::SecureNote => (
+                    None,
+                    Some(BwExportSecureNote { r#type: 0 }),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                CipherKind::Card(data) => (
+                    None,
+                    None,
+                    Some(BwExportCard {
+                        cardholder_name: data.cardholder_name.clone(),
+                        brand: data.brand.clone(),
+                        number: data.number.clone(),
+                        exp_month: data.exp_month.clone(),
+                        exp_year: data.exp_year.clone(),
+                        code: data.code.clone(),
+                    }),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                CipherKind::Identity(data) => (
+                    None,
+                    None,
+                    None,
+                    Some(BwExportIdentity {
+                        title: data.title.clone(),
+                        first_name: data.first_name.clone(),
+                        middle_name: data.middle_name.clone(),
+                        last_name: data.last_name.clone(),
+                        username: data.username.clone(),
+                        company: data.company.clone(),
+                        email: data.email.clone(),
+                        phone: data.phone.clone(),
+                        address1: data.address1.clone(),
+                        address2: data.address2.clone(),
+                        address3: data.address3.clone(),
+                        city: data.city.clone(),
+                        state: data.state.clone(),
+                        postal_code: data.postal_code.clone(),
+                        country: data.country.clone(),
+                        ssn: data.ssn.clone(),
+                        passport_number: data.passport_number.clone(),
+                        license_number: data.license_number.clone(),
+                    }),
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                CipherKind::SshKey(data) => (
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(BwExportSshKey {
+                        private_key: data.private_key.clone(),
+                        public_key: data.public_key.clone(),
+                        key_fingerprint: data.key_fingerprint.clone(),
+                    }),
+                    None,
+                    None,
+                    None,
+                ),
+                CipherKind::BankAccount(data) => {
+                    (None, None, None, None, None, Some(data.clone()), None, None)
+                }
+                CipherKind::DriversLicense(data) => {
+                    (None, None, None, None, None, None, Some(data.clone()), None)
+                }
+                CipherKind::Passport(data) => {
+                    (None, None, None, None, None, None, None, Some(data.clone()))
+                }
+            };
 
         let fields: Vec<BwExportField> = cipher
             .custom_fields

@@ -308,7 +308,7 @@ export default function AddEditCipherForm(props) {
             <input placeholder="2028" class={MONO_CLS} value={newCipher().expYear || ""} onInput={e => update("expYear", e.target.value)} {...SECURE_INPUT} />
           </div>
           <div>
-            <label class={FIELD_LABEL}>CVV</label>
+            <label class={FIELD_LABEL}>{t("fields.cvv")}</label>
             <input placeholder="123" type="password" class={MONO_CLS} value={newCipher().cvv || ""} onInput={e => update("cvv", e.target.value)} {...SECURE_INPUT} />
           </div>
         </div>
@@ -322,13 +322,13 @@ export default function AddEditCipherForm(props) {
         <div class="flex items-center justify-between pb-6 border-b border-[var(--color-border)]">
           <h3 class="text-xl font-bold text-[var(--color-text)] flex items-center gap-2">
             <span class="w-3 h-3 rounded-full bg-[var(--color-primary)]"></span>
-            {props.isEdit ? "Edit Entry" : t("entry.addTitle")}
+            {props.isEdit ? t("entry.editTitle") : t("entry.addTitle")}
           </h3>
           <button
             type="button"
             onClick={cancel}
             class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] rounded-lg border border-transparent hover:border-[var(--color-border)] transition-all cursor-pointer flex items-center justify-center"
-            title="Close"
+            title={t("entry.close")}
           >
             <IconX class="w-4 h-4" />
           </button>
@@ -337,7 +337,7 @@ export default function AddEditCipherForm(props) {
         <div class="space-y-4">
           {/* Favorite toggle */}
           <div class="flex items-center justify-between">
-            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">Favorite</label>
+            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.favorite")}</label>
             <button onClick={() => update("favorite", !newCipher().favorite)} class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().favorite ? "text-yellow-500" : "text-[var(--color-muted)] hover:text-yellow-500"}`}>
               <IconStar class="w-5 h-5" fill={newCipher().favorite ? "currentColor" : "none"} />
             </button>
@@ -345,7 +345,7 @@ export default function AddEditCipherForm(props) {
 
           {/* Reprompt toggle */}
           <div class="flex items-center justify-between">
-            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">Require password to view</label>
+            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.requirePasswordToView")}</label>
             <button onClick={() => update("reprompt", !newCipher().reprompt)} class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().reprompt ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-primary)]"}`}>
               <svg class="w-5 h-5" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" fill={newCipher().reprompt ? "currentColor" : "none"} d="M20.618 4.984A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
@@ -355,7 +355,7 @@ export default function AddEditCipherForm(props) {
           </div>
 
           <div>
-            <label class={FIELD_LABEL}>Item Name</label>
+            <label class={FIELD_LABEL}>{t("entry.itemName")}</label>
             <input placeholder={t("entry.namePlaceholder")} class={INPUT_CLS} value={newCipher().name} onInput={e => update("name", e.target.value)} {...SECURE_INPUT} />
           </div>
 
@@ -373,50 +373,132 @@ export default function AddEditCipherForm(props) {
           {/* Tags */}
           <div>
             <label class={FIELD_LABEL}>{t("entry.tags")}</label>
-            <div class="flex flex-wrap gap-1.5 mb-2">
-              <For each={tags()}>
-                {(tag, i) => (
-                  <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20">
+            <div class="flex flex-wrap gap-1.5 p-2 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] min-h-[46px]">
+              <For each={newCipher().tags || []}>
+                {tag => (
+                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20 animate-fade-in">
                     {tag}
-                    <button type="button" onClick={() => { tagsRef = tagsRef.filter((_, j) => j !== i()); setTags([...tagsRef]); }} class="text-[var(--color-primary)] hover:text-red-500 cursor-pointer">&times;</button>
+                    <button type="button" onClick={() => removeTag(tag)} class="hover:text-[var(--color-primary-hover)] cursor-pointer">×</button>
                   </span>
                 )}
               </For>
-            </div>
-            <div class="relative">
-              <input
-                placeholder={t("entry.tagPlaceholder")}
-                class={INPUT_CLS}
-                value={tagInput()}
-                onInput={e => setTagInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === "Enter" || e.key === ",") {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    addTag();
-                  } else if (e.key === "Escape") {
-                    setTagInput("");
-                  }
-                }}
-                onBlur={() => { if (tagInput().trim()) addTag(); }}
-                {...SECURE_INPUT}
-              />
-              <Show when={tagInput() && suggestions().length > 0}>
-                <div class="absolute z-10 mt-1 w-full rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] shadow-lg max-h-32 overflow-y-auto">
-                  <For each={suggestions()}>
-                    {s => (
-                      <button type="button" class="w-full text-left px-4 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-sidebar)] cursor-pointer" onClick={() => { setTagInput(""); addTagFromString(s); }}>{s}</button>
-                    )}
-                  </For>
-                </div>
-              </Show>
+              <div class="relative flex-1 min-w-[120px]">
+                <input
+                  type="text"
+                  placeholder={t("entry.tagPlaceholder")}
+                  class="w-full bg-transparent text-xs text-[var(--color-text)] outline-none py-1 px-1.5"
+                  value={tagInput()}
+                  onInput={e => setTagInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      addTag();
+                    }
+                    if (e.key === "Backspace" && !tagInput() && newCipher().tags?.length) {
+                      removeTag(newCipher().tags[newCipher().tags.length - 1]);
+                    }
+                  }}
+                  onBlur={() => { if (tagInput().trim()) addTag(); }}
+                />
+                <Show when={tagInput() && suggestions().length > 0}>
+                  <div class="absolute z-10 w-full left-0 mt-1.5 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl py-1 max-h-40 overflow-y-auto">
+                    <For each={suggestions()}>
+                      {s => (
+                        <button type="button" class="w-full text-left px-4 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-sidebar)] cursor-pointer" onClick={() => { setTagInput(""); addTagFromString(s); }}>{s}</button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
             </div>
           </div>
 
-          {/* Type-specific fields */}
-          <Show when={cipherType() === "login"}>{renderLoginFields()}</Show>
-          <Show when={cipherType() === "card"}>{renderCardFields()}</Show>
-          <Show when={cipherType() !== "login" && cipherType() !== "card"}>{() => renderSchemaFields()}</Show>
+          {/* Dynamic layout schema fields */}
+          <For each={layoutRows}>
+            {row => (
+              <div class={GRID_CLS[row.length] || GRID_CLS[1]}>
+                <For each={row}>
+                  {field => (
+                    <div>
+                      <div class="mb-1.5 flex items-center justify-between">
+                        <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{field.label}</label>
+                        <Show when={field.generator}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setGenLen(field.generator.length || 16);
+                              // Trigger state/effect update
+                              handleGenerate();
+                            }}
+                            class="text-[10px] font-bold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] cursor-pointer"
+                          >
+                            Generate
+                          </button>
+                        </Show>
+                      </div>
+                      <Show when={field.type === "password"} fallback={
+                        <input
+                          placeholder={field.placeholder || ""}
+                          class={fieldCls(field)}
+                          value={newCipher()[field.key] || ""}
+                          onInput={e => update(field.key, e.target.value)}
+                          {...SECURE_INPUT}
+                        />
+                      }>
+                        <div class="relative">
+                          <input
+                            placeholder={field.placeholder || ""}
+                            type={showPassword() ? "text" : "password"}
+                            class={MONO_CLS + " pr-24"}
+                            value={newCipher()[field.key] || ""}
+                            onInput={e => update(field.key, e.target.value)}
+                            {...SECURE_INPUT}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword())}
+                            class="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                          >
+                            <Show when={showPassword()} fallback={<IconEyeOff class="w-4 h-4" />}>
+                              <IconEye class="w-4 h-4" />
+                            </Show>
+                          </button>
+                        </div>
+                      </Show>
+                    </div>
+                  )}
+                </For>
+              </div>
+            )}
+          </For>
+
+          {/* Type-specific inputs outside standard layout (Card expiry, Custom Notes) */}
+          <Show when={cipherType() === "card"}>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class={FIELD_LABEL}>Cardholder Name</label>
+                <input placeholder="John Doe" class={INPUT_CLS} value={newCipher().cardholder_name || ""} onInput={e => update("cardholder_name", e.target.value)} {...SECURE_INPUT} />
+              </div>
+              <div>
+                <label class={FIELD_LABEL}>Card Number</label>
+                <input placeholder="1234 5678 9012 3456" class={MONO_CLS} value={formatCardNumber(newCipher().cardNumber || "")} onInput={handleCardInput(update)} {...SECURE_INPUT} />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class={FIELD_LABEL}>Exp Month</label>
+                <input placeholder="MM" class={MONO_CLS} value={newCipher().exp_month || ""} onInput={e => update("exp_month", e.target.value)} maxLength="2" {...SECURE_INPUT} />
+              </div>
+              <div>
+                <label class={FIELD_LABEL}>Exp Year</label>
+                <input placeholder="YYYY" class={MONO_CLS} value={newCipher().exp_year || ""} onInput={e => update("exp_year", e.target.value)} maxLength="4" {...SECURE_INPUT} />
+              </div>
+              <div>
+                <label class={FIELD_LABEL}>{t("fields.cvv")}</label>
+                <input placeholder="123" type="password" class={MONO_CLS} value={newCipher().code || ""} onInput={e => update("code", e.target.value)} maxLength="4" {...SECURE_INPUT} />
+              </div>
+            </div>
+          </Show>
 
           {/* Notes (all types) */}
           <div>
@@ -434,7 +516,7 @@ export default function AddEditCipherForm(props) {
           {/* Custom Fields */}
           <div>
             <div class="flex items-center justify-between mb-1.5">
-              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">Custom Fields</label>
+              <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.customFields")}</label>
               <button
                 type="button"
                 onClick={() => {
@@ -444,7 +526,7 @@ export default function AddEditCipherForm(props) {
                 class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-sidebar)] hover:bg-[var(--color-border)] border border-[var(--color-border)] text-[var(--color-text)] transition-all cursor-pointer flex items-center gap-1"
               >
                 <IconPlus class="w-3 h-3 text-[var(--color-primary)]" />
-                Add Field
+                {t("entry.addField")}
               </button>
             </div>
             <For each={fields()}>
@@ -458,82 +540,82 @@ export default function AddEditCipherForm(props) {
                 const linkedVal = () => typeof field.field_type === "object" && field.field_type?.Linked ? field.field_type.Linked : "LoginUsername";
                 return (
                 <div class="flex gap-2 mb-2 items-center">
-                  <input placeholder="Name" class="w-1/3 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.name} onInput={e => { Object.assign(fieldsRef[i()], { name: e.target.value }); }} {...SECURE_INPUT} />
+                  <input placeholder={t("entry.fieldNamePlaceholder")} class="w-1/3 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.name} onInput={e => { Object.assign(fieldsRef[i()], { name: e.target.value }); }} {...SECURE_INPUT} />
                   <select class="px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer" value={ft()} onChange={e => { const v = e.target.value; fieldsRef[i()] = { ...fieldsRef[i()], field_type: v === "Linked" ? { Linked: "LoginUsername" } : v, value: v === "Boolean" ? (fieldsRef[i()].value || "false") : fieldsRef[i()].value }; setFields([...fieldsRef]); }}>
-                    <option value="Text">Text</option>
-                    <option value="Hidden">Hidden</option>
-                    <option value="Boolean">Boolean</option>
-                    <option value="Linked">Linked</option>
+                    <option value="Text">{t("entry.fieldTypeText")}</option>
+                    <option value="Hidden">{t("entry.fieldTypeHidden")}</option>
+                    <option value="Boolean">{t("entry.fieldTypeBoolean")}</option>
+                    <option value="Linked">{t("entry.fieldTypeLinked")}</option>
                   </select>
                   <Show when={ft() !== "Linked"} fallback={
                     <select class="flex-1 px-2 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none cursor-pointer" value={linkedVal()} onChange={e => { fieldsRef[i()] = { ...fieldsRef[i()], field_type: { Linked: e.target.value }, value: "" }; setFields([...fieldsRef]); }}>
-                      <optgroup label="Login">
-                        <option value="LoginUsername">Username</option>
-                        <option value="LoginPassword">Password</option>
+                      <optgroup label={t("types.login")}>
+                        <option value="LoginUsername">{t("fields.username")}</option>
+                        <option value="LoginPassword">{t("fields.password")}</option>
                       </optgroup>
-                      <optgroup label="Card">
-                        <option value="CardCardholderName">Cardholder</option>
-                        <option value="CardNumber">Card Number</option>
-                        <option value="CardExpMonth">Exp Month</option>
-                        <option value="CardExpYear">Exp Year</option>
-                        <option value="CardCvv">CVV</option>
+                      <optgroup label={t("types.card")}>
+                        <option value="CardCardholderName">{t("fields.cardholder")}</option>
+                        <option value="CardNumber">{t("fields.cardNumber")}</option>
+                        <option value="CardExpMonth">{t("fields.expMonth")}</option>
+                        <option value="CardExpYear">{t("fields.expYear")}</option>
+                        <option value="CardCvv">{t("fields.cvv")}</option>
                       </optgroup>
-                      <optgroup label="Identity">
-                        <option value="IdentityTitle">Title</option>
-                        <option value="IdentityFirstName">First Name</option>
-                        <option value="IdentityMiddleName">Middle Name</option>
-                        <option value="IdentityLastName">Last Name</option>
-                        <option value="IdentityUsername">Username</option>
-                        <option value="IdentityCompany">Company</option>
-                        <option value="IdentityEmail">Email</option>
-                        <option value="IdentityPhone">Phone</option>
-                        <option value="IdentityAddress1">Address 1</option>
-                        <option value="IdentityAddress2">Address 2</option>
-                        <option value="IdentityAddress3">Address 3</option>
-                        <option value="IdentityCity">City</option>
-                        <option value="IdentityState">State</option>
-                        <option value="IdentityPostalCode">Postal Code</option>
-                        <option value="IdentityCountry">Country</option>
+                      <optgroup label={t("types.identity")}>
+                        <option value="IdentityTitle">{t("fields.title")}</option>
+                        <option value="IdentityFirstName">{t("fields.firstName")}</option>
+                        <option value="IdentityMiddleName">{t("fields.middleName")}</option>
+                        <option value="IdentityLastName">{t("fields.lastName")}</option>
+                        <option value="IdentityUsername">{t("fields.username")}</option>
+                        <option value="IdentityCompany">{t("fields.company")}</option>
+                        <option value="IdentityEmail">{t("fields.email")}</option>
+                        <option value="IdentityPhone">{t("fields.phone")}</option>
+                        <option value="IdentityAddress1">{t("fields.address1")}</option>
+                        <option value="IdentityAddress2">{t("fields.address2")}</option>
+                        <option value="IdentityAddress3">{t("fields.address3")}</option>
+                        <option value="IdentityCity">{t("fields.city")}</option>
+                        <option value="IdentityState">{t("fields.state")}</option>
+                        <option value="IdentityPostalCode">{t("fields.postalCode")}</option>
+                        <option value="IdentityCountry">{t("fields.country")}</option>
                       </optgroup>
-                      <optgroup label="Bank Account">
-                        <option value="BankAccountBankName">Bank Name</option>
-                        <option value="BankAccountNameOnAccount">Name on Account</option>
-                        <option value="BankAccountAccountType">Account Type</option>
-                        <option value="BankAccountAccountNumber">Account Number</option>
-                        <option value="BankAccountRoutingNumber">Routing Number</option>
-                        <option value="BankAccountBranchNumber">Branch Number</option>
-                        <option value="BankAccountPin">PIN</option>
-                        <option value="BankAccountSwiftCode">SWIFT Code</option>
-                        <option value="BankAccountIban">IBAN</option>
-                        <option value="BankAccountBankContactPhone">Bank Phone</option>
+                      <optgroup label={t("types.bankAccount")}>
+                        <option value="BankAccountBankName">{t("fields.bankName")}</option>
+                        <option value="BankAccountNameOnAccount">{t("fields.nameOnAccount")}</option>
+                        <option value="BankAccountAccountType">{t("fields.accountType")}</option>
+                        <option value="BankAccountAccountNumber">{t("fields.accountNumber")}</option>
+                        <option value="BankAccountRoutingNumber">{t("fields.routingNumber")}</option>
+                        <option value="BankAccountBranchNumber">{t("fields.branchNumber")}</option>
+                        <option value="BankAccountPin">{t("fields.pin")}</option>
+                        <option value="BankAccountSwiftCode">{t("fields.swiftCode")}</option>
+                        <option value="BankAccountIban">{t("fields.iban")}</option>
+                        <option value="BankAccountBankContactPhone">{t("fields.bankPhone")}</option>
                       </optgroup>
-                      <optgroup label="Driver License">
-                        <option value="DriversLicenseFirstName">First Name</option>
-                        <option value="DriversLicenseMiddleName">Middle Name</option>
-                        <option value="DriversLicenseLastName">Last Name</option>
-                        <option value="DriversLicenseDateOfBirth">Date of Birth</option>
-                        <option value="DriversLicenseLicenseNumber">License Number</option>
-                        <option value="DriversLicenseIssuingCountry">Issuing Country</option>
-                        <option value="DriversLicenseIssuingState">Issuing State</option>
-                        <option value="DriversLicenseIssueDate">Issue Date</option>
-                        <option value="DriversLicenseExpirationDate">Expiration Date</option>
-                        <option value="DriversLicenseIssuingAuthority">Issuing Authority</option>
-                        <option value="DriversLicenseLicenseClass">License Class</option>
+                      <optgroup label={t("types.driversLicense")}>
+                        <option value="DriversLicenseFirstName">{t("fields.firstName")}</option>
+                        <option value="DriversLicenseMiddleName">{t("fields.middleName")}</option>
+                        <option value="DriversLicenseLastName">{t("fields.lastName")}</option>
+                        <option value="DriversLicenseDateOfBirth">{t("fields.dateOfBirth")}</option>
+                        <option value="DriversLicenseLicenseNumber">{t("fields.licenseNumber")}</option>
+                        <option value="DriversLicenseIssuingCountry">{t("fields.issuingCountry")}</option>
+                        <option value="DriversLicenseIssuingState">{t("fields.issuingState")}</option>
+                        <option value="DriversLicenseIssueDate">{t("fields.issueDate")}</option>
+                        <option value="DriversLicenseExpirationDate">{t("fields.expirationDate")}</option>
+                        <option value="DriversLicenseIssuingAuthority">{t("fields.issuingAuthority")}</option>
+                        <option value="DriversLicenseLicenseClass">{t("fields.licenseClass")}</option>
                       </optgroup>
-                      <optgroup label="Passport">
-                        <option value="PassportSurname">Surname</option>
-                        <option value="PassportGivenName">Given Name</option>
-                        <option value="PassportDateOfBirth">Date of Birth</option>
-                        <option value="PassportSex">Sex</option>
-                        <option value="PassportBirthPlace">Birth Place</option>
-                        <option value="PassportNationality">Nationality</option>
-                        <option value="PassportIssuingCountry">Issuing Country</option>
-                        <option value="PassportPassportNumber">Passport Number</option>
-                        <option value="PassportPassportType">Passport Type</option>
-                        <option value="PassportNationalIdNumber">National ID Number</option>
-                        <option value="PassportIssuingAuthority">Issuing Authority</option>
-                        <option value="PassportIssueDate">Issue Date</option>
-                        <option value="PassportExpirationDate">Expiration Date</option>
+                      <optgroup label={t("types.passport")}>
+                        <option value="PassportSurname">{t("fields.surname")}</option>
+                        <option value="PassportGivenName">{t("fields.givenName")}</option>
+                        <option value="PassportDateOfBirth">{t("fields.dateOfBirth")}</option>
+                        <option value="PassportSex">{t("fields.sex")}</option>
+                        <option value="PassportBirthPlace">{t("fields.birthPlace")}</option>
+                        <option value="PassportNationality">{t("fields.nationality")}</option>
+                        <option value="PassportIssuingCountry">{t("fields.issuingCountry")}</option>
+                        <option value="PassportPassportNumber">{t("fields.passportNumber")}</option>
+                        <option value="PassportPassportType">{t("fields.passportType")}</option>
+                        <option value="PassportNationalIdNumber">{t("fields.nationalIdNumber")}</option>
+                        <option value="PassportIssuingAuthority">{t("fields.issuingAuthority")}</option>
+                        <option value="PassportIssueDate">{t("fields.issueDate")}</option>
+                        <option value="PassportExpirationDate">{t("fields.expirationDate")}</option>
                       </optgroup>
                     </select>
                   }>
@@ -547,17 +629,17 @@ export default function AddEditCipherForm(props) {
                         class="flex-1 relative h-10 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] transition-colors cursor-pointer"
                       >
                         <div class="flex items-center justify-between px-3 h-full">
-                          <span class="text-xs text-[var(--color-muted)]">{field.name || "Boolean"}</span>
+                          <span class="text-xs text-[var(--color-muted)]">{field.name || t("entry.fieldTypeBoolean")}</span>
                           <div class={`w-9 h-5 rounded-full transition-colors relative ${field.value === "true" ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}>
                             <div class={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${field.value === "true" ? "translate-x-5" : "translate-x-0.5"}`} />
                           </div>
                         </div>
                       </button>
                     }>
-                      <input placeholder="Value" class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.value} onInput={e => { Object.assign(fieldsRef[i()], { value: e.target.value }); }} {...SECURE_INPUT} />
+                      <input placeholder={t("entry.fieldValuePlaceholder")} class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.value} onInput={e => { Object.assign(fieldsRef[i()], { value: e.target.value }); }} {...SECURE_INPUT} />
                     </Show>
                   </Show>
-                  <button type="button" onClick={() => { fieldsRef = fieldsRef.filter((_, j) => j !== i()); setFields([...fieldsRef]); }} class="px-3 py-2 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in" title="Remove field">
+                  <button type="button" onClick={() => { fieldsRef = fieldsRef.filter((_, j) => j !== i()); setFields([...fieldsRef]); }} class="px-3 py-2 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in" title={t("entry.removeField")}>
                     <IconX class="w-4 h-4" />
                   </button>
                 </div>
@@ -569,10 +651,10 @@ export default function AddEditCipherForm(props) {
       </div>
       <div class="flex gap-3 p-8 pt-0">
         <button onClick={handleSave} class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-extrabold transition-all cursor-pointer shadow-lg active:scale-[0.99]">
-          Save
+          {t("entry.save")}
         </button>
         <button onClick={cancel} class="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all cursor-pointer active:scale-[0.99]">
-          Cancel
+          {t("entry.cancel")}
         </button>
       </div>
     </div>

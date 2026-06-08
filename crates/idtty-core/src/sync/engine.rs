@@ -400,16 +400,14 @@ impl SyncEngine {
         // Read device_id from registry (match by device_name)
         let reg_path = self.vault_path.join("meta/devices.json");
         let device_id = match std::fs::read_to_string(&reg_path) {
-            Ok(data) => {
-                match serde_json::from_str::<crate::devices::DeviceRegistry>(&data) {
-                    Ok(reg) => reg
-                        .devices
-                        .iter()
-                        .find(|(_, e)| e.name == self.device_name)
-                        .map(|(id, _)| *id),
-                    Err(_) => None,
-                }
-            }
+            Ok(data) => match serde_json::from_str::<crate::devices::DeviceRegistry>(&data) {
+                Ok(reg) => reg
+                    .devices
+                    .iter()
+                    .find(|(_, e)| e.name == self.device_name)
+                    .map(|(id, _)| *id),
+                Err(_) => None,
+            },
             Err(_) => None,
         };
         let device_id = match device_id {
@@ -420,21 +418,15 @@ impl SyncEngine {
         // Read epoch from epoch.json
         let epoch_path = self.vault_path.join("meta/epoch.json");
         let epoch = match std::fs::read_to_string(&epoch_path) {
-            Ok(data) => {
-                serde_json::from_str::<serde_json::Value>(&data)
-                    .ok()
-                    .and_then(|v| v["epoch"].as_u64())
-                    .unwrap_or(0)
-            }
+            Ok(data) => serde_json::from_str::<serde_json::Value>(&data)
+                .ok()
+                .and_then(|v| v["epoch"].as_u64())
+                .unwrap_or(0),
             Err(_) => 0,
         };
 
-        if let Err(e) = DeviceActivityIndex::update(
-            &self.vault_path,
-            &device_id,
-            commit_sha,
-            epoch,
-        ) {
+        if let Err(e) = DeviceActivityIndex::update(&self.vault_path, &device_id, commit_sha, epoch)
+        {
             eprintln!("warning: failed to update activity index: {e}");
         }
 
@@ -470,7 +462,9 @@ impl SyncEngine {
 
         // Check if new_epoch (epoch + 1) has an abort marker
         let new_epoch = epoch + 1;
-        let abort_path = self.vault_path.join(format!(".idtty/rekey/{new_epoch}.aborted"));
+        let abort_path = self
+            .vault_path
+            .join(format!(".idtty/rekey/{new_epoch}.aborted"));
         if abort_path.exists() {
             return Some(new_epoch);
         }
@@ -1221,9 +1215,7 @@ mod tests {
         Repository::init_bare(&remote_path).unwrap();
 
         let remote_url = format!("file://{}", remote_path.display());
-        engine
-            .add_remote(&repo, "origin", &remote_url)
-            .unwrap();
+        engine.add_remote(&repo, "origin", &remote_url).unwrap();
 
         engine.push(&repo, "origin").unwrap();
 
@@ -1231,7 +1223,12 @@ mod tests {
         let branch = SyncEngine::resolve_default_branch(&repo);
         let bare_repo = Repository::open(&remote_path).unwrap();
         bare_repo
-            .reference_symbolic("HEAD", &format!("refs/heads/{branch}"), true, "set default branch")
+            .reference_symbolic(
+                "HEAD",
+                &format!("refs/heads/{branch}"),
+                true,
+                "set default branch",
+            )
             .unwrap();
 
         // Clone: init + remote + fetch + checkout
@@ -1243,14 +1240,25 @@ mod tests {
             .add_remote(&cloned, "origin", &remote_url)
             .unwrap();
         let mut remote = cloned.find_remote("origin").unwrap();
-        remote.fetch(&[&format!("refs/heads/{branch}:refs/remotes/origin/{branch}")], None, None).unwrap();
+        remote
+            .fetch(
+                &[&format!("refs/heads/{branch}:refs/remotes/origin/{branch}")],
+                None,
+                None,
+            )
+            .unwrap();
         let remote_commit = cloned
             .find_reference(&format!("refs/remotes/origin/{branch}"))
             .unwrap()
             .peel_to_commit()
             .unwrap();
         cloned
-            .reference(&format!("refs/heads/{branch}"), remote_commit.id(), false, "clone")
+            .reference(
+                &format!("refs/heads/{branch}"),
+                remote_commit.id(),
+                false,
+                "clone",
+            )
             .unwrap();
         cloned.set_head(&format!("refs/heads/{branch}")).unwrap();
         cloned
@@ -1280,7 +1288,10 @@ mod tests {
             result,
             PullResult::FastForward | PullResult::Merged
         ));
-        assert!(dir.path().join("b.enc").exists(), "b.enc not found after pull");
+        assert!(
+            dir.path().join("b.enc").exists(),
+            "b.enc not found after pull"
+        );
     }
 
     #[test]

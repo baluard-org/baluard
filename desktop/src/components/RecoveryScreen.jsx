@@ -36,7 +36,7 @@ export default function RecoveryScreen() {
           <button
             onClick={handleCopy}
             class="absolute top-2 right-2 p-1.5 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-detail)] transition-all cursor-pointer shadow-sm flex items-center gap-1 text-xs"
-            title="Copy to clipboard"
+            title={t("recovery.copyToClipboard")}
           >
             <Show when={copied()} fallback={
               <IconCopy class="w-4 h-4" />

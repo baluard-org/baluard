@@ -160,7 +160,10 @@ impl SpaceGroupKey {
     pub fn generate(epoch: u64) -> Self {
         let mut key = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut key);
-        let s = Self { key: Box::new(key), epoch };
+        let s = Self {
+            key: Box::new(key),
+            epoch,
+        };
         mlock_key(s.key.as_ptr(), s.key.len());
         s
     }
@@ -181,13 +184,19 @@ impl SpaceGroupKey {
         hkdf.expand(&info, &mut key)
             .expect("32 bytes is valid output length for HKDF-SHA256");
 
-        let s = Self { key: Box::new(key), epoch };
+        let s = Self {
+            key: Box::new(key),
+            epoch,
+        };
         mlock_key(s.key.as_ptr(), s.key.len());
         s
     }
 
     pub fn from_bytes(bytes: [u8; 32], epoch: u64) -> Self {
-        let s = Self { key: Box::new(bytes), epoch };
+        let s = Self {
+            key: Box::new(bytes),
+            epoch,
+        };
         mlock_key(s.key.as_ptr(), s.key.len());
         s
     }

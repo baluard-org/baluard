@@ -284,7 +284,10 @@ impl VaultHandle {
 
         self.state = VaultState::Unlocked(UnlockedState {
             root_key: root_key.clone(),
-            space_group_key: crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(&root_key, current_epoch),
+            space_group_key: crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
+                &root_key,
+                current_epoch,
+            ),
             session_key,
             sync_key,
             item_keys: HashMap::new(),
@@ -754,7 +757,11 @@ impl VaultHandle {
 
     /// Derive an item key from the cached Space Group Key in UnlockedState.
     /// DESIGN-3: Uses the SGK already held in UnlockedState, avoiding redundant derivation.
-    fn derive_item_key_from_sgk(sgk: &crate::keys::hierarchy::SpaceGroupKey, cipher_id: Uuid, epoch: u64) -> ItemKey {
+    fn derive_item_key_from_sgk(
+        sgk: &crate::keys::hierarchy::SpaceGroupKey,
+        cipher_id: Uuid,
+        epoch: u64,
+    ) -> ItemKey {
         sgk.derive_item_key(cipher_id, epoch)
     }
 
@@ -926,15 +933,21 @@ impl VaultHandle {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
         let validated_tags = Self::validate_tags(&input.tags)?;
-        let input = CipherInput { tags: validated_tags, ..input.clone() };
+        let input = CipherInput {
+            tags: validated_tags,
+            ..input.clone()
+        };
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
         let cipher_id = Uuid::new_v4();
-        let item_key =
-            Self::derive_item_key_from_sgk(&unlocked.space_group_key, cipher_id, unlocked.current_epoch);
+        let item_key = Self::derive_item_key_from_sgk(
+            &unlocked.space_group_key,
+            cipher_id,
+            unlocked.current_epoch,
+        );
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -964,7 +977,10 @@ impl VaultHandle {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
         let validated_tags = Self::validate_tags(&input.tags)?;
-        let input = CipherInput { tags: validated_tags, ..input.clone() };
+        let input = CipherInput {
+            tags: validated_tags,
+            ..input.clone()
+        };
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -1030,7 +1046,8 @@ impl VaultHandle {
             input_owned.password_history = existing_cipher.password_history.clone();
         }
 
-        let item_key = Self::derive_item_key_from_sgk(&unlocked.space_group_key, cipher_id, key_epoch);
+        let item_key =
+            Self::derive_item_key_from_sgk(&unlocked.space_group_key, cipher_id, key_epoch);
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -1108,8 +1125,7 @@ impl VaultHandle {
             id: cipher_id,
             envelope_bytes: std::fs::read(&file_path)?,
         };
-        let existing =
-            self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
+        let existing = self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
 
         if existing.archived {
             return Ok(()); // Already archived, idempotent
@@ -1151,8 +1167,7 @@ impl VaultHandle {
             id: cipher_id,
             envelope_bytes: std::fs::read(&file_path)?,
         };
-        let existing =
-            self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
+        let existing = self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
 
         if !existing.archived {
             return Ok(()); // Already unarchived, idempotent
@@ -1190,7 +1205,9 @@ impl VaultHandle {
     pub fn validate_tag(name: &str) -> Result<String, IdttyError> {
         let trimmed = name.trim();
         if trimmed.is_empty() {
-            return Err(VaultError::Metadata("tag name cannot be empty or whitespace".into()).into());
+            return Err(
+                VaultError::Metadata("tag name cannot be empty or whitespace".into()).into(),
+            );
         }
         if trimmed.chars().count() > 64 {
             return Err(VaultError::Metadata("tag name exceeds 64 characters".into()).into());
@@ -1222,10 +1239,8 @@ impl VaultHandle {
             return Ok(vec![]);
         }
         let data = std::fs::read_to_string(&path)?;
-        let index: crate::vault::manifest::TagIndex =
-            serde_json::from_str(&data).map_err(|e| {
-                VaultError::Metadata(format!("tag index deserialization: {e}"))
-            })?;
+        let index: crate::vault::manifest::TagIndex = serde_json::from_str(&data)
+            .map_err(|e| VaultError::Metadata(format!("tag index deserialization: {e}")))?;
         Ok(index.tags)
     }
 
@@ -1253,9 +1268,8 @@ impl VaultHandle {
 
         let tag_path = self.path.join("meta/tag_index.json");
         let tmp_path = tag_path.with_extension("tmp");
-        let json = serde_json::to_string_pretty(&index).map_err(|e| {
-            VaultError::Metadata(format!("tag index serialization: {e}"))
-        })?;
+        let json = serde_json::to_string_pretty(&index)
+            .map_err(|e| VaultError::Metadata(format!("tag index serialization: {e}")))?;
         std::fs::write(&tmp_path, &json)?;
         std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
         std::fs::rename(&tmp_path, &tag_path)?;
@@ -1285,9 +1299,8 @@ impl VaultHandle {
 
         let tag_path = self.path.join("meta/tag_index.json");
         let tmp_path = tag_path.with_extension("tmp");
-        let json = serde_json::to_string_pretty(&index).map_err(|e| {
-            VaultError::Metadata(format!("tag index serialization: {e}"))
-        })?;
+        let json = serde_json::to_string_pretty(&index)
+            .map_err(|e| VaultError::Metadata(format!("tag index serialization: {e}")))?;
         std::fs::write(&tmp_path, &json)?;
         std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
         std::fs::rename(&tmp_path, &tag_path)?;
@@ -1306,7 +1319,11 @@ impl VaultHandle {
         let mut affected = 0usize;
 
         for meta in &metas {
-            if meta.tags.iter().any(|t| t.eq_ignore_ascii_case(&old_normalized)) {
+            if meta
+                .tags
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case(&old_normalized))
+            {
                 // Decrypt full cipher
                 let cipher = self.get_cipher(meta.id)?;
                 let cipher = match cipher {
@@ -1359,7 +1376,11 @@ impl VaultHandle {
         let mut affected = 0usize;
 
         for meta in &metas {
-            if meta.tags.iter().any(|t| t.eq_ignore_ascii_case(&normalized)) {
+            if meta
+                .tags
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case(&normalized))
+            {
                 let cipher = self.get_cipher(meta.id)?;
                 let cipher = match cipher {
                     CipherRead::Decrypted(c) => c,
@@ -1617,7 +1638,8 @@ impl VaultHandle {
                 tags: existing.tags.clone(),
             };
 
-            let new_item_key = Self::derive_item_key_from_root(&new_root_key, *cipher_id, new_epoch);
+            let new_item_key =
+                Self::derive_item_key_from_root(&new_root_key, *cipher_id, new_epoch);
             let new_file = cipher::encrypt_cipher(
                 self.vault_id,
                 *cipher_id,
@@ -1726,7 +1748,10 @@ impl VaultHandle {
                 u.root_key.zeroize();
                 u.root_key = new_root_key.clone();
                 u.space_group_key.zeroize();
-                u.space_group_key = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(&new_root_key, new_epoch);
+                u.space_group_key = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
+                    &new_root_key,
+                    new_epoch,
+                );
                 u.current_epoch = new_epoch;
                 u.item_keys.clear();
             }
@@ -1735,12 +1760,12 @@ impl VaultHandle {
 
         // H4 fix: proper epoch lifecycle through DeviceManager
         // Clean transition: old ACTIVE -> new ACTIVE (single-device shortcut)
-        self.device_manager.single_device_commit_rotation(new_epoch)?;
+        self.device_manager
+            .single_device_commit_rotation(new_epoch)?;
 
         // Fire observer hook
         if let Some(vp) = self.vault_path_as_ref() {
-            self.device_manager
-                .notify_rotation_committed(new_epoch, vp);
+            self.device_manager.notify_rotation_committed(new_epoch, vp);
         }
 
         // Clean up rotation-pending marker
@@ -1865,10 +1890,8 @@ impl VaultHandle {
             let mut existing = self.try_decrypt_cipher_with_root_key(&old_root, &file)?;
 
             // Re-encrypt attachment blobs with new item key
-            let new_item_key =
-                Self::derive_item_key_from_root(new_root_key, *cipher_id, new_epoch);
-            let old_item_key =
-                Self::derive_item_key_from_root(&old_root, *cipher_id, old_epoch);
+            let new_item_key = Self::derive_item_key_from_root(new_root_key, *cipher_id, new_epoch);
+            let old_item_key = Self::derive_item_key_from_root(&old_root, *cipher_id, old_epoch);
             for attach_meta in &existing.attachments {
                 let attach_dir = self
                     .path
@@ -1880,11 +1903,10 @@ impl VaultHandle {
                     continue;
                 }
                 let enc_blob = std::fs::read(&attach_path)?;
-                let mut plaintext =
-                    crate::vault::attachment::decrypt_attachment(
-                        old_item_key.as_bytes(),
-                        &enc_blob,
-                    )?;
+                let mut plaintext = crate::vault::attachment::decrypt_attachment(
+                    old_item_key.as_bytes(),
+                    &enc_blob,
+                )?;
                 let new_enc = crate::vault::attachment::encrypt_attachment(
                     new_item_key.as_bytes(),
                     &plaintext,
@@ -2016,11 +2038,10 @@ impl VaultHandle {
                 u.root_key.zeroize();
                 u.root_key = new_root_key.clone();
                 u.space_group_key.zeroize();
-                u.space_group_key =
-                    crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
-                        new_root_key,
-                        new_epoch,
-                    );
+                u.space_group_key = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
+                    new_root_key,
+                    new_epoch,
+                );
                 u.current_epoch = new_epoch;
                 u.item_keys.clear();
             }
@@ -2033,8 +2054,7 @@ impl VaultHandle {
         self.sync_registry_from_device_manager();
 
         if let Some(vp) = self.vault_path_as_ref() {
-            self.device_manager
-                .notify_rotation_committed(new_epoch, vp);
+            self.device_manager.notify_rotation_committed(new_epoch, vp);
         }
 
         // Clean up rotation-pending marker (disarm guard first)
@@ -2703,8 +2723,8 @@ mod tests {
                 created_at: None,
                 password_history: vec![],
                 attachments: vec![],
-            archived: false,
-            tags: vec![],
+                archived: false,
+                tags: vec![],
                 reprompt: false,
             };
             handle.update_cipher(id, &updated).unwrap();
@@ -2861,8 +2881,8 @@ mod tests {
                 created_at: None,
                 password_history: vec![],
                 attachments: vec![],
-            archived: false,
-            tags: vec![],
+                archived: false,
+                tags: vec![],
                 reprompt: false,
             };
             handle.update_cipher(id, &updated).unwrap();
@@ -3203,7 +3223,10 @@ mod tests {
 
         // Should NOT appear in normal list
         let metas = handle.list_cipher_meta().unwrap();
-        assert!(metas.is_empty(), "archived cipher should not appear in list");
+        assert!(
+            metas.is_empty(),
+            "archived cipher should not appear in list"
+        );
 
         // Should appear in archived list
         let archived = handle.list_archived_meta().unwrap();
@@ -3288,8 +3311,7 @@ mod tests {
         // Write keywrap for dev2
         let unlocked = handle.unlocked();
         let (eph, ct, tag) =
-            crate::crypto::hpke_wrap::wrap_key(unlocked.root_key.as_bytes(), &dev2_x_pub)
-                .unwrap();
+            crate::crypto::hpke_wrap::wrap_key(unlocked.root_key.as_bytes(), &dev2_x_pub).unwrap();
         drop(unlocked);
         let kw = serde_json::json!({
             "device_id": dev2_id.to_string(),
@@ -3337,11 +3359,16 @@ mod tests {
         assert_ne!(handle.unlocked().current_epoch, old_epoch);
 
         // Dev2's keywrap removed, self keywrap present
-        assert!(!dir.path().join(format!("meta/keywrap/{dev2_id}.json")).exists());
-        assert!(dir
-            .path()
-            .join(format!("meta/keywrap/{}.json", handle.device_id))
-            .exists());
+        assert!(
+            !dir.path()
+                .join(format!("meta/keywrap/{dev2_id}.json"))
+                .exists()
+        );
+        assert!(
+            dir.path()
+                .join(format!("meta/keywrap/{}.json", handle.device_id))
+                .exists()
+        );
 
         // No rotation-pending marker left
         assert!(!dir.path().join("meta/.rotation-pending").exists());
@@ -3414,8 +3441,7 @@ mod tests {
         // Write keywrap for dev2
         let unlocked = handle.unlocked();
         let (eph, ct, tag) =
-            crate::crypto::hpke_wrap::wrap_key(unlocked.root_key.as_bytes(), &dev2_x_pub)
-                .unwrap();
+            crate::crypto::hpke_wrap::wrap_key(unlocked.root_key.as_bytes(), &dev2_x_pub).unwrap();
         drop(unlocked);
         let kw = serde_json::json!({
             "device_id": dev2_id.to_string(),
@@ -3458,17 +3484,16 @@ mod tests {
         let id1 = handle.add_cipher(&input).unwrap();
 
         // Write the encrypted attachment file
-        let attach_dir = dir.path()
+        let attach_dir = dir
+            .path()
             .join("entries")
             .join(&id1.to_string())
             .join("attachments");
         std::fs::create_dir_all(&attach_dir).unwrap();
         let item_key = handle.derive_item_key(id1, handle.unlocked().current_epoch);
-        let enc_blob = crate::vault::attachment::encrypt_attachment(
-            item_key.as_bytes(),
-            b"hello world",
-        )
-        .unwrap();
+        let enc_blob =
+            crate::vault::attachment::encrypt_attachment(item_key.as_bytes(), b"hello world")
+                .unwrap();
         std::fs::write(attach_dir.join("attach-1.enc"), &enc_blob).unwrap();
 
         // Add a cipher, then move it to trash
@@ -3499,14 +3524,15 @@ mod tests {
 
         // Verify attachment was re-encrypted (file still exists and is readable)
         let attach_path = attach_dir.join("attach-1.enc");
-        assert!(attach_path.exists(), "attachment file should exist after rekey");
+        assert!(
+            attach_path.exists(),
+            "attachment file should exist after rekey"
+        );
         let new_enc_blob = std::fs::read(&attach_path).unwrap();
         let new_item_key = handle.derive_item_key(id1, handle.unlocked().current_epoch);
-        let decrypted = crate::vault::attachment::decrypt_attachment(
-            new_item_key.as_bytes(),
-            &new_enc_blob,
-        )
-        .unwrap();
+        let decrypted =
+            crate::vault::attachment::decrypt_attachment(new_item_key.as_bytes(), &new_enc_blob)
+                .unwrap();
         assert_eq!(decrypted, b"hello world");
 
         // Verify trashed cipher still decrypts
@@ -3630,7 +3656,14 @@ mod tests {
 
         handle.rebuild_tag_index().unwrap();
         let tags = handle.list_tags().unwrap();
-        assert_eq!(tags, vec!["email".to_string(), "personal".to_string(), "work".to_string()]);
+        assert_eq!(
+            tags,
+            vec![
+                "email".to_string(),
+                "personal".to_string(),
+                "work".to_string()
+            ]
+        );
     }
 
     #[test]

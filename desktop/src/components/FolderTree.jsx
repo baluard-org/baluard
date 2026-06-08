@@ -110,27 +110,27 @@ export function FolderNode(props) {
         {/* Hover toolbar */}
         <Show when={hovered() && !renaming()}>
           <div class="ml-auto flex items-center gap-0.5 shrink-0 pl-1">
-            <button title="Add subfolder"
+            <button title={t("entry.addSubfolder")}
               class="p-0.5 rounded hover:bg-[var(--color-sidebar)] text-[var(--color-muted)] hover:text-[var(--color-primary)] cursor-pointer"
               onClick={e => { e.stopPropagation(); setExpanded(true); setAddingChild(true); }}>
               <IconPlus class="w-3 h-3" />
             </button>
-            <button title="Rename"
+            <button title={t("entry.rename")}
               class="p-0.5 rounded hover:bg-[var(--color-sidebar)] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer"
               onClick={e => { e.stopPropagation(); setRenaming(true); }}>
               <IconPencil class="w-3 h-3" />
             </button>
             <Show when={confirmingDelete()} fallback={
-              <button title="Delete folder"
+              <button title={t("entry.deleteFolder")}
                 class="p-0.5 rounded hover:bg-red-500/10 text-[var(--color-muted)] hover:text-red-400 cursor-pointer"
                 onClick={e => { e.stopPropagation(); setConfirmingDelete(true); setTimeout(() => setConfirmingDelete(false), 3000); }}>
                 <IconX class="w-3 h-3" />
               </button>
             }>
-              <button title="Confirm delete"
+              <button title={t("entry.confirmDelete")}
                 class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-950/40 text-red-400 border border-red-900/30 hover:bg-red-950/60 cursor-pointer whitespace-nowrap"
                 onClick={e => { e.stopPropagation(); setConfirmingDelete(false); handleDelete(e); }}>
-                Delete?
+                {t("entry.deletePromptQuestion")}
               </button>
             </Show>
           </div>
@@ -147,7 +147,7 @@ export function FolderNode(props) {
           <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary)] opacity-50" />
           <input
             class="flex-1 min-w-0 bg-transparent border-b border-[var(--color-primary)] text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-muted)] pb-px"
-            placeholder="Subfolder name"
+            placeholder={t("entry.subfolderPlaceholder")}
             autofocus
             onKeyDown={async (e) => {
               if (e.key === "Enter") { await handleCreateChild(e); }

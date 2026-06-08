@@ -159,7 +159,7 @@ pub fn parse(data: &[u8]) -> ImportResult {
                     created_at: None,
                     password_history: vec![],
                     attachments: vec![],
-            archived: false,
+                    archived: false,
                     reprompt: false,
                     tags: imported_tags,
                 };

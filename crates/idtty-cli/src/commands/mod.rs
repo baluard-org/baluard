@@ -184,7 +184,7 @@ pub fn handle_add(
         created_at: None,
         password_history: vec![],
         attachments: vec![],
-            archived: false,
+        archived: false,
         reprompt: false,
         tags: vec![],
     };
@@ -469,7 +469,11 @@ pub fn handle_list(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         ConnectMode::Daemon => {
-            let action = if archived { "vault.list_archived" } else { "vault.list" };
+            let action = if archived {
+                "vault.list_archived"
+            } else {
+                "vault.list"
+            };
             let resp = client::request_to(action, "", socket)?;
             if !resp.success {
                 return Err(resp.error_message.into());
@@ -717,9 +721,10 @@ pub fn handle_rotation_abort(
     _socket: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
-        ConnectMode::Daemon => {
-            Err("rotation-abort requires --direct mode. Use: idtty --direct devices rotation-abort".into())
-        }
+        ConnectMode::Daemon => Err(
+            "rotation-abort requires --direct mode. Use: idtty --direct devices rotation-abort"
+                .into(),
+        ),
         ConnectMode::Direct => {
             let path = Path::new(vault_path);
             let mut handle = VaultHandle::open(path)?;
@@ -737,7 +742,10 @@ pub fn handle_rotation_abort(
                 println!("Use --force or wait for the timeout to elapse.");
                 return Ok(());
             }
-            println!("Rotation has been in ROTATING state for {}s (threshold: 3600s)", elapsed);
+            println!(
+                "Rotation has been in ROTATING state for {}s (threshold: 3600s)",
+                elapsed
+            );
 
             // Safety: abort only if no cipher files at new epoch
             let pending_epoch = dm.pending_transaction().map(|tx| tx.new_epoch).unwrap_or(0);
@@ -746,7 +754,10 @@ pub fn handle_rotation_abort(
                 if entries_dir.exists() {
                     // Check if any cipher files reference the new epoch
                     // (simplified: just warn, since actual re-encryption uses staged .tmp writes)
-                    println!("Warning: pending epoch is {}. Ensure no ciphers were re-encrypted.", pending_epoch);
+                    println!(
+                        "Warning: pending epoch is {}. Ensure no ciphers were re-encrypted.",
+                        pending_epoch
+                    );
                 }
             }
 
@@ -763,9 +774,10 @@ pub fn handle_rotation_status(
     _socket: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
-        ConnectMode::Daemon => {
-            Err("rotation-status requires --direct mode. Use: idtty --direct devices rotation-status".into())
-        }
+        ConnectMode::Daemon => Err(
+            "rotation-status requires --direct mode. Use: idtty --direct devices rotation-status"
+                .into(),
+        ),
         ConnectMode::Direct => {
             let path = Path::new(vault_path);
             let handle = VaultHandle::open(path)?;
@@ -773,7 +785,14 @@ pub fn handle_rotation_status(
 
             println!("Epoch: {}", dm.current_epoch());
             println!("State: {:?}", dm.epoch_state());
-            println!("Writes: {}", if dm.writes_allowed() { "allowed" } else { "BLOCKED" });
+            println!(
+                "Writes: {}",
+                if dm.writes_allowed() {
+                    "allowed"
+                } else {
+                    "BLOCKED"
+                }
+            );
 
             if dm.epoch_state() == idtty_core::keys::epoch::EpochState::Rotating {
                 if let Some(elapsed) = dm.rotation_stalled_secs(3600) {
@@ -813,7 +832,8 @@ pub fn handle_device_info(
                 println!("Enrolled at: {}", entry.enrolled_at);
                 println!(
                     "Enrolled by: {}",
-                    entry.enrolled_by
+                    entry
+                        .enrolled_by
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| "(founding device)".into())
                 );
@@ -824,7 +844,10 @@ pub fn handle_device_info(
             let activity = idtty_core::device_manager::DeviceActivityIndex::read(path);
             if let Some(act) = activity.devices.get(&handle.device_id.to_string()) {
                 println!("Last push: {}", act.last_push);
-                println!("Last commit: {}", &act.last_commit[..7.min(act.last_commit.len())]);
+                println!(
+                    "Last commit: {}",
+                    &act.last_commit[..7.min(act.last_commit.len())]
+                );
             }
 
             Ok(())
@@ -841,22 +864,28 @@ pub fn handle_device_revoke(
     let device_id: uuid::Uuid = device_id_str.parse().map_err(|_| "Invalid UUID")?;
 
     match mode {
-        ConnectMode::Daemon => {
-            Err("device revoke requires --direct mode. Use: idtty --direct devices revoke <UUID>".into())
-        }
+        ConnectMode::Daemon => Err(
+            "device revoke requires --direct mode. Use: idtty --direct devices revoke <UUID>"
+                .into(),
+        ),
         ConnectMode::Direct => {
             let path = Path::new(vault_path);
             let mut handle = VaultHandle::open(path)?;
 
             if device_id == handle.device_id {
-                return Err("Cannot revoke the current device. Use force-evict from another device.".into());
+                return Err(
+                    "Cannot revoke the current device. Use force-evict from another device.".into(),
+                );
             }
 
             if !handle.registry.devices.contains_key(&device_id) {
                 return Err(format!("Device {} not found in registry", device_id).into());
             }
 
-            let target_name = handle.registry.devices.get(&device_id)
+            let target_name = handle
+                .registry
+                .devices
+                .get(&device_id)
                 .map(|e| e.name.clone())
                 .unwrap_or_else(|| "Unknown".into());
 

@@ -1,23 +1,25 @@
 import { createSignal, Show, For } from "solid-js";
+import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { buildImportPayload } from "../lib/payload.js";
 
 export default function ImportExportButton() {
+  const { t } = useI18n();
   const [showMenu, setShowMenu] = createSignal(false);
   const [importing, setImporting] = createSignal(false);
   const [exporting, setExporting] = createSignal(false);
   const [message, setMessage] = createSignal(null);
 
   const formats = [
-    { id: "bw-json", label: "Bitwarden JSON" },
-    { id: "bw-csv", label: "Bitwarden CSV" },
-    { id: "chrome-csv", label: "Chrome CSV" },
-    { id: "firefox-csv", label: "Firefox CSV" },
-    { id: "lastpass-csv", label: "LastPass CSV" },
-    { id: "1password-1pux", label: "1Password (1PUX)" },
-    { id: "1password-csv", label: "1Password CSV" },
-    { id: "keepass-xml", label: "KeePass XML" },
+    { id: "bw-json", label: t("settings.formatBwJson") },
+    { id: "bw-csv", label: t("settings.formatBwCsv") },
+    { id: "chrome-csv", label: t("settings.formatChromeCsv") },
+    { id: "firefox-csv", label: t("settings.formatFirefoxCsv") },
+    { id: "lastpass-csv", label: t("settings.formatLastpassCsv") },
+    { id: "1password-1pux", label: t("settings.format1password1pux") },
+    { id: "1password-csv", label: t("settings.format1passwordCsv") },
+    { id: "keepass-xml", label: t("settings.formatKeePassXml") },
   ];
 
   async function doImport(format) {
@@ -43,9 +45,13 @@ export default function ImportExportButton() {
         const payload = JSON.stringify(buildImportPayload(format, data));
         const resp = await daemon("vault.import", payload);
         const result = JSON.parse(resp);
-        setMessage(`Imported ${result.imported || 0} entries` + (result.skipped ? `, skipped ${result.skipped}` : ""));
+        if (result.skipped) {
+          setMessage(t("settings.importSuccessSkipped", { imported: result.imported || 0, skipped: result.skipped }));
+        } else {
+          setMessage(t("settings.importSuccess", { imported: result.imported || 0 }));
+        }
       } catch (e) {
-        setMessage("Import failed: " + sanitizeError(e, null));
+        setMessage(t("settings.importFailed", { error: sanitizeError(e, t) }));
       }
       setImporting(false);
       setShowMenu(false);
@@ -66,9 +72,9 @@ export default function ImportExportButton() {
       a.download = `idtty-export.${ext}`;
       a.click();
       URL.revokeObjectURL(url);
-      setMessage("Export complete");
+      setMessage(t("settings.exportComplete"));
     } catch (e) {
-      setMessage("Export failed: " + sanitizeError(e, null));
+      setMessage(t("settings.exportFailed", { error: sanitizeError(e, t) }));
     }
     setExporting(false);
     setShowMenu(false);
@@ -78,14 +84,14 @@ export default function ImportExportButton() {
     <div class="relative">
       <button
         onClick={() => setShowMenu(!showMenu())}
-        title="Import / Export"
+        title={t("settings.importExport")}
         class="p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)]"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
       </button>
       <Show when={showMenu()}>
         <div class="absolute bottom-full right-0 mb-2 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl p-4 w-64 z-50">
-          <div class="text-xs font-bold text-[var(--color-text)] mb-2">Import from</div>
+          <div class="text-xs font-bold text-[var(--color-text)] mb-2">{t("settings.importFrom")}</div>
           <div class="space-y-1 mb-3">
             <For each={formats}>
               {(f) => (
@@ -100,7 +106,7 @@ export default function ImportExportButton() {
             </For>
           </div>
           <div class="border-t border-[var(--color-border)] pt-2">
-            <div class="text-xs font-bold text-[var(--color-text)] mb-2">Export as</div>
+            <div class="text-xs font-bold text-[var(--color-text)] mb-2">{t("settings.exportAs")}</div>
             <button
               onClick={() => doExport("bw-json")}
               disabled={exporting()}
