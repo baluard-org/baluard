@@ -23,6 +23,7 @@ idtty/
 │   │       ├── sync/           # Git sync engine (git2-rs), conflict resolution
 │   │       ├── import/         # Import parsers (8 formats) + export (2 formats)
 │   │       ├── device_manager.rs # Device fleet: registry, rotation, activity, enrollment
+│   │       ├── paths.rs        # Platform-correct base dirs (data, socket, logs, token)
 │   │       ├── types.rs        # CipherKind, CipherInput, CipherMeta, CustomFieldType, etc.
 │   │       └── error.rs        # IdttyError enum
 │   ├── idtty-cli/              # CLI (clap) — daemon-first with --direct fallback
@@ -98,7 +99,7 @@ Implications:
 
 Env vars (set automatically by `just desktop-debug`):
 * `IDTTY_DEBUG=1` -- enables Debug level (otherwise Warn only)
-* `IDTTY_LOG_DIR=<path>` -- overrides log directory (defaults to `~/.config/idtty/`)
+* `IDTTY_LOG_DIR=<path>` -- overrides log directory (defaults vary by platform: `$XDG_STATE_HOME/idtty/` on Linux, `~/Library/Logs/idtty/` on macOS, `%LOCALAPPDATA%\idtty\logs\` on Windows)
 
 Share logs: paste the file contents or `zip logs/ logs.zip`.
 
@@ -106,6 +107,7 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 * **Crypto primitives**: `crates/idtty-core/src/crypto/`
 * **Key hierarchy & lifecycle**: `crates/idtty-core/src/keys/`
 * **Vault CRUD & format**: `crates/idtty-core/src/vault/`
+* **Platform paths (data, socket, logs)**: `crates/idtty-core/src/paths.rs`
 * **CipherKind & data structs**: `crates/idtty-core/src/types.rs`
 * **Git sync**: `crates/idtty-core/src/sync/`
 * **CLI commands**: `crates/idtty-cli/src/commands/mod.rs`
@@ -131,7 +133,7 @@ Serde-tagged enum: `#[serde(tag = "type", content = "data")]`. 8 variants: Login
 JSON strings inside `GatewayRequest.payload`. `get_cipher` returns BOTH nested `kind` object AND flat top-level fields. `update_cipher` parses `kind` from payload (does NOT clone existing kind). `vault.list_full` returns all decrypted ciphers + folders + trash + archived in a single IPC call (used by desktop for fast unlock).
 
 ### IPC
-Unix domain sockets. 0600 via umask. Peer credential verification (SO_PEERCRED/getpeereid). `--socket` overrides default. Token-gated: 256-bit session token on unlock, constant-time comparison.
+Unix domain sockets. 0600 via umask. Peer credential verification (SO_PEERCRED/getpeereid). `--socket` overrides default. Token-gated: 256-bit session token on unlock, constant-time comparison. All platform paths centralized in `idtty_core::paths` (`crates/idtty-core/src/paths.rs`).
 
 ### Padded Buckets
 5 tiers (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB). Auto-selected via `Tier::fit()`. Prevents metadata leakage.

@@ -24,6 +24,7 @@ idtty/
 │   │       ├── orgs.rs         # Team sharing / RBAC
 │   │       ├── providers.rs    # Credential provider abstraction
 │   │       ├── recovery.rs     # BIP-39 recovery
+│   │       ├── paths.rs        # Platform-correct base dirs (data, socket, logs, token)
 │   │       ├── types.rs        # CipherKind, CipherInput, CipherMeta, all cipher data structs
 │   │       └── error.rs        # IdttyError enum
 │   └── idtty-cli/              # CLI Client (clap) - daemon-first with --direct fallback
@@ -89,7 +90,7 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 **Current state**: CLI dual-mode (daemon-first via socket + `--direct` fallback). Daemon fully implemented with vault state, sync, devices, TOTP, auto-lock. Tauri desktop with full CRUD UI, 8 cipher types, generator, TOTP widget.
 
 **Implemented**:
-- **Rust Daemon (`idtty-daemon`)**: Started by the Tauri tray wrapper on boot. Unlocks the vault directly in `zeroize`-protected memory. Opens a platform-aware Unix domain socket (Linux: `~/.config/idtty/idtty.sock`, macOS: `~/.config/idtty/idtty.sock`) with 0600 permissions (set via umask before bind to avoid TOCTOU race). Listens for length-delimited Protobuf requests via tokio async I/O. SO_PEERCRED peer UID verification on Linux.
+- **Rust Daemon (`idtty-daemon`)**: Started by the Tauri tray wrapper on boot. Unlocks the vault directly in `zeroize`-protected memory. Opens a platform-aware Unix domain socket (Linux: `$XDG_RUNTIME_DIR/idtty/idtty.sock`, macOS: `~/Library/Application Support/idtty/idtty.sock`) with 0600 permissions (set via umask before bind to avoid TOCTOU race). Listens for length-delimited Protobuf requests via tokio async I/O. SO_PEERCRED peer UID verification on Linux.
 - **CLI (`idtty-cli`)**: Dual-mode binary. Default: compiles flags into Protobuf, transmits over socket, prints response. `--direct` fallback links idtty-core in-process. `--socket <path>` for custom daemon path.
 - **Tauri v2 UI**: SolidJS/Tailwind v4 webview. `daemon_request` Tauri command proxies to daemon via Protobuf over Unix socket. System tray with Show/Quit menu. Full cipher CRUD with 8 types (Login, Card, Identity, SSH Key, Secure Note, Bank Account, Driver's License, Passport/ID). Password generator (CSPRNG + EFF 7776-word passphrase). TOTP code widget with boundary-aligned refresh. Auto-lock settings. Dark/light themes. Nested folders. Import/export (8 formats). Device fleet dashboard. Biometric unlock.
 

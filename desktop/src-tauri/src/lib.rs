@@ -58,17 +58,7 @@ impl Drop for Daemon {
 
 #[cfg(unix)]
 fn default_socket_path() -> PathBuf {
-    #[cfg(unix)]
-    {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(".config").join("idtty").join("idtty.sock");
-        }
-        PathBuf::from("/tmp/idtty/idtty.sock")
-    }
-    #[cfg(not(unix))]
-    {
-        PathBuf::from("idtty.sock")
-    }
+    idtty_core::paths::socket_path()
 }
 
 // ── Wire protocol ──

@@ -13,6 +13,7 @@ pub mod import;
 pub mod integrity;
 pub mod keys;
 pub mod orgs;
+pub mod paths;
 pub mod providers;
 pub mod recovery;
 pub mod sync;

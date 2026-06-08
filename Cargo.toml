@@ -70,3 +70,6 @@ prost-types = "0.13"
 
 # UniFFI
 uniffi = "0.28"
+
+# Platform paths
+dirs = "6"

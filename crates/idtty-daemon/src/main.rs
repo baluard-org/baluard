@@ -28,7 +28,7 @@ use tokio::signal::unix::{SignalKind, signal};
 const DEFAULT_VAULT_PATH: &str = ".";
 
 /// Initialize debug logging. When IDTTY_DEBUG=1:
-/// - Daemon logs to stderr (captured by Tauri sidecar) AND to ~/.config/idtty/debug.log
+/// - Daemon logs to stderr (captured by Tauri sidecar) AND to `idtty_core::paths::debug_log_path()`
 /// - Level: Debug for idtty crates, Warn for dependencies
 ///
 /// When IDTTY_DEBUG is unset: only errors to stderr.
@@ -146,7 +146,7 @@ async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
     // Spawn auto-lock background timer
     VaultState::spawn_auto_lock_checker(vault_state.clone());
 
-    // Ensure parent directory exists (~/.config/idtty/)
+    // Ensure socket parent directory exists.
     if let Some(parent) = std::path::Path::new(socket_path).parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -219,25 +219,10 @@ async fn accept_loop(listener: &UnixListener, vault_state: SharedVaultState) -> 
     }
 }
 
-/// Resolve debug log directory.
-/// Priority: IDTTY_LOG_DIR env > ~/.config/idtty/
+/// Resolve debug log path via idtty_core::paths.
+/// Respects IDTTY_LOG_DIR env override.
 mod dirs {
-    use std::path::PathBuf;
-
-    pub fn log_dir() -> PathBuf {
-        if let Ok(dir) = std::env::var("IDTTY_LOG_DIR") {
-            return PathBuf::from(dir);
-        }
-        #[cfg(unix)]
-        {
-            if let Ok(home) = std::env::var("HOME") {
-                return PathBuf::from(home).join(".config").join("idtty");
-            }
-        }
-        PathBuf::from(".")
-    }
-
-    pub fn debug_log_path() -> PathBuf {
-        log_dir().join("daemon.log")
+    pub fn debug_log_path() -> std::path::PathBuf {
+        idtty_core::paths::debug_log_path()
     }
 }
