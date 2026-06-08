@@ -73,24 +73,26 @@ export default function CipherAvatar(props) {
     onCleanup(() => { active = false; });
   });
 
-  const containerCls = () => {
-    const base = size === "lg"
-      ? "w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center shadow-lg"
-      : "w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center shrink-0";
-    return faviconSrc() ? base : `${base} ${getCuratedColor(props.name)}`;
-  };
-
-  return (
-    <div class={containerCls()}>
-      <Show when={faviconSrc()} fallback={getDomainInitials(props.name)}>
-        <img
-          src={faviconSrc()}
-          alt=""
-          class={size === "lg" ? "w-12 h-12 object-contain" : "w-5 h-5 object-contain"}
-          draggable={false}
-          onError={() => setFaviconSrc(null)}
-        />
-      </Show>
-    </div>
-  );
+   const containerCls = () => {
+     const base = size === "lg"
+       ? "w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center shadow-lg"
+       : "w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center shrink-0";
+     return faviconSrc()
+       ? (size === "lg" ? `${base} bg-[var(--color-sidebar)] border border-[var(--color-border)]` : base)
+       : `${base} ${getCuratedColor(props.name)}`;
+   };
+ 
+   return (
+     <div class={containerCls()}>
+       <Show when={faviconSrc()} fallback={getDomainInitials(props.name)}>
+         <img
+           src={faviconSrc()}
+           alt=""
+           class={size === "lg" ? "w-8 h-8 object-contain" : "w-5 h-5 object-contain"}
+           draggable={false}
+           onError={() => setFaviconSrc(null)}
+         />
+       </Show>
+     </div>
+   );
 }
