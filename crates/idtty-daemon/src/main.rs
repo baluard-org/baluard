@@ -30,6 +30,7 @@ const DEFAULT_VAULT_PATH: &str = ".";
 /// Initialize debug logging. When IDTTY_DEBUG=1:
 /// - Daemon logs to stderr (captured by Tauri sidecar) AND to ~/.config/idtty/debug.log
 /// - Level: Debug for idtty crates, Warn for dependencies
+///
 /// When IDTTY_DEBUG is unset: only errors to stderr.
 fn init_debug_logging() {
     use env_logger::Builder;

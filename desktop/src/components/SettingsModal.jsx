@@ -5,8 +5,9 @@ import { theme, setTheme } from "../context/themeSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
-import { error } from "../context/errorSignal.js";
-import { buildImportPayload, buildExportPayload, buildBiometricEnablePayload } from "../lib/payload.js";
+import { toastError, toastSuccess } from "../context/toastSignal.js";
+import { buildImportPayload, buildExportPayload } from "../lib/payload.js";
+import { biometryAvailable } from "../lib/biometry.js";
 import { IconX, IconMoon, IconSunFull, IconDownload } from "./Icon.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 
@@ -62,9 +63,16 @@ export default function SettingsModal() {
       setFetchFavicons(data.fetch_favicons !== false);
 
       // Load biometric status
-      const status = JSON.parse(await daemon("vault.biometric_status"));
-      setBiometricAvailable(status.available);
-      setBiometricEnabled(status.enabled);
+      const available = await biometryAvailable();
+      let enabled = false;
+      if (available) {
+        try {
+          const status = JSON.parse(await daemon("vault.biometric_status"));
+          enabled = status.enabled;
+        } catch {}
+      }
+      setBiometricAvailable(available);
+      setBiometricEnabled(enabled);
     } catch (e) {}
   }
 
@@ -91,11 +99,12 @@ export default function SettingsModal() {
       if (biometricEnabled()) {
         await daemon("vault.biometric_disable");
         setBiometricEnabled(false);
+        toastSuccess(t("settings.quickUnlockDisabled"));
       } else {
         setShowBiometricInput(true);
       }
     } catch (e) {
-      error(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
     }
   }
 
@@ -103,12 +112,15 @@ export default function SettingsModal() {
     const password = biometricPassword();
     if (!password) return;
     try {
-      await daemon("vault.biometric_enable", JSON.stringify(buildBiometricEnablePayload(password)));
+      // Validate password via daemon (temp handle, doesn't affect session)
+      // Then store in file-based keychain (biometric read enforced at daemon level)
+      await daemon("vault.biometric_enable", JSON.stringify({ password }));
       setBiometricEnabled(true);
       setShowBiometricInput(false);
       setBiometricPassword("");
+      toastSuccess(t("settings.quickUnlockEnabled"));
     } catch (e) {
-      error(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
     }
   }
 
@@ -272,7 +284,7 @@ export default function SettingsModal() {
                 </div>
 
                 {/* Quick Unlock (Biometric) Settings */}
-                <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
+                <div class="pt-4 border-t border-[var(--color-border)]">
                   <div class="flex items-center justify-between">
                     <div class="flex flex-col flex-1 pr-4">
                       <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.quickUnlock")}</span>
@@ -281,29 +293,55 @@ export default function SettingsModal() {
                     <Show when={biometricAvailable()} fallback={
                       <div class="text-[10px] text-[var(--color-muted)] bg-[var(--color-sidebar)] px-2.5 py-1 rounded-lg border border-[var(--color-border)] font-bold">{t("settings.unsupported")}</div>
                     }>
-                      <Show when={!biometricEnabled() && !showBiometricInput()} fallback={
-                        <Show when={biometricEnabled()} fallback={
-                          <div class="flex items-center gap-2">
-                            <input
-                              type="password"
-                              placeholder={t("login.passwordPlaceholder")}
-                              class="w-40 px-3 py-1.5 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
-                              value={biometricPassword()}
-                              onInput={e => setBiometricPassword(e.target.value)}
-                              onKeyDown={e => { if (e.key === "Enter") confirmBiometricEnable(); if (e.key === "Escape") { setShowBiometricInput(false); setBiometricPassword(""); } }}
-                              autofocus
-                            />
-                            <button onClick={confirmBiometricEnable} class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer">{t("entry.confirm")}</button>
-                            <button onClick={() => { setShowBiometricInput(false); setBiometricPassword(""); }} class="px-2 py-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">{t("entry.cancel")}</button>
-                          </div>
-                        }>
-                          <button onClick={toggleBiometric} class="px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer bg-green-950/20 text-green-400 border-green-900/50 hover:bg-green-950/30">{t("settings.enabled")}</button>
-                        </Show>
+                      <Show when={biometricEnabled()} fallback={
+                        <button
+                          onClick={toggleBiometric}
+                          disabled={showBiometricInput()}
+                          class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${showBiometricInput() ? "opacity-50 cursor-not-allowed bg-transparent text-[var(--color-muted)] border-[var(--color-border)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                        >
+                          {t("settings.enable")}
+                        </button>
                       }>
-                        <button onClick={toggleBiometric} class="px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]">{t("settings.enable")}</button>
+                        <button
+                          onClick={toggleBiometric}
+                          class="px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer bg-green-950/20 text-green-400 border-green-900/50 hover:bg-green-950/30"
+                        >
+                          {t("settings.enabled")}
+                        </button>
                       </Show>
                     </Show>
                   </div>
+
+                  <Show when={biometricAvailable() && showBiometricInput()}>
+                    <div class="mt-3 p-3 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-xl space-y-3">
+                      <div class="text-[10px] text-[var(--color-muted)] font-bold">
+                        {t("settings.promptQuickUnlock")}
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <input
+                          type="password"
+                          placeholder={t("login.passwordPlaceholder")}
+                          class="flex-1 px-3 py-1.5 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                          value={biometricPassword()}
+                          onInput={e => setBiometricPassword(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") confirmBiometricEnable(); if (e.key === "Escape") { setShowBiometricInput(false); setBiometricPassword(""); } }}
+                          autofocus
+                        />
+                        <button
+                          onClick={confirmBiometricEnable}
+                          class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer"
+                        >
+                          {t("entry.confirm")}
+                        </button>
+                        <button
+                          onClick={() => { setShowBiometricInput(false); setBiometricPassword(""); }}
+                          class="px-2 py-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer text-xs"
+                        >
+                          {t("entry.cancel")}
+                        </button>
+                      </div>
+                    </div>
+                  </Show>
                 </div>
 
                 {/* Favicon Settings */}

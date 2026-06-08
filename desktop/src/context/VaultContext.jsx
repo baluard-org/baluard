@@ -3,7 +3,7 @@ import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { buildAddPayload, buildUpdatePayload, buildGetPayload } from "../lib/payload.js";
 import { consumeVaultPrefetch } from "../lib/vaultPrefetch.js";
-import { setError } from "./errorSignal.js";
+import { toastError, toastWarning } from "./toastSignal.js";
 
 const VaultContext = createContext();
 
@@ -67,7 +67,7 @@ function VaultProvider(props) {
       setTrashCiphers(data.trash || []);
       setArchivedCiphers(data.archived || []);
     } catch (e) {
-      setError(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
     }
   }
 
@@ -84,26 +84,26 @@ function VaultProvider(props) {
   // because those are local state in VaultView, not global context.
 
   async function addCipher(cipherData, t) {
-    if (!cipherData.name) { setError(t("entry.namePlaceholder") + " required"); return null; }
+    if (!cipherData.name) { toastWarning(t("entry.namePlaceholder") + " required"); return null; }
     try {
       const id = await daemon("vault.add", JSON.stringify(buildAddPayload(cipherData)));
       await refreshCiphers(t);
       return id; // new cipher ID as string
     } catch (e) {
-      setError(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
       return null;
     }
   }
 
   async function updateCipher(id, cipherData, t) {
-    if (!cipherData.name) { setError(t("entry.namePlaceholder") + " required"); return; }
+    if (!cipherData.name) { toastWarning(t("entry.namePlaceholder") + " required"); return; }
     try {
       await daemon("vault.update", JSON.stringify(buildUpdatePayload(id, cipherData)));
       await refreshCiphers(t);
       const updated = JSON.parse(await daemon("vault.get", JSON.stringify(buildGetPayload(id))));
       return updated;
     } catch (e) {
-      setError(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
       return null;
     }
   }
@@ -112,7 +112,7 @@ function VaultProvider(props) {
     try {
       return JSON.parse(await daemon("vault.get", JSON.stringify(buildGetPayload(id))));
     } catch (e) {
-      setError(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
       return null;
     }
   }
@@ -124,7 +124,7 @@ function VaultProvider(props) {
       await refreshCiphers(t);
       return true;
     } catch (e) {
-      setError(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
       return false;
     }
   }
@@ -136,7 +136,7 @@ function VaultProvider(props) {
       await refreshCiphers(t);
       return true;
     } catch (e) {
-      setError(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
       return false;
     }
   }
@@ -146,10 +146,9 @@ function VaultProvider(props) {
       await daemon("vault.archive", id);
       guardedSetPane(setActivePane, activePane(), "welcome");
       await refreshCiphers(t);
-      // refreshCiphers fetches everything via vault.list_full batch call
       return true;
     } catch (e) {
-      setError(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
       return false;
     }
   }
@@ -159,10 +158,9 @@ function VaultProvider(props) {
       await daemon("vault.unarchive", id);
       guardedSetPane(setActivePane, activePane(), "welcome");
       await refreshCiphers(t);
-      // refreshCiphers fetches everything via vault.list_full batch call
       return true;
     } catch (e) {
-      setError(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
       return false;
     }
   }

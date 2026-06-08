@@ -17,6 +17,7 @@
         }
       ]
     },
-    "shell:allow-kill"
+    "shell:allow-kill",
+    "biometry:default"
   ]
 }

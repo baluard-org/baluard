@@ -717,10 +717,17 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         },
 
         "vault.biometric_unlock" => match state.biometric_unlock().await {
-            Ok(json) => ok_resp(json, token_str),
+            Ok(json) => {
+                // biometric_unlock() calls self.unlock() internally,
+                // which generates a new session token. Fetch it.
+                let token = state.get_session_token().await;
+                ok_resp(json, token.as_deref())
+            }
             Err(e) => err_response(e),
         },
 
+        // Validate master password without storing to keychain.
+        // Used by the Tauri biometry plugin flow: validate here, store there.
         _ => err_response(format!("Unknown action: {}", req.action)),
     };
 

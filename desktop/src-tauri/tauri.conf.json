@@ -39,6 +39,9 @@
       "binaries/idtty-daemon",
       "binaries/idtty"
     ],
+    "macOS": {
+      "entitlements": "idtty.entitlements"
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

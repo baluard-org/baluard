@@ -120,9 +120,3 @@ export function buildFolderCreatePayload(name, parentId) {
   return p;
 }
 
-/**
- * Build vault.biometric_enable payload.
- */
-export function buildBiometricEnablePayload(password) {
-  return { password };
-}

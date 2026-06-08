@@ -1,6 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
-import { setError } from "../context/errorSignal.js";
+import { toastError } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -54,7 +54,7 @@ export default function RecoveryScreen() {
             try {
               await daemon("vault.unlock", pw);
               auth.setStatus("unlocked");
-            } catch (err) { setError(sanitizeError(err, t)); auth.setStatus("locked"); }
+            } catch (err) { toastError(sanitizeError(err, t)); auth.setStatus("locked"); }
           } else { auth.setStatus("locked"); }
         }} class="space-y-4">
           <button

@@ -3,7 +3,7 @@ import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { buildCreatePayload } from "../lib/payload.js";
 import { startVaultPrefetch } from "../lib/vaultPrefetch.js";
-import { setError } from "./errorSignal.js";
+import { toastError, toastWarning } from "./toastSignal.js";
 
 const AuthContext = createContext();
 
@@ -32,6 +32,7 @@ function AuthProvider(props) {
   const [createPassword, setCreatePassword] = createSignal("");
 
   onMount(() => {
+    // Check if quick unlock is enabled (daemon keychain + biometry available)
     daemon("vault.biometric_status").then(r => {
       const s = JSON.parse(r);
       setBiometricAvailable(s.available && s.enabled);
@@ -44,7 +45,6 @@ function AuthProvider(props) {
     const password = loginPasswordRef?.value;
     if (!password) return;
     guardedSetStatus(setStatus, status(), "unlocking");
-    setError("");
     try {
       await daemon("vault.open");
       const infoStr = await daemon("vault.unlock", password);
@@ -53,7 +53,7 @@ function AuthProvider(props) {
       startVaultPrefetch();
       guardedSetStatus(setStatus, status(), "unlocked");
     } catch (e) {
-      setError(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
       guardedSetStatus(setStatus, status(), "locked");
     }
   }
@@ -63,27 +63,25 @@ function AuthProvider(props) {
       await daemon("vault.lock");
       guardedSetStatus(setStatus, status(), "locked");
       setVaultInfo(null);
-      setError("");
       // VaultProvider unmounts via <Show>. All vault signals destroyed.
     } catch (e) {
-      setError(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
     }
   }
 
   async function createVault(t) {
     const pw = createPassword();
     const confirm = document.getElementById("create-confirm")?.value;
-    if (!pw || pw.length < 8) { setError(t("create.errorMinLength")); return; }
-    if (pw !== confirm) { setError(t("create.errorMismatch")); return; }
+    if (!pw || pw.length < 8) { toastWarning(t("create.errorMinLength")); return; }
+    if (pw !== confirm) { toastWarning(t("create.errorMismatch")); return; }
     setCreatePassword(pw);
     guardedSetStatus(setStatus, status(), "creating");
-    setError("");
     try {
       const result = JSON.parse(await daemon("vault.create", JSON.stringify(buildCreatePayload(pw))));
       setRecoveryPhrase(result.recovery_phrase);
       guardedSetStatus(setStatus, status(), "recovery");
     } catch (e) {
-      setError(sanitizeError(e, t));
+      toastError(sanitizeError(e, t));
       guardedSetStatus(setStatus, status(), "init");
     }
   }

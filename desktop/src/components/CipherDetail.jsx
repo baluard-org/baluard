@@ -2,7 +2,6 @@ import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { cipherToFlat } from "../lib/cipherSchema.js";
 import { useVault } from "../context/VaultContext.jsx";
-import { error } from "../context/errorSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { uriStr, formatCardNumber } from "../lib/utils.js";

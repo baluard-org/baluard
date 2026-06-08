@@ -1,9 +1,11 @@
 import { Show } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
-import { error } from "../context/errorSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
-import { IconLock, IconAlert, IconUser } from "./Icon.jsx";
+import { biometryPrompt } from "../lib/biometry.js";
+import { toastError } from "../context/toastSignal.js";
+import { sanitizeError } from "../lib/utils.js";
+import { IconLock, IconUser } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 
 export default function LoginScreen() {
@@ -31,13 +33,6 @@ export default function LoginScreen() {
           <h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)]">{t("login.title")}</h1>
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("login.subtitle")}</p>
         </div>
-
-        <Show when={error()}>
-          <div class="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300 text-sm flex items-center gap-2">
-            <IconAlert class="w-5 h-5 shrink-0 text-red-400" />
-            {error()}
-          </div>
-        </Show>
 
         <form onSubmit={(e) => { e.preventDefault(); handleUnlock(); }} class="space-y-4">
           <div>
@@ -69,9 +64,17 @@ export default function LoginScreen() {
               type="button"
               onClick={async () => {
                 try {
+                  // Touch ID prompt (UX gate)
+                  await biometryPrompt();
+                  // Daemon reads password from file-based keychain + unlocks vault
+                  await daemon("vault.open");
                   await daemon("vault.biometric_unlock");
                   auth.setStatus("unlocked");
-                } catch (e) { /* Biometric failed or cancelled */ }
+                } catch (e) {
+                  if (!/cancelled|canceled|user cancel/i.test(e?.message || "")) {
+                    toastError(sanitizeError(e, t));
+                  }
+                }
               }}
               class="w-full mt-2 py-3 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
             >

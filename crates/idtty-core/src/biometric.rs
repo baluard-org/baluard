@@ -18,13 +18,12 @@ mod platform {
     use super::SERVICE_NAME;
     use core_foundation::base::TCFType;
     use core_foundation::boolean::CFBoolean;
+    use core_foundation::data::CFData;
     use core_foundation::dictionary::CFDictionary;
     use core_foundation::string::CFString;
-    use security_framework::passwords::{
-        AccessControlOptions, PasswordOptions, delete_generic_password, generic_password,
-        set_generic_password_options,
-    };
-    use security_framework_sys::base::errSecItemNotFound;
+    use security_framework::access_control::SecAccessControl;
+    use security_framework::passwords::AccessControlOptions;
+    use security_framework_sys::base::{errSecDuplicateItem, errSecItemNotFound};
     use zeroize::Zeroizing;
 
     /// Biometric constraint: Touch ID (any enrolled finger) OR device passcode fallback.
@@ -39,16 +38,73 @@ mod platform {
 
     /// Store master password with biometric access control.
     /// macOS enforces Touch ID / Face ID on READ, not on write.
+    ///
+    /// Uses raw FFI with kSecUseDataProtectionKeychain=false to target the
+    /// file-based keychain. The data protection keychain requires entitlements
+    /// (restricted by provisioning profile), which sidecar binaries lack.
+    /// The file-based keychain still supports SecAccessControl with biometric
+    /// constraints (Touch ID / passcode prompt on read).
     pub fn enable(master_password: &str) -> Result<(), String> {
         // Delete existing entry first (SecAccessControl is immutable on update;
         // we must delete + recreate to change access control flags).
         let _ = delete();
 
-        let mut opts = PasswordOptions::new_generic_password(SERVICE_NAME, ACCOUNT_NAME);
-        opts.set_access_control_options(AC_FLAGS);
+        let access_control = SecAccessControl::create_with_flags(AC_FLAGS.bits())
+            .map_err(|e| format!("access control create: {e}"))?;
 
-        set_generic_password_options(master_password.as_bytes(), opts)
-            .map_err(|e| format!("keychain store: {e}"))
+        let query: Vec<(CFString, core_foundation::base::CFType)> = unsafe {
+            vec![
+                unsafe_pair(
+                    security_framework_sys::item::kSecClass,
+                    CFString::wrap_under_get_rule(
+                        security_framework_sys::item::kSecClassGenericPassword,
+                    ),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecAttrService,
+                    CFString::from(SERVICE_NAME),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecAttrAccount,
+                    CFString::from(ACCOUNT_NAME),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecAttrAccessControl,
+                    access_control,
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecValueData,
+                    CFData::from_buffer(master_password.as_bytes()),
+                ),
+                // Force file-based keychain to avoid entitlement requirement.
+                // The data protection keychain needs restricted entitlements
+                // authorized by a provisioning profile, unavailable to sidecars.
+                unsafe_pair(
+                    security_framework_sys::item::kSecUseDataProtectionKeychain,
+                    CFBoolean::from(false),
+                ),
+            ]
+        };
+
+        let params = CFDictionary::from_CFType_pairs(&query);
+        let status = unsafe {
+            security_framework_sys::keychain_item::SecItemAdd(
+                params.as_concrete_TypeRef(),
+                std::ptr::null_mut(),
+            )
+        };
+
+        if status == errSecDuplicateItem as i32 {
+            // Shouldn't happen (we deleted above), but handle gracefully.
+            // Update requires a separate query without kSecValueData.
+            return Err("keychain item already exists after delete".into());
+        }
+
+        if status != 0 {
+            return Err(format!("keychain store: {}", status));
+        }
+
+        Ok(())
     }
 
     /// Delete stored master password. Ok if already deleted.
@@ -59,7 +115,6 @@ mod platform {
     /// Check if a stored secret exists. Does NOT trigger biometric prompt.
     pub fn is_enabled() -> bool {
         // Build query dictionary manually using raw FFI.
-        // We can't use PasswordOptions::push_query / to_dictionary (pub(crate)).
         //
         // Strategy: kSecReturnAttributes=true + kSecUseAuthenticationUI=kSecUseAuthenticationUISkip
         // This checks existence without triggering Touch ID:
@@ -92,6 +147,11 @@ mod platform {
                         security_framework_sys::item::kSecUseAuthenticationUISkip,
                     ),
                 ),
+                // Match the same keychain used by enable/unlock.
+                unsafe_pair(
+                    security_framework_sys::item::kSecUseDataProtectionKeychain,
+                    CFBoolean::from(false),
+                ),
             ]
         };
 
@@ -115,20 +175,103 @@ mod platform {
     /// Retrieve stored master password. Triggers Touch ID / biometric prompt.
     /// The returned bytes are zeroized after conversion.
     pub fn unlock() -> Result<String, String> {
-        let opts = PasswordOptions::new_generic_password(SERVICE_NAME, ACCOUNT_NAME);
-        // Zeroizing wrapper ensures master password bytes are cleared from heap on drop.
-        let data = Zeroizing::new(
-            generic_password(opts).map_err(|e| format!("biometric unlock failed: {e}"))?,
-        );
-        String::from_utf8(data.to_vec()).map_err(|e| format!("keychain data not utf8: {e}"))
+        let query: Vec<(CFString, core_foundation::base::CFType)> = unsafe {
+            vec![
+                unsafe_pair(
+                    security_framework_sys::item::kSecClass,
+                    CFString::wrap_under_get_rule(
+                        security_framework_sys::item::kSecClassGenericPassword,
+                    ),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecAttrService,
+                    CFString::from(SERVICE_NAME),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecAttrAccount,
+                    CFString::from(ACCOUNT_NAME),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecReturnData,
+                    CFBoolean::from(true),
+                ),
+                // Match the same keychain used by enable.
+                unsafe_pair(
+                    security_framework_sys::item::kSecUseDataProtectionKeychain,
+                    CFBoolean::from(false),
+                ),
+            ]
+        };
+
+        let params = CFDictionary::from_CFType_pairs(&query);
+        let mut ret: core_foundation_sys::base::CFTypeRef = std::ptr::null();
+        let status = unsafe {
+            security_framework_sys::keychain_item::SecItemCopyMatching(
+                params.as_concrete_TypeRef(),
+                &mut ret,
+            )
+        };
+
+        if status != 0 {
+            return Err(format!("biometric unlock failed: status={status}"));
+        }
+
+        if ret.is_null() {
+            return Err("biometric unlock failed: null result".into());
+        }
+
+        // Wrap in Zeroizing for secure cleanup of the CFData.
+        let cf_data = unsafe {
+            let data_ref = ret as core_foundation_sys::data::CFDataRef;
+            let len = core_foundation_sys::data::CFDataGetLength(data_ref) as usize;
+            let ptr = core_foundation_sys::data::CFDataGetBytePtr(data_ref);
+            let bytes = std::slice::from_raw_parts(ptr, len).to_vec();
+            core_foundation_sys::base::CFRelease(ret);
+            Zeroizing::new(bytes)
+        };
+
+        String::from_utf8(cf_data.to_vec()).map_err(|e| format!("keychain data not utf8: {e}"))
     }
 
     fn delete() -> Result<(), String> {
-        match delete_generic_password(SERVICE_NAME, ACCOUNT_NAME) {
-            Ok(()) => Ok(()),
-            Err(e) if e.code() == errSecItemNotFound => Ok(()),
-            Err(e) => Err(format!("keychain delete: {e}")),
+        let query: Vec<(CFString, core_foundation::base::CFType)> = unsafe {
+            vec![
+                unsafe_pair(
+                    security_framework_sys::item::kSecClass,
+                    CFString::wrap_under_get_rule(
+                        security_framework_sys::item::kSecClassGenericPassword,
+                    ),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecAttrService,
+                    CFString::from(SERVICE_NAME),
+                ),
+                unsafe_pair(
+                    security_framework_sys::item::kSecAttrAccount,
+                    CFString::from(ACCOUNT_NAME),
+                ),
+                // Match the same keychain used by enable.
+                unsafe_pair(
+                    security_framework_sys::item::kSecUseDataProtectionKeychain,
+                    CFBoolean::from(false),
+                ),
+            ]
+        };
+
+        let params = CFDictionary::from_CFType_pairs(&query);
+        let status = unsafe {
+            security_framework_sys::keychain_item::SecItemDelete(params.as_concrete_TypeRef())
+        };
+
+        if status == errSecItemNotFound as i32 {
+            return Ok(());
         }
+
+        if status != 0 {
+            return Err(format!("keychain delete: status={status}"));
+        }
+
+        Ok(())
     }
 
     /// Helper: wrap a static CFStringRef key and a CFType value into a dictionary pair.
