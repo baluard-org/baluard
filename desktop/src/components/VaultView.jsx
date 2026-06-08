@@ -401,9 +401,8 @@ export default function VaultView() {
           </div>
 
           {/* Table headers */}
-          <div class="px-6 py-2 border-b border-[var(--color-border)] text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between shrink-0">
+          <div class="px-6 py-2 border-b border-[var(--color-border)] text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center shrink-0">
             <span>{t("vault.headerName")}</span>
-            <span>{t("vault.headerOptions")}</span>
           </div>
 
           {/* Scrollable list items */}
