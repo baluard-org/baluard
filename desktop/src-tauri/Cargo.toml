@@ -28,6 +28,7 @@ prost = "0.13"
 anyhow = "1"
 libc = "0.2"
 zeroize = { version = "1", features = ["derive"] }
+idtty-core = { path = "../../crates/idtty-core" }
 
 [profile.release]
 panic = "abort"

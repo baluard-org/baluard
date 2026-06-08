@@ -96,6 +96,7 @@ crates/idtty-core/     # All crypto, vault format, key lifecycle, git sync
   src/keys/            # Key hierarchy, epochs, rotation
   src/vault/           # Vault handle, cipher CRUD, padding, folders
   src/sync/            # Git sync engine (git2-rs)
+  src/paths.rs         # Platform-correct base dirs (data, socket, logs, token)
   src/types.rs         # CipherKind, CipherInput, CipherMeta, all data structs
 crates/idtty-cli/      # Terminal client (clap)
   src/client.rs        # Protobuf socket client, session tokens
@@ -116,7 +117,7 @@ docs/                  # Architecture & design docs
 
 ### Key flows
 
-- **CLI -> Daemon**: CLI sends Protobuf over Unix socket. Session token persisted to `~/.config/idtty/idtty.tok`.
+- **CLI -> Daemon**: CLI sends Protobuf over Unix socket. Session token persisted alongside the socket (see `idtty_core::paths::token_path()`).
 - **CLI -> Direct**: `--direct` flag loads `idtty-core` in-process. No daemon. State dies with the process.
 - **Desktop -> Daemon**: Tauri app spawns daemon as sidecar via `tauri_plugin_shell`. Communicates over the same Unix socket.
 - **Daemon -> Core**: Daemon links `idtty-core` directly. All crypto happens in-process.

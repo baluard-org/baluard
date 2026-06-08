@@ -108,8 +108,8 @@ check: fmt-check lint test build
 _kill_daemon:
 	#!/usr/bin/env bash
 	set +e
-	SOCK="${XDG_RUNTIME_DIR:-/tmp}/idtty.sock"
-	[[ "$OSTYPE" == "darwin"* ]] && SOCK="$HOME/.config/idtty/idtty.sock"
+	SOCK="${XDG_RUNTIME_DIR:-$HOME/.local/share/idtty}/idtty.sock"
+	[[ "$OSTYPE" == "darwin"* ]] && SOCK="$HOME/Library/Application Support/idtty/idtty.sock"
 
 	# pgrep -x matches exact binary name only — no collateral damage
 	pgrep -x 'idtty-daemon' 2>/dev/null | while IFS= read -r pid; do
