@@ -436,6 +436,7 @@ impl VaultState {
             serde_json::from_str(payload).map_err(|e| format!("Invalid cipher input: {e}"))?;
 
         let cipher_id = handle.add_cipher(&input).map_err(|e| format!("{e}"))?;
+        let _ = handle.rebuild_tag_index();
 
         Ok(cipher_id.to_string())
     }
@@ -521,12 +522,21 @@ impl VaultState {
             password_history: existing_cipher.password_history.clone(),
             attachments: existing_cipher.attachments.clone(),
                 archived: existing_cipher.archived,
-                tags: existing_cipher.tags.clone(),
+                tags: match update.get("tags") {
+                Some(v) => serde_json::from_value::<Vec<String>>(v.clone())
+                    .unwrap_or_else(|e| {
+                        log::error!("tags deser failed: {e}");
+                        existing_cipher.tags.clone()
+                    }),
+                None => existing_cipher.tags.clone(),
+            },
         };
 
         handle
             .update_cipher(cipher_id, &input)
-            .map_err(|e| format!("{e}"))
+            .map_err(|e| format!("{e}"))?;
+        let _ = handle.rebuild_tag_index();
+        Ok(())
     }
 
     /// Clone a cipher by ID (duplicate with new UUID, empty history).
@@ -812,8 +822,8 @@ impl VaultState {
     }
 
     pub async fn rebuild_tag_index(&self) -> Result<String, String> {
-        let guard = self.inner.read().await;
-        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
         }

@@ -73,6 +73,7 @@ export default function AddEditCipherForm(props) {
   function addTag() {
     const val = tagInput().trim().toLowerCase().replace(/,$/, "");
     if (!val || tagsRef.length >= 20) return;
+    if ([...val].length > 64) return;
     if (tagsRef.some(t => t.toLowerCase() === val)) { setTagInput(""); return; }
     tagsRef = [...tagsRef, val];
     setTags([...tagsRef]);
@@ -393,8 +394,11 @@ export default function AddEditCipherForm(props) {
                     e.stopPropagation();
                     e.preventDefault();
                     addTag();
+                  } else if (e.key === "Escape") {
+                    setTagInput("");
                   }
                 }}
+                onBlur={() => { if (tagInput().trim()) addTag(); }}
                 {...SECURE_INPUT}
               />
               <Show when={tagInput() && suggestions().length > 0}>
