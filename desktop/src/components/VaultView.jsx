@@ -141,26 +141,8 @@ export default function VaultView() {
 
           {/* Navigation Scroll Area */}
           <div class="p-3 space-y-4 overflow-y-auto max-h-[calc(100vh-160px)]">
-            {/* Vault List dropdown */}
-            <div>
-              <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between">
-                <span>{t("vault.vaultsTitle")}</span>
-                <IconChevronDown class="w-3 h-3 text-[var(--color-muted)]" />
-              </div>
-              <div class="space-y-0.5 mt-1">
-                <button class="w-full px-3 py-2 rounded-xl text-xs font-bold text-[var(--color-text)] bg-transparent hover:bg-slate-800/10 hover:text-[var(--color-text)] transition-colors flex items-center gap-2.5 text-left cursor-pointer">
-                  <span class="w-2 h-2 rounded-full bg-[var(--color-primary)]"></span>
-                  {t("vault.myVault")}
-                </button>
-                <button class="w-full px-3 py-2 rounded-xl text-xs font-bold text-[var(--color-muted)] bg-transparent hover:bg-slate-800/10 hover:text-[var(--color-text)] transition-colors flex items-center gap-2.5 text-left cursor-pointer">
-                  <span class="w-2 h-2 rounded-full bg-[var(--color-accent)]"></span>
-                  {t("vault.familyVault")}
-                </button>
-              </div>
-            </div>
-
             {/* Categories */}
-            <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
+            <div>
               <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">
                 {t("vault.categoriesTitle")}
               </div>
