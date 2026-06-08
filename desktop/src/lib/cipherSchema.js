@@ -396,6 +396,7 @@ export function cipherToFlat(cipher) {
     custom_fields: cipher.custom_fields || [],
     attachments: cipher.attachments || [],
     reprompt: cipher.reprompt || false,
+    tags: cipher.tags || [],
   };
 
   // Type-specific fields from schema

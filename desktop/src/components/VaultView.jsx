@@ -6,7 +6,7 @@ import { error } from "../context/errorSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { buildFolderCreatePayload } from "../lib/payload.js";
-import { selectSource, filterByCategory, filterByFolder, searchCiphers } from "../lib/filters.js";
+import { selectSource, filterByCategory, filterByFolder, filterByTag, searchCiphers } from "../lib/filters.js";
 import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
 import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox, IconAlert } from "./Icon.jsx";
@@ -71,12 +71,13 @@ export default function VaultView() {
     let list = selectSource(cat, vault.ciphers(), vault.trashCiphers(), vault.archivedCiphers());
     list = filterByCategory(list, cat);
     list = filterByFolder(list, vault.folders(), vault.selectedFolder());
+    list = filterByTag(list, vault.selectedTag());
     list = searchCiphers(list, vault.searchQuery());
     return list;
   });
 
   function startAdd(type = "login") {
-    setNewCipher({ ...EMPTY_CIPHER, cipherType: type });
+    setNewCipher({ ...EMPTY_CIPHER, cipherType: type, folder_id: vault.selectedFolder() || null });
     vault.setActivePane("add");
     setShowAddMenu(false);
   }
@@ -167,7 +168,7 @@ export default function VaultView() {
                 <For each={categories}>
                   {(cat) => (
                     <button
-                      onClick={() => { vault.setSelectedCategory(cat.name); vault.setSelectedFolder(null); }}
+                      onClick={() => { vault.setSelectedCategory(cat.name); vault.setSelectedFolder(null); vault.setSelectedTag(null); }}
                       class={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between text-left cursor-pointer ${
                         vault.selectedCategory() === cat.name
                           ? "bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] shadow-sm"
@@ -247,6 +248,29 @@ export default function VaultView() {
                   <IconFolder class="w-3.5 h-3.5 shrink-0" />
                   <span>No Folder</span>
                 </button>
+                <Show when={vault.tags() && vault.tags().length > 0}>
+                  <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
+                    <h3 class="text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] mb-2" style={{ "padding-left": "14px" }}>Tags</h3>
+                    <div class="flex flex-wrap gap-1" style={{ "padding-left": "6px", "padding-right": "6px" }}>
+                      <For each={vault.tags() || []}>
+                        {tag => (
+                          <button
+                            onClick={() => { vault.setSelectedTag(vault.selectedTag() === tag ? null : tag); }}
+                            class={`px-2 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${vault.selectedTag() === tag ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]" : "bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                          >
+                            {tag}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                    <Show when={vault.selectedTag()}>
+                      <button
+                        onClick={() => vault.setSelectedTag(null)}
+                        class="mt-1.5 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer ml-2"
+                      >Clear tag filter</button>
+                    </Show>
+                  </div>
+                </Show>
               </div>
             </div>
           </div>
@@ -419,6 +443,8 @@ export default function VaultView() {
                 isEdit={false}
                 newCipher={newCipher}
                 setNewCipher={setNewCipher}
+                folders={vault.folders()}
+                tags={vault.tags()}
                 onSave={async () => {
                   const id = await vault.addCipher(newCipher(), t);
                   if (id) {
@@ -440,6 +466,8 @@ export default function VaultView() {
                 isEdit={true}
                 newCipher={newCipher}
                 setNewCipher={setNewCipher}
+                folders={vault.folders()}
+                tags={vault.tags()}
                 onSave={async () => {
                   const updated = await vault.updateCipher(viewCipher().id, newCipher(), t);
                   if (updated) {

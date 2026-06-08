@@ -64,6 +64,17 @@ export function filterByFolder(ciphers, folders, folderId) {
 }
 
 /**
+ * Filter ciphers by tag (case-insensitive match).
+ */
+export function filterByTag(ciphers, tag) {
+  if (!tag) return ciphers;
+  const lower = tag.toLowerCase();
+  return ciphers.filter(c =>
+    (c.tags || []).some(t => t.toLowerCase() === lower)
+  );
+}
+
+/**
  * Search ciphers by text query. Matches name, username, URIs, and notes.
  */
 export function searchCiphers(ciphers, query) {

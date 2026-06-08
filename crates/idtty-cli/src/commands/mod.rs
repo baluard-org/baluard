@@ -186,6 +186,7 @@ pub fn handle_add(
         attachments: vec![],
             archived: false,
         reprompt: false,
+        tags: vec![],
     };
 
     match mode {
@@ -1259,6 +1260,7 @@ pub fn handle_edit(
                 password_history: existing_cipher.password_history.clone(),
                 attachments: existing_cipher.attachments.clone(),
                 archived: existing_cipher.archived,
+                tags: existing_cipher.tags.clone(),
             };
 
             handle.update_cipher(cipher_id, &input)?;
@@ -1752,4 +1754,104 @@ pub fn handle_attach_list(
     }
 
     Ok(())
+}
+
+// ── Tag commands ──
+
+pub fn handle_tag_create(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("tag.create", name, socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("Tag '{}' created.", name);
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Tag management requires daemon mode.");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub fn handle_tag_list(
+    mode: ConnectMode,
+    socket: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("tag.list", "", socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            let tags: Vec<String> = serde_json::from_str(&resp.payload)?;
+            if tags.is_empty() {
+                println!("No tags found.");
+            } else {
+                for tag in &tags {
+                    println!("{tag}");
+                }
+            }
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Tag management requires daemon mode.");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub fn handle_tag_rename(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    old: &str,
+    new: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let payload = serde_json::json!({"old": old, "new": new}).to_string();
+            let resp = client::request_to("tag.rename", &payload, socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("Tag '{}' renamed to '{}'.", old, new);
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Tag management requires daemon mode.");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub fn handle_tag_delete(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            ensure_unlocked_daemon(socket)?;
+            let resp = client::request_to("tag.delete", name, socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            let result: serde_json::Value = serde_json::from_str(&resp.payload)?;
+            let updated = result["updated"].as_u64().unwrap_or(0);
+            println!("Tag '{}' removed from {} entries.", name, updated);
+            Ok(())
+        }
+        ConnectMode::Direct => {
+            eprintln!("Tag management requires daemon mode.");
+            std::process::exit(1);
+        }
+    }
 }

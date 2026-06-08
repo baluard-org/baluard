@@ -286,6 +286,7 @@ mod tests {
             attachments: vec![],
             archived: false,
             reprompt: false,
+            tags: vec![],
         }
     }
 
@@ -426,6 +427,7 @@ mod tests {
             attachments: vec![],
             archived: false,
             reprompt: false,
+            tags: vec![],
         };
         base.name = "Card".into();
 

@@ -124,8 +124,8 @@ impl VaultHandle {
         // Find our device ID from the keywrap files
         let device_id = Self::find_device_id(path)?;
 
-        // Derive vault_id from KDF salt (stable, unique per vault)
-        // TODO: store vault_id explicitly in a meta file during creation
+        // Derive vault_id deterministically from KDF salt (stable, unique per vault).
+        // No meta file needed: same salt always produces the same UUID.
         let vault_id = Self::derive_vault_id(&kdf_params);
 
         // MISS-2: Load DeviceManager from vault directory
@@ -546,6 +546,7 @@ impl VaultHandle {
                     password_history: existing_cipher.password_history.clone(),
                     attachments: existing_cipher.attachments.clone(),
                     archived: existing_cipher.archived,
+                    tags: existing_cipher.tags.clone(),
                 };
                 self.update_cipher(cipher_id, &input)?;
             }
@@ -647,6 +648,7 @@ impl VaultHandle {
                 update_seq: c.update_seq,
                 updated_at: c.updated_at,
                 archived: c.archived,
+                tags: c.tags.clone(),
             });
         }
 
@@ -1075,6 +1077,7 @@ impl VaultHandle {
             password_history: vec![], // empty history for clone
             attachments: existing.attachments.clone(),
             archived: existing.archived,
+            tags: existing.tags.clone(),
         };
 
         // add_cipher handles new UUID + encryption
@@ -1120,6 +1123,7 @@ impl VaultHandle {
             password_history: existing.password_history,
             attachments: existing.attachments,
             archived: true,
+            tags: existing.tags.clone(),
         };
         self.update_cipher(cipher_id, &input)
     }
@@ -1162,6 +1166,7 @@ impl VaultHandle {
             password_history: existing.password_history,
             attachments: existing.attachments,
             archived: false,
+            tags: existing.tags.clone(),
         };
         self.update_cipher(cipher_id, &input)
     }
@@ -1173,6 +1178,219 @@ impl VaultHandle {
             .into_iter()
             .filter(|m| m.archived)
             .collect())
+    }
+
+    // ── Tag operations ──
+
+    /// Validate a single tag name: trim, reject empty/whitespace, max 64 chars, lowercase.
+    pub fn validate_tag(name: &str) -> Result<String, IdttyError> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() || trimmed.chars().all(|c| c.is_whitespace()) {
+            return Err(VaultError::Metadata("tag name cannot be empty or whitespace".into()).into());
+        }
+        if trimmed.chars().count() > 64 {
+            return Err(VaultError::Metadata("tag name exceeds 64 characters".into()).into());
+        }
+        Ok(trimmed.to_lowercase())
+    }
+
+    /// Validate a slice of tags: each validated, case-insensitive dedup, max 20.
+    pub fn validate_tags(tags: &[String]) -> Result<Vec<String>, IdttyError> {
+        if tags.len() > 20 {
+            return Err(VaultError::Metadata("cipher cannot have more than 20 tags".into()).into());
+        }
+        let mut validated = Vec::with_capacity(tags.len());
+        let mut seen = std::collections::HashSet::new();
+        for tag in tags {
+            let normalized = Self::validate_tag(tag)?;
+            let key = normalized.to_lowercase();
+            if seen.insert(key) {
+                validated.push(normalized);
+            }
+        }
+        Ok(validated)
+    }
+
+    /// List all tags from the tag index cache.
+    /// Returns empty vec if index file is missing.
+    pub fn list_tags(&self) -> Result<Vec<String>, IdttyError> {
+        let path = self.path.join("meta/tag_index.json");
+        if !path.exists() {
+            return Ok(vec![]);
+        }
+        let data = std::fs::read_to_string(&path)?;
+        let index: crate::vault::manifest::TagIndex =
+            serde_json::from_str(&data).map_err(|e| {
+                VaultError::Metadata(format!("tag index deserialization: {e}"))
+            })?;
+        Ok(index.tags)
+    }
+
+    /// Rebuild tag index from all decrypted cipher metas.
+    pub fn rebuild_tag_index(&self) -> Result<(), IdttyError> {
+        let metas = self.list_cipher_meta_full()?;
+        let mut tag_set = std::collections::HashSet::new();
+        for meta in &metas {
+            for tag in &meta.tags {
+                tag_set.insert(tag.clone());
+            }
+        }
+        let mut tags: Vec<String> = tag_set.into_iter().collect();
+        tags.sort();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let index = crate::vault::manifest::TagIndex {
+            tags,
+            updated_at: now,
+        };
+
+        let tag_path = self.path.join("meta/tag_index.json");
+        let tmp_path = tag_path.with_extension("tmp");
+        let json = serde_json::to_string_pretty(&index).map_err(|e| {
+            VaultError::Metadata(format!("tag index serialization: {e}"))
+        })?;
+        std::fs::write(&tmp_path, &json)?;
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
+        std::fs::rename(&tmp_path, &tag_path)?;
+        Ok(())
+    }
+
+    /// Create a new tag in the index (without assigning to any cipher).
+    pub fn create_tag(&mut self, name: &str) -> Result<(), IdttyError> {
+        let normalized = Self::validate_tag(name)?;
+        let mut tags = self.list_tags()?;
+        // Case-insensitive check
+        if tags.iter().any(|t| t.eq_ignore_ascii_case(&normalized)) {
+            return Ok(()); // idempotent
+        }
+        tags.push(normalized);
+        tags.sort();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let index = crate::vault::manifest::TagIndex {
+            tags,
+            updated_at: now,
+        };
+
+        let tag_path = self.path.join("meta/tag_index.json");
+        let tmp_path = tag_path.with_extension("tmp");
+        let json = serde_json::to_string_pretty(&index).map_err(|e| {
+            VaultError::Metadata(format!("tag index serialization: {e}"))
+        })?;
+        std::fs::write(&tmp_path, &json)?;
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
+        std::fs::rename(&tmp_path, &tag_path)?;
+        Ok(())
+    }
+
+    /// Rename a tag across all ciphers. Returns count of affected ciphers.
+    pub fn rename_tag(&mut self, old: &str, new: &str) -> Result<usize, IdttyError> {
+        let old_normalized = Self::validate_tag(old)?;
+        let new_normalized = Self::validate_tag(new)?;
+        if old_normalized == new_normalized {
+            return Ok(0);
+        }
+
+        let metas = self.list_cipher_meta_full()?;
+        let mut affected = 0usize;
+
+        for meta in &metas {
+            if meta.tags.iter().any(|t| t.eq_ignore_ascii_case(&old_normalized)) {
+                // Decrypt full cipher
+                let cipher = self.get_cipher(meta.id)?;
+                let cipher = match cipher {
+                    CipherRead::Decrypted(c) => c,
+                    _ => continue,
+                };
+
+                let mut updated_tags: Vec<String> = cipher
+                    .tags
+                    .iter()
+                    .map(|t| {
+                        if t.eq_ignore_ascii_case(&old_normalized) {
+                            new_normalized.clone()
+                        } else {
+                            t.clone()
+                        }
+                    })
+                    .collect();
+                updated_tags.sort();
+                updated_tags.dedup();
+
+                let input = CipherInput {
+                    name: cipher.name,
+                    folder_id: cipher.folder_id,
+                    kind: cipher.kind,
+                    favorite: cipher.favorite,
+                    reprompt: cipher.reprompt,
+                    notes: cipher.notes,
+                    custom_fields: cipher.custom_fields,
+                    created_at: Some(cipher.created_at),
+                    password_history: cipher.password_history,
+                    attachments: cipher.attachments,
+                    archived: cipher.archived,
+                    tags: updated_tags,
+                };
+                self.update_cipher(meta.id, &input)?;
+                affected += 1;
+            }
+        }
+
+        self.rebuild_tag_index()?;
+        Ok(affected)
+    }
+
+    /// Delete a tag from all ciphers. Returns count of affected ciphers.
+    pub fn delete_tag(&mut self, name: &str) -> Result<usize, IdttyError> {
+        let normalized = Self::validate_tag(name)?;
+
+        let metas = self.list_cipher_meta_full()?;
+        let mut affected = 0usize;
+
+        for meta in &metas {
+            if meta.tags.iter().any(|t| t.eq_ignore_ascii_case(&normalized)) {
+                let cipher = self.get_cipher(meta.id)?;
+                let cipher = match cipher {
+                    CipherRead::Decrypted(c) => c,
+                    _ => continue,
+                };
+
+                let updated_tags: Vec<String> = cipher
+                    .tags
+                    .iter()
+                    .filter(|t| !t.eq_ignore_ascii_case(&normalized))
+                    .cloned()
+                    .collect();
+
+                let input = CipherInput {
+                    name: cipher.name,
+                    folder_id: cipher.folder_id,
+                    kind: cipher.kind,
+                    favorite: cipher.favorite,
+                    reprompt: cipher.reprompt,
+                    notes: cipher.notes,
+                    custom_fields: cipher.custom_fields,
+                    created_at: Some(cipher.created_at),
+                    password_history: cipher.password_history,
+                    attachments: cipher.attachments,
+                    archived: cipher.archived,
+                    tags: updated_tags,
+                };
+                self.update_cipher(meta.id, &input)?;
+                affected += 1;
+            }
+        }
+
+        self.rebuild_tag_index()?;
+        Ok(affected)
     }
 
     fn find_device_id(path: &Path) -> Result<Uuid, IdttyError> {
@@ -1393,6 +1611,7 @@ impl VaultHandle {
                 password_history: existing.password_history.clone(),
                 attachments: existing.attachments.clone(),
                 archived: existing.archived,
+                tags: existing.tags.clone(),
             };
 
             let new_item_key = Self::derive_item_key_from_root(&new_root_key, *cipher_id, new_epoch);
@@ -1685,6 +1904,7 @@ impl VaultHandle {
                 password_history: existing.password_history.clone(),
                 attachments: existing.attachments.clone(),
                 archived: existing.archived,
+                tags: existing.tags.clone(),
             };
 
             let new_file = cipher::encrypt_cipher(
@@ -1975,6 +2195,7 @@ impl VaultHandle {
                 update_seq: c.update_seq,
                 updated_at: c.updated_at,
                 archived: c.archived,
+                tags: c.tags.clone(),
             });
         }
 
@@ -2204,6 +2425,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
 
@@ -2253,6 +2475,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
 
@@ -2293,6 +2516,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
 
@@ -2345,6 +2569,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         handle.add_cipher(&input).unwrap();
@@ -2364,6 +2589,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         handle.add_cipher(&card_input).unwrap();
@@ -2399,6 +2625,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
@@ -2414,6 +2641,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         handle.update_cipher(id, &updated).unwrap();
@@ -2451,6 +2679,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
@@ -2472,6 +2701,7 @@ mod tests {
                 password_history: vec![],
                 attachments: vec![],
             archived: false,
+            tags: vec![],
                 reprompt: false,
             };
             handle.update_cipher(id, &updated).unwrap();
@@ -2527,6 +2757,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
@@ -2547,6 +2778,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         handle.update_cipher(id, &updated).unwrap();
@@ -2606,6 +2838,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         let id = handle.add_cipher(&input).unwrap();
@@ -2626,6 +2859,7 @@ mod tests {
                 password_history: vec![],
                 attachments: vec![],
             archived: false,
+            tags: vec![],
                 reprompt: false,
             };
             handle.update_cipher(id, &updated).unwrap();
@@ -2702,6 +2936,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         let cipher_id = handle.add_cipher(&input).unwrap();
@@ -2750,6 +2985,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         let cipher_id = handle.add_cipher(&input).unwrap();
@@ -2766,6 +3002,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         handle.update_cipher(cipher_id, &updated).unwrap();
@@ -2803,6 +3040,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         let id1 = handle.add_cipher(&input1).unwrap();
@@ -2822,6 +3060,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         let id2 = handle.add_cipher(&input2).unwrap();
@@ -3077,6 +3316,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         let id1 = handle.add_cipher(&input).unwrap();
@@ -3209,6 +3449,7 @@ mod tests {
                 created_at: 1000,
             }],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         let id1 = handle.add_cipher(&input).unwrap();
@@ -3243,6 +3484,7 @@ mod tests {
             password_history: vec![],
             attachments: vec![],
             archived: false,
+            tags: vec![],
             reprompt: false,
         };
         let id2 = handle.add_cipher(&trash_input).unwrap();
@@ -3288,5 +3530,240 @@ mod tests {
             }
         }
         check_no_tmp(dir.path());
+    }
+
+    // ── Tag tests ──
+
+    #[test]
+    fn tag_validation_rejects_empty() {
+        assert!(VaultHandle::validate_tag("").is_err());
+        assert!(VaultHandle::validate_tag("   ").is_err());
+        assert!(VaultHandle::validate_tag("\t\n").is_err());
+        assert!(VaultHandle::validate_tag("valid").is_ok());
+    }
+
+    #[test]
+    fn tag_validation_max_length() {
+        let long_tag = "a".repeat(65);
+        assert!(VaultHandle::validate_tag(&long_tag).is_err());
+        let exact_tag = "a".repeat(64);
+        assert!(VaultHandle::validate_tag(&exact_tag).is_ok());
+    }
+
+    #[test]
+    fn tag_validation_normalizes_case() {
+        let result = VaultHandle::validate_tag("Work").unwrap();
+        assert_eq!(result, "work");
+    }
+
+    #[test]
+    fn create_cipher_with_tags() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let input = CipherInput {
+            name: "Tagged".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            reprompt: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec!["work".into(), "email".into()],
+        };
+        let id = handle.add_cipher(&input).unwrap();
+
+        let result = handle.get_cipher(id).unwrap();
+        match result {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.tags, vec!["work".to_string(), "email".to_string()]);
+            }
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+    }
+
+    #[test]
+    fn rebuild_tag_index() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Create ciphers with various tags
+        let input1 = CipherInput {
+            name: "A".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            reprompt: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec!["work".into(), "email".into()],
+        };
+        let input2 = CipherInput {
+            name: "B".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            reprompt: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec!["personal".into(), "email".into()],
+        };
+        handle.add_cipher(&input1).unwrap();
+        handle.add_cipher(&input2).unwrap();
+
+        handle.rebuild_tag_index().unwrap();
+        let tags = handle.list_tags().unwrap();
+        assert_eq!(tags, vec!["email".to_string(), "personal".to_string(), "work".to_string()]);
+    }
+
+    #[test]
+    fn create_tag_to_index() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        handle.create_tag("Work").unwrap();
+        let tags = handle.list_tags().unwrap();
+        assert_eq!(tags, vec!["work".to_string()]);
+
+        // Idempotent
+        handle.create_tag("WORK").unwrap();
+        let tags2 = handle.list_tags().unwrap();
+        assert_eq!(tags2, vec!["work".to_string()]);
+    }
+
+    #[test]
+    fn rename_tag_updates_ciphers() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let input1 = CipherInput {
+            name: "A".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            reprompt: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec!["old-tag".into()],
+        };
+        let input2 = CipherInput {
+            name: "B".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            reprompt: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec!["old-tag".into(), "keep".into()],
+        };
+        let id1 = handle.add_cipher(&input1).unwrap();
+        let id2 = handle.add_cipher(&input2).unwrap();
+
+        let count = handle.rename_tag("old-tag", "new-tag").unwrap();
+        assert_eq!(count, 2);
+
+        // Verify cipher 1
+        let c1 = match handle.get_cipher(id1).unwrap() {
+            CipherRead::Decrypted(c) => c,
+            _ => panic!("expected decrypted"),
+        };
+        assert_eq!(c1.tags, vec!["new-tag".to_string()]);
+
+        // Verify cipher 2
+        let c2 = match handle.get_cipher(id2).unwrap() {
+            CipherRead::Decrypted(c) => c,
+            _ => panic!("expected decrypted"),
+        };
+        assert!(c2.tags.contains(&"new-tag".to_string()));
+        assert!(c2.tags.contains(&"keep".to_string()));
+
+        // Index updated
+        let tags = handle.list_tags().unwrap();
+        assert!(!tags.contains(&"old-tag".to_string()));
+        assert!(tags.contains(&"new-tag".to_string()));
+    }
+
+    #[test]
+    fn delete_tag_removes_from_ciphers() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let input1 = CipherInput {
+            name: "A".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            reprompt: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec!["delete-me".into(), "keep".into()],
+        };
+        let input2 = CipherInput {
+            name: "B".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+            favorite: false,
+            reprompt: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec!["keep".into()],
+        };
+        let id1 = handle.add_cipher(&input1).unwrap();
+        let id2 = handle.add_cipher(&input2).unwrap();
+
+        let count = handle.delete_tag("delete-me").unwrap();
+        assert_eq!(count, 1);
+
+        // Verify cipher 1 no longer has delete-me
+        let c1 = match handle.get_cipher(id1).unwrap() {
+            CipherRead::Decrypted(c) => c,
+            _ => panic!("expected decrypted"),
+        };
+        assert_eq!(c1.tags, vec!["keep".to_string()]);
+
+        // Verify cipher 2 untouched
+        let c2 = match handle.get_cipher(id2).unwrap() {
+            CipherRead::Decrypted(c) => c,
+            _ => panic!("expected decrypted"),
+        };
+        assert_eq!(c2.tags, vec!["keep".to_string()]);
+
+        // Index updated
+        let tags = handle.list_tags().unwrap();
+        assert!(!tags.contains(&"delete-me".to_string()));
+        assert!(tags.contains(&"keep".to_string()));
     }
 }

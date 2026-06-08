@@ -857,16 +857,20 @@ impl SyncEngine {
 
 /// Validate that a git URL uses an allowed scheme.
 /// Permits: https://, ssh://, git@ (SSH shorthand).
-/// Rejects: file://, git://, and all other schemes.
+/// In tests only: also permits file:// and absolute paths.
+/// Rejects: git://, and all other schemes.
 fn validate_git_url(url: &str) -> Result<(), IdttyError> {
     if url.starts_with("https://") || url.starts_with("ssh://") || url.starts_with("git@") {
-        Ok(())
-    } else {
-        Err(SyncError::Git(format!(
-            "unsupported URL scheme: {url}. Use https://, ssh://, or git@"
-        ))
-        .into())
+        return Ok(());
     }
+    #[cfg(test)]
+    if url.starts_with("file://") || (url.starts_with('/') && !url.contains("://")) {
+        return Ok(());
+    }
+    Err(SyncError::Git(format!(
+        "unsupported URL scheme: {url}. Use https://, ssh://, or git@"
+    ))
+    .into())
 }
 
 impl SyncEngine {
@@ -883,6 +887,10 @@ impl SyncEngine {
 
     fn save_last_head(&self, oid: &str) -> Result<(), IdttyError> {
         let path = Self::head_path(&self.vault_path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| SyncError::Git(format!("create meta dir: {e}")))?;
+        }
         let record = serde_json::json!({ "last_remote_head": oid });
         std::fs::write(
             &path,
@@ -1168,10 +1176,42 @@ mod tests {
         assert!(clone_dir.path().join(".git").exists());
     }
 
+    /// Helper: set up Ed25519 signing key + verifying key for a test repo.
+    /// Uses a provided verifying key hex so both repos share the same keypair.
+    fn setup_signing_keys_with(dir: &std::path::Path, signing_key: &ed25519_dalek::SigningKey) {
+        let verifying = ed25519_dalek::VerifyingKey::from(signing_key);
+        let privkey_data = serde_json::json!({
+            "x25519_private": hex::encode([0u8; 32]),
+            "ed25519_private": hex::encode(signing_key.to_bytes()),
+        });
+        std::fs::create_dir_all(dir.join("meta")).unwrap();
+        std::fs::write(
+            dir.join("meta/device-privkey.json"),
+            serde_json::to_string_pretty(&privkey_data).unwrap(),
+        )
+        .unwrap();
+        let vk_hex = hex::encode(verifying.to_bytes());
+        let registry = serde_json::json!({
+            "devices": [
+                { "name": "test-device", "signing_public_key": vk_hex },
+                { "name": "clone-device", "signing_public_key": vk_hex },
+            ]
+        });
+        std::fs::write(
+            dir.join("meta/device-registry.json"),
+            serde_json::to_string_pretty(&registry).unwrap(),
+        )
+        .unwrap();
+    }
+
     #[test]
-    #[ignore] // TODO: git2 local push to bare repo has issues; works over HTTPS/SSH
     fn push_pull_roundtrip() {
-        let (dir, engine) = make_test_repo();
+        let signing_key = crate::crypto::signature::generate_ed25519_keypair().0;
+
+        let (dir, _engine) = make_test_repo();
+        setup_signing_keys_with(dir.path(), &signing_key);
+        let engine = SyncEngine::new(dir.path(), "test-device");
+
         std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
         let repo = engine.init_repo().unwrap();
 
@@ -1180,37 +1220,42 @@ mod tests {
         let remote_path = remote_dir.path().join("vault.git");
         Repository::init_bare(&remote_path).unwrap();
 
-        // Create main branch from initial commit
-        {
-            let head = repo.head().unwrap();
-            let commit = head.peel_to_commit().unwrap();
-            // Rename current branch to main
-            repo.branch("main", &commit, true).unwrap();
-            repo.set_head("refs/heads/main").unwrap();
-        }
-
+        let remote_url = format!("file://{}", remote_path.display());
         engine
-            .add_remote(&repo, "origin", &remote_path.display().to_string())
+            .add_remote(&repo, "origin", &remote_url)
             .unwrap();
-        // Debug: what refs does the bare repo have?
-        let bare_repo = Repository::open(&remote_path).unwrap();
-        bare_repo.references().unwrap().for_each(|r| {
-            if let Ok(refn) = r {
-                eprintln!("  ref: {:?} -> {:?}", refn.name(), refn.target());
-            }
-        });
+
         engine.push(&repo, "origin").unwrap();
 
-        // Clone
-        let clone_dir = tempfile::tempdir().unwrap();
-        let cloned =
-            SyncEngine::clone_unchecked(&remote_path.display().to_string(), clone_dir.path())
-                .unwrap();
+        // Resolve the branch name that was pushed and set bare repo HEAD accordingly.
+        let branch = SyncEngine::resolve_default_branch(&repo);
+        let bare_repo = Repository::open(&remote_path).unwrap();
+        bare_repo
+            .reference_symbolic("HEAD", &format!("refs/heads/{branch}"), true, "set default branch")
+            .unwrap();
 
-        // Debug: list files
-        for entry in std::fs::read_dir(clone_dir.path()).unwrap() {
-            eprintln!("  {:?}", entry.unwrap().file_name());
-        }
+        // Clone: init + remote + fetch + checkout
+        let clone_dir = tempfile::tempdir().unwrap();
+        setup_signing_keys_with(clone_dir.path(), &signing_key);
+        let clone_engine = SyncEngine::new(clone_dir.path(), "clone-device");
+        let cloned = Repository::init(clone_dir.path()).unwrap();
+        clone_engine
+            .add_remote(&cloned, "origin", &remote_url)
+            .unwrap();
+        let mut remote = cloned.find_remote("origin").unwrap();
+        remote.fetch(&[&format!("refs/heads/{branch}:refs/remotes/origin/{branch}")], None, None).unwrap();
+        let remote_commit = cloned
+            .find_reference(&format!("refs/remotes/origin/{branch}"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        cloned
+            .reference(&format!("refs/heads/{branch}"), remote_commit.id(), false, "clone")
+            .unwrap();
+        cloned.set_head(&format!("refs/heads/{branch}")).unwrap();
+        cloned
+            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
 
         assert!(
             clone_dir.path().join("a.enc").exists(),
@@ -1219,17 +1264,23 @@ mod tests {
 
         // Add cipher on clone, commit and push back
         std::fs::write(clone_dir.path().join("b.enc"), b"\xBB").unwrap();
-        let clone_engine = SyncEngine::new(clone_dir.path(), "clone-device");
         clone_engine.commit_all(&cloned, "").unwrap();
         clone_engine.push(&cloned, "origin").unwrap();
 
         // Pull on original
         let result = engine.pull(&repo, "origin").unwrap();
+
+        // Force checkout to sync working tree with new HEAD
+        let repo_after = engine.open_repo().unwrap();
+        repo_after
+            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+
         assert!(matches!(
             result,
             PullResult::FastForward | PullResult::Merged
         ));
-        assert!(dir.path().join("b.enc").exists());
+        assert!(dir.path().join("b.enc").exists(), "b.enc not found after pull");
     }
 
     #[test]

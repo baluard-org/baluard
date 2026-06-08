@@ -53,7 +53,12 @@
     "archive": "Archive",
     "unarchive": "Unarchive",
     "restore": "Restore",
-    "selectPrompt": "Select an entry or add a new one"
+    "selectPrompt": "Select an entry or add a new one",
+    "folder": "Folder",
+    "noFolder": "No folder",
+    "tags": "Tags",
+    "addTag": "Add tag",
+    "tagPlaceholder": "Type a tag..."
   },
   "settings": {
     "faviconLabel": "Show website icons",

@@ -146,6 +146,12 @@ enum Commands {
         action: FolderAction,
     },
 
+    /// Manage tags.
+    Tags {
+        #[command(subcommand)]
+        action: TagAction,
+    },
+
     /// Import entries from external format.
     Import {
         /// Format: bw-json, bw-csv, chrome-csv, firefox-csv, lastpass-csv, 1password-1pux, 1password-csv, keepass-xml.
@@ -249,6 +255,29 @@ enum FolderAction {
     Delete {
         /// Folder ID.
         id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TagAction {
+    /// Create a new tag.
+    Create {
+        /// Tag name.
+        name: String,
+    },
+    /// List all tags.
+    List,
+    /// Rename a tag across all entries.
+    Rename {
+        /// Current tag name.
+        old: String,
+        /// New tag name.
+        new: String,
+    },
+    /// Delete a tag from all entries.
+    Delete {
+        /// Tag name.
+        name: String,
     },
 }
 
@@ -410,6 +439,19 @@ fn main() {
             }
             FolderAction::Delete { id } => {
                 commands::handle_folder_delete(mode, cli.socket.as_deref(), &id)
+            }
+        },
+
+        Commands::Tags { action } => match action {
+            TagAction::Create { name } => {
+                commands::handle_tag_create(mode, cli.socket.as_deref(), &name)
+            }
+            TagAction::List => commands::handle_tag_list(mode, cli.socket.as_deref()),
+            TagAction::Rename { old, new } => {
+                commands::handle_tag_rename(mode, cli.socket.as_deref(), &old, &new)
+            }
+            TagAction::Delete { name } => {
+                commands::handle_tag_delete(mode, cli.socket.as_deref(), &name)
             }
         },
 

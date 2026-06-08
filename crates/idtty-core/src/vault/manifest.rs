@@ -53,6 +53,15 @@ pub struct Folder {
     pub icon: Option<String>,
 }
 
+/// Tag index cache (stored in meta/tag_index.json).
+/// Derived from decrypted cipher tags. Committed to git for cross-device sync.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagIndex {
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub updated_at: u64,
+}
+
 /// Trash entry with logical timestamp (D6: per-item tombstones, delete-wins).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrashEntry {
