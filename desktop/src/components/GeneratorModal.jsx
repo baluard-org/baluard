@@ -3,12 +3,14 @@ import { Transition } from "solid-transition-group";
 import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword, generatePassphrase } from "../lib/utils.js";
 import { IconCopy, IconCheck, IconRefresh } from "./Icon.jsx";
+import FocusTrap from "./FocusTrap.jsx";
 
 const MODE_PASSWORD = "password";
 const MODE_PASSPHRASE = "passphrase";
 
 export default function GeneratorModal(props) {
   const { t } = useI18n();
+  let dialogRef;
   const [mode, setMode] = createSignal(MODE_PASSWORD);
   const [copied, setCopied] = createSignal(false);
 
@@ -61,11 +63,18 @@ export default function GeneratorModal(props) {
   return (
     <Transition name="fade">
       <Show when={props.showGenerator}>
-        <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="generator-title"
+          class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+        >
+          <FocusTrap containerRef={dialogRef} onEscape={() => props.setShowGenerator(false)} />
           <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl max-w-sm w-full shadow-2xl overflow-hidden flex flex-col">
             {/* Header */}
             <div class="p-6 pb-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
-              <h3 class="text-lg font-bold text-[var(--color-text)]">{t("generator.title")}</h3>
+              <h3 id="generator-title" class="text-lg font-bold text-[var(--color-text)]">{t("generator.title")}</h3>
               <button onClick={() => props.setShowGenerator(false)} class="p-1 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">✕</button>
             </div>
 

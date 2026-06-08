@@ -399,7 +399,7 @@ export default function CipherDetail(props) {
                 Edit
               </button>
               <button
-                onClick={() => vault.archiveCipher(cipher().id, t)}
+                onClick={() => props.onArchive?.()}
                 class="py-3 px-4 rounded-xl bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:bg-[var(--color-card)] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
               >
                 <IconArchive class="w-4 h-4" />
