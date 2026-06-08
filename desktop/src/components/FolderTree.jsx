@@ -71,7 +71,7 @@ export function FolderNode(props) {
   return (
     <div>
       <div
-        class={`group/folder flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+        class={`group/folder flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors min-h-[30px] ${
           vault.selectedFolder() === props.node.id
             ? "bg-[var(--color-sidebar)] text-[var(--color-text)]"
             : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"
@@ -111,18 +111,18 @@ export function FolderNode(props) {
         <Show when={hovered() && !renaming()}>
           <div class="ml-auto flex items-center gap-0.5 shrink-0 pl-1">
             <button title={t("entry.addSubfolder")}
-              class="p-0.5 rounded hover:bg-[var(--color-sidebar)] text-[var(--color-muted)] hover:text-[var(--color-primary)] cursor-pointer"
+              class="p-0.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer flex items-center justify-center"
               onClick={e => { e.stopPropagation(); setExpanded(true); setAddingChild(true); }}>
               <IconPlus class="w-3 h-3" />
             </button>
             <button title={t("entry.rename")}
-              class="p-0.5 rounded hover:bg-[var(--color-sidebar)] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer"
+              class="p-0.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer flex items-center justify-center"
               onClick={e => { e.stopPropagation(); setRenaming(true); }}>
               <IconPencil class="w-3 h-3" />
             </button>
             <Show when={confirmingDelete()} fallback={
               <button title={t("entry.deleteFolder")}
-                class="p-0.5 rounded hover:bg-red-500/10 text-[var(--color-muted)] hover:text-red-400 cursor-pointer"
+                class="p-0.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-muted)] hover:text-red-400 hover:bg-red-500/10 transition-all cursor-pointer flex items-center justify-center"
                 onClick={e => { e.stopPropagation(); setConfirmingDelete(true); setTimeout(() => setConfirmingDelete(false), 3000); }}>
                 <IconX class="w-3 h-3" />
               </button>

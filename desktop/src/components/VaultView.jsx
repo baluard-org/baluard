@@ -160,7 +160,7 @@ export default function VaultView() {
             </div>
 
             {/* Categories */}
-            <div>
+            <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
               <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">
                 {t("vault.categoriesTitle")}
               </div>
@@ -201,15 +201,15 @@ export default function VaultView() {
             </div>
 
             {/* Folders */}
-            <div>
+            <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
               <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between">
                 <span>{t("vault.foldersTitle")}</span>
                 <button
                   onClick={() => setShowNewFolder(!showNewFolder())}
-                  class="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] cursor-pointer"
+                  class="p-1 rounded-md border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer flex items-center justify-center"
                   title={t("vault.newFolder")}
                 >
-                  <IconPlus class="w-3.5 h-3.5" />
+                  <IconPlus class="w-3 h-3" />
                 </button>
               </div>
               <div class="space-y-0.5 mt-1">
@@ -249,28 +249,32 @@ export default function VaultView() {
                   <span>{t("entry.noFolder")}</span>
                 </button>
                 <Show when={vault.tags() && vault.tags().length > 0}>
-                  <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
-                    <h3 class="text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] mb-2" style={{ "padding-left": "14px" }}>{t("entry.tagsHeader")}</h3>
-                    <div class="flex flex-wrap gap-1" style={{ "padding-left": "6px", "padding-right": "6px" }}>
-                      <For each={vault.tags() || []}>
-                        {tag => (
-                          <button
-                            onClick={() => { vault.setSelectedTag(vault.selectedTag() === tag ? null : tag); }}
-                            class={`px-2 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${vault.selectedTag() === tag ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]" : "bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
-                          >
-                            {tag}
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                    <Show when={vault.selectedTag()}>
-                      <button
-                        onClick={() => vault.setSelectedTag(null)}
-                        class="mt-1.5 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer ml-2"
-                      >{t("entry.clearTagFilter")}</button>
-                    </Show>
-                  </div>
-                </Show>
+                   <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
+                     <div class="flex items-center justify-between mb-2" style={{ "padding-left": "14px", "padding-right": "14px" }}>
+                       <h3 class="text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.tagsHeader")}</h3>
+                       <Show when={vault.selectedTag()}>
+                         <button
+                           onClick={() => vault.setSelectedTag(null)}
+                           class="px-2 py-0.5 text-[9px] font-bold normal-case border border-[var(--color-border)] bg-[var(--color-card)] rounded-md text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer"
+                         >
+                           {t("entry.clearTagFilter")}
+                         </button>
+                       </Show>
+                     </div>
+                     <div class="flex flex-wrap gap-1" style={{ "padding-left": "6px", "padding-right": "6px" }}>
+                       <For each={vault.tags() || []}>
+                         {tag => (
+                           <button
+                             onClick={() => { vault.setSelectedTag(vault.selectedTag() === tag ? null : tag); }}
+                             class={`px-2 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${vault.selectedTag() === tag ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]" : "bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                           >
+                             {tag}
+                           </button>
+                         )}
+                       </For>
+                     </div>
+                   </div>
+                 </Show>
               </div>
             </div>
           </div>
@@ -327,7 +331,7 @@ export default function VaultView() {
                   onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu()); }}
                   class="px-4 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center gap-1"
                 >
-                  + {t("vault.newButton")}
+                  {t("vault.newButton")}
                   <IconChevronDown class={`w-3 h-3 transition-transform ${showAddMenu() ? "rotate-180" : ""}`} />
                 </button>
                 <Show when={showAddMenu()}>
