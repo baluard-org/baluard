@@ -596,6 +596,17 @@ impl VaultHandle {
     pub fn load_activity_enc(
         &self,
     ) -> Result<crate::device_manager::DeviceActivityIndex, IdttyError> {
+        // Sync engine writes plaintext device_activity.json after every commit.
+        // If it exists, re-encrypt it (fresh data) before reading .enc.
+        let json_path = self.path.join("meta/device_activity.json");
+        if json_path.exists() {
+            let fresh = crate::device_manager::DeviceActivityIndex::read(&self.path);
+            if !fresh.devices.is_empty() {
+                let _ = self.save_activity_enc(&fresh);
+            }
+            return Ok(fresh);
+        }
+
         let enc_path = self.path.join("meta/activity.enc");
         if enc_path.exists() {
             let unlocked = match &self.state {
@@ -610,12 +621,10 @@ impl VaultHandle {
             let index: crate::device_manager::DeviceActivityIndex =
                 serde_json::from_slice(&decrypted)
                     .map_err(|e| VaultError::Metadata(format!("activity decrypt parse: {e}")))?;
-            // Cleanup stale plaintext
-            let _ = std::fs::remove_file(self.path.join("meta/device_activity.json"));
             return Ok(index);
         }
-        // Legacy fallback: plaintext device_activity.json
-        Ok(crate::device_manager::DeviceActivityIndex::read(&self.path))
+        // No data at all
+        Ok(crate::device_manager::DeviceActivityIndex::new())
     }
 
     /// Save encrypted device activity index to meta/activity.enc (atomic write).
