@@ -335,8 +335,8 @@ impl VaultState {
                 .map_err(|e| format!("Invalid display_name: {e}"))?;
         }
         if let Some(v) = partial.get("subtitle") {
-            settings.subtitle = serde_json::from_value(v.clone())
-                .map_err(|e| format!("Invalid subtitle: {e}"))?;
+            settings.subtitle =
+                serde_json::from_value(v.clone()).map_err(|e| format!("Invalid subtitle: {e}"))?;
         }
         if let Some(v) = partial.get("avatar_ext") {
             settings.avatar_ext = serde_json::from_value(v.clone())
@@ -354,10 +354,7 @@ impl VaultState {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
         let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
-        let ext = settings
-            .avatar_ext
-            .as_deref()
-            .unwrap_or("");
+        let ext = settings.avatar_ext.as_deref().unwrap_or("");
         if ext.is_empty() {
             return Ok(String::new());
         }
@@ -385,14 +382,19 @@ impl VaultState {
             let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
             if let Some(ref old_ext) = settings.avatar_ext {
                 let old_ext_clean = old_ext.trim().to_lowercase();
-                if matches!(old_ext_clean.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
+                if matches!(
+                    old_ext_clean.as_str(),
+                    "png" | "jpg" | "jpeg" | "gif" | "webp"
+                ) {
                     let old_path = handle.path.join(format!("meta/avatar.{old_ext_clean}"));
                     let _ = std::fs::remove_file(&old_path);
                 }
             }
             let mut settings = settings;
             settings.avatar_ext = None;
-            handle.save_settings(&settings).map_err(|e| format!("{e}"))?;
+            handle
+                .save_settings(&settings)
+                .map_err(|e| format!("{e}"))?;
             return Ok(());
         }
 
@@ -425,13 +427,20 @@ impl VaultState {
         // Remove old avatar if ext changed
         if let Some(ref old_ext) = settings.avatar_ext {
             let old_ext_clean = old_ext.trim().to_lowercase();
-            if old_ext_clean != ext && matches!(old_ext_clean.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
+            if old_ext_clean != ext
+                && matches!(
+                    old_ext_clean.as_str(),
+                    "png" | "jpg" | "jpeg" | "gif" | "webp"
+                )
+            {
                 let old_path = handle.path.join(format!("meta/avatar.{old_ext_clean}"));
                 let _ = std::fs::remove_file(&old_path);
             }
         }
         settings.avatar_ext = Some(ext);
-        handle.save_settings(&settings).map_err(|e| format!("{e}"))?;
+        handle
+            .save_settings(&settings)
+            .map_err(|e| format!("{e}"))?;
         Ok(())
     }
 
@@ -445,7 +454,9 @@ impl VaultState {
 
         // Validate key type early
         if !matches!(key_type, "ed25519" | "rsa4096" | "ecdsa256") {
-            return Err(format!("Unknown SSH key type: {key_type}. Use ed25519, rsa4096, or ecdsa256"));
+            return Err(format!(
+                "Unknown SSH key type: {key_type}. Use ed25519, rsa4096, or ecdsa256"
+            ));
         }
 
         // Generate keypair using system CSRNG
@@ -456,8 +467,11 @@ impl VaultState {
             let mut seed = [0u8; 32];
             rand::rngs::OsRng.fill_bytes(&mut seed);
             let kp = ssh_key::private::Ed25519Keypair::from_seed(&seed);
-            ssh_key::private::PrivateKey::new(ssh_key::private::KeypairData::Ed25519(kp), String::new())
-                .map_err(|e| format!("Ed25519 key construction failed: {e}"))?
+            ssh_key::private::PrivateKey::new(
+                ssh_key::private::KeypairData::Ed25519(kp),
+                String::new(),
+            )
+            .map_err(|e| format!("Ed25519 key construction failed: {e}"))?
         } else {
             // Adapter: rand 0.8 OsRng -> ssh_key::rand_core 0.10 traits
             // OsRng never fails, so we use Infallible as the error type
@@ -465,8 +479,12 @@ impl VaultState {
             struct Adapter;
             impl ssh_key::rand_core::TryRng for Adapter {
                 type Error = Infallible;
-                fn try_next_u32(&mut self) -> Result<u32, Self::Error> { Ok(rand::rngs::OsRng.next_u32()) }
-                fn try_next_u64(&mut self) -> Result<u64, Self::Error> { Ok(rand::rngs::OsRng.next_u64()) }
+                fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+                    Ok(rand::rngs::OsRng.next_u32())
+                }
+                fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+                    Ok(rand::rngs::OsRng.next_u64())
+                }
                 fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
                     rand::rngs::OsRng.fill_bytes(dst);
                     Ok(())
@@ -476,18 +494,23 @@ impl VaultState {
             let algorithm = if key_type == "rsa4096" {
                 ssh_key::Algorithm::Rsa { hash: None }
             } else {
-                ssh_key::Algorithm::Ecdsa { curve: ssh_key::EcdsaCurve::NistP256 }
+                ssh_key::Algorithm::Ecdsa {
+                    curve: ssh_key::EcdsaCurve::NistP256,
+                }
             };
             ssh_key::private::PrivateKey::random(&mut Adapter, algorithm)
                 .map_err(|e| format!("SSH key generation failed: {e}"))?
         };
 
         // Encode public key in OpenSSH format
-        let public_key = private_key.public_key().to_openssh()
+        let public_key = private_key
+            .public_key()
+            .to_openssh()
             .map_err(|e| format!("Public key encoding failed: {e}"))?;
 
         // Compute SHA256 fingerprint
-        let fingerprint = private_key.public_key()
+        let fingerprint = private_key
+            .public_key()
             .fingerprint(ssh_key::HashAlg::Sha256)
             .to_string();
 

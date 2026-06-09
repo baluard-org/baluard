@@ -12,6 +12,8 @@ const SESSION_INFO: &[u8] = b"idtty-session-v1";
 const SYNC_INFO: &[u8] = b"idtty-sync-v1";
 const SEQUENCE_INFO: &[u8] = b"idtty-sequence-v1";
 const INDEX_INFO: &[u8] = b"idtty-index-v1";
+const FOLDERS_INFO: &[u8] = b"idtty-folders-v1";
+const TAGS_INFO: &[u8] = b"idtty-tags-v1";
 
 /// Derive a 32-byte Session Key from KEK.
 ///
@@ -47,6 +49,26 @@ pub fn derive_index_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
     let mut key = [0u8; 32];
     hkdf.expand(INDEX_INFO, &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
+/// Derive a 32-byte Folders Key from Root Key.
+/// Used to encrypt/decrypt `meta/folders.enc`.
+pub fn derive_folders_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, root_key);
+    let mut key = [0u8; 32];
+    hkdf.expand(FOLDERS_INFO, &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
+/// Derive a 32-byte Tags Key from Root Key.
+/// Used to encrypt/decrypt `meta/tags.enc`.
+pub fn derive_tags_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, root_key);
+    let mut key = [0u8; 32];
+    hkdf.expand(TAGS_INFO, &mut key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
@@ -99,5 +121,31 @@ mod tests {
             derive_sync_key(&kek1).unwrap(),
             derive_sync_key(&kek2).unwrap()
         );
+    }
+
+    #[test]
+    fn folders_key_deterministic() {
+        let rk = [42u8; 64];
+        assert_eq!(
+            derive_folders_key(&rk).unwrap(),
+            derive_folders_key(&rk).unwrap()
+        );
+    }
+
+    #[test]
+    fn tags_key_deterministic() {
+        let rk = [42u8; 64];
+        assert_eq!(derive_tags_key(&rk).unwrap(), derive_tags_key(&rk).unwrap());
+    }
+
+    #[test]
+    fn index_folders_tags_all_differ() {
+        let rk = [42u8; 64];
+        let idx = derive_index_key(&rk).unwrap();
+        let fld = derive_folders_key(&rk).unwrap();
+        let tag = derive_tags_key(&rk).unwrap();
+        assert_ne!(idx, fld);
+        assert_ne!(idx, tag);
+        assert_ne!(fld, tag);
     }
 }

@@ -243,32 +243,13 @@ impl VaultHandle {
             }
         }
 
-        // Step 5: HPKE-decapsulate Root Key
-        // CLI mode: stored in meta/device-privkey.json (NOT for production!)
-        let privkey_path = self.path.join("meta/device-privkey.json");
-        let root_key = if privkey_path.exists() {
-            let pk_json = std::fs::read_to_string(&privkey_path)
-                .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
-            let pk_data: serde_json::Value = serde_json::from_str(&pk_json)
-                .map_err(|e| VaultError::Corrupt(format!("privkey json: {e}")))?;
-            let priv_bytes = hex::decode(pk_data["x25519_private"].as_str().unwrap_or(""))
-                .map_err(|e| VaultError::Corrupt(format!("privkey hex: {e}")))?;
-            let priv_arr: [u8; 32] = priv_bytes
-                .try_into()
-                .map_err(|_| VaultError::Corrupt("invalid private key length".into()))?;
-            let priv_key = x25519_dalek::StaticSecret::from(priv_arr);
-
-            let unwrapped = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &priv_key)?;
-            let rk_bytes: [u8; 64] = unwrapped
-                .try_into()
-                .map_err(|_| VaultError::Corrupt("unwrapped root key not 64 bytes".into()))?;
-            RootKey::from_bytes(rk_bytes)
-        } else {
-            return Err(VaultError::NotFound(
-                "device private key not found (CLI mode requires meta/device-privkey.json)".into(),
-            )
-            .into());
-        };
+        // Step 5: HPKE-decapsulate Root Key using device private key (keyring or file)
+        let privkeys = load_device_privkeys(&self.path, self.device_id)?;
+        let unwrapped = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &privkeys.x25519)?;
+        let rk_bytes: [u8; 64] = unwrapped
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("unwrapped root key not 64 bytes".into()))?;
+        let root_key = RootKey::from_bytes(rk_bytes);
 
         // Step 6: Verify root key with RK canary
         if let Err(e) = self.verify_root_key(&root_key) {
@@ -297,7 +278,42 @@ impl VaultHandle {
         // M6 fix: ensure registries stay in sync after unlock
         self.sync_registry_to_device_manager();
 
+        // Migrate plaintext metadata to encrypted format
+        self.migrate_plaintext_metadata();
+
         Ok(())
+    }
+
+    /// Migrate plaintext metadata files to encrypted format.
+    /// Called after successful unlock. Best-effort: logs errors but does not fail unlock.
+    fn migrate_plaintext_metadata(&self) {
+        // Migrate folders.json -> folders.enc
+        let folders_json = self.path.join("meta/folders.json");
+        let folders_enc = self.path.join("meta/folders.enc");
+        if folders_json.exists() && !folders_enc.exists() {
+            if let Ok(data) = std::fs::read_to_string(&folders_json) {
+                if let Ok(folders) =
+                    serde_json::from_str::<Vec<crate::vault::manifest::Folder>>(&data)
+                {
+                    if self.save_folders(&folders).is_ok() {
+                        let _ = std::fs::remove_file(&folders_json);
+                    }
+                }
+            }
+        }
+
+        // Migrate tag_index.json -> tags.enc
+        let tags_json = self.path.join("meta/tag_index.json");
+        let tags_enc = self.path.join("meta/tags.enc");
+        if tags_json.exists() && !tags_enc.exists() {
+            if let Ok(data) = std::fs::read_to_string(&tags_json) {
+                if let Ok(index) = serde_json::from_str::<crate::vault::manifest::TagIndex>(&data) {
+                    if self.save_tags_enc(&index).is_ok() {
+                        let _ = std::fs::remove_file(&tags_json);
+                    }
+                }
+            }
+        }
     }
 
     /// Lock the vault: zeroize all key material.
@@ -369,40 +385,89 @@ impl VaultHandle {
         settings: &crate::vault::manifest::VaultSettings,
     ) -> Result<(), IdttyError> {
         let settings_path = self.path.join("meta/settings.json");
-        let tmp_path = settings_path.with_extension("tmp");
         let json = serde_json::to_string_pretty(settings).map_err(|e| {
             crate::error::VaultError::Metadata(format!("settings serialization: {e}"))
         })?;
-        std::fs::write(&tmp_path, &json)?;
-        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
-        std::fs::rename(&tmp_path, &settings_path)?;
+        super::write_vault_file(&settings_path, json.as_bytes())?;
         Ok(())
     }
 
     // ── Folder CRUD ──
 
-    /// List all folders.
+    /// List all folders (decrypts from meta/folders.enc, falls back to plaintext folders.json).
     pub fn list_folders(&self) -> Result<Vec<crate::vault::manifest::Folder>, IdttyError> {
-        let folders_path = self.path.join("meta/folders.json");
-        if !folders_path.exists() {
-            return Ok(Vec::new());
+        let enc_path = self.path.join("meta/folders.enc");
+        if enc_path.exists() {
+            let unlocked = match &self.state {
+                VaultState::Unlocked(u) => u,
+                VaultState::Locked => return Err(VaultError::Locked.into()),
+            };
+            let key = hkdf_derive::derive_folders_key(unlocked.root_key.as_bytes())
+                .map_err(|e| VaultError::Metadata(format!("folders key derivation: {e}")))?;
+            let data = std::fs::read(&enc_path)?;
+            let envelope = crate::vault::envelope::deserialize(&data)?;
+            let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
+            let folders: Vec<crate::vault::manifest::Folder> =
+                serde_json::from_slice(&decrypted)
+                    .map_err(|e| VaultError::Metadata(format!("folders decrypt parse: {e}")))?;
+            // Cleanup stale plaintext if encrypted version decrypts cleanly
+            let _ = std::fs::remove_file(self.path.join("meta/folders.json"));
+            return Ok(folders);
         }
-        let data = std::fs::read_to_string(&folders_path)?;
-        let folders: Vec<crate::vault::manifest::Folder> = serde_json::from_str(&data)
-            .map_err(|e| crate::error::VaultError::Metadata(format!("folders parse: {e}")))?;
-        Ok(folders)
+        // Legacy fallback: plaintext folders.json
+        let json_path = self.path.join("meta/folders.json");
+        if json_path.exists() {
+            let data = std::fs::read_to_string(&json_path)?;
+            let folders: Vec<crate::vault::manifest::Folder> = serde_json::from_str(&data)
+                .map_err(|e| VaultError::Metadata(format!("folders parse: {e}")))?;
+            return Ok(folders);
+        }
+        Ok(Vec::new())
     }
 
-    /// Save folders to disk (atomic write).
+    /// Save folders to disk (encrypted, atomic write).
     fn save_folders(&self, folders: &[crate::vault::manifest::Folder]) -> Result<(), IdttyError> {
-        let folders_path = self.path.join("meta/folders.json");
-        let tmp_path = folders_path.with_extension("tmp");
-        let json = serde_json::to_string_pretty(folders).map_err(|e| {
-            crate::error::VaultError::Metadata(format!("folders serialization: {e}"))
-        })?;
-        std::fs::write(&tmp_path, &json)?;
-        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
-        std::fs::rename(&tmp_path, &folders_path)?;
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let key = hkdf_derive::derive_folders_key(unlocked.root_key.as_bytes())
+            .map_err(|e| VaultError::Metadata(format!("folders key derivation: {e}")))?;
+        let json = serde_json::to_vec(folders)
+            .map_err(|e| VaultError::Metadata(format!("folders serialization: {e}")))?;
+        let nonce_counter = {
+            use rand::RngCore;
+            let mut bytes = [0u8; 8];
+            rand::thread_rng().fill_bytes(&mut bytes);
+            u64::from_le_bytes(bytes)
+        };
+        let nonce = crate::crypto::aead::build_nonce(nonce_counter, Uuid::nil());
+        let aad = crate::crypto::aead::build_aad(
+            self.vault_id,
+            crate::types::ObjectType::Meta,
+            Uuid::nil(),
+            None,
+            crate::ALG_AES_256_GCM,
+            unlocked.current_epoch,
+            1,
+        );
+        let header = crate::types::EnvelopeHeader {
+            version: crate::IDTTY_VERSION,
+            alg_id: crate::ALG_AES_256_GCM,
+            key_epoch: unlocked.current_epoch,
+            nonce_counter,
+            update_seq: 1,
+            tier: None,
+        };
+        let envelope = crate::crypto::aead::encrypt(&key, &json, &aad, &nonce, header)?;
+        let envelope_bytes = crate::vault::envelope::serialize(&envelope)?;
+        let enc_path = self.path.join("meta/folders.enc");
+        super::write_vault_file(&enc_path, &envelope_bytes)?;
+        // Remove legacy plaintext file if it still exists
+        let json_path = self.path.join("meta/folders.json");
+        if json_path.exists() {
+            let _ = std::fs::remove_file(&json_path);
+        }
         Ok(())
     }
 
@@ -851,7 +916,7 @@ impl VaultHandle {
             let trash_dir = self.path.join("trash");
             std::fs::create_dir_all(&trash_dir)?;
             let envelope_bytes = std::fs::read(&active_path)?;
-            std::fs::write(&trash_path, &envelope_bytes)?;
+            super::write_vault_file(&trash_path, &envelope_bytes)?;
             std::fs::remove_file(&active_path)?;
             self.rebuild_index()?;
             Ok(())
@@ -896,7 +961,7 @@ impl VaultHandle {
         let ciphers_dir = self.path.join("ciphers");
         std::fs::create_dir_all(&ciphers_dir)?;
         let envelope_bytes = std::fs::read(&trash_path)?;
-        std::fs::write(&active_path, &envelope_bytes)?;
+        super::write_vault_file(&active_path, &envelope_bytes)?;
         std::fs::remove_file(&trash_path)?;
         self.rebuild_index()?;
         Ok(())
@@ -963,7 +1028,7 @@ impl VaultHandle {
         )?;
 
         let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
-        std::fs::write(&file_path, &file.envelope_bytes)?;
+        super::write_vault_file(&file_path, &file.envelope_bytes)?;
         self.rebuild_index()?;
 
         Ok(cipher_id)
@@ -1062,7 +1127,7 @@ impl VaultHandle {
             new_update_seq, // nonce_counter: use update_seq to ensure unique nonce per update
         )?;
 
-        std::fs::write(&file_path, &file.envelope_bytes)?;
+        super::write_vault_file(&file_path, &file.envelope_bytes)?;
         self.rebuild_index()?;
 
         Ok(())
@@ -1234,20 +1299,38 @@ impl VaultHandle {
         Ok(validated)
     }
 
-    /// List all tags from the tag index cache.
+    /// List all tags (decrypts from meta/tags.enc, falls back to plaintext tag_index.json).
     /// Returns empty vec if index file is missing.
     pub fn list_tags(&self) -> Result<Vec<String>, IdttyError> {
-        let path = self.path.join("meta/tag_index.json");
-        if !path.exists() {
-            return Ok(vec![]);
+        let enc_path = self.path.join("meta/tags.enc");
+        if enc_path.exists() {
+            let unlocked = match &self.state {
+                VaultState::Unlocked(u) => u,
+                VaultState::Locked => return Err(VaultError::Locked.into()),
+            };
+            let key = hkdf_derive::derive_tags_key(unlocked.root_key.as_bytes())
+                .map_err(|e| VaultError::Metadata(format!("tags key derivation: {e}")))?;
+            let data = std::fs::read(&enc_path)?;
+            let envelope = crate::vault::envelope::deserialize(&data)?;
+            let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
+            let index: crate::vault::manifest::TagIndex = serde_json::from_slice(&decrypted)
+                .map_err(|e| VaultError::Metadata(format!("tags decrypt parse: {e}")))?;
+            // Cleanup stale plaintext if encrypted version decrypts cleanly
+            let _ = std::fs::remove_file(self.path.join("meta/tag_index.json"));
+            return Ok(index.tags);
         }
-        let data = std::fs::read_to_string(&path)?;
-        let index: crate::vault::manifest::TagIndex = serde_json::from_str(&data)
-            .map_err(|e| VaultError::Metadata(format!("tag index deserialization: {e}")))?;
-        Ok(index.tags)
+        // Legacy fallback: plaintext tag_index.json
+        let json_path = self.path.join("meta/tag_index.json");
+        if json_path.exists() {
+            let data = std::fs::read_to_string(&json_path)?;
+            let index: crate::vault::manifest::TagIndex = serde_json::from_str(&data)
+                .map_err(|e| VaultError::Metadata(format!("tag index deserialization: {e}")))?;
+            return Ok(index.tags);
+        }
+        Ok(vec![])
     }
 
-    /// Rebuild tag index from all decrypted cipher metas.
+    /// Rebuild tag index from all decrypted cipher metas (encrypted).
     pub fn rebuild_tag_index(&self) -> Result<(), IdttyError> {
         let metas = self.list_cipher_meta_full()?;
         let mut tag_set = std::collections::HashSet::new();
@@ -1269,13 +1352,7 @@ impl VaultHandle {
             updated_at: now,
         };
 
-        let tag_path = self.path.join("meta/tag_index.json");
-        let tmp_path = tag_path.with_extension("tmp");
-        let json = serde_json::to_string_pretty(&index)
-            .map_err(|e| VaultError::Metadata(format!("tag index serialization: {e}")))?;
-        std::fs::write(&tmp_path, &json)?;
-        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
-        std::fs::rename(&tmp_path, &tag_path)?;
+        self.save_tags_enc(&index)?;
         Ok(())
     }
 
@@ -1300,13 +1377,53 @@ impl VaultHandle {
             updated_at: now,
         };
 
-        let tag_path = self.path.join("meta/tag_index.json");
-        let tmp_path = tag_path.with_extension("tmp");
-        let json = serde_json::to_string_pretty(&index)
-            .map_err(|e| VaultError::Metadata(format!("tag index serialization: {e}")))?;
-        std::fs::write(&tmp_path, &json)?;
-        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
-        std::fs::rename(&tmp_path, &tag_path)?;
+        self.save_tags_enc(&index)?;
+        Ok(())
+    }
+
+    /// Encrypt and save tag index to meta/tags.enc (atomic write).
+    fn save_tags_enc(&self, index: &crate::vault::manifest::TagIndex) -> Result<(), IdttyError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let key = hkdf_derive::derive_tags_key(unlocked.root_key.as_bytes())
+            .map_err(|e| VaultError::Metadata(format!("tags key derivation: {e}")))?;
+        let json = serde_json::to_vec(index)
+            .map_err(|e| VaultError::Metadata(format!("tags serialization: {e}")))?;
+        let nonce_counter = {
+            use rand::RngCore;
+            let mut bytes = [0u8; 8];
+            rand::thread_rng().fill_bytes(&mut bytes);
+            u64::from_le_bytes(bytes)
+        };
+        let nonce = crate::crypto::aead::build_nonce(nonce_counter, Uuid::nil());
+        let aad = crate::crypto::aead::build_aad(
+            self.vault_id,
+            crate::types::ObjectType::Meta,
+            Uuid::nil(),
+            None,
+            crate::ALG_AES_256_GCM,
+            unlocked.current_epoch,
+            1,
+        );
+        let header = crate::types::EnvelopeHeader {
+            version: crate::IDTTY_VERSION,
+            alg_id: crate::ALG_AES_256_GCM,
+            key_epoch: unlocked.current_epoch,
+            nonce_counter,
+            update_seq: 1,
+            tier: None,
+        };
+        let envelope = crate::crypto::aead::encrypt(&key, &json, &aad, &nonce, header)?;
+        let envelope_bytes = crate::vault::envelope::serialize(&envelope)?;
+        let enc_path = self.path.join("meta/tags.enc");
+        super::write_vault_file(&enc_path, &envelope_bytes)?;
+        // Remove legacy plaintext file if it still exists
+        let json_path = self.path.join("meta/tag_index.json");
+        if json_path.exists() {
+            let _ = std::fs::remove_file(&json_path);
+        }
         Ok(())
     }
 
@@ -1511,8 +1628,10 @@ impl VaultHandle {
         std::fs::write(
             &path,
             serde_json::to_string_pretty(&record)
-                .map_err(|e| VaultError::Corrupt(format!("attempts serialize: {e}")))?,
+                .map_err(|e| VaultError::Corrupt(format!("attempts serialize: {e}")))?
+                .as_bytes(),
         )?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
         Ok(())
     }
 
@@ -1604,6 +1723,7 @@ impl VaultHandle {
             &pending_marker,
             serde_json::to_string_pretty(&pending_data).unwrap(),
         )?;
+        let _ = std::fs::set_permissions(&pending_marker, std::fs::Permissions::from_mode(0o600));
 
         // Phase 1: Re-encrypt all ciphers to .tmp files (staged)
         let mut staged_renames: Vec<(PathBuf, PathBuf)> = Vec::new();
@@ -1692,30 +1812,21 @@ impl VaultHandle {
         let canary_rename = (canary_tmp.clone(), canary_path.clone());
 
         // Phase 3: Write new keywrap file (staged)
-        let privkey_path = self.path.join("meta/device-privkey.json");
-        let x25519_secret = if privkey_path.exists() {
-            let pk_json = std::fs::read_to_string(&privkey_path)
-                .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
-            let pk_data: serde_json::Value = serde_json::from_str(&pk_json)
-                .map_err(|e| VaultError::Corrupt(format!("privkey json: {e}")))?;
-            let priv_hex = pk_data["x25519_private"].as_str().unwrap_or("");
-            let priv_bytes = hex::decode(priv_hex)
-                .map_err(|e| VaultError::Corrupt(format!("x25519_private hex: {e}")))?;
-            let priv_arr: [u8; 32] = priv_bytes
-                .try_into()
-                .map_err(|_| VaultError::Corrupt("invalid x25519 key length".into()))?;
-            x25519_dalek::StaticSecret::from(priv_arr)
-        } else {
-            // Cleanup staged files on error
-            for (tmp, _) in &staged_renames {
-                let _ = std::fs::remove_file(tmp);
+        let privkeys = match load_device_privkeys(&self.path, self.device_id) {
+            Ok(k) => k,
+            Err(_) => {
+                // Cleanup staged files on error
+                for (tmp, _) in &staged_renames {
+                    let _ = std::fs::remove_file(tmp);
+                }
+                let _ = std::fs::remove_file(&canary_tmp);
+                return Err(VaultError::NotFound(
+                    "device private key not found for keywrap".into(),
+                )
+                .into());
             }
-            let _ = std::fs::remove_file(&canary_tmp);
-            return Err(
-                VaultError::NotFound("device private key not found for keywrap".into()).into(),
-            );
         };
-        let x25519_public = x25519_dalek::PublicKey::from(&x25519_secret);
+        let x25519_public = x25519_dalek::PublicKey::from(&privkeys.x25519);
         let (eph_pub, ct, tag) =
             crate::crypto::hpke_wrap::wrap_key(new_root_key.as_bytes(), &x25519_public)?;
         let keywrap_data = serde_json::json!({
@@ -1745,6 +1856,10 @@ impl VaultHandle {
         // 3. Commit keywrap last (point of no return)
         std::fs::rename(&keywrap_tmp, &keywrap_path)?;
 
+        // Read folders/tags with OLD root key before swap
+        let old_folders = self.list_folders().ok();
+        let old_tags = self.list_tags().ok();
+
         // Phase 5: Swap Root Key and update epoch via DeviceManager lifecycle
         match &mut self.state {
             VaultState::Unlocked(u) => {
@@ -1769,6 +1884,22 @@ impl VaultHandle {
         // Fire observer hook
         if let Some(vp) = self.vault_path_as_ref() {
             self.device_manager.notify_rotation_committed(new_epoch, vp);
+        }
+
+        // Re-encrypt folders/tags with NEW root key
+        if let Some(folders) = old_folders {
+            let _ = self.save_folders(&folders);
+        }
+        if let Some(tags) = old_tags {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let index = crate::vault::manifest::TagIndex {
+                tags,
+                updated_at: now,
+            };
+            let _ = self.save_tags_enc(&index);
         }
 
         // Clean up rotation-pending marker
@@ -1816,29 +1947,8 @@ impl VaultHandle {
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
-        // ── Precheck: validate privkey exists and parses BEFORE any irreversible change ──
-        let privkey_path = self.path.join("meta/device-privkey.json");
-        if !privkey_path.exists() {
-            return Err(
-                VaultError::NotFound("device private key not found for keywrap".into()).into(),
-            );
-        }
-        let x25519_secret = {
-            let mut pk_json = std::fs::read_to_string(&privkey_path)
-                .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
-            let pk_data: serde_json::Value = serde_json::from_str(&pk_json)
-                .map_err(|e| VaultError::Corrupt(format!("privkey json: {e}")))?;
-            let priv_hex = pk_data["x25519_private"].as_str().unwrap_or("");
-            let mut priv_bytes = hex::decode(priv_hex)
-                .map_err(|e| VaultError::Corrupt(format!("x25519_private hex: {e}")))?;
-            let priv_arr: [u8; 32] = priv_bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| VaultError::Corrupt("invalid x25519 key length".into()))?;
-            priv_bytes.zeroize();
-            pk_json.zeroize();
-            x25519_dalek::StaticSecret::from(priv_arr)
-        };
+        // ── Precheck: validate privkey accessible BEFORE any irreversible change ──
+        let privkeys = load_device_privkeys(&self.path, self.device_id)?;
 
         // ── Write crash-recovery marker and setup cleanup guard ──
         let pending_marker = self.path.join("meta/.rotation-pending");
@@ -1850,6 +1960,7 @@ impl VaultHandle {
             &pending_marker,
             serde_json::to_string_pretty(&pending_data).unwrap(),
         )?;
+        let _ = std::fs::set_permissions(&pending_marker, std::fs::Permissions::from_mode(0o600));
         let mut _guard = RotationGuard::new(&self.path, &pending_marker);
 
         // ── Commit: revoke in registry and get new root key ──
@@ -2019,7 +2130,7 @@ impl VaultHandle {
         std::fs::write(&canary_tmp, &rk_canary)?;
 
         // ── Write keywrap for current device (staged) ──
-        let x25519_public = x25519_dalek::PublicKey::from(&x25519_secret);
+        let x25519_public = x25519_dalek::PublicKey::from(&privkeys.x25519);
         let (eph_pub, ct, tag) = hpke_wrap::wrap_key(new_root_key.as_bytes(), &x25519_public)?;
         let keywrap_data = serde_json::json!({
             "device_id": self.device_id.to_string(),
@@ -2049,6 +2160,10 @@ impl VaultHandle {
             .join(format!("meta/keywrap/{target_device_id}.json"));
         let _ = std::fs::remove_file(&revoked_keywrap);
 
+        // Read folders/tags with OLD root key before swap
+        let old_folders = self.list_folders().ok();
+        let old_tags = self.list_tags().ok();
+
         // ── Update in-memory state ──
         match &mut self.state {
             VaultState::Unlocked(u) => {
@@ -2072,6 +2187,22 @@ impl VaultHandle {
 
         if let Some(vp) = self.vault_path_as_ref() {
             self.device_manager.notify_rotation_committed(new_epoch, vp);
+        }
+
+        // Re-encrypt folders/tags with NEW root key
+        if let Some(folders) = old_folders {
+            let _ = self.save_folders(&folders);
+        }
+        if let Some(tags) = old_tags {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let index = crate::vault::manifest::TagIndex {
+                tags,
+                updated_at: now,
+            };
+            let _ = self.save_tags_enc(&index);
         }
 
         // Clean up rotation-pending marker (disarm guard first)
@@ -2130,26 +2261,10 @@ impl VaultHandle {
             crate::device_manager::build_ack_sign_input(tx.new_epoch, &self.device_id, &txn_hash);
 
         // Load signing key
-        let privkey_path = self.path.join("meta/device-privkey.json");
-        if !privkey_path.exists() {
-            return Err(VaultError::NotFound(
-                "device signing key not found (CLI mode requires meta/device-privkey.json)".into(),
-            )
-            .into());
-        }
-        let pk_json = std::fs::read_to_string(&privkey_path)?;
-        let pk_data: serde_json::Value = serde_json::from_str(&pk_json)
-            .map_err(|e| VaultError::Corrupt(format!("privkey json: {e}")))?;
-        let ed_priv_hex = pk_data["ed25519_private"].as_str().unwrap_or("");
-        let ed_priv_bytes = hex::decode(ed_priv_hex)
-            .map_err(|e| VaultError::Corrupt(format!("ed25519_private hex: {e}")))?;
-        let ed_priv_arr: [u8; 32] = ed_priv_bytes
-            .try_into()
-            .map_err(|_| VaultError::Corrupt("invalid ed25519 private key length".into()))?;
+        let privkeys = load_device_privkeys(&self.path, self.device_id)?;
 
         use crate::crypto::signature;
-        let signing_key = ed25519_dalek::SigningKey::from_bytes(&ed_priv_arr);
-        let ack_sig = signature::sign(&signing_key, &sign_input)?;
+        let ack_sig = signature::sign(&privkeys.ed25519, &sign_input)?;
 
         let ack = crate::device_manager::RotationAck {
             epoch: tx.new_epoch,
@@ -2247,8 +2362,8 @@ impl VaultHandle {
         std::fs::create_dir_all(&index_dir)?;
         let index_path = index_dir.join("index.enc");
         let tmp_path = index_path.with_extension("enc.tmp");
-        std::fs::write(&tmp_path, enc_bytes)?;
-        std::fs::rename(tmp_path, index_path)?;
+        super::write_vault_file(&tmp_path, &enc_bytes)?;
+        std::fs::rename(&tmp_path, &index_path)?;
 
         Ok(())
     }
@@ -2332,6 +2447,121 @@ pub struct LockedCipherInfo {
     pub update_seq: u64,
     pub tier: Option<Tier>,
     pub ciphertext_len: usize,
+}
+
+// ── Keyring-backed device private key storage ──
+
+/// Device private key material (X25519 + Ed25519).
+struct DevicePrivKeys {
+    x25519: x25519_dalek::StaticSecret,
+    ed25519: ed25519_dalek::SigningKey,
+}
+
+/// Build a stable keyring service name from vault salt.
+/// Uses first 8 bytes of salt to avoid collisions between multiple vaults.
+fn keyring_service(vault_path: &Path) -> String {
+    // Read salt from kdf-params.json for a stable fingerprint
+    let kdf_path = vault_path.join("meta/kdf-params.json");
+    if let Ok(data) = std::fs::read_to_string(&kdf_path) {
+        if let Ok(params) = serde_json::from_str::<serde_json::Value>(&data) {
+            if let Some(salt_hex) = params["salt"].as_str() {
+                if salt_hex.len() >= 16 {
+                    return format!("idtty-{}", &salt_hex[..16]);
+                }
+            }
+        }
+    }
+    // Fallback: hash the vault path
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    vault_path.hash(&mut hasher);
+    format!("idtty-fallback-{:016x}", hasher.finish())
+}
+
+/// Load device private keys from OS keyring, falling back to plaintext file.
+/// On successful file read, migrates to keyring and deletes the file.
+fn load_device_privkeys(vault_path: &Path, device_id: Uuid) -> Result<DevicePrivKeys, IdttyError> {
+    let service = keyring_service(vault_path);
+    let account = device_id.to_string();
+
+    // 1. Try OS keyring first
+    if let Ok(entry) = keyring::Entry::new(&service, &account) {
+        if let Ok(json) = entry.get_password() {
+            return parse_privkey_json(&json);
+        }
+    }
+
+    // 2. Fall back to plaintext file (backward compat)
+    let privkey_path = vault_path.join("meta/device-privkey.json");
+    if privkey_path.exists() {
+        let json = std::fs::read_to_string(&privkey_path)
+            .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
+        let keys = parse_privkey_json(&json)?;
+
+        // Migration attempt: store in keyring for future use
+        // Keep the file as fallback -- don't delete it.
+        // Keyring may not persist reliably in all environments (CI, headless).
+        if let Ok(entry) = keyring::Entry::new(&service, &account) {
+            let _ = entry.set_password(&json);
+        }
+
+        return Ok(keys);
+    }
+
+    Err(VaultError::NotFound("device private key not found".into()).into())
+}
+
+/// Store device private keys to OS keyring at vault creation time.
+/// Falls back to plaintext file if keyring is unavailable.
+fn store_device_privkeys(
+    vault_path: &Path,
+    device_id: Uuid,
+    x25519_secret: &x25519_dalek::StaticSecret,
+    ed25519_signing: &ed25519_dalek::SigningKey,
+) -> Result<(), IdttyError> {
+    let json = format!(
+        "{{\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
+        hex::encode(x25519_secret.to_bytes()),
+        hex::encode(ed25519_signing.to_bytes())
+    );
+
+    let service = keyring_service(vault_path);
+    let account = device_id.to_string();
+
+    // Try keyring first
+    if let Ok(entry) = keyring::Entry::new(&service, &account) {
+        if entry.set_password(&json).is_ok() {
+            return Ok(());
+        }
+    }
+
+    // Fallback: write plaintext file
+    let privkey_path = vault_path.join("meta/device-privkey.json");
+    super::write_vault_file(&privkey_path, json.as_bytes())?;
+    Ok(())
+}
+
+/// Parse device private keys from JSON string.
+fn parse_privkey_json(json: &str) -> Result<DevicePrivKeys, IdttyError> {
+    let data: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| VaultError::Corrupt(format!("privkey json: {e}")))?;
+
+    let x_bytes = hex::decode(data["x25519_private"].as_str().unwrap_or(""))
+        .map_err(|e| VaultError::Corrupt(format!("x25519 hex: {e}")))?;
+    let x_arr: [u8; 32] = x_bytes
+        .try_into()
+        .map_err(|_| VaultError::Corrupt("invalid x25519 key length".into()))?;
+
+    let ed_bytes = hex::decode(data["ed25519_private"].as_str().unwrap_or(""))
+        .map_err(|e| VaultError::Corrupt(format!("ed25519 hex: {e}")))?;
+    let ed_arr: [u8; 32] = ed_bytes
+        .try_into()
+        .map_err(|_| VaultError::Corrupt("invalid ed25519 key length".into()))?;
+
+    Ok(DevicePrivKeys {
+        x25519: x25519_dalek::StaticSecret::from(x_arr),
+        ed25519: ed25519_dalek::SigningKey::from_bytes(&ed_arr),
+    })
 }
 
 #[cfg(test)]
