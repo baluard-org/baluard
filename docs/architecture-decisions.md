@@ -635,6 +635,64 @@ Created `lib/cipherSchema.js` with schemas for all 8 cipher types. Each schema d
 5. **daemon.js, payload.js, utils.js, app.css, i18n keys are touch-free zones.**
 6. **Tests must grow.** Each refactor adds tests for previously untested logic.
 
+### D12. SSH Key Generation (Completed 2026-06-09)
+
+**Decision: Daemon-side SSH key generation with `ssh-key` crate**
+
+SSH keypairs are generated in the daemon process using the `ssh-key` crate. Private key material never crosses the IPC boundary.
+
+**Key types:**
+- Ed25519 (default, recommended): Fast, modern, 256-bit seed via ed25519-dalek
+- RSA 4096 (legacy compatibility): Generated via ssh-key crate with rand_core adapter bridging rand 0.8 OsRng to rand_core 0.10 traits
+- ECDSA P-256 (FIPS compliance): Generated via ssh-key crate with NIST P-256 curve
+
+**Daemon command:** `ssh.generate_key` accepts `{type: "ed25519"|"rsa4096"|"ecdsa256"}`, returns JSON `{public_key, fingerprint, private_key}` in OpenSSH format.
+
+**Desktop UI:** `SshKeyGenerator.jsx` component with type selector, generate button with spinner, copy buttons for public key and fingerprint, private key behind warning disclosure (`<details>` element).
+
+**rand_core compatibility:** The project uses `rand` 0.8 (rand_core 0.6) while `ssh-key` 0.7 requires rand_core 0.10. Ed25519 bypasses this by constructing keypairs directly from seed bytes. RSA/ECDSA use an `Adapter` struct implementing `ssh_key::rand_core::TryRng` and `TryCryptoRng` by delegating to `rand::rngs::OsRng` with `Infallible` error type.
+
+### D13. Modal Accessibility (Completed 2026-06-09)
+
+**Decision: Reusable FocusTrap component for all modals**
+
+All modals use `<FocusTrap containerRef={ref} onEscape={fn} />` providing:
+- `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, `aria-describedby` attributes
+- Tab/Shift+Tab focus trap within modal container
+- Escape key dismiss
+- Auto-focus first interactive element on mount
+- Restore focus to trigger element on unmount
+
+**Applied to:** DeleteConfirm, ArchiveConfirm, Reprompt, Generator, Settings, EmptyTrash modals.
+
+### D14. User Profile (Completed 2026-06-09)
+
+**Decision: Profile data in VaultSettings, avatar as separate file**
+
+`VaultSettings` (`meta/settings.json`) gains `display_name`, `subtitle`, `avatar_ext` fields. Avatar stored as `meta/avatar.{ext}` in vault directory (unencrypted, synced via git). Rationale: vault is already encrypted at rest; storing base64 avatar data in settings.json bloats diffs.
+
+**Constraints:** Ext validated against whitelist (`png/jpg/jpeg/gif/webp`), size capped at 350KB base64. Path traversal validated. Old avatar file cleaned up on ext change.
+
+**Daemon commands:** `vault.avatar.get` returns base64 data, `vault.avatar.set` accepts base64 + ext. SettingsModal holds local state, syncs back to VaultContext on modal close via `createEffect`.
+
+### D15. Toast Notification System (Completed 2026-06-09)
+
+**Decision: Standalone signal-based toasts, no inline feedback text**
+
+`toastSignal.js` provides `toastSuccess(message)` and `toastError(message)` standalone signals consumed by `ToastContainer.jsx`. All user feedback uses toasts. No inline "Profile saved" or "Copied!" text.
+
+### D16. Tag Deletion with Confirmation (Completed 2026-06-09)
+
+**Decision: Hover-reveal delete with confirmation modal**
+
+Sidebar tag pills reveal an X on hover. Click triggers a confirmation modal. Confirmation calls `tag.delete` daemon command which removes the tag from all ciphers and rebuilds the tag index. Uses existing `DeleteConfirmModal` pattern with FocusTrap.
+
+### D17. Full i18n (Completed 2026-06-09)
+
+**Decision: Zero hardcoded user-facing strings**
+
+All user-facing strings replaced with `t()` keys. Both `en.json` and `es.json` maintained in sync. Covers: cipher schema labels, form fields, modal text, toast messages, settings sections, SSH key generation UI.
+
 ---
 
 ## Staged Implementation Roadmap
@@ -677,6 +735,7 @@ Tags are user-defined labels for organizing ciphers. Unlike folders (single assi
 | `VaultHandle::rebuild_tag_index` | `handle.rs` | Rebuilds cache from decrypted ciphers |
 | Daemon routes | `handler.rs`, `state.rs` | `tag.list/create/rename/delete/rebuild_index` |
 | CLI | `commands/mod.rs` | `idtty tags list/create/rename/delete` |
+| Desktop: tag sidebar | Sidebar tag pills with click-to-filter + hover X for deletion |
 
 ### Validation Boundary
 

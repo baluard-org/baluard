@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Updated:** 2026-06-08
+**Updated:** 2026-06-09
 
 ## OVERVIEW
 Project: **IDtty** (Git-native password manager)
@@ -38,8 +38,12 @@ idtty/
 │           └── state.rs        # VaultState (Arc<RwLock>), auto-lock
 ├── desktop/                    # Tauri v2 + SolidJS frontend
 │   └── src/
-│       ├── App.jsx             # Main UI (2500+ lines)
-│       └── i18n/locales/       # en.json, _template.json
+│       ├── App.jsx             # Root component (thin provider wrapper)
+│       ├── components/         # 25 components (VaultView, CipherDetail, SshKeyGenerator, etc.)
+│       ├── context/            # AuthContext, VaultContext, errorSignal, themeSignal, toastSignal
+│       ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js
+│       ├── __tests__/          # vitest tests (payload, utils, filters, cipherSchema)
+│       └── i18n/locales/       # en.json, es.json (all user-facing strings)
 ├── proto/                      # Protobuf schemas (compiled via prost)
 │   ├── vault.proto
 │   ├── space.proto
@@ -147,6 +151,18 @@ All vault commands route through daemon by default. `--direct` falls back to idt
 ### Attachments
 AES-256-GCM encrypted with cipher's item key. Max 2MB. Stored at `<vault>/entries/<cipher_id>/attachments/<id>.enc`. Plaintext zeroized after use.
 
+### SSH Key Generation
+Daemon-side via `ssh-key` crate. 3 key types: Ed25519 (default/recommended), RSA 4096 (legacy compat), ECDSA P-256 (FIPS compliance). Returns OpenSSH public key, SHA256 fingerprint, OpenSSH private key PEM. Private key material never crosses IPC boundary.
+
+### User Profile
+Display name, subtitle, avatar stored in `VaultSettings`. Avatar as file in vault (`meta/avatar.{ext}`). Sidebar reads from VaultContext profile signals. SettingsModal syncs on close via `createEffect`.
+
+### Modal Accessibility
+All modals use `<FocusTrap>` component: `role="dialog"`, `aria-modal`, `aria-labelledby`, Tab/Shift+Tab trap, Escape dismiss, auto-focus first interactive element, restore focus on close. Applied to: DeleteConfirm, ArchiveConfirm, Reprompt, Generator, Settings, EmptyTrash.
+
+### Tag Deletion
+Hover X on sidebar tag pills triggers confirmation modal. Calls `tag.delete` daemon command. Removes tag from all ciphers + rebuilds index.
+
 ## GOTCHAS
 * **Password history**: Auto-appended on password change. Cap 10 entries (FIFO).
 * **Folder depth**: Max 16 levels. `delete_folder` cascades via BFS descendant collection.
@@ -154,8 +170,14 @@ AES-256-GCM encrypted with cipher's item key. Max 2MB. Stored at `<vault>/entrie
 * **`RotationGuard`**: RAII guard cleans up `.tmp` files and crash marker on error. Disarmed after successful atomic commit.
 * **CodeGraph available**: `.codegraph/` index exists. Route codebase exploration through CodeGraph tools when available.
 * **Feature flags control sync**: `git-sync` feature gate; CLI enables it by default.
+* **SSH key generation**: Private key material generated daemon-side via `ssh-key` crate. Only formatted OpenSSH strings cross IPC.
+* **Avatar storage**: Unencrypted `meta/avatar.{ext}` in vault directory. Vault encrypts at rest; avoids bloating settings.json diffs. Ext validated against whitelist (png/jpg/jpeg/gif/webp), 350KB base64 cap.
+* **Profile data**: Stored in `VaultSettings` (`meta/settings.json`). `display_name`, `subtitle`, `avatar_ext` fields.
+* **Toast notifications**: `toastSignal.js` standalone signals. All user feedback via toasts, not inline text.
+* **i18n**: All user-facing strings use `t()` keys. Both `en.json` and `es.json` must stay in sync. No hardcoded strings.
+* **FocusTrap**: All modals use `<FocusTrap>` component for keyboard accessibility (Tab trap, Escape dismiss, auto-focus, restore focus).
 
 ## UX PRINCIPLES
 * **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden.
 * **No server backend**: Desktop and mobile apps work standalone/offline. Git sync is optional.
-* **i18n**: All user-facing strings in `desktop/src/i18n/locales/en.json`. Use `t("key")` in components.
+* **i18n**: All user-facing strings in `desktop/src/i18n/locales/en.json` and `es.json`. Use `t("key")` in components. Both files must stay in sync.
