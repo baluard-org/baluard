@@ -119,7 +119,18 @@
     "booleanNo": "No",
     "addUri": "Add URI",
     "removeUri": "Remove URI",
-    "unsupportedImageFormat": "Unsupported image format"
+    "unsupportedImageFormat": "Unsupported image format",
+    "sshGenerateKey": "Generate Key",
+    "sshKeyType": "Key Type",
+    "sshKeyEd25519": "Ed25519",
+    "sshKeyRsa4096": "RSA 4096",
+    "sshKeyEcdsa256": "ECDSA P-256",
+    "sshKeyGenerating": "Generating...",
+    "sshKeyGenerated": "SSH key generated",
+    "sshKeyCopyPublic": "Copy public key",
+    "sshKeyCopyFingerprint": "Copy fingerprint",
+    "sshKeyCopyPrivate": "Copy private key",
+    "sshKeyCopied": "Copied!"
   },
   "settings": {
     "faviconLabel": "Show website icons",

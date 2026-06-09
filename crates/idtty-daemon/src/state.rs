@@ -435,6 +435,76 @@ impl VaultState {
         Ok(())
     }
 
+    /// Generate an SSH keypair. Payload: JSON {"type": "ed25519"|"rsa4096"|"ecdsa256"}
+    /// Returns JSON {"public_key": "ssh-ed25519 ...", "fingerprint": "SHA256:...", "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
+    /// Key material stays in the daemon process; only formatted strings cross IPC.
+    pub async fn ssh_generate_key(&self, payload: &str) -> Result<String, String> {
+        let v: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let key_type = v["type"].as_str().unwrap_or("ed25519");
+
+        // Validate key type early
+        if !matches!(key_type, "ed25519" | "rsa4096" | "ecdsa256") {
+            return Err(format!("Unknown SSH key type: {key_type}. Use ed25519, rsa4096, or ecdsa256"));
+        }
+
+        // Generate keypair using system CSRNG
+        // For Ed25519: construct from raw 32-byte seed (fast, no trait compat issues)
+        // For RSA/ECDSA: use ssh_key's built-in random via a rand_core adapter
+        use rand::RngCore;
+        let private_key = if key_type == "ed25519" {
+            let mut seed = [0u8; 32];
+            rand::rngs::OsRng.fill_bytes(&mut seed);
+            let kp = ssh_key::private::Ed25519Keypair::from_seed(&seed);
+            ssh_key::private::PrivateKey::new(ssh_key::private::KeypairData::Ed25519(kp), String::new())
+                .map_err(|e| format!("Ed25519 key construction failed: {e}"))?
+        } else {
+            // Adapter: rand 0.8 OsRng -> ssh_key::rand_core 0.10 traits
+            // OsRng never fails, so we use Infallible as the error type
+            use std::convert::Infallible;
+            struct Adapter;
+            impl ssh_key::rand_core::TryRng for Adapter {
+                type Error = Infallible;
+                fn try_next_u32(&mut self) -> Result<u32, Self::Error> { Ok(rand::rngs::OsRng.next_u32()) }
+                fn try_next_u64(&mut self) -> Result<u64, Self::Error> { Ok(rand::rngs::OsRng.next_u64()) }
+                fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+                    rand::rngs::OsRng.fill_bytes(dst);
+                    Ok(())
+                }
+            }
+            impl ssh_key::rand_core::TryCryptoRng for Adapter {}
+            let algorithm = if key_type == "rsa4096" {
+                ssh_key::Algorithm::Rsa { hash: None }
+            } else {
+                ssh_key::Algorithm::Ecdsa { curve: ssh_key::EcdsaCurve::NistP256 }
+            };
+            ssh_key::private::PrivateKey::random(&mut Adapter, algorithm)
+                .map_err(|e| format!("SSH key generation failed: {e}"))?
+        };
+
+        // Encode public key in OpenSSH format
+        let public_key = private_key.public_key().to_openssh()
+            .map_err(|e| format!("Public key encoding failed: {e}"))?;
+
+        // Compute SHA256 fingerprint
+        let fingerprint = private_key.public_key()
+            .fingerprint(ssh_key::HashAlg::Sha256)
+            .to_string();
+
+        // Encode private key in OpenSSH PEM format (unencrypted, will be encrypted by vault)
+        let private_key_pem = private_key
+            .to_openssh(ssh_key::LineEnding::LF)
+            .map_err(|e| format!("Private key encoding failed: {e}"))?;
+
+        let result = serde_json::json!({
+            "public_key": public_key,
+            "fingerprint": fingerprint,
+            "private_key": private_key_pem.as_ref() as &str,
+        });
+
+        serde_json::to_string(&result).map_err(|e| format!("JSON serialization: {e}"))
+    }
+
     /// Fetch a favicon for a given domain/URI.
     /// Payload: plain string (domain or full URI).
     /// Returns base64-encoded PNG on success, or empty string if disabled/failed.

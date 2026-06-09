@@ -5,6 +5,7 @@ import { FIELD_LABEL, handleCardInput } from "../lib/helpers.js";
 import { getSchema } from "../lib/cipherSchema.js";
 import { IconX, IconStar, IconEye, IconEyeOff, IconPlus } from "./Icon.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
+import SshKeyGenerator from "./SshKeyGenerator.jsx";
 
 const INPUT_CLS = "w-full px-4 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all";
 const MONO_CLS = INPUT_CLS + " font-mono";
@@ -429,6 +430,18 @@ export default function AddEditCipherForm(props) {
               </div>
             </div>
           </div>
+
+          {/* SSH Key Generator */}
+          <Show when={cipherType() === "sshKey"}>
+            <SshKeyGenerator
+              publicKey={newCipher().publicKey || ""}
+              privateKey={newCipher().privateKey || ""}
+              fingerprint={newCipher().fingerprint || ""}
+              onGenerated={({ publicKey, privateKey, fingerprint }) => {
+                setNewCipher({ ...newCipher(), publicKey, privateKey, fingerprint });
+              }}
+            />
+          </Show>
 
           {/* Type-specific fields */}
           <Show when={cipherType() === "login"}>{renderLoginFields()}</Show>
