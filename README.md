@@ -25,6 +25,16 @@ just test
 
 See **[docs/dev-setup.md](docs/dev-setup.md)** for prerequisites, platform setup, and all build commands.
 
+### Try the demo vault
+
+```bash
+just seed-demo            # seeds vault at platform-default location (password: demo)
+baluard --direct list    # list entries
+just desktop-debug       # open in GUI
+```
+
+Seeds 31 entries across all 8 cipher types (logins, cards, notes, identities, SSH keys, bank accounts, driver licenses, passports), plus national IDs (Chilean Carnet/RUT), 5 folders, and 11 tags. No daemon needed -- runs in `--direct` mode. If an existing vault is found, offers to back it up before seeding.
+
 ## Documentation
 
 For full documentation, see **[docs/index.md](docs/index.md)**.
