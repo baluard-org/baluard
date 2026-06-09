@@ -5,6 +5,7 @@
 
 use base64::Engine;
 use idtty_core::vault::handle::{CipherRead, VaultHandle};
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -329,10 +330,89 @@ impl VaultState {
             settings.fetch_favicons = serde_json::from_value(v.clone())
                 .map_err(|e| format!("Invalid fetch_favicons: {e}"))?;
         }
+        if let Some(v) = partial.get("display_name") {
+            settings.display_name = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid display_name: {e}"))?;
+        }
+        if let Some(v) = partial.get("subtitle") {
+            settings.subtitle = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid subtitle: {e}"))?;
+        }
+        if let Some(v) = partial.get("avatar_ext") {
+            settings.avatar_ext = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid avatar_ext: {e}"))?;
+        }
 
         handle
             .save_settings(&settings)
             .map_err(|e| format!("{e}"))?;
+        Ok(())
+    }
+
+    /// Get avatar image as base64. Returns empty string if no avatar set.
+    pub async fn avatar_get(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+        let ext = settings
+            .avatar_ext
+            .as_deref()
+            .unwrap_or("");
+        if ext.is_empty() {
+            return Ok(String::new());
+        }
+        let avatar_path = handle.path.join(format!("meta/avatar.{ext}"));
+        if !avatar_path.exists() {
+            return Ok(String::new());
+        }
+        let data = std::fs::read(&avatar_path).map_err(|e| format!("read avatar: {e}"))?;
+        use base64::Engine;
+        Ok(base64::engine::general_purpose::STANDARD.encode(&data))
+    }
+
+    /// Set avatar image from base64. Payload: JSON {"data": "<base64>", "ext": "png"}
+    /// Saves to meta/avatar.{ext} and updates settings.avatar_ext.
+    pub async fn avatar_set(&self, payload: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        let v: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let b64 = v["data"].as_str().unwrap_or("");
+        let ext = v["ext"].as_str().unwrap_or("png").to_string();
+        if b64.is_empty() {
+            // Remove avatar
+            let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+            if let Some(old_ext) = &settings.avatar_ext {
+                let old_path = handle.path.join(format!("meta/avatar.{old_ext}"));
+                let _ = std::fs::remove_file(&old_path);
+            }
+            let mut settings = settings;
+            settings.avatar_ext = None;
+            handle.save_settings(&settings).map_err(|e| format!("{e}"))?;
+            return Ok(());
+        }
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| format!("base64 decode: {e}"))?;
+        // Save avatar file
+        let avatar_path = handle.path.join(format!("meta/avatar.{ext}"));
+        let tmp_path = avatar_path.with_extension("tmp");
+        std::fs::write(&tmp_path, &bytes).map_err(|e| format!("write avatar: {e}"))?;
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("chmod avatar: {e}"))?;
+        std::fs::rename(&tmp_path, &avatar_path).map_err(|e| format!("rename avatar: {e}"))?;
+        // Update settings
+        let mut settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+        // Remove old avatar if ext changed
+        if let Some(old_ext) = &settings.avatar_ext {
+            if old_ext != &ext {
+                let old_path = handle.path.join(format!("meta/avatar.{old_ext}"));
+                let _ = std::fs::remove_file(&old_path);
+            }
+        }
+        settings.avatar_ext = Some(ext);
+        handle.save_settings(&settings).map_err(|e| format!("{e}"))?;
         Ok(())
     }
 
