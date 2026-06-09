@@ -92,13 +92,13 @@ pub struct VaultSettings {
     #[serde(default)]
     pub fetch_favicons: Option<bool>,
     /// User display name shown in sidebar.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// User subtitle/role shown under display name.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subtitle: Option<String>,
     /// Avatar file extension (e.g. "png", "jpg"). Avatar stored at meta/avatar.{ext}.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_ext: Option<String>,
 }
 

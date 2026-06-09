@@ -334,35 +334,51 @@ impl VaultHandle {
         }
     }
 
-    /// Lock the vault: zeroize all key material and normalize file timestamps.
+    /// Lock the vault: zeroize all key material.
+    /// File timestamp normalization runs in a background thread to avoid
+    /// blocking the lock operation on large vaults.
     pub fn lock(&mut self) {
         self.state = VaultState::Locked;
-        self.normalize_timestamps();
+        let path_clone = self.path.clone();
+        let creation_ts = self
+            .registry
+            .devices
+            .values()
+            .map(|d| d.enrolled_at)
+            .min()
+            .unwrap_or(0);
+        std::thread::spawn(move || {
+            Self::normalize_timestamps_bg(&path_clone, creation_ts);
+        });
     }
 
-    /// Normalize all vault file timestamps to epoch 0.
-    /// Mitigates filesystem-level timing analysis. Best-effort.
-    fn normalize_timestamps(&self) {
+    /// Background timestamp normalization (static, no &self).
+    fn normalize_timestamps_bg(vault_path: &std::path::Path, creation_ts: u64) {
         use filetime::{FileTime, set_file_mtime};
-        let epoch = FileTime::from_unix_time(0, 0);
-        let dirs = ["ciphers", "trash", "meta"];
-        for dir_name in &dirs {
-            let dir = self.path.join(dir_name);
-            if let Ok(entries) = std::fs::read_dir(&dir) {
+        let target = FileTime::from_unix_time(creation_ts as i64, 0);
+
+        fn normalize_dir(dir: &std::path::Path, target: FileTime) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_file() {
-                        let _ = set_file_mtime(&path, epoch);
+                        let _ = set_file_mtime(&path, target);
+                    } else if path.is_dir() {
+                        normalize_dir(&path, target);
                     }
                 }
             }
         }
-        // Top-level .enc files in vault root (unlikely but safe)
-        if let Ok(entries) = std::fs::read_dir(&self.path) {
+
+        let dirs = ["ciphers", "trash", "meta"];
+        for dir_name in &dirs {
+            normalize_dir(&vault_path.join(dir_name), target);
+        }
+        if let Ok(entries) = std::fs::read_dir(vault_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "enc") {
-                    let _ = set_file_mtime(&path, epoch);
+                    let _ = set_file_mtime(&path, target);
                 }
             }
         }
@@ -408,17 +424,14 @@ impl VaultHandle {
 
     /// Encrypt metadata JSON and write to disk atomically.
     /// Shared by save_folders, save_tags_enc, save_profile.
+    /// Caller must ensure vault is unlocked and derive the key.
     fn encrypt_and_write_meta(
         &self,
         key: &[u8; 32],
-        _label: &str,
         json: &[u8],
         enc_path: &std::path::Path,
+        epoch: u64,
     ) -> Result<(), IdttyError> {
-        let unlocked = match &self.state {
-            VaultState::Unlocked(u) => u,
-            VaultState::Locked => return Err(VaultError::Locked.into()),
-        };
         let nonce_counter = {
             use rand::RngCore;
             let mut bytes = [0u8; 8];
@@ -432,13 +445,13 @@ impl VaultHandle {
             Uuid::nil(),
             None,
             crate::ALG_AES_256_GCM,
-            unlocked.current_epoch,
+            epoch,
             1,
         );
         let header = crate::types::EnvelopeHeader {
             version: crate::IDTTY_VERSION,
             alg_id: crate::ALG_AES_256_GCM,
-            key_epoch: unlocked.current_epoch,
+            key_epoch: epoch,
             nonce_counter,
             update_seq: 1,
             tier: None,
@@ -548,7 +561,7 @@ impl VaultHandle {
         let json = serde_json::to_vec(profile)
             .map_err(|e| VaultError::Metadata(format!("profile serialization: {e}")))?;
         let enc_path = self.path.join("meta/profile.enc");
-        self.encrypt_and_write_meta(&key, "profile", &json, &enc_path)?;
+        self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
         Ok(())
     }
 
@@ -611,7 +624,7 @@ impl VaultHandle {
         let json = serde_json::to_vec(folders)
             .map_err(|e| VaultError::Metadata(format!("folders serialization: {e}")))?;
         let enc_path = self.path.join("meta/folders.enc");
-        self.encrypt_and_write_meta(&key, "folders", &json, &enc_path)?;
+        self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
         // Remove legacy plaintext file if it still exists
         let json_path = self.path.join("meta/folders.json");
         if json_path.exists() {
@@ -1541,7 +1554,7 @@ impl VaultHandle {
         let json = serde_json::to_vec(index)
             .map_err(|e| VaultError::Metadata(format!("tags serialization: {e}")))?;
         let enc_path = self.path.join("meta/tags.enc");
-        self.encrypt_and_write_meta(&key, "tags", &json, &enc_path)?;
+        self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
         // Remove legacy plaintext file if it still exists
         let json_path = self.path.join("meta/tag_index.json");
         if json_path.exists() {

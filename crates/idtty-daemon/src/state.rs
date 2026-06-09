@@ -301,7 +301,10 @@ impl VaultState {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
         let mut settings = handle.get_settings().map_err(|e| format!("{e}"))?;
-        // Merge encrypted profile fields (if available)
+        // Merge encrypted profile fields (if available).
+        // Note: load_profile() may write settings.json (strips stale identity fields
+        // from crash window). Safe because write_vault_file uses atomic rename, but
+        // semantically a write inside a read-locked context.
         if let Ok(profile) = handle.load_profile() {
             settings.display_name = profile.display_name;
             settings.subtitle = profile.subtitle;
