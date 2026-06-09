@@ -10,6 +10,7 @@ git clone https://github.com/EstebanForge/Baluard.git
 cd Baluard
 just                    # List all targets
 just check              # Full CI parity (fmt + clippy + test + build)
+just seed-demo          # Create demo vault with 31 test entries (password: demo)
 ```
 
 See **[docs/dev-setup.md](docs/dev-setup.md)** for prerequisites, platform-specific setup, and all build commands.

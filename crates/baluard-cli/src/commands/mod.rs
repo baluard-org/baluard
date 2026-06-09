@@ -14,22 +14,47 @@ use baluard_core::types::{CipherInput, KdfProfile};
 use baluard_core::vault::handle::{CipherRead, VaultHandle};
 use zeroize::Zeroize;
 
+// ── Direct-mode helpers ──
+
+/// Open and unlock a vault in direct mode. Returns the unlocked VaultHandle.
+/// Supports BALUARD_PASSWORD env-var for scripting (avoids TTY prompt).
+fn unlock_vault_direct(vault_path: &str) -> Result<VaultHandle, Box<dyn std::error::Error>> {
+    let path = Path::new(vault_path);
+    let mut handle = VaultHandle::open(path)?;
+    let password = match std::env::var("BALUARD_PASSWORD") {
+        Ok(pw) => pw,
+        Err(_) => prompt_password("Master password: ")?,
+    };
+    let mp = zeroize::Zeroizing::new(password);
+    handle.unlock(&mp)?;
+    Ok(handle)
+}
+
 // ── Init (always direct) ──
 
 pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn std::error::Error>> {
     let profile = parse_profile(profile_str)?;
 
-    let password = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
-    let confirm = zeroize::Zeroizing::new(prompt_password("Confirm password: ")?);
-
-    if *password != *confirm {
-        eprintln!("error: passwords do not match");
-        std::process::exit(1);
-    }
-
-    if password.len() < 8 {
-        eprintln!("warning: password is shorter than recommended (8+ characters)");
-    }
+    let password = match std::env::var("BALUARD_PASSWORD") {
+        Ok(pw) => {
+            if pw.len() < 8 {
+                eprintln!("warning: password is shorter than recommended (8+ characters)");
+            }
+            zeroize::Zeroizing::new(pw)
+        }
+        Err(_) => {
+            let pw = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
+            let confirm = zeroize::Zeroizing::new(prompt_password("Confirm password: ")?);
+            if *pw != *confirm {
+                eprintln!("error: passwords do not match");
+                std::process::exit(1);
+            }
+            if pw.len() < 8 {
+                eprintln!("warning: password is shorter than recommended (8+ characters)");
+            }
+            pw
+        }
+    };
 
     println!("Creating vault...");
     let (_handle, secrets) =
@@ -156,10 +181,7 @@ pub fn handle_add(
             Ok(())
         }
         ConnectMode::Direct => {
-            let mp = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
-            let path = Path::new(vault_path);
-            let mut handle = VaultHandle::open(path)?;
-            handle.unlock(&mp)?;
+            let mut handle = unlock_vault_direct(vault_path)?;
             let cipher_id = handle.add_cipher(&input)?;
             println!("Cipher added: {cipher_id}");
             Ok(())
@@ -249,13 +271,7 @@ pub fn handle_get(
             Ok(())
         }
         ConnectMode::Direct => {
-            let path = Path::new(vault_path);
-            let mut handle = VaultHandle::open(path)?;
-
-            if decrypt {
-                let mp = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
-                handle.unlock(&mp)?;
-            }
+            let handle = unlock_vault_direct(vault_path)?;
 
             match handle.get_cipher(cipher_id)? {
                 CipherRead::Decrypted(c) => match output {
@@ -1222,10 +1238,7 @@ pub fn handle_edit(
             Ok(())
         }
         ConnectMode::Direct => {
-            let mp = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
-            let path = Path::new(vault_path);
-            let mut handle = VaultHandle::open(path)?;
-            handle.unlock(&mp)?;
+            let mut handle = unlock_vault_direct(vault_path)?;
 
             let cipher_id = uuid::Uuid::parse_str(id).map_err(|_| "invalid UUID")?;
             let existing = handle.get_cipher(cipher_id)?;
@@ -1329,6 +1342,7 @@ pub fn handle_settings_set(
 
 pub fn handle_folder_create(
     mode: ConnectMode,
+    vault_path: &str,
     socket: Option<&str>,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1343,14 +1357,17 @@ pub fn handle_folder_create(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Folder management requires daemon mode.");
-            std::process::exit(1);
+            let mut handle = unlock_vault_direct(vault_path)?;
+            let id = handle.create_folder(name)?;
+            println!("Folder created: {id}");
+            Ok(())
         }
     }
 }
 
 pub fn handle_folder_list(
     mode: ConnectMode,
+    vault_path: &str,
     socket: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
@@ -1373,18 +1390,29 @@ pub fn handle_folder_list(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Folder management requires daemon mode.");
-            std::process::exit(1);
+            let handle = unlock_vault_direct(vault_path)?;
+            let folders = handle.list_folders()?;
+            if folders.is_empty() {
+                println!("No folders.");
+                return Ok(());
+            }
+            println!("{:<36} NAME", "ID");
+            for f in &folders {
+                println!("{} {}", f.id, f.name);
+            }
+            Ok(())
         }
     }
 }
 
 pub fn handle_folder_rename(
     mode: ConnectMode,
+    vault_path: &str,
     socket: Option<&str>,
     id: &str,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let folder_id = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid folder UUID: {e}"))?;
     match mode {
         ConnectMode::Daemon => {
             ensure_unlocked_daemon(socket)?;
@@ -1397,17 +1425,21 @@ pub fn handle_folder_rename(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Folder management requires daemon mode.");
-            std::process::exit(1);
+            let mut handle = unlock_vault_direct(vault_path)?;
+            handle.rename_folder(folder_id, name)?;
+            println!("Folder renamed.");
+            Ok(())
         }
     }
 }
 
 pub fn handle_folder_delete(
     mode: ConnectMode,
+    vault_path: &str,
     socket: Option<&str>,
     id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let folder_id = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid folder UUID: {e}"))?;
     match mode {
         ConnectMode::Daemon => {
             ensure_unlocked_daemon(socket)?;
@@ -1419,8 +1451,10 @@ pub fn handle_folder_delete(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Folder management requires daemon mode.");
-            std::process::exit(1);
+            let mut handle = unlock_vault_direct(vault_path)?;
+            handle.delete_folder(folder_id)?;
+            println!("Folder deleted. Entries moved to unassigned.");
+            Ok(())
         }
     }
 }
@@ -1750,6 +1784,7 @@ pub fn handle_attach_list(
 
 pub fn handle_tag_create(
     mode: ConnectMode,
+    vault_path: &str,
     socket: Option<&str>,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1764,14 +1799,17 @@ pub fn handle_tag_create(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Tag management requires daemon mode.");
-            std::process::exit(1);
+            let mut handle = unlock_vault_direct(vault_path)?;
+            handle.create_tag(name)?;
+            println!("Tag '{}' created.", name);
+            Ok(())
         }
     }
 }
 
 pub fn handle_tag_list(
     mode: ConnectMode,
+    vault_path: &str,
     socket: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
@@ -1792,14 +1830,23 @@ pub fn handle_tag_list(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Tag management requires daemon mode.");
-            std::process::exit(1);
+            let handle = unlock_vault_direct(vault_path)?;
+            let tags = handle.list_tags()?;
+            if tags.is_empty() {
+                println!("No tags found.");
+            } else {
+                for tag in &tags {
+                    println!("{tag}");
+                }
+            }
+            Ok(())
         }
     }
 }
 
 pub fn handle_tag_rename(
     mode: ConnectMode,
+    vault_path: &str,
     socket: Option<&str>,
     old: &str,
     new: &str,
@@ -1816,14 +1863,17 @@ pub fn handle_tag_rename(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Tag management requires daemon mode.");
-            std::process::exit(1);
+            let mut handle = unlock_vault_direct(vault_path)?;
+            let updated = handle.rename_tag(old, new)?;
+            println!("Tag '{}' renamed to '{}' ({} entries updated).", old, new, updated);
+            Ok(())
         }
     }
 }
 
 pub fn handle_tag_delete(
     mode: ConnectMode,
+    vault_path: &str,
     socket: Option<&str>,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1840,8 +1890,10 @@ pub fn handle_tag_delete(
             Ok(())
         }
         ConnectMode::Direct => {
-            eprintln!("Tag management requires daemon mode.");
-            std::process::exit(1);
+            let mut handle = unlock_vault_direct(vault_path)?;
+            let updated = handle.delete_tag(name)?;
+            println!("Tag '{}' removed from {} entries.", name, updated);
+            Ok(())
         }
     }
 }

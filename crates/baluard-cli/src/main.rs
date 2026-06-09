@@ -1004,27 +1004,31 @@ fn main() {
 
         Commands::Folders { action } => match action {
             FolderAction::Create { name } => {
-                commands::handle_folder_create(mode, cli.socket.as_deref(), &name)
+                commands::handle_folder_create(mode, &cli.vault_path, cli.socket.as_deref(), &name)
             }
-            FolderAction::List => commands::handle_folder_list(mode, cli.socket.as_deref()),
+            FolderAction::List => {
+                commands::handle_folder_list(mode, &cli.vault_path, cli.socket.as_deref())
+            }
             FolderAction::Rename { id, name } => {
-                commands::handle_folder_rename(mode, cli.socket.as_deref(), &id, &name)
+                commands::handle_folder_rename(mode, &cli.vault_path, cli.socket.as_deref(), &id, &name)
             }
             FolderAction::Delete { id } => {
-                commands::handle_folder_delete(mode, cli.socket.as_deref(), &id)
+                commands::handle_folder_delete(mode, &cli.vault_path, cli.socket.as_deref(), &id)
             }
         },
 
         Commands::Tags { action } => match action {
             TagAction::Create { name } => {
-                commands::handle_tag_create(mode, cli.socket.as_deref(), &name)
+                commands::handle_tag_create(mode, &cli.vault_path, cli.socket.as_deref(), &name)
             }
-            TagAction::List => commands::handle_tag_list(mode, cli.socket.as_deref()),
+            TagAction::List => {
+                commands::handle_tag_list(mode, &cli.vault_path, cli.socket.as_deref())
+            }
             TagAction::Rename { old, new } => {
-                commands::handle_tag_rename(mode, cli.socket.as_deref(), &old, &new)
+                commands::handle_tag_rename(mode, &cli.vault_path, cli.socket.as_deref(), &old, &new)
             }
             TagAction::Delete { name } => {
-                commands::handle_tag_delete(mode, cli.socket.as_deref(), &name)
+                commands::handle_tag_delete(mode, &cli.vault_path, cli.socket.as_deref(), &name)
             }
         },
 

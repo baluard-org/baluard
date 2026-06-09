@@ -222,6 +222,161 @@ desktop-build: _sidecar desktop-deps
 
 # ── E2E Smoke Test ─────────────────────────────────────────────────────────
 
+# Seed a demo vault with realistic test data (31 entries, 5 folders, 11 tags)
+# Creates vault at the platform-default location. Password: demo
+# If an existing vault is found, offers to back it up before seeding.
+seed-demo: build-release
+	#!/usr/bin/env bash
+	set -euo pipefail
+	export BALUARD_PASSWORD=demo
+
+	# Detect platform vault path (matches desktop: data_dir()/vault)
+	case "$(uname -s)" in
+		Darwin) DATA_DIR="$HOME/Library/Application Support/baluard" ;;
+		Linux)  DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/baluard" ;;
+		MINGW*|MSYS*|CYGWIN*) DATA_DIR="$LOCALAPPDATA/baluard" ;;
+		*)      DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/baluard" ;;
+	esac
+	VAULT="$DATA_DIR/vault"
+
+	if [ -d "$VAULT" ] && [ -f "$VAULT/meta/kdf.json" ]; then
+		echo "Existing vault found at: $VAULT"
+		echo ""
+		read -r -p "Rename existing vault to backup and seed fresh? [y/N] " ANSWER
+		case "$ANSWER" in
+			y|Y)
+				BACKUP="${VAULT}.backup.$(date +%Y%m%d-%H%M%S)"
+				mv "$VAULT" "$BACKUP"
+				echo "Existing vault backed up to: $BACKUP"
+				echo ""
+				;;
+			*)
+				echo "Aborted. Remove or rename the existing vault manually:"
+				echo "  mv \"$VAULT\" \"${VAULT}.old\""
+				exit 1
+				;;
+		esac
+	fi
+
+		baluard() { target/release/{{ binary }} --vault-path "$VAULT" --direct "$@"; }
+
+	echo "=== Creating vault at $VAULT ==="
+	baluard init
+
+	echo ""
+	echo "=== Creating folders ==="
+	baluard folders create "Personal"
+	baluard folders create "Work"
+	baluard folders create "Finance"
+	baluard folders create "Infrastructure"
+	baluard folders create "Travel"
+
+	# Capture folder IDs
+	map_folder_id() {
+		baluard folders list | awk -v name="$1" '$0 ~ name { print $1; exit }'
+	}
+	PERSONAL=$(map_folder_id "Personal")
+	WORK=$(map_folder_id "Work")
+	FINANCE=$(map_folder_id "Finance")
+	INFRA=$(map_folder_id "Infrastructure")
+	TRAVEL=$(map_folder_id "Travel")
+
+	echo ""
+	echo "=== Creating tags ==="
+	for tag in important shared team personal urgent legacy backup mfa api-key staging production; do
+		baluard tags create "$tag"
+	done
+
+	echo ""
+	echo "=== Seeding login entries ==="
+
+	baluard add login --name "GitHub" --username "esteban@actitud.xyz" --password "gh_s3cur3T0k3nH3r3!" --uri "https://github.com" --notes "Personal GitHub account" --tags important,mfa --folder "$WORK"
+	baluard add login --name "GitLab" --username "esteban" --password "gl-pat-xxxxxxxxxxxx" --uri "https://gitlab.com" --tags api-key --folder "$WORK"
+	baluard add login --name "AWS Console" --username "admin@actitud.xyz" --password "Aws#P@ssw0rd!2026" --uri "https://console.aws.amazon.com" --notes "Root account, enable MFA!" --tags important,production --folder "$INFRA"
+	baluard add login --name "Gmail" --username "esteban@gmail.com" --password "Gm@1lS3cur3!" --uri "https://mail.google.com" --tags personal,mfa --folder "$PERSONAL"
+	baluard add login --name "Netflix" --username "esteban@gmail.com" --password "N3tfl1x\$tream" --uri "https://netflix.com" --tags personal --folder "$PERSONAL"
+	baluard add login --name "Figma" --username "esteban@actitud.xyz" --password "F1gm@D3sign!" --uri "https://figma.com" --tags work --folder "$WORK"
+	baluard add login --name "Slack" --username "esteban@actitud.xyz" --password "Sl@ckW0rk!" --uri "https://slack.com" --tags work,team --folder "$WORK"
+	baluard add login --name "Vercel" --username "esteban@actitud.xyz" --password "V3rc3lD3pl0y!" --uri "https://vercel.com" --tags work,api-key --folder "$WORK"
+	baluard add login --name "Cloudflare" --username "admin@actitud.xyz" --password "CF_R@y_ID!2026" --uri "https://dash.cloudflare.com" --tags production --folder "$INFRA"
+	baluard add login --name "Linear" --username "esteban@actitud.xyz" --password "L1n3@rPlan!" --uri "https://linear.app" --tags work --folder "$WORK"
+
+	echo ""
+	echo "=== Seeding card entries ==="
+
+	baluard add card --name "Visa Platinum" --cardholder-name "Esteban Forge" --brand "Visa" --number "4532123456789012" --exp-month "09" --exp-year "2028" --code "123" --tags personal,important --folder "$FINANCE"
+	baluard add card --name "Mastercard Business" --cardholder-name "Esteban Forge" --brand "Mastercard" --number "5412345678901234" --exp-month "03" --exp-year "2027" --code "456" --tags work --folder "$FINANCE"
+	baluard add card --name "Amex Gold" --cardholder-name "Esteban Forge" --brand "American Express" --number "378282246310005" --exp-month "12" --exp-year "2029" --code "7890" --notes "Travel rewards card" --folder "$FINANCE"
+
+	echo ""
+	echo "=== Seeding secure notes ==="
+
+	baluard add note --name "WiFi Password - Home" --notes 'HomeNetwork$_2026!' --tags personal --folder "$PERSONAL"
+	baluard add note --name "Server Recovery Codes" --notes $'BACKUP-1: A3F8-B7C2-D9E1\nBACKUP-2: K4M6-P8R2-T5W9\nBACKUP-3: X1Y3-Z5A7-B9C1' --tags important,backup --folder "$INFRA"
+	baluard add note --name "Garage Door Code" --notes "4521" --tags personal --folder "$PERSONAL"
+	baluard add note --name "Safety Deposit Box" --notes $'Bank: Chase Downtown\nBox: #417\nKey: green tag in desk drawer' --tags personal,important --folder "$PERSONAL"
+	baluard add note --name "Email Aliases" --notes $'personal: esteban@gmail.com\nwork: esteban@actitud.xyz\nbilling: billing@actitud.xyz\nspam: noreply+spam@actitud.xyz' --tags shared --folder "$PERSONAL"
+
+	echo ""
+	echo "=== Seeding identity entries ==="
+
+	baluard add identity --name "Esteban Forge" --title "Mr" --first-name "Esteban" --last-name "Forge" --username "estebanforge" --company "Actitud Studio" --email "esteban@actitud.xyz" --phone "+1-555-0142" --address1 "742 Innovation Drive" --city "San Francisco" --state "CA" --postal-code "94105" --country "US" --tags personal,important --folder "$PERSONAL"
+	baluard add identity --name "Business Contact" --title "Mr" --first-name "Esteban" --last-name "Forge" --company "Actitud Studio" --email "info@actitud.xyz" --phone "+1-555-0143" --address1 "742 Innovation Drive" --city "San Francisco" --state "CA" --postal-code "94105" --country "US" --tags work,shared --folder "$WORK"
+
+	echo ""
+	echo "=== Seeding SSH keys ==="
+
+	baluard add ssh-key --name "GitHub SSH Key" --public-key "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEstebanForgeGitHub2026" --fingerprint "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8" --tags important,api-key --folder "$INFRA"
+	baluard add ssh-key --name "Production Server" --public-key "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEstebanForgeProd2026" --fingerprint "SHA256:pB9R3k7mWQ2vX4yN8tL6jK5hG0dF1sA3cE7uM9wR2iO" --tags production,important --folder "$INFRA"
+	baluard add ssh-key --name "Staging Deploy Key" --public-key "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEstebanForgeStaging2026" --fingerprint "SHA256:qR4tY7uW0vX2zN5bA8cD6eF3gH1iJ9kL0mO3pS6wU2xT" --notes "Read-only deploy key for staging" --tags staging --folder "$INFRA"
+
+	echo ""
+	echo "=== Seeding bank accounts ==="
+
+	baluard add bank --name "Chase Checking" --bank-name "JPMorgan Chase" --name-on-account "Esteban Forge" --account-type "Checking" --account-number "123456789" --routing-number "021000021" --swift-code "CHASUS33" --tags personal --folder "$FINANCE"
+	baluard add bank --name "Chase Savings" --bank-name "JPMorgan Chase" --name-on-account "Esteban Forge" --account-type "Savings" --account-number "987654321" --routing-number "021000021" --tags personal --folder "$FINANCE"
+	baluard add bank --name "Business Account" --bank-name "Silicon Valley Bank" --name-on-account "Actitud Studio LLC" --account-type "Business Checking" --account-number "456789123" --routing-number "121000248" --swift-code "SVBKUS6S" --notes "Business operating account" --tags work --folder "$FINANCE"
+
+	echo ""
+	echo "=== Seeding driver licenses ==="
+
+	baluard add license --name "CA Driver License" --first-name "Esteban" --last-name "Forge" --date-of-birth "1990-06-15" --license-number "F1234567" --issuing-country "US" --issuing-state "CA" --issue-date "2018-03-20" --expiration-date "2028-03-20" --tags personal,important --folder "$PERSONAL"
+
+	echo ""
+	echo "=== Seeding passports ==="
+
+	baluard add passport --name "US Passport" --surname "Forge" --given-name "Esteban" --date-of-birth "1990-06-15" --sex "M" --birth-place "San Francisco" --nationality "US" --passport-number "P12345678" --issuing-country "US" --issue-date "2022-01-15" --expiration-date "2032-01-14" --tags personal,important --folder "$TRAVEL"
+
+	echo ""
+	echo "=== Seeding national IDs ==="
+
+	baluard add note --name "Chile Carnet de Identidad" --notes $'RUN/RUT: 16.543.210-4\nTipo: Cédula de Identidad\nNombres: Esteban Andrés\nApellidos: Forge Muñoz\nSexo: M\nFecha de nacimiento: 1990-06-15\nNacionalidad: Chilena\nFecha de emisión: 2021-08-10\nFecha de vencimiento: 2031-08-10\nNúmero de documento: A12345678' --tags personal,important --folder "$PERSONAL"
+	baluard add note --name "Chile RUT (Empresa)" --notes $'RUT: 76.321.456-K\nRazón social: Actitud Studio SpA\nTipo entidad: Sociedad por Acciones\nActividad: Desarrollo de software\nFecha de inicio: 2023-03-15\nSII: Registro Vigente' --tags work,important --folder "$WORK"
+	baluard add bank --name "Banco de Chile Cuenta Corriente" --bank-name "Banco de Chile" --name-on-account "Esteban Forge Muñoz" --account-type "Cuenta Corriente" --account-number "12345678" --routing-number "0001" --swift-code "BCHICLRM" --tags personal --folder "$FINANCE"
+
+	echo ""
+	echo "=== Demo vault seeded ==="
+	echo "  Location: $VAULT"
+	echo "  Password: demo"
+	echo ""
+	echo "  Entries by type:"
+	echo "    Logins:       10"
+	echo "    Cards:         3"
+	echo "    Notes:         7  (incl. 2 RUT/Carnet)"
+	echo "    Identities:    2"
+	echo "    SSH Keys:      3"
+	echo "    Bank Accounts: 4  (incl. 1 Chilean)"
+	echo "    Licenses:      1"
+	echo "    Passports:     1"
+	echo "    ────────────────"
+	echo "    Total:        31"
+	echo ""
+	echo "  Folders: Personal, Work, Finance, Infrastructure, Travel"
+	echo "  Tags:    important, shared, team, personal, urgent, legacy, backup, mfa, api-key, staging, production"
+	echo ""
+	echo "  List entries: {{ binary }} --direct list"
+	echo "  Open in GUI:  just desktop-debug"
+
 # End-to-end smoke test (requires release build)
 e2e: build-release
 	#!/usr/bin/env bash
@@ -234,21 +389,21 @@ e2e: build-release
 	echo "=== INIT ===" && printf "testpass123\ntestpass123\n" | target/release/{{ binary }} init --vault-path "$VAULT"
 	echo ""
 	echo "=== DAEMON ===" && target/release/{{ daemon }} --vault-path "$VAULT" --socket "$SOCK" &>/tmp/baluard-daemon.log & DAEMON_PID=$!; sleep 1
-	echo "=== PING ===" && $CLI ping
+	echo "=== PING ===" && baluard ping
 	echo ""
-	echo "=== UNLOCK ===" && $CLI unlock <<< "testpass123"
+	echo "=== UNLOCK ===" && baluard unlock <<< "testpass123"
 	echo ""
-	echo "=== ADD ===" && $CLI add --name "Test" --username "user@test.com" --password "secret123"
-	UUID=$($CLI list 2>&1 | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+	echo "=== ADD ===" && baluard add --name "Test" --username "user@test.com" --password "secret123"
+	UUID=$(baluard list 2>&1 | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
 	echo "UUID: $UUID"
 	echo ""
-	echo "=== GET ===" && $CLI get "$UUID" 2>&1
+	echo "=== GET ===" && baluard get "$UUID" 2>&1
 	echo ""
-	echo "=== DELETE ===" && $CLI delete "$UUID"
+	echo "=== DELETE ===" && baluard delete "$UUID"
 	echo ""
-	echo "=== LIST (empty) ===" && $CLI list
+	echo "=== LIST (empty) ===" && baluard list
 	echo ""
-	echo "=== LOCK ===" && $CLI lock
+	echo "=== LOCK ===" && baluard lock
 	echo ""
 	kill $DAEMON_PID 2>/dev/null; wait $DAEMON_PID 2>/dev/null || true
 	rm -f "$SOCK" "${SOCK%.sock}.tok"
