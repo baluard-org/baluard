@@ -31,6 +31,7 @@ base64.workspace = true
 zeroize.workspace = true
 dirs.workspace = true
 keyring.workspace = true
+filetime.workspace = true
 csv = "1.3"
 roxmltree = "0.20"
 zip = { version = "2.2", default-features = false, features = ["deflate"] }

@@ -80,7 +80,7 @@ pub enum TrashObjectType {
 }
 
 /// Vault settings (stored encrypted in meta/settings.enc, last-write-wins).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VaultSettings {
     pub auto_lock_minutes: Option<u32>,
     pub theme: Option<String>,
@@ -99,6 +99,15 @@ pub struct VaultSettings {
     pub subtitle: Option<String>,
     /// Avatar file extension (e.g. "png", "jpg"). Avatar stored at meta/avatar.{ext}.
     #[serde(default)]
+    pub avatar_ext: Option<String>,
+}
+
+/// Encrypted user profile fields (stored in meta/profile.enc).
+/// Separated from VaultSettings to prevent identity leakage via git sync.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserProfile {
+    pub display_name: Option<String>,
+    pub subtitle: Option<String>,
     pub avatar_ext: Option<String>,
 }
 

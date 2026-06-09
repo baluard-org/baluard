@@ -314,11 +314,58 @@ impl VaultHandle {
                 }
             }
         }
+
+        // Migrate settings.json identity fields -> profile.enc
+        let profile_enc = self.path.join("meta/profile.enc");
+        if !profile_enc.exists() {
+            if let Ok(settings) = self.get_settings() {
+                let has_identity = settings.display_name.is_some()
+                    || settings.subtitle.is_some()
+                    || settings.avatar_ext.is_some();
+                if has_identity {
+                    let profile = crate::vault::manifest::UserProfile {
+                        display_name: settings.display_name,
+                        subtitle: settings.subtitle,
+                        avatar_ext: settings.avatar_ext,
+                    };
+                    let _ = self.save_profile(&profile);
+                }
+            }
+        }
     }
 
-    /// Lock the vault: zeroize all key material.
+    /// Lock the vault: zeroize all key material and normalize file timestamps.
     pub fn lock(&mut self) {
         self.state = VaultState::Locked;
+        self.normalize_timestamps();
+    }
+
+    /// Normalize all vault file timestamps to epoch 0.
+    /// Mitigates filesystem-level timing analysis. Best-effort.
+    fn normalize_timestamps(&self) {
+        use filetime::{FileTime, set_file_mtime};
+        let epoch = FileTime::from_unix_time(0, 0);
+        let dirs = ["ciphers", "trash", "meta"];
+        for dir_name in &dirs {
+            let dir = self.path.join(dir_name);
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        let _ = set_file_mtime(&path, epoch);
+                    }
+                }
+            }
+        }
+        // Top-level .enc files in vault root (unlikely but safe)
+        if let Ok(entries) = std::fs::read_dir(&self.path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "enc") {
+                    let _ = set_file_mtime(&path, epoch);
+                }
+            }
+        }
     }
 
     /// Check if vault is unlocked.
@@ -389,6 +436,96 @@ impl VaultHandle {
             crate::error::VaultError::Metadata(format!("settings serialization: {e}"))
         })?;
         super::write_vault_file(&settings_path, json.as_bytes())?;
+        Ok(())
+    }
+
+    /// Load encrypted user profile from meta/profile.enc.
+    /// Returns default (empty) profile if file doesn't exist yet.
+    /// Falls back to reading identity fields from plaintext settings.json (legacy).
+    pub fn load_profile(&self) -> Result<crate::vault::manifest::UserProfile, IdttyError> {
+        let enc_path = self.path.join("meta/profile.enc");
+        if enc_path.exists() {
+            let unlocked = match &self.state {
+                VaultState::Unlocked(u) => u,
+                VaultState::Locked => return Err(VaultError::Locked.into()),
+            };
+            let key = hkdf_derive::derive_profile_key(unlocked.root_key.as_bytes())
+                .map_err(|e| VaultError::Metadata(format!("profile key derivation: {e}")))?;
+            let data = std::fs::read(&enc_path)?;
+            let envelope = crate::vault::envelope::deserialize(&data)?;
+            let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
+            let profile: crate::vault::manifest::UserProfile =
+                serde_json::from_slice(&decrypted)
+                    .map_err(|e| VaultError::Metadata(format!("profile decrypt parse: {e}")))?;
+            return Ok(profile);
+        }
+
+        // Legacy fallback: extract identity fields from plaintext settings.json
+        if let Ok(settings) = self.get_settings() {
+            return Ok(crate::vault::manifest::UserProfile {
+                display_name: settings.display_name,
+                subtitle: settings.subtitle,
+                avatar_ext: settings.avatar_ext,
+            });
+        }
+
+        Ok(crate::vault::manifest::UserProfile {
+            display_name: None,
+            subtitle: None,
+            avatar_ext: None,
+        })
+    }
+
+    /// Save encrypted user profile to meta/profile.enc (atomic write).
+    /// Also strips identity fields from plaintext settings.json.
+    pub fn save_profile(
+        &self,
+        profile: &crate::vault::manifest::UserProfile,
+    ) -> Result<(), IdttyError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let key = hkdf_derive::derive_profile_key(unlocked.root_key.as_bytes())
+            .map_err(|e| VaultError::Metadata(format!("profile key derivation: {e}")))?;
+        let json = serde_json::to_vec(profile)
+            .map_err(|e| VaultError::Metadata(format!("profile serialization: {e}")))?;
+        let nonce_counter = {
+            use rand::RngCore;
+            let mut bytes = [0u8; 8];
+            rand::thread_rng().fill_bytes(&mut bytes);
+            u64::from_le_bytes(bytes)
+        };
+        let nonce = crate::crypto::aead::build_nonce(nonce_counter, Uuid::nil());
+        let aad = crate::crypto::aead::build_aad(
+            self.vault_id,
+            crate::types::ObjectType::Meta,
+            Uuid::nil(),
+            None,
+            crate::ALG_AES_256_GCM,
+            unlocked.current_epoch,
+            1,
+        );
+        let header = crate::types::EnvelopeHeader {
+            version: crate::IDTTY_VERSION,
+            alg_id: crate::ALG_AES_256_GCM,
+            key_epoch: unlocked.current_epoch,
+            nonce_counter,
+            update_seq: 1,
+            tier: None,
+        };
+        let envelope = crate::crypto::aead::encrypt(&key, &json, &aad, &nonce, header)?;
+        let envelope_bytes = crate::vault::envelope::serialize(&envelope)?;
+        let enc_path = self.path.join("meta/profile.enc");
+        super::write_vault_file(&enc_path, &envelope_bytes)?;
+
+        // Strip identity fields from plaintext settings.json
+        let mut settings = self.get_settings().unwrap_or_default();
+        settings.display_name = None;
+        settings.subtitle = None;
+        settings.avatar_ext = None;
+        self.save_settings(&settings)?;
+
         Ok(())
     }
 
