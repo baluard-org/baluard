@@ -253,6 +253,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(()) => {
                     // Auto-purge old trash (default 30 days) on unlock
                     let _ = state.purge_old_trash(30).await;
+                    // Start cover commit scheduler
+                    state.start_cover_timer().await;
                     // Token was just generated inside unlock(). Fetch it.
                     let token = state.get_session_token().await;
                     match state.info().await {
@@ -737,6 +739,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => {
                 // biometric_unlock() calls self.unlock() internally,
                 // which generates a new session token. Fetch it.
+                state.start_cover_timer().await;
                 let token = state.get_session_token().await;
                 ok_resp(json, token.as_deref())
             }

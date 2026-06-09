@@ -1140,9 +1140,10 @@ meta/device-privkey.json
 meta/kdf-attempts.json
 meta/git-credentials.json
 
-# Legacy plaintext metadata (now encrypted as folders.enc/tags.enc)
+# Legacy plaintext metadata (now encrypted as folders.enc/tags.enc/activity.enc)
 meta/folders.json
 meta/tag_index.json
+meta/device_activity.json
 
 # Build artifacts
 target/
