@@ -79,7 +79,9 @@ export default function AddEditCipherForm(props) {
   // Schema-driven layout rows (reactive)
   const layoutRows = () => {
     const s = schema();
-    return s.layout || [];
+    if (s.layout && s.layout.length) return s.layout.map(row => row.map(k => s.fields.find(f => f.key === k)).filter(Boolean));
+    if (s.fields.length) return s.fields.map(f => [f]);
+    return [];
   };
 
   function addTag() {
@@ -448,7 +450,7 @@ export default function AddEditCipherForm(props) {
                             }}
                             class="text-[10px] font-bold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] cursor-pointer"
                           >
-                            Generate
+                            {t("entry.generatePassword")}
                           </button>
                         </Show>
                       </div>
