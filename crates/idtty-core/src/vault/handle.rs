@@ -1993,9 +1993,10 @@ impl VaultHandle {
         // 3. Commit keywrap last (point of no return)
         std::fs::rename(&keywrap_tmp, &keywrap_path)?;
 
-        // Read folders/tags with OLD root key before swap
+        // Read folders/tags/profile with OLD root key before swap
         let old_folders = self.list_folders().ok();
         let old_tags = self.list_tags().ok();
+        let old_profile = self.load_profile().ok();
 
         // Phase 5: Swap Root Key and update epoch via DeviceManager lifecycle
         match &mut self.state {
@@ -2023,7 +2024,7 @@ impl VaultHandle {
             self.device_manager.notify_rotation_committed(new_epoch, vp);
         }
 
-        // Re-encrypt folders/tags with NEW root key
+        // Re-encrypt folders/tags/profile with NEW root key
         if let Some(folders) = old_folders {
             let _ = self.save_folders(&folders);
         }
@@ -2037,6 +2038,9 @@ impl VaultHandle {
                 updated_at: now,
             };
             let _ = self.save_tags_enc(&index);
+        }
+        if let Some(profile) = old_profile {
+            let _ = self.save_profile(&profile);
         }
 
         // Clean up rotation-pending marker
@@ -2297,9 +2301,10 @@ impl VaultHandle {
             .join(format!("meta/keywrap/{target_device_id}.json"));
         let _ = std::fs::remove_file(&revoked_keywrap);
 
-        // Read folders/tags with OLD root key before swap
+        // Read folders/tags/profile with OLD root key before swap
         let old_folders = self.list_folders().ok();
         let old_tags = self.list_tags().ok();
+        let old_profile = self.load_profile().ok();
 
         // ── Update in-memory state ──
         match &mut self.state {
@@ -2326,7 +2331,7 @@ impl VaultHandle {
             self.device_manager.notify_rotation_committed(new_epoch, vp);
         }
 
-        // Re-encrypt folders/tags with NEW root key
+        // Re-encrypt folders/tags/profile with NEW root key
         if let Some(folders) = old_folders {
             let _ = self.save_folders(&folders);
         }
@@ -2340,6 +2345,9 @@ impl VaultHandle {
                 updated_at: now,
             };
             let _ = self.save_tags_enc(&index);
+        }
+        if let Some(profile) = old_profile {
+            let _ = self.save_profile(&profile);
         }
 
         // Clean up rotation-pending marker (disarm guard first)

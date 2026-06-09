@@ -350,33 +350,40 @@ impl VaultState {
                 .map_err(|e| format!("Invalid avatar_ext: {e}"))?;
         }
 
-        // If identity fields present, save to encrypted profile
-        let has_identity = settings.display_name.is_some()
-            || settings.subtitle.is_some()
-            || settings.avatar_ext.is_some();
-        if has_identity {
+        // Check if payload contains identity keys (even with null values for clearing)
+        let partial_obj = partial.as_object();
+        let has_identity_keys = partial_obj.is_some_and(|o| {
+            o.contains_key("display_name")
+                || o.contains_key("subtitle")
+                || o.contains_key("avatar_ext")
+        });
+
+        if has_identity_keys {
             let profile = idtty_core::vault::manifest::UserProfile {
                 display_name: settings.display_name.clone(),
                 subtitle: settings.subtitle.clone(),
                 avatar_ext: settings.avatar_ext.clone(),
             };
             handle.save_profile(&profile).map_err(|e| format!("{e}"))?;
-            // save_profile already strips identity from settings.json
-            return Ok(());
+            // save_profile strips identity from settings.json and saves it
+        } else {
+            handle
+                .save_settings(&settings)
+                .map_err(|e| format!("{e}"))?;
         }
-
-        handle
-            .save_settings(&settings)
-            .map_err(|e| format!("{e}"))?;
         Ok(())
     }
 
     /// Get avatar image as base64. Returns empty string if no avatar set.
+    /// Reads avatar_ext from encrypted profile.enc.
     pub async fn avatar_get(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
-        let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
-        let ext = settings.avatar_ext.as_deref().unwrap_or("");
+        let ext = handle
+            .load_profile()
+            .ok()
+            .and_then(|p| p.avatar_ext)
+            .unwrap_or_default();
         if ext.is_empty() {
             return Ok(String::new());
         }
@@ -390,7 +397,7 @@ impl VaultState {
     }
 
     /// Set avatar image from base64. Payload: JSON {"data": "<base64>", "ext": "png"}
-    /// Saves to meta/avatar.{ext} and updates settings.avatar_ext.
+    /// Saves to meta/avatar.{ext} and updates encrypted profile.
     pub async fn avatar_set(&self, payload: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
@@ -399,10 +406,12 @@ impl VaultState {
         let b64 = v["data"].as_str().unwrap_or("");
         let ext_raw = v["ext"].as_str().unwrap_or("png");
 
+        // Load current profile from encrypted storage
+        let mut profile = handle.load_profile().unwrap_or_default();
+
         if b64.is_empty() {
             // Remove avatar
-            let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
-            if let Some(ref old_ext) = settings.avatar_ext {
+            if let Some(ref old_ext) = profile.avatar_ext {
                 let old_ext_clean = old_ext.trim().to_lowercase();
                 if matches!(
                     old_ext_clean.as_str(),
@@ -412,11 +421,8 @@ impl VaultState {
                     let _ = std::fs::remove_file(&old_path);
                 }
             }
-            let mut settings = settings;
-            settings.avatar_ext = None;
-            handle
-                .save_settings(&settings)
-                .map_err(|e| format!("{e}"))?;
+            profile.avatar_ext = None;
+            handle.save_profile(&profile).map_err(|e| format!("{e}"))?;
             return Ok(());
         }
 
@@ -444,10 +450,8 @@ impl VaultState {
             .map_err(|e| format!("chmod avatar: {e}"))?;
         std::fs::rename(&tmp_path, &avatar_path).map_err(|e| format!("rename avatar: {e}"))?;
 
-        // Update settings
-        let mut settings = handle.get_settings().map_err(|e| format!("{e}"))?;
         // Remove old avatar if ext changed
-        if let Some(ref old_ext) = settings.avatar_ext {
+        if let Some(ref old_ext) = profile.avatar_ext {
             let old_ext_clean = old_ext.trim().to_lowercase();
             if old_ext_clean != ext
                 && matches!(
@@ -459,10 +463,8 @@ impl VaultState {
                 let _ = std::fs::remove_file(&old_path);
             }
         }
-        settings.avatar_ext = Some(ext);
-        handle
-            .save_settings(&settings)
-            .map_err(|e| format!("{e}"))?;
+        profile.avatar_ext = Some(ext);
+        handle.save_profile(&profile).map_err(|e| format!("{e}"))?;
         Ok(())
     }
 
