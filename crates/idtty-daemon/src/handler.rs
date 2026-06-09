@@ -197,6 +197,25 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "ssh.generate_key",
 ];
 
+/// Actions that mutate vault data. Schedule cover commits after these.
+const COVER_MUTATION_ACTIONS: &[&str] = &[
+    "vault.add",
+    "vault.update",
+    "vault.delete",
+    "vault.archive",
+    "vault.unarchive",
+    "vault.clone",
+    "vault.import",
+    "folder.create",
+    "folder.rename",
+    "folder.delete",
+    "tag.create",
+    "tag.rename",
+    "tag.delete",
+    "settings.set",
+    "vault.avatar.set",
+];
+
 /// Build a success GatewayResponse. Attaches session token if available.
 fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
     GatewayResponse {
@@ -750,6 +769,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         // Used by the Tauri biometry plugin flow: validate here, store there.
         _ => err_response(format!("Unknown action: {}", req.action)),
     };
+
+    // Schedule cover commit after successful vault mutations
+    if resp.success && COVER_MUTATION_ACTIONS.contains(&req.action.as_str()) {
+        state.schedule_cover_after_commit();
+    }
 
     // Zeroize any remaining sensitive data in the request
     req.payload.zeroize();
