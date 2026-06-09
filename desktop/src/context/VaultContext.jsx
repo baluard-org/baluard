@@ -178,6 +178,18 @@ function VaultProvider(props) {
     }
   }
 
+  async function deleteTag(name, t) {
+    try {
+      await daemon("tag.delete", name);
+      if (selectedTag() === name) setSelectedTag(null);
+      await refreshCiphers(t);
+      return true;
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+      return false;
+    }
+  }
+
   async function unarchiveCipher(id, t) {
     try {
       await daemon("vault.unarchive", id);
@@ -214,7 +226,7 @@ function VaultProvider(props) {
     // Actions
     refreshCiphers, refreshDeviceFleet, refreshProfile,
     addCipher, updateCipher, getCipher,
-    deleteCipher, restoreCipher, archiveCipher, unarchiveCipher,
+    deleteCipher, restoreCipher, archiveCipher, unarchiveCipher, deleteTag,
   };
 
   return (

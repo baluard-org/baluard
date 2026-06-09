@@ -166,6 +166,8 @@
     "subtitlePlaceholder": "Role, team, or tagline",
     "changeAvatar": "Change avatar",
     "removeAvatar": "Remove",
+    "deleteTagTitle": "Delete tag?",
+    "deleteTagConfirm": "This will remove the tag \"{tag}\" from all entries. The entries themselves will not be deleted.",
     "avatarSaved": "Avatar updated",
     "avatarRemoved": "Avatar removed",
     "profileSaved": "Profile updated"
