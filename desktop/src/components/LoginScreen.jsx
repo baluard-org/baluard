@@ -44,7 +44,6 @@ export default function LoginScreen() {
               autocapitalize="off"
               spellcheck="false"
               placeholder={t("login.passwordPlaceholder")}
-              value="estebancuevas"
               class="w-full px-4 py-3.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)] transition-all-fast"
               autofocus
             />

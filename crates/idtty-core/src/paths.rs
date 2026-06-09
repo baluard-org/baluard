@@ -147,7 +147,9 @@ mod tests {
     #[test]
     fn socket_path_has_sock_extension() {
         assert_eq!(
-            socket_path().extension().map(|e| e.to_string_lossy().into_owned()),
+            socket_path()
+                .extension()
+                .map(|e| e.to_string_lossy().into_owned()),
             Some("sock".to_string())
         );
     }

@@ -894,11 +894,40 @@ impl SyncEngine {
         Ok(())
     }
 
-    /// Load Ed25519 signing key from meta/device-privkey.json.
-    /// Returns None if file missing (pre-vault). Returns error if file is corrupt.
+    /// Load Ed25519 signing key from OS keyring or meta/device-privkey.json.
+    /// Returns None if no key found. Returns error if key is corrupt.
     fn load_signing_key(
         vault_path: &Path,
     ) -> Result<Option<ed25519_dalek::SigningKey>, IdttyError> {
+        // Try OS keyring: read device IDs from devices.json and try each
+        let service = Self::keyring_service_for_vault(vault_path);
+        if let Ok(devices_data) = std::fs::read_to_string(vault_path.join("meta/devices.json")) {
+            if let Ok(devices) = serde_json::from_str::<serde_json::Value>(&devices_data) {
+                if let Some(device_map) = devices["devices"].as_object() {
+                    for (device_id, _) in device_map {
+                        if let Ok(entry) = keyring::Entry::new(&service, device_id) {
+                            if let Ok(json) = entry.get_password() {
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
+                                    if let Some(hex_str) = v["ed25519_private"].as_str() {
+                                        if let Ok(bytes_vec) = hex::decode(hex_str) {
+                                            let bytes: [u8; 32] =
+                                                bytes_vec.try_into().map_err(|_| {
+                                                    SyncError::Git("privkey wrong length".into())
+                                                })?;
+                                            return Ok(Some(
+                                                ed25519_dalek::SigningKey::from_bytes(&bytes),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: plaintext file
         let path = vault_path.join("meta/device-privkey.json");
         if !path.exists() {
             return Ok(None);
@@ -918,6 +947,24 @@ impl SyncEngine {
         use zeroize::Zeroize;
         bytes.zeroize();
         Ok(Some(key))
+    }
+
+    /// Build keyring service name for a vault path (mirrors handle.rs keyring_service).
+    fn keyring_service_for_vault(vault_path: &Path) -> String {
+        let kdf_path = vault_path.join("meta/kdf-params.json");
+        if let Ok(data) = std::fs::read_to_string(&kdf_path) {
+            if let Ok(params) = serde_json::from_str::<serde_json::Value>(&data) {
+                if let Some(salt_hex) = params["salt"].as_str() {
+                    if salt_hex.len() >= 16 {
+                        return format!("idtty-{}", &salt_hex[..16]);
+                    }
+                }
+            }
+        }
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        vault_path.hash(&mut hasher);
+        format!("idtty-fallback-{:016x}", hasher.finish())
     }
 
     /// Verify signatures for new commits pulled from remote.
@@ -1077,6 +1124,10 @@ const GITIGNORE_CONTENT: &str = "\
 meta/device-privkey.json
 meta/kdf-attempts.json
 meta/git-credentials.json
+
+# Legacy plaintext metadata (now encrypted as folders.enc/tags.enc)
+meta/folders.json
+meta/tag_index.json
 
 # Build artifacts
 target/

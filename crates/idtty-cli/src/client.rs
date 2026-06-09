@@ -37,9 +37,15 @@ fn token_file_path(socket_path: Option<&str>) -> PathBuf {
         Some(p) => {
             let sock = PathBuf::from(p);
             #[cfg(windows)]
-            { idtty_core::paths::data_dir().join(sock.file_name().unwrap_or_default()).with_extension("tok") }
+            {
+                idtty_core::paths::data_dir()
+                    .join(sock.file_name().unwrap_or_default())
+                    .with_extension("tok")
+            }
             #[cfg(not(windows))]
-            { sock.with_extension("tok") }
+            {
+                sock.with_extension("tok")
+            }
         }
     }
 }
