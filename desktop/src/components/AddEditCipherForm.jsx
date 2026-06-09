@@ -454,34 +454,45 @@ export default function AddEditCipherForm(props) {
                           </button>
                         </Show>
                       </div>
-                      <Show when={field.type === "password"} fallback={
-                        <input
-                          placeholder={field.placeholder || ""}
-                          class={fieldCls(field)}
-                          value={newCipher()[field.key] || ""}
-                          onInput={e => update(field.key, e.target.value)}
-                          {...SECURE_INPUT}
-                        />
-                      }>
-                        <div class="relative">
+                      <Show when={field.type === "textarea"} fallback={
+                        <Show when={field.type === "password"} fallback={
                           <input
                             placeholder={field.placeholder || ""}
-                            type={showPassword() ? "text" : "password"}
-                            class={MONO_CLS + " pr-24"}
+                            class={fieldCls(field)}
                             value={newCipher()[field.key] || ""}
                             onInput={e => update(field.key, e.target.value)}
                             {...SECURE_INPUT}
                           />
-                          <button
-                            type="button"
-                            onClick={() => setShowPassword(!showPassword())}
-                            class="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer"
-                          >
-                            <Show when={showPassword()} fallback={<IconEyeOff class="w-4 h-4" />}>
-                              <IconEye class="w-4 h-4" />
-                            </Show>
-                          </button>
-                        </div>
+                        }>
+                          <div class="relative">
+                            <input
+                              placeholder={field.placeholder || ""}
+                              type={showPassword() ? "text" : "password"}
+                              class={MONO_CLS + " pr-24"}
+                              value={newCipher()[field.key] || ""}
+                              onInput={e => update(field.key, e.target.value)}
+                              {...SECURE_INPUT}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPassword(!showPassword())}
+                              class="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                            >
+                              <Show when={showPassword()} fallback={<IconEyeOff class="w-4 h-4" />}>
+                                <IconEye class="w-4 h-4" />
+                              </Show>
+                            </button>
+                          </div>
+                        </Show>
+                      }>
+                        <textarea
+                          placeholder={field.placeholder || ""}
+                          rows={field.rows || 4}
+                          class={fieldCls(field) + " resize-none"}
+                          value={newCipher()[field.key] || ""}
+                          onInput={e => update(field.key, e.target.value)}
+                          {...SECURE_INPUT}
+                        />
                       </Show>
                     </div>
                   )}
