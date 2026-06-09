@@ -104,7 +104,7 @@ pub struct VaultSettings {
 
 /// Encrypted user profile fields (stored in meta/profile.enc).
 /// Separated from VaultSettings to prevent identity leakage via git sync.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserProfile {
     pub display_name: Option<String>,
     pub subtitle: Option<String>,

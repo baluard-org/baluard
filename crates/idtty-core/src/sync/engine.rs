@@ -155,7 +155,7 @@ impl SyncEngine {
             .find_tree(tree_id)
             .map_err(|e| SyncError::Git(format!("find_tree: {e}")))?;
 
-        let sig = Signature::now(&self.device_name, "idtty@local")
+        let sig = Signature::now("IDtty User", "vault@idtty.local")
             .map_err(|e| SyncError::Git(format!("signature: {e}")))?;
 
         // Check for existing HEAD
@@ -683,7 +683,7 @@ impl SyncEngine {
             .find_tree(tree_id)
             .map_err(|e| SyncError::Git(format!("find tree: {e}")))?;
 
-        let sig = Signature::now(&self.device_name, "idtty@local")
+        let sig = Signature::now("IDtty User", "vault@idtty.local")
             .map_err(|e| SyncError::Git(format!("signature: {e}")))?;
 
         let local_parent = repo
@@ -776,7 +776,7 @@ impl SyncEngine {
             .find_tree(tree_id)
             .map_err(|e| SyncError::Git(format!("find_tree: {e}")))?;
 
-        let sig = Signature::now(&self.device_name, "idtty@local")
+        let sig = Signature::now("IDtty User", "vault@idtty.local")
             .map_err(|e| SyncError::Git(format!("signature: {e}")))?;
 
         let local_parent = repo
