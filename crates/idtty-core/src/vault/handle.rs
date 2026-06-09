@@ -2734,36 +2734,6 @@ fn load_device_privkeys(vault_path: &Path, device_id: Uuid) -> Result<DevicePriv
     Err(VaultError::NotFound("device private key not found".into()).into())
 }
 
-/// Store device private keys to OS keyring at vault creation time.
-/// Falls back to plaintext file if keyring is unavailable.
-fn store_device_privkeys(
-    vault_path: &Path,
-    device_id: Uuid,
-    x25519_secret: &x25519_dalek::StaticSecret,
-    ed25519_signing: &ed25519_dalek::SigningKey,
-) -> Result<(), IdttyError> {
-    let json = format!(
-        "{{\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
-        hex::encode(x25519_secret.to_bytes()),
-        hex::encode(ed25519_signing.to_bytes())
-    );
-
-    let service = keyring_service(vault_path);
-    let account = device_id.to_string();
-
-    // Try keyring first
-    if let Ok(entry) = keyring::Entry::new(&service, &account) {
-        if entry.set_password(&json).is_ok() {
-            return Ok(());
-        }
-    }
-
-    // Fallback: write plaintext file
-    let privkey_path = vault_path.join("meta/device-privkey.json");
-    super::write_vault_file(&privkey_path, json.as_bytes())?;
-    Ok(())
-}
-
 /// Parse device private keys from JSON string.
 fn parse_privkey_json(json: &str) -> Result<DevicePrivKeys, IdttyError> {
     let data: serde_json::Value = serde_json::from_str(json)
