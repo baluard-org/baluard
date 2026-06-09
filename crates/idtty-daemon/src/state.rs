@@ -378,23 +378,40 @@ impl VaultState {
         let v: serde_json::Value =
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let b64 = v["data"].as_str().unwrap_or("");
-        let ext = v["ext"].as_str().unwrap_or("png").to_string();
+        let ext_raw = v["ext"].as_str().unwrap_or("png");
+
+        // Validate extension to prevent path traversal
+        let ext = ext_raw.trim().to_lowercase();
+        if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
+            return Err("Invalid avatar extension".into());
+        }
+
         if b64.is_empty() {
             // Remove avatar
             let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
-            if let Some(old_ext) = &settings.avatar_ext {
-                let old_path = handle.path.join(format!("meta/avatar.{old_ext}"));
-                let _ = std::fs::remove_file(&old_path);
+            if let Some(ref old_ext) = settings.avatar_ext {
+                let old_ext_clean = old_ext.trim().to_lowercase();
+                if matches!(old_ext_clean.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
+                    let old_path = handle.path.join(format!("meta/avatar.{old_ext_clean}"));
+                    let _ = std::fs::remove_file(&old_path);
+                }
             }
             let mut settings = settings;
             settings.avatar_ext = None;
             handle.save_settings(&settings).map_err(|e| format!("{e}"))?;
             return Ok(());
         }
+
+        // Cap avatar size (~350KB base64 = ~256KB decoded)
+        if b64.len() > 350_000 {
+            return Err("Avatar too large (max 256KB)".into());
+        }
+
         use base64::Engine;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(b64)
             .map_err(|e| format!("base64 decode: {e}"))?;
+
         // Save avatar file
         let avatar_path = handle.path.join(format!("meta/avatar.{ext}"));
         let tmp_path = avatar_path.with_extension("tmp");
@@ -402,12 +419,14 @@ impl VaultState {
         std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| format!("chmod avatar: {e}"))?;
         std::fs::rename(&tmp_path, &avatar_path).map_err(|e| format!("rename avatar: {e}"))?;
+
         // Update settings
         let mut settings = handle.get_settings().map_err(|e| format!("{e}"))?;
         // Remove old avatar if ext changed
-        if let Some(old_ext) = &settings.avatar_ext {
-            if old_ext != &ext {
-                let old_path = handle.path.join(format!("meta/avatar.{old_ext}"));
+        if let Some(ref old_ext) = settings.avatar_ext {
+            let old_ext_clean = old_ext.trim().to_lowercase();
+            if old_ext_clean != ext && matches!(old_ext_clean.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
+                let old_path = handle.path.join(format!("meta/avatar.{old_ext_clean}"));
                 let _ = std::fs::remove_file(&old_path);
             }
         }

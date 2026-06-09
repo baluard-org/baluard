@@ -113,6 +113,7 @@ export default function VaultView() {
           aria-modal="true"
           aria-labelledby="empty-trash-title"
           class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
+          onClick={() => setShowEmptyTrashConfirm(false)}
         >
           <FocusTrap containerRef={emptyTrashRef} onEscape={() => setShowEmptyTrashConfirm(false)} />
           <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -443,8 +444,8 @@ export default function VaultView() {
                 setViewCipher={setViewCipher}
                 setActivePane={vault.setActivePane}
                 selectedCategory={vault.selectedCategory()}
-                onArchive={() => setShowArchiveConfirm(true)}
-onDelete={(id) => setShowDeleteConfirm(true)}
+                                onArchive={() => setShowArchiveConfirm(true)}
+                onDelete={(id) => setShowDeleteConfirm(true)}
               />
             </Match>
             <Match when={vault.activePane() === "add"}>

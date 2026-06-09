@@ -93,7 +93,9 @@ export default function SettingsModal() {
     try {
       const b64 = await daemon("vault.avatar.get");
       setAvatarB64(b64 || "");
-    } catch {}
+    } catch (e) {
+      if (import.meta.env.DEV) console.warn("loadSettings avatar:", e);
+    }
   }
 
   async function saveAutoLock() {

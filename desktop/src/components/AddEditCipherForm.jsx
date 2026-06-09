@@ -79,7 +79,7 @@ export default function AddEditCipherForm(props) {
   // Schema-driven layout rows (reactive)
   const layoutRows = () => {
     const s = schema();
-    return s.layout || s.fields.length ? (s.layout || []) : [];
+    return s.layout || [];
   };
 
   function addTag() {
