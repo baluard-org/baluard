@@ -406,6 +406,49 @@ impl VaultHandle {
         }
     }
 
+    /// Encrypt metadata JSON and write to disk atomically.
+    /// Shared by save_folders, save_tags_enc, save_profile.
+    fn encrypt_and_write_meta(
+        &self,
+        key: &[u8; 32],
+        _label: &str,
+        json: &[u8],
+        enc_path: &std::path::Path,
+    ) -> Result<(), IdttyError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let nonce_counter = {
+            use rand::RngCore;
+            let mut bytes = [0u8; 8];
+            rand::thread_rng().fill_bytes(&mut bytes);
+            u64::from_le_bytes(bytes)
+        };
+        let nonce = crate::crypto::aead::build_nonce(nonce_counter, Uuid::nil());
+        let aad = crate::crypto::aead::build_aad(
+            self.vault_id,
+            crate::types::ObjectType::Meta,
+            Uuid::nil(),
+            None,
+            crate::ALG_AES_256_GCM,
+            unlocked.current_epoch,
+            1,
+        );
+        let header = crate::types::EnvelopeHeader {
+            version: crate::IDTTY_VERSION,
+            alg_id: crate::ALG_AES_256_GCM,
+            key_epoch: unlocked.current_epoch,
+            nonce_counter,
+            update_seq: 1,
+            tier: None,
+        };
+        let envelope = crate::crypto::aead::encrypt(key, json, &aad, &nonce, header)?;
+        let envelope_bytes = crate::vault::envelope::serialize(&envelope)?;
+        super::write_vault_file(enc_path, &envelope_bytes)?;
+        Ok(())
+    }
+
     /// Get vault settings (reads from disk).
     pub fn get_settings(&self) -> Result<crate::vault::manifest::VaultSettings, IdttyError> {
         let settings_path = self.path.join("meta/settings.json");
@@ -457,6 +500,19 @@ impl VaultHandle {
             let profile: crate::vault::manifest::UserProfile =
                 serde_json::from_slice(&decrypted)
                     .map_err(|e| VaultError::Metadata(format!("profile decrypt parse: {e}")))?;
+            // Cleanup: strip stale identity fields from plaintext settings.json
+            // (crash window: profile.enc written but settings.json not yet stripped)
+            if let Ok(mut settings) = self.get_settings() {
+                if settings.display_name.is_some()
+                    || settings.subtitle.is_some()
+                    || settings.avatar_ext.is_some()
+                {
+                    settings.display_name = None;
+                    settings.subtitle = None;
+                    settings.avatar_ext = None;
+                    let _ = self.save_settings(&settings);
+                }
+            }
             return Ok(profile);
         }
 
@@ -490,34 +546,8 @@ impl VaultHandle {
             .map_err(|e| VaultError::Metadata(format!("profile key derivation: {e}")))?;
         let json = serde_json::to_vec(profile)
             .map_err(|e| VaultError::Metadata(format!("profile serialization: {e}")))?;
-        let nonce_counter = {
-            use rand::RngCore;
-            let mut bytes = [0u8; 8];
-            rand::thread_rng().fill_bytes(&mut bytes);
-            u64::from_le_bytes(bytes)
-        };
-        let nonce = crate::crypto::aead::build_nonce(nonce_counter, Uuid::nil());
-        let aad = crate::crypto::aead::build_aad(
-            self.vault_id,
-            crate::types::ObjectType::Meta,
-            Uuid::nil(),
-            None,
-            crate::ALG_AES_256_GCM,
-            unlocked.current_epoch,
-            1,
-        );
-        let header = crate::types::EnvelopeHeader {
-            version: crate::IDTTY_VERSION,
-            alg_id: crate::ALG_AES_256_GCM,
-            key_epoch: unlocked.current_epoch,
-            nonce_counter,
-            update_seq: 1,
-            tier: None,
-        };
-        let envelope = crate::crypto::aead::encrypt(&key, &json, &aad, &nonce, header)?;
-        let envelope_bytes = crate::vault::envelope::serialize(&envelope)?;
         let enc_path = self.path.join("meta/profile.enc");
-        super::write_vault_file(&enc_path, &envelope_bytes)?;
+        self.encrypt_and_write_meta(&key, "profile", &json, &enc_path)?;
 
         // Strip identity fields from plaintext settings.json
         let mut settings = self.get_settings().unwrap_or_default();
@@ -572,34 +602,8 @@ impl VaultHandle {
             .map_err(|e| VaultError::Metadata(format!("folders key derivation: {e}")))?;
         let json = serde_json::to_vec(folders)
             .map_err(|e| VaultError::Metadata(format!("folders serialization: {e}")))?;
-        let nonce_counter = {
-            use rand::RngCore;
-            let mut bytes = [0u8; 8];
-            rand::thread_rng().fill_bytes(&mut bytes);
-            u64::from_le_bytes(bytes)
-        };
-        let nonce = crate::crypto::aead::build_nonce(nonce_counter, Uuid::nil());
-        let aad = crate::crypto::aead::build_aad(
-            self.vault_id,
-            crate::types::ObjectType::Meta,
-            Uuid::nil(),
-            None,
-            crate::ALG_AES_256_GCM,
-            unlocked.current_epoch,
-            1,
-        );
-        let header = crate::types::EnvelopeHeader {
-            version: crate::IDTTY_VERSION,
-            alg_id: crate::ALG_AES_256_GCM,
-            key_epoch: unlocked.current_epoch,
-            nonce_counter,
-            update_seq: 1,
-            tier: None,
-        };
-        let envelope = crate::crypto::aead::encrypt(&key, &json, &aad, &nonce, header)?;
-        let envelope_bytes = crate::vault::envelope::serialize(&envelope)?;
         let enc_path = self.path.join("meta/folders.enc");
-        super::write_vault_file(&enc_path, &envelope_bytes)?;
+        self.encrypt_and_write_meta(&key, "folders", &json, &enc_path)?;
         // Remove legacy plaintext file if it still exists
         let json_path = self.path.join("meta/folders.json");
         if json_path.exists() {
@@ -1528,34 +1532,8 @@ impl VaultHandle {
             .map_err(|e| VaultError::Metadata(format!("tags key derivation: {e}")))?;
         let json = serde_json::to_vec(index)
             .map_err(|e| VaultError::Metadata(format!("tags serialization: {e}")))?;
-        let nonce_counter = {
-            use rand::RngCore;
-            let mut bytes = [0u8; 8];
-            rand::thread_rng().fill_bytes(&mut bytes);
-            u64::from_le_bytes(bytes)
-        };
-        let nonce = crate::crypto::aead::build_nonce(nonce_counter, Uuid::nil());
-        let aad = crate::crypto::aead::build_aad(
-            self.vault_id,
-            crate::types::ObjectType::Meta,
-            Uuid::nil(),
-            None,
-            crate::ALG_AES_256_GCM,
-            unlocked.current_epoch,
-            1,
-        );
-        let header = crate::types::EnvelopeHeader {
-            version: crate::IDTTY_VERSION,
-            alg_id: crate::ALG_AES_256_GCM,
-            key_epoch: unlocked.current_epoch,
-            nonce_counter,
-            update_seq: 1,
-            tier: None,
-        };
-        let envelope = crate::crypto::aead::encrypt(&key, &json, &aad, &nonce, header)?;
-        let envelope_bytes = crate::vault::envelope::serialize(&envelope)?;
         let enc_path = self.path.join("meta/tags.enc");
-        super::write_vault_file(&enc_path, &envelope_bytes)?;
+        self.encrypt_and_write_meta(&key, "tags", &json, &enc_path)?;
         // Remove legacy plaintext file if it still exists
         let json_path = self.path.join("meta/tag_index.json");
         if json_path.exists() {
