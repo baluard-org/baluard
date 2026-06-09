@@ -1,7 +1,7 @@
 # IDtty: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-06-04
+> Last updated: 2026-06-09
 
 ---
 
@@ -24,8 +24,8 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
 - `/crates/idtty-core` - Rust core engine: crypto, keys, vault, padding, git sync
 - `/crates/idtty-cli` - Terminal CLI client (clap, daemon-first with `--direct` fallback)
-- `/crates/idtty-daemon` - Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state)
-- `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 8 cipher types, generator, TOTP, auto-lock, dark/light themes)
+- `/crates/idtty-daemon` - Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state, SSH key generation)
+- `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 8 cipher types, generator, TOTP, auto-lock, dark/light themes, i18n en/es)
 
 ---
 
@@ -63,7 +63,14 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | Linked Custom Fields | Done | 24 LinkedFieldType variants with type-safe resolution |
 | Nested Folders | Done | Max depth 16. Cascade delete. BFS descendant collection |
 | Archive | Done | Archive/unarchive ciphers. Separate list view |
-| Extra cipher types | Done | BankAccount (10 fields), DriversLicense (12 fields), Passport & ID (13 fields) |
+| Extra cipher types | Done | BankAccount (10 fields), DriversLicense (12 fields), Passport & ID (13 fields)
+| SSH key generation | Done | Ed25519 (default), RSA 4096, ECDSA P-256. Daemon-side via `ssh-key` crate. OpenSSH format output |
+| User profile | Done | Display name, subtitle, avatar in VaultSettings. Avatar file in vault dir. Sidebar reads from context |
+| Modal accessibility | Done | FocusTrap component (Tab trap, Escape dismiss, auto-focus, restore focus). Applied to all 6 modals |
+| Tag deletion | Done | Hover X on sidebar pills, confirmation modal, tag.delete daemon command |
+| Archive confirmation | Done | ArchiveConfirmModal with FocusTrap. Prompts before archiving entries |
+| i18n completion | Done | All hardcoded strings replaced with t() keys. en.json + es.json in sync |
+| Toast notifications | Done | toastSignal.js standalone signals. All user feedback via toasts | |
 | Orgs | Done | Team/org sharing. HPKE key wrapping. Auto-rekey on member removal |
 | Emergency access | Done | Break-glass access. Pre-wrapped Root Key. Advisory time gate |
 | Providers | Done | GitHub/GitLab adapters. OAuth + PAT. Auto-create vault repo |
@@ -290,14 +297,14 @@ idtty/
 ├── crates/
 │   ├── idtty-core/               # Rust Core: crypto, keys, vault, padding, sync, import/export, health, biometric, attachments
 │   ├── idtty-cli/                # Terminal CLI (daemon-first + --direct fallback)
-│   └── idtty-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState, auto-lock, TOTP, attachments, biometric)
+│   └── idtty-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState, auto-lock, TOTP, attachments, biometric, SSH key gen)
 ├── desktop/                      # Tauri v2 Desktop (SolidJS/Tailwind)
 │   ├── src/
-│   │   ├── components/         # 19 components (Icon.jsx, VaultView, CipherDetail, etc.)
-│   │   ├── context/             # AuthContext, VaultContext, errorSignal, themeSignal
+│   │   ├── components/         # 25 components (VaultView, CipherDetail, SshKeyGenerator, FocusTrap, etc.)
+│   │   ├── context/             # AuthContext, VaultContext, errorSignal, themeSignal, toastSignal
 │   │   ├── lib/                 # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js
-│   │   ├── __tests__/           # 96 vitest tests (payload, utils, filters, cipherSchema)
-│   │   └── App.jsx               # Root component (thin provider wrapper)
+│   │   ├── __tests__/           # vitest tests (payload, utils, filters, cipherSchema)
+│   │   └── i18n/locales/        # en.json, es.json (all user-facing strings)
 ├── docs/                         # Architecture & design docs
 ├── plans/                        # Implementation plans
 └── justfile                      # Build system
