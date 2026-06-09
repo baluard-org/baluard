@@ -132,8 +132,7 @@ export default function SettingsModal() {
         display_name: displayName() || null,
         subtitle: profileSubtitle() || null,
       }));
-      setProfileSaved(true);
-      setTimeout(() => setProfileSaved(false), 1500);
+      toastSuccess(t("settings.profileSaved"));
     } catch (e) {
       toastError(sanitizeError(e, t));
     }
