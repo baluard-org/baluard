@@ -69,7 +69,7 @@ export default function ImportExportButton() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `idtty-export.${ext}`;
+      a.download = `baluard-export.${ext}`;
       a.click();
       URL.revokeObjectURL(url);
       setMessage(t("settings.exportComplete"));

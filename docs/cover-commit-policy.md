@@ -22,7 +22,7 @@ From these, they can infer:
 Cover commits are no-op commits (same tree as HEAD) that are indistinguishable from real vault updates. Combined with:
 
 1. **Static commit message** (`COMMIT_MESSAGE` constant in engine.rs)
-2. **Generic git author** (`"IDtty User" <vault@idtty.local>`)
+2. **Generic git author** (`"Baluard User" <vault@baluard.local>`)
 3. **Encrypted metadata** (folders, tags, profile, activity all `.enc`)
 4. **Timestamp normalization** on vault lock
 5. **Jitter delay** before network operations (`apply_push_jitter`)

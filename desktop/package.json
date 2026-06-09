@@ -1,7 +1,7 @@
 {
-  "name": "idtty-desktop",
+  "name": "baluard-desktop",
   "version": "0.1.0",
-  "description": "IDtty desktop app",
+  "description": "Baluard desktop app",
   "type": "module",
   "scripts": {
     "dev": "vite",

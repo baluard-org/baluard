@@ -1,12 +1,12 @@
 set unstable
 
-# ── IDtty build system ──────────────────────────────────────────────────────
+# ── Baluard build system ──────────────────────────────────────────────────────
 # Usage: just <target>
 # Help:  just            (lists all targets)
 # ────────────────────────────────────────────────────────────────────────────
 
-binary      := "idtty"
-daemon      := "idtty-daemon"
+binary      := "baluard"
+daemon      := "baluard-daemon"
 build_dir   := "bin"
 dist_dir    := "dist"
 version     := trim(shell("grep -A1 '^\\[workspace.package\\]' Cargo.toml | grep '^version' | sed 's/.*= *\"\\(.*\\)\".*$/\\1/'"))
@@ -72,7 +72,7 @@ test-release:
 
 # Run core library tests only
 test-core:
-	{{ linuxbrew_env }} cargo test -p idtty-core
+	{{ linuxbrew_env }} cargo test -p baluard-core
 
 # Run tests with output
 test-verbose:
@@ -104,15 +104,15 @@ check: fmt-check lint test build
 
 # ── Desktop (Tauri) ────────────────────────────────────────────────────────
 
-# Kill any running idtty-daemon process (exact binary match only)
+# Kill any running baluard-daemon process (exact binary match only)
 _kill_daemon:
 	#!/usr/bin/env bash
 	set +e
-	SOCK="${XDG_RUNTIME_DIR:-$HOME/.local/share/idtty}/idtty.sock"
-	[[ "$OSTYPE" == "darwin"* ]] && SOCK="$HOME/Library/Application Support/idtty/idtty.sock"
+	SOCK="${XDG_RUNTIME_DIR:-$HOME/.local/share/baluard}/baluard.sock"
+	[[ "$OSTYPE" == "darwin"* ]] && SOCK="$HOME/Library/Application Support/baluard/baluard.sock"
 
 	# pgrep -x matches exact binary name only — no collateral damage
-	pgrep -x 'idtty-daemon' 2>/dev/null | while IFS= read -r pid; do
+	pgrep -x 'baluard-daemon' 2>/dev/null | while IFS= read -r pid; do
 		[ -z "$pid" ] && continue
 		kill "$pid" 2>/dev/null
 		echo "Stopped daemon (pid=$pid)"
@@ -128,14 +128,14 @@ _sidecar-force:
 	set -euo pipefail
 	TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
 	mkdir -p desktop/src-tauri/binaries
-	{{ linuxbrew_env }} cargo build --release -p idtty-daemon -p idtty-cli
-	cp target/release/idtty-daemon "desktop/src-tauri/binaries/idtty-daemon-$TRIPLE"
-	cp target/release/idtty "desktop/src-tauri/binaries/idtty-$TRIPLE"
+	{{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli
+	cp target/release/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
+	cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
 	# Force-refresh sidecar in tauri target/debug
 	mkdir -p desktop/src-tauri/target/debug
-	cp "desktop/src-tauri/binaries/idtty-daemon-$TRIPLE" "desktop/src-tauri/target/debug/idtty-daemon"
-	cp "desktop/src-tauri/binaries/idtty-$TRIPLE" "desktop/src-tauri/target/debug/idtty"
-	echo "Sidecar rebuilt (forced): idtty-daemon-$TRIPLE"
+	cp "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE" "desktop/src-tauri/target/debug/baluard-daemon"
+	cp "desktop/src-tauri/binaries/baluard-$TRIPLE" "desktop/src-tauri/target/debug/baluard"
+	echo "Sidecar rebuilt (forced): baluard-daemon-$TRIPLE"
 
 # Build daemon sidecar for current platform (Tauri needs target-triple suffix)
 _sidecar:
@@ -145,22 +145,22 @@ _sidecar:
 	mkdir -p desktop/src-tauri/binaries
 
 	# Staleness check: skip cargo+copy if sidecar is newer than all Rust sources
-	SIDECAR="desktop/src-tauri/binaries/idtty-daemon-$TRIPLE"
+	SIDECAR="desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
 	if [ -f "$SIDECAR" ]; then
 	  # Find any .rs file newer than the sidecar binary
 	  NEWEST_SRC=$(find crates -name '*.rs' -newer "$SIDECAR" -print -quit 2>/dev/null || true)
 	  if [ -z "$NEWEST_SRC" ]; then
 	    echo "Sidecar up-to-date (no Rust changes detected)"
 	  else
-	    {{ linuxbrew_env }} cargo build --release -p idtty-daemon -p idtty-cli
-	    cp target/release/idtty-daemon "$SIDECAR"
-	    cp target/release/idtty "desktop/src-tauri/binaries/idtty-$TRIPLE"
+	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli
+	    cp target/release/baluard-daemon "$SIDECAR"
+	    cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
 	    echo "Sidecar rebuilt: $SIDECAR"
 	  fi
 	else
-	    {{ linuxbrew_env }} cargo build --release -p idtty-daemon -p idtty-cli
-	    cp target/release/idtty-daemon "$SIDECAR"
-	    cp target/release/idtty "desktop/src-tauri/binaries/idtty-$TRIPLE"
+	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli
+	    cp target/release/baluard-daemon "$SIDECAR"
+	    cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
 	    echo "Sidecar rebuilt: $SIDECAR"
 	fi
 
@@ -168,8 +168,8 @@ _sidecar:
 	# to target/debug/ during compilation, but a stale cross-platform binary from
 	# another host's cargo build can cause "cannot execute binary file" on exec).
 	mkdir -p desktop/src-tauri/target/debug
-	cp "desktop/src-tauri/binaries/idtty-daemon-$TRIPLE" "desktop/src-tauri/target/debug/idtty-daemon"
-	cp "desktop/src-tauri/binaries/idtty-$TRIPLE" "desktop/src-tauri/target/debug/idtty"
+	cp "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE" "desktop/src-tauri/target/debug/baluard-daemon"
+	cp "desktop/src-tauri/binaries/baluard-$TRIPLE" "desktop/src-tauri/target/debug/baluard"
 
 # Install desktop npm dependencies
 desktop-deps:
@@ -179,9 +179,9 @@ desktop-deps:
 codesign:
 	#!/usr/bin/env bash
 	set -euo pipefail
-	BINARY="desktop/src-tauri/target/debug/idtty-desktop"
+	BINARY="desktop/src-tauri/target/debug/baluard-desktop"
 	if [ ! -f "$BINARY" ]; then echo "Not found: $BINARY. Run desktop-debug first."; exit 1; fi
-	ENTITLEMENTS="desktop/src-tauri/idtty.entitlements"
+	ENTITLEMENTS="desktop/src-tauri/baluard.entitlements"
 	IDENTITY=$(security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db 2>/dev/null \
 		| grep "Apple Development" | head -1 | sed 's/.*"\(.*\)".*/\1/' || true)
 	if [ -z "$IDENTITY" ]; then
@@ -199,7 +199,7 @@ desktop-dev: _sidecar-force desktop-deps
 	just _kill_daemon
 	cd desktop && npm run tauri dev
 
-# Run desktop app with full debug logging (IDTTY_DEBUG=1)
+# Run desktop app with full debug logging (BALUARD_DEBUG=1)
 # Logs go to ./logs/ (daemon.log + desktop.log)
 # Share: zip logs/ or paste the relevant file
 desktop-debug: _sidecar-force desktop-deps
@@ -214,7 +214,7 @@ desktop-debug: _sidecar-force desktop-deps
 	echo "  daemon.log  — IPC routing, crypto, vault operations"
 	echo "  desktop.log — Tauri bridge, daemon requests/responses"
 	echo ""
-	IDTTY_DEBUG=1 IDTTY_LOG_DIR="$LOG_DIR" cd desktop && npm run tauri dev
+	BALUARD_DEBUG=1 BALUARD_LOG_DIR="$LOG_DIR" cd desktop && npm run tauri dev
 
 # Build desktop app (production bundle)
 desktop-build: _sidecar desktop-deps
@@ -227,13 +227,13 @@ e2e: build-release
 	#!/usr/bin/env bash
 	set -euo pipefail
 	VAULT=$(mktemp -d)
-	SOCK=$(mktemp -u /tmp/idtty-test-XXXXX)
+	SOCK=$(mktemp -u /tmp/baluard-test-XXXXX)
 	CLI="target/release/{{ binary }} --vault-path $VAULT --socket $SOCK"
 	echo "Vault: $VAULT Socket: $SOCK"
 	echo ""
 	echo "=== INIT ===" && printf "testpass123\ntestpass123\n" | target/release/{{ binary }} init --vault-path "$VAULT"
 	echo ""
-	echo "=== DAEMON ===" && target/release/{{ daemon }} --vault-path "$VAULT" --socket "$SOCK" &>/tmp/idtty-daemon.log & DAEMON_PID=$!; sleep 1
+	echo "=== DAEMON ===" && target/release/{{ daemon }} --vault-path "$VAULT" --socket "$SOCK" &>/tmp/baluard-daemon.log & DAEMON_PID=$!; sleep 1
 	echo "=== PING ===" && $CLI ping
 	echo ""
 	echo "=== UNLOCK ===" && $CLI unlock <<< "testpass123"

@@ -1,4 +1,4 @@
-# IDtty Documentation
+# Baluard Documentation
 
 > Single source of truth for architecture, security, and implementation status.
 

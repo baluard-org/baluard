@@ -1,9 +1,9 @@
 {
   "app": {
-    "name": "IDtty"
+    "name": "Baluard"
   },
   "login": {
-    "title": "IDtty",
+    "title": "Baluard",
     "subtitle": "Ingresa la contraseña maestra",
     "passwordPlaceholder": "Contraseña maestra",
     "unlock": "Desbloquear",
@@ -295,7 +295,7 @@
     "statusStale": "Antiguo",
     "statusDormant": "Dormido",
     "revokeConfirm": "¿Revocar \"{name}\"? Esto rotará las claves de la bóveda. Esta acción no se puede deshacer.",
-    "revocationFailed": "Error de revocación: {error}. Intenta con la CLI: idtty --direct devices revoke {id}",
+    "revocationFailed": "Error de revocación: {error}. Intenta con la CLI: baluard --direct devices revoke {id}",
     "title": "Dispositivos",
     "subtitle": "Dispositivos que se han sincronizado con esta bóveda.",
     "revokedTitle": "Dispositivo revocado",

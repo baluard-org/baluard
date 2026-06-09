@@ -1,9 +1,9 @@
 {
   "app": {
-    "name": "IDtty"
+    "name": "Baluard"
   },
   "login": {
-    "title": "IDtty",
+    "title": "Baluard",
     "subtitle": "Enter master password",
     "passwordPlaceholder": "Master password",
     "unlock": "Unlock",
@@ -295,7 +295,7 @@
     "statusStale": "Stale",
     "statusDormant": "Dormant",
     "revokeConfirm": "Revoke \"{name}\"? This will rotate vault keys. This cannot be undone.",
-    "revocationFailed": "Revocation failed: {error}. Try CLI: idtty --direct devices revoke {id}",
+    "revocationFailed": "Revocation failed: {error}. Try CLI: baluard --direct devices revoke {id}",
     "title": "Devices",
     "subtitle": "Devices that have synced with this vault.",
     "revokedTitle": "Device Revoked",

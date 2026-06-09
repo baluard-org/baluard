@@ -3,7 +3,7 @@
 **Date:** 2026-06-09
 **Reviewers:** TARS (lead), peer review (via peer), Agy (via agy)
 **Subject:** `docs/vault-metadata-leakage-analysis.md`
-**Scope:** Independent security architects assessing the same leakage report against the IDtty Rust/Tauri codebase
+**Scope:** Independent security architects assessing the same leakage report against the Baluard Rust/Tauri codebase
 
 ---
 
@@ -17,7 +17,7 @@ Both peer agents independently classified the findings as critical, identifying 
 
 > **Finding 1 -- `device-privkey.json`: CRITICAL.** Look at `handle.rs:248-271`. The unlock path reads raw hex X25519 private keys from a plaintext file on disk. The comment at line 247 says `"NOT for production!"` but there is no keyring path implemented -- this IS the production code path. Any process running as the same user (browser, npm package, any Electron app, any script with file read access) can extract the device private key. Combined with the master password (keylogger, shoulder surfing, reuse) it fully compromises the vault. The `.gitignore` entry prevents git exposure but does nothing for local malware. This is real-world exploitable with a single `cat` command.
 
-> **Finding 2 -- `folders.json` + `tag_index.json`: CRITICAL in the git-sync threat model.** IDtty's entire identity is "git-native password manager." These files are committed to git. A remote host (GitHub, GitLab, Gitea, S3, any cloud sync) with read access to the repository gets full content classification without any decryption. In a breach of a private repo -- or a misconfigured public repo -- the attacker immediately knows `["Banking", "Crypto Wallets", "Work VPN", "2FA Seeds"]`. This is the highest-probability external attacker path for this product.
+> **Finding 2 -- `folders.json` + `tag_index.json`: CRITICAL in the git-sync threat model.** Baluard's entire identity is "git-native password manager." These files are committed to git. A remote host (GitHub, GitLab, Gitea, S3, any cloud sync) with read access to the repository gets full content classification without any decryption. In a breach of a private repo -- or a misconfigured public repo -- the attacker immediately knows `["Banking", "Crypto Wallets", "Work VPN", "2FA Seeds"]`. This is the highest-probability external attacker path for this product.
 
 > **Everything else is medium** -- real information leakage, but requires local filesystem access and doesn't directly break the crypto.
 
@@ -113,15 +113,15 @@ This is the highest-priority fix because it addresses the git-sync threat model:
 
 The pattern already exists. `index.enc` proves the infrastructure works. This is a straight copy of that pattern.
 
-**In `crates/idtty-core/src/crypto/hkdf_derive.rs`:** Add two derivation functions:
+**In `crates/baluard-core/src/crypto/hkdf_derive.rs`:** Add two derivation functions:
 
 ```rust
-pub fn derive_folders_key(root_key: &[u8]) -> Result<[u8; 32], IdttyError> {
-    derive_subkey(root_key, b"idtty-folders-v1")
+pub fn derive_folders_key(root_key: &[u8]) -> Result<[u8; 32], BaluardError> {
+    derive_subkey(root_key, b"baluard-folders-v1")
 }
 
-pub fn derive_tags_key(root_key: &[u8]) -> Result<[u8; 32], IdttyError> {
-    derive_subkey(root_key, b"idtty-tags-v1")
+pub fn derive_tags_key(root_key: &[u8]) -> Result<[u8; 32], BaluardError> {
+    derive_subkey(root_key, b"baluard-tags-v1")
 }
 ```
 
@@ -161,9 +161,9 @@ The `keyring` crate is already in the dependency tree per platform targets. The 
 **In `vault/handle.rs`:** Replace the privkey read at lines 248-271 with:
 
 ```rust
-fn load_device_privkey(vault_path: &Path, device_id: Uuid) -> Result<x25519_dalek::StaticSecret, IdttyError> {
+fn load_device_privkey(vault_path: &Path, device_id: Uuid) -> Result<x25519_dalek::StaticSecret, BaluardError> {
     // 1. Try keyring
-    let service = format!("idtty-{}", derive_vault_fingerprint(vault_path));
+    let service = format!("baluard-{}", derive_vault_fingerprint(vault_path));
     let entry = keyring::Entry::new(&service, &device_id.to_string())
         .map_err(|e| VaultError::Metadata(format!("keyring: {e}")))?;
     if let Ok(secret) = entry.get_password() {
@@ -194,7 +194,7 @@ fn load_device_privkey(vault_path: &Path, device_id: Uuid) -> Result<x25519_dale
 
 #### Agy's Implementation Plan
 
-Store the private key material under service name `xyz.actitud.idtty` and account identifier `device_identity`. Fall back to an encrypted local file using a key derived from system-level hardware identifiers only if the system keyring is unavailable.
+Store the private key material under service name `xyz.actitud.baluard` and account identifier `device_identity`. Fall back to an encrypted local file using a key derived from system-level hardware identifiers only if the system keyring is unavailable.
 
 #### Design Decision
 
@@ -280,8 +280,8 @@ Both agents agree this is a mitigation, not a fix. Timestamps are inherent to fi
 During vault initialization, programmatically configure the local repository:
 
 ```bash
-git config user.name "IDtty User"
-git config user.email "vault@idtty.local"
+git config user.name "Baluard User"
+git config user.email "vault@baluard.local"
 ```
 
 Set `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE` environment variables to a fixed epoch when executing commit commands from the Tauri backend.

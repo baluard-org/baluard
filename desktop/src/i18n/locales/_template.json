@@ -2,10 +2,10 @@
   "_comment": "Copy this file, rename to your language code (e.g. es.json, fr.json, de.json), and translate the values. Keep the keys exactly as they are. Submit a PR to desktop/src/i18n/locales/.",
 
   "app": {
-    "name": "IDtty"
+    "name": "Baluard"
   },
   "login": {
-    "title": "IDtty",
+    "title": "Baluard",
     "subtitle": "ENTER_MASTER_PASSWORD",
     "passwordPlaceholder": "MASTER_PASSWORD",
     "unlock": "UNLOCK",

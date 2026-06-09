@@ -27,7 +27,7 @@ export async function biometryAvailable() {
  * Returns true if authenticated, throws on failure/cancel.
  */
 export async function biometryPrompt(reason) {
-  await authenticate(reason || "Unlock IDtty", {
+  await authenticate(reason || "Unlock Baluard", {
     allowDeviceCredential: true,
   });
   return true;

@@ -268,7 +268,7 @@ export default function SettingsModal() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `idtty_export.${isCsv ? "csv" : "json"}`;
+      a.download = `baluard_export.${isCsv ? "csv" : "json"}`;
       a.click();
       URL.revokeObjectURL(url);
       setMessage(t("settings.exportComplete"));

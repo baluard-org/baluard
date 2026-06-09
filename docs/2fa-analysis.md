@@ -8,7 +8,7 @@
 
 ## Context
 
-IDtty is a serverless, local-first password manager. No backend. No cloud. Vault is encrypted files on disk. Sync via optional git remote.
+Baluard is a serverless, local-first password manager. No backend. No cloud. Vault is encrypted files on disk. Sync via optional git remote.
 
 The question: **What does 2FA mean when there is no server to enforce it?**
 
@@ -40,7 +40,7 @@ Traditional (server-based):
   Attack separation: compromising the password hash ≠ compromising the TOTP secret
   Result: real second factor
 
-Serverless (IDtty):
+Serverless (Baluard):
   User holds: master password + TOTP code
   Vault holds: KEK-derived encryption + TOTP shared secret
   Attack separation: same master password decrypts BOTH the vault AND the TOTP secret
@@ -59,7 +59,7 @@ TOTP only adds real security if the shared secret is stored behind a **different
 
 ### Tier 1: Correct Framing (zero cost, do now)
 
-IDtty is already 2FA by design:
+Baluard is already 2FA by design:
 
 - **Something you know**: master password
 - **Something you have**: the encrypted vault files on your physical device(s)
@@ -72,7 +72,7 @@ Document this explicitly in UX. Make it a feature, not an apology. "Your vault o
 unlock(vault_path, master_password):
   1. master_password → Argon2id → KEK
   2. KEK → decrypt root key (as today)
-  3. FIDO2 challenge: IDtty generates random nonce
+  3. FIDO2 challenge: Baluard generates random nonce
   4. Platform authenticator signs nonce with hardware-bound private key
   5. Verify Ed25519 signature against stored public key (in vault header)
   6. Only then: root key used for vault operations
@@ -96,9 +96,9 @@ unlock(vault_path, master_password):
 **Registration flow**:
 ```
 1. User enables "Hardware unlock" in settings
-2. IDtty calls FIDO2 make_credential() on platform authenticator
+2. Baluard calls FIDO2 make_credential() on platform authenticator
 3. User authenticates via biometric (Touch ID, Windows Hello, fingerprint)
-4. IDtty stores credential_id + public_key in vault header
+4. Baluard stores credential_id + public_key in vault header
 5. From now on, vault unlock requires both master password + FIDO2 assertion
 ```
 

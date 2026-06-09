@@ -16,7 +16,7 @@ export default function RepromptModal(props) {
   const [failed, setFailed] = createSignal(false);
 
   // Expose for parent to trigger the modal
-  window.__idttyReprompt = { show: () => { setShow(true); setPassword(""); setFailed(false); }, hide: () => setShow(false) };
+  window.__baluardReprompt = { show: () => { setShow(true); setPassword(""); setFailed(false); }, hide: () => setShow(false) };
 
   async function handleConfirm() {
     const pw = password();

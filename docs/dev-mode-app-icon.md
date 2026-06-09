@@ -6,11 +6,11 @@
 
 ## Problem
 
-When running the desktop app via `just desktop-dev` or `just desktop-debug`, third-party app switchers (Command-Tab Plus 2) display a generic terminal icon instead of the IDtty app icon.
+When running the desktop app via `just desktop-dev` or `just desktop-debug`, third-party app switchers (Command-Tab Plus 2) display a generic terminal icon instead of the Baluard app icon.
 
 ## Root Cause
 
-`cargo tauri dev` compiles and runs a bare executable at `target/debug/idtty-desktop` -- **not** inside a macOS `.app` bundle.
+`cargo tauri dev` compiles and runs a bare executable at `target/debug/baluard-desktop` -- **not** inside a macOS `.app` bundle.
 
 macOS resolves app icons from two different sources depending on who asks:
 
@@ -23,7 +23,7 @@ Third-party switchers resolve the icon from the filesystem bundle via `NSRunning
 
 ## Production Builds
 
-`just desktop-build` produces a proper `IDtty.app` bundle with the icon embedded. All switchers display it correctly.
+`just desktop-build` produces a proper `Baluard.app` bundle with the icon embedded. All switchers display it correctly.
 
 ## References
 

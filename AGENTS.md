@@ -3,7 +3,7 @@
 **Updated:** 2026-06-09
 
 ## OVERVIEW
-Project: **IDtty** (Git-native password manager)
+Project: **Baluard** (Git-native password manager)
 Stack: Rust (core crypto + CLI + daemon), SolidJS/Tailwind/Tauri v2 (desktop), Protobuf (IPC schema)
 License: GPL-3.0
 
@@ -13,9 +13,9 @@ Git-native password manager with padded-bucket encrypted storage, device-identit
 
 ## STRUCTURE
 ```
-idtty/
+baluard/
 ├── crates/
-│   ├── idtty-core/             # Core library: crypto, keys, vault, sync
+│   ├── baluard-core/             # Core library: crypto, keys, vault, sync
 │   │   └── src/
 │   │       ├── crypto/         # KDF (Argon2id), AEAD (AES-256-GCM), HKDF, HPKE, Ed25519, TOTP
 │   │       ├── keys/           # Key hierarchy (Root/SGK/Item/Session), epochs, rotation
@@ -25,13 +25,13 @@ idtty/
 │   │       ├── device_manager.rs # Device fleet: registry, rotation, activity, enrollment
 │   │       ├── paths.rs        # Platform-correct base dirs (data, socket, logs, token)
 │   │       ├── types.rs        # CipherKind, CipherInput, CipherMeta, CustomFieldType, etc.
-│   │       └── error.rs        # IdttyError enum
-│   ├── idtty-cli/              # CLI (clap) — daemon-first with --direct fallback
+│   │       └── error.rs        # BaluardError enum
+│   ├── baluard-cli/              # CLI (clap) — daemon-first with --direct fallback
 │   │   └── src/
 │   │       ├── main.rs         # Command dispatch
 │   │       ├── client.rs       # Protobuf socket client
 │   │       └── commands/       # Dual-mode handlers
-│   └── idtty-daemon/           # Background IPC daemon
+│   └── baluard-daemon/           # Background IPC daemon
 │       └── src/
 │           ├── main.rs         # Socket listener, SIGINT/SIGTERM, 0600 perms
 │           ├── handler.rs      # Protobuf routing, token-gated IPC
@@ -93,32 +93,32 @@ Implications:
 ## CODING STANDARDS
 * **Rust**: Edition 2024, MSRV 1.85. Feature flags: `full` (default) = `git-sync` + `org` + `emergency`. `thiserror` for library errors, `anyhow` for CLI. `proptest` for property-based tests.
 * **JS/TS**: ES modules, SolidJS, Vite. Tailwind for layout. `crypto.getRandomValues` only (never `Math.random`).
-* **Protobuf**: proto3, `idtty.vault` package. Compiled via prost in daemon + CLI.
+* **Protobuf**: proto3, `baluard.vault` package. Compiled via prost in daemon + CLI.
 * **Security**: AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket 0600. Zeroize on drop for key material and TOTP secrets.
 
 ## DEBUG LOGGING
-`just desktop-debug` runs the desktop app with `IDTTY_DEBUG=1`. Logs go to `./logs/` at cwd.
+`just desktop-debug` runs the desktop app with `BALUARD_DEBUG=1`. Logs go to `./logs/` at cwd.
 * `daemon.log` -- IPC routing, vault CRUD, serde errors, crypto ops (via `env_logger`)
 * `desktop.log` -- Tauri bridge: every daemon request with action, payload size, success/error (via `tauri-plugin-log`)
 
 Env vars (set automatically by `just desktop-debug`):
-* `IDTTY_DEBUG=1` -- enables Debug level (otherwise Warn only)
-* `IDTTY_LOG_DIR=<path>` -- overrides log directory (defaults vary by platform: `$XDG_STATE_HOME/idtty/` on Linux, `~/Library/Logs/idtty/` on macOS, `%LOCALAPPDATA%\idtty\logs\` on Windows)
+* `BALUARD_DEBUG=1` -- enables Debug level (otherwise Warn only)
+* `BALUARD_LOG_DIR=<path>` -- overrides log directory (defaults vary by platform: `$XDG_STATE_HOME/baluard/` on Linux, `~/Library/Logs/baluard/` on macOS, `%LOCALAPPDATA%\baluard\logs\` on Windows)
 
 Share logs: paste the file contents or `zip logs/ logs.zip`.
 
 ## WHERE TO LOOK
-* **Crypto primitives**: `crates/idtty-core/src/crypto/`
-* **Key hierarchy & lifecycle**: `crates/idtty-core/src/keys/`
-* **Vault CRUD & format**: `crates/idtty-core/src/vault/`
-* **Platform paths (data, socket, logs)**: `crates/idtty-core/src/paths.rs`
-* **CipherKind & data structs**: `crates/idtty-core/src/types.rs`
-* **Git sync**: `crates/idtty-core/src/sync/`
-* **CLI commands**: `crates/idtty-cli/src/commands/mod.rs`
-* **Daemon IPC**: `crates/idtty-daemon/src/handler.rs`
-* **Daemon vault state**: `crates/idtty-daemon/src/state.rs`
+* **Crypto primitives**: `crates/baluard-core/src/crypto/`
+* **Key hierarchy & lifecycle**: `crates/baluard-core/src/keys/`
+* **Vault CRUD & format**: `crates/baluard-core/src/vault/`
+* **Platform paths (data, socket, logs)**: `crates/baluard-core/src/paths.rs`
+* **CipherKind & data structs**: `crates/baluard-core/src/types.rs`
+* **Git sync**: `crates/baluard-core/src/sync/`
+* **CLI commands**: `crates/baluard-cli/src/commands/mod.rs`
+* **Daemon IPC**: `crates/baluard-daemon/src/handler.rs`
+* **Daemon vault state**: `crates/baluard-daemon/src/state.rs`
 * **Desktop frontend**: `desktop/src/App.jsx`
-* **Device fleet**: `crates/idtty-core/src/device_manager.rs`
+* **Device fleet**: `crates/baluard-core/src/device_manager.rs`
 * **Protobuf schemas**: `proto/`
 * **Design docs**: `docs/architecture-decisions.md` (authoritative)
 
@@ -137,7 +137,7 @@ Serde-tagged enum: `#[serde(tag = "type", content = "data")]`. 8 variants: Login
 JSON strings inside `GatewayRequest.payload`. `get_cipher` returns BOTH nested `kind` object AND flat top-level fields. `update_cipher` parses `kind` from payload (does NOT clone existing kind). `vault.list_full` returns all decrypted ciphers + folders + trash + archived in a single IPC call (used by desktop for fast unlock).
 
 ### IPC
-Unix domain sockets. 0600 via umask. Peer credential verification (SO_PEERCRED/getpeereid). `--socket` overrides default. Token-gated: 256-bit session token on unlock, constant-time comparison. All platform paths centralized in `idtty_core::paths` (`crates/idtty-core/src/paths.rs`).
+Unix domain sockets. 0600 via umask. Peer credential verification (SO_PEERCRED/getpeereid). `--socket` overrides default. Token-gated: 256-bit session token on unlock, constant-time comparison. All platform paths centralized in `baluard_core::paths` (`crates/baluard-core/src/paths.rs`).
 
 ### Padded Buckets
 5 tiers (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB). Auto-selected via `Tier::fit()`. Prevents metadata leakage.
@@ -146,7 +146,7 @@ Unix domain sockets. 0600 via umask. Peer credential verification (SO_PEERCRED/g
 Epoch state machine: CREATED -> ACTIVE -> ROTATING -> RETIRED -> DESTROYED. `revoke_device_and_rekey()` performs full rotation: validates preconditions, writes crash marker, re-encrypts all ciphers + attachments, writes keywrap, updates in-memory state. `rotate_root_key()` for non-revocation rotation. Recovery via BIP-39 phrase.
 
 ### CLI Dual-Mode
-All vault commands route through daemon by default. `--direct` falls back to idtty-core in-process. `--socket <path>` accepts custom socket.
+All vault commands route through daemon by default. `--direct` falls back to baluard-core in-process. `--socket <path>` accepts custom socket.
 
 ### Attachments
 AES-256-GCM encrypted with cipher's item key. Max 2MB. Stored at `<vault>/entries/<cipher_id>/attachments/<id>.enc`. Plaintext zeroized after use.

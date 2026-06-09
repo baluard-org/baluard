@@ -1,4 +1,4 @@
-# IDtty: Master Progress Document
+# Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
 > Last updated: 2026-06-09
@@ -8,7 +8,7 @@
 ## Project Overview
 
 **What**: Git-backed password manager. Encrypted vault stored as a git repo. No server.
-**Stack**: Rust Core Engine (`idtty-core` crypto/keys/vault/sync + `idtty-daemon` IPC socket server + `idtty-cli` terminal client) + Tauri v2 Desktop (SolidJS/Tailwind) + Single-String Protobuf Gateway.
+**Stack**: Rust Core Engine (`baluard-core` crypto/keys/vault/sync + `baluard-daemon` IPC socket server + `baluard-cli` terminal client) + Tauri v2 Desktop (SolidJS/Tailwind) + Single-String Protobuf Gateway.
 **Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell.
 **Architecture docs**: `docs/architecture-decisions.md` through `docs/software-architecture.md`.
 
@@ -22,9 +22,9 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
-- `/crates/idtty-core` - Rust core engine: crypto, keys, vault, padding, git sync
-- `/crates/idtty-cli` - Terminal CLI client (clap, daemon-first with `--direct` fallback)
-- `/crates/idtty-daemon` - Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state, SSH key generation)
+- `/crates/baluard-core` - Rust core engine: crypto, keys, vault, padding, git sync
+- `/crates/baluard-cli` - Terminal CLI client (clap, daemon-first with `--direct` fallback)
+- `/crates/baluard-daemon` - Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state, SSH key generation)
 - `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 8 cipher types, generator, TOTP, auto-lock, dark/light themes, i18n en/es)
 
 ---
@@ -33,7 +33,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 
 | Module | Status | What's Implemented |
 |--------|--------|--------------------|
-| `workspace` | Done | Rust workspace with idtty-core, idtty-cli, idtty-daemon crates |
+| `workspace` | Done | Rust workspace with baluard-core, baluard-cli, baluard-daemon crates |
 | `proto/schemas` | Done | `vault.proto`, `space.proto`, `auth.proto`. Compiled by prost-build in daemon and CLI |
 | `crypto/aead` | Done | AES-256-GCM with strict AAD binding |
 | `vault/handle` | Done | Vault CRUD operations |
@@ -125,7 +125,7 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 | Tag index cache | `meta/tag_index.json` rebuilt on vault.list_full | **Done** |
 | Tag CRUD | create_tag, rename_tag, delete_tag, list_tags in VaultHandle | **Done** |
 | Daemon IPC routes | tag.list, tag.create, tag.rename, tag.delete, tag.rebuild_index | **Done** |
-| CLI commands | `idtty tags list/create/rename/delete` | **Done** |
+| CLI commands | `baluard tags list/create/rename/delete` | **Done** |
 | Desktop: tag input | Free-text + autocomplete in Add/Edit form | **Done** |
 | Desktop: tag pills | CipherDetail header badges | **Done** |
 | Desktop: tag sidebar | Tag section in sidebar with click-to-filter | **Done** |
@@ -157,7 +157,7 @@ Features parked for the far future. Do not start without explicit confirmation.
 
 | Item | Description | Blocker |
 |------|-------------|---------|
-| Encrypted JSON export | IDtty-native format (Argon2id + AES-256-GCM). Git clone + recovery phrase already covers disaster recovery | Low priority, needs format documentation |
+| Encrypted JSON export | Baluard-native format (Argon2id + AES-256-GCM). Git clone + recovery phrase already covers disaster recovery | Low priority, needs format documentation |
 | FIDO2 credential storage | On Login cipher type. Requires hardware auth infrastructure | Needs FIDO2-compatible hardware for testing |
 
 ### Out of Scope (No Server)
@@ -168,7 +168,7 @@ Features parked for the far future. Do not start without explicit confirmation.
 | Breach report | HaveIBeenPwned requires external API |
 | Send | Encrypted sharing requires server relay |
 | HOTP | TOTP only. Counter-based OTP out of scope |
-| BW server API compat | IDtty is serverless |
+| BW server API compat | Baluard is serverless |
 
 ### Security
 
@@ -292,12 +292,12 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 ## File Map
 
 ```
-idtty/
+baluard/
 ├── proto/                        # Shared Protobuf Schemas (vault, space, auth)
 ├── crates/
-│   ├── idtty-core/               # Rust Core: crypto, keys, vault, padding, sync, import/export, health, biometric, attachments
-│   ├── idtty-cli/                # Terminal CLI (daemon-first + --direct fallback)
-│   └── idtty-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState, auto-lock, TOTP, attachments, biometric, SSH key gen)
+│   ├── baluard-core/               # Rust Core: crypto, keys, vault, padding, sync, import/export, health, biometric, attachments
+│   ├── baluard-cli/                # Terminal CLI (daemon-first + --direct fallback)
+│   └── baluard-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState, auto-lock, TOTP, attachments, biometric, SSH key gen)
 ├── desktop/                      # Tauri v2 Desktop (SolidJS/Tailwind)
 │   ├── src/
 │   │   ├── components/         # 25 components (VaultView, CipherDetail, SshKeyGenerator, FocusTrap, etc.)

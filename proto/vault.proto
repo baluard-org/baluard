@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package idtty.vault;
+package baluard.vault;
 
 
 // Envelope maps to uniform size buckets (1KB, 8KB, 64KB, 1MB)

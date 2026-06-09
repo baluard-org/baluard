@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    idtty_desktop_lib::run()
+    baluard_desktop_lib::run()
 }
