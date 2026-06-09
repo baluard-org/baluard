@@ -107,7 +107,19 @@
     "itemType": "{type} Item",
     "confirmPassword": "Confirm Password",
     "enterMasterPasswordToContinue": "Enter your master password to continue.",
-    "confirm": "Confirm"
+    "confirm": "Confirm",
+    "closeGenerator": "Close",
+    "generatePassword": "Generate",
+    "uris": "URIs",
+    "totpUri": "TOTP URI",
+    "copyCode": "Copy code",
+    "launchWebsite": "Launch website",
+    "downloadFailed": "Download failed",
+    "booleanYes": "Yes",
+    "booleanNo": "No",
+    "addUri": "Add URI",
+    "removeUri": "Remove URI",
+    "unsupportedImageFormat": "Unsupported image format"
   },
   "settings": {
     "faviconLabel": "Show website icons",
@@ -216,6 +228,7 @@
     "expMonth": "Exp Month",
     "expYear": "Exp Year",
     "cvv": "CVV",
+    "totpUri": "TOTP URI",
     "title": "Title",
     "firstName": "First Name",
     "middleName": "Middle Name",

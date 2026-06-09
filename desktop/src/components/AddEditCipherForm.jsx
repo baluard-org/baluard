@@ -142,11 +142,12 @@ export default function AddEditCipherForm(props) {
   function renderField(f) {
     const val = () => newCipher()[f.key] || "";
     const cls = fieldCls(f);
+    const label = f.label.includes(".") ? t(f.label) : f.label;
 
     if (f.type === "select") {
       return (
         <div>
-          <label class={FIELD_LABEL}>{f.label}</label>
+          <label class={FIELD_LABEL}>{label}</label>
           <select class={cls} value={val()} onChange={e => update(f.key, e.target.value)}>
             <option value="">--</option>
             <For each={f.options}>{o => <option value={o}>{o}</option>}</For>
@@ -158,7 +159,7 @@ export default function AddEditCipherForm(props) {
     if (f.type === "textarea") {
       return (
         <div>
-          <label class={FIELD_LABEL}>{f.label}</label>
+          <label class={FIELD_LABEL}>{label}</label>
           <textarea
             placeholder={f.placeholder || ""}
             rows={f.rows || 4}
@@ -173,7 +174,7 @@ export default function AddEditCipherForm(props) {
 
     return (
       <div>
-        <label class={FIELD_LABEL}>{f.label}</label>
+        <label class={FIELD_LABEL}>{label}</label>
         <input
           type={f.type === "password" ? "password" : f.type === "email" ? "email" : "text"}
           placeholder={f.placeholder || ""}
@@ -233,7 +234,7 @@ export default function AddEditCipherForm(props) {
                 <Show when={showPassword()} fallback={<IconEye class="w-4 h-4" />}><IconEyeOff class="w-4 h-4" /></Show>
               </button>
               <button type="button" onClick={() => { setShowGen(!showGen()); if (!newCipher().password) handleGenerate(); }} class="px-3 py-1.5 rounded-lg text-xs font-bold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] transition-all cursor-pointer shadow-sm">
-                {showGen() ? "Close" : "Generate"}
+                {showGen() ? t("entry.closeGenerator") : t("entry.generatePassword")}
               </button>
             </div>
           </div>
@@ -436,7 +437,7 @@ export default function AddEditCipherForm(props) {
                   {field => (
                     <div>
                       <div class="mb-1.5 flex items-center justify-between">
-                        <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{field.label}</label>
+                        <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{field.label.includes(".") ? t(field.label) : field.label}</label>
                         <Show when={field.generator}>
                           <button
                             type="button"

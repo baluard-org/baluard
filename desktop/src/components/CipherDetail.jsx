@@ -144,7 +144,7 @@ export default function CipherDetail(props) {
                     <button
                       onClick={() => { navigator.clipboard.writeText(totpCode()?.code || ""); setTotpCopied(true); setTimeout(() => setTotpCopied(false), 1800); }}
                       class="p-1.5 rounded-lg text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-                      title="Copy code"
+                      title={t("entry.copyCode")}
                     >
                       <Show when={!totpCopied()} fallback={<span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-success)]" /></span>}>
                         <IconCopy class="w-4 h-4" />
@@ -280,7 +280,7 @@ export default function CipherDetail(props) {
                     target="_blank"
                     rel="noopener noreferrer"
                     class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
-                    title="Launch website"
+                    title={t("entry.launchWebsite")}
                   >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
                   </a>
@@ -305,7 +305,7 @@ export default function CipherDetail(props) {
                       <span class="text-sm text-[var(--color-text)]">{field.name}</span>
                       <span class={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${field.value === "true" ? "bg-emerald-500/15 text-emerald-400" : "bg-[var(--color-card)] text-[var(--color-muted)]"}`}>
                         <span class={`w-2 h-2 rounded-full ${field.value === "true" ? "bg-emerald-400" : "bg-[var(--color-muted)]"}`} />
-                        {field.value === "true" ? "Yes" : "No"}
+                        {field.value === "true" ? t("entry.booleanYes") : t("entry.booleanNo")}
                       </span>
                     </div>
                   }>
@@ -362,7 +362,7 @@ export default function CipherDetail(props) {
                     const a = document.createElement("a");
                     a.href = url; a.download = attach.filename; a.click();
                     URL.revokeObjectURL(url);
-                  } catch(e) { alert("Download failed: " + e.message); }
+                  } catch(e) { alert(t("entry.downloadFailed") + ": " + e.message); }
                 }
                 return (
                   <div class="flex items-center justify-between p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
