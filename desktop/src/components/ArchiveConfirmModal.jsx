@@ -15,12 +15,13 @@ export default function ArchiveConfirmModal(props) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="archive-confirm-title"
+          aria-describedby="archive-confirm-desc"
           class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
         >
           <FocusTrap containerRef={dialogRef} onEscape={() => props.setShow(false)} />
           <div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl">
             <h3 id="archive-confirm-title" class="text-lg font-bold text-[var(--color-text)] mb-2">{t("entry.archiveTitle")}</h3>
-            <p class="text-sm text-[var(--color-muted)] mb-6">{t("entry.archiveConfirm")}</p>
+            <p id="archive-confirm-desc" class="text-sm text-[var(--color-muted)] mb-6">{t("entry.archiveConfirm")}</p>
             <div class="flex gap-3">
               <button
                 onClick={() => props.setShow(false)}

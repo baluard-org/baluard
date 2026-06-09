@@ -93,11 +93,15 @@ function VaultProvider(props) {
       setDisplayName(data.display_name || "");
       setProfileSubtitle(data.subtitle || "");
       setAvatarExt(data.avatar_ext || "png");
-    } catch {}
+    } catch (e) {
+      if (import.meta.env.DEV) console.warn("refreshProfile settings:", e);
+    }
     try {
       const b64 = await daemon("vault.avatar.get");
       setAvatarB64(b64 || "");
-    } catch {}
+    } catch (e) {
+      if (import.meta.env.DEV) console.warn("refreshProfile avatar:", e);
+    }
   }
 
   // ── Cipher CRUD ──
