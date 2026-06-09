@@ -91,6 +91,15 @@ pub struct VaultSettings {
     /// `None` or `Some(true)` = enabled (default). `Some(false)` = disabled.
     #[serde(default)]
     pub fetch_favicons: Option<bool>,
+    /// User display name shown in sidebar.
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// User subtitle/role shown under display name.
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    /// Avatar file extension (e.g. "png", "jpg"). Avatar stored at meta/avatar.{ext}.
+    #[serde(default)]
+    pub avatar_ext: Option<String>,
 }
 
 fn deserialize_uri_match_strategy<'de, D>(

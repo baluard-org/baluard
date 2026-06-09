@@ -352,6 +352,9 @@ impl VaultHandle {
                 theme: None,
                 default_uri_match: None,
                 fetch_favicons: None,
+                display_name: None,
+                subtitle: None,
+                avatar_ext: None,
             });
         }
         let data = std::fs::read_to_string(&settings_path)?;

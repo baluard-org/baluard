@@ -51,6 +51,12 @@ function VaultProvider(props) {
   // Settings modal (only accessible while unlocked)
   const [showSettingsModal, setShowSettingsModal] = createSignal(false);
 
+  // Profile (loaded from settings)
+  const [displayName, setDisplayName] = createSignal("");
+  const [profileSubtitle, setProfileSubtitle] = createSignal("");
+  const [avatarB64, setAvatarB64] = createSignal("");
+  const [avatarExt, setAvatarExt] = createSignal("png");
+
   // ── Data fetchers ──
 
   async function refreshCiphers(t) {
@@ -66,6 +72,8 @@ function VaultProvider(props) {
       setTags(Array.isArray(data.tags) ? data.tags : []);
       setTrashCiphers(data.trash || []);
       setArchivedCiphers(data.archived || []);
+      // Profile loads alongside cipher data
+      refreshProfile();
     } catch (e) {
       toastError(sanitizeError(e, t));
     }
@@ -77,6 +85,19 @@ function VaultProvider(props) {
       setDeviceFleet(data.devices || []);
       if (data.self_device_id) setSelfDeviceId(data.self_device_id);
     } catch { /* non-critical */ }
+  }
+
+  async function refreshProfile() {
+    try {
+      const data = JSON.parse(await daemon("settings.get"));
+      setDisplayName(data.display_name || "");
+      setProfileSubtitle(data.subtitle || "");
+      setAvatarExt(data.avatar_ext || "png");
+    } catch {}
+    try {
+      const b64 = await daemon("vault.avatar.get");
+      setAvatarB64(b64 || "");
+    } catch {}
   }
 
   // ── Cipher CRUD ──
@@ -184,8 +205,10 @@ function VaultProvider(props) {
     activePane, setActivePane,
     // Settings
     showSettingsModal, setShowSettingsModal,
+    // Profile
+    displayName, profileSubtitle, avatarB64, avatarExt,
     // Actions
-    refreshCiphers, refreshDeviceFleet,
+    refreshCiphers, refreshDeviceFleet, refreshProfile,
     addCipher, updateCipher, getCipher,
     deleteCipher, restoreCipher, archiveCipher, unarchiveCipher,
   };

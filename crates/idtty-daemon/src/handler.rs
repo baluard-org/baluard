@@ -192,6 +192,8 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.attach_delete",
     "vault.biometric_enable",
     "vault.biometric_disable",
+    "vault.avatar.get",
+    "vault.avatar.set",
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.
@@ -713,6 +715,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
         "vault.biometric_disable" => match state.biometric_disable().await {
             Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.avatar.get" => match state.avatar_get().await {
+            Ok(b64) => ok_resp(b64, token_str),
+            Err(e) => err_response(e),
+        },
+        "vault.avatar.set" => match state.avatar_set(&req.payload).await {
+            Ok(()) => ok_resp("{}", token_str),
             Err(e) => err_response(e),
         },
 

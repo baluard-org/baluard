@@ -157,7 +157,18 @@
     "format1passwordCsv": "1Password CSV",
     "formatKeePassXml": "KeePass XML",
     "quickUnlockEnabled": "Quick Unlock enabled",
-    "quickUnlockDisabled": "Quick Unlock disabled"
+    "quickUnlockDisabled": "Quick Unlock disabled",
+    "profile": "Profile",
+    "profileDesc": "Customize your identity in the sidebar.",
+    "displayName": "Display Name",
+    "displayNamePlaceholder": "Your name or alias",
+    "subtitle": "Subtitle",
+    "subtitlePlaceholder": "Role, team, or tagline",
+    "changeAvatar": "Change avatar",
+    "removeAvatar": "Remove",
+    "avatarSaved": "Avatar updated",
+    "avatarRemoved": "Avatar removed",
+    "profileSaved": "Profile updated"
   },
   "errors": {
     "daemonNotRunning": "Daemon is not running",

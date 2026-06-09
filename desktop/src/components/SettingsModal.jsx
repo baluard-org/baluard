@@ -38,6 +38,13 @@ export default function SettingsModal() {
   const [exporting, setExporting] = createSignal(false);
   const [message, setMessage] = createSignal(null);
 
+  // Profile state
+  const [displayName, setDisplayName] = createSignal("");
+  const [profileSubtitle, setProfileSubtitle] = createSignal("");
+  const [avatarB64, setAvatarB64] = createSignal("");
+  const [avatarExt, setAvatarExt] = createSignal("png");
+  const [profileSaved, setProfileSaved] = createSignal(false);
+
   const formats = [
     { id: "bw-json", label: t("settings.formatBwJson") },
     { id: "bw-csv", label: t("settings.formatBwCsv") },
@@ -75,7 +82,18 @@ export default function SettingsModal() {
       }
       setBiometricAvailable(available);
       setBiometricEnabled(enabled);
+
+      // Load profile
+      setDisplayName(data.display_name || "");
+      setProfileSubtitle(data.subtitle || "");
+      setAvatarExt(data.avatar_ext || "png");
     } catch (e) {}
+
+    // Load avatar separately (binary)
+    try {
+      const b64 = await daemon("vault.avatar.get");
+      setAvatarB64(b64 || "");
+    } catch {}
   }
 
   async function saveAutoLock() {
@@ -93,6 +111,70 @@ export default function SettingsModal() {
       await daemon("settings.set", JSON.stringify({ fetch_favicons: next }));
     } catch (e) {
       setFetchFavicons(!next);
+    }
+  }
+
+  async function saveProfile() {
+    try {
+      await daemon("settings.set", JSON.stringify({
+        display_name: displayName() || null,
+        subtitle: profileSubtitle() || null,
+      }));
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 1500);
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    }
+  }
+
+  async function handleAvatarUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (!["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
+      toastError("Unsupported image format");
+      return;
+    }
+    // Read, resize to 256x256 via canvas, upload
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = async () => {
+      URL.revokeObjectURL(url);
+      const size = 256;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      // Center-crop to square
+      const scale = Math.max(size / img.width, size / img.height);
+      const sw = size / scale;
+      const sh = size / scale;
+      const sx = (img.width - sw) / 2;
+      const sy = (img.height - sh) / 2;
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, size, size);
+      const resizedExt = ext === "jpeg" ? "jpg" : ext;
+      const mime = resizedExt === "png" ? "image/png" : "image/jpeg";
+      const b64 = canvas.toDataURL(mime, 0.85).split(",")[1];
+      try {
+        await daemon("vault.avatar.set", JSON.stringify({ data: b64, ext: resizedExt }));
+        setAvatarB64(b64);
+        setAvatarExt(resizedExt);
+        toastSuccess(t("settings.avatarSaved"));
+      } catch (e) {
+        toastError(sanitizeError(e, t));
+      }
+    };
+    img.src = url;
+  }
+
+  async function removeAvatar() {
+    try {
+      await daemon("vault.avatar.set", JSON.stringify({ data: "", ext: "" }));
+      setAvatarB64("");
+      setAvatarExt("png");
+      toastSuccess(t("settings.avatarRemoved"));
+    } catch (e) {
+      toastError(sanitizeError(e, t));
     }
   }
 
@@ -245,6 +327,66 @@ export default function SettingsModal() {
             {/* Content */}
             <div class="flex-1 overflow-y-auto p-6 space-y-6">
               <Show when={activeTab() === "general"}>
+                {/* Profile */}
+                <div class="space-y-3">
+                  <label class="text-xs font-bold text-[var(--color-text)]">{t("settings.profile")}</label>
+                  <p class="text-[10px] text-[var(--color-muted)]">{t("settings.profileDesc")}</p>
+                  <div class="flex items-center gap-4">
+                    <div class="relative group shrink-0">
+                      <Show when={avatarB64()} fallback={
+                        <div class="w-16 h-16 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-lg shadow-md">
+                          {(displayName() || "?").slice(0, 2).toUpperCase()}
+                        </div>
+                      }>
+                        <img
+                          src={`data:image/${avatarExt() === "jpg" ? "jpeg" : avatarExt()};base64,${avatarB64()}`}
+                          alt="Avatar"
+                          class="w-16 h-16 rounded-full object-cover shadow-md"
+                        />
+                      </Show>
+                      <label class="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                        <span class="text-[10px] font-bold text-white">{t("settings.changeAvatar")}</span>
+                        <input type="file" accept="image/*" class="hidden" onChange={handleAvatarUpload} />
+                      </label>
+                    </div>
+                    <Show when={avatarB64()}>
+                      <button
+                        onClick={removeAvatar}
+                        class="text-[10px] text-[var(--color-muted)] hover:text-red-400 cursor-pointer transition-colors"
+                      >{t("settings.removeAvatar")}</button>
+                    </Show>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="text-[10px] font-bold text-[var(--color-muted)] uppercase tracking-wider">{t("settings.displayName")}</label>
+                      <input
+                        type="text"
+                        placeholder={t("settings.displayNamePlaceholder")}
+                        class="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
+                        value={displayName()}
+                        onInput={e => setDisplayName(e.target.value)}
+                        onBlur={saveProfile}
+                        autocomplete="off"
+                      />
+                    </div>
+                    <div>
+                      <label class="text-[10px] font-bold text-[var(--color-muted)] uppercase tracking-wider">{t("settings.subtitle")}</label>
+                      <input
+                        type="text"
+                        placeholder={t("settings.subtitlePlaceholder")}
+                        class="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
+                        value={profileSubtitle()}
+                        onInput={e => setProfileSubtitle(e.target.value)}
+                        onBlur={saveProfile}
+                        autocomplete="off"
+                      />
+                    </div>
+                  </div>
+                  <Show when={profileSaved()}>
+                    <div class="text-[10px] text-[var(--color-primary)] font-bold">{t("settings.profileSaved")}</div>
+                  </Show>
+                </div>
+
                 {/* Theme Settings */}
                 <div class="space-y-2">
                   <label class="text-xs font-bold text-[var(--color-text)]">{t("settings.appTheme")}</label>

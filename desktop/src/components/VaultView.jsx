@@ -284,12 +284,20 @@ export default function VaultView() {
         {/* Sidebar Footer */}
         <div class="p-4 border-t border-[var(--color-border)] flex items-center justify-between gap-3 bg-[var(--color-sidebar)]">
           <div class="flex items-center gap-3 min-w-0 flex-1">
-            <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-xs shadow-md shrink-0">
-              ES
-            </div>
+            <Show when={vault.avatarB64()} fallback={
+              <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-xs shadow-md shrink-0">
+                {(vault.displayName() || "?").slice(0, 2).toUpperCase()}
+              </div>
+            }>
+              <img
+                src={`data:image/${vault.avatarExt() === "jpg" ? "jpeg" : vault.avatarExt()};base64,${vault.avatarB64()}`}
+                alt=""
+                class="w-9 h-9 rounded-full object-cover shadow-md shrink-0"
+              />
+            </Show>
             <div class="min-w-0 flex-1">
-              <div class="text-xs font-bold text-[var(--color-text)] truncate leading-none">EstebanForge</div>
-              <div class="text-[9px] text-[var(--color-muted)] truncate mt-1">Lead Architect</div>
+              <div class="text-xs font-bold text-[var(--color-text)] truncate leading-none">{vault.displayName() || t("settings.profile")}</div>
+              <div class="text-[9px] text-[var(--color-muted)] truncate mt-1">{vault.profileSubtitle() || ""}</div>
             </div>
           </div>
           <div class="flex items-center gap-1.5 shrink-0">
