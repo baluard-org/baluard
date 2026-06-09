@@ -108,30 +108,25 @@ impl VaultState {
     /// Fire a cover commit (git-sync only).
     #[cfg(feature = "git-sync")]
     async fn fire_cover_commit(&self) {
-        let guard = self.inner.read().await;
-        if let Some(handle) = guard.as_ref() {
+        let device_name = {
+            let guard = self.inner.read().await;
+            let Some(handle) = guard.as_ref() else {
+                return;
+            };
             if !handle.is_unlocked() {
                 return;
             }
-        } else {
-            return;
-        }
-        drop(guard);
-
-        let device_name = {
-            let guard = self.inner.read().await;
-            guard
-                .as_ref()
-                .and_then(|h| {
-                    h.device_manager
-                        .registry()
-                        .devices
-                        .values()
-                        .next()
-                        .map(|d| d.name.clone())
-                })
+            handle
+                .device_manager
+                .registry()
+                .devices
+                .get(&handle.device_id)
+                .map(|d| d.name.clone())
                 .unwrap_or_default()
         };
+        if device_name.is_empty() {
+            return;
+        }
         let engine = idtty_core::sync::engine::SyncEngine::new(&self.vault_path, &device_name);
         if let Ok(repo) = engine.open_repo() {
             let _ = engine.cover_commit(&repo);
