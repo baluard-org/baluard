@@ -33,10 +33,12 @@ export default function VaultView() {
   const [showDeleteConfirm, setShowDeleteConfirm] = createSignal(false);
   const [showArchiveConfirm, setShowArchiveConfirm] = createSignal(false);
   let emptyTrashRef;
+  let deleteTagRef;
   const [showGenerator, setShowGenerator] = createSignal(false);
   const [showAddMenu, setShowAddMenu] = createSignal(false);
   const [showEmptyTrashConfirm, setShowEmptyTrashConfirm] = createSignal(false);
   const [showNewFolder, setShowNewFolder] = createSignal(false);
+  const [deleteTagName, setDeleteTagName] = createSignal(null);
 
   // Init: load ciphers on first mount
   onMount(async () => {
@@ -106,6 +108,36 @@ export default function VaultView() {
           if (ok) { setViewCipher(null); }
         }}
       />
+      <Show when={deleteTagName()}>
+        <div
+          ref={deleteTagRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-tag-title"
+          class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setDeleteTagName(null)}
+        >
+          <FocusTrap containerRef={deleteTagRef} onEscape={() => setDeleteTagName(null)} />
+          <div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+            <h3 id="delete-tag-title" class="text-lg font-bold text-[var(--color-text)] mb-2">{t("entry.deleteTagTitle")}</h3>
+            <p class="text-sm text-[var(--color-muted)] mb-6">{t("entry.deleteTagConfirm", { tag: deleteTagName() })}</p>
+            <div class="flex gap-3">
+              <button
+                onClick={() => setDeleteTagName(null)}
+                class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] font-semibold transition-all cursor-pointer"
+              >{t("entry.cancel")}</button>
+              <button
+                onClick={async () => {
+                  const name = deleteTagName();
+                  setDeleteTagName(null);
+                  await vault.deleteTag(name, t);
+                }}
+                class="flex-1 py-2.5 rounded-xl bg-red-950/40 text-red-400 border border-red-900/30 hover:bg-red-950/60 font-semibold transition-all cursor-pointer"
+              >{t("entry.delete")}</button>
+            </div>
+          </div>
+        </div>
+      </Show>
       <Show when={showEmptyTrashConfirm()}>
         <div
           ref={emptyTrashRef}
@@ -266,12 +298,19 @@ export default function VaultView() {
                      <div class="flex flex-wrap gap-1" style={{ "padding-left": "6px", "padding-right": "6px" }}>
                        <For each={vault.tags() || []}>
                          {tag => (
-                           <button
-                             onClick={() => { vault.setSelectedTag(vault.selectedTag() === tag ? null : tag); }}
-                             class={`px-2 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${vault.selectedTag() === tag ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]" : "bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
-                           >
-                             {tag}
-                           </button>
+                           <div class="group relative">
+                             <button
+                               onClick={() => { vault.setSelectedTag(vault.selectedTag() === tag ? null : tag); }}
+                               class={`px-2 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${vault.selectedTag() === tag ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]" : "bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                             >
+                               {tag}
+                             </button>
+                             <button
+                               onClick={(e) => { e.stopPropagation(); setDeleteTagName(tag); }}
+                               class="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-red-400 hover:border-red-400 flex items-center justify-center text-[9px] leading-none opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                               title={t("entry.delete")}
+                             >×</button>
+                           </div>
                          )}
                        </For>
                      </div>
