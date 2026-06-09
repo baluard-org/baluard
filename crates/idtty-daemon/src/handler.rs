@@ -204,16 +204,20 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "vault.delete",
     "vault.archive",
     "vault.unarchive",
-    "vault.clone",
+    "cipher.clone",
     "vault.import",
+    "vault.trash.restore",
+    "vault.trash.purge",
     "folder.create",
     "folder.rename",
     "folder.delete",
     "tag.create",
     "tag.rename",
     "tag.delete",
+    "tag.rebuild_index",
     "settings.set",
     "vault.avatar.set",
+    "device.revoke",
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.
