@@ -143,7 +143,7 @@ export default function SettingsModal() {
     if (!file) return;
     const ext = file.name.split(".").pop().toLowerCase();
     if (!["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
-      toastError("Unsupported image format");
+      toastError(t("entry.unsupportedImageFormat"));
       return;
     }
     // Read, resize to 256x256 via canvas, upload
