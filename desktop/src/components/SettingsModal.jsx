@@ -54,7 +54,6 @@ export default function SettingsModal() {
   const [profileSubtitle, setProfileSubtitle] = createSignal("");
   const [avatarB64, setAvatarB64] = createSignal("");
   const [avatarExt, setAvatarExt] = createSignal("png");
-  const [profileSaved, setProfileSaved] = createSignal(false);
 
   const formats = [
     { id: "bw-json", label: t("settings.formatBwJson") },
@@ -395,9 +394,6 @@ export default function SettingsModal() {
                       />
                     </div>
                   </div>
-                  <Show when={profileSaved()}>
-                    <div class="text-[10px] text-[var(--color-primary)] font-bold">{t("settings.profileSaved")}</div>
-                  </Show>
                 </div>
 
                 {/* Theme Settings */}
