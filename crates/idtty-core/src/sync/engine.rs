@@ -106,17 +106,18 @@ impl SyncEngine {
             Repository::init(&self.vault_path).map_err(|e| SyncError::Git(format!("init: {e}")))?;
 
         // Set generic git author to prevent identity correlation via git log
-        if let Ok(mut config) = repo.config() {
-            if let Err(e) = config.set_str("user.name", "IDtty User") {
-                return Err(IdttyError::Sync(SyncError::Git(format!(
-                    "failed to set local git user.name: {e}"
-                ))));
-            }
-            if let Err(e) = config.set_str("user.email", "vault@idtty.local") {
-                return Err(IdttyError::Sync(SyncError::Git(format!(
-                    "failed to set local git user.email: {e}"
-                ))));
-            }
+        let mut config = repo
+            .config()
+            .map_err(|e| SyncError::Git(format!("failed to open local git config: {e}")))?;
+        if let Err(e) = config.set_str("user.name", "IDtty User") {
+            return Err(IdttyError::Sync(SyncError::Git(format!(
+                "failed to set local git user.name: {e}"
+            ))));
+        }
+        if let Err(e) = config.set_str("user.email", "vault@idtty.local") {
+            return Err(IdttyError::Sync(SyncError::Git(format!(
+                "failed to set local git user.email: {e}"
+            ))));
         }
 
         // Write .gitignore

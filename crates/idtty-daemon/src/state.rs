@@ -364,8 +364,14 @@ impl VaultState {
                 subtitle: settings.subtitle.clone(),
                 avatar_ext: settings.avatar_ext.clone(),
             };
+            // Strip identity from settings, save both
+            settings.display_name = None;
+            settings.subtitle = None;
+            settings.avatar_ext = None;
+            handle
+                .save_settings(&settings)
+                .map_err(|e| format!("{e}"))?;
             handle.save_profile(&profile).map_err(|e| format!("{e}"))?;
-            // save_profile strips identity from settings.json and saves it
         } else {
             handle
                 .save_settings(&settings)
