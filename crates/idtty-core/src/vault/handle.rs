@@ -328,7 +328,7 @@ impl VaultHandle {
                         subtitle: settings.subtitle,
                         avatar_ext: settings.avatar_ext,
                     };
-                    let _ = self.save_profile(&profile);
+                    let _ = self.save_profile_and_strip_settings(&profile);
                 }
             }
         }
@@ -533,7 +533,8 @@ impl VaultHandle {
     }
 
     /// Save encrypted user profile to meta/profile.enc (atomic write).
-    /// Also strips identity fields from plaintext settings.json.
+    /// Does NOT modify settings.json. Caller is responsible for stripping
+    /// identity fields from plaintext settings if needed.
     pub fn save_profile(
         &self,
         profile: &crate::vault::manifest::UserProfile,
@@ -548,14 +549,21 @@ impl VaultHandle {
             .map_err(|e| VaultError::Metadata(format!("profile serialization: {e}")))?;
         let enc_path = self.path.join("meta/profile.enc");
         self.encrypt_and_write_meta(&key, "profile", &json, &enc_path)?;
+        Ok(())
+    }
 
-        // Strip identity fields from plaintext settings.json
+    /// Save profile AND strip identity fields from plaintext settings.json.
+    /// Used by migration and crash-window cleanup where caller owns the settings state.
+    pub fn save_profile_and_strip_settings(
+        &self,
+        profile: &crate::vault::manifest::UserProfile,
+    ) -> Result<(), IdttyError> {
+        self.save_profile(profile)?;
         let mut settings = self.get_settings().unwrap_or_default();
         settings.display_name = None;
         settings.subtitle = None;
         settings.avatar_ext = None;
         self.save_settings(&settings)?;
-
         Ok(())
     }
 
