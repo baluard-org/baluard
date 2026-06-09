@@ -133,6 +133,11 @@ pub enum KdfProfile {
 }
 
 impl KdfProfile {
+    /// Default profile for deserialization fallback.
+    fn default_value() -> Self {
+        KdfProfile::DesktopStd
+    }
+
     /// Memory in KiB for this profile.
     pub const fn memory_kib(&self) -> u32 {
         match self {
@@ -173,6 +178,9 @@ impl KdfProfile {
 /// Full KDF parameters (profile + calibrated values within bounds).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KdfParams {
+    /// Profile name is not serialized to prevent device class leakage.
+    /// Deserialized from old vaults for backward compat, then ignored.
+    #[serde(default = "KdfProfile::default_value", skip_serializing)]
     pub profile: KdfProfile,
     pub memory_kib: u32,
     pub time_cost: u32,

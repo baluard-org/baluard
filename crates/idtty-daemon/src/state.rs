@@ -296,10 +296,17 @@ impl VaultState {
     }
 
     /// Get current vault settings as JSON.
+    /// Merges encrypted profile data (display_name, subtitle, avatar_ext) from profile.enc.
     pub async fn settings_get(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
-        let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+        let mut settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+        // Merge encrypted profile fields (if available)
+        if let Ok(profile) = handle.load_profile() {
+            settings.display_name = profile.display_name;
+            settings.subtitle = profile.subtitle;
+            settings.avatar_ext = profile.avatar_ext;
+        }
         serde_json::to_string(&settings).map_err(|e| format!("settings serialization: {e}"))
     }
 
@@ -341,6 +348,21 @@ impl VaultState {
         if let Some(v) = partial.get("avatar_ext") {
             settings.avatar_ext = serde_json::from_value(v.clone())
                 .map_err(|e| format!("Invalid avatar_ext: {e}"))?;
+        }
+
+        // If identity fields present, save to encrypted profile
+        let has_identity = settings.display_name.is_some()
+            || settings.subtitle.is_some()
+            || settings.avatar_ext.is_some();
+        if has_identity {
+            let profile = idtty_core::vault::manifest::UserProfile {
+                display_name: settings.display_name.clone(),
+                subtitle: settings.subtitle.clone(),
+                avatar_ext: settings.avatar_ext.clone(),
+            };
+            handle.save_profile(&profile).map_err(|e| format!("{e}"))?;
+            // save_profile already strips identity from settings.json
+            return Ok(());
         }
 
         handle

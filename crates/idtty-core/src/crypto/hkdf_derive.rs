@@ -14,6 +14,7 @@ const SEQUENCE_INFO: &[u8] = b"idtty-sequence-v1";
 const INDEX_INFO: &[u8] = b"idtty-index-v1";
 const FOLDERS_INFO: &[u8] = b"idtty-folders-v1";
 const TAGS_INFO: &[u8] = b"idtty-tags-v1";
+const PROFILE_INFO: &[u8] = b"idtty-profile-v1";
 
 /// Derive a 32-byte Session Key from KEK.
 ///
@@ -69,6 +70,16 @@ pub fn derive_tags_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
     let mut key = [0u8; 32];
     hkdf.expand(TAGS_INFO, &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
+/// Derive a 32-byte Profile Key from Root Key.
+/// Used to encrypt/decrypt `meta/profile.enc` (user identity fields).
+pub fn derive_profile_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, root_key);
+    let mut key = [0u8; 32];
+    hkdf.expand(PROFILE_INFO, &mut key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
@@ -147,5 +158,16 @@ mod tests {
         assert_ne!(idx, fld);
         assert_ne!(idx, tag);
         assert_ne!(fld, tag);
+    }
+
+    #[test]
+    fn profile_key_deterministic_and_unique() {
+        let rk = [42u8; 64];
+        let p1 = derive_profile_key(&rk).unwrap();
+        let p2 = derive_profile_key(&rk).unwrap();
+        assert_eq!(p1, p2);
+        assert_ne!(p1, derive_index_key(&rk).unwrap());
+        assert_ne!(p1, derive_folders_key(&rk).unwrap());
+        assert_ne!(p1, derive_tags_key(&rk).unwrap());
     }
 }

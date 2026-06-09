@@ -105,6 +105,12 @@ impl SyncEngine {
         let repo =
             Repository::init(&self.vault_path).map_err(|e| SyncError::Git(format!("init: {e}")))?;
 
+        // Set generic git author to prevent identity correlation via git log
+        if let Ok(mut config) = repo.config() {
+            let _ = config.set_str("user.name", "IDtty User");
+            let _ = config.set_str("user.email", "vault@idtty.local");
+        }
+
         // Write .gitignore
         let gitignore = self.vault_path.join(".gitignore");
         if !gitignore.exists() {

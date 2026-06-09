@@ -64,6 +64,9 @@ zeroize = { version = "1", features = ["derive"] }
 # OS keychain (biometric unlock)
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust", "windows-native"] }
 
+# File timestamp manipulation
+filetime = "0.2"
+
 # Protobuf
 prost = "0.13"
 prost-types = "0.13"
