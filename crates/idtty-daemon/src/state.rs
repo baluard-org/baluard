@@ -26,6 +26,9 @@ pub struct VaultState {
     last_activity: AtomicU64,
     /// Cover commit scheduler handle. Cancelled on lock.
     cover_timer: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    /// Whether a post-mutation cover commit is already pending.
+    /// Prevents spawning multiple cover tasks from rapid sequential edits.
+    cover_pending: std::sync::atomic::AtomicBool,
 }
 
 impl VaultState {
@@ -37,6 +40,7 @@ impl VaultState {
             session_token: RwLock::new(None),
             last_activity: AtomicU64::new(0),
             cover_timer: RwLock::new(None),
+            cover_pending: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -86,13 +90,25 @@ impl VaultState {
     }
 
     /// Schedule a single cover commit at a random delay (30min-4hr).
-    /// Called after real vault commits to mask usage patterns.
+    /// Deduplicates: if a cover is already pending, this is a no-op.
+    /// Called after vault mutations to mask usage patterns.
     pub fn schedule_cover_after_commit(self: &Arc<Self>) {
+        // Dedup: skip if already scheduled
+        if self
+            .cover_pending
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
         let state = self.clone();
         tokio::spawn(async move {
             // Random delay: 30min - 4hr
             let delay_secs = 1800 + (rand::random::<u64>() % 12600);
             tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
+
+            // Clear pending flag before firing (allows next mutation to reschedule)
+            state.cover_pending.store(false, Ordering::Relaxed);
 
             let guard = state.inner.read().await;
             if let Some(handle) = guard.as_ref() {
@@ -177,6 +193,7 @@ impl VaultState {
                         timeout_secs
                     );
                     state.stop_cover_timer().await;
+                    state.cover_pending.store(false, Ordering::Relaxed);
                     let mut guard = state.inner.write().await;
                     if let Some(handle) = guard.as_mut() {
                         if handle.is_unlocked() {
@@ -245,6 +262,7 @@ impl VaultState {
     pub async fn lock(&self) -> Result<(), String> {
         // Stop cover timer first
         self.stop_cover_timer().await;
+        self.cover_pending.store(false, Ordering::Relaxed);
 
         let mut guard = self.inner.write().await;
         if let Some(ref mut handle) = *guard {
