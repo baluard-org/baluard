@@ -4,6 +4,7 @@ mod client;
 mod commands;
 
 use clap::{Parser, Subcommand};
+use baluard_core::types::{CipherInput, CipherKind, LoginData};
 
 /// How to connect to the vault.
 #[derive(Clone, Copy, Debug)]
@@ -56,24 +57,8 @@ enum Commands {
 
     /// Add a new cipher.
     Add {
-        /// Cipher name.
-        #[arg(long)]
-        name: String,
-        /// Username.
-        #[arg(long)]
-        username: Option<String>,
-        /// Password (omitted = prompt).
-        #[arg(long)]
-        password: Option<String>,
-        /// URI.
-        #[arg(long)]
-        uri: Option<String>,
-        /// Notes.
-        #[arg(long)]
-        notes: Option<String>,
-        /// Folder ID to assign to.
-        #[arg(long)]
-        folder: Option<String>,
+        #[command(subcommand)]
+        cipher: CipherAddCommand,
     },
 
     /// Get a cipher by ID or name.
@@ -126,6 +111,9 @@ enum Commands {
         /// New folder ID.
         #[arg(long)]
         folder: Option<String>,
+        /// Replace tags (comma-separated). Use "" to clear all.
+        #[arg(long, value_delimiter = ',')]
+        tags: Option<Vec<String>>,
     },
 
     /// Manage enrolled devices.
@@ -304,6 +292,596 @@ enum SyncAction {
     },
 }
 
+// ── Cipher Add Subcommands ─────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum CipherAddCommand {
+    /// Add a login entry (username, password, URI).
+    Login {
+        #[arg(long)]
+        name: String,
+        /// Username.
+        #[arg(long)]
+        username: Option<String>,
+        /// Password (omitted = interactive prompt).
+        #[arg(long)]
+        password: Option<String>,
+        /// URI.
+        #[arg(long)]
+        uri: Option<String>,
+        /// TOTP URI (otpauth://...).
+        #[arg(long)]
+        totp_uri: Option<String>,
+        /// Notes.
+        #[arg(long)]
+        notes: Option<String>,
+        /// Folder ID.
+        #[arg(long)]
+        folder: Option<String>,
+        /// Tags (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Mark as favorite.
+        #[arg(long, default_value_t = false)]
+        favorite: bool,
+    },
+
+    /// Add a payment card.
+    Card {
+        #[arg(long)]
+        name: String,
+        /// Cardholder name.
+        #[arg(long)]
+        cardholder_name: Option<String>,
+        /// Card brand (Visa, Mastercard, etc).
+        #[arg(long)]
+        brand: Option<String>,
+        /// Card number.
+        #[arg(long)]
+        number: Option<String>,
+        /// Expiration month.
+        #[arg(long)]
+        exp_month: Option<String>,
+        /// Expiration year.
+        #[arg(long)]
+        exp_year: Option<String>,
+        /// CVV/CVC.
+        #[arg(long)]
+        code: Option<String>,
+        /// Notes.
+        #[arg(long)]
+        notes: Option<String>,
+        /// Folder ID.
+        #[arg(long)]
+        folder: Option<String>,
+        /// Tags (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Mark as favorite.
+        #[arg(long, default_value_t = false)]
+        favorite: bool,
+    },
+
+    /// Add a secure note.
+    #[command(visible_alias = "note")]
+    SecureNote {
+        #[arg(long)]
+        name: String,
+        /// Note content.
+        #[arg(long)]
+        notes: Option<String>,
+        /// Folder ID.
+        #[arg(long)]
+        folder: Option<String>,
+        /// Tags (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Mark as favorite.
+        #[arg(long, default_value_t = false)]
+        favorite: bool,
+    },
+
+    /// Add an identity record.
+    Identity {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        first_name: Option<String>,
+        #[arg(long)]
+        middle_name: Option<String>,
+        #[arg(long)]
+        last_name: Option<String>,
+        #[arg(long)]
+        username: Option<String>,
+        #[arg(long)]
+        company: Option<String>,
+        #[arg(long)]
+        email: Option<String>,
+        #[arg(long)]
+        phone: Option<String>,
+        #[arg(long)]
+        address1: Option<String>,
+        #[arg(long)]
+        address2: Option<String>,
+        #[arg(long)]
+        address3: Option<String>,
+        #[arg(long)]
+        city: Option<String>,
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long)]
+        postal_code: Option<String>,
+        #[arg(long)]
+        country: Option<String>,
+        /// Notes.
+        #[arg(long)]
+        notes: Option<String>,
+        /// Folder ID.
+        #[arg(long)]
+        folder: Option<String>,
+        /// Tags (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Mark as favorite.
+        #[arg(long, default_value_t = false)]
+        favorite: bool,
+    },
+
+    /// Add an SSH key.
+    #[command(visible_alias = "ssh")]
+    SshKey {
+        #[arg(long)]
+        name: String,
+        /// Public key (OpenSSH format).
+        #[arg(long)]
+        public_key: Option<String>,
+        /// Private key (PEM format).
+        #[arg(long)]
+        private_key: Option<String>,
+        /// Key fingerprint.
+        #[arg(long)]
+        fingerprint: Option<String>,
+        /// Notes.
+        #[arg(long)]
+        notes: Option<String>,
+        /// Folder ID.
+        #[arg(long)]
+        folder: Option<String>,
+        /// Tags (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Mark as favorite.
+        #[arg(long, default_value_t = false)]
+        favorite: bool,
+    },
+
+    /// Add a bank account.
+    #[command(visible_alias = "bank")]
+    BankAccount {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        bank_name: Option<String>,
+        #[arg(long)]
+        name_on_account: Option<String>,
+        #[arg(long)]
+        account_type: Option<String>,
+        #[arg(long)]
+        account_number: Option<String>,
+        #[arg(long)]
+        routing_number: Option<String>,
+        #[arg(long)]
+        branch_number: Option<String>,
+        #[arg(long)]
+        swift_code: Option<String>,
+        #[arg(long)]
+        iban: Option<String>,
+        /// Notes.
+        #[arg(long)]
+        notes: Option<String>,
+        /// Folder ID.
+        #[arg(long)]
+        folder: Option<String>,
+        /// Tags (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Mark as favorite.
+        #[arg(long, default_value_t = false)]
+        favorite: bool,
+    },
+
+    /// Add a driver's license.
+    #[command(visible_alias = "license")]
+    DriversLicense {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        first_name: Option<String>,
+        #[arg(long)]
+        middle_name: Option<String>,
+        #[arg(long)]
+        last_name: Option<String>,
+        #[arg(long)]
+        date_of_birth: Option<String>,
+        #[arg(long)]
+        license_number: Option<String>,
+        #[arg(long)]
+        issuing_country: Option<String>,
+        #[arg(long)]
+        issuing_state: Option<String>,
+        #[arg(long)]
+        issue_date: Option<String>,
+        #[arg(long)]
+        expiration_date: Option<String>,
+        /// Notes.
+        #[arg(long)]
+        notes: Option<String>,
+        /// Folder ID.
+        #[arg(long)]
+        folder: Option<String>,
+        /// Tags (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Mark as favorite.
+        #[arg(long, default_value_t = false)]
+        favorite: bool,
+    },
+
+    /// Add a passport.
+    Passport {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        surname: Option<String>,
+        #[arg(long)]
+        given_name: Option<String>,
+        #[arg(long)]
+        date_of_birth: Option<String>,
+        #[arg(long)]
+        sex: Option<String>,
+        #[arg(long)]
+        birth_place: Option<String>,
+        #[arg(long)]
+        nationality: Option<String>,
+        #[arg(long)]
+        passport_number: Option<String>,
+        #[arg(long)]
+        issuing_country: Option<String>,
+        #[arg(long)]
+        issue_date: Option<String>,
+        #[arg(long)]
+        expiration_date: Option<String>,
+        /// Notes.
+        #[arg(long)]
+        notes: Option<String>,
+        /// Folder ID.
+        #[arg(long)]
+        folder: Option<String>,
+        /// Tags (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Mark as favorite.
+        #[arg(long, default_value_t = false)]
+        favorite: bool,
+    },
+}
+
+/// Parse a folder ID string into a UUID, returning a descriptive error on failure.
+fn parse_folder_id(folder: Option<&String>) -> Result<Option<uuid::Uuid>, Box<dyn std::error::Error>> {
+    folder
+        .map(|f| uuid::Uuid::parse_str(f).map_err(|e| format!("Invalid folder UUID '{f}': {e}").into()))
+        .transpose()
+}
+
+/// Build a CipherInput from a CipherAddCommand subcommand.
+fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn std::error::Error>> {
+    match cipher {
+        CipherAddCommand::Login {
+            name,
+            username,
+            password,
+            uri,
+            totp_uri,
+            notes,
+            folder,
+            tags,
+            favorite,
+        } => {
+            let cipher_password = match password {
+                Some(p) => {
+                    eprintln!("warning: --password exposes secret in process list.");
+                    Some(p)
+                }
+                None => {
+                    let pw = commands::prompt_password("Password: ")?;
+                    if pw.is_empty() {
+                        None
+                    } else {
+                        Some(pw)
+                    }
+                }
+            };
+            Ok(CipherInput {
+                name,
+                folder_id: parse_folder_id(folder.as_ref())?,
+                kind: CipherKind::Login(LoginData {
+                    username,
+                    password: cipher_password,
+                    uris: uri
+                        .map(|u| vec![baluard_core::types::LoginUri::new(u)])
+                        .unwrap_or_default(),
+                    totp_uri,
+                    autofill_on_page_load: false,
+                    password_revision_date: None,
+                }),
+                favorite,
+                notes,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+                attachments: vec![],
+                archived: false,
+                reprompt: false,
+                tags,
+            })
+        }
+        CipherAddCommand::Card {
+            name,
+            cardholder_name,
+            brand,
+            number,
+            exp_month,
+            exp_year,
+            code,
+            notes,
+            folder,
+            tags,
+            favorite,
+        } => Ok(CipherInput {
+            name,
+            folder_id: parse_folder_id(folder.as_ref())?,
+            kind: CipherKind::Card(baluard_core::types::CardData {
+                cardholder_name,
+                brand,
+                number,
+                exp_month,
+                exp_year,
+                code,
+            }),
+            favorite,
+            notes,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            reprompt: false,
+            tags,
+        }),
+        CipherAddCommand::SecureNote {
+            name,
+            notes,
+            folder,
+            tags,
+            favorite,
+        } => Ok(CipherInput {
+            name,
+            folder_id: parse_folder_id(folder.as_ref())?,
+            kind: CipherKind::SecureNote,
+            favorite,
+            notes,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            reprompt: false,
+            tags,
+        }),
+        CipherAddCommand::Identity {
+            name,
+            title,
+            first_name,
+            middle_name,
+            last_name,
+            username,
+            company,
+            email,
+            phone,
+            address1,
+            address2,
+            address3,
+            city,
+            state,
+            postal_code,
+            country,
+            notes,
+            folder,
+            tags,
+            favorite,
+        } => Ok(CipherInput {
+            name,
+            folder_id: parse_folder_id(folder.as_ref())?,
+            kind: CipherKind::Identity(baluard_core::types::IdentityData {
+                title,
+                first_name,
+                middle_name,
+                last_name,
+                username,
+                company,
+                email,
+                phone,
+                address1,
+                address2,
+                address3,
+                city,
+                state,
+                postal_code,
+                country,
+                ..Default::default()
+            }),
+            favorite,
+            notes,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            reprompt: false,
+            tags,
+        }),
+        CipherAddCommand::SshKey {
+            name,
+            public_key,
+            private_key,
+            fingerprint,
+            notes,
+            folder,
+            tags,
+            favorite,
+        } => Ok(CipherInput {
+            name,
+            folder_id: parse_folder_id(folder.as_ref())?,
+            kind: CipherKind::SshKey(baluard_core::types::SshKeyData {
+                public_key,
+                private_key,
+                key_fingerprint: fingerprint,
+            }),
+            favorite,
+            notes,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            reprompt: false,
+            tags,
+        }),
+        CipherAddCommand::BankAccount {
+            name,
+            bank_name,
+            name_on_account,
+            account_type,
+            account_number,
+            routing_number,
+            branch_number,
+            swift_code,
+            iban,
+            notes,
+            folder,
+            tags,
+            favorite,
+        } => Ok(CipherInput {
+            name,
+            folder_id: parse_folder_id(folder.as_ref())?,
+            kind: CipherKind::BankAccount(baluard_core::types::BankAccountData {
+                bank_name,
+                name_on_account,
+                account_type,
+                account_number,
+                routing_number,
+                branch_number,
+                swift_code,
+                iban,
+                ..Default::default()
+            }),
+            favorite,
+            notes,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            reprompt: false,
+            tags,
+        }),
+        CipherAddCommand::DriversLicense {
+            name,
+            first_name,
+            middle_name,
+            last_name,
+            date_of_birth,
+            license_number,
+            issuing_country,
+            issuing_state,
+            issue_date,
+            expiration_date,
+            notes,
+            folder,
+            tags,
+            favorite,
+        } => Ok(CipherInput {
+            name,
+            folder_id: parse_folder_id(folder.as_ref())?,
+            kind: CipherKind::DriversLicense(baluard_core::types::DriversLicenseData {
+                first_name,
+                middle_name,
+                last_name,
+                date_of_birth,
+                license_number,
+                issuing_country,
+                issuing_state,
+                issue_date,
+                expiration_date,
+                ..Default::default()
+            }),
+            favorite,
+            notes,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            reprompt: false,
+            tags,
+        }),
+        CipherAddCommand::Passport {
+            name,
+            surname,
+            given_name,
+            date_of_birth,
+            sex,
+            birth_place,
+            nationality,
+            passport_number,
+            issuing_country,
+            issue_date,
+            expiration_date,
+            notes,
+            folder,
+            tags,
+            favorite,
+        } => Ok(CipherInput {
+            name,
+            folder_id: parse_folder_id(folder.as_ref())?,
+            kind: CipherKind::Passport(baluard_core::types::PassportData {
+                surname,
+                given_name,
+                date_of_birth,
+                sex,
+                birth_place,
+                nationality,
+                passport_number,
+                issuing_country,
+                issue_date,
+                expiration_date,
+                ..Default::default()
+            }),
+            favorite,
+            notes,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            reprompt: false,
+            tags,
+        }),
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -344,24 +922,12 @@ fn main() {
         },
 
         // Cipher CRUD: daemon-first with direct fallback
-        Commands::Add {
-            name,
-            username,
-            password,
-            uri,
-            notes,
-            folder,
-        } => commands::handle_add(
-            mode,
-            &cli.vault_path,
-            cli.socket.as_deref(),
-            name,
-            username,
-            password,
-            uri,
-            notes,
-            folder.as_deref(),
-        ),
+        Commands::Add { cipher } => {
+            match build_cipher_input(cipher) {
+                Ok(input) => commands::handle_add(mode, &cli.vault_path, cli.socket.as_deref(), input),
+                Err(e) => Err(e),
+            }
+        }
         Commands::Get {
             id,
             decrypt,
@@ -394,6 +960,7 @@ fn main() {
             name,
             favorite,
             folder,
+            tags,
         } => commands::handle_edit(
             mode,
             &cli.vault_path,
@@ -402,6 +969,7 @@ fn main() {
             name,
             favorite,
             folder,
+            tags,
         ),
 
         // Devices

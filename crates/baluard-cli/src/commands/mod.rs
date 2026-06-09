@@ -10,7 +10,7 @@ use crate::client;
 use std::path::Path;
 
 use base64::Engine;
-use baluard_core::types::{CipherInput, CipherKind, KdfProfile, LoginData};
+use baluard_core::types::{CipherInput, KdfProfile};
 use baluard_core::vault::handle::{CipherRead, VaultHandle};
 use zeroize::Zeroize;
 
@@ -138,57 +138,12 @@ pub fn handle_lock(
 
 // ── Add cipher ──
 
-#[allow(clippy::too_many_arguments)]
 pub fn handle_add(
     mode: ConnectMode,
     vault_path: &str,
     socket: Option<&str>,
-    name: String,
-    username: Option<String>,
-    password: Option<String>,
-    uri: Option<String>,
-    notes: Option<String>,
-    folder_id: Option<&str>,
+    input: CipherInput,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let cipher_password = match password {
-        Some(p) => {
-            eprintln!(
-                "warning: --password exposes secret in process list. Use interactive prompt instead."
-            );
-            zeroize::Zeroizing::new(p)
-        }
-        None => zeroize::Zeroizing::new(prompt_password("Password: ")?),
-    };
-
-    let folder_uuid = folder_id
-        .map(uuid::Uuid::parse_str)
-        .transpose()
-        .map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid folder UUID: {e}")))?;
-
-    let input = CipherInput {
-        name,
-        folder_id: folder_uuid,
-        kind: CipherKind::Login(LoginData {
-            username,
-            password: Some((*cipher_password).clone()),
-            uris: uri
-                .map(|u| vec![baluard_core::types::LoginUri::new(u)])
-                .unwrap_or_default(),
-            totp_uri: None,
-            autofill_on_page_load: false,
-            password_revision_date: None,
-        }),
-        favorite: false,
-        notes,
-        custom_fields: vec![],
-        created_at: None,
-        password_history: vec![],
-        attachments: vec![],
-        archived: false,
-        reprompt: false,
-        tags: vec![],
-    };
-
     match mode {
         ConnectMode::Daemon => {
             ensure_unlocked_daemon(socket)?;
@@ -1211,7 +1166,7 @@ fn device_name(vault_path: &str) -> String {
     "baluard-device".into()
 }
 
-fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
     match rpassword::prompt_password(prompt) {
         Ok(pw) => Ok(pw),
         Err(_) => {
@@ -1235,9 +1190,10 @@ pub fn handle_edit(
     name: Option<String>,
     favorite: Option<bool>,
     folder: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if name.is_none() && favorite.is_none() && folder.is_none() {
-        eprintln!("Nothing to edit. Use --name, --favorite, or --folder.");
+    if name.is_none() && favorite.is_none() && folder.is_none() && tags.is_none() {
+        eprintln!("Nothing to edit. Use --name, --favorite, --folder, or --tags.");
         return Ok(());
     }
 
@@ -1250,6 +1206,10 @@ pub fn handle_edit(
     }
     if let Some(ref fid) = folder {
         payload["folder_id"] = serde_json::Value::String(fid.clone());
+    }
+    if let Some(ref t) = tags {
+        let filtered: Vec<String> = t.iter().filter(|s| !s.is_empty()).cloned().collect();
+        payload["tags"] = serde_json::json!(filtered);
     }
 
     match mode {
@@ -1278,7 +1238,8 @@ pub fn handle_edit(
                 name: name.clone().unwrap_or_else(|| existing_cipher.name.clone()),
                 folder_id: folder
                     .as_ref()
-                    .and_then(|f| f.parse::<uuid::Uuid>().ok())
+                    .map(|f| uuid::Uuid::parse_str(f).map_err(|e| format!("Invalid folder UUID '{f}': {e}")))
+                    .transpose()?
                     .or(existing_cipher.folder_id),
                 kind: existing_cipher.kind.clone(),
                 favorite: favorite.unwrap_or(existing_cipher.favorite),
@@ -1289,7 +1250,7 @@ pub fn handle_edit(
                 password_history: existing_cipher.password_history.clone(),
                 attachments: existing_cipher.attachments.clone(),
                 archived: existing_cipher.archived,
-                tags: existing_cipher.tags.clone(),
+                tags: tags.map(|t| t.into_iter().filter(|s| !s.is_empty()).collect()).unwrap_or_else(|| existing_cipher.tags.clone()),
             };
 
             handle.update_cipher(cipher_id, &input)?;
