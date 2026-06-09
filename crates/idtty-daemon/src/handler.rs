@@ -194,6 +194,7 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.biometric_disable",
     "vault.avatar.get",
     "vault.avatar.set",
+    "ssh.generate_key",
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.
@@ -724,6 +725,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         },
         "vault.avatar.set" => match state.avatar_set(&req.payload).await {
             Ok(()) => ok_resp("{}", token_str),
+            Err(e) => err_response(e),
+        },
+
+        "ssh.generate_key" => match state.ssh_generate_key(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
 

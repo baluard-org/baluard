@@ -31,6 +31,8 @@ prost-build = "0.13"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+ssh-key = { version = "0.7.0-rc.10", features = ["ed25519", "rsa"] }
+rand_core = "0.10"
 
 [features]
 default = ["git-sync"]
