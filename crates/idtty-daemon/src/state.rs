@@ -380,12 +380,6 @@ impl VaultState {
         let b64 = v["data"].as_str().unwrap_or("");
         let ext_raw = v["ext"].as_str().unwrap_or("png");
 
-        // Validate extension to prevent path traversal
-        let ext = ext_raw.trim().to_lowercase();
-        if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
-            return Err("Invalid avatar extension".into());
-        }
-
         if b64.is_empty() {
             // Remove avatar
             let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
@@ -400,6 +394,12 @@ impl VaultState {
             settings.avatar_ext = None;
             handle.save_settings(&settings).map_err(|e| format!("{e}"))?;
             return Ok(());
+        }
+
+        // Validate extension to prevent path traversal
+        let ext = ext_raw.trim().to_lowercase();
+        if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
+            return Err("Invalid avatar extension".into());
         }
 
         // Cap avatar size (~350KB base64 = ~256KB decoded)
