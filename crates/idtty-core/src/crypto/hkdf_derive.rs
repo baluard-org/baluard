@@ -15,6 +15,7 @@ const INDEX_INFO: &[u8] = b"idtty-index-v1";
 const FOLDERS_INFO: &[u8] = b"idtty-folders-v1";
 const TAGS_INFO: &[u8] = b"idtty-tags-v1";
 const PROFILE_INFO: &[u8] = b"idtty-profile-v1";
+const ACTIVITY_INFO: &[u8] = b"idtty-activity-v1";
 
 /// Derive a 32-byte Session Key from KEK.
 ///
@@ -80,6 +81,17 @@ pub fn derive_profile_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> 
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
     let mut key = [0u8; 32];
     hkdf.expand(PROFILE_INFO, &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
+/// Derive a 32-byte Device Activity Key from Root Key.
+///
+/// Activity Key encrypts meta/activity.enc (device last-push metadata).
+pub fn derive_activity_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, root_key);
+    let mut key = [0u8; 32];
+    hkdf.expand(ACTIVITY_INFO, &mut key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }

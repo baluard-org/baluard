@@ -332,6 +332,15 @@ impl VaultHandle {
                 }
             }
         }
+
+        // Migrate device_activity.json -> activity.enc
+        let activity_enc = self.path.join("meta/activity.enc");
+        if !activity_enc.exists() {
+            let plaintext = crate::device_manager::DeviceActivityIndex::read(&self.path);
+            if !plaintext.devices.is_empty() {
+                let _ = self.save_activity_enc(&plaintext);
+            }
+        }
     }
 
     /// Lock the vault: zeroize all key material.
@@ -577,6 +586,59 @@ impl VaultHandle {
         settings.subtitle = None;
         settings.avatar_ext = None;
         self.save_settings(&settings)?;
+        Ok(())
+    }
+
+    // ── Device Activity ──
+
+    /// Load encrypted device activity index from meta/activity.enc.
+    /// Falls back to plaintext meta/device_activity.json (legacy).
+    pub fn load_activity_enc(
+        &self,
+    ) -> Result<crate::device_manager::DeviceActivityIndex, IdttyError> {
+        let enc_path = self.path.join("meta/activity.enc");
+        if enc_path.exists() {
+            let unlocked = match &self.state {
+                VaultState::Unlocked(u) => u,
+                VaultState::Locked => return Err(VaultError::Locked.into()),
+            };
+            let key = hkdf_derive::derive_activity_key(unlocked.root_key.as_bytes())
+                .map_err(|e| VaultError::Metadata(format!("activity key derivation: {e}")))?;
+            let data = std::fs::read(&enc_path)?;
+            let envelope = crate::vault::envelope::deserialize(&data)?;
+            let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
+            let index: crate::device_manager::DeviceActivityIndex =
+                serde_json::from_slice(&decrypted)
+                    .map_err(|e| VaultError::Metadata(format!("activity decrypt parse: {e}")))?;
+            // Cleanup stale plaintext
+            let _ = std::fs::remove_file(self.path.join("meta/device_activity.json"));
+            return Ok(index);
+        }
+        // Legacy fallback: plaintext device_activity.json
+        Ok(crate::device_manager::DeviceActivityIndex::read(&self.path))
+    }
+
+    /// Save encrypted device activity index to meta/activity.enc (atomic write).
+    /// Does NOT modify plaintext device_activity.json (sync engine may still write it).
+    fn save_activity_enc(
+        &self,
+        index: &crate::device_manager::DeviceActivityIndex,
+    ) -> Result<(), IdttyError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let key = hkdf_derive::derive_activity_key(unlocked.root_key.as_bytes())
+            .map_err(|e| VaultError::Metadata(format!("activity key derivation: {e}")))?;
+        let json = serde_json::to_vec(index)
+            .map_err(|e| VaultError::Metadata(format!("activity serialization: {e}")))?;
+        let enc_path = self.path.join("meta/activity.enc");
+        self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
+        // Remove legacy plaintext
+        let json_path = self.path.join("meta/device_activity.json");
+        if json_path.exists() {
+            let _ = std::fs::remove_file(&json_path);
+        }
         Ok(())
     }
 
@@ -1996,6 +2058,7 @@ impl VaultHandle {
         let old_folders = self.list_folders().ok();
         let old_tags = self.list_tags().ok();
         let old_profile = self.load_profile().ok();
+        let old_activity = self.load_activity_enc().ok();
 
         // Phase 5: Swap Root Key and update epoch via DeviceManager lifecycle
         match &mut self.state {
@@ -2040,6 +2103,9 @@ impl VaultHandle {
         }
         if let Some(profile) = old_profile {
             let _ = self.save_profile(&profile);
+        }
+        if let Some(activity) = old_activity {
+            let _ = self.save_activity_enc(&activity);
         }
 
         // Clean up rotation-pending marker
@@ -2304,6 +2370,7 @@ impl VaultHandle {
         let old_folders = self.list_folders().ok();
         let old_tags = self.list_tags().ok();
         let old_profile = self.load_profile().ok();
+        let old_activity = self.load_activity_enc().ok();
 
         // ── Update in-memory state ──
         match &mut self.state {
@@ -2347,6 +2414,9 @@ impl VaultHandle {
         }
         if let Some(profile) = old_profile {
             let _ = self.save_profile(&profile);
+        }
+        if let Some(activity) = old_activity {
+            let _ = self.save_activity_enc(&activity);
         }
 
         // Clean up rotation-pending marker (disarm guard first)

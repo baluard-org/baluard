@@ -24,6 +24,8 @@ pub struct VaultState {
     session_token: RwLock<Option<String>>,
     /// Last activity timestamp (seconds since epoch). Updated on every IPC request.
     last_activity: AtomicU64,
+    /// Cover commit scheduler handle. Cancelled on lock.
+    cover_timer: RwLock<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl VaultState {
@@ -34,6 +36,7 @@ impl VaultState {
             inner: RwLock::new(None),
             session_token: RwLock::new(None),
             last_activity: AtomicU64::new(0),
+            cover_timer: RwLock::new(None),
         }
     }
 
@@ -44,6 +47,95 @@ impl VaultState {
             .unwrap_or_default()
             .as_secs();
         self.last_activity.store(now, Ordering::Relaxed);
+    }
+
+    /// Start the periodic cover commit timer.
+    /// Fires at random intervals (2-6 hours) to mask inactivity patterns.
+    /// Only runs while vault is unlocked. Cancelled on lock.
+    pub async fn start_cover_timer(self: &Arc<Self>) {
+        self.stop_cover_timer().await;
+        let state = self.clone();
+        let state_for_store = self.clone();
+
+        let handle = tokio::spawn(async move {
+            loop {
+                // Random interval: 2-6 hours
+                let delay_secs = 7200 + (rand::random::<u64>() % 14400);
+                tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
+
+                // Check vault is still unlocked
+                let guard = state.inner.read().await;
+                if let Some(handle) = guard.as_ref() {
+                    if handle.is_unlocked() {
+                        drop(guard);
+                        #[cfg(feature = "git-sync")]
+                        state.fire_cover_commit().await;
+                    }
+                }
+            }
+        });
+
+        *state_for_store.cover_timer.write().await = Some(handle);
+    }
+
+    /// Cancel the cover commit timer.
+    pub async fn stop_cover_timer(&self) {
+        if let Some(handle) = self.cover_timer.write().await.take() {
+            handle.abort();
+        }
+    }
+
+    /// Schedule a single cover commit at a random delay (30min-4hr).
+    /// Called after real vault commits to mask usage patterns.
+    pub fn schedule_cover_after_commit(self: &Arc<Self>) {
+        let state = self.clone();
+        tokio::spawn(async move {
+            // Random delay: 30min - 4hr
+            let delay_secs = 1800 + (rand::random::<u64>() % 12600);
+            tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
+
+            let guard = state.inner.read().await;
+            if let Some(handle) = guard.as_ref() {
+                if handle.is_unlocked() {
+                    drop(guard);
+                    #[cfg(feature = "git-sync")]
+                    state.fire_cover_commit().await;
+                }
+            }
+        });
+    }
+
+    /// Fire a cover commit (git-sync only).
+    #[cfg(feature = "git-sync")]
+    async fn fire_cover_commit(&self) {
+        let guard = self.inner.read().await;
+        if let Some(handle) = guard.as_ref() {
+            if !handle.is_unlocked() {
+                return;
+            }
+        } else {
+            return;
+        }
+        drop(guard);
+
+        let device_name = {
+            let guard = self.inner.read().await;
+            guard
+                .as_ref()
+                .and_then(|h| {
+                    h.device_manager
+                        .registry()
+                        .devices
+                        .values()
+                        .next()
+                        .map(|d| d.name.clone())
+                })
+                .unwrap_or_default()
+        };
+        let engine = idtty_core::sync::engine::SyncEngine::new(&self.vault_path, &device_name);
+        if let Ok(repo) = engine.open_repo() {
+            let _ = engine.cover_commit(&repo);
+        }
     }
 
     /// Get seconds since last activity.
@@ -89,6 +181,7 @@ impl VaultState {
                         elapsed,
                         timeout_secs
                     );
+                    state.stop_cover_timer().await;
                     let mut guard = state.inner.write().await;
                     if let Some(handle) = guard.as_mut() {
                         if handle.is_unlocked() {
@@ -155,6 +248,9 @@ impl VaultState {
 
     /// Lock the vault, zeroizing keys in memory. Clears the session token.
     pub async fn lock(&self) -> Result<(), String> {
+        // Stop cover timer first
+        self.stop_cover_timer().await;
+
         let mut guard = self.inner.write().await;
         if let Some(ref mut handle) = *guard {
             handle.lock();
@@ -1421,7 +1517,7 @@ impl VaultState {
     }
 
     /// Return device fleet activity data.
-    /// Reads meta/device_activity.json and cross-references with the device registry.
+    /// Reads encrypted activity.enc and cross-references with the device registry.
     pub async fn device_activity(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
@@ -1430,7 +1526,7 @@ impl VaultState {
             return Err("Vault is locked".into());
         }
 
-        let index = idtty_core::device_manager::DeviceActivityIndex::read(&self.vault_path);
+        let index = handle.load_activity_enc().map_err(|e| format!("{e}"))?;
         let registry = handle.device_manager.registry();
 
         let mut devices = Vec::new();
