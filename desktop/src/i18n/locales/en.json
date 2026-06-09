@@ -99,6 +99,8 @@
     "deleteFolder": "Delete folder",
     "confirmDelete": "Confirm delete",
     "deletePromptQuestion": "Delete?",
+    "deleteTagTitle": "Delete tag?",
+    "deleteTagConfirm": "This will remove the tag \"{tag}\" from all entries. The entries themselves will not be deleted.",
     "subfolderPlaceholder": "Subfolder name",
     "copyNotes": "Copy notes",
     "untitled": "Untitled",
@@ -166,8 +168,6 @@
     "subtitlePlaceholder": "Role, team, or tagline",
     "changeAvatar": "Change avatar",
     "removeAvatar": "Remove",
-    "deleteTagTitle": "Delete tag?",
-    "deleteTagConfirm": "This will remove the tag \"{tag}\" from all entries. The entries themselves will not be deleted.",
     "avatarSaved": "Avatar updated",
     "avatarRemoved": "Avatar removed",
     "profileSaved": "Profile updated"
