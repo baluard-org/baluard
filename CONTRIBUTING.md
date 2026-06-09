@@ -1,4 +1,4 @@
-# Contributing to IDtty
+# Contributing to Baluard
 
 Thank you for your interest in contributing!
 
@@ -6,8 +6,8 @@ Thank you for your interest in contributing!
 
 ```bash
 cargo install just      # Build runner
-git clone https://github.com/EstebanForge/IDtty.git
-cd IDtty
+git clone https://github.com/EstebanForge/Baluard.git
+cd Baluard
 just                    # List all targets
 just check              # Full CI parity (fmt + clippy + test + build)
 ```
@@ -55,7 +55,7 @@ Behaviour which can be reasonably considered harassment will not be tolerated.
 - No `!important`
 
 ### Protobuf
-- proto3 syntax, `idtty.vault` package
+- proto3 syntax, `baluard.vault` package
 
 ## Security
 

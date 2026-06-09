@@ -1,5 +1,5 @@
 {
-  "name": "idtty-extension",
+  "name": "baluard-extension",
   "version": "1.0.0",
   "description": "Browser extension popup (SolidJS) thin client",
   "type": "module",

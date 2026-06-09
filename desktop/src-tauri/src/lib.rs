@@ -1,6 +1,6 @@
-//! IDtty desktop Tauri backend.
+//! Baluard desktop Tauri backend.
 //!
-//! - Starts idtty-daemon on launch, stops on quit
+//! - Starts baluard-daemon on launch, stops on quit
 //! - Window close hides to system tray
 //! - Proxies vault operations via Protobuf-over-Unix-socket
 
@@ -21,7 +21,7 @@ const MAX_RESPONSE_SIZE: u64 = 5 * 1024 * 1024;
 /// Generated Protobuf types
 mod proto {
     #![allow(dead_code)]
-    include!(concat!(env!("OUT_DIR"), "/idtty.auth.rs"));
+    include!(concat!(env!("OUT_DIR"), "/baluard.auth.rs"));
 }
 
 use proto::{GatewayRequest, GatewayResponse};
@@ -58,7 +58,7 @@ impl Drop for Daemon {
 
 #[cfg(unix)]
 fn default_socket_path() -> PathBuf {
-    idtty_core::paths::socket_path()
+    baluard_core::paths::socket_path()
 }
 
 // ── Wire protocol ──
@@ -247,9 +247,9 @@ pub fn run() {
         .manage(SessionToken(Mutex::new(None::<zeroize::Zeroizing<String>>)))
         .setup(|app| {
             // Always log to file for debuggability.
-            // IDTTY_LOG_DIR overrides log directory; defaults to socket dir.
-            // IDTTY_DEBUG=1 enables Debug level; otherwise Warn.
-            let log_dir = if let Ok(dir) = std::env::var("IDTTY_LOG_DIR") {
+            // BALUARD_LOG_DIR overrides log directory; defaults to socket dir.
+            // BALUARD_DEBUG=1 enables Debug level; otherwise Warn.
+            let log_dir = if let Ok(dir) = std::env::var("BALUARD_LOG_DIR") {
                 std::path::PathBuf::from(dir)
             } else {
                 default_socket_path().parent()
@@ -257,7 +257,7 @@ pub fn run() {
             };
             let _ = std::fs::create_dir_all(&log_dir);
 
-            let level = if std::env::var("IDTTY_DEBUG").unwrap_or_default() == "1" {
+            let level = if std::env::var("BALUARD_DEBUG").unwrap_or_default() == "1" {
                 log::LevelFilter::Debug
             } else {
                 log::LevelFilter::Warn
@@ -281,12 +281,12 @@ pub fn run() {
             // outdated code after a sidecar rebuild.
             #[cfg(unix)]
             {
-                // Kill only processes whose binary is exactly "idtty-daemon".
+                // Kill only processes whose binary is exactly "baluard-daemon".
                 // Do NOT use lsof -t -U — on macOS it can return PIDs of unrelated
                 // processes (OrbStack, Docker, Ice, Ghostty, etc.) that hold Unix sockets.
                 let socket = default_socket_path();
                 if let Ok(output) = std::process::Command::new("pgrep")
-                    .args(["-x", "idtty-daemon"])
+                    .args(["-x", "baluard-daemon"])
                     .output()
                 {
                     let pids = String::from_utf8_lossy(&output.stdout);
@@ -301,7 +301,7 @@ pub fn run() {
                 let _ = std::fs::remove_file(&socket);
 
                 // Use tauri-plugin-shell sidecar for bundle-relative binary path.
-                // Binary must exist at src-tauri/binaries/idtty-daemon-{target-triple}
+                // Binary must exist at src-tauri/binaries/baluard-daemon-{target-triple}
                 //
                 // Default vault path lives alongside the socket.
                 let socket_dir = socket.parent()
@@ -310,12 +310,12 @@ pub fn run() {
                 log::info!("Starting daemon with --vault-path {} --socket {}",
                     vault_path.display(), socket.display());
 
-                    let sidecar_command = app.shell().sidecar("idtty-daemon")
+                    let sidecar_command = app.shell().sidecar("baluard-daemon")
                         .map_err(|e| format!("Sidecar not found: {e}"))?;
 
                     let sidecar_command = sidecar_command
                         .args(["--vault-path", vault_path.to_str().unwrap_or("."),
-                               "--socket", default_socket_path().to_str().unwrap_or("/tmp/idtty.sock")]);
+                               "--socket", default_socket_path().to_str().unwrap_or("/tmp/baluard.sock")]);
 
                     // Spawn the daemon. We MUST keep the stdout/stderr receiver alive
                     // — dropping it closes the pipe and the daemon can fail on EPIPE
@@ -382,7 +382,7 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("IDtty")
+                .tooltip("Baluard")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {

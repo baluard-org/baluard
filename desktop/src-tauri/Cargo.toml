@@ -1,14 +1,14 @@
 [package]
-name = "idtty-desktop"
+name = "baluard-desktop"
 version = "0.1.0"
-description = "IDtty desktop app"
+description = "Baluard desktop app"
 authors = ["EstebanForge"]
 license = "GPL-3.0"
-repository = "https://github.com/EstebanForge/IDtty"
+repository = "https://github.com/EstebanForge/Baluard"
 edition = "2024"
 
 [lib]
-name = "idtty_desktop_lib"
+name = "baluard_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -28,7 +28,7 @@ prost = "0.13"
 anyhow = "1"
 libc = "0.2"
 zeroize = { version = "1", features = ["derive"] }
-idtty-core = { path = "../../crates/idtty-core" }
+baluard-core = { path = "../../crates/baluard-core" }
 
 [profile.release]
 panic = "abort"

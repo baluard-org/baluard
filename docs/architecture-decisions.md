@@ -1,4 +1,4 @@
-# IDtty: Architecture Decisions Record
+# Baluard: Architecture Decisions Record
 
 > Master Blueprint for the Git-backed Password Manager (Space Manager).
 > Pure Rust core, Single-String Protobuf Gateway, Padded Buckets, UniFFI mobile bridge, SolidJS/KMP UI layers.
@@ -11,7 +11,7 @@
 
 **Decision: Compiled Rust Core with `zeroize`-protected memory**
 
-All cryptographic operations, Git operations (git2-rs), padding, and secret loading are handled entirely in the `idtty-core` Rust crate. Secrets (decrypted keys, entries) are held in `Zeroize`-derived structs. The daemon process keeps vault data in locked memory regions via `memsec`/`zeroize` to prevent paging to disk or leaking via core dumps.
+All cryptographic operations, Git operations (git2-rs), padding, and secret loading are handled entirely in the `baluard-core` Rust crate. Secrets (decrypted keys, entries) are held in `Zeroize`-derived structs. The daemon process keeps vault data in locked memory regions via `memsec`/`zeroize` to prevent paging to disk or leaking via core dumps.
 
 ---
 
@@ -27,7 +27,7 @@ To eliminate metadata leaks (website names, usernames, specific file sizes) and 
    - **M Bucket (100 KB)**: Extended Secure Notes
    - **L Bucket (250 KB)**: Small Attachments, Scanned IDs
    - **XL Bucket (2 MB)**: Larger documents or media files
-3. **Index Lookup (`index.enc`)**: An encrypted lookup table mapping human-readable metadata (URLs, Titles) to their corresponding hashed filenames under `entries/`. Decrypted on demand by idtty-core.
+3. **Index Lookup (`index.enc`)**: An encrypted lookup table mapping human-readable metadata (URLs, Titles) to their corresponding hashed filenames under `entries/`. Decrypted on demand by baluard-core.
 
 ---
 
@@ -64,8 +64,8 @@ Decrypts Entries (entries/*.enc)
 
 **Decision: Automatic Index Rebuild & File Conflict Resolution**
 
-- **Index Auto-Heal**: If `index.enc` experiences a Git conflict due to concurrent multi-device updates, idtty-core resolves the conflict programmatically. It decrypts the entire local `entries/` folder, reconstructs the index table from scratch, and silently force-pushes the clean resolution.
-- **Entry Conflict Healing**: If a single padded file (`entries/3a7f82...enc`) experiences a conflict, idtty-core renames the local version, accepts the remote commit, and flags a notification to the UI layer: *"Two updates happened at once. Which do you keep?"*
+- **Index Auto-Heal**: If `index.enc` experiences a Git conflict due to concurrent multi-device updates, baluard-core resolves the conflict programmatically. It decrypts the entire local `entries/` folder, reconstructs the index table from scratch, and silently force-pushes the clean resolution.
+- **Entry Conflict Healing**: If a single padded file (`entries/3a7f82...enc`) experiences a conflict, baluard-core renames the local version, accepts the remote commit, and flags a notification to the UI layer: *"Two updates happened at once. Which do you keep?"*
 
 ---
 
@@ -75,8 +75,8 @@ Decrypts Entries (entries/*.enc)
 
 To circumvent mobile OS sandboxes that aggressively terminate background synchronization loops:
 1. **JIT Hook**: Triggered immediately when the mobile browser or credential provider requests autofill.
-2. **Micro-Fetch**: idtty-core (via UniFFI binding) initiates a rapid `git fetch` to evaluate the remote branch SHA delta.
-3. **Pulls Delta**: If a delta is present, idtty-core pulls changes, decrypts entries, and updates the local cache *before* prompting the user for biometrics (FaceID/Fingerprint).
+2. **Micro-Fetch**: baluard-core (via UniFFI binding) initiates a rapid `git fetch` to evaluate the remote branch SHA delta.
+3. **Pulls Delta**: If a delta is present, baluard-core pulls changes, decrypts entries, and updates the local cache *before* prompting the user for biometrics (FaceID/Fingerprint).
 
 ---
 
@@ -88,7 +88,7 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 
 **Current state**: Protobuf wire protocol fully implemented. Daemon compiles all 3 protos via prost-build. CLI compiles auth.proto. Length-delimited framing (varint prefix) on Unix sockets. 30+ daemon routes operational.
 
-**Target**: All layers will communicate with idtty-core through a unified, serialized gateway interface:
+**Target**: All layers will communicate with baluard-core through a unified, serialized gateway interface:
 - **Input**: A single Protobuf serialized string containing the action command and its parameters.
 - **Output**: A serialized response string.
 - This decoupling allows front-end tiers to compile with `MOCK_BACKEND=true` to skip native builds during UI development, feeding hardcoded mock Protobuf payloads directly to components.
@@ -99,8 +99,8 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 
 **Decision: Rust Daemon (Server) + CLI Client (socket) + Tauri v2 (SolidJS/Tailwind UI)**
 
-- **Rust Daemon (`idtty-daemon`)**: Started on boot by Tauri. Unlocks the vault into `zeroize`-protected memory. Listens on a platform-aware domain socket (Linux: `$XDG_RUNTIME_DIR/idtty/idtty.sock`, macOS: `~/Library/Application Support/idtty/idtty.sock`, Windows: Named Pipes) with `0600` permissions via umask before bind. Built on tokio for async I/O. Handles both SIGINT and SIGTERM for graceful shutdown. SO_PEERCRED peer UID verification on Linux. **Current state: fully implemented with 30+ routes, vault state, sync, devices.**
-- **CLI (`idtty-cli`)**: Dual-mode socket client. Default: serializes flags into Protobuf, transmits to daemon via Unix socket, prints response. `--direct` fallback links idtty-core in-process. `--socket <path>` for custom daemon socket. All vault, sync, and devices commands implemented.
+- **Rust Daemon (`baluard-daemon`)**: Started on boot by Tauri. Unlocks the vault into `zeroize`-protected memory. Listens on a platform-aware domain socket (Linux: `$XDG_RUNTIME_DIR/baluard/baluard.sock`, macOS: `~/Library/Application Support/baluard/baluard.sock`, Windows: Named Pipes) with `0600` permissions via umask before bind. Built on tokio for async I/O. Handles both SIGINT and SIGTERM for graceful shutdown. SO_PEERCRED peer UID verification on Linux. **Current state: fully implemented with 30+ routes, vault state, sync, devices.**
+- **CLI (`baluard-cli`)**: Dual-mode socket client. Default: serializes flags into Protobuf, transmits to daemon via Unix socket, prints response. `--direct` fallback links baluard-core in-process. `--socket <path>` for custom daemon socket. All vault, sync, and devices commands implemented.
 - **Tauri v2 UI**: SolidJS/Tailwind v4 webview. Communicates with the daemon via a `daemon_request` Tauri command that proxies Protobuf over Unix sockets. System tray with Show/Quit menu. Full cipher CRUD with 8 types (Login, Card, Identity, SSH Key, Secure Note, Bank Account, Driver's License, Passport/ID). Password generator (CSPRNG + EFF 7776-word passphrase). TOTP widget with boundary-aligned refresh. Auto-lock settings. Dark/light themes. Import/export (8 formats). Nested folders. Device fleet dashboard. Biometric unlock. **Current state: fully implemented.**
 
 ---
@@ -109,12 +109,12 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 
 **Decision: Mozilla UniFFI for Rust-to-Kotlin/Swift bridge**
 
-Mobile apps will bind directly to idtty-core via UniFFI-generated native bindings:
-- **Kotlin (Android)**: UniFFI generates Kotlin data classes and function bindings from `#[uniffi::export]` proc-macros on idtty-core's public API. Compiled into the KMP project as a static library.
+Mobile apps will bind directly to baluard-core via UniFFI-generated native bindings:
+- **Kotlin (Android)**: UniFFI generates Kotlin data classes and function bindings from `#[uniffi::export]` proc-macros on baluard-core's public API. Compiled into the KMP project as a static library.
 - **Swift (iOS)**: UniFFI generates Swift bindings compiled into an xcframework.
 - **No intermediate language**: The Rust core is the single source of truth. No Go, no cgo, no gomobile. UniFFI's serialization-based FFI provides a clean security boundary between Rust memory and foreign memory.
 - **JIT Autofill**: The UniFFI-exposed `sync::fetch_and_decrypt()` method will be called directly from the Kotlin/Swift autofill adapter before biometric prompt.
-- **Current state**: idtty-core has no `#[uniffi::export]` annotations yet. Mobile app is a placeholder scaffold.
+- **Current state**: baluard-core has no `#[uniffi::export]` annotations yet. Mobile app is a placeholder scaffold.
 
 ---
 
@@ -122,10 +122,10 @@ Mobile apps will bind directly to idtty-core via UniFFI-generated native binding
 
 **Decision: Envelope Asymmetric Key Wrapping via `metadata/access_list.json`**
 
-1. **Space Invitation**: An Admin enters an invitee's email. idtty-core fetches their public key from the Git host.
-2. **Group Key wrapping**: idtty-core encrypts the Space's AES-GCM **Group Key** with the recipient's public key and appends the wrapped payload to `metadata/access_list.json`.
+1. **Space Invitation**: An Admin enters an invitee's email. baluard-core fetches their public key from the Git host.
+2. **Group Key wrapping**: baluard-core encrypts the Space's AES-GCM **Group Key** with the recipient's public key and appends the wrapped payload to `metadata/access_list.json`.
 3. **Acceptance**: Invitee decrypts the group key with their local device private key.
-4. **Revocation / Offboarding**: The Admin rotates the Group Key. idtty-core re-encrypts the `entries/` directory, updates `access_list.json` for remaining members, and pushes the changes. The evicted user's local instance is instantly locked out of new commits, and all local entries are reduced to unreadable ciphertext.
+4. **Revocation / Offboarding**: The Admin rotates the Group Key. baluard-core re-encrypts the `entries/` directory, updates `access_list.json` for remaining members, and pushes the changes. The evicted user's local instance is instantly locked out of new commits, and all local entries are reduced to unreadable ciphertext.
 
 ---
 
@@ -255,7 +255,7 @@ Rules:
 - UUID big-endian comparison: sort enrolled UUIDs as 128-bit integers, elect lowest.
 - Elected device aborts stalled rotation (epoch -> ACTIVE) and can re-initiate.
 - User confirmation required before aborting another device's rotation.
-- Abort marker: `.idtty/rekey/{new_epoch}.aborted`
+- Abort marker: `.baluard/rekey/{new_epoch}.aborted`
 
 ### Signed Commits
 
@@ -317,7 +317,7 @@ DeviceManager
 └── RotationCoordinator (two-phase commit logic, owns the transaction)
 ```
 
-`DeviceManager` lives in `crates/idtty-core/src/device_manager.rs`. It owns the coordination between registry, epoch state, and rotation. Individual components remain independently testable pure structs. `VaultHandle` holds a `DeviceManager`. All vault ops check epoch state through it.
+`DeviceManager` lives in `crates/baluard-core/src/device_manager.rs`. It owns the coordination between registry, epoch state, and rotation. Individual components remain independently testable pure structs. `VaultHandle` holds a `DeviceManager`. All vault ops check epoch state through it.
 
 ### Three Operational Modes
 
@@ -350,18 +350,18 @@ Phase 1 — PROPOSE (initiating device, online now):
      HPKE(RK', device_x25519_pk) → wrapped_keys[device_id]
   3. Build RekeyTransaction:
      { old_epoch, new_epoch, wrapped_keys, initiator, timestamp }
-  4. Write .idtty/rekey/{new_epoch}.txn
+  4. Write .baluard/rekey/{new_epoch}.txn
   5. Git commit + push
   6. Transition epoch → ROTATING
   7. Vault: READS allowed (old epoch), WRITES blocked
 
 Phase 2 — ACKNOWLEDGE (each device, async, on next sync):
   1. Pull from remote
-  2. Read .idtty/rekey/{new_epoch}.txn
+  2. Read .baluard/rekey/{new_epoch}.txn
   3. Unwrap own HPKE(RK', my_pk) → verify RK' is sane
   4. Compute txn_hash = SHA-256(serialized .txn file)
   5. Sign: Ed25519(my_signing_sk, "ack" || epoch || device_id || txn_hash)
-  6. Write .idtty/rekey/{new_epoch}.ack.{device_id}
+  6. Write .baluard/rekey/{new_epoch}.ack.{device_id}
   7. Git commit + push
 
 Phase 3 — COMMIT (any device observing quorum):
@@ -372,7 +372,7 @@ Phase 3 — COMMIT (any device observing quorum):
      - Verify txn_hash matches the .txn file (prevents ack transplant)
   4. If verified ack count >= quorum (ceil(N/2)):
      - Re-derive SGKs under new RK'
-     - Write .idtty/rekey/{new_epoch}.committed
+     - Write .baluard/rekey/{new_epoch}.committed
      - Transition: old epoch → RETIRED, new epoch → ACTIVE
      - Delete old keywrap files for evicted devices
      - Vault WRITES re-enabled
@@ -505,7 +505,7 @@ Recovery bypasses DeviceManager enrollment entirely. The recovery phrase IS the 
 ### File Layout
 
 ```
-.idtty/
+.baluard/
   rekey/
     {epoch}.txn            # Rotation proposal (HPKE-wrapped RK' per device)
     {epoch}.ack.{device}   # Device acknowledgment (signed, with txn_hash binding)
@@ -697,9 +697,9 @@ All user-facing strings replaced with `t()` keys. Both `en.json` and `es.json` m
 
 ## Staged Implementation Roadmap
 
-- **Phase 1: Cryptographic Core & Padding Engine**: Rust idtty-core (crypto, keys, vault, padding). Protobuf schemas. DONE.
+- **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.
 - **Phase 2: Git Sync Engine**: git2-rs sync, conflict auto-healing, state machine. DONE.
-- **Phase 3: IPC Daemon & CLI**: idtty-daemon (tokio Unix socket server), idtty-cli (socket client), Protobuf gateway handler.
+- **Phase 3: IPC Daemon & CLI**: baluard-daemon (tokio Unix socket server), baluard-cli (socket client), Protobuf gateway handler.
 - **Phase 4: Desktop UI & Open-Source Launch**: SolidJS/Tailwind Tauri v2 app, system tray, GPL-3.0 license.
 - **Phase 5: Mobile & Extension**: UniFFI Kotlin/Swift bindings, KMP mobile app, MV3 browser extension with native messaging.
 
@@ -734,7 +734,7 @@ Tags are user-defined labels for organizing ciphers. Unlike folders (single assi
 | `VaultHandle::validate_tag(s)` | `handle.rs` | Validation + normalization |
 | `VaultHandle::rebuild_tag_index` | `handle.rs` | Rebuilds cache from decrypted ciphers |
 | Daemon routes | `handler.rs`, `state.rs` | `tag.list/create/rename/delete/rebuild_index` |
-| CLI | `commands/mod.rs` | `idtty tags list/create/rename/delete` |
+| CLI | `commands/mod.rs` | `baluard tags list/create/rename/delete` |
 | Desktop: tag sidebar | Sidebar tag pills with click-to-filter + hover X for deletion |
 
 ### Validation Boundary

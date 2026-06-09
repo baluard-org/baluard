@@ -1,13 +1,13 @@
-# IDtty
+# Baluard
 
 Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients.
 
 ## Architecture
 
 ```
-idtty-core    -> Pure Rust: crypto (AES-256-GCM, Argon2id, HPKE, Ed25519, TOTP), vault format, key lifecycle, git sync
-idtty-daemon  -> Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state, auto-lock, TOTP)
-idtty-cli     -> Terminal client (daemon-first with --direct fallback, folders, edit)
+baluard-core    -> Pure Rust: crypto (AES-256-GCM, Argon2id, HPKE, Ed25519, TOTP), vault format, key lifecycle, git sync
+baluard-daemon  -> Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state, auto-lock, TOTP)
+baluard-cli     -> Terminal client (daemon-first with --direct fallback, folders, edit)
 desktop/      -> Tauri v2 desktop app (SolidJS + Tailwind v4, 5 cipher types, generator, TOTP widget)
 mobile/       → Kotlin Multiplatform via UniFFI (planned)
 extension/    → MV3 browser extension (planned)
@@ -17,8 +17,8 @@ extension/    → MV3 browser extension (planned)
 
 ```bash
 cargo install just      # Build runner
-git clone https://github.com/EstebanForge/IDtty.git
-cd IDtty
+git clone https://github.com/EstebanForge/Baluard.git
+cd Baluard
 just build
 just test
 ```

@@ -9,13 +9,13 @@
 
 ## 0. Peer Review Verdict
 
-Two independent security architects (peer review, Agy) reviewed this analysis against the IDtty Rust/Tauri codebase.
+Two independent security architects (peer review, Agy) reviewed this analysis against the Baluard Rust/Tauri codebase.
 
 **Consensus: Critical.** Two findings were independently classified as critical by both reviewers:
 
 1. **`device-privkey.json`** -- Raw hex X25519/Ed25519 private keys on disk. `handle.rs:248-271` reads them as the production code path (the comment `"NOT for production!"` is aspirational). Any same-user process can extract device identity keys with `cat`. Combined with master password compromise, fully breaks the vault.
 
-2. **`folders.json` + `tag_index.json`** -- Committed to git in cleartext. IDtty's identity is "git-native password manager." Any remote host with repo access (GitHub, GitLab, Gitea, S3, any cloud sync) gets full content classification without decryption. This is the highest-probability external attacker path.
+2. **`folders.json` + `tag_index.json`** -- Committed to git in cleartext. Baluard's identity is "git-native password manager." Any remote host with repo access (GitHub, GitLab, Gitea, S3, any cloud sync) gets full content classification without decryption. This is the highest-probability external attacker path.
 
 Everything else is medium or below. The cipher encryption (AES-256-GCM, padded buckets, random UUID filenames) is sound. The vulnerability is exclusively in metadata handling.
 
@@ -244,7 +244,7 @@ eaefc02d  2026-06-08 21:04:47
 - Commit frequency reveals usage patterns.
 - The static message `"vault update"` is good (no operational hints), but commit count and timing are still visible.
 
-**Peer verdict:** Mitigate. Agy recommends generic git author config at vault init (`user.name "IDtty User"`, `user.email "vault@idtty.local"`) and normalized commit dates. peer review did not address this but agrees static messages are already in place.
+**Peer verdict:** Mitigate. Agy recommends generic git author config at vault init (`user.name "Baluard User"`, `user.email "vault@baluard.local"`) and normalized commit dates. peer review did not address this but agrees static messages are already in place.
 
 **Impact:** Medium with local access. High with remote sync (git push to a server).
 
@@ -438,14 +438,14 @@ The highest-priority fix. Addresses the git-sync threat model: the core product 
 
 **Implementation:**
 
-In `crates/idtty-core/src/crypto/hkdf_derive.rs`, add derivation functions:
+In `crates/baluard-core/src/crypto/hkdf_derive.rs`, add derivation functions:
 
 ```rust
-pub fn derive_folders_key(root_key: &[u8]) -> Result<[u8; 32], IdttyError> {
-    derive_subkey(root_key, b"idtty-folders-v1")
+pub fn derive_folders_key(root_key: &[u8]) -> Result<[u8; 32], BaluardError> {
+    derive_subkey(root_key, b"baluard-folders-v1")
 }
-pub fn derive_tags_key(root_key: &[u8]) -> Result<[u8; 32], IdttyError> {
-    derive_subkey(root_key, b"idtty-tags-v1")
+pub fn derive_tags_key(root_key: &[u8]) -> Result<[u8; 32], BaluardError> {
+    derive_subkey(root_key, b"baluard-tags-v1")
 }
 ```
 
@@ -469,8 +469,8 @@ The `keyring` crate is already in the dependency tree. The comment at `handle.rs
 In `vault/handle.rs`, replace the privkey read at lines 248-271:
 
 ```rust
-fn load_device_privkey(vault_path: &Path, device_id: Uuid) -> Result<DevicePrivKeys, IdttyError> {
-    let service = format!("idtty-{}", derive_vault_fingerprint(vault_path));
+fn load_device_privkey(vault_path: &Path, device_id: Uuid) -> Result<DevicePrivKeys, BaluardError> {
+    let service = format!("baluard-{}", derive_vault_fingerprint(vault_path));
     let entry = keyring::Entry::new(&service, &device_id.to_string())
         .map_err(|e| VaultError::Metadata(format!("keyring: {e}")))?;
 
@@ -555,8 +555,8 @@ Use `filetime` crate to set all vault file timestamps to a fixed constant on loc
 
 At vault init, configure local repo with generic author:
 ```
-git config user.name "IDtty User"
-git config user.email "vault@idtty.local"
+git config user.name "Baluard User"
+git config user.email "vault@baluard.local"
 ```
 The static commit message (`"vault update"`) is already in place. Generic author config completes the picture.
 

@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "crates/idtty-core",
-    "crates/idtty-cli",
-    "crates/idtty-daemon",
+    "crates/baluard-core",
+    "crates/baluard-cli",
+    "crates/baluard-daemon",
 ]
 resolver = "2"
 

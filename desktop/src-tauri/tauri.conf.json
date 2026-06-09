@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "IDtty",
+  "productName": "Baluard",
   "version": "0.1.0",
-  "identifier": "xyz.actitud.idtty",
+  "identifier": "xyz.actitud.baluard",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "IDtty",
+        "title": "Baluard",
         "width": 1200,
         "height": 700,
         "minWidth": 900,
@@ -36,11 +36,11 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/idtty-daemon",
-      "binaries/idtty"
+      "binaries/baluard-daemon",
+      "binaries/baluard"
     ],
     "macOS": {
-      "entitlements": "idtty.entitlements"
+      "entitlements": "baluard.entitlements"
     },
     "android": {
       "debugApplicationIdSuffix": ".debug"

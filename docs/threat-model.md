@@ -1,4 +1,4 @@
-# IDtty: Threat Model
+# Baluard: Threat Model
 
 > Formal adversary model for the Rust-backed Space Manager.
 > Covers: adversary classes, in-scope threats, local socket security, bucket metadata leakage, biometric attack surface, attachment handling, import parser risks, TOTP secret lifecycle, and JIT sync security.
@@ -10,7 +10,7 @@
 | Adversary Class | Capability Level | Primary Threat | Security Guarantee |
 |-----------------|-----------------|----------------|-------------------|
 | A — Honest-but-curious Git Provider | Passive read of all repository objects | Metadata inference (bucket distribution), timing analysis | Cannot read entry plaintexts. File names are UUID hashes; entry sizes are uniform buckets (5KB, 30KB, 100KB, 250KB, 2MB). Cover commits obscure push frequency. |
-| B — Malicious Git Provider | Active: can modify refs, inject corrupted index | Rollback attacks, corrupted index injection | index.enc auto-healed locally by idtty-core. Rebuilt from entries if corrupted or conflicted. Unsigned commits rejected. Integrity manifest (Ed25519 checkpoints) detects rollback. |
+| B — Malicious Git Provider | Active: can modify refs, inject corrupted index | Rollback attacks, corrupted index injection | index.enc auto-healed locally by baluard-core. Rebuilt from entries if corrupted or conflicted. Unsigned commits rejected. Integrity manifest (Ed25519 checkpoints) detects rollback. |
 | C — Local Process (on same device) | Read IPC socket or pipes | Intercept IPC commands, steal secrets | Mitigated via `0600` socket permissions on Unix and system ACLs on Windows named pipes. Session token required for all cipher/sync operations (R7-2). SO_PEERCRED peer UID verification on Linux, getpeereid on macOS. |
 | D — Local Attacker (physical disk access) | Read stored files directly | Offline brute force or cache recovery | Files are AES-256-GCM encrypted. Keys are isolated in host OS Keyring or `zeroize`-protected memory. |
 | E — Malware with OS root privileges | Full process memory interception | Dump memory, steal secrets | `zeroize`-protected memory with `mlock` guards prevents standard paging and core dump leakage. Key material mlock'd to prevent swap persistence (R7-3). |
@@ -42,7 +42,7 @@
 
 ### T5: Active Git Remote Adversary (Swap/Rollback)
 - **Threat**: The git remote host (or any party with push access) modifies vault entries by renaming, replacing, or rolling back encrypted files. Without integrity binding, the victim decrypts the wrong entry and sends its contents to an attacker-controlled service (CVE-2020-28086 class attack).
-- **Control**: Every encrypted envelope includes AES-256-GCM AAD (Additional Authenticated Data). The AAD is derived via SHA-256 hash over length-prefixed fields: `vault_id || object_type || object_id || tier || alg_id || key_epoch || update_seq` with domain separation prefix `idtty-aad-v2`. On decryption, the daemon recomputes expected AAD from caller parameters and asserts before decryption. Mismatches are rejected with `Corrupt("cipher identity mismatch")`. This blocks swap attacks, rename attacks, and cross-entry cut-and-paste.
+- **Control**: Every encrypted envelope includes AES-256-GCM AAD (Additional Authenticated Data). The AAD is derived via SHA-256 hash over length-prefixed fields: `vault_id || object_type || object_id || tier || alg_id || key_epoch || update_seq` with domain separation prefix `baluard-aad-v2`. On decryption, the daemon recomputes expected AAD from caller parameters and asserts before decryption. Mismatches are rejected with `Corrupt("cipher identity mismatch")`. This blocks swap attacks, rename attacks, and cross-entry cut-and-paste.
 - **Control**: Git commit signing (Ed25519) provides repository-level integrity. Unsigned commits are rejected.
 - **Control**: Ed25519-signed integrity manifest checkpoints detect rollback. Fresh devices bootstrap trust from the manifest.
 
@@ -58,7 +58,7 @@
 
 ### T8: Import Parser Exploitation
 - **Threat**: A crafted import file (CSV, JSON, XML, 1PUX) exploits a parser bug to cause memory corruption or code execution.
-- **Control**: All import parsers are written in Rust (memory-safe). Parsed data flows into typed `CipherInput` structs before batch-creation. No code execution from import data. Parser errors produce `IdttyError` without panicking.
+- **Control**: All import parsers are written in Rust (memory-safe). Parsed data flows into typed `CipherInput` structs before batch-creation. No code execution from import data. Parser errors produce `BaluardError` without panicking.
 
 ### T9: TOTP Secret Exposure
 - **Threat**: TOTP secret is extracted from daemon memory or intercepted over IPC.

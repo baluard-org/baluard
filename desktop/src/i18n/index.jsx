@@ -43,7 +43,7 @@ function pickPlural(dict, fallbackDict, key, count) {
   return dict[key] || fallbackDict[key] || key;
 }
 
-const STORAGE_KEY = "idtty-locale";
+const STORAGE_KEY = "baluard-locale";
 const enDict = flatten(en);
 
 function getStoredLocale() {

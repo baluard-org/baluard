@@ -38,7 +38,7 @@
 
 ### Files changed:
 
-1. **`crates/idtty-core/src/types.rs`**
+1. **`crates/baluard-core/src/types.rs`**
    - Add `tags: Vec<String>` to `CipherInput` (line ~498, `#[serde(default)]`)
    - Add `tags: Vec<String>` to `CipherEnvelopeData` (line ~630)
    - Add `tags: Vec<String>` to `Cipher` (line ~703)
@@ -46,23 +46,23 @@
    - Update test helpers (`make_cipher` etc.) to include `tags: vec![]`
    - Grep all `Cipher { .. }` and `CipherInput { .. }` struct literals for compilation
 
-2. **`crates/idtty-core/src/vault/manifest.rs`**
+2. **`crates/baluard-core/src/vault/manifest.rs`**
    - Add `TagIndex` struct: `pub tags: Vec<String>`, `pub updated_at: u64`
 
-3. **`crates/idtty-core/src/vault/handle.rs`**
-   - Add `fn rebuild_tag_index(&self) -> Result<(), IdttyError>` — scan all decrypted ciphers, extract unique tags, write `meta/tag_index.json`
-   - Add `fn list_tags(&self) -> Result<Vec<String>, IdttyError>` — read from cache, or rebuild if missing
-   - Add `fn create_tag(&mut self, name: &str) -> Result<(), IdttyError>` — validate, add to index, save
-   - Add `fn rename_tag(&mut self, old: &str, new: &str) -> Result<usize, IdttyError>` — rename across all ciphers + update index
-   - Add `fn delete_tag(&mut self, name: &str) -> Result<usize, IdttyError>` — remove from all ciphers + remove from index
-   - Add `fn validate_tag(tag: &str) -> Result<String, IdttyError>` — `.chars().count() <= 64`, non-empty, trim, lowercase-normalize
-   - Add `fn validate_tags(tags: &[String]) -> Result<Vec<String>, IdttyError>` — dedup (case-insensitive), max 20, validate each
+3. **`crates/baluard-core/src/vault/handle.rs`**
+   - Add `fn rebuild_tag_index(&self) -> Result<(), BaluardError>` — scan all decrypted ciphers, extract unique tags, write `meta/tag_index.json`
+   - Add `fn list_tags(&self) -> Result<Vec<String>, BaluardError>` — read from cache, or rebuild if missing
+   - Add `fn create_tag(&mut self, name: &str) -> Result<(), BaluardError>` — validate, add to index, save
+   - Add `fn rename_tag(&mut self, old: &str, new: &str) -> Result<usize, BaluardError>` — rename across all ciphers + update index
+   - Add `fn delete_tag(&mut self, name: &str) -> Result<usize, BaluardError>` — remove from all ciphers + remove from index
+   - Add `fn validate_tag(tag: &str) -> Result<String, BaluardError>` — `.chars().count() <= 64`, non-empty, trim, lowercase-normalize
+   - Add `fn validate_tags(tags: &[String]) -> Result<Vec<String>, BaluardError>` — dedup (case-insensitive), max 20, validate each
    - Update cipher CRUD to pass through `tags` field
    - Update `list_cipher_meta_full` CipherMeta construction (~line 637) to include `tags: c.tags`
    - Update `list_archived_meta` CipherMeta construction (~line 1965) to include `tags: c.tags`
    - Update ALL `CipherInput { .. }` struct literals (grep first) — handle.rs, cipher.rs, health.rs, conflict.rs
 
-4. **`crates/idtty-core/src/crypto/aead.rs`** (if AAD needs tag data — verify)
+4. **`crates/baluard-core/src/crypto/aead.rs`** (if AAD needs tag data — verify)
    - Tags are inside the envelope, encrypted with item key. No AAD change needed.
 
 ### Tests:
@@ -84,10 +84,10 @@
 
 ### Files changed:
 
-1. **`crates/idtty-daemon/src/handler.rs`**
+1. **`crates/baluard-daemon/src/handler.rs`**
    - Register routes: `"tag.list"`, `"tag.create"`, `"tag.rename"`, `"tag.delete"`, `"tag.rebuild_index"`
 
-2. **`crates/idtty-daemon/src/state.rs`**
+2. **`crates/baluard-daemon/src/state.rs`**
    - Add `pub async fn list_tags(&self) -> Result<String, String>`
    - Add `pub async fn create_tag(&self, payload: &str) -> Result<String, String>`
    - Add `pub async fn rename_tag(&self, payload: &str) -> Result<(), String>`
@@ -110,7 +110,7 @@
 
 ### Files changed:
 
-1. **`crates/idtty-cli/src/commands/mod.rs`**
+1. **`crates/baluard-cli/src/commands/mod.rs`**
    - Add `TagCommands` enum: `List`, `Create`, `Rename`, `Delete`
    - Wire into command dispatch
    - `tag list` — print one tag per line
@@ -166,10 +166,10 @@
 
 ### Files changed:
 
-1. **`crates/idtty-core/src/import/onepassword_1pux.rs`**
+1. **`crates/baluard-core/src/import/onepassword_1pux.rs`**
    - Preserve all tags on cipher instead of using first tag as folder hint
 
-2. **`crates/idtty-core/src/import/export.rs`**
+2. **`crates/baluard-core/src/import/export.rs`**
    - Export tags in BW-compatible format
    - Add `tags` field to export struct
 

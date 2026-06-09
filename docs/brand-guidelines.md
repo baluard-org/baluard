@@ -1,4 +1,4 @@
-# IDtty Brand
+# Baluard Brand
 
 > Central reference for visual identity: colors, tokens, and design rules.
 
