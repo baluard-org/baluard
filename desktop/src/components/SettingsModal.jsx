@@ -38,6 +38,17 @@ export default function SettingsModal() {
   const [exporting, setExporting] = createSignal(false);
   const [message, setMessage] = createSignal(null);
 
+  // Sync profile to VaultContext when settings modal closes
+  let wasSettingsOpen = false;
+  createEffect(() => {
+    const isOpen = vault.showSettingsModal();
+    if (isOpen) wasSettingsOpen = true;
+    if (wasSettingsOpen && !isOpen) {
+      wasSettingsOpen = false;
+      vault.refreshProfile();
+    }
+  });
+
   // Profile state
   const [displayName, setDisplayName] = createSignal("");
   const [profileSubtitle, setProfileSubtitle] = createSignal("");
