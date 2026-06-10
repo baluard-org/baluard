@@ -11,6 +11,8 @@ pub mod handle;
 pub mod index;
 pub mod manifest;
 pub mod padding;
+pub mod registry;
+pub mod slug;
 
 pub use handle::VaultHandle;
 

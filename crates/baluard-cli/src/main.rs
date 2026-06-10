@@ -22,6 +22,10 @@ struct Cli {
     #[arg(long, global = true, default_value = ".")]
     vault_path: String,
 
+    /// Target a specific vault by slug (uses --direct mode if not active vault).
+    #[arg(long, global = true)]
+    vault: Option<String>,
+
     /// Use baluard-core directly instead of the daemon.
     #[arg(long, global = true)]
     direct: bool,
@@ -47,6 +51,9 @@ enum Commands {
         /// Subtitle/role (shown under display name).
         #[arg(long)]
         subtitle: Option<String>,
+        /// Vault slug (machine-friendly ID, e.g. "baluard-personal"). Defaults to auto-generated from name.
+        #[arg(long)]
+        slug: Option<String>,
         /// Theme: light, dark, system.
         #[arg(long)]
         theme: Option<String>,
@@ -208,6 +215,12 @@ enum Commands {
 
     /// Ping the daemon to check connectivity.
     Ping,
+
+    /// Manage vaults (list, switch).
+    Vaults {
+        #[command(subcommand)]
+        action: VaultAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -224,6 +237,17 @@ enum DeviceCommands {
     Revoke {
         /// Device UUID to revoke.
         device_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum VaultAction {
+    /// List all registered vaults.
+    List,
+    /// Switch active vault.
+    Switch {
+        /// Vault slug.
+        slug: String,
     },
 }
 
@@ -900,7 +924,28 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
 fn main() {
     let cli = Cli::parse();
 
-    let mode = if cli.direct {
+    // Resolve --vault flag: translate slug to vault path + force direct mode
+    let vault_path = if let Some(ref vault_slug) = cli.vault {
+        match baluard_core::vault::registry::VaultRegistry::load() {
+            Ok(reg) => match reg.get(vault_slug) {
+                Some(entry) => entry.path.to_string_lossy().into_owned(),
+                None => {
+                    eprintln!("error: vault '{vault_slug}' not found in registry");
+                    std::process::exit(1);
+                }
+            },
+            Err(e) => {
+                eprintln!("error: failed to load registry: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        cli.vault_path.clone()
+    };
+
+    // --vault forces direct mode (daemon only serves active vault)
+    let forced_direct = cli.vault.is_some();
+    let mode = if cli.direct || forced_direct {
         ConnectMode::Direct
     } else {
         ConnectMode::Daemon
@@ -908,39 +953,39 @@ fn main() {
 
     let result = match cli.command {
         // Init always direct (creates vault on disk)
-        Commands::Init { profile, name, subtitle, theme, lang, auto_lock } =>
-            commands::handle_init(&cli.vault_path, &profile, name, subtitle, theme, lang, auto_lock),
+        Commands::Init { profile, name, subtitle, slug, theme, lang, auto_lock } =>
+            commands::handle_init(&cli.vault_path, &profile, name, subtitle, slug, theme, lang, auto_lock),
 
         // Vault lifecycle
-        Commands::Unlock => commands::handle_unlock(mode, &cli.vault_path, cli.socket.as_deref()),
+        Commands::Unlock => commands::handle_unlock(mode, &vault_path, cli.socket.as_deref()),
         Commands::Lock => commands::handle_lock(mode, cli.socket.as_deref()),
 
         // Sync: daemon-first with direct fallback
         Commands::Sync { action } => match action {
             SyncAction::Init => {
-                commands::handle_sync_init(mode, &cli.vault_path, cli.socket.as_deref())
+                commands::handle_sync_init(mode, &vault_path, cli.socket.as_deref())
             }
             SyncAction::Remote { url } => {
-                commands::handle_sync_remote(mode, &cli.vault_path, cli.socket.as_deref(), &url)
+                commands::handle_sync_remote(mode, &vault_path, cli.socket.as_deref(), &url)
             }
             SyncAction::Push => {
-                commands::handle_sync_push(mode, &cli.vault_path, cli.socket.as_deref())
+                commands::handle_sync_push(mode, &vault_path, cli.socket.as_deref())
             }
             SyncAction::Pull => {
-                commands::handle_sync_pull(mode, &cli.vault_path, cli.socket.as_deref())
+                commands::handle_sync_pull(mode, &vault_path, cli.socket.as_deref())
             }
             SyncAction::Status => {
-                commands::handle_sync_status(mode, &cli.vault_path, cli.socket.as_deref())
+                commands::handle_sync_status(mode, &vault_path, cli.socket.as_deref())
             }
             SyncAction::Log { limit } => {
-                commands::handle_sync_log(mode, &cli.vault_path, cli.socket.as_deref(), limit)
+                commands::handle_sync_log(mode, &vault_path, cli.socket.as_deref(), limit)
             }
         },
 
         // Cipher CRUD: daemon-first with direct fallback
         Commands::Add { cipher } => {
             match build_cipher_input(cipher) {
-                Ok(input) => commands::handle_add(mode, &cli.vault_path, cli.socket.as_deref(), input),
+                Ok(input) => commands::handle_add(mode, &vault_path, cli.socket.as_deref(), input),
                 Err(e) => Err(e),
             }
         }
@@ -950,25 +995,25 @@ fn main() {
             output,
         } => commands::handle_get(
             mode,
-            &cli.vault_path,
+            &vault_path,
             cli.socket.as_deref(),
             &id,
             decrypt,
             &output,
         ),
         Commands::List { archived } => {
-            commands::handle_list(mode, &cli.vault_path, cli.socket.as_deref(), archived)
+            commands::handle_list(mode, &vault_path, cli.socket.as_deref(), archived)
         }
         Commands::Delete { id } => {
-            commands::handle_delete(mode, &cli.vault_path, cli.socket.as_deref(), &id)
+            commands::handle_delete(mode, &vault_path, cli.socket.as_deref(), &id)
         }
 
         Commands::Archive { id } => {
-            commands::handle_archive(mode, &cli.vault_path, cli.socket.as_deref(), &id)
+            commands::handle_archive(mode, &vault_path, cli.socket.as_deref(), &id)
         }
 
         Commands::Unarchive { id } => {
-            commands::handle_unarchive(mode, &cli.vault_path, cli.socket.as_deref(), &id)
+            commands::handle_unarchive(mode, &vault_path, cli.socket.as_deref(), &id)
         }
 
         Commands::Edit {
@@ -979,7 +1024,7 @@ fn main() {
             tags,
         } => commands::handle_edit(
             mode,
-            &cli.vault_path,
+            &vault_path,
             cli.socket.as_deref(),
             &id,
             name,
@@ -991,20 +1036,20 @@ fn main() {
         // Devices
         Commands::Devices { action } => match action {
             DeviceCommands::List => {
-                commands::handle_devices(mode, &cli.vault_path, cli.socket.as_deref())
+                commands::handle_devices(mode, &vault_path, cli.socket.as_deref())
             }
             DeviceCommands::RotationStatus => {
-                commands::handle_rotation_status(mode, &cli.vault_path, cli.socket.as_deref())
+                commands::handle_rotation_status(mode, &vault_path, cli.socket.as_deref())
             }
             DeviceCommands::RotationAbort => {
-                commands::handle_rotation_abort(mode, &cli.vault_path, cli.socket.as_deref())
+                commands::handle_rotation_abort(mode, &vault_path, cli.socket.as_deref())
             }
             DeviceCommands::Info => {
-                commands::handle_device_info(mode, &cli.vault_path, cli.socket.as_deref())
+                commands::handle_device_info(mode, &vault_path, cli.socket.as_deref())
             }
             DeviceCommands::Revoke { device_id } => commands::handle_device_revoke(
                 mode,
-                &cli.vault_path,
+                &vault_path,
                 cli.socket.as_deref(),
                 &device_id,
             ),
@@ -1020,31 +1065,31 @@ fn main() {
 
         Commands::Folders { action } => match action {
             FolderAction::Create { name } => {
-                commands::handle_folder_create(mode, &cli.vault_path, cli.socket.as_deref(), &name)
+                commands::handle_folder_create(mode, &vault_path, cli.socket.as_deref(), &name)
             }
             FolderAction::List => {
-                commands::handle_folder_list(mode, &cli.vault_path, cli.socket.as_deref())
+                commands::handle_folder_list(mode, &vault_path, cli.socket.as_deref())
             }
             FolderAction::Rename { id, name } => {
-                commands::handle_folder_rename(mode, &cli.vault_path, cli.socket.as_deref(), &id, &name)
+                commands::handle_folder_rename(mode, &vault_path, cli.socket.as_deref(), &id, &name)
             }
             FolderAction::Delete { id } => {
-                commands::handle_folder_delete(mode, &cli.vault_path, cli.socket.as_deref(), &id)
+                commands::handle_folder_delete(mode, &vault_path, cli.socket.as_deref(), &id)
             }
         },
 
         Commands::Tags { action } => match action {
             TagAction::Create { name } => {
-                commands::handle_tag_create(mode, &cli.vault_path, cli.socket.as_deref(), &name)
+                commands::handle_tag_create(mode, &vault_path, cli.socket.as_deref(), &name)
             }
             TagAction::List => {
-                commands::handle_tag_list(mode, &cli.vault_path, cli.socket.as_deref())
+                commands::handle_tag_list(mode, &vault_path, cli.socket.as_deref())
             }
             TagAction::Rename { old, new } => {
-                commands::handle_tag_rename(mode, &cli.vault_path, cli.socket.as_deref(), &old, &new)
+                commands::handle_tag_rename(mode, &vault_path, cli.socket.as_deref(), &old, &new)
             }
             TagAction::Delete { name } => {
-                commands::handle_tag_delete(mode, &cli.vault_path, cli.socket.as_deref(), &name)
+                commands::handle_tag_delete(mode, &vault_path, cli.socket.as_deref(), &name)
             }
         },
 
@@ -1101,6 +1146,7 @@ fn main() {
             }
             Ok(())
         }
+        Commands::Vaults { ref action } => commands::handle_vaults(action, &cli),
     };
 
     if let Err(e) = result {

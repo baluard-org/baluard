@@ -5,6 +5,8 @@
 //! - Direct: calls baluard-core directly (fallback, --direct flag)
 
 use crate::ConnectMode;
+use crate::VaultAction;
+use crate::Cli;
 use crate::client;
 
 use std::path::Path;
@@ -77,11 +79,13 @@ fn parse_theme(s: &str) -> Result<baluard_core::types::ThemeMode, String> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_init(
     vault_path: &str,
     profile_str: &str,
     flag_name: Option<String>,
     flag_subtitle: Option<String>,
+    flag_slug: Option<String>,
     flag_theme: Option<String>,
     flag_lang: Option<String>,
     flag_auto_lock: Option<u32>,
@@ -135,6 +139,41 @@ pub fn handle_init(
         None => None,
     };
 
+    // Resolve slug: flag > auto-generate from display name > prompt
+    let slug = match flag_slug {
+        Some(s) => {
+            let (cleaned, modified) = baluard_core::vault::slug::clean_slug(&s);
+            if let Err(e) = baluard_core::vault::slug::validate_slug(&cleaned) {
+                eprintln!("error: invalid slug '{s}': {e}");
+                if modified { eprintln!("  (auto-corrected to '{cleaned}' but still invalid)"); }
+                std::process::exit(1);
+            }
+            if modified { eprintln!("Slug auto-corrected to: {cleaned}"); }
+            Some(cleaned)
+        }
+        None => {
+            let name_for_slug = display_name.as_deref().unwrap_or("Personal");
+            let suggested = baluard_core::vault::slug::suggest_slug(name_for_slug);
+            if is_tty() {
+                let input = prompt_password_optional(&format!("Vault slug [{suggested}]: "));
+                if input.is_empty() {
+                    Some(suggested)
+                } else {
+                    let (cleaned, _) = baluard_core::vault::slug::clean_slug(&input);
+                    match baluard_core::vault::slug::validate_slug(&cleaned) {
+                        Ok(()) => Some(cleaned),
+                        Err(e) => {
+                            eprintln!("error: invalid slug: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            } else {
+                Some(suggested)
+            }
+        }
+    };
+
     let theme = match flag_theme.as_deref() {
         Some(t) => Some(parse_theme(t)?),
         None if is_tty() => {
@@ -168,12 +207,55 @@ pub fn handle_init(
     };
 
     println!("Creating vault...");
+
+    // Pre-flight: check slug collision before writing any files
+    let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
+    if let Some(ref s) = slug {
+        if reg.exists(s) {
+            eprintln!("error: vault '{s}' already exists in registry");
+            std::process::exit(1);
+        }
+    }
+
+    // Determine vault path: if slug is set and user gave ".", use vaults_dir
+    let resolved_path = if vault_path == "." {
+        if let Some(ref s) = slug {
+            let p = baluard_core::paths::vaults_dir().join(s);
+            if p.exists() {
+                eprintln!("error: vault directory already exists: {}", p.display());
+                std::process::exit(1);
+            }
+            println!("Vault path: {}", p.display());
+            p
+        } else {
+            std::path::PathBuf::from(vault_path)
+        }
+    } else {
+        std::path::PathBuf::from(vault_path)
+    };
+
     let (_handle, secrets) =
-        baluard_core::vault::creation::VaultCreator::new(vault_path, &password, "this-device")
+        baluard_core::vault::creation::VaultCreator::new(&resolved_path, &password, "this-device")
             .kdf_profile(profile)
-            .profile(display_name, subtitle)
+            .profile(display_name.clone(), subtitle)
+            .slug(slug.clone())
             .preferences(theme, lang.clone(), auto_lock)
             .execute()?;
+
+    // Register vault in registry (fatal on failure)
+    if let Some(ref s) = slug {
+        let mut reg = reg; // reuse pre-flight registry (still valid)
+        reg.add(baluard_core::vault::registry::VaultEntry {
+            slug: s.clone(),
+            display_name: display_name.clone().unwrap_or_else(|| s.clone()),
+            path: resolved_path.clone(),
+            provider: None,
+            last_opened: None,
+            vault_id: secrets.vault_id,
+        })?;
+        reg.set_active(s)?;
+        reg.save_locked()?;
+    }
 
     println!();
     println!("Vault created successfully.");
@@ -190,7 +272,7 @@ pub fn handle_init(
         hex::encode(secrets.trust_fingerprint)
     );
 
-    println!("Vault files written to: {}", vault_path);
+    println!("Vault files written to: {}", resolved_path.display());
     Ok(())
 }
 
@@ -2015,6 +2097,51 @@ pub fn handle_tag_delete(
             let mut handle = unlock_vault_direct(vault_path)?;
             let updated = handle.delete_tag(name)?;
             println!("Tag '{}' removed from {} entries.", name, updated);
+            Ok(())
+        }
+    }
+}
+
+// ── Vaults ──
+
+pub fn handle_vaults(action: &VaultAction, _cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        VaultAction::List => {
+            let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
+            if reg.vaults.is_empty() {
+                println!("No vaults registered.");
+                println!("Create one with: baluard init");
+                return Ok(());
+            }
+            println!("{:<30} {:<20} PATH", "SLUG", "NAME");
+            println!("{}", "-".repeat(80));
+            let mut slugs: Vec<&str> = reg.vaults.keys().map(|s| s.as_str()).collect();
+            slugs.sort();
+            for slug in slugs {
+                let entry = reg.vaults.get(slug).unwrap();
+                let active_marker = if reg.active_vault.as_deref() == Some(slug) { "*" } else { " " };
+                println!("{active_marker}{:<29} {:<20} {}", slug, entry.display_name, entry.path.display());
+            }
+            if let Some(ref active) = reg.active_vault {
+                println!();
+                println!("Active: {active}");
+            }
+            Ok(())
+        }
+        VaultAction::Switch { slug } => {
+            let mut reg = baluard_core::vault::registry::VaultRegistry::load_locked()?;
+            if !reg.exists(slug) {
+                eprintln!("error: vault '{slug}' not found in registry");
+                eprintln!("Registered vaults:");
+                for s in reg.list_slugs() {
+                    eprintln!("  {s}");
+                }
+                std::process::exit(1);
+            }
+            reg.set_active(slug)?;
+            reg.touch(slug);
+            reg.save_locked()?;
+            println!("Active vault set to: {slug}");
             Ok(())
         }
     }

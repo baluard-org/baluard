@@ -76,3 +76,6 @@ uniffi = "0.28"
 
 # Platform paths
 dirs = "6"
+
+# Cross-process file locking
+fd-lock = "4"
