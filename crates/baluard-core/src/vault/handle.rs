@@ -478,6 +478,7 @@ impl VaultHandle {
             return Ok(crate::vault::manifest::VaultSettings {
                 auto_lock_minutes: None,
                 theme: None,
+                lang: None,
                 default_uri_match: None,
                 fetch_favicons: None,
                 display_name: None,
@@ -587,6 +588,30 @@ impl VaultHandle {
         settings.avatar_ext = None;
         self.save_settings(&settings)?;
         Ok(())
+    }
+
+    // ── Locale ──
+
+    /// Save plaintext locale to meta/locale.
+    /// This file is readable before vault unlock (login screen needs language).
+    pub fn save_locale(&self, lang: &str) -> Result<(), BaluardError> {
+        let path = self.path.join("meta/locale");
+        std::fs::write(&path, lang).map_err(|e| {
+            VaultError::Metadata(format!("writing meta/locale: {e}"))
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
+    }
+
+    /// Load plaintext locale from meta/locale.
+    /// Returns None if file does not exist.
+    pub fn load_locale(&self) -> Option<String> {
+        let path = self.path.join("meta/locale");
+        std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
     }
 
     // ── Device Activity ──

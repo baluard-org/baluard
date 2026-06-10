@@ -20,13 +20,30 @@
     "creating": "Creando bóveda...",
     "alreadyHaveVault": "Ya tengo una bóveda",
     "errorMinLength": "La contraseña debe tener al menos 8 caracteres",
-    "errorMismatch": "Las contraseñas no coinciden"
+    "errorMismatch": "Las contraseñas no coinciden",
+    "languageLabel": "Idioma"
   },
   "recovery": {
     "title": "Frase de recuperación",
     "warning": "Escribe esta frase. NO se volverá a mostrar.",
     "confirm": "He guardado mi frase de recuperación",
     "copyToClipboard": "Copiar al portapapeles"
+  },
+  "setup": {
+    "title": "Configura tu bóveda",
+    "subtitle": "Opcional: personaliza tu experiencia",
+    "profileSection": "Perfil",
+    "displayNamePlaceholder": "Tu nombre (opcional)",
+    "subtitlePlaceholder": "Rol o lema (opcional)",
+    "prefsSection": "Preferencias",
+    "themeLabel": "Tema",
+    "themeLight": "Claro",
+    "themeDark": "Oscuro",
+    "themeSystem": "Sistema",
+    "autoLockLabel": "Tiempo de bloqueo automático",
+    "autoLockMinutes": "minutos (0 para desactivar)",
+    "submit": "Empezar a usar Baluard",
+    "submitting": "Configurando..."
   },
   "vault": {
     "statusUnlocked": "Desbloqueada",

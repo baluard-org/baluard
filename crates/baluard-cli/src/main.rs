@@ -41,6 +41,21 @@ enum Commands {
         /// KDF profile: mobile-low, desktop-std, desktop-high.
         #[arg(long, default_value = "desktop-std")]
         profile: String,
+        /// Display name (shown in sidebar).
+        #[arg(long)]
+        name: Option<String>,
+        /// Subtitle/role (shown under display name).
+        #[arg(long)]
+        subtitle: Option<String>,
+        /// Theme: light, dark, system.
+        #[arg(long)]
+        theme: Option<String>,
+        /// Language: en, es.
+        #[arg(long)]
+        lang: Option<String>,
+        /// Auto-lock timeout in minutes.
+        #[arg(long)]
+        auto_lock: Option<u32>,
     },
 
     /// Unlock vault in the daemon (verifies master password).
@@ -893,7 +908,8 @@ fn main() {
 
     let result = match cli.command {
         // Init always direct (creates vault on disk)
-        Commands::Init { profile } => commands::handle_init(&cli.vault_path, &profile),
+        Commands::Init { profile, name, subtitle, theme, lang, auto_lock } =>
+            commands::handle_init(&cli.vault_path, &profile, name, subtitle, theme, lang, auto_lock),
 
         // Vault lifecycle
         Commands::Unlock => commands::handle_unlock(mode, &cli.vault_path, cli.socket.as_deref()),

@@ -32,15 +32,74 @@ fn unlock_vault_direct(vault_path: &str) -> Result<VaultHandle, Box<dyn std::err
 
 // ── Init (always direct) ──
 
-pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+/// Detect OS locale from environment variables.
+/// Priority: $LANGUAGE > $LC_ALL > $LC_MESSAGES > $LANG.
+/// Parses "es_CL.UTF-8" -> "es". Falls back to "en".
+fn detect_locale() -> String {
+    let candidates = [
+        std::env::var("LANGUAGE").ok(),
+        std::env::var("LC_ALL").ok(),
+        std::env::var("LC_MESSAGES").ok(),
+        std::env::var("LANG").ok(),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        // $LANGUAGE may be colon-separated (GNU gettext priority)
+        for entry in candidate.split(':') {
+            let code = entry
+                .split('.')
+                .next()
+                .unwrap_or("")
+                .split('_')
+                .next()
+                .unwrap_or("");
+            match code {
+                "en" | "es" => return code.to_string(),
+                _ => continue,
+            }
+        }
+    }
+    "en".to_string()
+}
+
+/// Check if stdin is a TTY (interactive terminal).
+fn is_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
+}
+
+/// Parse theme string to ThemeMode.
+fn parse_theme(s: &str) -> Result<baluard_core::types::ThemeMode, String> {
+    match s {
+        "light" => Ok(baluard_core::types::ThemeMode::Light),
+        "dark" => Ok(baluard_core::types::ThemeMode::Dark),
+        "system" => Ok(baluard_core::types::ThemeMode::System),
+        _ => Err(format!("unknown theme: '{s}' (valid: light, dark, system)")),
+    }
+}
+
+pub fn handle_init(
+    vault_path: &str,
+    profile_str: &str,
+    flag_name: Option<String>,
+    flag_subtitle: Option<String>,
+    flag_theme: Option<String>,
+    flag_lang: Option<String>,
+    flag_auto_lock: Option<u32>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let profile = parse_profile(profile_str)?;
 
+    // Resolve password: env var > TTY prompt > error
     let password = match std::env::var("BALUARD_PASSWORD") {
         Ok(pw) => {
             if pw.len() < 8 {
-                eprintln!("warning: password is shorter than recommended (8+ characters)");
+                eprintln!("error: password must be at least 8 characters");
+                std::process::exit(1);
             }
             zeroize::Zeroizing::new(pw)
+        }
+        Err(_) if !is_tty() => {
+            eprintln!("error: no password available. Set BALUARD_PASSWORD or run interactively.");
+            std::process::exit(1);
         }
         Err(_) => {
             let pw = zeroize::Zeroizing::new(prompt_password("Master password: ")?);
@@ -50,16 +109,70 @@ pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn st
                 std::process::exit(1);
             }
             if pw.len() < 8 {
-                eprintln!("warning: password is shorter than recommended (8+ characters)");
+                eprintln!("error: password must be at least 8 characters");
+                std::process::exit(1);
             }
             pw
         }
+    };
+
+    // Resolve wizard fields: flags > interactive prompts > defaults
+    let display_name = match flag_name {
+        Some(n) => Some(n),
+        None if is_tty() => {
+            let input = prompt_password_optional("Display name (optional, Enter to skip): ");
+            if input.is_empty() { None } else { Some(input) }
+        }
+        None => None,
+    };
+
+    let subtitle = match flag_subtitle {
+        Some(s) => Some(s),
+        None if is_tty() => {
+            let input = prompt_password_optional("Subtitle (optional, Enter to skip): ");
+            if input.is_empty() { None } else { Some(input) }
+        }
+        None => None,
+    };
+
+    let theme = match flag_theme.as_deref() {
+        Some(t) => Some(parse_theme(t)?),
+        None if is_tty() => {
+            let input = prompt_password_optional("Theme [light/dark/system, default: system]: ");
+            match input.trim() {
+                "" | "system" => Some(baluard_core::types::ThemeMode::System),
+                "light" => Some(baluard_core::types::ThemeMode::Light),
+                "dark" => Some(baluard_core::types::ThemeMode::Dark),
+                other => { eprintln!("warning: unknown theme '{other}', using system"); Some(baluard_core::types::ThemeMode::System) }
+            }
+        }
+        None => Some(baluard_core::types::ThemeMode::System),
+    };
+
+    let lang = match flag_lang {
+        Some(l) => Some(l),
+        None => Some(detect_locale()),
+    };
+
+    let auto_lock = match flag_auto_lock {
+        Some(m) => Some(m),
+        None if is_tty() => {
+            let input = prompt_password_optional("Auto-lock minutes [default: 15, 0 to disable]: ");
+            match input.trim() {
+                "" => Some(15),
+                "0" => None, // disabled
+                n => n.parse::<u32>().ok().or_else(|| { eprintln!("warning: invalid number, using 15"); Some(15) }),
+            }
+        }
+        None => Some(15),
     };
 
     println!("Creating vault...");
     let (_handle, secrets) =
         baluard_core::vault::creation::VaultCreator::new(vault_path, &password, "this-device")
             .kdf_profile(profile)
+            .profile(display_name, subtitle)
+            .preferences(theme, lang.clone(), auto_lock)
             .execute()?;
 
     println!();
@@ -79,6 +192,15 @@ pub fn handle_init(vault_path: &str, profile_str: &str) -> Result<(), Box<dyn st
 
     println!("Vault files written to: {}", vault_path);
     Ok(())
+}
+
+/// Read a line from stdin (echoes normally, for non-secret fields).
+/// Returns empty string on EOF or empty input.
+fn prompt_password_optional(prompt: &str) -> String {
+    eprint!("{prompt}");
+    let mut buf = String::new();
+    let _ = std::io::stdin().read_line(&mut buf);
+    buf.trim().to_string()
 }
 
 // ── Unlock ──

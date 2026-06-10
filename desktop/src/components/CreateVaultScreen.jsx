@@ -1,11 +1,39 @@
+import { onMount } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { IconLock } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 
+const AVAILABLE_LOCALES = [
+  { code: "en", label: "English" },
+  { code: "es", label: "Espa\u00f1ol" },
+];
+
+function detectOsLocale() {
+  try {
+    const lang = navigator.language?.split("-")[0];
+    if (lang === "en" || lang === "es") return lang;
+  } catch {}
+  return "en";
+}
+
 export default function CreateVaultScreen() {
   const auth = useAuth();
-  const { t } = useI18n();
+  const { t, locale, setLocale } = useI18n();
+
+  // Auto-detect OS locale on first mount (before user has a saved preference)
+  onMount(() => {
+    const stored = localStorage.getItem("baluard-locale");
+    if (!stored) {
+      const detected = detectOsLocale();
+      if (detected !== locale()) setLocale(detected);
+    }
+  });
+
+  const handleLangChange = (e) => {
+    const code = e.target.value;
+    if (code !== locale()) setLocale(code);
+  };
 
   return (
     <div class="flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 relative">
@@ -21,6 +49,15 @@ export default function CreateVaultScreen() {
         </div>
 
         <form onSubmit={(e) => { e.preventDefault(); auth.createVault(t); }} class="space-y-4">
+          <select
+            value={locale()}
+            onChange={handleLangChange}
+            class="w-full px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all cursor-pointer"
+          >
+            {AVAILABLE_LOCALES.map(l => (
+              <option value={l.code}>{l.label}</option>
+            ))}
+          </select>
           <input
             id="create-password"
             data-create-password

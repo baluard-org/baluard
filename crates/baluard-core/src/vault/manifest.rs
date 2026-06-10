@@ -83,7 +83,10 @@ pub enum TrashObjectType {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VaultSettings {
     pub auto_lock_minutes: Option<u32>,
-    pub theme: Option<String>,
+    pub theme: Option<crate::types::ThemeMode>,
+    /// Language code (e.g. "en", "es"). Persisted separately in plaintext meta/locale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
     /// URI match strategy global default. Typed enum with hard error on unknown values.
     #[serde(default, deserialize_with = "deserialize_uri_match_strategy")]
     pub default_uri_match: Option<crate::types::UriMatchStrategy>,
@@ -186,5 +189,55 @@ mod tests {
         let json = r#"{"default_uri_match": null}"#;
         let settings: VaultSettings = serde_json::from_str(json).unwrap();
         assert!(settings.default_uri_match.is_none());
+    }
+
+    #[test]
+    fn theme_mode_serde_roundtrip() {
+        use crate::types::ThemeMode;
+        for theme in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
+            let json = serde_json::to_string(&theme).unwrap();
+            let back: ThemeMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(theme, back);
+        }
+    }
+
+    #[test]
+    fn theme_mode_rejects_unknown() {
+        let result: Result<crate::types::ThemeMode, _> = serde_json::from_str("\"neon\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn theme_mode_case_insensitive_deserialize() {
+        // Existing vaults may have capitalized theme strings
+        for (input, expected) in [
+            ("\"Light\"", crate::types::ThemeMode::Light),
+            ("\"DARK\"", crate::types::ThemeMode::Dark),
+            ("\"System\"", crate::types::ThemeMode::System),
+            ("\"light\"", crate::types::ThemeMode::Light),
+        ] {
+            let result: crate::types::ThemeMode = serde_json::from_str(input).unwrap();
+            assert_eq!(result, expected, "failed for input: {input}");
+        }
+    }
+
+    #[test]
+    fn vault_settings_theme_roundtrip() {
+        let settings = VaultSettings {
+            theme: Some(crate::types::ThemeMode::Dark),
+            lang: Some("es".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: VaultSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.theme, Some(crate::types::ThemeMode::Dark));
+        assert_eq!(back.lang.as_deref(), Some("es"));
+    }
+
+    #[test]
+    fn vault_settings_lang_skipped_when_none() {
+        let settings = VaultSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("lang"));
     }
 }

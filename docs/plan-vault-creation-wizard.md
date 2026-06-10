@@ -2,7 +2,7 @@
 
 > Status: **Planned**
 > Last updated: 2026-06-10
-> Reviewed by: peer review (peer peer review, session `wizard-review`)
+> Reviewed by: peer review (session `wizard-review`)
 
 ## Goal
 
@@ -267,4 +267,4 @@ The `vault.create` handler and `create_vault()` in `state.rs` remain **unchanged
 
 | Date | Reviewer | Session | Findings |
 |------|----------|---------|----------|
-| 2026-06-10 | peer review | `wizard-review` | 13 issues: 3 breaking (step 3 data in step 1 payload, `lang` field missing, RecoveryScreen unchanged), 4 high (state machine gaps, prefetch missing, device_name hardcoded, phrase not zeroed), 6 medium/low. All addressed in this revision. |
+| 2026-06-10 | peer | `wizard-review` | 13 issues: 3 breaking (step 3 data in step 1 payload, `lang` field missing, RecoveryScreen unchanged), 4 high (state machine gaps, prefetch missing, device_name hardcoded, phrase not zeroed), 6 medium/low. All addressed in this revision. |

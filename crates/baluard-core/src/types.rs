@@ -216,6 +216,32 @@ impl KdfParams {
     }
 }
 
+// ── Theme Mode ──
+
+/// Theme preference for the desktop UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    Light,
+    Dark,
+    #[default]
+    System,
+}
+
+impl<'de> serde::Deserialize<'de> for ThemeMode {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        match s.to_lowercase().as_str() {
+            "light" => Ok(ThemeMode::Light),
+            "dark" => Ok(ThemeMode::Dark),
+            "system" => Ok(ThemeMode::System),
+            _ => Err(serde::de::Error::custom(format!(
+                "unknown theme: '{s}' (valid: light, dark, system)"
+            ))),
+        }
+    }
+}
+
 // ── Epoch States (doc 03, Section 2) ──
 // Defined in keys::epoch::EpochState. Re-exported here for convenience.
 pub use crate::keys::epoch::EpochState;

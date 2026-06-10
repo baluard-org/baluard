@@ -175,6 +175,7 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.list_archived",
     "settings.get",
     "settings.set",
+    "locale.save",
     "favicon.get",
     "sync.init",
     "sync.remote",
@@ -574,6 +575,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
             match state.settings_set(&req.payload).await {
                 Ok(()) => ok_resp("settings updated", token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "locale.save" => {
+            if req.payload.is_empty() {
+                return err_response("Missing lang in payload");
+            }
+            match state.locale_save(&req.payload).await {
+                Ok(()) => ok_resp("locale saved", token_str),
                 Err(e) => err_response(e),
             }
         }

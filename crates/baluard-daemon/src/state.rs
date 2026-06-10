@@ -480,6 +480,12 @@ impl VaultState {
             settings.avatar_ext = serde_json::from_value(v.clone())
                 .map_err(|e| format!("Invalid avatar_ext: {e}"))?;
         }
+        if let Some(v) = partial.get("lang") {
+            let lang = v.as_str().ok_or("lang must be a string")?;
+            settings.lang = Some(lang.to_string());
+            // Also persist to plaintext meta/locale for pre-unlock access
+            handle.save_locale(lang).map_err(|e| format!("{e}"))?;
+        }
 
         // Check if payload contains identity keys (even with null values for clearing)
         let partial_obj = partial.as_object();
@@ -603,6 +609,14 @@ impl VaultState {
         profile.avatar_ext = Some(ext);
         handle.save_profile(&profile).map_err(|e| format!("{e}"))?;
         Ok(())
+    }
+
+    /// Save plaintext locale to meta/locale (readable before vault unlock).
+    /// Payload: plain lang string (e.g. "es").
+    pub async fn locale_save(&self, lang: &str) -> Result<(), String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        handle.save_locale(lang).map_err(|e| format!("{e}"))
     }
 
     /// Generate an SSH keypair. Payload: JSON {"type": "ed25519"|"rsa4096"|"ecdsa256"}
