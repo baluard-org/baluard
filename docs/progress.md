@@ -157,10 +157,10 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| Core: VaultCreator builder | `.profile()` + `.preferences()` methods, chain writes on creation | Not started |
-| CLI: hybrid wizard | Flags + interactive fallback, OS locale detection | Not started |
-| Desktop: 3-step wizard | Language+Password → Recovery → Profile+Preferences | Not started |
-| Daemon: vault.create profile | Parse profile/prefs from payload, forward to VaultCreator | Not started |
+| Core: VaultCreator builder | `.profile()` + `.preferences()` methods, chain writes on creation | **Done** |
+| CLI: hybrid wizard | Flags + interactive fallback, OS locale detection | **Done** |
+| Desktop: 3-step wizard | Language+Password → Recovery → Profile+Preferences | **Done** |
+| Daemon: locale.save route | Plaintext meta/locale write for pre-unlock access | **Done** |
 
 ### Icon Audit
 

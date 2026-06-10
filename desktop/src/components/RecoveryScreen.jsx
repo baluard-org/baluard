@@ -1,9 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
-import { toastError } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
-import { daemon } from "../lib/daemon.js";
-import { sanitizeError } from "../lib/utils.js";
 import { IconNote, IconCopy, IconCheck } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 
@@ -48,14 +45,9 @@ export default function RecoveryScreen() {
 
         <form onSubmit={async (e) => {
           e.preventDefault();
-          auth.setStatus("unlocking");
-          const pw = auth.createPassword();
-          if (pw) {
-            try {
-              await daemon("vault.unlock", pw);
-              auth.setStatus("unlocked");
-            } catch (err) { toastError(sanitizeError(err, t)); auth.setStatus("locked"); }
-          } else { auth.setStatus("locked"); }
+          // Zero recovery phrase from memory, transition to setup wizard
+          auth.setRecoveryPhrase("");
+          auth.setStatus("setup");
         }} class="space-y-4">
           <button
             type="submit"

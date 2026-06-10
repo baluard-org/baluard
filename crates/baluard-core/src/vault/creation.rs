@@ -254,6 +254,12 @@ pub struct VaultCreator<'a> {
     initialize_git: bool,
     keystore: Option<&'a dyn SecureKeystore>,
     entropy: Option<Box<dyn EntropyProvider>>,
+    // Wizard fields (applied post-creation)
+    display_name: Option<String>,
+    subtitle: Option<String>,
+    theme: Option<crate::types::ThemeMode>,
+    lang: Option<String>,
+    auto_lock_minutes: Option<u32>,
 }
 
 impl<'a> Drop for VaultCreator<'a> {
@@ -274,6 +280,11 @@ impl<'a> VaultCreator<'a> {
             initialize_git: true,
             keystore: None,
             entropy: None,
+            display_name: None,
+            subtitle: None,
+            theme: None,
+            lang: None,
+            auto_lock_minutes: None,
         }
     }
 
@@ -304,6 +315,26 @@ impl<'a> VaultCreator<'a> {
     /// Inject a custom entropy provider.
     pub fn entropy(mut self, entropy: impl EntropyProvider + 'static) -> Self {
         self.entropy = Some(Box::new(entropy));
+        self
+    }
+
+    /// Set user profile fields (display name, subtitle).
+    pub fn profile(mut self, display_name: Option<String>, subtitle: Option<String>) -> Self {
+        self.display_name = display_name;
+        self.subtitle = subtitle;
+        self
+    }
+
+    /// Set user preferences (theme, language, auto-lock timeout).
+    pub fn preferences(
+        mut self,
+        theme: Option<crate::types::ThemeMode>,
+        lang: Option<String>,
+        auto_lock_minutes: Option<u32>,
+    ) -> Self {
+        self.theme = theme;
+        self.lang = lang;
+        self.auto_lock_minutes = auto_lock_minutes;
         self
     }
 
@@ -563,6 +594,9 @@ impl<'a> VaultCreator<'a> {
                     vault_id,
                 };
 
+                // Apply wizard profile + preferences
+                self.apply_wizard_settings(&handle)?;
+
                 Ok((handle, secrets))
             }
             CeremonyMode::Join {
@@ -785,9 +819,49 @@ impl<'a> VaultCreator<'a> {
                     vault_id,
                 };
 
+                // Apply wizard profile + preferences
+                self.apply_wizard_settings(&handle)?;
+
                 Ok((handle, secrets))
             }
         }
+    }
+
+    /// Apply wizard profile + preferences to a freshly created vault.
+    fn apply_wizard_settings(&self, handle: &VaultHandle) -> Result<(), BaluardError> {
+        let has_profile = self.display_name.is_some() || self.subtitle.is_some();
+        let has_prefs = self.theme.is_some()
+            || self.lang.is_some()
+            || self.auto_lock_minutes.is_some();
+
+        if has_profile {
+            let profile = crate::vault::manifest::UserProfile {
+                display_name: self.display_name.clone(),
+                subtitle: self.subtitle.clone(),
+                avatar_ext: None,
+            };
+            handle.save_profile_and_strip_settings(&profile)?;
+        }
+
+        if has_prefs {
+            let mut settings = handle.get_settings().unwrap_or_default();
+            if let Some(ref theme) = self.theme {
+                settings.theme = Some(*theme);
+            }
+            if let Some(ref lang) = self.lang {
+                settings.lang = Some(lang.clone());
+            }
+            if let Some(auto_lock) = self.auto_lock_minutes {
+                settings.auto_lock_minutes = Some(auto_lock);
+            }
+            handle.save_settings(&settings)?;
+        }
+
+        if let Some(ref lang) = self.lang {
+            handle.save_locale(lang)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -901,5 +975,68 @@ mod tests {
         assert!(join_handle.is_unlocked());
         assert_eq!(join_secrets.device_id.into_bytes(), [9u8; 16]);
         assert_eq!(join_secrets.vault_id, secrets.vault_id); // matches initial vault ID!
+    }
+
+    #[test]
+    fn test_vault_creator_with_profile_and_prefs() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("profiled_vault");
+
+        let (handle, _secrets) = VaultCreator::new(&path, "master-pass", "TestDevice")
+            .kdf_profile(KdfProfile::MobileLow)
+            .initialize_git(false)
+            .entropy(DeterministicEntropy { val: 42 })
+            .profile(
+                Some("Esteban".into()),
+                Some("Lead Architect".into()),
+            )
+            .preferences(
+                Some(crate::types::ThemeMode::Dark),
+                Some("es".into()),
+                Some(30),
+            )
+            .execute()
+            .unwrap();
+
+        // Verify profile
+        let profile = handle.load_profile().unwrap();
+        assert_eq!(profile.display_name.as_deref(), Some("Esteban"));
+        assert_eq!(profile.subtitle.as_deref(), Some("Lead Architect"));
+
+        // Verify settings
+        let settings = handle.get_settings().unwrap();
+        assert_eq!(settings.theme, Some(crate::types::ThemeMode::Dark));
+        assert_eq!(settings.lang.as_deref(), Some("es"));
+        assert_eq!(settings.auto_lock_minutes, Some(30));
+
+        // Verify locale file
+        assert_eq!(handle.load_locale().as_deref(), Some("es"));
+        assert!(path.join("meta/locale").exists());
+    }
+
+    #[test]
+    fn test_vault_creator_without_wizard_fields() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("minimal_vault");
+
+        let (handle, _secrets) = VaultCreator::new(&path, "master-pass", "TestDevice")
+            .kdf_profile(KdfProfile::MobileLow)
+            .initialize_git(false)
+            .entropy(DeterministicEntropy { val: 11 })
+            .execute()
+            .unwrap();
+
+        // No profile, no prefs, no locale file
+        let profile = handle.load_profile().unwrap();
+        assert!(profile.display_name.is_none());
+        assert!(profile.subtitle.is_none());
+
+        let settings = handle.get_settings().unwrap();
+        assert!(settings.theme.is_none());
+        assert!(settings.lang.is_none());
+        assert!(settings.auto_lock_minutes.is_none());
+
+        assert!(handle.load_locale().is_none());
+        assert!(!path.join("meta/locale").exists());
     }
 }

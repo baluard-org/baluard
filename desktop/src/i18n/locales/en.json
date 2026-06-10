@@ -20,13 +20,30 @@
     "creating": "Creating vault...",
     "alreadyHaveVault": "Already have a vault",
     "errorMinLength": "Password must be at least 8 characters",
-    "errorMismatch": "Passwords do not match"
+    "errorMismatch": "Passwords do not match",
+    "languageLabel": "Language"
   },
   "recovery": {
     "title": "Recovery Phrase",
     "warning": "Write this down. It will NOT be shown again.",
     "confirm": "I've saved my recovery phrase",
     "copyToClipboard": "Copy to clipboard"
+  },
+  "setup": {
+    "title": "Set Up Your Vault",
+    "subtitle": "Optional: personalize your experience",
+    "profileSection": "Profile",
+    "displayNamePlaceholder": "Your name (optional)",
+    "subtitlePlaceholder": "Role or tagline (optional)",
+    "prefsSection": "Preferences",
+    "themeLabel": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "System",
+    "autoLockLabel": "Auto-lock timeout",
+    "autoLockMinutes": "minutes (0 to disable)",
+    "submit": "Start using Baluard",
+    "submitting": "Setting up..."
   },
   "vault": {
     "statusUnlocked": "Unlocked",

@@ -14,7 +14,8 @@ const VALID_AUTH_TRANSITIONS = {
   unlocked:  ["locked"],
   init:      ["creating", "locked"],
   creating:  ["recovery", "init"],
-  recovery:  ["init", "locked"],
+  recovery:  ["setup", "init", "locked"],
+  setup:     ["unlocked", "locked"],
 };
 
 function guardedSetStatus(setStatus, from, to) {
@@ -90,7 +91,8 @@ function AuthProvider(props) {
     status, setStatus,
     vaultInfo, setVaultInfo,
     biometricAvailable,
-    recoveryPhrase, createPassword,
+    recoveryPhrase, setRecoveryPhrase,
+    createPassword, setCreatePassword,
     setLoginPasswordRef: (r) => { loginPasswordRef = r; },
     unlock, lock, createVault,
   };

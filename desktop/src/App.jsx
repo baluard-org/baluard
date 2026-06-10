@@ -7,6 +7,7 @@ import { VaultProvider } from "./context/VaultContext.jsx";
 import LoginScreen from "./components/LoginScreen.jsx";
 import RecoveryScreen from "./components/RecoveryScreen.jsx";
 import CreateVaultScreen from "./components/CreateVaultScreen.jsx";
+import SetupScreen from "./components/SetupScreen.jsx";
 import VaultView from "./components/VaultView.jsx";
 import ToastContainer from "./components/ToastContainer.jsx";
 
@@ -41,13 +42,17 @@ export default function App() {
       {/* Auth screens — covered by vault when unlocked */}
       <Show when={auth.status() !== "unlocked"}>
         <div class="absolute inset-0">
-          <Show when={auth.status() === "recovery"} fallback={
-            <Show when={auth.status() === "init" || auth.status() === "creating"}
-              fallback={<LoginScreen />}>
-              <CreateVaultScreen />
+          <Show when={auth.status() === "setup"} fallback={
+            <Show when={auth.status() === "recovery"} fallback={
+              <Show when={auth.status() === "init" || auth.status() === "creating"}
+                fallback={<LoginScreen />}>
+                <CreateVaultScreen />
+              </Show>
+            }>
+              <RecoveryScreen />
             </Show>
           }>
-            <RecoveryScreen />
+            <SetupScreen />
           </Show>
         </div>
       </Show>
