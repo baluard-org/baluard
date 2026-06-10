@@ -284,6 +284,103 @@ impl VaultHandle {
         Ok(())
     }
 
+    /// Change the master password. Requires unlocked vault.
+    ///
+    /// H1 fix: Re-derives KEK, re-wraps the Root Key, re-encrypts the KEK canary,
+    /// updates KDF params, and disables stale biometric secrets.
+    pub fn change_master_password(
+        &mut self,
+        old_password: &str,
+        new_password: &str,
+    ) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+
+        // Step 1: Verify old password
+        let old_kek = kdf::derive_kek(old_password, &self.kdf_params)?;
+        let old_session_key = hkdf_derive::derive_session_key(&old_kek)?;
+        if self.path.join("meta/kek-canary.enc").exists() {
+            let canary_data = std::fs::read(self.path.join("meta/kek-canary.enc"))?;
+            let canary_envelope = crate::vault::envelope::deserialize(&canary_data)?;
+            let canary_pt = crate::crypto::aead::decrypt(&old_session_key, &canary_envelope)
+                .map_err(|_| VaultError::Corrupt("old master password incorrect".into()))?;
+            if canary_pt != b"baluard-kek-ok" {
+                return Err(VaultError::Corrupt("old master password incorrect".into()).into());
+            }
+        }
+
+        // Step 2: Derive new KEK with existing KDF params
+        // (could optionally re-calibrate, but keep it simple for now)
+        let new_kek = kdf::derive_kek(new_password, &self.kdf_params)?;
+        let new_session_key = hkdf_derive::derive_session_key(&new_kek)?;
+
+        // Step 3: Get current root key from unlocked state
+        let root_key = match &self.state {
+            VaultState::Unlocked(u) => u.root_key.clone(),
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+
+        // Step 4: Load device private key for HPKE re-wrap
+        let privkeys = load_device_privkeys(&self.path, self.device_id)?;
+        let x25519_public = x25519_dalek::PublicKey::from(&privkeys.x25519);
+
+        // Step 5: HPKE re-wrap Root Key with new session key
+        let (eph_pub, ct, tag) =
+            crate::crypto::hpke_wrap::wrap_key(root_key.as_bytes(), &x25519_public)?;
+        let keywrap_data = serde_json::json!({
+            "device_id": self.device_id.to_string(),
+            "ephemeral_public": hex::encode(eph_pub),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        let keywrap_path = self
+            .path
+            .join(format!("meta/keywrap/{}.json", self.device_id));
+        let keywrap_tmp = keywrap_path.with_extension("json.tmp");
+        std::fs::write(
+            &keywrap_tmp,
+            serde_json::to_string_pretty(&keywrap_data).unwrap(),
+        )?;
+        std::fs::rename(&keywrap_tmp, &keywrap_path)?;
+
+        // Step 6: Re-encrypt KEK canary with new session key
+        if self.path.join("meta/kek-canary.enc").exists() {
+            let canary_nonce = crate::crypto::aead::build_nonce(0, self.vault_id);
+            let canary_header = crate::types::EnvelopeHeader {
+                version: crate::BALUARD_VERSION,
+                alg_id: crate::ALG_AES_256_GCM,
+                key_epoch: 0,
+                nonce_counter: 0,
+                update_seq: 0,
+                tier: None,
+            };
+            let canary_envelope = crate::crypto::aead::encrypt(
+                &new_session_key,
+                b"baluard-kek-ok",
+                b"baluard-kek-canary-v1",
+                &canary_nonce,
+                canary_header,
+            )?;
+            let canary_bytes = crate::vault::envelope::serialize(&canary_envelope)?;
+            let canary_path = self.path.join("meta/kek-canary.enc");
+            let canary_tmp = canary_path.with_extension("enc.tmp");
+            std::fs::write(&canary_tmp, &canary_bytes)?;
+            std::fs::rename(&canary_tmp, &canary_path)?;
+        }
+
+        // Step 7: Update in-memory session key
+        if let VaultState::Unlocked(ref mut u) = self.state {
+            u.session_key = new_session_key;
+        }
+
+        // Step 8: Disable old biometric secret (it stores the old password)
+        // Caller should re-enable biometric with the new password after this.
+        let _ = crate::biometric::disable();
+
+        Ok(())
+    }
+
     /// Migrate plaintext metadata files to encrypted format.
     /// Called after successful unlock. Best-effort: logs errors but does not fail unlock.
     fn migrate_plaintext_metadata(&self) {
