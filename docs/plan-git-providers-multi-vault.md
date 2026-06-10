@@ -90,6 +90,18 @@ Implement GitHub `list_repos`, `create_private_repo`, `detect_vault_repos` (sear
 - [x] Provider credentials shared across vaults (one GitHub auth)
 - [x] Token refresh plumbing exists (no-op for GitHub, ready for GitLab)
 
+### Review notes
+
+All BLOCKERs resolved: token-gated routes, spawn_blocking for git ops, credentials already gitignored.
+
+Deferred to later phases:
+- **W2**: `CredentialConfig.https_token` as `SecretString` (token handed to git2 as `&str`, minimal gain)
+- **W3**: `ProviderToken.refresh_token` field as `SecretString` (zeroize-on-drop already protects it)
+- **W9**: TOCTOU on registry load/save (single-process daemon, small window)
+- **N2**: Extract provider+token loading boilerplate into helper (revisit when Phase 5 adds providers)
+- **N3**: Registry timestamps as `u64` instead of `String` (backward compat risk for existing files)
+- **N4**: GitHub code search does not index private repos (need list+fetch fallback in Phase 4)
+
 ---
 
 ## Phase 4: Remote Vault Clone + Three-Screen Wizard
