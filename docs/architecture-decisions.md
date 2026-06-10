@@ -614,7 +614,7 @@ Created `lib/filters.js` with pure functions: `selectSource`, `filterByCategory`
 
 #### Candidate C: State Transition Guards (Completed)
 
-`VALID_AUTH_TRANSITIONS` table in AuthContext (6 states, documented valid edges including `init → locked`). `VALID_PANE_TRANSITIONS` table in VaultContext (4 states). `guardedSetStatus`/`guardedSetPane` wrap all internal state transitions. Dev-only `console.warn` on invalid transitions.
+`VALID_AUTH_TRANSITIONS` table in AuthContext (7 states, documented valid edges including `init -> locked`, `recovery -> setup`). `VALID_PANE_TRANSITIONS` table in VaultContext (4 states). `guardedSetStatus`/`guardedSetPane` wrap all internal state transitions. Dev-only `console.warn` on invalid transitions.
 
 #### Candidate A: Cipher Schema (Completed)
 
@@ -692,6 +692,33 @@ Sidebar tag pills reveal an X on hover. Click triggers a confirmation modal. Con
 **Decision: Zero hardcoded user-facing strings**
 
 All user-facing strings replaced with `t()` keys. Both `en.json` and `es.json` maintained in sync. Covers: cipher schema labels, form fields, modal text, toast messages, settings sections, SSH key generation UI.
+
+### D18. Vault Creation Wizard (Completed 2026-06-10)
+
+**Decision: Split-path wizard with 3-step desktop flow and hybrid CLI flags**
+
+CLI chains profile + preferences into `VaultCreator` builder before `execute()`. Desktop creates vault first, then applies profile/prefs via separate IPC calls (`settings.set`, `locale.save`). This split exists because desktop collects profile AFTER `vault.create` (step 3), so the creation payload cannot include it.
+
+**Schema changes:**
+- `ThemeMode` enum (`Light`/`Dark`/`System`) with case-insensitive serde, replacing `Option<String>` on `VaultSettings.theme`
+- `VaultSettings.lang` field for language preference
+- `save_locale()`/`load_locale()` on VaultHandle for plaintext `meta/locale` file
+- `locale.save` daemon route (plaintext write for pre-unlock access)
+
+**CLI (`baluard init`):** `--name`, `--subtitle`, `--theme`, `--lang`, `--auto-lock` flags. OS locale auto-detection (`$LANGUAGE > $LC_ALL > $LC_MESSAGES > $LANG`). Interactive prompts when TTY, hard errors when piped. 8-char minimum enforced as hard error.
+
+**Desktop (3-step wizard):**
+1. `CreateVaultScreen` -- language selector (auto-detected from `navigator.language`) + password
+2. `RecoveryScreen` -- phrase display + copy, transitions to `setup`
+3. `SetupScreen` (new) -- profile fields + theme selector + auto-lock, FocusTrap, applies via IPC
+
+**Auth state machine:** Added `setup` state. Transitions: `recovery -> setup -> unlocked`. 7 states total.
+
+**Key design decisions:**
+- Avatar deferred to Settings (rarely urgent on first run)
+- Crash between creation and profile write accepted (profile is cosmetic, missing = defaults)
+- Recovery phrase printed to stdout in CLI (no confirmation prompt -- breaks piped/CI)
+- Language persisted in both encrypted settings AND plaintext `meta/locale` (login screen needs it before unlock)
 
 ---
 
