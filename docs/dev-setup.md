@@ -55,6 +55,9 @@ just test
 # Full CI check (fmt + clippy + test + build)
 just check
 
+# Seed a demo vault (31 entries, password: demo)
+just seed-demo
+
 # See all available commands
 just
 ```

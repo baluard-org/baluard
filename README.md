@@ -8,7 +8,7 @@ Git-native password manager with padded-bucket encrypted storage, device-identit
 baluard-core    -> Pure Rust: crypto (AES-256-GCM, Argon2id, HPKE, Ed25519, TOTP), vault format, key lifecycle, git sync
 baluard-daemon  -> Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state, auto-lock, TOTP)
 baluard-cli     -> Terminal client (daemon-first with --direct fallback, folders, edit)
-desktop/      -> Tauri v2 desktop app (SolidJS + Tailwind v4, 5 cipher types, generator, TOTP widget)
+desktop/      -> Tauri v2 desktop app (SolidJS + Tailwind v4, 8 cipher types, generator, TOTP widget)
 mobile/       → Kotlin Multiplatform via UniFFI (planned)
 extension/    → MV3 browser extension (planned)
 ```

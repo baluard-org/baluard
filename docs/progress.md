@@ -151,6 +151,31 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 |------|-------------|--------|
 | Additional import formats | Dashlane, Enpass, NordPass, Avast, Avira, Keeper, RoboForm, Myki, mSecure, Blur | Not started |
 
+### Vault Creation Wizard
+
+| Item | Description | Status |
+|------|-------------|--------|
+| Wizard flow | Multi-step wizard on new vault creation to seed user details | Not started |
+| Profile fields | Collect display name, subtitle, avatar during vault setup | Not started |
+| Other details | Additional seed options (language, theme preference, etc.) | Not started |
+
+### Icon Audit
+
+| Item | Description | Status |
+|------|-------------|--------|
+| Icon review | Audit all icons across desktop for visual correctness | Not started |
+| Broken/wrong icons | Identify and fix misaligned, missing, or incorrect icons | Not started |
+
+### Git Online Providers Auth & Sync
+
+| Item | Description | Status |
+|------|-------------|--------|
+| GitHub auth | OAuth + PAT adapter for GitHub | Not started |
+| GitLab auth | OAuth + PAT adapter for GitLab | Not started |
+| Codeberg auth | OAuth + PAT adapter for Codeberg (Forgejo) | Not started |
+| Unified provider interface | Common auth/sync trait across all 3 providers | Not started |
+| Provider selection UI | Desktop flow to pick provider and authenticate | Not started |
+
 ### Nice to Have / Future
 
 Features parked for the far future. Do not start without explicit confirmation.
@@ -270,7 +295,8 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 | `init --profile <p>` | Direct | Create new vault |
 | `unlock` | Daemon/Direct | Unlock vault |
 | `lock` | Daemon | Lock vault, zeroize keys |
-| `add --name N ...` | Daemon/Direct | Add cipher |
+| `add <type> ...` | Daemon/Direct | Add cipher (8 subcommands: login, card, secure-note, identity, ssh-key, bank-account, drivers-license, passport) |
+| `tags {create\|list\|rename\|delete}` | Daemon/Direct | Tag management |
 | `get <id> --decrypt` | Daemon/Direct | Get cipher by UUID |
 | `list` | Daemon/Direct | List all cipher UUIDs |
 | `edit <id>` | Daemon/Direct | Edit cipher metadata |
@@ -286,6 +312,8 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 | `ping` | Daemon | Check daemon connectivity |
 
 **Flags**: `--vault-path <dir>`, `--direct` (skip daemon), `--socket <path>`
+
+**Env vars**: `BALUARD_PASSWORD` (bypass TTY prompt for scripting), `BALUARD_DEBUG=1`, `BALUARD_LOG_DIR=<path>`
 
 ---
 
