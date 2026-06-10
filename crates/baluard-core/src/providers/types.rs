@@ -354,6 +354,13 @@ pub trait ForgeProvider: Send + Sync {
 
     /// Attempt to revoke a token at the provider. Non-blocking on failure.
     async fn revoke_token(&self, token: &ProviderToken) -> Result<(), ProviderError>;
+
+    /// Refresh an expiring token. No-op for providers with non-expiring tokens (GitHub).
+    /// Returns Ok(None) if no refresh was needed, Ok(Some(new_token)) if refreshed.
+    async fn refresh_token(
+        &self,
+        token: &ProviderToken,
+    ) -> Result<Option<ProviderToken>, ProviderError>;
 }
 
 #[cfg(test)]
@@ -440,6 +447,10 @@ pub mod mock {
 
         async fn revoke_token(&self, _token: &ProviderToken) -> Result<(), ProviderError> {
             Ok(())
+        }
+
+        async fn refresh_token(&self, _token: &ProviderToken) -> Result<Option<ProviderToken>, ProviderError> {
+            Ok(None)
         }
     }
 }
