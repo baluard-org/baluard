@@ -153,11 +153,14 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 ### Vault Creation Wizard
 
+**Plan**: See `docs/plan-vault-creation-wizard.md`
+
 | Item | Description | Status |
 |------|-------------|--------|
-| Wizard flow | Multi-step wizard on new vault creation to seed user details | Not started |
-| Profile fields | Collect display name, subtitle, avatar during vault setup | Not started |
-| Other details | Additional seed options (language, theme preference, etc.) | Not started |
+| Core: VaultCreator builder | `.profile()` + `.preferences()` methods, chain writes on creation | Not started |
+| CLI: hybrid wizard | Flags + interactive fallback, OS locale detection | Not started |
+| Desktop: 3-step wizard | Language+Password → Recovery → Profile+Preferences | Not started |
+| Daemon: vault.create profile | Parse profile/prefs from payload, forward to VaultCreator | Not started |
 
 ### Icon Audit
 
