@@ -23,6 +23,15 @@ pub fn data_dir() -> PathBuf {
         .join(APP_NAME)
 }
 
+/// Directory containing all managed vaults.
+///
+/// `<data_dir>/vaults/`
+///
+/// Each vault lives in a subdirectory named by its slug.
+pub fn vaults_dir() -> PathBuf {
+    data_dir().join("vaults")
+}
+
 /// IPC socket path.
 ///
 /// Linux: `$XDG_RUNTIME_DIR/baluard/baluard.sock` (falls back to data dir)

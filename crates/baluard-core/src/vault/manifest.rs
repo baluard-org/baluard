@@ -94,6 +94,10 @@ pub struct VaultSettings {
     /// `None` or `Some(true)` = enabled (default). `Some(false)` = disabled.
     #[serde(default)]
     pub fetch_favicons: Option<bool>,
+    /// Vault slug (machine-friendly identifier, e.g. "baluard-personal").
+    /// Immutable after creation. Used as filesystem folder name, registry key, and git repo name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
     /// User display name shown in sidebar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,

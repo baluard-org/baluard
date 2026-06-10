@@ -29,6 +29,9 @@ pub enum BaluardError {
     #[error("integrity error: {0}")]
     Integrity(#[from] IntegrityError),
 
+    #[error("registry error: {0}")]
+    Registry(#[from] crate::vault::registry::RegistryError),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

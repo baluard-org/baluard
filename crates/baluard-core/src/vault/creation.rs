@@ -257,6 +257,7 @@ pub struct VaultCreator<'a> {
     // Wizard fields (applied post-creation)
     display_name: Option<String>,
     subtitle: Option<String>,
+    slug: Option<String>,
     theme: Option<crate::types::ThemeMode>,
     lang: Option<String>,
     auto_lock_minutes: Option<u32>,
@@ -282,6 +283,7 @@ impl<'a> VaultCreator<'a> {
             entropy: None,
             display_name: None,
             subtitle: None,
+            slug: None,
             theme: None,
             lang: None,
             auto_lock_minutes: None,
@@ -322,6 +324,12 @@ impl<'a> VaultCreator<'a> {
     pub fn profile(mut self, display_name: Option<String>, subtitle: Option<String>) -> Self {
         self.display_name = display_name;
         self.subtitle = subtitle;
+        self
+    }
+
+    /// Set vault slug (machine-friendly identifier).
+    pub fn slug(mut self, slug: Option<String>) -> Self {
+        self.slug = slug;
         self
     }
 
@@ -542,6 +550,19 @@ impl<'a> VaultCreator<'a> {
 
                 write_secret(&path.join("meta/kek-canary.enc"), &kek_canary)?;
                 write_secret(&path.join("meta/rk-canary.enc"), &rk_canary)?;
+
+                // Write .baluard marker file (vault detection, not secret)
+                if let Some(ref slug) = self.slug {
+                    // Validate slug at library boundary
+                    crate::vault::slug::validate_slug(slug).map_err(|e| {
+                        BaluardError::from(VaultError::Corrupt(format!("invalid slug: {e}")))
+                    })?;
+                    let marker = crate::vault::registry::BaluardMarker::new(
+                        vault_id,
+                        slug,
+                    );
+                    marker.write_to_vault(&path)?;
+                }
 
                 // Initialize Git Sync Repo if required
                 #[cfg(feature = "git-sync")]
@@ -832,7 +853,8 @@ impl<'a> VaultCreator<'a> {
         let has_profile = self.display_name.is_some() || self.subtitle.is_some();
         let has_prefs = self.theme.is_some()
             || self.lang.is_some()
-            || self.auto_lock_minutes.is_some();
+            || self.auto_lock_minutes.is_some()
+            || self.slug.is_some();
 
         if has_profile {
             let profile = crate::vault::manifest::UserProfile {
@@ -853,6 +875,9 @@ impl<'a> VaultCreator<'a> {
             }
             if let Some(auto_lock) = self.auto_lock_minutes {
                 settings.auto_lock_minutes = Some(auto_lock);
+            }
+            if let Some(ref slug) = self.slug {
+                settings.slug = Some(slug.clone());
             }
             handle.save_settings(&settings)?;
         }

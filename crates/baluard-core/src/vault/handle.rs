@@ -481,6 +481,7 @@ impl VaultHandle {
                 lang: None,
                 default_uri_match: None,
                 fetch_favicons: None,
+                slug: None,
                 display_name: None,
                 subtitle: None,
                 avatar_ext: None,
