@@ -116,7 +116,7 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 ### Tags
 
-**Storage**: Encrypted `tags: Vec<String>` on cipher envelope + `meta/tag_index.json` plaintext cache. See `docs/plan-tags.md`.
+**Storage**: Encrypted `tags: Vec<String>` on cipher envelope + `meta/tag_index.json` plaintext cache. See DOMAIN 8 in `docs/architecture-decisions.md`.
 
 | Component | Description | Status |
 |-----------|-------------|--------|
@@ -153,7 +153,7 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 ### Vault Creation Wizard
 
-**Plan**: See `docs/plan-vault-creation-wizard.md`
+**Architecture**: See D18 in `docs/architecture-decisions.md`
 
 | Item | Description | Status |
 |------|-------------|--------|
@@ -295,7 +295,7 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 
 | Command | Mode | Description |
 |---------|------|-------------|
-| `init --profile <p>` | Direct | Create new vault |
+| `init [OPTIONS]` | Direct | Create new vault. Flags: `--profile`, `--name`, `--subtitle`, `--theme`, `--lang`, `--auto-lock` |
 | `unlock` | Daemon/Direct | Unlock vault |
 | `lock` | Daemon | Lock vault, zeroize keys |
 | `add <type> ...` | Daemon/Direct | Add cipher (8 subcommands: login, card, secure-note, identity, ssh-key, bank-account, drivers-license, passport) |
