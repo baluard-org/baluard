@@ -1283,7 +1283,6 @@ impl VaultHandle {
             &item_key,
             unlocked.current_epoch, // epoch
             1,                      // update_seq
-            0,                      // nonce_counter
         )?;
 
         let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
@@ -1383,7 +1382,6 @@ impl VaultHandle {
             &item_key,
             key_epoch,
             new_update_seq,
-            new_update_seq, // nonce_counter: use update_seq to ensure unique nonce per update
         )?;
 
         super::write_vault_file(&file_path, &file.envelope_bytes)?;
@@ -2003,7 +2001,6 @@ impl VaultHandle {
                 &new_item_key,
                 new_epoch,
                 existing.update_seq,
-                existing.update_seq,
             )?;
 
             // Write to .tmp path (staged)
@@ -2293,7 +2290,6 @@ impl VaultHandle {
                 &input,
                 &new_item_key,
                 new_epoch,
-                existing.update_seq,
                 existing.update_seq,
             )?;
 

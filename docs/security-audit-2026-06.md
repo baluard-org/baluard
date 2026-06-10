@@ -111,7 +111,7 @@ Three compounding flaws make the emergency-access feature a full master-password
 
 **Net effect.** Anyone holding the contact private key — or anyone with access to the unprotected, synced `emergency.json` — decrypts the entire vault without the master password and without waiting.
 
-**Fix.** Set `0600` and keep the wrapped Root Key out of the synced tree; sign the emergency config with a device key; enforce the delay owner-side (or drop the security claim and document the feature as advisory-only).
+**Fix.** Set `0600` and keep the wrapped Root Key out of the synced tree; sign the emergency config with a device key **pinned to the device registry** (not self-stored); only `Approved` status (owner-signed) grants recovery — drop the client-side time gate entirely.
 
 ---
 
@@ -125,14 +125,14 @@ Three compounding flaws make the emergency-access feature a full master-password
 - **`device.revoke`** — not gated; only checks `handle.is_unlocked()` (`state.rs:1604-1641`). It is even present in `COVER_MUTATION_ACTIONS` (`:225`), confirming it is treated as a mutation but the author forgot the token gate. It triggers `revoke_device_and_rekey()`: full root-key rotation, re-encryption of every cipher and attachment, new keywrap.
 - **`vault.biometric_unlock`** — not gated. `biometric_unlock` calls `state.unlock()` internally (`state.rs:1309-1313`), which mints a fresh session token and returns it.
 
-> **⚠️ Disputed sub-claim (pending re-analysis):** The original audit also listed `vault.biometric_enable` as not token-gated. Source inspection confirms `vault.biometric_enable` **is** present in `TOKEN_REQUIRED_ACTIONS` (handler.rs line 211), and therefore IS token-gated. This sub-claim was incorrect. See **Appendix: Disputed Claims** at the end of this document.
+> **⚠️ Disputed sub-claim (pending re-analysis):** The original audit also listed `vault.biometric_enable` as not token-gated. Source inspection confirms `vault.biometric_enable` **is** present in `TOKEN_REQUIRED_ACTIONS` (handler.rs line 211), and therefore IS token-gated. This sub-claim was incorrect. See **Appendix: Disputed Claims** at the end of this document. Additionally, peer review identified that token-gating `vault.biometric_unlock` creates a circular dependency (need token to unlock, but unlock is how you get a token from locked state), so it was reverted in favor of OS-level defense.
 
 **Exploit.** While the vault is unlocked (or with biometric enabled), any same-UID process — a compromised browser-extension host, a rogue script — connects to the socket and:
 
 - calls `vault.biometric_unlock` with no token → triggers a silent OS-keyring unlock (on Linux Secret Service with an unlocked keyring this requires no user interaction) → receives a brand-new valid session token in the response → uses it for all gated cipher reads. The token defense is defeated end-to-end.
 - or calls `device.revoke` → forces a full key rotation → denial of service that locks other devices out, with no token required.
 
-**Fix.** Add `device.revoke` and `vault.biometric_unlock` to `TOKEN_REQUIRED_ACTIONS` (`vault.biometric_enable` is already gated). If biometric unlock is intended to bypass the token by design, document explicitly that any same-UID process can therefore unlock the vault, and reconsider that tradeoff.
+**Fix.** Add `device.revoke` to `TOKEN_REQUIRED_ACTIONS`. `vault.biometric_unlock` is intentionally NOT token-gated (unlock primitive used when no token exists; defense relies on OS keyring/biometric prompt instead).
 
 ---
 
@@ -445,7 +445,7 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
 
 **Still valid:** `device.revoke` and `vault.biometric_unlock` are confirmed NOT in the list. The exploit scenarios for those two actions remain valid.
 
-**Recommended action:** Remove `vault.biometric_enable` from C4's list of ungated actions. Update the fix recommendation to only add `device.revoke` and `vault.biometric_unlock`. C4 remains CRITICAL based on `device.revoke` and `vault.biometric_unlock` alone.
+**Recommended action:** Remove `vault.biometric_enable` from C4's list of ungated actions. C4 remains valid for `device.revoke` only. `vault.biometric_unlock` is not token-gated by design (circular dependency identified by peer review: unlock primitive used when no token exists).
 
 ---
 

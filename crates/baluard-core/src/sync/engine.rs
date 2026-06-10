@@ -640,7 +640,6 @@ impl SyncEngine {
         self.transition_state(SyncState::Merging)?;
 
         // Non-fast-forward: need merge
-        // Use "ours" strategy for conflict resolution (local wins for conflicting fields)
         let merge_base = repo
             .merge_base(local_oid, remote_oid)
             .map_err(|e| SyncError::Git(format!("merge_base: {e}")))?;
@@ -648,6 +647,11 @@ impl SyncEngine {
         let _ancestor = repo
             .find_commit(merge_base)
             .map_err(|e| SyncError::Git(format!("find ancestor: {e}")))?;
+
+        // D22: Verify commit signatures BEFORE merging remote commits.
+        // Collect remote commits from merge_base to remote_oid and verify each.
+        let remote_new_oids = Self::collect_commit_range(repo, merge_base, remote_oid)?;
+        self.verify_commit_signatures(repo, &remote_new_oids)?;
 
         // Perform merge
         let annotated = repo
@@ -756,11 +760,45 @@ impl SyncEngine {
         remote_oid: Oid,
         resolved_files: &[(String, Vec<u8>)],
     ) -> Result<Oid, BaluardError> {
-        // Write resolved files to working directory
+        // D22: Verify remote commits before resolving conflicts with their data.
+        let merge_base = repo
+            .merge_base(local_oid, remote_oid)
+            .map_err(|e| SyncError::Git(format!("merge_base for conflict resolve: {e}")))?;
+        let remote_new_oids = Self::collect_commit_range(repo, merge_base, remote_oid)?;
+        self.verify_commit_signatures(repo, &remote_new_oids)?;
+
+        // Write resolved files to working directory (with path traversal protection)
+        // Validate ALL paths before any filesystem side-effects.
+        let canonical_vault = self.vault_path.canonicalize()
+            .map_err(|e| SyncError::Git(format!("canonicalize vault path: {e}")))?;
+
         for (path, content) in resolved_files {
             let full_path = self.vault_path.join(path);
-            if let Some(parent) = full_path.parent() {
-                std::fs::create_dir_all(parent)
+
+            // Canonicalize the parent (must already exist under vault).
+            // Do NOT create dirs before validation — that creates side-effects
+            // outside the vault on traversal paths.
+            let parent = full_path.parent().unwrap_or(Path::new("."));
+            let canonical_parent = parent.canonicalize()
+                .map_err(|e| SyncError::Git(format!(
+                    "path '{}' parent not under vault: {e}", path
+                )))?;
+            if !canonical_parent.starts_with(&canonical_vault) {
+                return Err(SyncError::Git(format!(
+                    "path traversal detected: '{}' escapes vault directory", path
+                )).into());
+            }
+            let canonical_full = canonical_parent
+                .join(full_path.file_name().unwrap_or_default());
+            if !canonical_full.starts_with(&canonical_vault) {
+                return Err(SyncError::Git(format!(
+                    "path traversal detected: '{}' escapes vault directory", path
+                )).into());
+            }
+
+            // Now safe to create dirs and write
+            if let Some(p) = full_path.parent() {
+                std::fs::create_dir_all(p)
                     .map_err(|e| SyncError::Git(format!("create dir: {e}")))?;
             }
             std::fs::write(&full_path, content)
