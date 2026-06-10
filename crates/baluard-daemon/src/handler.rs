@@ -981,6 +981,193 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
+        "provider.repos" => {
+            let provider = match parse_provider_name(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return e,
+            };
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return err_response(format!("Invalid payload: {e}")),
+            };
+            let page = payload["page"].as_u64().unwrap_or(1) as u8;
+            let per_page = payload["per_page"].as_u64().unwrap_or(30) as u8;
+            let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+            let info = match state_file.get(provider) {
+                Some(i) => i,
+                None => return err_response(format!("{} not connected", provider)),
+            };
+            let token = match baluard_core::providers::token::load_token(provider, &info.username) {
+                Ok(t) => t,
+                Err(e) => return err_response(format!("Token not found: {e}")),
+            };
+            let prov = provider_for(provider);
+            match prov.list_repos(&token, page, per_page).await {
+                Ok(repos) => ok_resp(serde_json::to_string(&repos).unwrap_or_default(), token_str),
+                Err(e) => err_response(format!("Failed to list repos: {e}")),
+            }
+        }
+
+        "provider.vault_repos" => {
+            let provider = match parse_provider_name(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return e,
+            };
+            let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+            let info = match state_file.get(provider) {
+                Some(i) => i,
+                None => return err_response(format!("{} not connected", provider)),
+            };
+            let token = match baluard_core::providers::token::load_token(provider, &info.username) {
+                Ok(t) => t,
+                Err(e) => return err_response(format!("Token not found: {e}")),
+            };
+            let prov = provider_for(provider);
+            match prov.detect_vault_repos(&token).await {
+                Ok(repos) => ok_resp(serde_json::to_string(&repos).unwrap_or_default(), token_str),
+                Err(e) => err_response(format!("Failed to detect vault repos: {e}")),
+            }
+        }
+
+        "provider.create_repo" => {
+            let provider = match parse_provider_name(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return e,
+            };
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return err_response(format!("Invalid payload: {e}")),
+            };
+            let name = match payload["name"].as_str() {
+                Some(n) => n.to_string(),
+                None => return err_response("Missing repo name"),
+            };
+            let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+            let info = match state_file.get(provider) {
+                Some(i) => i,
+                None => return err_response(format!("{} not connected", provider)),
+            };
+            let token = match baluard_core::providers::token::load_token(provider, &info.username) {
+                Ok(t) => t,
+                Err(e) => return err_response(format!("Token not found: {e}")),
+            };
+            let prov = provider_for(provider);
+            match prov.create_private_repo(&token, &name).await {
+                Ok(repo) => ok_resp(serde_json::to_string(&repo).unwrap_or_default(), token_str),
+                Err(e) => err_response(format!("Failed to create repo: {e}")),
+            }
+        }
+
+        "vault.setup_sync" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return err_response(format!("Invalid payload: {e}")),
+            };
+            let provider = match payload["provider"].as_str() {
+                Some(p) => p.to_string(),
+                None => return err_response("Missing provider"),
+            };
+            let repo_name = payload["repo_name"].as_str().unwrap_or("").to_string();
+
+            // Resolve provider
+            let prov_type = match baluard_core::providers::types::Provider::all()
+                .iter().find(|p| p.to_string() == provider)
+            {
+                Some(p) => *p,
+                None => return err_response(format!("Unknown provider: {provider}")),
+            };
+
+            // Load token from keyring
+            let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+            let info = match state_file.get(prov_type) {
+                Some(i) => i,
+                None => return err_response(format!("{provider} not connected")),
+            };
+            let token = match baluard_core::providers::token::load_token(prov_type, &info.username) {
+                Ok(t) => t,
+                Err(e) => return err_response(format!("Token not found: {e}")),
+            };
+
+            // Default repo name to vault slug if not provided
+            let vault_path = state.vault_path.clone();
+            let effective_name = if repo_name.is_empty() {
+                // Try reading slug from .baluard marker
+                match baluard_core::vault::registry::BaluardMarker::read_from_vault(&vault_path) {
+                    Ok(Some(m)) => m.slug.clone(),
+                    _ => {
+                        // Fallback to directory name
+                        vault_path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("vault")
+                            .to_string()
+                    }
+                }
+            } else {
+                repo_name
+            };
+
+            // Create private repo on provider
+            let prov = provider_for(prov_type);
+            let repo = match prov.create_private_repo(&token, &effective_name).await {
+                Ok(r) => r,
+                Err(e) => return err_response(format!("Failed to create repo: {e}")),
+            };
+
+            // Init git repo + add remote + push
+            #[cfg(feature = "git-sync")]
+            {
+                use baluard_core::sync::engine::SyncEngine;
+                let engine = SyncEngine::new(&vault_path, "baluard-daemon");
+
+                // Init repo if not already a git repo
+                let git_repo = match engine.open_repo() {
+                    Ok(r) => r,
+                    Err(_) => match engine.init_repo() {
+                        Ok(r) => r,
+                        Err(e) => return err_response(format!("Git init failed: {e}")),
+                    },
+                };
+
+                // Add origin remote
+                if let Err(e) = engine.add_remote(&git_repo, "origin", &repo.clone_url) {
+                    return err_response(format!("Failed to add remote: {e}"));
+                }
+
+                // First push
+                if let Err(e) = engine.push(&git_repo, "origin") {
+                    return err_response(format!("First push failed: {e}"));
+                }
+
+                // Update registry with sync info
+                let slug = vault_path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("").to_string();
+                if !slug.is_empty() {
+                    if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
+                        if let Some(entry) = reg.get_mut(&slug) {
+                            entry.provider = Some(provider.clone());
+                            entry.remote_url = Some(repo.clone_url.clone());
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            entry.last_synced = Some(now.to_string());
+                        }
+                        let _ = reg.save_locked();
+                    }
+                }
+
+                ok_resp(serde_json::json!({
+                    "status": "synced",
+                    "repo": repo.clone_url,
+                    "provider": provider
+                }).to_string(), token_str)
+            }
+
+            #[cfg(not(feature = "git-sync"))]
+            err_response("Git sync not available (compiled without git-sync feature)")
+        }
+
         _ => err_response(format!("Unknown action: {}", req.action)),
     };
 

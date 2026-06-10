@@ -250,6 +250,8 @@ pub fn handle_init(
             display_name: display_name.clone().unwrap_or_else(|| s.clone()),
             path: resolved_path.clone(),
             provider: None,
+            remote_url: None,
+            last_synced: None,
             last_opened: None,
             vault_id: secrets.vault_id,
         })?;

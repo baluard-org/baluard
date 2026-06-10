@@ -1,39 +1,61 @@
 //! Credential callbacks for SSH and HTTPS authentication.
 //!
 //! SSH: delegates to ssh-agent (no key material stored in process).
-//! HTTPS: reads personal access token from BALUARD_GIT_TOKEN env var,
-//!         or from meta/git-credentials.json in the vault directory.
+//! HTTPS: reads provider token from keyring (primary), then env var,
+//!         then meta/git-credentials.json in the vault directory.
 
 use std::path::Path;
 
 #[cfg(feature = "git-sync")]
 use git2::{Cred, CredentialType, RemoteCallbacks};
 
+use crate::providers::types::Provider;
+use secrecy::ExposeSecret;
+
 /// Credential source configuration.
 #[derive(Debug, Clone)]
 pub struct CredentialConfig {
-    /// HTTPS personal access token (from env or vault config).
+    /// HTTPS personal access token.
+    /// Priority: keyring (provider) > env var > vault config file.
     pub https_token: Option<String>,
 }
 
 impl CredentialConfig {
-    /// Load credential config from environment and vault config file.
+    /// Load credentials from provider keyring, env var, or vault config file.
+    /// Provider keyring is checked first (the auth flow stores tokens there).
     pub fn load(vault_path: &Path) -> Self {
-        // Env var takes priority
-        let https_token = std::env::var("BALUARD_GIT_TOKEN").ok().or_else(|| {
-            // Fallback: read from vault config
-            let config_path = vault_path.join("meta/git-credentials.json");
-            if config_path.exists() {
-                if let Ok(data) = std::fs::read_to_string(&config_path) {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
-                        return v["token"].as_str().map(|s| s.to_string());
-                    }
+        let https_token = Self::load_from_keyring()
+            .or_else(|| std::env::var("BALUARD_GIT_TOKEN").ok())
+            .or_else(|| Self::load_from_file(vault_path));
+        Self { https_token }
+    }
+
+    /// Load from any connected provider's keyring entry.
+    /// Iterates providers.json to find a connected provider, then reads its token.
+    fn load_from_keyring() -> Option<String> {
+        let state = crate::providers::token::ProvidersState::load().ok()?;
+        // Try all connected providers, return first token found
+        for provider in Provider::all() {
+            if let Some(info) = state.get(*provider) {
+                if let Ok(token) = crate::providers::token::load_token(*provider, &info.username) {
+                    return Some(token.access_token().expose_secret().to_string());
                 }
             }
-            None
-        });
+        }
+        None
+    }
 
-        Self { https_token }
+    /// Load from vault config file fallback.
+    fn load_from_file(vault_path: &Path) -> Option<String> {
+        let config_path = vault_path.join("meta/git-credentials.json");
+        if config_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&config_path) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
+                    return v["token"].as_str().map(|s| s.to_string());
+                }
+            }
+        }
+        None
     }
 }
 

@@ -97,6 +97,12 @@ pub struct VaultEntry {
     /// Connected provider, if any ("github", "gitlab", "codeberg").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    /// Remote URL for git sync (e.g. "https://github.com/user/vault.git").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_url: Option<String>,
+    /// Unix timestamp of last successful sync (seconds since epoch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_synced: Option<String>,
     /// Unix timestamp of last open (seconds since epoch).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_opened: Option<String>,
@@ -342,6 +348,8 @@ mod tests {
             display_name: slug.to_string(),
             path: PathBuf::from(format!("/tmp/vaults/{slug}")),
             provider: None,
+            remote_url: None,
+            last_synced: None,
             last_opened: None,
             vault_id: Uuid::new_v4(),
         }
@@ -433,6 +441,8 @@ mod tests {
             display_name: "Bad".to_string(),
             path: PathBuf::from("/tmp/bad"),
             provider: None,
+            remote_url: None,
+            last_synced: None,
             last_opened: None,
             vault_id: Uuid::new_v4(),
         };

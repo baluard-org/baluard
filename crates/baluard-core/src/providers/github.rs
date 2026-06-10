@@ -306,6 +306,14 @@ impl ForgeProvider for GitHubProvider {
         // PATs also require manual deletion. No-op.
         Ok(())
     }
+
+    async fn refresh_token(
+        &self,
+        _token: &ProviderToken,
+    ) -> Result<Option<ProviderToken>, ProviderError> {
+        // GitHub tokens (PAT + OAuth) don't expire. No refresh needed.
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
