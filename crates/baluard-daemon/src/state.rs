@@ -293,6 +293,25 @@ impl VaultState {
         Ok(())
     }
 
+    /// Change the master password. Requires vault to be unlocked.
+    /// H1 fix: re-wraps KEK and disables stale biometric secret.
+    pub async fn change_master_password(
+        &self,
+        old_password: &str,
+        new_password: &str,
+    ) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".into());
+        }
+
+        handle
+            .change_master_password(old_password, new_password)
+            .map_err(|e| format!("{e}"))
+    }
+
     /// Check if vault is currently unlocked.
     #[allow(dead_code)]
     pub async fn is_unlocked(&self) -> bool {

@@ -205,6 +205,8 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     // Note: vault.biometric_unlock is intentionally NOT token-gated because
     // it's an unlock primitive (used when vault is locked, no token exists).
     // Defense against same-UID abuse relies on OS keyring/biometric prompt.
+    // H1: password change requires existing session
+    "vault.change_password",
 ];
 
 /// Actions that mutate vault data. Schedule cover commits after these.
@@ -328,6 +330,27 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(()) => ok_resp("locked", None),
             Err(e) => err_response(e),
         },
+
+        // H1 fix: master password change (token required)
+        "vault.change_password" => {
+            let payload: serde_json::Value =
+                match serde_json::from_str(&req.payload) {
+                    Ok(v) => v,
+                    Err(e) => return err_response(format!("Invalid JSON: {e}")),
+                };
+            let old_pw = match payload["old_password"].as_str() {
+                Some(s) => s,
+                None => return err_response("missing old_password"),
+            };
+            let new_pw = match payload["new_password"].as_str() {
+                Some(s) => s,
+                None => return err_response("missing new_password"),
+            };
+            match state.change_master_password(old_pw, new_pw).await {
+                Ok(()) => ok_resp("{}", token_str),
+                Err(e) => err_response(e),
+            }
+        }
 
         // vault.info: token NOT required (no secret data, used as pre-flight by CLI)
         "vault.info" => match state.info().await {
