@@ -13,11 +13,27 @@ use super::types::{Provider, ProviderInfo, ProviderToken};
 use crate::paths::data_dir;
 
 /// Non-sensitive provider state file.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProvidersState {
+    /// Schema version for forward compatibility.
+    #[serde(default = "default_version")]
+    pub version: u32,
     /// Map of "provider" -> ProviderInfo.
     #[serde(flatten)]
     pub providers: HashMap<String, ProviderInfo>,
+}
+
+fn default_version() -> u32 {
+    1
+}
+
+impl Default for ProvidersState {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            providers: HashMap::new(),
+        }
+    }
 }
 
 impl ProvidersState {
@@ -78,19 +94,30 @@ fn keyring_key(provider: Provider, username: &str) -> String {
     format!("baluard-{}-{}", provider, username)
 }
 
+/// Wrap keyring errors with headless environment hint.
+fn keyring_error(e: &keyring::Error) -> super::types::ProviderError {
+    super::types::ProviderError::Keyring(format!(
+        "{e}. Keyring unavailable in headless/CI environments. \
+         Use `baluard --direct provider connect-pat` with a PAT instead."
+    ))
+}
+
 /// Store a provider token in the OS keyring.
+///
+/// Returns `ProviderError::Keyring` with a hint about headless environments
+/// if the OS keyring is unavailable.
 pub fn store_token(
     provider: Provider,
     username: &str,
     token: &ProviderToken,
 ) -> Result<(), super::types::ProviderError> {
     let key = keyring_key(provider, username);
-    let secret = token.to_secret();
+    let secret = token.to_secret().map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
     let entry = keyring::Entry::new("baluard", &key)
-        .map_err(|e| super::types::ProviderError::Keyring(e.to_string()))?;
+        .map_err(|e| keyring_error(&e))?;
     entry
         .set_password(secret.expose_secret())
-        .map_err(|e| super::types::ProviderError::Keyring(e.to_string()))?;
+        .map_err(|e| keyring_error(&e))?;
     Ok(())
 }
 
@@ -101,10 +128,10 @@ pub fn load_token(
 ) -> Result<ProviderToken, super::types::ProviderError> {
     let key = keyring_key(provider, username);
     let entry = keyring::Entry::new("baluard", &key)
-        .map_err(|e| super::types::ProviderError::Keyring(e.to_string()))?;
+        .map_err(|e| keyring_error(&e))?;
     let secret_str = entry
         .get_password()
-        .map_err(|e| super::types::ProviderError::Keyring(e.to_string()))?;
+        .map_err(|e| keyring_error(&e))?;
     let secret = SecretString::new(secret_str.into());
     ProviderToken::from_secret(&secret)
         .map_err(|e| super::types::ProviderError::Keyring(e.to_string()))
@@ -117,10 +144,10 @@ pub fn delete_token(
 ) -> Result<(), super::types::ProviderError> {
     let key = keyring_key(provider, username);
     let entry = keyring::Entry::new("baluard", &key)
-        .map_err(|e| super::types::ProviderError::Keyring(e.to_string()))?;
+        .map_err(|e| keyring_error(&e))?;
     entry
         .delete_credential()
-        .map_err(|e| super::types::ProviderError::Keyring(e.to_string()))?;
+        .map_err(|e| keyring_error(&e))?;
     Ok(())
 }
 
@@ -185,10 +212,11 @@ mod tests {
 
     #[test]
     fn token_serialization_round_trip() {
+        use secrecy::ExposeSecret;
         let token = ProviderToken::new("ghp_test123", "repo");
-        let secret = token.to_secret();
+        let secret = token.to_secret().unwrap();
         let restored = ProviderToken::from_secret(&secret).unwrap();
-        assert_eq!(restored.access_token, "ghp_test123");
+        assert_eq!(restored.access_token().expose_secret(), "ghp_test123");
         assert_eq!(restored.scopes, "repo");
         assert!(restored.refresh_token.is_none());
         assert!(restored.expires_at.is_none());
