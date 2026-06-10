@@ -32,7 +32,10 @@ pub struct CipherFile {
 /// 1. Serialize cipher data to JSON
 /// 2. Select tier based on content size
 /// 3. Apply tiered padding
-/// 4. Encrypt with Item Key using AES-256-GCM + AAD
+/// 4. Encrypt with Item Key using AES-256-GCM + AAD + random nonce
+///
+/// Each encryption uses a fresh random 96-bit nonce to prevent nonce reuse
+/// across concurrent multi-device edits (C1 fix).
 pub fn encrypt_cipher(
     vault_id: Uuid,
     cipher_id: CipherId,
@@ -40,7 +43,6 @@ pub fn encrypt_cipher(
     item_key: &ItemKey,
     key_epoch: u64,
     update_seq: u64,
-    nonce_counter: u64,
 ) -> Result<CipherFile, BaluardError> {
     // Serialize cipher data
     let cipher_data = CipherData::from_input(input);
@@ -69,15 +71,15 @@ pub fn encrypt_cipher(
         update_seq,
     );
 
-    // Build nonce
-    let nonce = aead::build_nonce(nonce_counter, cipher_id);
+    // Build random nonce (C1 fix: prevents nonce reuse across devices)
+    let nonce = aead::build_random_nonce();
 
-    // Build header
+    // Build header (nonce_counter is vestigial; actual nonce is in CipherEnvelope.nonce)
     let header = EnvelopeHeader {
         version: BALUARD_VERSION,
         alg_id: ALG_AES_256_GCM,
         key_epoch,
-        nonce_counter,
+        nonce_counter: 0,
         update_seq,
         tier: Some(tier),
     };
@@ -300,7 +302,7 @@ mod tests {
             tags: vec![],
         };
 
-        let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
+        let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1).unwrap();
 
         // Verify envelope is properly formed
         assert_eq!(file.id, cipher_id);
@@ -349,7 +351,7 @@ mod tests {
             tags: vec![],
         };
 
-        let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1, 0).unwrap();
+        let file = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1).unwrap();
         assert!(decrypt_cipher(vault_id, cipher_id, &file, &wrong_key).is_err());
     }
 
@@ -386,7 +388,7 @@ mod tests {
         };
 
         // Encrypt for cipher A
-        let file_a = encrypt_cipher(vault_id, cipher_id_a, &input, &item_key, 1, 1, 0).unwrap();
+        let file_a = encrypt_cipher(vault_id, cipher_id_a, &input, &item_key, 1, 1).unwrap();
 
         // Build a fake CipherFile that looks like B but contains A's envelope
         let swapped_file = CipherFile {
@@ -402,5 +404,54 @@ mod tests {
             err_str.contains("identity mismatch"),
             "expected identity mismatch error, got: {err_str}"
         );
+    }
+
+    /// C1 regression: two encryptions with identical inputs MUST produce
+    /// different nonces (prevents AES-GCM nonce reuse across devices).
+    #[test]
+    fn random_nonce_prevents_reuse() {
+        let vault_id = Uuid::new_v4();
+        let cipher_id = Uuid::new_v4();
+        let item_key = ItemKey::generate();
+
+        let input = CipherInput {
+            name: "test".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: None,
+                password: Some("secret".into()),
+                uris: vec![],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            reprompt: false,
+            archived: false,
+            tags: vec![],
+        };
+
+        // Same vault, cipher, key, epoch, update_seq — what multi-device edit would produce
+        let file1 = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1).unwrap();
+        let file2 = encrypt_cipher(vault_id, cipher_id, &input, &item_key, 1, 1).unwrap();
+
+        // Nonces must differ (this is the exact property C1 turns on)
+        let env1 = envelope::deserialize(&file1.envelope_bytes).unwrap();
+        let env2 = envelope::deserialize(&file2.envelope_bytes).unwrap();
+        assert_ne!(
+            env1.nonce, env2.nonce,
+            "C1 regression: two encryptions produced the same nonce!"
+        );
+
+        // Both must still decrypt correctly
+        let dec1 = decrypt_cipher(vault_id, cipher_id, &file1, &item_key).unwrap();
+        let dec2 = decrypt_cipher(vault_id, cipher_id, &file2, &item_key).unwrap();
+        assert_eq!(dec1.name, "test");
+        assert_eq!(dec2.name, "test");
     }
 }

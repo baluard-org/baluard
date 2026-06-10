@@ -200,6 +200,11 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "provider.vault_repos",
     "provider.create_repo",
     "vault.setup_sync",
+    // C4 fix: device.revoke triggers destructive rekey, must be token-gated
+    "device.revoke",
+    // Note: vault.biometric_unlock is intentionally NOT token-gated because
+    // it's an unlock primitive (used when vault is locked, no token exists).
+    // Defense against same-UID abuse relies on OS keyring/biometric prompt.
 ];
 
 /// Actions that mutate vault data. Schedule cover commits after these.

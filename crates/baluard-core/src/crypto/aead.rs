@@ -55,12 +55,29 @@ pub fn build_aad(
 
 /// Build a 12-byte nonce from a per-object counter and object shard ID.
 ///
+/// **LEGACY for cipher path.** New cipher writes use `build_random_nonce()`.
+/// Still used for meta/index/canary writes where multi-device concurrency
+/// is not a concern (these paths use a random counter, not a sequential one).
+///
 /// nonce = nonce_counter (8 bytes LE) || object_shard_id (4 bytes)
 pub fn build_nonce(nonce_counter: u64, object_id: Uuid) -> [u8; 12] {
     let mut nonce = [0u8; 12];
     nonce[..8].copy_from_slice(&nonce_counter.to_le_bytes());
     // First 4 bytes of UUID as shard ID for namespace separation
     nonce[8..].copy_from_slice(&object_id.as_bytes()[..4]);
+    nonce
+}
+
+/// Build a cryptographically random 12-byte nonce.
+///
+/// Each write gets a unique nonce, preventing AES-GCM nonce reuse when
+/// multiple devices edit the same cipher concurrently (C1 fix).
+/// The 96-bit nonce space provides ~2^32 writes before birthday collision
+/// probability reaches 2^-32, far beyond any realistic cipher edit count.
+pub fn build_random_nonce() -> [u8; 12] {
+    use rand::RngCore;
+    let mut nonce = [0u8; 12];
+    rand::rngs::OsRng.fill_bytes(&mut nonce);
     nonce
 }
 
