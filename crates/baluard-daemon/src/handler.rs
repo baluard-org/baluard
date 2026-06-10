@@ -7,6 +7,7 @@
 
 use crate::proto::{GatewayRequest, GatewayResponse};
 use crate::state::SharedVaultState;
+use baluard_core::providers::ForgeProvider;
 
 use anyhow::Result;
 use base64::Engine;
@@ -781,6 +782,187 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
         // Validate master password without storing to keychain.
         // Used by the Tauri biometry plugin flow: validate here, store there.
+
+        // ── Provider auth (no token required, auth happens before vault unlock) ──
+        "provider.list" => {
+            use baluard_core::providers::types::Provider;
+            use baluard_core::providers::token::ProvidersState;
+            let state_file = ProvidersState::load().unwrap_or_default();
+            let mut providers = serde_json::Map::new();
+            for p in Provider::all() {
+                let key = p.to_string();
+                if let Some(info) = state_file.get(*p) {
+                    providers.insert(key, serde_json::to_value(info).unwrap_or_default());
+                } else {
+                    providers.insert(key.clone(), serde_json::json!({
+                        "provider": key,
+                        "connected": false,
+                        "auth_method": p.auth_method()
+                    }));
+                }
+            }
+            ok_resp(serde_json::Value::Object(providers).to_string(), token_str)
+        }
+
+        "provider.connect_start" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return err_response(format!("Invalid payload: {e}")),
+            };
+            let provider_name = payload["provider"].as_str().unwrap_or("");
+            match provider_name {
+                "github" => {
+                    let gh = baluard_core::providers::github::GitHubProvider::new();
+                    match gh.device_flow_start().await {
+                        Ok(session) => ok_resp(serde_json::to_string(&session).unwrap_or_default(), token_str),
+                        Err(e) => err_response(format!("Device flow start failed: {e}")),
+                    }
+                }
+                _ => err_response(format!("Device flow not supported for '{provider_name}'. Use provider.connect_pat.")),
+            }
+        }
+
+        "provider.connect_poll" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return err_response(format!("Invalid payload: {e}")),
+            };
+            let session: baluard_core::providers::types::DeviceFlowSession =
+                match serde_json::from_value(payload) {
+                    Ok(s) => s,
+                    Err(e) => return err_response(format!("Invalid session: {e}")),
+                };
+            let gh = baluard_core::providers::github::GitHubProvider::new();
+            match gh.device_flow_poll(&session).await {
+                Ok(status) => match status {
+                    baluard_core::providers::types::DeviceFlowStatus::Pending => {
+                        ok_resp(serde_json::json!({"status": "pending"}).to_string(), token_str)
+                    }
+                    baluard_core::providers::types::DeviceFlowStatus::Expired => {
+                        ok_resp(serde_json::json!({"status": "expired"}).to_string(), token_str)
+                    }
+                    baluard_core::providers::types::DeviceFlowStatus::Success(token) => {
+                        // Validate token and get user info
+                        match gh.validate_token(&token).await {
+                            Ok(info) => {
+                                // Store token in keyring
+                                if let Err(e) = baluard_core::providers::token::store_token(
+                                    info.provider, &info.username, &token,
+                                ) {
+                                    return err_response(format!("Keyring error: {e}"));
+                                }
+                                // Store non-sensitive state
+                                let mut state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+                                state_file.set(info.clone());
+                                if let Err(e) = state_file.save() {
+                                    return err_response(format!("Failed to save provider state: {e}"));
+                                }
+                                ok_resp(serde_json::json!({"status": "success", "username": info.username}).to_string(), token_str)
+                            }
+                            Err(e) => err_response(format!("Token validation failed: {e}")),
+                        }
+                    }
+                },
+                Err(e) => err_response(format!("Poll failed: {e}")),
+            }
+        }
+
+        "provider.connect_pat" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return err_response(format!("Invalid payload: {e}")),
+            };
+            let provider_name = payload["provider"].as_str().unwrap_or("");
+            let pat = payload["token"].as_str().unwrap_or("");
+            if pat.is_empty() {
+                return err_response("Missing token in payload");
+            }
+
+            match provider_name {
+                "github" => {
+                    let gh = baluard_core::providers::github::GitHubProvider::new();
+                    match gh.authenticate_pat(pat).await {
+                        Ok((token, info)) => {
+                            if let Err(e) = baluard_core::providers::token::store_token(
+                                info.provider, &info.username, &token,
+                            ) {
+                                return err_response(format!("Keyring error: {e}"));
+                            }
+                            let mut state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+                            state_file.set(info.clone());
+                            if let Err(e) = state_file.save() {
+                                return err_response(format!("Failed to save provider state: {e}"));
+                            }
+                            ok_resp(serde_json::json!({"status": "success", "username": info.username}).to_string(), token_str)
+                        }
+                        Err(e) => err_response(format!("PAT auth failed: {e}")),
+                    }
+                }
+                _ => err_response(format!("Unknown provider: {provider_name}")),
+            }
+        }
+
+        "provider.status" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return err_response(format!("Invalid payload: {e}")),
+            };
+            let provider_name = payload["provider"].as_str().unwrap_or("");
+            let provider = match provider_name {
+                "github" => baluard_core::providers::types::Provider::GitHub,
+                "gitlab" => baluard_core::providers::types::Provider::GitLab,
+                "codeberg" => baluard_core::providers::types::Provider::Codeberg,
+                _ => return err_response(format!("Unknown provider: {provider_name}")),
+            };
+            let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+            match state_file.get(provider) {
+                Some(info) => {
+                    // Try to load token from keyring and validate
+                    match baluard_core::providers::token::load_token(provider, &info.username) {
+                        Ok(token) => {
+                            let gh = baluard_core::providers::github::GitHubProvider::new();
+                            match gh.validate_token(&token).await {
+                                Ok(valid_info) => ok_resp(
+                                    serde_json::json!({"valid": true, "username": valid_info.username}).to_string(),
+                                    token_str,
+                                ),
+                                Err(e) => ok_resp(
+                                    serde_json::json!({"valid": false, "error": e.to_string()}).to_string(),
+                                    token_str,
+                                ),
+                            }
+                        }
+                        Err(e) => ok_resp(
+                            serde_json::json!({"valid": false, "error": format!("Token not found: {e}")}).to_string(),
+                            token_str,
+                        ),
+                    }
+                }
+                None => ok_resp(
+                    serde_json::json!({"connected": false}).to_string(),
+                    token_str,
+                ),
+            }
+        }
+
+        "provider.disconnect" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return err_response(format!("Invalid payload: {e}")),
+            };
+            let provider_name = payload["provider"].as_str().unwrap_or("");
+            let provider = match provider_name {
+                "github" => baluard_core::providers::types::Provider::GitHub,
+                "gitlab" => baluard_core::providers::types::Provider::GitLab,
+                "codeberg" => baluard_core::providers::types::Provider::Codeberg,
+                _ => return err_response(format!("Unknown provider: {provider_name}")),
+            };
+            match baluard_core::providers::token::disconnect(provider) {
+                Ok(()) => ok_resp("disconnected", token_str),
+                Err(e) => err_response(format!("Disconnect failed: {e}")),
+            }
+        }
+
         _ => err_response(format!("Unknown action: {}", req.action)),
     };
 

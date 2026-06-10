@@ -48,6 +48,9 @@ clap = { version = "4", features = ["derive"] }
 proptest = "1"
 tokio = { version = "1", features = ["full"] }
 
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
 # UUID
 uuid = { version = "1", features = ["v4", "serde"] }
 
@@ -60,6 +63,15 @@ base64 = { version = "0.22", features = ["alloc"] }
 
 # Secure memory
 zeroize = { version = "1", features = ["derive"] }
+
+# Git provider clients
+octocrab = "0.44"
+
+# Secret types
+secrecy = { version = "0.10", features = ["serde"] }
+
+# Async trait
+async-trait = "0.1"
 
 # OS keychain (biometric unlock)
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust", "windows-native"] }
