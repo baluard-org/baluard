@@ -29,20 +29,20 @@ Replace the `subtitle` field with a `slug` field in `VaultSettings` and the crea
 
 ### Acceptance criteria
 
-- [ ] Slug generation normalizes any input string to `^[a-z0-9][a-z0-9-]{2,61}[a-z0-9]$`, suggests `baluard-` prefix
-- [ ] Slug stored in `VaultSettings`, replaces `subtitle` in creation wizard
-- [ ] `.baluard` marker written at vault creation with `{ version: 1, vault_id, slug }`
-- [ ] Vault registry module: create, read, update, delete vault entries
-- [ ] Registry writes are atomic (temp + rename)
-- [ ] Registry uses `fd-lock` for cross-process safety
-- [ ] `vaults_dir()` returns `<data_dir>/vaults/` platform-correctly
-- [ ] New vaults created under `vaults_dir().join(slug)`
+- [x] Slug generation normalizes any input string to `^[a-z0-9][a-z0-9-]{2,61}[a-z0-9]$`, suggests `baluard-` prefix
+- [x] Slug stored in `VaultSettings`, replaces `subtitle` in creation wizard
+- [x] `.baluard` marker written at vault creation with `{ version: 1, vault_id, slug }`
+- [x] Vault registry module: create, read, update, delete vault entries
+- [x] Registry writes are atomic (temp + rename)
+- [x] Registry uses `fd-lock` for cross-process safety
+- [x] `vaults_dir()` returns `<data_dir>/vaults/` platform-correctly
+- [x] New vaults created under `vaults_dir().join(slug)`
 - [ ] Daemon reads `active_vault` from registry on startup
-- [ ] `baluard vaults list` prints registered vaults
-- [ ] `baluard --vault <slug>` targets a specific vault (uses `--direct` if not active)
-- [ ] Slug collision detected and surfaced with clear error before creation
-- [ ] Property-based test: any string input produces valid slug
-- [ ] Registry survives crash (atomic write verification test)
+- [x] `baluard vaults list` prints registered vaults
+- [x] `baluard --vault <slug>` targets a specific vault (uses `--direct` if not active)
+- [x] Slug collision detected and surfaced with clear error before creation
+- [x] Property-based test: any string input produces valid slug
+- [x] Registry survives crash (atomic write verification test)
 
 ---
 
@@ -56,16 +56,16 @@ Define the `ForgeProvider` trait with `async fn` methods. Implement `DeviceFlowS
 
 ### Acceptance criteria
 
-- [ ] `ForgeProvider` trait defined with two-phase device flow (`start` + `poll`) and PAT auth
-- [ ] `ProviderToken` wraps `SecretString`, includes `refresh_token` + `expires_at`, implements `Zeroize`
-- [ ] GitHub device flow works end-to-end: `connect_start` returns code+URL, `connect_poll` returns pending/success/expired
-- [ ] Token stored in OS keyring on successful auth
-- [ ] `providers.json` written with non-sensitive state (username, scopes, connected_at)
-- [ ] `provider.list` returns GitHub as connected with username, others as available
-- [ ] `provider.connect_pat` validates token against GitHub API before storing
-- [ ] `provider.status` validates stored token is still valid
-- [ ] Mock provider trait implementation for unit tests
-- [ ] Headless fallback: clear error when keyring unavailable, suggesting `--direct` with PAT
+- [x] `ForgeProvider` trait defined with two-phase device flow (`start` + `poll`) and PAT auth
+- [x] `ProviderToken` wraps `SecretString`, includes `refresh_token` + `expires_at`, implements `Zeroize`
+- [x] GitHub device flow works end-to-end: `connect_start` returns code+URL, `connect_poll` returns pending/success/expired/slow_down
+- [x] Token stored in OS keyring on successful auth
+- [x] `providers.json` written with non-sensitive state (username, scopes, connected_at, version)
+- [x] `provider.list` returns GitHub as connected with username, others as available (uniform shape)
+- [x] `provider.connect_pat` validates token against GitHub API before storing
+- [x] `provider.status` validates stored token is still valid
+- [x] Mock provider trait implementation for unit tests
+- [x] Headless fallback: clear error when keyring unavailable, suggesting `--direct` with PAT
 
 ---
 
