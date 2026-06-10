@@ -173,10 +173,12 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| GitHub auth | OAuth + PAT adapter for GitHub | Not started |
-| GitLab auth | OAuth + PAT adapter for GitLab | Not started |
-| Codeberg auth | OAuth + PAT adapter for Codeberg (Forgejo) | Not started |
-| Unified provider interface | Common auth/sync trait across all 3 providers | Not started |
+| **Phase 1** | Slug + .baluard marker + vault registry + multi-vault CLI | **Done** |
+| **Phase 2** | Provider trait + GitHub auth (device flow + PAT) + keyring + daemon routes | **Done** |
+| Phase 3 | GitHub repo operations + first sync | Not started |
+| Phase 4 | Remote vault clone + three-screen wizard | Not started |
+| Phase 5 | GitLab + Codeberg providers | Not started |
+| Phase 6 | Vault switching + CLI polish | Not started |
 | Provider selection UI | Desktop flow to pick provider and authenticate | Not started |
 
 ### Nice to Have / Future
