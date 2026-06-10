@@ -102,10 +102,10 @@ pub struct VaultEntry {
     pub remote_url: Option<String>,
     /// Unix timestamp of last successful sync (seconds since epoch).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_synced: Option<String>,
+    pub last_synced: Option<u64>,
     /// Unix timestamp of last open (seconds since epoch).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_opened: Option<String>,
+    pub last_opened: Option<u64>,
     /// Vault UUID (from the .baluard marker).
     pub vault_id: Uuid,
 }
@@ -294,7 +294,7 @@ impl VaultRegistry {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default();
-            entry.last_opened = Some(now.as_secs().to_string());
+            entry.last_opened = Some(now.as_secs());
         }
     }
 

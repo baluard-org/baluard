@@ -1176,7 +1176,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_secs();
-                            entry.last_synced = Some(now.to_string());
+                            entry.last_synced = Some(now);
                         }
                         let _ = reg.save_locked();
                     }

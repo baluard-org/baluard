@@ -223,36 +223,36 @@ desktop-build: _sidecar desktop-deps
 # ── E2E Smoke Test ─────────────────────────────────────────────────────────
 
 # Seed a demo vault with realistic test data (31 entries, 5 folders, 11 tags)
-# Creates vault at the platform-default location. Password: demo
+# Creates vault at the platform-default location. Password: baluard99
 # If an existing vault is found, offers to back it up before seeding.
 seed-demo: build-release
 	#!/usr/bin/env bash
 	set -euo pipefail
-	export BALUARD_PASSWORD=demo
+	export BALUARD_PASSWORD=baluard99
 
-	# Detect platform vault path (matches desktop: data_dir()/vault)
+	# Detect platform data directory
 	case "$(uname -s)" in
 		Darwin) DATA_DIR="$HOME/Library/Application Support/baluard" ;;
 		Linux)  DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/baluard" ;;
 		MINGW*|MSYS*|CYGWIN*) DATA_DIR="$LOCALAPPDATA/baluard" ;;
 		*)      DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/baluard" ;;
 	esac
-	VAULT="$DATA_DIR/vault"
+	VAULT="$DATA_DIR/vaults/baluard-personal"
 
-	if [ -d "$VAULT" ] && [ -f "$VAULT/meta/kdf.json" ]; then
-		echo "Existing vault found at: $VAULT"
+	if [ -d "$VAULT" ]; then
+		echo "Existing vault directory found at: $VAULT"
 		echo ""
-		read -r -p "Rename existing vault to backup and seed fresh? [y/N] " ANSWER
+		read -r -p "Remove and seed fresh? [y/N] " ANSWER
 		case "$ANSWER" in
 			y|Y)
-				BACKUP="${VAULT}.backup.$(date +%Y%m%d-%H%M%S)"
-				mv "$VAULT" "$BACKUP"
-				echo "Existing vault backed up to: $BACKUP"
+				rm -rf "$VAULT"
+				rm -f "$DATA_DIR/registry.json"
+				echo "Removed."
 				echo ""
 				;;
 			*)
-				echo "Aborted. Remove or rename the existing vault manually:"
-				echo "  mv \"$VAULT\" \"${VAULT}.old\""
+				echo "Aborted. Remove the existing vault manually:"
+				echo "  rm -rf \"$VAULT\""
 				exit 1
 				;;
 		esac
@@ -261,7 +261,7 @@ seed-demo: build-release
 		baluard() { target/release/{{ binary }} --vault-path "$VAULT" --direct "$@"; }
 
 	echo "=== Creating vault at $VAULT ==="
-	baluard init
+	baluard init --slug baluard-personal
 
 	echo ""
 	echo "=== Creating folders ==="
@@ -357,7 +357,7 @@ seed-demo: build-release
 	echo ""
 	echo "=== Demo vault seeded ==="
 	echo "  Location: $VAULT"
-	echo "  Password: demo"
+	echo "  Password: baluard99"
 	echo ""
 	echo "  Entries by type:"
 	echo "    Logins:       10"
