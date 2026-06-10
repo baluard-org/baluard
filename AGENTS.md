@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Updated:** 2026-06-09
+**Updated:** 2026-06-10
 
 ## OVERVIEW
 Project: **Baluard** (Git-native password manager)
@@ -39,7 +39,7 @@ baluard/
 ├── desktop/                    # Tauri v2 + SolidJS frontend
 │   └── src/
 │       ├── App.jsx             # Root component (thin provider wrapper)
-│       ├── components/         # 25 components (VaultView, CipherDetail, SshKeyGenerator, etc.)
+│       ├── components/         # 26 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, etc.)
 │       ├── context/            # AuthContext, VaultContext, errorSignal, themeSignal, toastSignal
 │       ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js
 │       ├── __tests__/          # vitest tests (payload, utils, filters, cipherSchema)
@@ -157,8 +157,20 @@ Daemon-side via `ssh-key` crate. 3 key types: Ed25519 (default/recommended), RSA
 ### User Profile
 Display name, subtitle, avatar stored in `VaultSettings`. Avatar as file in vault (`meta/avatar.{ext}`). Sidebar reads from VaultContext profile signals. SettingsModal syncs on close via `createEffect`.
 
+### Vault Creation Wizard
+Multi-step wizard for both CLI and desktop. CLI: `baluard init` with `--name`, `--subtitle`, `--theme`, `--lang`, `--auto-lock` flags + interactive fallback. Desktop: 3-step flow (language+password -> recovery phrase -> profile+preferences). `VaultCreator` builder chains `.profile()` + `.preferences()` on `execute()`. Desktop applies post-creation via `settings.set` + `locale.save` IPC.
+
+### ThemeMode
+Typed enum (`Light`/`Dark`/`System`) replacing `Option<String>` on `VaultSettings.theme`. Case-insensitive serde for backward compat. Default: `System`.
+
+### Locale Persistence
+Language stored in two places: encrypted `VaultSettings.lang` (post-unlock) + plaintext `meta/locale` (pre-unlock, login screen). `locale.save` daemon route writes plaintext file.
+
 ### Modal Accessibility
-All modals use `<FocusTrap>` component: `role="dialog"`, `aria-modal`, `aria-labelledby`, Tab/Shift+Tab trap, Escape dismiss, auto-focus first interactive element, restore focus on close. Applied to: DeleteConfirm, ArchiveConfirm, Reprompt, Generator, Settings, EmptyTrash.
+All modals use `<FocusTrap>` component: `role="dialog"`, `aria-modal`, `aria-labelledby`, Tab/Shift+Tab trap, Escape dismiss, auto-focus first interactive element, restore focus on close. Applied to: DeleteConfirm, ArchiveConfirm, Reprompt, Generator, Settings, EmptyTrash, SetupScreen.
+
+### Auth State Machine
+7 states: `locked`, `unlocking`, `unlocked`, `init`, `creating`, `recovery`, `setup`. Wizard flow: `init` -> `creating` -> `recovery` -> `setup` -> `unlocked`. `setup` state added for post-creation profile/preferences step.
 
 ### Tag Deletion
 Hover X on sidebar tag pills triggers confirmation modal. Calls `tag.delete` daemon command. Removes tag from all ciphers + rebuilds index.
@@ -176,6 +188,8 @@ Hover X on sidebar tag pills triggers confirmation modal. Calls `tag.delete` dae
 * **Toast notifications**: `toastSignal.js` standalone signals. All user feedback via toasts, not inline text.
 * **i18n**: All user-facing strings use `t()` keys. Both `en.json` and `es.json` must stay in sync. No hardcoded strings.
 * **FocusTrap**: All modals use `<FocusTrap>` component for keyboard accessibility (Tab trap, Escape dismiss, auto-focus, restore focus).
+* **Locale file**: `meta/locale` is plaintext (not secret data). Needed before vault unlock for login screen i18n. Written by both CLI (`VaultCreator`) and desktop (`locale.save` IPC).
+* **Auth `setup` state**: Recovery screen transitions to `setup` (not `unlocked`). SetupScreen unlocks vault + applies profile/prefs before transitioning to `unlocked`.
 
 ## UX PRINCIPLES
 * **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden.

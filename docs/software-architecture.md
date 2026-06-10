@@ -40,7 +40,7 @@ baluard/
 ├── desktop/                    # Tauri v2 Desktop App (SolidJS/Tailwind, full CRUD, 8 cipher types)
 │   ├── src-tauri/              # Rust backend: daemon proxy, tray, proto codegen
 │   ├── src/                    # SolidJS webview: login, vault, cipher CRUD
-│   │   ├── components/         # 25 components (VaultView, CipherDetail, SshKeyGenerator, FocusTrap, etc.)
+│   │   ├── components/         # 26 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, etc.)
 │   │   ├── context/            # AuthContext, VaultContext, errorSignal, themeSignal, toastSignal
 │   │   ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js
 │   │   ├── __tests__/          # vitest tests (payload, utils, filters, cipherSchema)
@@ -97,7 +97,7 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 **Implemented**:
 - **Rust Daemon (`baluard-daemon`)**: Started by the Tauri tray wrapper on boot. Unlocks the vault directly in `zeroize`-protected memory. Opens a platform-aware Unix domain socket (Linux: `$XDG_RUNTIME_DIR/baluard/baluard.sock`, macOS: `~/Library/Application Support/baluard/baluard.sock`) with 0600 permissions (set via umask before bind to avoid TOCTOU race). Listens for length-delimited Protobuf requests via tokio async I/O. SO_PEERCRED peer UID verification on Linux.
 - **CLI (`baluard-cli`)**: Dual-mode binary. Default: compiles flags into Protobuf, transmits over socket, prints response. `--direct` fallback links baluard-core in-process. `--socket <path>` for custom daemon path.
-- **Tauri v2 UI**: SolidJS/Tailwind v4 webview. `daemon_request` Tauri command proxies to daemon via Protobuf over Unix socket. System tray with Show/Quit menu. Full cipher CRUD with 8 types (Login, Card, Identity, SSH Key, Secure Note, Bank Account, Driver's License, Passport/ID). Password generator (CSPRNG + EFF 7776-word passphrase). TOTP code widget with boundary-aligned refresh. Auto-lock settings. Dark/light themes. Nested folders. Import/export (8 formats). Device fleet dashboard. Biometric unlock. SSH key generation (Ed25519/RSA 4096/ECDSA P-256). User profile (display name, subtitle, avatar). Tag management with sidebar pills. Modal accessibility (FocusTrap). Full i18n (English + Spanish). Toast notifications.
+- **Tauri v2 UI**: SolidJS/Tailwind v4 webview. `daemon_request` Tauri command proxies to daemon via Protobuf over Unix socket. System tray with Show/Quit menu. Full cipher CRUD with 8 types (Login, Card, Identity, SSH Key, Secure Note, Bank Account, Driver's License, Passport/ID). Password generator (CSPRNG + EFF 7776-word passphrase). TOTP code widget with boundary-aligned refresh. Auto-lock settings. Dark/light themes. Nested folders. Import/export (8 formats). Device fleet dashboard. Biometric unlock. SSH key generation (Ed25519/RSA 4096/ECDSA P-256). User profile (display name, subtitle, avatar). Tag management with sidebar pills. Modal accessibility (FocusTrap). Full i18n (English + Spanish). Toast notifications. Vault creation wizard (3-step: language+password, recovery phrase, profile+preferences).
 
 ### 3.2 Mobile Tier (B2C)
 

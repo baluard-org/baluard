@@ -1,6 +1,6 @@
 # Vault Creation Wizard
 
-> Status: **Planned**
+> Status: **Implemented**
 > Last updated: 2026-06-10
 > Reviewed by: peer review (session `wizard-review`)
 
