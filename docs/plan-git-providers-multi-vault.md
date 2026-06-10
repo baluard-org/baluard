@@ -99,7 +99,6 @@ Deferred to later phases:
 - **W3**: `ProviderToken.refresh_token` field as `SecretString` (zeroize-on-drop already protects it)
 - **W9**: TOCTOU on registry load/save (single-process daemon, small window)
 - **N2**: Extract provider+token loading boilerplate into helper (revisit when Phase 5 adds providers)
-- **N3**: Registry timestamps as `u64` instead of `String` (backward compat risk for existing files)
 - **N4**: GitHub code search does not index private repos (need list+fetch fallback in Phase 4)
 
 ---
