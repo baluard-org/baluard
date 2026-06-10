@@ -520,6 +520,8 @@ impl<'a> VaultCreator<'a> {
                     "ephemeral_public": hex::encode(wrapped_recovery_key.0),
                     "encrypted_key": hex::encode(wrapped_recovery_key.1),
                     "tag": hex::encode(wrapped_recovery_key.2),
+                    // H4 fix: store recovery X25519 public key for re-wrapping on rotation
+                    "recovery_x25519_pubkey": hex::encode(recovery_x25519_public.as_bytes()),
                 });
                 write_secret(
                     &path.join("meta/recovery.json"),
