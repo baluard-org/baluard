@@ -7,7 +7,6 @@
 
 use crate::proto::{GatewayRequest, GatewayResponse};
 use crate::state::SharedVaultState;
-use baluard_core::providers::ForgeProvider;
 
 use anyhow::Result;
 use base64::Engine;
@@ -229,6 +228,31 @@ fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
         error_message: String::new(),
         payload: payload.into(),
         session_token: token.unwrap_or("").to_string(),
+    }
+}
+
+/// Dispatch to the correct ForgeProvider implementation based on Provider enum.
+/// Centralizes provider routing so handler code stays provider-agnostic.
+fn provider_for(p: baluard_core::providers::types::Provider) -> Box<dyn baluard_core::providers::ForgeProvider> {
+    match p {
+        baluard_core::providers::types::Provider::GitHub => {
+            Box::new(baluard_core::providers::github::GitHubProvider::new())
+        }
+        // Phase 5: GitLab, Codeberg
+        _ => unimplemented!("Provider {:?} not yet implemented", p),
+    }
+}
+
+/// Helper: parse provider name from JSON payload.
+fn parse_provider_name(payload: &str) -> Result<baluard_core::providers::types::Provider, GatewayResponse> {
+    let val: serde_json::Value = serde_json::from_str(payload)
+        .map_err(|e| err_response(format!("Invalid payload: {e}")))?;
+    let name = val["provider"].as_str().unwrap_or("");
+    match name {
+        "github" => Ok(baluard_core::providers::types::Provider::GitHub),
+        "gitlab" => Ok(baluard_core::providers::types::Provider::GitLab),
+        "codeberg" => Ok(baluard_core::providers::types::Provider::Codeberg),
+        _ => Err(err_response(format!("Unknown provider: {name}"))),
     }
 }
 
@@ -792,7 +816,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             for p in Provider::all() {
                 let key = p.to_string();
                 if let Some(info) = state_file.get(*p) {
-                    providers.insert(key, serde_json::to_value(info).unwrap_or_default());
+                    // Uniform shape: always include connected + auth_method
+                    let mut val = serde_json::to_value(info).unwrap_or_default();
+                    val["connected"] = serde_json::Value::Bool(true);
+                    val["auth_method"] = serde_json::Value::String(p.auth_method().to_string());
+                    providers.insert(key, val);
                 } else {
                     providers.insert(key.clone(), serde_json::json!({
                         "provider": key,
@@ -805,20 +833,19 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
 
         "provider.connect_start" => {
-            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+            let provider = match parse_provider_name(&req.payload) {
                 Ok(p) => p,
-                Err(e) => return err_response(format!("Invalid payload: {e}")),
+                Err(e) => return e,
             };
-            let provider_name = payload["provider"].as_str().unwrap_or("");
-            match provider_name {
-                "github" => {
-                    let gh = baluard_core::providers::github::GitHubProvider::new();
-                    match gh.device_flow_start().await {
+            match provider.auth_method() {
+                "device-flow" => {
+                    let prov = provider_for(provider);
+                    match prov.device_flow_start().await {
                         Ok(session) => ok_resp(serde_json::to_string(&session).unwrap_or_default(), token_str),
                         Err(e) => err_response(format!("Device flow start failed: {e}")),
                     }
                 }
-                _ => err_response(format!("Device flow not supported for '{provider_name}'. Use provider.connect_pat.")),
+                _ => err_response(format!("Device flow not supported for {}. Use provider.connect_pat.", provider)),
             }
         }
 
@@ -832,18 +859,21 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     Ok(s) => s,
                     Err(e) => return err_response(format!("Invalid session: {e}")),
                 };
-            let gh = baluard_core::providers::github::GitHubProvider::new();
-            match gh.device_flow_poll(&session).await {
+            let prov = provider_for(session.provider);
+            match prov.device_flow_poll(&session).await {
                 Ok(status) => match status {
                     baluard_core::providers::types::DeviceFlowStatus::Pending => {
                         ok_resp(serde_json::json!({"status": "pending"}).to_string(), token_str)
+                    }
+                    baluard_core::providers::types::DeviceFlowStatus::SlowDown => {
+                        ok_resp(serde_json::json!({"status": "slow_down", "interval_increment": 5}).to_string(), token_str)
                     }
                     baluard_core::providers::types::DeviceFlowStatus::Expired => {
                         ok_resp(serde_json::json!({"status": "expired"}).to_string(), token_str)
                     }
                     baluard_core::providers::types::DeviceFlowStatus::Success(token) => {
                         // Validate token and get user info
-                        match gh.validate_token(&token).await {
+                        match prov.validate_token(&token).await {
                             Ok(info) => {
                                 // Store token in keyring
                                 if let Err(e) = baluard_core::providers::token::store_token(
@@ -855,6 +885,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                                 let mut state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
                                 state_file.set(info.clone());
                                 if let Err(e) = state_file.save() {
+                                    // Rollback: remove orphaned keyring entry
+                                    let _ = baluard_core::providers::token::delete_token(info.provider, &info.username);
                                     return err_response(format!("Failed to save provider state: {e}"));
                                 }
                                 ok_resp(serde_json::json!({"status": "success", "username": info.username}).to_string(), token_str)
@@ -868,60 +900,53 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
 
         "provider.connect_pat" => {
+            let provider = match parse_provider_name(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return e,
+            };
             let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
                 Ok(p) => p,
                 Err(e) => return err_response(format!("Invalid payload: {e}")),
             };
-            let provider_name = payload["provider"].as_str().unwrap_or("");
-            let pat = payload["token"].as_str().unwrap_or("");
+            let pat = payload["token"].as_str().unwrap_or("").to_string();
+            drop(payload);
+            req.payload.zeroize();
             if pat.is_empty() {
                 return err_response("Missing token in payload");
             }
 
-            match provider_name {
-                "github" => {
-                    let gh = baluard_core::providers::github::GitHubProvider::new();
-                    match gh.authenticate_pat(pat).await {
-                        Ok((token, info)) => {
-                            if let Err(e) = baluard_core::providers::token::store_token(
-                                info.provider, &info.username, &token,
-                            ) {
-                                return err_response(format!("Keyring error: {e}"));
-                            }
-                            let mut state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
-                            state_file.set(info.clone());
-                            if let Err(e) = state_file.save() {
-                                return err_response(format!("Failed to save provider state: {e}"));
-                            }
-                            ok_resp(serde_json::json!({"status": "success", "username": info.username}).to_string(), token_str)
-                        }
-                        Err(e) => err_response(format!("PAT auth failed: {e}")),
+            let prov = provider_for(provider);
+            match prov.authenticate_pat(&pat).await {
+                Ok((token, info)) => {
+                    if let Err(e) = baluard_core::providers::token::store_token(
+                        info.provider, &info.username, &token,
+                    ) {
+                        return err_response(format!("Keyring error: {e}"));
                     }
+                    let mut state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+                    state_file.set(info.clone());
+                    if let Err(e) = state_file.save() {
+                        let _ = baluard_core::providers::token::delete_token(info.provider, &info.username);
+                        return err_response(format!("Failed to save provider state: {e}"));
+                    }
+                    ok_resp(serde_json::json!({"status": "success", "username": info.username}).to_string(), token_str)
                 }
-                _ => err_response(format!("Unknown provider: {provider_name}")),
+                Err(e) => err_response(format!("PAT auth failed: {e}")),
             }
         }
 
         "provider.status" => {
-            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+            let provider = match parse_provider_name(&req.payload) {
                 Ok(p) => p,
-                Err(e) => return err_response(format!("Invalid payload: {e}")),
-            };
-            let provider_name = payload["provider"].as_str().unwrap_or("");
-            let provider = match provider_name {
-                "github" => baluard_core::providers::types::Provider::GitHub,
-                "gitlab" => baluard_core::providers::types::Provider::GitLab,
-                "codeberg" => baluard_core::providers::types::Provider::Codeberg,
-                _ => return err_response(format!("Unknown provider: {provider_name}")),
+                Err(e) => return e,
             };
             let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
             match state_file.get(provider) {
                 Some(info) => {
-                    // Try to load token from keyring and validate
                     match baluard_core::providers::token::load_token(provider, &info.username) {
                         Ok(token) => {
-                            let gh = baluard_core::providers::github::GitHubProvider::new();
-                            match gh.validate_token(&token).await {
+                            let prov = provider_for(provider);
+                            match prov.validate_token(&token).await {
                                 Ok(valid_info) => ok_resp(
                                     serde_json::json!({"valid": true, "username": valid_info.username}).to_string(),
                                     token_str,
@@ -946,16 +971,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
 
         "provider.disconnect" => {
-            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+            let provider = match parse_provider_name(&req.payload) {
                 Ok(p) => p,
-                Err(e) => return err_response(format!("Invalid payload: {e}")),
-            };
-            let provider_name = payload["provider"].as_str().unwrap_or("");
-            let provider = match provider_name {
-                "github" => baluard_core::providers::types::Provider::GitHub,
-                "gitlab" => baluard_core::providers::types::Provider::GitLab,
-                "codeberg" => baluard_core::providers::types::Provider::Codeberg,
-                _ => return err_response(format!("Unknown provider: {provider_name}")),
+                Err(e) => return e,
             };
             match baluard_core::providers::token::disconnect(provider) {
                 Ok(()) => ok_resp("disconnected", token_str),

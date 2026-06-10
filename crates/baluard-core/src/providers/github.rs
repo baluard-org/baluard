@@ -7,6 +7,7 @@
 use async_trait::async_trait;
 use octocrab::models::Repository;
 use octocrab::Octocrab;
+use secrecy::ExposeSecret;
 
 use super::types::{
     DeviceFlowSession, DeviceFlowStatus, ForgeProvider, Provider, ProviderError, ProviderInfo,
@@ -20,17 +21,21 @@ const GITHUB_CLIENT_ID: &str = "Ov23liuGmBAmBRWm3Ni";
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 
-pub struct GitHubProvider;
+pub struct GitHubProvider {
+    http: reqwest::Client,
+}
 
 impl GitHubProvider {
     pub fn new() -> Self {
-        Self
+        Self {
+            http: reqwest::Client::new(),
+        }
     }
 
     /// Build an octocrab client from a token.
     fn client_from_token(&self, token: &ProviderToken) -> Result<Octocrab, ProviderError> {
         Octocrab::builder()
-            .personal_token(token.access_token.clone())
+            .personal_token(token.access_token().expose_secret().to_string())
             .build()
             .map_err(|e| ProviderError::Api(e.to_string()))
     }
@@ -65,7 +70,7 @@ impl ForgeProvider for GitHubProvider {
     }
 
     async fn device_flow_start(&self) -> Result<DeviceFlowSession, ProviderError> {
-        let client = reqwest::Client::new();
+        let client = &self.http;
         let resp = client
             .post(DEVICE_CODE_URL)
             .header("Accept", "application/json")
@@ -127,7 +132,7 @@ impl ForgeProvider for GitHubProvider {
             return Ok(DeviceFlowStatus::Expired);
         }
 
-        let client = reqwest::Client::new();
+        let client = &self.http;
         let resp = client
             .post(ACCESS_TOKEN_URL)
             .header("Accept", "application/json")
@@ -149,9 +154,10 @@ impl ForgeProvider for GitHubProvider {
             .map_err(|e| ProviderError::Api(e.to_string()))?;
 
         match data["error"].as_str() {
-            Some("authorization_pending") | Some("slow_down") => {
+            Some("authorization_pending") => {
                 Ok(DeviceFlowStatus::Pending)
             }
+            Some("slow_down") => Ok(DeviceFlowStatus::SlowDown),
             Some("expired_token") | Some("access_denied") => Ok(DeviceFlowStatus::Expired),
             Some(e) => Err(ProviderError::AuthFailed(e.to_string())),
             None => {

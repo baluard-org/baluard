@@ -84,42 +84,100 @@ pub enum DeviceFlowStatus {
     Success(ProviderToken),
     /// User denied or code expired. Start over.
     Expired,
+    /// Server asked to slow down. Increase interval by 5s (RFC 8628 §3.5).
+    SlowDown,
 }
 
-impl PartialEq for DeviceFlowStatus {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Pending, Self::Pending) => true,
-            (Self::Expired, Self::Expired) => true,
-            (Self::Success(a), Self::Success(b)) => a.access_token == b.access_token,
-            _ => false,
+/// Provider token with zeroize-on-drop semantics.
+///
+/// `access_token` is stored as `SecretString` to prevent accidental logging.
+/// Use `access_token()` to retrieve it (requires `ExposeSecret` in scope).
+pub struct ProviderToken {
+    /// Access token (primary credential). Never logged or printed.
+    access_token: SecretString,
+    /// Refresh token (GitLab uses this, GitHub doesn't).
+    pub refresh_token: Option<String>,
+    /// Unix timestamp when token expires (None = never).
+    pub expires_at: Option<u64>,
+    /// Scopes granted.
+    pub scopes: String,
+}
+
+// Manual Debug to avoid printing secrets.
+impl std::fmt::Debug for ProviderToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderToken")
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "[REDACTED]"))
+            .field("expires_at", &self.expires_at)
+            .field("scopes", &self.scopes)
+            .finish()
+    }
+}
+
+impl Clone for ProviderToken {
+    fn clone(&self) -> Self {
+        Self {
+            access_token: SecretString::new(self.access_token.expose_secret().to_string().into()),
+            refresh_token: self.refresh_token.clone(),
+            expires_at: self.expires_at,
+            scopes: self.scopes.clone(),
         }
     }
 }
 
-impl Eq for DeviceFlowStatus {}
+impl Zeroize for ProviderToken {
+    fn zeroize(&mut self) {
+        // SecretString handles its own zeroize, but zeroize the other fields
+        self.refresh_token.zeroize();
+        self.expires_at.zeroize();
+        self.scopes.zeroize();
+    }
+}
 
-/// Provider token with zeroize-on-drop semantics.
-#[derive(Debug, Clone, Serialize, Deserialize, Zeroize)]
-#[zeroize(drop)]
-pub struct ProviderToken {
-    /// Access token (primary credential).
-    pub access_token: String,
-    /// Refresh token (GitLab uses this, GitHub doesn't).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refresh_token: Option<String>,
-    /// Unix timestamp when token expires (None = never).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<u64>,
-    /// Scopes granted.
-    pub scopes: String,
+impl Drop for ProviderToken {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+// Custom serde: serialize access_token as plain string, deserialize into SecretString.
+impl Serialize for ProviderToken {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("ProviderToken", 4)?;
+        s.serialize_field("access_token", self.access_token.expose_secret())?;
+        s.serialize_field("refresh_token", &self.refresh_token)?;
+        s.serialize_field("expires_at", &self.expires_at)?;
+        s.serialize_field("scopes", &self.scopes)?;
+        s.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ProviderToken {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Helper {
+            access_token: String,
+            refresh_token: Option<String>,
+            expires_at: Option<u64>,
+            scopes: String,
+        }
+        let h = Helper::deserialize(deserializer)?;
+        Ok(Self {
+            access_token: SecretString::new(h.access_token.into()),
+            refresh_token: h.refresh_token,
+            expires_at: h.expires_at,
+            scopes: h.scopes,
+        })
+    }
 }
 
 impl ProviderToken {
     /// Create a new non-expiring token (GitHub PAT style).
     pub fn new(access_token: impl Into<String>, scopes: impl Into<String>) -> Self {
         Self {
-            access_token: access_token.into(),
+            access_token: SecretString::new(access_token.into().into()),
             refresh_token: None,
             expires_at: None,
             scopes: scopes.into(),
@@ -134,11 +192,16 @@ impl ProviderToken {
         scopes: impl Into<String>,
     ) -> Self {
         Self {
-            access_token: access_token.into(),
+            access_token: SecretString::new(access_token.into().into()),
             refresh_token: Some(refresh_token.into()),
             expires_at: Some(expires_at),
             scopes: scopes.into(),
         }
+    }
+
+    /// Access the underlying token string. Requires `ExposeSecret` in scope.
+    pub fn access_token(&self) -> &SecretString {
+        &self.access_token
     }
 
     /// Check if token is expired or about to expire (5 min buffer).
@@ -155,11 +218,10 @@ impl ProviderToken {
         }
     }
 
-    /// Convert to SecretString for keyring storage.
-    pub fn to_secret(&self) -> SecretString {
-        // Serialize full token for keyring storage (includes refresh + expiry)
-        let json = serde_json::to_string(self).unwrap_or_default();
-        SecretString::new(json.into())
+    /// Serialize for keyring storage. Returns all fields as JSON.
+    pub fn to_secret(&self) -> Result<SecretString, serde_json::Error> {
+        let json = serde_json::to_string(self)?;
+        Ok(SecretString::new(json.into()))
     }
 
     /// Deserialize from keyring secret string.
@@ -292,4 +354,92 @@ pub trait ForgeProvider: Send + Sync {
 
     /// Attempt to revoke a token at the provider. Non-blocking on failure.
     async fn revoke_token(&self, token: &ProviderToken) -> Result<(), ProviderError>;
+}
+
+#[cfg(test)]
+pub mod mock {
+    use super::*;
+
+    /// Mock provider for unit tests. All operations succeed with dummy data.
+    pub struct MockProvider {
+        pub provider_type: Provider,
+    }
+
+    impl MockProvider {
+        pub fn github() -> Self {
+            Self { provider_type: Provider::GitHub }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ForgeProvider for MockProvider {
+        fn provider(&self) -> Provider { self.provider_type }
+
+        async fn device_flow_start(&self) -> Result<DeviceFlowSession, ProviderError> {
+            Ok(DeviceFlowSession {
+                provider: self.provider_type,
+                user_code: "MOCK-CODE".into(),
+                verification_uri: "https://github.com/login/device".into(),
+                device_code: "mock-device-code".into(),
+                interval_secs: 1,
+                expires_at: u64::MAX,
+            })
+        }
+
+        async fn device_flow_poll(&self, _session: &DeviceFlowSession) -> Result<DeviceFlowStatus, ProviderError> {
+            Ok(DeviceFlowStatus::Success(ProviderToken::new("mock-token", "repo")))
+        }
+
+        async fn authenticate_pat(&self, _token: &str) -> Result<(ProviderToken, ProviderInfo), ProviderError> {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            Ok((
+                ProviderToken::new("mock-token", "repo"),
+                ProviderInfo {
+                    provider: self.provider_type,
+                    username: "mock-user".into(),
+                    scopes: "repo".into(),
+                    connected_at: now,
+                },
+            ))
+        }
+
+        async fn validate_token(&self, _token: &ProviderToken) -> Result<ProviderInfo, ProviderError> {
+            Ok(ProviderInfo {
+                provider: self.provider_type,
+                username: "mock-user".into(),
+                scopes: "repo".into(),
+                connected_at: 0,
+            })
+        }
+
+        async fn get_authenticated_user(&self, _token: &ProviderToken) -> Result<String, ProviderError> {
+            Ok("mock-user".into())
+        }
+
+        async fn list_repos(&self, _token: &ProviderToken, _page: u8, _per_page: u8) -> Result<Vec<VaultRepo>, ProviderError> {
+            Ok(vec![])
+        }
+
+        async fn detect_vault_repos(&self, _token: &ProviderToken) -> Result<Vec<VaultRepo>, ProviderError> {
+            Ok(vec![])
+        }
+
+        async fn create_private_repo(&self, _token: &ProviderToken, name: &str) -> Result<VaultRepo, ProviderError> {
+            Ok(VaultRepo {
+                name: name.into(),
+                full_name: format!("mock-user/{name}"),
+                clone_url: format!("https://github.com/mock-user/{name}.git"),
+                private: true,
+                vault_slug: None,
+                vault_id: None,
+            })
+        }
+
+        async fn revoke_token(&self, _token: &ProviderToken) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
 }
