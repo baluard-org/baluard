@@ -2143,10 +2143,54 @@ impl VaultHandle {
         // Clean up rotation-pending marker
         let _ = std::fs::remove_file(self.path.join("meta/.rotation-pending"));
 
+        // H4 fix: re-wrap recovery key with new Root Key
+        let _ = Self::rewrap_recovery_key(&self.path, &new_root_key);
+
         Ok(())
     }
 
-    /// Initiate a root key rotation for this device.
+    /// Re-wrap the Root Key in meta/recovery.json after rotation.
+    /// Reads the stored recovery X25519 public key and HPKE-wraps the new Root Key.
+    /// If recovery.json doesn't exist or lacks the pubkey field, silently skips.
+    fn rewrap_recovery_key(
+        vault_path: &Path,
+        new_root_key: &RootKey,
+    ) -> Result<(), BaluardError> {
+        let recovery_path = vault_path.join("meta/recovery.json");
+        if !recovery_path.exists() {
+            return Ok(());
+        }
+
+        let data = std::fs::read_to_string(&recovery_path)
+            .map_err(|e| VaultError::Metadata(format!("read recovery.json: {e}")))?;
+        let mut json: serde_json::Value = serde_json::from_str(&data)
+            .map_err(|e| VaultError::Corrupt(format!("parse recovery.json: {e}")))?;
+
+        let pubkey_hex = match json["recovery_x25519_pubkey"].as_str() {
+            Some(h) => h,
+            None => return Ok(()), // Old format without pubkey; skip silently
+        };
+
+        let pubkey_bytes: [u8; 32] = hex::decode(pubkey_hex)
+            .map_err(|e| VaultError::Corrupt(format!("recovery pubkey hex: {e}")))?
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("recovery pubkey wrong length".into()))?;
+
+        let pubkey = x25519_dalek::PublicKey::from(pubkey_bytes);
+        let (eph_pub, ct, tag) =
+            crate::crypto::hpke_wrap::wrap_key(new_root_key.as_bytes(), &pubkey)?;
+
+        // Update the JSON in-place
+        json["ephemeral_public"] = serde_json::Value::String(hex::encode(eph_pub));
+        json["encrypted_key"] = serde_json::Value::String(hex::encode(ct));
+        json["tag"] = serde_json::Value::String(hex::encode(tag));
+
+        let tmp = recovery_path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_string_pretty(&json).unwrap())?;
+        std::fs::rename(&tmp, &recovery_path)?;
+
+        Ok(())
+    }
     ///
     /// Generates a new Root Key, wraps it for all enrolled devices,
     /// and transitions the epoch to ROTATING.
@@ -2208,7 +2252,8 @@ impl VaultHandle {
         let new_root_key = result
             .new_root_key
             .as_ref()
-            .ok_or_else(|| VaultError::Corrupt("revoke returned no new root key".into()))?;
+            .ok_or_else(|| VaultError::Corrupt("revoke returned no new root key".into()))?
+            .clone();
         let new_epoch = result.new_epoch;
 
         // ── Clone old root key once (borrow-safe for loop) ──
@@ -2242,7 +2287,7 @@ impl VaultHandle {
             let mut existing = self.try_decrypt_cipher_with_root_key(&old_root, &file)?;
 
             // Re-encrypt attachment blobs with new item key
-            let new_item_key = Self::derive_item_key_from_root(new_root_key, *cipher_id, new_epoch);
+            let new_item_key = Self::derive_item_key_from_root(&new_root_key, *cipher_id, new_epoch);
             let old_item_key = Self::derive_item_key_from_root(&old_root, *cipher_id, old_epoch);
             for attach_meta in &existing.attachments {
                 let attach_dir = self
@@ -2410,7 +2455,7 @@ impl VaultHandle {
                 u.root_key = new_root_key.clone();
                 u.space_group_key.zeroize();
                 u.space_group_key = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
-                    new_root_key,
+                    &new_root_key,
                     new_epoch,
                 );
                 u.current_epoch = new_epoch;
@@ -2453,6 +2498,9 @@ impl VaultHandle {
         // Clean up rotation-pending marker (disarm guard first)
         _guard.disarm();
         let _ = std::fs::remove_file(&pending_marker);
+
+        // H4 fix: re-wrap recovery key with new Root Key
+        let _ = Self::rewrap_recovery_key(&self.path, &new_root_key);
 
         Ok(result)
     }

@@ -2051,10 +2051,18 @@ mod tests {
 
         // Write recovery.json
         let (eph_pub, ct, tag) = &ceremony.wrapped_recovery_key;
+        // Derive the recovery X25519 pubkey from the phrase for storage
+        let recovery_key_bytes = ceremony.recovery_phrase.derive_key();
+        let recovery_x25519_secret = x25519_dalek::StaticSecret::from(
+            <[u8; 32]>::try_from(&recovery_key_bytes[..32]).unwrap()
+        );
+        let recovery_x25519_public = x25519_dalek::PublicKey::from(&recovery_x25519_secret);
         let recovery_json = serde_json::json!({
             "ephemeral_public": hex::encode(eph_pub),
             "encrypted_key": hex::encode(ct),
             "tag": hex::encode(tag),
+            // H4 fix: store recovery X25519 public key for re-wrapping on rotation
+            "recovery_x25519_pubkey": hex::encode(recovery_x25519_public.as_bytes()),
         });
         std::fs::write(
             vault_path.join("meta/recovery.json"),
