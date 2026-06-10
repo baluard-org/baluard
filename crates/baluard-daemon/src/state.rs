@@ -712,7 +712,8 @@ impl VaultState {
             let guard = self.inner.read().await;
             if let Some(handle) = guard.as_ref() {
                 let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
-                if matches!(settings.fetch_favicons, Some(false)) {
+                // H7 fix: default-off. Only fetch when explicitly enabled.
+                if !matches!(settings.fetch_favicons, Some(true)) {
                     return Ok(String::new());
                 }
             }
