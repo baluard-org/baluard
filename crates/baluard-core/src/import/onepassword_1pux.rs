@@ -172,14 +172,20 @@ pub fn parse(data: &[u8]) -> ImportResult {
     result
 }
 
+/// Maximum decompressed size for 1PUX export.data (H8 fix: zip-bomb protection).
+const MAX_DECOMPRESSED_SIZE: u64 = 32 * 1024 * 1024; // 32 MB
+
 fn extract_export_data(
     mut archive: zip::ZipArchive<std::io::Cursor<&[u8]>>,
     result: &mut ImportResult,
 ) -> Option<String> {
     // Standard 1PUX: export.data in ZIP root
     if let Ok(mut file) = archive.by_name("export.data") {
+        // H8 fix: cap decompressed size to prevent zip-bomb OOM.
+        // 4MB compressed can expand to GB without this guard.
+        let mut limited = std::io::Read::take(&mut file, MAX_DECOMPRESSED_SIZE);
         let mut contents = String::new();
-        if std::io::Read::read_to_string(&mut file, &mut contents).is_ok() {
+        if std::io::Read::read_to_string(&mut limited, &mut contents).is_ok() {
             return Some(contents);
         }
     }

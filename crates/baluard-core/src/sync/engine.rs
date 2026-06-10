@@ -516,7 +516,7 @@ impl SyncEngine {
 
         remote
             .push(&[&push_refspec], Some(&mut push_options))
-            .map_err(|e| SyncError::Git(format!("push: {e}")))?;
+            .map_err(|e| SyncError::Git(crate::sync::credentials::scrub_git_error(&format!("push: {e}"))))?;
 
         // Track local HEAD OID for rollback detection
         let pushed_oid = repo
@@ -565,7 +565,7 @@ impl SyncEngine {
             let refspec = format!("refs/heads/*:refs/remotes/{remote_name}/*");
             remote
                 .fetch(&[&refspec], Some(&mut fetch_opts), None)
-                .map_err(|e| SyncError::Git(format!("fetch: {e}")))?;
+                .map_err(|e| SyncError::Git(crate::sync::credentials::scrub_git_error(&format!("fetch: {e}"))))?;
 
             // Resolve remote branch dynamically
             let remote_branch = Self::resolve_remote_branch(repo, remote_name);
@@ -873,7 +873,7 @@ impl SyncEngine {
         let cred_config = CredentialConfig::load(target);
         let mut fetch_opts = FetchOptions::new();
         // Build inline callbacks to avoid lifetime issues
-        let https_token = cred_config.https_token.clone();
+        let https_token = cred_config.expose_token();
         let mut callbacks = git2::RemoteCallbacks::new();
         callbacks.credentials(move |_url, username_from_url, allowed_types| {
             if allowed_types.contains(git2::CredentialType::SSH_KEY) {
@@ -897,7 +897,7 @@ impl SyncEngine {
         builder.fetch_options(fetch_opts);
         let repo = builder
             .clone(url, target)
-            .map_err(|e| SyncError::Git(format!("clone: {e}")))?;
+            .map_err(|e| SyncError::Git(crate::sync::credentials::scrub_git_error(&format!("clone: {e}"))))?;
         Ok(repo)
     }
 }
