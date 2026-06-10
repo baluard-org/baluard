@@ -132,17 +132,19 @@ pub fn decrypt_cipher(
     let mut padded = aead::decrypt(item_key.as_bytes(), &enc_envelope)?;
 
     // Unpad
-    let mut json = padding::unpad(&padded)?;;
+    let mut json = padding::unpad(&padded)?;
 
     // Deserialize cipher data (handles old flat format via migrate())
-    let raw_data: CipherEnvelopeData = serde_json::from_slice(&json)
-        .map_err(|e| VaultError::Corrupt(format!("cipher deserialization: {e}")))?;
+    let raw_data_result = serde_json::from_slice::<CipherEnvelopeData>(&json);
 
-    // H2 fix: zeroize plaintext intermediates before returning.
-    // padded and json hold full cleartext; without this they linger on the heap.
+    // H2 fix: zeroize plaintext intermediates even on error paths.
+    // padded and json hold full cleartext; zeroize before any early return.
     use zeroize::Zeroize;
     json.zeroize();
     padded.zeroize();
+
+    let raw_data: CipherEnvelopeData = raw_data_result
+        .map_err(|e| VaultError::Corrupt(format!("cipher deserialization: {e}")))?;
 
     let data: CipherData = raw_data.into();
 

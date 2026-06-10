@@ -160,7 +160,7 @@ Clarification (answering the original brief): biometric does **not** escrow the 
 
 `decrypt_cipher` produces `padded` (`cipher.rs:130`) and `json` (`:133`) `Vec<u8>` holding full plaintext, plus a `Cipher` struct whose `LoginData.password`, `CardData.number`, `notes`, TOTP URI, `password_history`, etc. are plain `String`/`Vec`. None implement `Zeroize`/`ZeroizeOnDrop`, and `decrypt_cipher` does not wipe `padded`/`json` before returning. Every `get_cipher`, `list_full`, and index rebuild leaves cleartext passwords in freed heap memory, recoverable via core dump, swap, or heap-spray.
 
-The revoke/rekey loop manually zeroizes (`handle.rs:2300-2316`), proving the team knows the requirement — but it is absent from the hot read paths. This contradicts the peer review.md claim "Zeroize on drop for key material and TOTP secrets."
+The revoke/rekey loop manually zeroizes (`handle.rs:2300-2316`), proving the team knows the requirement — but it is absent from the hot read paths. This contradicts the stated design principle "Zeroize on drop for key material and TOTP secrets."
 
 **Fix.** Implement `ZeroizeOnDrop` on secret-bearing types in `types.rs`; zeroize `padded`/`json` intermediates in `decrypt_cipher`.
 
@@ -289,7 +289,7 @@ No `certificate_check` callback is registered on `RemoteCallbacks` anywhere, so 
 
 ### M7. TOTP seed crosses IPC into the edit form
 **File:** `desktop/src/components/AddEditCipherForm.jsx:298`.
-The TOTP field is bound to `newCipher().totp_uri` and rendered as `<input value=...>` containing the full `otpauth://totp/...?secret=...` URI. peer review.md states "TOTP: Seed NEVER crosses IPC. Only derived numeric code sent to frontend." The detail view (`CipherDetail.jsx:52`) correctly uses only the derived code, but the edit form receives and displays the raw seed, which then lives in webview memory. **Fix:** reconcile with the stated invariant — either treat the edit-form exception as accepted-and-documented, or avoid sending the seed to the frontend (edit via a write-only field).
+The TOTP field is bound to `newCipher().totp_uri` and rendered as `<input value=...>` containing the full `otpauth://totp/...?secret=...` URI. The project's security policy states "TOTP: Seed NEVER crosses IPC. Only derived numeric code sent to frontend." The detail view (`CipherDetail.jsx:52`) correctly uses only the derived code, but the edit form receives and displays the raw seed, which then lives in webview memory. **Fix:** reconcile with the stated invariant — either treat the edit-form exception as accepted-and-documented, or avoid sending the seed to the frontend (edit via a write-only field).
 
 ### M8. Attachment size recorded as 0 (zeroize-before-read bug)
 **File:** `crates/baluard-daemon/src/state.rs:1362`, `:1384`.

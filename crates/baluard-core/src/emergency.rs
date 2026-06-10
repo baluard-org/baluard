@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_bypass_a_grantee_re_signs_with_own_key() {
-        // the Bypass A: grantee generates own keypair, self-signs Approved.
+        // Peer review Bypass A: grantee generates own keypair, self-signs Approved.
         // Must fail because verifying key is pinned to device registry (owner's key).
         let dir = tempdir().unwrap();
         let vault_path = dir.path();
@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn test_bypass_b_requested_zero_time_instant_recovery() {
-        // the Bypass B: grantee sets Requested { request_time: 0 } for instant recovery.
+        // Peer review Bypass B: grantee sets Requested { request_time: 0 } for instant recovery.
         // Must fail because Requested path no longer grants recovery.
         let dir = tempdir().unwrap();
         let vault_path = dir.path();

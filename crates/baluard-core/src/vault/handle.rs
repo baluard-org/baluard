@@ -288,6 +288,13 @@ impl VaultHandle {
     ///
     /// H1 fix: Re-derives KEK, re-wraps the Root Key, re-encrypts the KEK canary,
     /// updates KDF params, and disables stale biometric secrets.
+    ///
+    /// **Security note**: The master password gates the KEK canary (password verification)
+    /// and the keywrap (encrypted via device X25519 key). The device private key
+    /// (from OS keyring or `meta/device-privkey.json`) independently controls Root Key
+    /// access. Password change alone does NOT protect against an attacker who holds
+    /// the device private key. For post-compromise remediation, call `rotate_root_key()`
+    /// or `revoke_device_and_rekey()` after changing the password.
     pub fn change_master_password(
         &mut self,
         old_password: &str,
@@ -376,7 +383,11 @@ impl VaultHandle {
 
         // Step 8: Disable old biometric secret (it stores the old password)
         // Caller should re-enable biometric with the new password after this.
-        let _ = crate::biometric::disable();
+        // Log on failure: stale secret will cause canary mismatch on next biometric unlock,
+        // which is self-correcting (user falls back to manual password entry).
+        if let Err(e) = crate::biometric::disable() {
+            eprintln!("warning: failed to disable biometric after password change: {e}");
+        }
 
         Ok(())
     }
@@ -2240,8 +2251,8 @@ impl VaultHandle {
         // Clean up rotation-pending marker
         let _ = std::fs::remove_file(self.path.join("meta/.rotation-pending"));
 
-        // H4 fix: re-wrap recovery key with new Root Key
-        let _ = Self::rewrap_recovery_key(&self.path, &new_root_key);
+        // H4 fix: re-wrap recovery key with new Root Key (propagate error)
+        Self::rewrap_recovery_key(&self.path, &new_root_key)?;
 
         Ok(())
     }
@@ -2265,7 +2276,17 @@ impl VaultHandle {
 
         let pubkey_hex = match json["recovery_x25519_pubkey"].as_str() {
             Some(h) => h,
-            None => return Ok(()), // Old format without pubkey; skip silently
+            None => {
+                // Legacy vault without pubkey field — cannot re-wrap.
+                // Recovery phrase will unwrap the OLD Root Key, which is stale after rotation.
+                // Log loudly; user should re-create vault or re-enroll via recovery phrase.
+                eprintln!(
+                    "WARNING: recovery.json lacks recovery_x25519_pubkey; recovery re-wrap skipped. \
+                     Recovery phrase will NOT work after this rotation. \
+                     Re-enroll via recovery phrase to fix."
+                );
+                return Ok(());
+            }
         };
 
         let pubkey_bytes: [u8; 32] = hex::decode(pubkey_hex)
@@ -2284,6 +2305,8 @@ impl VaultHandle {
 
         let tmp = recovery_path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_string_pretty(&json).unwrap())?;
+        // H4 fix: enforce 0600 on file holding HPKE-wrapped Root Key
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
         std::fs::rename(&tmp, &recovery_path)?;
 
         Ok(())
@@ -2596,8 +2619,8 @@ impl VaultHandle {
         _guard.disarm();
         let _ = std::fs::remove_file(&pending_marker);
 
-        // H4 fix: re-wrap recovery key with new Root Key
-        let _ = Self::rewrap_recovery_key(&self.path, &new_root_key);
+        // H4 fix: re-wrap recovery key with new Root Key (propagate error)
+        Self::rewrap_recovery_key(&self.path, &new_root_key)?;
 
         Ok(result)
     }
