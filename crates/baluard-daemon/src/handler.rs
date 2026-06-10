@@ -196,6 +196,10 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.avatar.get",
     "vault.avatar.set",
     "ssh.generate_key",
+    "provider.repos",
+    "provider.vault_repos",
+    "provider.create_repo",
+    "vault.setup_sync",
 ];
 
 /// Actions that mutate vault data. Schedule cover commits after these.
@@ -238,8 +242,8 @@ fn provider_for(p: baluard_core::providers::types::Provider) -> Box<dyn baluard_
         baluard_core::providers::types::Provider::GitHub => {
             Box::new(baluard_core::providers::github::GitHubProvider::new())
         }
-        // Phase 5: GitLab, Codeberg
-        _ => unimplemented!("Provider {:?} not yet implemented", p),
+        // Phase 5: GitLab, Codeberg — will panic if called before impl exists
+        _ => unreachable!("Provider {:?} not yet implemented", p),
     }
 }
 
@@ -990,8 +994,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(p) => p,
                 Err(e) => return err_response(format!("Invalid payload: {e}")),
             };
-            let page = payload["page"].as_u64().unwrap_or(1) as u8;
-            let per_page = payload["per_page"].as_u64().unwrap_or(30) as u8;
+            let page = (payload["page"].as_u64().unwrap_or(1)).min(100) as u8;
+            let per_page = (payload["per_page"].as_u64().unwrap_or(30)).min(100) as u8;
             let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
             let info = match state_file.get(provider) {
                 Some(i) => i,
@@ -1113,40 +1117,61 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(e) => return err_response(format!("Failed to create repo: {e}")),
             };
 
-            // Init git repo + add remote + push
+            // Init git repo + add remote + push (blocking git ops)
             #[cfg(feature = "git-sync")]
             {
-                use baluard_core::sync::engine::SyncEngine;
-                let engine = SyncEngine::new(&vault_path, "baluard-daemon");
+                let slug_for_reg = match baluard_core::vault::registry::BaluardMarker::read_from_vault(&vault_path) {
+                    Ok(Some(m)) => m.slug.clone(),
+                    _ => vault_path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string(),
+                };
+                let provider_for_reg = provider.clone();
+                let remote_url = repo.clone_url.clone();
+                let provider_clone = provider.clone();
+                let handle = tokio::task::spawn_blocking(move || -> Result<String, String> {
+                    use baluard_core::sync::engine::SyncEngine;
+                    let engine = SyncEngine::new(&vault_path, "baluard-daemon");
 
-                // Init repo if not already a git repo
-                let git_repo = match engine.open_repo() {
-                    Ok(r) => r,
-                    Err(_) => match engine.init_repo() {
+                    // Init repo if not already a git repo
+                    let git_repo = match engine.open_repo() {
                         Ok(r) => r,
-                        Err(e) => return err_response(format!("Git init failed: {e}")),
-                    },
+                        Err(_) => engine.init_repo().map_err(|e| format!("Git init failed: {e}"))?,
+                    };
+
+                    // Add origin remote (idempotent check)
+                    if let Ok(existing) = engine.get_remote_url(&git_repo, "origin") {
+                        if existing != remote_url {
+                            return Err(format!("Remote 'origin' already set to {existing}; disconnect sync first"));
+                        }
+                        // Same URL, skip
+                    } else {
+                        engine.add_remote(&git_repo, "origin", &remote_url)
+                            .map_err(|e| format!("Failed to add remote: {e}"))?;
+                    }
+
+                    // Stage + commit any pending changes, then push
+                    let status = engine.status(&git_repo).map_err(|e| format!("Status check failed: {e}"))?;
+                    if status.is_dirty() {
+                        engine.commit_all(&git_repo, "")
+                            .map_err(|e| format!("Commit failed: {e}"))?;
+                    }
+                    engine.push(&git_repo, "origin")
+                        .map_err(|e| format!("First push failed: {e}"))?;
+
+                    Ok(remote_url)
+                });
+
+                let remote_url = match handle.await {
+                    Ok(Ok(url)) => url,
+                    Ok(Err(e)) => return err_response(e),
+                    Err(e) => return err_response(format!("Task join: {e}")),
                 };
 
-                // Add origin remote
-                if let Err(e) = engine.add_remote(&git_repo, "origin", &repo.clone_url) {
-                    return err_response(format!("Failed to add remote: {e}"));
-                }
-
-                // First push
-                if let Err(e) = engine.push(&git_repo, "origin") {
-                    return err_response(format!("First push failed: {e}"));
-                }
-
                 // Update registry with sync info
-                let slug = vault_path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("").to_string();
-                if !slug.is_empty() {
+                if !slug_for_reg.is_empty() {
                     if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
-                        if let Some(entry) = reg.get_mut(&slug) {
-                            entry.provider = Some(provider.clone());
-                            entry.remote_url = Some(repo.clone_url.clone());
+                        if let Some(entry) = reg.get_mut(&slug_for_reg) {
+                            entry.provider = Some(provider_clone);
+                            entry.remote_url = Some(remote_url.clone());
                             let now = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
@@ -1159,8 +1184,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
                 ok_resp(serde_json::json!({
                     "status": "synced",
-                    "repo": repo.clone_url,
-                    "provider": provider
+                    "repo": remote_url,
+                    "provider": provider_for_reg
                 }).to_string(), token_str)
             }
 

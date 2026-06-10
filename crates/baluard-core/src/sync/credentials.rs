@@ -24,10 +24,27 @@ impl CredentialConfig {
     /// Load credentials from provider keyring, env var, or vault config file.
     /// Provider keyring is checked first (the auth flow stores tokens there).
     pub fn load(vault_path: &Path) -> Self {
-        let https_token = Self::load_from_keyring()
+        Self::load_with_hint(vault_path, None)
+    }
+
+    /// Load credentials with an optional provider hint.
+    /// When a specific provider is known (e.g. from vault registry), use it directly
+    /// instead of iterating all connected providers.
+    pub fn load_with_hint(vault_path: &Path, hint: Option<Provider>) -> Self {
+        let https_token = hint
+            .and_then(Self::load_from_keyring_for)
+            .or_else(Self::load_from_keyring)
             .or_else(|| std::env::var("BALUARD_GIT_TOKEN").ok())
             .or_else(|| Self::load_from_file(vault_path));
         Self { https_token }
+    }
+
+    /// Load from a specific provider's keyring entry.
+    fn load_from_keyring_for(provider: Provider) -> Option<String> {
+        let state = crate::providers::token::ProvidersState::load().ok()?;
+        let info = state.get(provider)?;
+        let token = crate::providers::token::load_token(provider, &info.username).ok()?;
+        Some(token.access_token().expose_secret().to_string())
     }
 
     /// Load from any connected provider's keyring entry.
