@@ -79,16 +79,16 @@ Implement GitHub `list_repos`, `create_private_repo`, `detect_vault_repos` (sear
 
 ### Acceptance criteria
 
-- [ ] `provider.repos` lists user's GitHub repos with pagination
-- [ ] `provider.vault_repos` returns only repos containing `.baluard` marker (search API)
-- [ ] `provider.create_repo` creates private repo, verifies `private: true` on response
-- [ ] If repo is public after creation, delete it and return error (never push to public)
-- [ ] `vault.setup_sync` connects active vault to provider repo, sets git remote, performs first push
-- [ ] git2-rs credential callback reads token from keyring, no external binary
+- [x] `provider.repos` lists user's GitHub repos with pagination
+- [x] `provider.vault_repos` returns only repos containing `.baluard` marker (search API)
+- [x] `provider.create_repo` creates private repo, verifies `private: true` on response
+- [x] If repo is public after creation, delete it and return error (never push to public)
+- [x] `vault.setup_sync` connects active vault to provider repo, sets git remote, performs first push
+- [x] git2-rs credential callback reads token from keyring, no external binary
 - [ ] "Enable sync" toggle in wizard: off by default, on triggers provider selection + auth + repo creation + first push
-- [ ] Repo name defaults to vault slug, user can edit
-- [ ] Provider credentials shared across vaults (one GitHub auth)
-- [ ] Token refresh plumbing exists (no-op for GitHub, ready for GitLab)
+- [x] Repo name defaults to vault slug, user can edit
+- [x] Provider credentials shared across vaults (one GitHub auth)
+- [x] Token refresh plumbing exists (no-op for GitHub, ready for GitLab)
 
 ---
 

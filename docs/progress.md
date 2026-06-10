@@ -175,7 +175,7 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 |------|-------------|--------|
 | **Phase 1** | Slug + .baluard marker + vault registry + multi-vault CLI | **Done** |
 | **Phase 2** | Provider trait + GitHub auth (device flow + PAT) + keyring + daemon routes | **Done** |
-| Phase 3 | GitHub repo operations + first sync | Not started |
+| **Phase 3** | GitHub repo operations + first sync + credential wiring | **Done** |
 | Phase 4 | Remote vault clone + three-screen wizard | Not started |
 | Phase 5 | GitLab + Codeberg providers | Not started |
 | Phase 6 | Vault switching + CLI polish | Not started |
