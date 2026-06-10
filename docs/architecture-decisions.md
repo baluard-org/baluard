@@ -732,7 +732,7 @@ CLI chains profile + preferences into `VaultCreator` builder before `execute()`.
 
 ---
 
-## DOMAIN 7: TAGS & CIPHER CATEGORIZATION
+## DOMAIN 8: TAGS & CIPHER CATEGORIZATION
 
 Tags are user-defined labels for organizing ciphers. Unlike folders (single assignment), a cipher can have up to 20 tags.
 
