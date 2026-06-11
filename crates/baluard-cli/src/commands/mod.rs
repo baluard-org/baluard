@@ -1282,31 +1282,22 @@ pub fn handle_enroll_with_phrase(
             // Open DeviceManager and call enroll_with_recovery_phrase
             let mut dm = DeviceManager::load_from_vault(path)?;
 
-            // Enforce policy: check vault settings
-            if let Ok(handle) = VaultHandle::open(path) {
-                let settings = handle.get_settings().unwrap_or_default();
-                if settings.enrollment_policy
-                    == baluard_core::vault::manifest::EnrollmentPolicy::Strict
-                {
-                    return Err(
-                        "Vault is in Strict enrollment mode. Recovery phrase enrollment is \
-                         disabled. Use 'baluard recover' (destructive) or change the \
-                         enrollment_policy setting."
-                            .into(),
-                    );
-                }
-            }
+            // PR-4 fix: fail-closed on settings read. Previously
+            // `if let Ok(handle)` fell through to enrollment on read error.
+            // Now a parse/open failure aborts enrollment.
+            let handle = VaultHandle::open(path)
+                .map_err(|e| format!("failed to read vault settings: {e}"))?;
+            let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
 
-            // Peer review fix: pass the caller's private keys (owned) to the
-            // method (whose public halves are in the payload). The method
-            // enrolls those public keys, encrypts the keywrap to the X25519
-            // public key, and returns the private keys for the caller to
-            // persist.
+            // Peer review fix: pass the policy to the core method (PR-3
+            // core-level enforcement). Don't pre-check here — the method
+            // enforces. Pre-checking here is redundant and TOCTOU-prone.
             let result = dm.enroll_with_recovery_phrase(
                 &payload,
                 &phrase_str,
                 x25519_secret,
                 ed25519_signing,
+                settings.enrollment_policy,
             )?;
 
             // Persist device-privkey for this device using the keys returned

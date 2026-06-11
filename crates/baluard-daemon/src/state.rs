@@ -1809,17 +1809,13 @@ impl VaultState {
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
         let vault_path = handle.path.clone();
 
-        // Check enrollment policy
+        // PR-3 fix: load policy and pass to the core method. The method
+        // enforces Strict rejection itself; no pre-check here (would be
+        // redundant and TOCTOU-prone). Read failures are fail-closed:
+        // we read settings ONCE and pass the loaded value.
         let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
-        if settings.enrollment_policy
-            == baluard_core::vault::manifest::EnrollmentPolicy::Strict
-        {
-            return Err("vault is in Strict enrollment mode; recovery phrase \
-                enrollment is disabled. Use 'baluard recover' (destructive) or \
-                change the enrollment_policy setting."
-                .into());
-        }
-        drop(guard);
+        let policy = settings.enrollment_policy;
+        drop(handle);
 
         // Build EnrollmentPayload for this device
         let (x25519_secret, x25519_public) =
@@ -1857,7 +1853,7 @@ impl VaultState {
         let mut dm = DeviceManager::load_from_vault(&vault_path)
             .map_err(|e| format!("load device manager: {e}"))?;
         let result = dm
-            .enroll_with_recovery_phrase(&payload, phrase, x25519_secret, ed25519_signing)
+            .enroll_with_recovery_phrase(&payload, phrase, x25519_secret, ed25519_signing, policy)
             .map_err(|e| format!("enroll: {e}"))?;
 
         // Persist device-privkey for this device using the keys RETURNED

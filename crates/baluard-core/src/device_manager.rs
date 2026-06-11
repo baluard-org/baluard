@@ -1403,14 +1403,33 @@ impl DeviceManager {
     /// and returns the private keys in `RecoveryResult` for the caller
     /// to persist. This ensures the registry, keywrap, and local
     /// `device-privkey.json` all agree.
+    ///
+    /// **Policy enforcement (PR-3):** The caller MUST pass the vault's
+    /// current `EnrollmentPolicy`. In `Strict` mode, this method returns
+    /// an error and does not enroll. The caller is responsible for
+    /// loading the policy and passing it; this avoids a TOCTOU race
+    /// where the method re-reads policy from disk after the caller
+    /// already validated it.
     pub fn enroll_with_recovery_phrase(
         &mut self,
         payload: &EnrollmentPayload,
         phrase: &str,
         x25519_secret: x25519_dalek::StaticSecret,
         ed25519_signing: ed25519_dalek::SigningKey,
+        policy: crate::vault::manifest::EnrollmentPolicy,
     ) -> Result<RecoveryResult, BaluardError> {
         use crate::recovery::RecoveryPhrase;
+
+        // PR-3 fix: enforce policy at the core level. Any direct caller
+        // (not just CLI/daemon wrappers) is protected.
+        if policy == crate::vault::manifest::EnrollmentPolicy::Strict {
+            return Err(DeviceError::EnrollmentRejected(
+                "recovery phrase enrollment is disabled in Strict mode; \
+                 use recover_from_phrase (destructive) or change the policy"
+                    .into(),
+            )
+            .into());
+        }
 
         // Step 1: Parse phrase
         let recovery_phrase = RecoveryPhrase::from_phrase(phrase).map_err(|e| {
@@ -2474,7 +2493,13 @@ mod tests {
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let (p2, x2_sk, e2_sk) = make_payload_with_keys("Device B (via phrase)");
         let result = mgr2
-            .enroll_with_recovery_phrase(&p2, &phrase_str, x2_sk, e2_sk)
+            .enroll_with_recovery_phrase(
+                &p2,
+                &phrase_str,
+                x2_sk,
+                e2_sk,
+                crate::vault::manifest::EnrollmentPolicy::Personal,
+            )
             .unwrap();
 
         // Verify: both devices in registry (old device preserved)
@@ -2508,7 +2533,13 @@ mod tests {
 
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let (p2, x2_sk, e2_sk) = make_payload_with_keys("Attacker");
-        let result = mgr2.enroll_with_recovery_phrase(&p2, &wrong_phrase, x2_sk, e2_sk);
+        let result = mgr2.enroll_with_recovery_phrase(
+            &p2,
+            &wrong_phrase,
+            x2_sk,
+            e2_sk,
+            crate::vault::manifest::EnrollmentPolicy::Personal,
+        );
         assert!(result.is_err(), "wrong phrase must be rejected");
     }
 
@@ -2525,7 +2556,13 @@ mod tests {
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let (mut stale, x_sk, e_sk) = make_payload_with_keys("Stale");
         stale.timestamp = 0; // ancient
-        let result = mgr2.enroll_with_recovery_phrase(&stale, &phrase_str, x_sk, e_sk);
+        let result = mgr2.enroll_with_recovery_phrase(
+            &stale,
+            &phrase_str,
+            x_sk,
+            e_sk,
+            crate::vault::manifest::EnrollmentPolicy::Personal,
+        );
         assert!(result.is_err(), "stale timestamp must be rejected");
     }
 
@@ -2542,12 +2579,23 @@ mod tests {
         // Use same nonce twice
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let (mut p1, x1_sk, e1_sk) = make_payload_with_keys("Replay Test 1");
-        mgr2
-            .enroll_with_recovery_phrase(&p1, &phrase_str, x1_sk, e1_sk)
-            .unwrap();
+        mgr2.enroll_with_recovery_phrase(
+            &p1,
+            &phrase_str,
+            x1_sk,
+            e1_sk,
+            crate::vault::manifest::EnrollmentPolicy::Personal,
+        )
+        .unwrap();
         let (mut p2, x2_sk, e2_sk) = make_payload_with_keys("Replay Test 2");
         p2.nonce = p1.nonce.clone(); // same nonce
-        let result = mgr2.enroll_with_recovery_phrase(&p2, &phrase_str, x2_sk, e2_sk);
+        let result = mgr2.enroll_with_recovery_phrase(
+            &p2,
+            &phrase_str,
+            x2_sk,
+            e2_sk,
+            crate::vault::manifest::EnrollmentPolicy::Personal,
+        );
         assert!(result.is_err(), "replayed nonce must be rejected");
     }
 
@@ -2564,7 +2612,13 @@ mod tests {
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let (p2, x_sk, e_sk) = make_payload_with_keys("Phrase Device");
         let _ = mgr2
-            .enroll_with_recovery_phrase(&p2, &phrase_str, x_sk, e_sk)
+            .enroll_with_recovery_phrase(
+                &p2,
+                &phrase_str,
+                x_sk,
+                e_sk,
+                crate::vault::manifest::EnrollmentPolicy::Personal,
+            )
             .unwrap();
 
         // Verify: keywrap file written for new device
@@ -2587,7 +2641,13 @@ mod tests {
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
         let mut p1_clone = make_payload_with_keys("Device A clone");
         p1_clone.0.device_id = p1.device_id; // same device_id
-        let result = mgr2.enroll_with_recovery_phrase(&p1_clone.0, &phrase_str, p1_clone.1, p1_clone.2);
+        let result = mgr2.enroll_with_recovery_phrase(
+            &p1_clone.0,
+            &phrase_str,
+            p1_clone.1,
+            p1_clone.2,
+            crate::vault::manifest::EnrollmentPolicy::Personal,
+        );
         assert!(result.is_err(), "already-enrolled device must be rejected");
     }
 }
