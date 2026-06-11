@@ -116,6 +116,7 @@ pub struct VaultSettings {
     /// - `Strict` (default for existing vaults, backward compat): only an
     ///   enrolled-device signature can authorize enrollment. Recovery
     ///   phrase only works via destructive `recover_from_phrase`.
+    ///
     /// Migrating from Strict to Personal is a one-way door; re-read docs
     /// before doing so.
     #[serde(default = "default_enrollment_policy")]

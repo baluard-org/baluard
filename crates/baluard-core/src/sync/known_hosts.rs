@@ -66,7 +66,8 @@ pub fn verify_host_key(host: &str, key_type: &str, key: &[u8]) -> HostKeyResult 
         //   "@cert-authority,*.example.com"       -> marker=["@cert-authority"], hosts=["*.example.com"]
         //   "@revoked"                            -> marker=["@revoked"], hosts=[]
         let first_field = parts[0];
-        let (has_revoked_marker, host_patterns): (bool, Vec<&str>) = if first_field.starts_with('@') {
+        let (has_revoked_marker, host_patterns): (bool, Vec<&str>) = if first_field.starts_with('@')
+        {
             // Comma-separated markers+hosts; first segment(s) starting with @ are markers.
             let segments: Vec<&str> = first_field.split(',').collect();
             let mut revoked = false;
@@ -183,8 +184,7 @@ fn host_matches(pattern: &str, host: &str) -> bool {
 /// Minimal RFC 4648 base64 decoder (standard alphabet, with/without padding).
 /// Avoids pulling in the `base64` crate just for known_hosts.
 fn base64_decode(s: &str) -> Result<Vec<u8>, ()> {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut lookup = [255u8; 256];
     for (i, &c) in ALPHABET.iter().enumerate() {
         lookup[c as usize] = i as u8;
@@ -232,8 +232,8 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, ()> {
     }
     // Handle unpadded tail (2 chars → 1 byte, 3 chars → 2 bytes).
     if buf_len == 2 {
-        let combined = (u32::from(lookup[buf[0] as usize]) << 18)
-            | (u32::from(lookup[buf[1] as usize]) << 12);
+        let combined =
+            (u32::from(lookup[buf[0] as usize]) << 18) | (u32::from(lookup[buf[1] as usize]) << 12);
         out.push((combined >> 16) as u8);
     } else if buf_len == 3 {
         let combined = (u32::from(lookup[buf[0] as usize]) << 18)

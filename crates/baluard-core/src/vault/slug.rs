@@ -10,8 +10,6 @@
 //! - `baluard-` prefix suggested but not enforced
 //! - Immutable after vault creation
 
-
-
 /// Normalize a user-provided name into a suggested slug.
 ///
 /// Steps:
@@ -80,7 +78,10 @@ pub fn validate_slug(slug: &str) -> Result<(), SlugError> {
     if slug.starts_with('-') || slug.ends_with('-') {
         return Err(SlugError::LeadingTrailingHyphen);
     }
-    if !slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+    if !slug
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
         return Err(SlugError::InvalidChars);
     }
     if slug.contains("--") {
@@ -167,7 +168,10 @@ impl std::fmt::Display for SlugError {
                 write!(f, "Slug cannot start or end with a hyphen")
             }
             SlugError::InvalidChars => {
-                write!(f, "Slug can only contain lowercase letters, digits, and hyphens")
+                write!(
+                    f,
+                    "Slug can only contain lowercase letters, digits, and hyphens"
+                )
             }
             SlugError::ConsecutiveHyphens => {
                 write!(f, "Slug cannot contain consecutive hyphens")
@@ -237,14 +241,23 @@ mod tests {
 
     #[test]
     fn validate_too_short() {
-        assert!(matches!(validate_slug("ab"), Err(SlugError::TooShort(2, 4))));
-        assert!(matches!(validate_slug("abc"), Err(SlugError::TooShort(3, 4))));
+        assert!(matches!(
+            validate_slug("ab"),
+            Err(SlugError::TooShort(2, 4))
+        ));
+        assert!(matches!(
+            validate_slug("abc"),
+            Err(SlugError::TooShort(3, 4))
+        ));
     }
 
     #[test]
     fn validate_too_long() {
         let long_slug = "a".repeat(64);
-        assert!(matches!(validate_slug(&long_slug), Err(SlugError::TooLong(64, 63))));
+        assert!(matches!(
+            validate_slug(&long_slug),
+            Err(SlugError::TooLong(64, 63))
+        ));
     }
 
     #[test]
@@ -261,8 +274,14 @@ mod tests {
 
     #[test]
     fn validate_invalid_chars() {
-        assert!(matches!(validate_slug("My_Vault"), Err(SlugError::InvalidChars)));
-        assert!(matches!(validate_slug("vault.name"), Err(SlugError::InvalidChars)));
+        assert!(matches!(
+            validate_slug("My_Vault"),
+            Err(SlugError::InvalidChars)
+        ));
+        assert!(matches!(
+            validate_slug("vault.name"),
+            Err(SlugError::InvalidChars)
+        ));
     }
 
     #[test]

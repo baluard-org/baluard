@@ -5,8 +5,8 @@
 //! Repo creation uses raw POST /user/repos (octocrab doesn't expose it directly).
 
 use async_trait::async_trait;
-use octocrab::models::Repository;
 use octocrab::Octocrab;
+use octocrab::models::Repository;
 use secrecy::ExposeSecret;
 
 use super::types::{
@@ -74,10 +74,7 @@ impl ForgeProvider for GitHubProvider {
         let resp = client
             .post(DEVICE_CODE_URL)
             .header("Accept", "application/json")
-            .form(&[
-                ("client_id", GITHUB_CLIENT_ID),
-                ("scope", "repo"),
-            ])
+            .form(&[("client_id", GITHUB_CLIENT_ID), ("scope", "repo")])
             .send()
             .await
             .map_err(|e| ProviderError::Api(e.to_string()))?;
@@ -139,10 +136,7 @@ impl ForgeProvider for GitHubProvider {
             .form(&[
                 ("client_id", GITHUB_CLIENT_ID),
                 ("device_code", &session.device_code),
-                (
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:device_code",
-                ),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ])
             .send()
             .await
@@ -172,9 +166,7 @@ impl ForgeProvider for GitHubProvider {
             .map_err(|e| ProviderError::Api(e.to_string()))?;
 
         match data["error"].as_str() {
-            Some("authorization_pending") => {
-                Ok(DeviceFlowStatus::Pending)
-            }
+            Some("authorization_pending") => Ok(DeviceFlowStatus::Pending),
             // M11 fix: SlowDown now carries the new interval (RFC 8628 §3.5).
             Some("slow_down") => Ok(DeviceFlowStatus::SlowDown {
                 interval_secs: session.interval_secs + 5,
@@ -225,10 +217,7 @@ impl ForgeProvider for GitHubProvider {
         })
     }
 
-    async fn get_authenticated_user(
-        &self,
-        token: &ProviderToken,
-    ) -> Result<String, ProviderError> {
+    async fn get_authenticated_user(&self, token: &ProviderToken) -> Result<String, ProviderError> {
         let info = self.validate_token(token).await?;
         Ok(info.username)
     }
@@ -250,7 +239,10 @@ impl ForgeProvider for GitHubProvider {
             .await
             .map_err(|e| ProviderError::Api(e.to_string()))?;
 
-        Ok(page_result.into_iter().filter_map(|r| self.repo_to_vault(&r)).collect())
+        Ok(page_result
+            .into_iter()
+            .filter_map(|r| self.repo_to_vault(&r))
+            .collect())
     }
 
     async fn detect_vault_repos(
@@ -309,9 +301,7 @@ impl ForgeProvider for GitHubProvider {
             // Delete public repo immediately
             if let Some(owner) = &repo.owner {
                 let route = format!("/repos/{}/{}", owner.login, repo.name);
-                let _ = client
-                    .delete::<(), _, ()>(route, None as Option<&()>)
-                    .await;
+                let _ = client.delete::<(), _, ()>(route, None as Option<&()>).await;
             }
             return Err(ProviderError::RepoPublic(format!(
                 "repo '{name}' was created public (safety abort)"

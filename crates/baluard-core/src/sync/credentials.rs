@@ -68,7 +68,9 @@ impl CredentialConfig {
             .and_then(Self::load_from_keyring_for)
             .or_else(Self::load_from_keyring)
             .or_else(|| {
-                std::env::var("BALUARD_GIT_TOKEN").ok().map(|s| SecretString::new(s.into_boxed_str()))
+                std::env::var("BALUARD_GIT_TOKEN")
+                    .ok()
+                    .map(|s| SecretString::new(s.into_boxed_str()))
             })
             .or_else(|| Self::load_from_file(vault_path));
         Self { https_token }
@@ -89,7 +91,13 @@ impl CredentialConfig {
         let state = crate::providers::token::ProvidersState::load().ok()?;
         let info = state.get(provider)?;
         let token = crate::providers::token::load_token(provider, &info.username).ok()?;
-        Some(SecretString::new(token.access_token().expose_secret().to_string().into_boxed_str()))
+        Some(SecretString::new(
+            token
+                .access_token()
+                .expose_secret()
+                .to_string()
+                .into_boxed_str(),
+        ))
     }
 
     fn load_from_keyring() -> Option<SecretString> {
@@ -98,7 +106,11 @@ impl CredentialConfig {
             if let Some(info) = state.get(*provider) {
                 if let Ok(token) = crate::providers::token::load_token(*provider, &info.username) {
                     return Some(SecretString::new(
-                        token.access_token().expose_secret().to_string().into_boxed_str(),
+                        token
+                            .access_token()
+                            .expose_secret()
+                            .to_string()
+                            .into_boxed_str(),
                     ));
                 }
             }
@@ -111,7 +123,9 @@ impl CredentialConfig {
         if config_path.exists() {
             if let Ok(data) = std::fs::read_to_string(&config_path) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
-                    return v["token"].as_str().map(|s| SecretString::new(s.to_string().into_boxed_str()));
+                    return v["token"]
+                        .as_str()
+                        .map(|s| SecretString::new(s.to_string().into_boxed_str()));
                 }
             }
         }
@@ -153,8 +167,8 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
     // - HTTPS (X.509): passthrough to libgit2/libcurl's built-in CA validation
     //   (already secure by default).
     callbacks.certificate_check(|cert, host| {
-        use git2::cert::SshHostKeyType;
         use git2::CertificateCheckStatus;
+        use git2::cert::SshHostKeyType;
         if let Some(hostkey) = cert.as_hostkey() {
             let key_type = match hostkey.hostkey_type() {
                 Some(SshHostKeyType::Ed255219) => "ssh-ed25519",
@@ -208,7 +222,10 @@ mod tests {
             assert!(config.https_token.is_some());
         } else {
             assert!(config.https_token.is_some());
-            assert_eq!(config.expose_token().as_deref().map(|s| s.as_str()), Some("ghp_test123"));
+            assert_eq!(
+                config.expose_token().as_deref().map(|s| s.as_str()),
+                Some("ghp_test123")
+            );
         }
     }
 
@@ -216,19 +233,31 @@ mod tests {
     fn scrub_removes_url_userinfo() {
         let msg = "transport error: https://git:ghp_abc123def@github.com/user/repo.git";
         let cleaned = scrub_git_error(msg);
-        assert!(!cleaned.contains("ghp_abc123def"), "PAT not scrubbed: {cleaned}");
-        assert!(cleaned.contains("***@github.com"), "URL structure lost: {cleaned}");
+        assert!(
+            !cleaned.contains("ghp_abc123def"),
+            "PAT not scrubbed: {cleaned}"
+        );
+        assert!(
+            cleaned.contains("***@github.com"),
+            "URL structure lost: {cleaned}"
+        );
     }
 
     #[test]
     fn scrub_removes_pat_prefixes() {
         let msg = "authentication failed: token ghp_ABCDEF123456";
         let cleaned = scrub_git_error(msg);
-        assert!(!cleaned.contains("ghp_"), "PAT prefix not scrubbed: {cleaned}");
+        assert!(
+            !cleaned.contains("ghp_"),
+            "PAT prefix not scrubbed: {cleaned}"
+        );
 
         let msg2 = "error: glpat-XXXXXXXXXXXX";
         let cleaned2 = scrub_git_error(msg2);
-        assert!(!cleaned2.contains("glpat-"), "GitLab PAT not scrubbed: {cleaned2}");
+        assert!(
+            !cleaned2.contains("glpat-"),
+            "GitLab PAT not scrubbed: {cleaned2}"
+        );
     }
 
     #[test]

@@ -559,10 +559,7 @@ impl<'a> VaultCreator<'a> {
                     crate::vault::slug::validate_slug(slug).map_err(|e| {
                         BaluardError::from(VaultError::Corrupt(format!("invalid slug: {e}")))
                     })?;
-                    let marker = crate::vault::registry::BaluardMarker::new(
-                        vault_id,
-                        slug,
-                    );
+                    let marker = crate::vault::registry::BaluardMarker::new(vault_id, slug);
                     marker.write_to_vault(&path)?;
                 }
 
@@ -583,10 +580,9 @@ impl<'a> VaultCreator<'a> {
 
                 let mut device_manager = DeviceManager::new();
                 device_manager.set_vault_path(&path);
-                device_manager
-                    .epoch
-                    .activate()
-                    .map_err(|e| BaluardError::from(crate::error::KeyError::InvalidEpochState(e)))?;
+                device_manager.epoch.activate().map_err(|e| {
+                    BaluardError::from(crate::error::KeyError::InvalidEpochState(e))
+                })?;
                 // H6 fix: sync registry so device_manager.is_enrolled() works
                 device_manager.registry = registry.clone();
 
@@ -666,7 +662,9 @@ impl<'a> VaultCreator<'a> {
                     })?;
                 let recovery_json: serde_json::Value = serde_json::from_str(&recovery_json_str)
                     .map_err(|e| {
-                        BaluardError::from(VaultError::Corrupt(format!("recovery json format: {e}")))
+                        BaluardError::from(VaultError::Corrupt(format!(
+                            "recovery json format: {e}"
+                        )))
                     })?;
 
                 let eph_pub = hex::decode(recovery_json["ephemeral_public"].as_str().unwrap_or(""))
@@ -808,10 +806,9 @@ impl<'a> VaultCreator<'a> {
 
                 let mut device_manager = DeviceManager::new();
                 device_manager.set_vault_path(&path);
-                device_manager
-                    .epoch
-                    .activate()
-                    .map_err(|e| BaluardError::from(crate::error::KeyError::InvalidEpochState(e)))?;
+                device_manager.epoch.activate().map_err(|e| {
+                    BaluardError::from(crate::error::KeyError::InvalidEpochState(e))
+                })?;
                 // H6 fix: sync registry so device_manager.is_enrolled() works
                 device_manager.registry = registry.clone();
 
@@ -1013,10 +1010,7 @@ mod tests {
             .kdf_profile(KdfProfile::MobileLow)
             .initialize_git(false)
             .entropy(DeterministicEntropy { val: 42 })
-            .profile(
-                Some("Esteban".into()),
-                Some("Lead Architect".into()),
-            )
+            .profile(Some("Esteban".into()), Some("Lead Architect".into()))
             .preferences(
                 Some(crate::types::ThemeMode::Dark),
                 Some("es".into()),

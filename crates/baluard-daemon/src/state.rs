@@ -3,8 +3,8 @@
 //! Holds an unlocked VaultHandle in memory behind a shared lock.
 //! The daemon routes gateway actions through this state.
 
-use base64::Engine;
 use baluard_core::vault::handle::{CipherRead, VaultHandle};
+use base64::Engine;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -595,8 +595,8 @@ impl VaultState {
         let data = std::fs::read(&avatar_path).map_err(|e| format!("read avatar: {e}"))?;
         // Migrate: encrypt and write to avatar.enc
         let key = handle.derive_avatar_key();
-        let blob = baluard_core::vault::avatar::encrypt_avatar(&key, &data)
-            .map_err(|e| format!("{e}"))?;
+        let blob =
+            baluard_core::vault::avatar::encrypt_avatar(&key, &data).map_err(|e| format!("{e}"))?;
         let tmp_path = enc_path.with_extension("enc.tmp");
         std::fs::write(&tmp_path, &blob).map_err(|e| format!("write avatar: {e}"))?;
         std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
@@ -660,8 +660,8 @@ impl VaultState {
 
         // M1 fix: encrypt with avatar key derived from SGK
         let key = handle.derive_avatar_key();
-        let blob =
-            baluard_core::vault::avatar::encrypt_avatar(&key, &bytes).map_err(|e| format!("{e}"))?;
+        let blob = baluard_core::vault::avatar::encrypt_avatar(&key, &bytes)
+            .map_err(|e| format!("{e}"))?;
 
         // Atomic write: tmp + chmod 0600 + rename
         let enc_path = handle.path.join("meta/avatar.enc");
@@ -1808,7 +1808,9 @@ impl VaultState {
         // Validate phrase shape
         let word_count = phrase.split_whitespace().count();
         if word_count != 24 {
-            return Err(format!("recovery phrase must be 24 words, got {word_count}"));
+            return Err(format!(
+                "recovery phrase must be 24 words, got {word_count}"
+            ));
         }
 
         let guard = self.inner.read().await;
@@ -1835,9 +1837,9 @@ impl VaultState {
         let payload = EnrollmentPayload {
             device_id: uuid::Uuid::new_v4(),
             encryption_public_key: hex::encode(x25519_public.to_bytes()),
-            signing_public_key: hex::encode(
-                baluard_core::crypto::signature::verifying_key_bytes(&ed25519_verifying),
-            ),
+            signing_public_key: hex::encode(baluard_core::crypto::signature::verifying_key_bytes(
+                &ed25519_verifying,
+            )),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -1879,13 +1881,9 @@ impl VaultState {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(
-                &privkey_tmp,
-                std::fs::Permissions::from_mode(0o600),
-            );
+            let _ = std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
         }
-        std::fs::rename(&privkey_tmp, &privkey_path)
-            .map_err(|e| format!("rename privkey: {e}"))?;
+        std::fs::rename(&privkey_tmp, &privkey_path).map_err(|e| format!("rename privkey: {e}"))?;
 
         let json = serde_json::json!({
             "device_id": result.device_id.to_string(),

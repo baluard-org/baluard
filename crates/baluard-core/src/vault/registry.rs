@@ -42,14 +42,12 @@ impl BaluardMarker {
 
     /// Serialize to JSON.
     pub fn to_json(&self) -> Result<String, RegistryError> {
-        serde_json::to_string_pretty(self)
-            .map_err(|e| RegistryError::Serialize(e.to_string()))
+        serde_json::to_string_pretty(self).map_err(|e| RegistryError::Serialize(e.to_string()))
     }
 
     /// Deserialize from JSON.
     pub fn from_json(json: &str) -> Result<Self, RegistryError> {
-        serde_json::from_str(json)
-            .map_err(|e| RegistryError::Corrupt(e.to_string()))
+        serde_json::from_str(json).map_err(|e| RegistryError::Corrupt(e.to_string()))
     }
 
     /// Write the marker file to a vault directory.
@@ -59,10 +57,8 @@ impl BaluardMarker {
 
         // Use atomic write pattern
         let tmp_path = marker_path.with_extension("tmp");
-        std::fs::write(&tmp_path, &json)
-            .map_err(|e| RegistryError::Io(e.to_string()))?;
-        std::fs::rename(&tmp_path, &marker_path)
-            .map_err(|e| RegistryError::Io(e.to_string()))?;
+        std::fs::write(&tmp_path, &json).map_err(|e| RegistryError::Io(e.to_string()))?;
+        std::fs::rename(&tmp_path, &marker_path).map_err(|e| RegistryError::Io(e.to_string()))?;
 
         Ok(())
     }
@@ -73,8 +69,8 @@ impl BaluardMarker {
         if !marker_path.exists() {
             return Ok(None);
         }
-        let json = std::fs::read_to_string(&marker_path)
-            .map_err(|e| RegistryError::Io(e.to_string()))?;
+        let json =
+            std::fs::read_to_string(&marker_path).map_err(|e| RegistryError::Io(e.to_string()))?;
         let marker = Self::from_json(&json)?;
         Ok(Some(marker))
     }
@@ -153,8 +149,7 @@ impl VaultRegistry {
     pub fn load_locked() -> Result<Self, RegistryError> {
         let path = Self::path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| RegistryError::Io(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|e| RegistryError::Io(e.to_string()))?;
         }
         let lock_path = path.with_extension("lock");
         let lock_file = std::fs::OpenOptions::new()
@@ -165,7 +160,9 @@ impl VaultRegistry {
             .open(&lock_path)
             .map_err(|e| RegistryError::Io(e.to_string()))?;
         let mut locker = RwLock::new(lock_file);
-        let _guard = locker.write().map_err(|e| RegistryError::Io(e.to_string()))?;
+        let _guard = locker
+            .write()
+            .map_err(|e| RegistryError::Io(e.to_string()))?;
         Self::load_from(&path)
     }
 
@@ -174,10 +171,9 @@ impl VaultRegistry {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let data = std::fs::read_to_string(path)
-            .map_err(|e| RegistryError::Io(e.to_string()))?;
-        let reg: VaultRegistry = serde_json::from_str(&data)
-            .map_err(|e| RegistryError::Corrupt(e.to_string()))?;
+        let data = std::fs::read_to_string(path).map_err(|e| RegistryError::Io(e.to_string()))?;
+        let reg: VaultRegistry =
+            serde_json::from_str(&data).map_err(|e| RegistryError::Corrupt(e.to_string()))?;
         if reg.version != REGISTRY_VERSION {
             return Err(RegistryError::Version(reg.version, REGISTRY_VERSION));
         }
@@ -194,8 +190,7 @@ impl VaultRegistry {
     pub fn save_locked(&self) -> Result<(), RegistryError> {
         let path = Self::path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| RegistryError::Io(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|e| RegistryError::Io(e.to_string()))?;
         }
         let lock_path = path.with_extension("lock");
         let lock_file = std::fs::OpenOptions::new()
@@ -206,7 +201,9 @@ impl VaultRegistry {
             .open(&lock_path)
             .map_err(|e| RegistryError::Io(e.to_string()))?;
         let mut locker = RwLock::new(lock_file);
-        let _guard = locker.write().map_err(|e| RegistryError::Io(e.to_string()))?;
+        let _guard = locker
+            .write()
+            .map_err(|e| RegistryError::Io(e.to_string()))?;
         self.save_to(&path)
     }
 
@@ -214,8 +211,7 @@ impl VaultRegistry {
     pub fn save_to(&self, path: &Path) -> Result<(), RegistryError> {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| RegistryError::Io(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|e| RegistryError::Io(e.to_string()))?;
         }
 
         let json = serde_json::to_string_pretty(self)
@@ -223,8 +219,7 @@ impl VaultRegistry {
 
         // Atomic write: temp file + rename
         let tmp_path = path.with_extension("tmp");
-        std::fs::write(&tmp_path, &json)
-            .map_err(|e| RegistryError::Io(e.to_string()))?;
+        std::fs::write(&tmp_path, &json).map_err(|e| RegistryError::Io(e.to_string()))?;
 
         #[cfg(unix)]
         {
@@ -233,16 +228,14 @@ impl VaultRegistry {
                 .map_err(|e| RegistryError::Io(e.to_string()))?;
         }
 
-        std::fs::rename(&tmp_path, path)
-            .map_err(|e| RegistryError::Io(e.to_string()))?;
+        std::fs::rename(&tmp_path, path).map_err(|e| RegistryError::Io(e.to_string()))?;
 
         Ok(())
     }
 
     /// Add a new vault to the registry.
     pub fn add(&mut self, entry: VaultEntry) -> Result<(), RegistryError> {
-        validate_slug(&entry.slug)
-            .map_err(|e| RegistryError::InvalidSlug(e.to_string()))?;
+        validate_slug(&entry.slug).map_err(|e| RegistryError::InvalidSlug(e.to_string()))?;
 
         if self.vaults.contains_key(&entry.slug) {
             return Err(RegistryError::DuplicateSlug(entry.slug));
