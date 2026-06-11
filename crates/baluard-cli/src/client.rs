@@ -58,13 +58,17 @@ pub fn set_session_token(token: &str, socket_path: Option<&str>) {
     // Write atomically: tmp file with 0600, then rename
     let tmp = path.with_extension("tok.tmp");
 
+    // Remove stale tmp from prior crash
+    let _ = std::fs::remove_file(&tmp);
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
+        // create_new(true): fails if file exists (prevents symlink following)
+        // mode(0o600): created with restrictive perms from the start
         if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
+            .create_new(true)
             .write(true)
-            .truncate(true)
             .mode(0o600)
             .open(&tmp)
         {
