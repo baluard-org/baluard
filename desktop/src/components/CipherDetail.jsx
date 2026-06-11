@@ -256,7 +256,10 @@ export default function CipherDetail(props) {
         <Show when={cipher()?.uris?.length}>
           {(() => {
             const uri = () => uriStr(cipher()?.uris?.[0]);
-            const launchHref = () => { const u = uri(); return u.startsWith("http") ? u : `https://${u}`; };
+            // L4 fix: only treat http(s) and mailto as already-prefixed URIs.
+            // The previous `u.startsWith("http")` also matched `httpfoo...`.
+            const SCHEME_RE = /^(https?|mailto):\/\//i;
+            const launchHref = () => { const u = uri(); return SCHEME_RE.test(u) ? u : `https://${u}`; };
             const launch = (e) => { e.preventDefault(); openUrl(launchHref()); };
             return (
               <div class="space-y-4 pt-2">

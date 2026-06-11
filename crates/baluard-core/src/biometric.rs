@@ -6,6 +6,19 @@
 //! On other platforms: Uses the `keyring` crate with native backends.
 //! The daemon retrieves the password and performs vault unlock internally.
 //! The master password NEVER leaves the daemon process over IPC.
+//!
+//! L5 fix documentation:
+//! - macOS: `BIOMETRY_ANY` access control flag allows passcode fallback.
+//!   If Touch ID hardware is missing or not enrolled, the keychain will
+//!   prompt for the device passcode instead. This is a security reduction
+//!   vs biometrics-only. Users on Macs without Touch ID should NOT enable
+//!   biometric unlock — the UI should gate this on hardware availability.
+//! - A proper fix requires `LAContext.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)`
+//!   to detect biometric hardware presence. This is deferred (see audit
+//!   finding L5 residual).
+//! - The `is_available()` function returns `true` on macOS without verifying
+//!   hardware. This is a known limitation; the UI should also check
+//!   platform-specific signals before offering the toggle.
 
 const SERVICE_NAME: &str = "com.baluard.desktop";
 const ACCOUNT_NAME: &str = "quick-unlock";
