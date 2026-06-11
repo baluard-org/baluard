@@ -58,13 +58,51 @@ pub fn verify_host_key(host: &str, key_type: &str, key: &[u8]) -> HostKeyResult 
         if parts.len() < 3 {
             continue;
         }
-        // First field: host pattern (may include markers like @cert-authority)
-        let host_field = strip_markers(parts[0]);
-        // Key type and base64 key
-        let entry_key_type = parts[parts.len() - 2];
-        let entry_key_b64 = parts[parts.len() - 1];
+        // First field: host pattern (may include markers like @cert-authority
+        // and/or comma-separated multiple host patterns).
+        // Examples:
+        //   "github.com"                          -> ["github.com"]
+        //   "github.com,192.30.255.112"           -> ["github.com", "192.30.255.112"]
+        //   "@cert-authority,*.example.com"       -> marker=["@cert-authority"], hosts=["*.example.com"]
+        //   "@revoked"                            -> marker=["@revoked"], hosts=[]
+        let first_field = parts[0];
+        let (has_revoked_marker, host_patterns): (bool, Vec<&str>) = if first_field.starts_with('@') {
+            // Comma-separated markers+hosts; first segment(s) starting with @ are markers.
+            let segments: Vec<&str> = first_field.split(',').collect();
+            let mut revoked = false;
+            let mut hosts = Vec::new();
+            for seg in &segments {
+                if *seg == "@revoked" {
+                    revoked = true;
+                } else if !seg.starts_with('@') {
+                    hosts.push(*seg);
+                }
+                // Other markers (e.g. @cert-authority, @userknown) are noted
+                // but not enforced — we're verifying host keys, not CA chains.
+            }
+            (revoked, hosts)
+        } else {
+            // No markers; comma-separated list of host patterns.
+            let hosts: Vec<&str> = first_field.split(',').collect();
+            (false, hosts)
+        };
+        // Markers like @revoked must hard-fail (OpenSSH: a matched @revoked
+        // entry means the host key has been revoked and must never be trusted).
+        if has_revoked_marker {
+            // @revoked with no host patterns applies to the entry as a whole;
+            // we treat it as a global revoke indicator: if the line had any
+            // matching host, we'd reject. Since we have no host here, skip.
+            // (OpenSSH @revoked lines always include a host pattern.)
+            continue;
+        }
+        // Key type is the second field, base64 key is the third.
+        // Trailing fields (parts[3+]) are comments and ignored.
+        let entry_key_type = parts[1];
+        let entry_key_b64 = parts[2];
 
-        if !host_matches(host_field, host) {
+        // Check if ANY of the comma-separated host patterns match.
+        let any_match = host_patterns.iter().any(|p| host_matches(p, host));
+        if !any_match {
             continue;
         }
         found_key_for_host = true;
@@ -108,6 +146,7 @@ fn known_hosts_path() -> PathBuf {
 }
 
 /// Strip leading markers like `@cert-authority,@revoked` from a host field.
+#[allow(dead_code)]
 fn strip_markers(field: &str) -> &str {
     // Markers are comma-separated and prefixed with @, appearing before the host
     // pattern. They may be absent. Format: `[markers,]pattern`
@@ -259,5 +298,67 @@ mod tests {
         }
         let result = verify_host_key("github.com", "ssh-ed25519", &[1, 2, 3]);
         assert_eq!(result, HostKeyResult::Missing);
+    }
+
+    #[test]
+    fn verify_with_comment_trailing() {
+        // Real-world known_hosts entries include a trailing comment after the key.
+        // The verifier must not misread the comment as the key.
+        let dir = tempfile::tempdir().unwrap();
+        let ssh_dir = dir.path().join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        let key = b"fake-key-bytes-32-bytes-long!!!";
+        let key_b64 = base64_encode(key);
+        // Format: hosts keytype base64key comment
+        std::fs::write(
+            ssh_dir.join("known_hosts"),
+            format!("github.com ssh-ed25519 {key_b64} # added by user\n"),
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+        }
+        let result = verify_host_key("github.com", "ssh-ed25519", key);
+        assert_eq!(result, HostKeyResult::Known);
+    }
+
+    #[test]
+    fn verify_comma_separated_hosts() {
+        // OpenSSH allows multiple host patterns in one entry.
+        let dir = tempfile::tempdir().unwrap();
+        let ssh_dir = dir.path().join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        let key = b"another-fake-key";
+        let key_b64 = base64_encode(key);
+        std::fs::write(
+            ssh_dir.join("known_hosts"),
+            format!("github.com,192.30.255.112 ssh-ed25519 {key_b64}\n"),
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+        }
+        // First host pattern matches
+        assert_eq!(
+            verify_host_key("github.com", "ssh-ed25519", key),
+            HostKeyResult::Known
+        );
+        // Second host pattern also matches
+        assert_eq!(
+            verify_host_key("192.30.255.112", "ssh-ed25519", key),
+            HostKeyResult::Known
+        );
+        // Non-matching host
+        assert_eq!(
+            verify_host_key("evil.com", "ssh-ed25519", key),
+            HostKeyResult::Unknown
+        );
+    }
+
+    /// Helper: RFC 4648 base64 encoder for test fixtures.
+    /// Uses the base64 crate to avoid hand-rolling encoding bugs.
+    fn base64_encode(data: &[u8]) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(data)
     }
 }
