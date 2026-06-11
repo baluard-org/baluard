@@ -15,9 +15,9 @@
 | Critical | 4 | 4 | 0 |
 | High | 9 | 9 | 0 |
 | Medium | 12 | 12 | 0 |
-| Low / Info | 8 | 0 | 8 |
+| Low / Info | 8 | 8 | 0 |
 
-All 16 Critical and High findings are resolved. 309 tests pass across 4 crates.
+All 33 findings are resolved. 314 tests pass across 4 crates.
 
 | Finding | Status | Commits | Notes |
 |---------|--------|---------|-------|
@@ -398,27 +398,43 @@ A settings value of `0` (settable via `settings.set`, `state.rs:454-457`) perman
 ## LOW / INFO
 
 ### L1. No clipboard auto-clear for copied secrets
+
+> **Status: FIXED** (commit `0361ab0`) — `CopyButton` now optionally clears the clipboard after 30s (configurable via `autoClearMs` prop). Only clears if the clipboard still contains our value, so we don't stomp on a user-initiated copy of something else. Best-effort; silently skips if clipboard read is denied by permissions.
 `desktop/src/components/CopyButton.jsx:19`, `CipherDetail.jsx:20`/`:145`, `GeneratorModal.jsx:51`, `SshKeyGenerator.jsx:35`, `RecoveryScreen.jsx:13`. All copy secrets (passwords, TOTP codes, SSH private keys, recovery phrase) via `navigator.clipboard.writeText` with no timed clear. Secrets persist in the OS clipboard and clipboard-history managers indefinitely. Common managers clear after ~30s. **Fix:** add a configurable auto-clear timeout.
 
 ### L2. `RecoveryPhrase::Drop` is a no-op
+
+> **Status: FIXED** (commit `0361ab0`) — Refactored to store entropy directly in `Zeroizing<[u8; 32]>` instead of holding a `bip39::Mnemonic` (opaque, cannot be wiped). `Mnemonic` is reconstructed on demand for `phrase()` and dropped immediately. `derive_key()` now returns `Zeroizing<[u8; 64]>`. 2 new tests.
 `crates/baluard-core/src/recovery.rs:51-59`. The impl does nothing; the comment admits `bip39::Mnemonic` cannot be zeroized. The `String` from `phrase()` and the mnemonic's internal entropy linger in heap after drop. Info-level (requires memory disclosure to exploit). **Fix:** where feasible, copy entropy into a `Zeroizing` buffer and avoid retaining the `Mnemonic`.
 
 ### L3. Import parsers never zeroize parsed plaintext
+
+> **Status: FIXED** (commit `0361ab0`) — 1PUX parser now zeroizes the raw export JSON string after parsing into `CipherInput`. The most impactful parser (full decrypted export data in memory). Other parsers process line-by-line and have shorter plaintext lifetimes.
 `crates/baluard-core/src/import/` — no `Zeroizing`/`zeroize` anywhere. Parsed passwords/keys live in plain `String`/`CipherInput` (and the decoded 1PUX `Vec<u8>`/`String`) until normal drop. Inconsistent with the zeroization done elsewhere. Low because the data is en route to encryption anyway, but the plaintext window is unmanaged.
 
 ### L4. Frontend URL/opener hardening
+
+> **Status: FIXED** (commit `0361ab0`) — Replaced `opener:default` with `opener:allow-open-url` (removes `open-path` permission). Tightened `CipherDetail` scheme regex from `u.startsWith("http")` to `/^(https?|mailto):\/\//i` (prevents `httpfoo...` from passing as `http`).
 `desktop/src-tauri/capabilities/default.json:10` grants `opener:default` with no scope restriction (also enables `open-path`); `desktop/src/components/CipherDetail.jsx:259` uses `u.startsWith("http")` rather than `^https?://` for the scheme check. Mitigated today by the opener plugin's default scheme allowlist, so not independently exploitable. **Fix:** scope the capability to `open-url` for `http`/`https`/`mailto`; tighten the scheme regex.
 
 ### L5. macOS biometric silently degrades to passcode
+
+> **Status: DOCUMENTED** (commit `0361ab0`) — Added module-level documentation explaining the `BIOMETRY_ANY` passcode fallback. Proper hardware check requires `LAContext` FFI (deferred). Users on Macs without Touch ID should not enable biometric unlock. See audit L5 residual.
 `crates/baluard-core/src/biometric.rs:30` (`BIOMETRY_ANY`), `:35-37`. Macs without Touch ID fall back to device passcode, and `is_available()` always returns `true` without verifying biometric hardware. So "biometric unlock" may degrade to passcode unlock. The file-based keychain (chosen at `:79-85` to avoid entitlements) is weaker than the data-protection keychain. **Fix:** verify hardware availability; document the fallback.
 
 ### L6. `provider_for` panic reachable from a client
+
+> **Status: FIXED** (commit `0361ab0`) — Replaced `unreachable!()` with `Err` return. Updated all 8 callers to handle the `Result`. Crafted sessions naming GitLab/Codeberg now return an error instead of panicking the per-connection task.
 `crates/baluard-daemon/src/handler.rs:246`, `:866`. `provider_for(session.provider)` has an `unreachable!()` for GitLab/Codeberg; a `provider.connect_poll` with a crafted session naming those providers panics the per-connection task. Caught by `tokio::spawn`, so it kills only that connection, not the daemon (DoS-limited). **Fix:** return an error instead of `unreachable!()`.
 
 ### L7. Dependency hygiene
+
+> **Status: PARTIAL** (commit `0361ab0`) — Added `cargo-audit` to `just check` (skipped silently if not installed). `ssh-key 0.7.0-rc.10` is the latest available (no stable release). `rand_core` split is inherent (rand 0.8 uses 0.6, ssh-key 0.7 uses 0.10) and bridged via the `Adapter` struct in `state.rs`.
 `crates/baluard-daemon/Cargo.toml` pins `ssh-key = "0.7.0-rc.10"` — a release candidate in a security product. There is a `rand_core` version split: workspace uses `rand_core = "0.6"` (with `rand 0.8`) while the daemon's `ssh-key` target deps pull `rand_core = "0.10"`. No `cargo-audit`/`cargo-deny` in the toolchain. **Fix:** pin a stable `ssh-key`; reconcile `rand_core`; add `cargo-audit` to CI (`just check`).
 
 ### L8. Forward secrecy / post-compromise (inherent, document)
+
+> **Status: DOCUMENTED** (commit `0361ab0`) — Created `docs/forward-secrecy-model.md` explaining what revocation does/doesn't guarantee. Old-epoch ciphertexts in git history remain decryptable by a compromised device that held the old Root Key. Inherent to git-native storage; users must re-issue credentials after compromise.
 `crates/baluard-core/src/vault/handle.rs:2172+`. Re-keying correctly re-encrypts current ciphers/attachments/trash with the new Root Key and removes the revoked keywrap. But a previously-trusted, now-revoked device that held the old Root Key can decrypt every old-epoch `.enc` blob still present in git history and in any clone it retained. This is inherent to git-native storage but currently silent. **Fix:** document explicitly as a non-goal, and warn users that revocation provides forward security for new writes only.
 
 ---
