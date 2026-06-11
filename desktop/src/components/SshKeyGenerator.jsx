@@ -46,9 +46,11 @@ export default function SshKeyGenerator(props) {
     );
   }
 
+  // L7 fix: RSA 4096 removed. The rsa crate has RUSTSEC-2023-0071
+  // (Marvin Attack, no fix). Ed25519 (recommended) and ECDSA P-256 cover
+  // modern needs.
   const TYPES = [
     { id: "ed25519", label: t("entry.sshKeyEd25519"), recommended: true },
-    { id: "rsa4096", label: t("entry.sshKeyRsa4096") },
     { id: "ecdsa256", label: t("entry.sshKeyEcdsa256") },
   ];
 

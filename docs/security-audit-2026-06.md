@@ -334,7 +334,7 @@ For a privacy-focused, offline, no-server-backend password manager, this is a me
 
 ### M1. Avatar stored unencrypted and synced to the remote
 
-> **Status: FIXED** (commit `b7fae8f`) — Added `baluard_core::vault::avatar` with `encrypt_avatar`/`decrypt_avatar` (AES-256-GCM, random nonce). Key derived from SGK via new `derive_avatar_key()` method (domain-separated from item keys). Encrypted blob stored at `meta/avatar.enc`. Legacy plaintext `meta/avatar.{ext}` read on first access (backward compat).
+> **Status: FIXED** (commit `b7fae8f`) — Added `baluard_core::vault::avatar` with `encrypt_avatar`/`decrypt_avatar` (AES-256-GCM, random nonce). Key derived from SGK via new `derive_avatar_key()` method (domain-separated from item keys, in `keys/hierarchy.rs:242`; called from `vault/handle.rs:582`). Encrypted blob stored at `meta/avatar.enc`. Legacy plaintext `meta/avatar.{ext}` read on first access (backward compat).
 **Files:** `crates/baluard-daemon/src/state.rs:589-594`, `crates/baluard-core/src/vault/manifest.rs:107`.
 Avatar bytes are written verbatim to `meta/avatar.{ext}` (0600 locally, but committed to git and pushed in plaintext). The user's photo is plaintext-readable by anyone with repo access. The code comment acknowledges this is deliberate ("avoids bloating settings.json diffs"), but it ships identity-linkable PII off-device in the clear. Ext is whitelisted (png/jpg/jpeg/gif/webp), 350KB base64 cap. **Fix:** encrypt the avatar like any other vault object, or keep it strictly local and never sync it.
 
