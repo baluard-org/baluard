@@ -353,6 +353,22 @@ impl DeviceManagerStore for FileDeviceManagerStore {
         std::fs::create_dir_all(&meta)
             .map_err(|e| DeviceError::Keystore(format!("create meta dir: {e}")))?;
 
+        // M9 fix: write registry + epoch + seen_nonces as a single atomic file.
+        // The previous design wrote 3 separate files (devices.json, epoch.json,
+        // seen-nonces.json) and a crash mid-sequence could leave partial state.
+        // We keep writing the legacy individual files for backward-compat with
+        // existing readers and older vault formats, but the combined file is
+        // the authoritative source on next load.
+        let combined = serde_json::json!({
+            "registry": state.registry,
+            "epoch": state.epoch,
+            "seen_nonces": state.seen_nonces,
+        });
+        let combined_json = serde_json::to_string_pretty(&combined)
+            .map_err(|e| DeviceError::Keystore(format!("serialize combined state: {e}")))?;
+        let combined_path = meta.join("device-state.json");
+        atomic_write(&combined_path, &combined_json)?;
+
         // Save registry
         let registry_path = meta.join("devices.json");
         let registry_json = serde_json::to_string_pretty(&state.registry)
@@ -371,7 +387,11 @@ impl DeviceManagerStore for FileDeviceManagerStore {
             .map_err(|e| DeviceError::Keystore(format!("serialize nonces: {e}")))?;
         atomic_write(&nonces_path, &nonces_json)?;
 
-        // Save pending transaction and acks if in ROTATING state
+        // Save pending transaction and acks if in ROTATING state.
+        // NOTE: rekey/ files are the cross-device rotation protocol (git-pushed
+        // between devices). They cannot be bundled into the local atomic state
+        // because each device produces them independently. Per-file atomic_write
+        // is correct here.
         if let Some(ref tx) = state.pending_transaction {
             let rekey_dir = self.vault_path.join(".baluard/rekey");
             std::fs::create_dir_all(&rekey_dir)
@@ -402,24 +422,45 @@ impl DeviceManagerStore for FileDeviceManagerStore {
             return Ok(None);
         }
 
-        let registry_path = self.vault_path.join("meta/devices.json");
-        let registry = if registry_path.exists() {
-            let data = std::fs::read_to_string(&registry_path)
-                .map_err(|e| DeviceError::Keystore(format!("read devices: {e}")))?;
-            serde_json::from_str(&data)
-                .map_err(|e| DeviceError::Keystore(format!("parse devices: {e}")))?
+        // M9 fix: prefer the combined atomic state file (meta/device-state.json)
+        // for atomicity. Fall back to individual legacy files for old vaults.
+        let combined_path = self.vault_path.join("meta/device-state.json");
+        let (registry, epoch, seen_nonces) = if combined_path.exists() {
+            let data = std::fs::read_to_string(&combined_path)
+                .map_err(|e| DeviceError::Keystore(format!("read device-state: {e}")))?;
+            let v: serde_json::Value = serde_json::from_str(&data)
+                .map_err(|e| DeviceError::Keystore(format!("parse device-state: {e}")))?;
+            let registry: DeviceRegistry = serde_json::from_value(v["registry"].clone())
+                .map_err(|e| DeviceError::Keystore(format!("parse registry in combined: {e}")))?;
+            let epoch: EpochInfo = serde_json::from_value(v["epoch"].clone())
+                .map_err(|e| KeyError::InvalidEpochState(format!("parse epoch in combined: {e}")))?;
+            let seen_nonces: Vec<String> = serde_json::from_value(v["seen_nonces"].clone())
+                .map_err(|e| DeviceError::Keystore(format!("parse nonces in combined: {e}")))?;
+            (registry, epoch, seen_nonces)
         } else {
-            DeviceRegistry::new()
-        };
+            // Legacy: read individual files
+            let registry_path = self.vault_path.join("meta/devices.json");
+            let registry = if registry_path.exists() {
+                let data = std::fs::read_to_string(&registry_path)
+                    .map_err(|e| DeviceError::Keystore(format!("read devices: {e}")))?;
+                serde_json::from_str(&data)
+                    .map_err(|e| DeviceError::Keystore(format!("parse devices: {e}")))?
+            } else {
+                DeviceRegistry::new()
+            };
 
-        let epoch_path = self.vault_path.join("meta/epoch.json");
-        let epoch = if epoch_path.exists() {
-            let data = std::fs::read_to_string(&epoch_path)
-                .map_err(|e| KeyError::InvalidEpochState(format!("read epoch: {e}")))?;
-            serde_json::from_str(&data)
-                .map_err(|e| KeyError::InvalidEpochState(format!("parse epoch: {e}")))?
-        } else {
-            EpochInfo::new(0)
+            let epoch_path = self.vault_path.join("meta/epoch.json");
+            let epoch = if epoch_path.exists() {
+                let data = std::fs::read_to_string(&epoch_path)
+                    .map_err(|e| KeyError::InvalidEpochState(format!("read epoch: {e}")))?;
+                serde_json::from_str(&data)
+                    .map_err(|e| KeyError::InvalidEpochState(format!("parse epoch: {e}")))?
+            } else {
+                EpochInfo::new(0)
+            };
+
+            let seen_nonces = load_seen_nonces(&self.vault_path);
+            (registry, epoch, seen_nonces)
         };
 
         let mut pending_transaction = None;
@@ -452,8 +493,6 @@ impl DeviceManagerStore for FileDeviceManagerStore {
                 }
             }
         }
-
-        let seen_nonces = load_seen_nonces(&self.vault_path);
 
         Ok(Some(DeviceManagerState {
             registry,

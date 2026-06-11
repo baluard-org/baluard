@@ -84,8 +84,10 @@ pub enum DeviceFlowStatus {
     Success(ProviderToken),
     /// User denied or code expired. Start over.
     Expired,
-    /// Server asked to slow down. Increase interval by 5s (RFC 8628 §3.5).
-    SlowDown,
+    /// Server asked to slow down. Caller must update session.interval_secs
+    /// to the value in this variant (RFC 8628 §3.5: add 5 seconds, then
+    /// continue polling at the new interval).
+    SlowDown { interval_secs: u64 },
 }
 
 /// Provider token with zeroize-on-drop semantics.

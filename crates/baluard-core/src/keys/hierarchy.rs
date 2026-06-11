@@ -235,6 +235,32 @@ impl SpaceGroupKey {
 
         ItemKey::from_bytes(key)
     }
+
+    /// M1 fix: Derive a dedicated key for encrypting the user avatar.
+    /// Domain-separated from item keys so a leak of one cannot decrypt the other.
+    /// Epoch-bound so avatar is re-wrapped on root key rotation.
+    pub fn derive_avatar_key(&self, epoch: u64) -> [u8; 32] {
+        debug_assert_eq!(
+            epoch, self.epoch,
+            "SpaceGroupKey epoch mismatch: SGK bound to epoch {} but derive_avatar_key called with epoch {}",
+            self.epoch, epoch
+        );
+
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+
+        // "baluard-avatar-v1" (17 bytes) + epoch (8 bytes) = 25 bytes
+        let mut info = Vec::with_capacity(25);
+        info.extend_from_slice(b"baluard-avatar-v1");
+        info.extend_from_slice(&epoch.to_le_bytes());
+
+        let hkdf = Hkdf::<Sha256>::new(None, self.key.as_slice());
+        let mut key = [0u8; 32];
+        hkdf.expand(&info, &mut key)
+            .expect("32 bytes is valid output length for HKDF-SHA256");
+
+        key
+    }
 }
 
 impl Zeroize for SpaceGroupKey {

@@ -35,6 +35,9 @@ pub struct VaultState {
     /// Session counter incremented on every lock. Orphaned cover tasks
     /// check this and bail if the session has changed.
     cover_session: AtomicU64,
+    /// M4 fix: Per-vault rate limiter for sensitive operations.
+    /// Keyed by vault_path to isolate multi-vault setups.
+    pub rate_limiter: crate::rate_limit::RateLimiter,
 }
 
 impl VaultState {
@@ -49,6 +52,7 @@ impl VaultState {
             cover_timer: RwLock::new(None),
             cover_pending: std::sync::atomic::AtomicBool::new(false),
             cover_session: AtomicU64::new(0),
+            rate_limiter: crate::rate_limit::RateLimiter::new(),
         }
     }
 
@@ -557,6 +561,8 @@ impl VaultState {
 
     /// Get avatar image as base64. Returns empty string if no avatar set.
     /// Reads avatar_ext from encrypted profile.enc.
+    /// M1 fix: avatar is AES-256-GCM encrypted at meta/avatar.enc. Falls
+    /// back to plaintext meta/avatar.{ext} for legacy vaults (one-time read).
     pub async fn avatar_get(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
@@ -568,6 +574,18 @@ impl VaultState {
         if ext.is_empty() {
             return Ok(String::new());
         }
+
+        let enc_path = handle.path.join("meta/avatar.enc");
+        if enc_path.exists() {
+            let blob = std::fs::read(&enc_path).map_err(|e| format!("read avatar: {e}"))?;
+            let key = handle.derive_avatar_key();
+            let bytes = baluard_core::vault::avatar::decrypt_avatar(&key, &blob)
+                .map_err(|e| format!("{e}"))?;
+            use base64::Engine;
+            return Ok(base64::engine::general_purpose::STANDARD.encode(&bytes));
+        }
+
+        // Legacy: plaintext meta/avatar.{ext} (pre-M1 fix)
         let avatar_path = handle.path.join(format!("meta/avatar.{ext}"));
         if !avatar_path.exists() {
             return Ok(String::new());
@@ -578,7 +596,9 @@ impl VaultState {
     }
 
     /// Set avatar image from base64. Payload: JSON {"data": "<base64>", "ext": "png"}
-    /// Saves to meta/avatar.{ext} and updates encrypted profile.
+    /// M1 fix: encrypts avatar with AES-256-GCM (key from SGK) and stores
+    /// at meta/avatar.enc. Legacy plaintext meta/avatar.{ext} files are
+    /// deleted on next set.
     pub async fn avatar_set(&self, payload: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
@@ -591,7 +611,9 @@ impl VaultState {
         let mut profile = handle.load_profile().unwrap_or_default();
 
         if b64.is_empty() {
-            // Remove avatar
+            // Remove avatar: delete both encrypted and any legacy plaintext
+            let enc_path = handle.path.join("meta/avatar.enc");
+            let _ = std::fs::remove_file(&enc_path);
             if let Some(ref old_ext) = profile.avatar_ext {
                 let old_ext_clean = old_ext.trim().to_lowercase();
                 if matches!(
@@ -623,15 +645,20 @@ impl VaultState {
             .decode(b64)
             .map_err(|e| format!("base64 decode: {e}"))?;
 
-        // Save avatar file
-        let avatar_path = handle.path.join(format!("meta/avatar.{ext}"));
-        let tmp_path = avatar_path.with_extension("tmp");
-        std::fs::write(&tmp_path, &bytes).map_err(|e| format!("write avatar: {e}"))?;
+        // M1 fix: encrypt with avatar key derived from SGK
+        let key = handle.derive_avatar_key();
+        let blob =
+            baluard_core::vault::avatar::encrypt_avatar(&key, &bytes).map_err(|e| format!("{e}"))?;
+
+        // Atomic write: tmp + chmod 0600 + rename
+        let enc_path = handle.path.join("meta/avatar.enc");
+        let tmp_path = enc_path.with_extension("enc.tmp");
+        std::fs::write(&tmp_path, &blob).map_err(|e| format!("write avatar: {e}"))?;
         std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| format!("chmod avatar: {e}"))?;
-        std::fs::rename(&tmp_path, &avatar_path).map_err(|e| format!("rename avatar: {e}"))?;
+        std::fs::rename(&tmp_path, &enc_path).map_err(|e| format!("rename avatar: {e}"))?;
 
-        // Remove old avatar if ext changed
+        // Remove old plaintext avatar (any extension) and any old encrypted file
         if let Some(ref old_ext) = profile.avatar_ext {
             let old_ext_clean = old_ext.trim().to_lowercase();
             if old_ext_clean != ext

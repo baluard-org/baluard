@@ -6,6 +6,7 @@
 
 mod crypto;
 mod handler;
+mod rate_limit;
 pub mod socket_path;
 mod state;
 pub mod proto {

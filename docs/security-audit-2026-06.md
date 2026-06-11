@@ -507,6 +507,22 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
 
 ---
 
+### DC-3. M7: TOTP seed in edit form contradicts "seed never crosses IPC"
+
+**Original claim (M7):** The edit form receives the full `otpauth://` URI including the TOTP seed, contradicting the stated invariant that only the derived code crosses IPC.
+
+**Actual code:**
+- `desktop/src/components/CipherDetail.jsx:52-62` — detail view fetches only the derived code via `daemon("cipher.totp_code", c.id)`. Seed never crosses IPC for read-only display.
+- `desktop/src/components/AddEditCipherForm.jsx:298` — edit form binds `<input value={newCipher().totp_uri || ""}>`. The full URI (including seed) is in the cipher struct returned by `cipher.get`.
+
+**Finding:** The "seed never crosses IPC" invariant was about the **read-only display path** (detail view), where it IS honored. The edit form is a **cold path** (user-initiated, full cipher data exchange): the TOTP seed is part of the cipher's encrypted payload, exactly like the password field next to it. Sending the seed in the cipher struct on `cipher.get` is required for the edit form to function (e.g. to change algorithm, period, or digits) and is no more sensitive than the password. The same `cipher.get` call already returns the password, SSH keys, card numbers, and notes — all of which cross IPC by the cipher model.
+
+**Still valid:** If the intent was that the seed is treated as a separate, never-IPC'd secret (independent of the cipher), the architecture does not implement that. The seed is a normal cipher field.
+
+**Recommended action:** Update the security policy to read: *"TOTP seed crosses IPC only as part of the full cipher struct returned by `cipher.get` (required for edit). The read-only display path (`cipher.totp_code`) returns only the derived numeric code."* M7 downgraded to accepted design decision.
+
+---
+
 ## Appendix: Residual Items from Remediation
 
 The following items were identified during peer review of the fixes but are accepted as known limitations or deferred to future work:

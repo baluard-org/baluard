@@ -148,6 +148,24 @@ impl ForgeProvider for GitHubProvider {
             .await
             .map_err(|e| ProviderError::Api(e.to_string()))?;
 
+        // M11 fix: check HTTP status before parsing JSON body.
+        // GitHub returns 400 with an error JSON for authorization_pending /
+        // slow_down / expired_token, but 429 (rate limit) or 5xx (server
+        // error) should NOT be parsed as a normal device flow response.
+        let status = resp.status();
+        if !status.is_success() {
+            // 429: rate limited. Treat as slow_down with +5s (RFC 8628 §3.5).
+            if status.as_u16() == 429 {
+                return Ok(DeviceFlowStatus::SlowDown {
+                    interval_secs: session.interval_secs + 5,
+                });
+            }
+            // Other non-2xx: surface as error.
+            return Err(ProviderError::Api(format!(
+                "device flow poll HTTP {status}"
+            )));
+        }
+
         let data: serde_json::Value = resp
             .json()
             .await
@@ -157,7 +175,10 @@ impl ForgeProvider for GitHubProvider {
             Some("authorization_pending") => {
                 Ok(DeviceFlowStatus::Pending)
             }
-            Some("slow_down") => Ok(DeviceFlowStatus::SlowDown),
+            // M11 fix: SlowDown now carries the new interval (RFC 8628 §3.5).
+            Some("slow_down") => Ok(DeviceFlowStatus::SlowDown {
+                interval_secs: session.interval_secs + 5,
+            }),
             Some("expired_token") | Some("access_denied") => Ok(DeviceFlowStatus::Expired),
             Some(e) => Err(ProviderError::AuthFailed(e.to_string())),
             None => {

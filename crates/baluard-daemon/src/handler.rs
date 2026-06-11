@@ -306,11 +306,29 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             if req.payload.is_empty() {
                 return err_response("Missing master password in payload");
             }
+            // M4 fix: rate-limit failed unlock attempts.
+            let vault_key = state.vault_path.to_string_lossy().into_owned();
+            match state.rate_limiter.check(&vault_key) {
+                crate::rate_limit::RateCheck::Allowed => {}
+                crate::rate_limit::RateCheck::Backoff(d) => {
+                    return err_response(format!(
+                        "Too many failed attempts. Wait {}s before retrying.",
+                        d.as_secs()
+                    ));
+                }
+                crate::rate_limit::RateCheck::LockedOut(d) => {
+                    return err_response(format!(
+                        "Vault locked due to too many failed attempts. Wait {}s.",
+                        d.as_secs()
+                    ));
+                }
+            }
             let result = state.unlock(&req.payload).await;
             // Zeroize the password from the request immediately after use
             req.payload.zeroize();
             match result {
                 Ok(()) => {
+                    state.rate_limiter.record_success(&vault_key);
                     // Auto-purge old trash (default 30 days) on unlock
                     let _ = state.purge_old_trash(30).await;
                     // Start cover commit scheduler
@@ -322,7 +340,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                         Err(e) => err_response(e),
                     }
                 }
-                Err(e) => err_response(e),
+                Err(e) => {
+                    state.rate_limiter.record_failure(&vault_key);
+                    err_response(e)
+                }
             }
         }
 
@@ -825,16 +846,39 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
-        "vault.biometric_unlock" => match state.biometric_unlock().await {
-            Ok(json) => {
-                // biometric_unlock() calls self.unlock() internally,
-                // which generates a new session token. Fetch it.
-                state.start_cover_timer().await;
-                let token = state.get_session_token().await;
-                ok_resp(json, token.as_deref())
+        "vault.biometric_unlock" => {
+            // M4 fix: rate-limit failed biometric unlock attempts.
+            let vault_key = state.vault_path.to_string_lossy().into_owned();
+            match state.rate_limiter.check(&vault_key) {
+                crate::rate_limit::RateCheck::Allowed => {}
+                crate::rate_limit::RateCheck::Backoff(d) => {
+                    return err_response(format!(
+                        "Too many failed attempts. Wait {}s before retrying.",
+                        d.as_secs()
+                    ));
+                }
+                crate::rate_limit::RateCheck::LockedOut(d) => {
+                    return err_response(format!(
+                        "Vault locked due to too many failed attempts. Wait {}s.",
+                        d.as_secs()
+                    ));
+                }
             }
-            Err(e) => err_response(e),
-        },
+            match state.biometric_unlock().await {
+                Ok(json) => {
+                    state.rate_limiter.record_success(&vault_key);
+                    // biometric_unlock() calls self.unlock() internally,
+                    // which generates a new session token. Fetch it.
+                    state.start_cover_timer().await;
+                    let token = state.get_session_token().await;
+                    ok_resp(json, token.as_deref())
+                }
+                Err(e) => {
+                    state.rate_limiter.record_failure(&vault_key);
+                    err_response(e)
+                }
+            }
+        }
 
         // Validate master password without storing to keychain.
         // Used by the Tauri biometry plugin flow: validate here, store there.
@@ -897,8 +941,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     baluard_core::providers::types::DeviceFlowStatus::Pending => {
                         ok_resp(serde_json::json!({"status": "pending"}).to_string(), token_str)
                     }
-                    baluard_core::providers::types::DeviceFlowStatus::SlowDown => {
-                        ok_resp(serde_json::json!({"status": "slow_down", "interval_increment": 5}).to_string(), token_str)
+                    baluard_core::providers::types::DeviceFlowStatus::SlowDown { interval_secs } => {
+                        // M11 fix: caller persists this back into the session
+                        // and re-polls at the new (longer) interval.
+                        ok_resp(serde_json::json!({"status": "slow_down", "interval_secs": interval_secs}).to_string(), token_str)
                     }
                     baluard_core::providers::types::DeviceFlowStatus::Expired => {
                         ok_resp(serde_json::json!({"status": "expired"}).to_string(), token_str)

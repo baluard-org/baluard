@@ -75,10 +75,14 @@ impl CredentialConfig {
     }
 
     /// Expose the token for git2 credential callbacks (internal use only).
-    /// The returned String is short-lived within the callback closure.
+    /// M6 fix: wraps the exposed plaintext in Zeroizing so it is wiped on drop,
+    /// closing the gap where the callback closure held a plain `String` copy
+    /// of the secret for the lifetime of the sync operation.
     #[cfg(feature = "git-sync")]
-    pub(crate) fn expose_token(&self) -> Option<String> {
-        self.https_token.as_ref().map(|t| t.expose_secret().to_string())
+    pub(crate) fn expose_token(&self) -> Option<zeroize::Zeroizing<String>> {
+        self.https_token
+            .as_ref()
+            .map(|t| zeroize::Zeroizing::new(t.expose_secret().to_string()))
     }
 
     fn load_from_keyring_for(provider: Provider) -> Option<SecretString> {
@@ -132,7 +136,7 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
         if allowed_types.contains(CredentialType::USER_PASS_PLAINTEXT) {
             if let Some(ref token) = https_token {
                 let user = username_from_url.unwrap_or("git");
-                return Cred::userpass_plaintext(user, token);
+                return Cred::userpass_plaintext(user, token.as_str());
             }
         }
 
@@ -141,6 +145,40 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
         }
 
         Err(git2::Error::from_str("no credential source available"))
+    });
+
+    // M5 fix: enforce known_hosts for SSH connections, passthrough for HTTPS.
+    // - SSH host keys: strict verification against ~/.ssh/known_hosts.
+    //   Unknown hosts rejected (fail closed), preventing MITM via first-use.
+    // - HTTPS (X.509): passthrough to libgit2/libcurl's built-in CA validation
+    //   (already secure by default).
+    callbacks.certificate_check(|cert, host| {
+        use git2::cert::SshHostKeyType;
+        use git2::CertificateCheckStatus;
+        if let Some(hostkey) = cert.as_hostkey() {
+            let key_type = match hostkey.hostkey_type() {
+                Some(SshHostKeyType::Ed255219) => "ssh-ed25519",
+                Some(SshHostKeyType::Rsa) => "ssh-rsa",
+                Some(SshHostKeyType::Dss) => "ssh-dss",
+                Some(SshHostKeyType::Ecdsa256) => "ecdsa-sha2-nistp256",
+                Some(SshHostKeyType::Ecdsa384) => "ecdsa-sha2-nistp384",
+                Some(SshHostKeyType::Ecdsa521) => "ecdsa-sha2-nistp521",
+                _ => "",
+            };
+            let key = hostkey.hostkey().unwrap_or(&[]);
+            match crate::sync::known_hosts::verify_host_key(host, key_type, key) {
+                crate::sync::known_hosts::HostKeyResult::Known => {
+                    Ok(CertificateCheckStatus::CertificateOk)
+                }
+                // Fail closed: reject unknown / mismatched / missing file.
+                _ => Err(git2::Error::from_str(&format!(
+                    "SSH host key for {host} not in known_hosts"
+                ))),
+            }
+        } else {
+            // HTTPS/X.509 cert: passthrough to libgit2's built-in CA check.
+            Ok(CertificateCheckStatus::CertificatePassthrough)
+        }
     });
 
     callbacks
@@ -170,7 +208,7 @@ mod tests {
             assert!(config.https_token.is_some());
         } else {
             assert!(config.https_token.is_some());
-            assert_eq!(config.expose_token().as_deref(), Some("ghp_test123"));
+            assert_eq!(config.expose_token().as_deref().map(|s| s.as_str()), Some("ghp_test123"));
         }
     }
 
