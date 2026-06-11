@@ -1297,12 +1297,24 @@ pub fn handle_enroll_with_phrase(
                 }
             }
 
-            let result = dm.enroll_with_recovery_phrase(&payload, &phrase_str)?;
+            // Peer review fix: pass the caller's private keys (owned) to the
+            // method (whose public halves are in the payload). The method
+            // enrolls those public keys, encrypts the keywrap to the X25519
+            // public key, and returns the private keys for the caller to
+            // persist.
+            let result = dm.enroll_with_recovery_phrase(
+                &payload,
+                &phrase_str,
+                x25519_secret,
+                ed25519_signing,
+            )?;
 
-            // Persist device-privkey for this device
+            // Persist device-privkey for this device using the keys returned
+            // by the method (same keys the registry and keywrap were built
+            // with — guarantees consistency).
             let privkey_data = serde_json::json!({
-                "x25519_private": hex::encode(x25519_secret.to_bytes()),
-                "ed25519_private": hex::encode(ed25519_signing.to_bytes()),
+                "x25519_private": hex::encode(result.x25519_secret.to_bytes()),
+                "ed25519_private": hex::encode(result.ed25519_signing.to_bytes()),
             });
             let privkey_path = path.join("meta/device-privkey.json");
             let privkey_tmp = privkey_path.with_extension("json.tmp");

@@ -1849,17 +1849,23 @@ impl VaultState {
             registry_version: None,
         };
 
-        // Open DeviceManager and call enroll_with_recovery_phrase
+        // Open DeviceManager and call enroll_with_recovery_phrase.
+        // Peer review fix: pass the caller's private keys (owned) — whose
+        // public halves are in the payload. The method enrolls those public
+        // keys, encrypts the keywrap to the X25519 public key, and returns
+        // the private keys for the caller to persist.
         let mut dm = DeviceManager::load_from_vault(&vault_path)
             .map_err(|e| format!("load device manager: {e}"))?;
         let result = dm
-            .enroll_with_recovery_phrase(&payload, phrase)
+            .enroll_with_recovery_phrase(&payload, phrase, x25519_secret, ed25519_signing)
             .map_err(|e| format!("enroll: {e}"))?;
 
-        // Persist device-privkey for this device
+        // Persist device-privkey for this device using the keys RETURNED
+        // by the method (same keys the registry and keywrap were built
+        // with — guarantees consistency).
         let privkey_data = serde_json::json!({
-            "x25519_private": hex::encode(x25519_secret.to_bytes()),
-            "ed25519_private": hex::encode(ed25519_signing.to_bytes()),
+            "x25519_private": hex::encode(result.x25519_secret.to_bytes()),
+            "ed25519_private": hex::encode(result.ed25519_signing.to_bytes()),
         });
         let privkey_path = vault_path.join("meta/device-privkey.json");
         let privkey_tmp = privkey_path.with_extension("json.tmp");

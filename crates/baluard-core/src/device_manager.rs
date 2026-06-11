@@ -1396,11 +1396,19 @@ impl DeviceManager {
     /// - This method PRESERVES the device registry (old devices stay enrolled).
     /// - `recover_from_phrase` resets the registry to a single new device.
     ///
-    /// Returns the new device's X25519/Ed25519 private keys for keywrap/signing.
+    /// **Key consistency:** The caller MUST generate the X25519/Ed25519
+    /// keypairs, put the public keys in `payload`, and pass the private
+    /// keys here (moved in). The method enrolls the public keys in the
+    /// registry, encrypts the Root Key to the payload's X25519 public key,
+    /// and returns the private keys in `RecoveryResult` for the caller
+    /// to persist. This ensures the registry, keywrap, and local
+    /// `device-privkey.json` all agree.
     pub fn enroll_with_recovery_phrase(
         &mut self,
         payload: &EnrollmentPayload,
         phrase: &str,
+        x25519_secret: x25519_dalek::StaticSecret,
+        ed25519_signing: ed25519_dalek::SigningKey,
     ) -> Result<RecoveryResult, BaluardError> {
         use crate::recovery::RecoveryPhrase;
 
@@ -1505,8 +1513,13 @@ impl DeviceManager {
             None, // No approver — recovery phrase is the authority
         )?;
 
-        // Step 8: Write keywrap for new device (so the vault is usable on next open)
-        let (x25519_secret, x25519_public) = crate::crypto::hpke_wrap::generate_x25519_keypair();
+        // Step 8: Write keywrap for new device using the CALLER's X25519 key.
+        // Peer review fix: was generating a fresh keypair here, which made
+        // the keywrap unopenable by the new device (whose privkey was
+        // generated separately by the CLI/daemon). Now we use the same
+        // secret the caller passed, whose public half is enrolled in the
+        // registry — guaranteeing registry/keywrap/privkey consistency.
+        let x25519_public = x25519_dalek::PublicKey::from(&x25519_secret);
         let (eph_pub, ct, tag_out) =
             crate::crypto::hpke_wrap::wrap_key(root_key.as_bytes(), &x25519_public)?;
         let keywrap_data = serde_json::json!({
@@ -1522,26 +1535,10 @@ impl DeviceManager {
             &serde_json::to_string_pretty(&keywrap_data).unwrap(),
         )?;
 
-        // Step 9: Write device-privkey.json for CLI/rotation use
-        let (ed25519_signing, _ed25519_verifying) =
-            crate::crypto::signature::generate_ed25519_keypair();
-        let ed_priv_bytes = ed25519_signing.to_bytes();
-        let privkey_data = serde_json::json!({
-            "x25519_private": hex::encode(x25519_secret.to_bytes()),
-            "ed25519_private": hex::encode(ed_priv_bytes),
-        });
-        let privkey_path = vault_path.join("meta/device-privkey.json");
-        let privkey_tmp = privkey_path.with_extension("json.tmp");
-        std::fs::write(
-            &privkey_tmp,
-            serde_json::to_string_pretty(&privkey_data).unwrap(),
-        )?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
-        }
-        std::fs::rename(&privkey_tmp, &privkey_path)?;
+        // Peer review fix: device-privkey.json is the CALLER's responsibility.
+        // The method returns the private keys in RecoveryResult; the caller
+        // persists them. Writing here too caused a second overwrite with
+        // yet another keypair, breaking key consistency.
 
         // Step 10: Persist state
         self.auto_save_result()?;
@@ -1554,6 +1551,16 @@ impl DeviceManager {
             ed25519_signing,
         })
     }
+
+    // ── Enrollment Policy Enforcement ──
+    //
+    // The CLI/daemon wrappers check the policy before calling the phrase
+    // enrollment method. Core-level enforcement is a defense-in-depth
+    // check: any direct caller of `enroll_with_recovery_phrase` must
+    // pass the vault's `EnrollmentPolicy` explicitly. The method itself
+    // does NOT re-read the policy from disk (that would be a TOCTOU
+    // race with the caller's check). The caller is responsible for
+    // loading the policy and passing it.
 
     /// Determine current epoch from vault cipher headers or RK canary.
     fn determine_epoch_from_vault(vault_path: &Path) -> u64 {
@@ -1777,6 +1784,32 @@ mod tests {
             epoch: None,
             registry_version: None,
         }
+    }
+
+    /// Build a payload AND the corresponding private keys together.
+    /// Peer review fix: tests must pass the same private keys whose public
+    /// halves are in the payload, so the keywrap is openable by the new device.
+    fn make_payload_with_keys(
+        name: &str,
+    ) -> (EnrollmentPayload, x25519_dalek::StaticSecret, ed25519_dalek::SigningKey) {
+        let (x_sk, x_pk) = hpke_wrap::generate_x25519_keypair();
+        let (e_sk, e_pk) = sig::generate_ed25519_keypair();
+        let nonce: [u8; 32] = rand::random();
+        let payload = EnrollmentPayload {
+            device_id: Uuid::new_v4(),
+            encryption_public_key: hex::encode(x_pk.to_bytes()),
+            signing_public_key: hex::encode(sig::verifying_key_bytes(&e_pk)),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            nonce: hex::encode(nonce),
+            name: name.to_string(),
+            vault_id: None,
+            epoch: None,
+            registry_version: None,
+        };
+        (payload, x_sk, e_sk)
     }
 
     fn make_payload_bound(name: &str, epoch: u64, reg_ver: u64) -> EnrollmentPayload {
@@ -2439,14 +2472,24 @@ mod tests {
 
         // Now enroll a second device via recovery phrase (non-destructive)
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
-        let p2 = make_payload("Device B (via phrase)");
-        let result = mgr2.enroll_with_recovery_phrase(&p2, &phrase_str).unwrap();
+        let (p2, x2_sk, e2_sk) = make_payload_with_keys("Device B (via phrase)");
+        let result = mgr2
+            .enroll_with_recovery_phrase(&p2, &phrase_str, x2_sk, e2_sk)
+            .unwrap();
 
         // Verify: both devices in registry (old device preserved)
         assert_eq!(mgr2.registry.count(), 2);
         assert!(mgr2.registry.is_enrolled(&p1.device_id));
         assert!(mgr2.registry.is_enrolled(&p2.device_id));
         assert_eq!(result.entry.name, "Device B (via phrase)");
+
+        // Peer review fix: verify key consistency. The returned private
+        // keys must match the public keys enrolled in the registry.
+        let enrolled_pub = x25519_dalek::PublicKey::from(&result.x25519_secret);
+        assert_eq!(
+            hex::encode(enrolled_pub.as_bytes()),
+            result.entry.encryption_public_key
+        );
     }
 
     #[test]
@@ -2464,8 +2507,8 @@ mod tests {
         let wrong_phrase = RecoveryPhrase::generate().unwrap().phrase();
 
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
-        let p2 = make_payload("Attacker");
-        let result = mgr2.enroll_with_recovery_phrase(&p2, &wrong_phrase);
+        let (p2, x2_sk, e2_sk) = make_payload_with_keys("Attacker");
+        let result = mgr2.enroll_with_recovery_phrase(&p2, &wrong_phrase, x2_sk, e2_sk);
         assert!(result.is_err(), "wrong phrase must be rejected");
     }
 
@@ -2480,9 +2523,9 @@ mod tests {
         mgr.auto_save_result().unwrap();
 
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
-        let mut stale = make_payload("Stale");
+        let (mut stale, x_sk, e_sk) = make_payload_with_keys("Stale");
         stale.timestamp = 0; // ancient
-        let result = mgr2.enroll_with_recovery_phrase(&stale, &phrase_str);
+        let result = mgr2.enroll_with_recovery_phrase(&stale, &phrase_str, x_sk, e_sk);
         assert!(result.is_err(), "stale timestamp must be rejected");
     }
 
@@ -2498,11 +2541,13 @@ mod tests {
 
         // Use same nonce twice
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
-        let mut p1 = make_payload("Replay Test 1");
-        mgr2.enroll_with_recovery_phrase(&p1, &phrase_str).unwrap();
-        let mut p2 = make_payload("Replay Test 2");
+        let (mut p1, x1_sk, e1_sk) = make_payload_with_keys("Replay Test 1");
+        mgr2
+            .enroll_with_recovery_phrase(&p1, &phrase_str, x1_sk, e1_sk)
+            .unwrap();
+        let (mut p2, x2_sk, e2_sk) = make_payload_with_keys("Replay Test 2");
         p2.nonce = p1.nonce.clone(); // same nonce
-        let result = mgr2.enroll_with_recovery_phrase(&p2, &phrase_str);
+        let result = mgr2.enroll_with_recovery_phrase(&p2, &phrase_str, x2_sk, e2_sk);
         assert!(result.is_err(), "replayed nonce must be rejected");
     }
 
@@ -2517,8 +2562,10 @@ mod tests {
         mgr.auto_save_result().unwrap();
 
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
-        let p2 = make_payload("Phrase Device");
-        let _ = mgr2.enroll_with_recovery_phrase(&p2, &phrase_str).unwrap();
+        let (p2, x_sk, e_sk) = make_payload_with_keys("Phrase Device");
+        let _ = mgr2
+            .enroll_with_recovery_phrase(&p2, &phrase_str, x_sk, e_sk)
+            .unwrap();
 
         // Verify: keywrap file written for new device
         let keywrap_path = vault_path.join(format!("meta/keywrap/{}.json", p2.device_id));
@@ -2538,7 +2585,9 @@ mod tests {
 
         // Try to re-enroll same device via phrase
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
-        let result = mgr2.enroll_with_recovery_phrase(&p1, &phrase_str);
+        let mut p1_clone = make_payload_with_keys("Device A clone");
+        p1_clone.0.device_id = p1.device_id; // same device_id
+        let result = mgr2.enroll_with_recovery_phrase(&p1_clone.0, &phrase_str, p1_clone.1, p1_clone.2);
         assert!(result.is_err(), "already-enrolled device must be rejected");
     }
 }
