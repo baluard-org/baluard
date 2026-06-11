@@ -298,8 +298,26 @@ pub fn handle_init(
     println!();
 
     if !verify_recovery_phrase_interactive(&secrets.recovery_phrase.phrase()) {
-        return Err("Recovery phrase verification failed. Vault was created but phrase \
-             was not confirmed. Re-run `baluard init` and complete the verification step."
+        // PR-6 fix: roll back the newly-created vault. Previously we left
+        // it on disk and told the user to re-run `baluard init`, which
+        // would fail with "vault already exists." Now we delete the
+        // whole directory so the user can retry cleanly.
+        eprintln!();
+        eprintln!("Verification failed. Rolling back the new vault at:");
+        eprintln!("  {}", resolved_path.display());
+        if let Err(e) = std::fs::remove_dir_all(&resolved_path) {
+            eprintln!("warning: failed to remove vault directory: {e}");
+            eprintln!("Delete it manually before re-running `baluard init`.");
+        }
+        // Also remove the registry entry if we added one
+        if let Some(ref s) = slug {
+            if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load() {
+                let _ = reg.remove(s);
+                let _ = reg.save();
+            }
+        }
+        return Err("Recovery phrase verification failed. Vault rolled back. \
+             Re-run `baluard init` and complete the verification step."
             .into());
     }
 

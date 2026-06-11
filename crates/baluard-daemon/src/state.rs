@@ -1815,7 +1815,7 @@ impl VaultState {
         // we read settings ONCE and pass the loaded value.
         let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
         let policy = settings.enrollment_policy;
-        drop(handle);
+        let _ = handle;
 
         // Build EnrollmentPayload for this device
         let (x25519_secret, x25519_public) =
