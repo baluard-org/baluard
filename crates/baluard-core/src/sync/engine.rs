@@ -867,7 +867,9 @@ impl SyncEngine {
     }
 
     /// Clone without URL validation (for local testing/development).
-    pub fn clone_unchecked(url: &str, target: &Path) -> Result<Repository, BaluardError> {
+    /// M5 fix: `pub(crate)` so external callers cannot bypass scheme validation.
+    #[doc(hidden)]
+    pub(crate) fn clone_unchecked(url: &str, target: &Path) -> Result<Repository, BaluardError> {
         let mut builder = RepoBuilder::new();
         // Wire credential callbacks for clone operations
         let cred_config = CredentialConfig::load(target);
@@ -885,13 +887,40 @@ impl SyncEngine {
             if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
                 if let Some(ref token) = https_token {
                     let user = username_from_url.unwrap_or("git");
-                    return git2::Cred::userpass_plaintext(user, token);
+                    return git2::Cred::userpass_plaintext(user, token.as_str());
                 }
             }
             if allowed_types.contains(git2::CredentialType::DEFAULT) {
                 return git2::Cred::default();
             }
             Err(git2::Error::from_str("no credential source available"))
+        });
+        // M5 fix: enforce known_hosts for SSH (HTTPS passthrough).
+        callbacks.certificate_check(|cert, host| {
+            use git2::cert::SshHostKeyType;
+            use git2::CertificateCheckStatus;
+            if let Some(hostkey) = cert.as_hostkey() {
+                let key_type = match hostkey.hostkey_type() {
+                    Some(SshHostKeyType::Ed255219) => "ssh-ed25519",
+                    Some(SshHostKeyType::Rsa) => "ssh-rsa",
+                    Some(SshHostKeyType::Dss) => "ssh-dss",
+                    Some(SshHostKeyType::Ecdsa256) => "ecdsa-sha2-nistp256",
+                    Some(SshHostKeyType::Ecdsa384) => "ecdsa-sha2-nistp384",
+                    Some(SshHostKeyType::Ecdsa521) => "ecdsa-sha2-nistp521",
+                    _ => "",
+                };
+                let key = hostkey.hostkey().unwrap_or(&[]);
+                match crate::sync::known_hosts::verify_host_key(host, key_type, key) {
+                    crate::sync::known_hosts::HostKeyResult::Known => {
+                        Ok(CertificateCheckStatus::CertificateOk)
+                    }
+                    _ => Err(git2::Error::from_str(&format!(
+                        "SSH host key for {host} not in known_hosts"
+                    ))),
+                }
+            } else {
+                Ok(CertificateCheckStatus::CertificatePassthrough)
+            }
         });
         fetch_opts.remote_callbacks(callbacks);
         builder.fetch_options(fetch_opts);

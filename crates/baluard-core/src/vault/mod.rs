@@ -4,6 +4,7 @@
 //! Doc 06 Section 10: Vault creation ceremony.
 
 pub mod attachment;
+pub mod avatar;
 pub mod cipher;
 pub mod creation;
 pub mod envelope;

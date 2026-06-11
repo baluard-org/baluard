@@ -576,6 +576,16 @@ impl VaultHandle {
         }
     }
 
+    /// M1 fix: Derive the avatar encryption key from the unlocked SGK.
+    /// Domain-separated from item keys; epoch-bound so avatar is re-wrapped
+    /// on root key rotation.
+    pub fn derive_avatar_key(&self) -> [u8; 32] {
+        let unlocked = self.unlocked();
+        unlocked
+            .space_group_key
+            .derive_avatar_key(unlocked.space_group_key.epoch())
+    }
+
     /// Encrypt metadata JSON and write to disk atomically.
     /// Shared by save_folders, save_tags_enc, save_profile.
     /// Caller must ensure vault is unlocked and derive the key.
