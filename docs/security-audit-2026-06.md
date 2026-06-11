@@ -304,7 +304,7 @@ For a privacy-focused, offline, no-server-backend password manager, this is a me
 
 ### H9. Quorum bypass on revocation/eviction; enrollment not bound to vault
 
-> **Status: FIXED** (commit `35359bf`) — Enrollment: `EnrollmentPayload` gains `vault_id`, `epoch`, `registry_version` fields. `enroll()` verifies epoch and registry_version fail-closed (rejects missing bindings for non-first-device). Revocation: always self-acknowledge and commit (Baluard is single-admin; quorum proves admin authorization, not multi-party approval). **Residual:** `vault_id` binding not verified at DeviceManager layer (needs handle-layer wiring); out-of-band fingerprint confirmation step not implemented.
+> **Status: REVISED** (commits `35359bf`, `f8bb338`, `12b1f26`, `7ef4a6f`) — Original fix (commit `35359bf`): enrollment binding to vault_id/epoch/registry_version; revocation always self-commits (single-admin model). Product revision (commits `f8bb338`+): added `EnrollmentPolicy` (Personal/Strict) and `enroll_with_recovery_phrase()` for non-destructive enrollment via the recovery phrase. New vaults default to Personal; existing vaults default to Strict (backward compat). The recovery phrase is the vault's root authority — it can already perform full disaster recovery; phrase-based enrollment is a strict subset. See **Residual** below and the new **Appendix: Enrollment Design** for the full product decision.
 
 **File:** `crates/baluard-core/src/device_manager.rs:1030-1097` (revocation/eviction), `:782-791` (enrollment)
 **Status:** Confirmed design gaps.
@@ -316,6 +316,17 @@ For a privacy-focused, offline, no-server-backend password manager, this is a me
 **Enrollment.** `enroll` (`:782-791`) verifies an Ed25519 signature over `"enroll" || JSON(payload)` only. The payload (`:200-212`) contains device keys, timestamp, nonce, name — but **no vault ID, no epoch, no approver-registry binding**. The ±5-min window + nonce prevents replay within the window, but a captured approval is valid against any vault state, and the out-of-band channel (QR/paste) is trust-on-first-use with no fingerprint confirmation step. An attacker who intercepts and substitutes the `EnrollmentPayload` before the approver signs gets the approver to authorize attacker-controlled keys.
 
 **Fix.** Enforce quorum on eviction; bind enrollment signatures to vault ID + epoch + registry version; add an out-of-band fingerprint confirmation step to enrollment.
+
+**Product revision (2026-06-11).** The original fix addressed multi-admin correctness. A subsequent product review (see *Appendix: Enrollment Design* below) identified a design tension: requiring another device to authorize enrollment is hostile to single-user, serverless workflows. The fix was extended with:
+
+1. **`EnrollmentPolicy`** in `VaultSettings`: `Personal` (default for new vaults) or `Strict` (default for existing vaults, backward compat).
+2. **`enroll_with_recovery_phrase(payload, phrase)`** in `DeviceManager`: non-destructive enrollment that uses the BIP-39 recovery phrase as proof of root authority. Enrolls into the existing registry without resetting it.
+3. **Mandatory recovery-phrase verification** during vault creation in both desktop and CLI. The user MUST re-enter 4 random words from the phrase before proceeding. This is not security theater — it's the only defense against permanent vault loss when all devices fail.
+4. **`baluard devices enroll-with-phrase`** CLI subcommand + `vault.enroll_with_phrase` IPC route.
+
+**Threat model.** The recovery phrase is already the root authority: `recover_from_phrase` exists for full disaster recovery (resets registry). `enroll_with_recovery_phrase` is a strict subset of that authority — it adds a device without resetting state. If the phrase is compromised, the vault is already compromised regardless. The master password alone remains insufficient to add a device.
+
+**Residual.** `vault_id` binding not verified at DeviceManager layer (needs handle-layer wiring); out-of-band fingerprint confirmation step for device approval not implemented (users should still verify device fingerprints before approving enrollment).
 
 ---
 
@@ -572,6 +583,98 @@ The following items were identified during peer review of the fixes but are acce
 3. **H3 residual:** Integrity manifest signatures are recorded but not verified on load. Manifest is in writable tree with no external anchor. Multi-device sync may cause manifest conflicts (single `meta/integrity.json` per vault). Per-device manifest and external anchoring are future work.
 4. **H6 residual:** Token stored plaintext for its lifetime (no rotation). 30-second reprompt grant token not enforced server-side.
 5. **H9 residual:** `vault_id` not verified at DeviceManager layer (DeviceManager lacks vault_id). Out-of-band fingerprint confirmation step not implemented.
+
+---
+
+## Appendix: Enrollment Design (Product Decision, 2026-06-11)
+
+**Background.** The original H9 fix addressed multi-admin correctness by
+requiring an enrolled device to sign any new device's enrollment payload.
+A product review surfaced a design tension: this is hostile to single-user,
+serverless workflows. A solo user with one phone and one laptop who
+loses both cannot add a new device without a pre-existing device to
+produce the approval signature.
+
+**Product constraints (non-negotiable).**
+
+1. No central server. No Baluard-operated infrastructure.
+2. Easy to use. Adding a second device should not require the first
+   device to be physically present and unlocked.
+3. 100% independent. A user who has lost every device must still be
+   able to recover and continue using Baluard on a fresh device.
+4. Future-proof. A user returning to Baluard after years must not
+   depend on a service that may have shut down.
+5. Single-user is the primary use case. Team sharing is secondary.
+
+**Resolution.**
+
+- **Two-path enrollment** controlled by a vault setting:
+  - `ExistingDevice`: an enrolled device signed the payload. Required
+    in `Strict` mode, accepted in `Personal` mode.
+  - `RecoveryPhrase`: the 24-word BIP-39 phrase. Only accepted in
+    `Personal` mode. The phrase is the vault's root authority.
+
+- **`EnrollmentPolicy` setting** in `VaultSettings`:
+  - `Personal` (default for new vaults): phrase OR device approval accepted.
+  - `Strict` (default for existing vaults, backward compat): only
+    device approval accepted. Phrase only works via destructive
+    `recover_from_phrase`.
+
+- **New method `DeviceManager::enroll_with_recovery_phrase(payload, phrase)`**:
+  Non-destructive — enrolls into the existing registry without
+  resetting devices. Unwraps Root Key from `meta/recovery.json`,
+  writes a new keywrap, persists state.
+
+- **Mandatory recovery-phrase write-down verification** during vault
+  creation (both desktop and CLI). The user MUST re-enter 4 random
+  words from the phrase before they can proceed. Positions are
+  deterministic (FNV-1a hash of the phrase) so the same phrase
+  always asks for the same words. This is not security theater —
+  it's the only defense against permanent vault loss when all
+  devices fail.
+
+**Threat model answer.** Is there a principled reason the recovery
+phrase should NOT also function as authority for adding a subsequent
+device? **No.** The recovery phrase is already the root authority:
+`recover_from_phrase` already exists for full disaster recovery
+(registry reset). `enroll_with_recovery_phrase` is a strict subset
+of that authority — it adds a device without resetting state. If
+the phrase is compromised, the vault is already compromised.
+
+**What the master password does NOT do.** The master password
+alone remains insufficient to add a device. Without the recovery
+phrase AND without an enrolled device, enrollment is impossible.
+The master password is a KEK for the on-disk data, not a device
+authority.
+
+**Failure mode table.**
+
+| Scenario | Outcome |
+|---|---|
+| Add second device, first is alive | Enrolls via device approval (works in both policies) |
+| Add second device, first is dead, phrase kept | Enrolls via recovery phrase (Personal mode) |
+| Add second device, first is dead, phrase lost | Permanently locked out (Strict mode) |
+| All devices lost, phrase preserved | Enrolls via recovery phrase (Personal mode) |
+| All devices lost, phrase lost | Permanently locked out (any mode) |
+| Thief steals master password, wants to add attacker device | Cannot — no enrolled device to sign, no recovery phrase |
+
+**Files changed.**
+
+- `crates/baluard-core/src/vault/manifest.rs`: `EnrollmentPolicy` enum,
+  default for new vaults is `Personal`, deserialization fallback for
+  existing vaults is `Strict`.
+- `crates/baluard-core/src/device_manager.rs`: `EnrollmentAuthorization`
+  enum, `enroll_with_recovery_phrase()` method, 6 new tests.
+- `crates/baluard-daemon/src/state.rs` + `handler.rs`: `vault.enroll_with_phrase`
+  IPC route + handler.
+- `crates/baluard-cli/`: `baluard devices enroll-with-phrase` subcommand
+  with typed confirmation, `getrandom = 0.2` dependency.
+- `desktop/src/components/RecoveryScreen.jsx`: mandatory verification
+  step, "why this matters" panel with examples.
+- `desktop/src/i18n/locales/{en,es}.json`: full translations.
+
+**Tests.** 10 new tests (6 for `enroll_with_phrase`, 4 for
+`EnrollmentPolicy`). 324 total pass.
 
 ---
 

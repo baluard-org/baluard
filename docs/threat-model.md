@@ -79,8 +79,8 @@
 
 ### T13: Recovery Phrase Exposure
 - **Threat**: The BIP-39 24-word recovery phrase is written down, photographed, or observed during vault creation.
-- **Control**: The phrase is displayed once during creation and never stored in plaintext. Derived via BIP-39 from 256 bits of CSPRNG entropy. The recovery phrase bypasses all device enrollment and quorum controls. Physical security of the phrase is the user's responsibility.
-- **Residual**: The phrase IS the root of trust. If compromised, full vault access is possible from any device. No mitigating control exists beyond physical protection.
+- **Control**: The phrase is displayed once during creation and never stored in plaintext. Derived via BIP-39 from 256 bits of CSPRNG entropy. The recovery phrase bypasses all device enrollment and quorum controls. Physical security of the phrase is the user's responsibility. **Mandatory write-down verification** during creation (user must re-enter 4 random words) reduces the risk that the user proceeds without actually writing it down.
+- **Residual**: The phrase IS the root of trust. If compromised, full vault access is possible from any device. No mitigating control exists beyond physical protection. With `EnrollmentPolicy::Personal`, the phrase can also be used to enroll new devices (non-destructive). With `Strict`, it only works via destructive `recover_from_phrase`.
 
 ### T14: Cover Commit Correlation
 - **Threat**: Despite cover commits, an adversary correlates real commits (accompanying entry changes) with cover commits (no-op) by analyzing commit diff sizes or timing patterns.
