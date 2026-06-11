@@ -27,7 +27,20 @@
     "title": "Frase de recuperación",
     "warning": "Escribe esta frase. NO se volverá a mostrar.",
     "confirm": "He guardado mi frase de recuperación",
-    "copyToClipboard": "Copiar al portapapeles"
+    "confirmDisabled": "Verifica todas las palabras para continuar",
+    "copyToClipboard": "Copiar al portapapeles",
+    "whyTitle": "Por qué esto importa",
+    "whyBody": "Esta frase de 24 palabras es la ÚNICA forma de recuperar tu bóveda si todos los dispositivos fallan. No hay servidor, no hay restablecimiento por correo, no hay número de teléfono al que llamar. Si pierdes la frase y todos tus dispositivos, tu bóveda desaparece para siempre.",
+    "showExamples": "¿Cuándo necesitaría esto?",
+    "hideExamples": "Ocultar ejemplos",
+    "example1": "Compras un portátil nuevo y el viejo ya no está.",
+    "example2": "Pierdes o destruyes el teléfono y el portátil murió el mes pasado.",
+    "example3": "Un incendio, inundación o robo se lleva todos los dispositivos a la vez.",
+    "example4": "Vuelves a Baluard después de años y necesitas configurar un dispositivo nuevo.",
+    "writeItDown": "Escríbela en papel. Guárdala en un lugar seguro (caja fuerte, caja de seguridad, bolsa ignífuga). Las capturas de pantalla y los gestores de contraseñas NO son lo suficientemente seguros — también pueden fallar.",
+    "verifyTitle": "Demuestra que la escribiste",
+    "wordN": "Palabra #{n}",
+    "verified": "Todas las palabras coinciden. Tu frase de recuperación está guardada."
   },
   "setup": {
     "title": "Configura tu bóveda",

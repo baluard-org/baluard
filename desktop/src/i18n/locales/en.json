@@ -27,7 +27,20 @@
     "title": "Recovery Phrase",
     "warning": "Write this down. It will NOT be shown again.",
     "confirm": "I've saved my recovery phrase",
-    "copyToClipboard": "Copy to clipboard"
+    "confirmDisabled": "Verify all words above to continue",
+    "copyToClipboard": "Copy to clipboard",
+    "whyTitle": "Why this matters",
+    "whyBody": "This 24-word phrase is the ONLY way to recover your vault if every device fails. There is no server, no email reset, no phone number to call. If you lose the phrase and all your devices, your vault is gone forever.",
+    "showExamples": "When would I need this?",
+    "hideExamples": "Hide examples",
+    "example1": "You buy a new laptop and your old one is already gone.",
+    "example2": "Your phone is lost or destroyed and your laptop died last month.",
+    "example3": "A house fire, flood, or theft takes every device at once.",
+    "example4": "You return to Baluard after years away and need to set up a new device.",
+    "writeItDown": "Write it on paper. Store it somewhere safe (safe, safety deposit box, fireproof bag). Screenshots and password managers are NOT safe enough — they can fail too.",
+    "verifyTitle": "Prove you wrote it down",
+    "wordN": "Word #{n}",
+    "verified": "All words match. Your recovery phrase is saved."
   },
   "setup": {
     "title": "Set Up Your Vault",
