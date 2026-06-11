@@ -640,6 +640,7 @@ impl VaultHandle {
                 display_name: None,
                 subtitle: None,
                 avatar_ext: None,
+                enrollment_policy: crate::vault::manifest::EnrollmentPolicy::Strict,
             });
         }
         let data = std::fs::read_to_string(&settings_path)?;

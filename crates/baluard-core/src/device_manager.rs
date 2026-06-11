@@ -225,6 +225,21 @@ pub struct ApprovalSignature {
     pub signature: Vec<u8>,
 }
 
+/// Authorization for enrolling a new device.
+///
+/// Two paths, controlled by `VaultSettings::enrollment_policy`:
+/// - `ExistingDevice`: an enrolled device signed the payload. Required
+///   in `Strict` mode, accepted in `Personal` mode.
+/// - `RecoveryPhrase`: the 24-word BIP-39 recovery phrase. Only
+///   accepted in `Personal` mode. The phrase is the vault's root
+///   authority; it can already perform full disaster recovery via
+///   `recover_from_phrase`. This variant enrolls into the existing
+///   registry without resetting state.
+pub enum EnrollmentAuthorization<'a> {
+    ExistingDevice(&'a ApprovalSignature),
+    RecoveryPhrase(&'a str),
+}
+
 /// Pairing bundle returned by existing device after approving enrollment.
 /// Transfer methods: QR code, manual copy/paste, file export.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1358,6 +1373,183 @@ impl DeviceManager {
             root_key,
             entry,
             device_id: new_device_id,
+            x25519_secret,
+            ed25519_signing,
+        })
+    }
+
+    // ── Non-destructive enrollment via recovery phrase ──
+
+    /// Enroll a new device into an existing vault using the BIP-39 recovery
+    /// phrase. Non-destructive: existing devices remain in the registry.
+    ///
+    /// Use case: user has lost all their enrolled devices (or the only
+    /// enrolled device is inaccessible) but still has the recovery phrase.
+    /// The phrase proves root authority — the new device derives the Root
+    /// Key, wraps it for itself, and joins the existing vault.
+    ///
+    /// Requires `EnrollmentPolicy::Personal`. In `Strict` mode, only
+    /// `ExistingDevice` authorization is accepted; use `recover_from_phrase`
+    /// (destructive) instead.
+    ///
+    /// Difference from `recover_from_phrase`:
+    /// - This method PRESERVES the device registry (old devices stay enrolled).
+    /// - `recover_from_phrase` resets the registry to a single new device.
+    ///
+    /// Returns the new device's X25519/Ed25519 private keys for keywrap/signing.
+    pub fn enroll_with_recovery_phrase(
+        &mut self,
+        payload: &EnrollmentPayload,
+        phrase: &str,
+    ) -> Result<RecoveryResult, BaluardError> {
+        use crate::recovery::RecoveryPhrase;
+
+        // Step 1: Parse phrase
+        let recovery_phrase = RecoveryPhrase::from_phrase(phrase).map_err(|e| {
+            DeviceError::EnrollmentRejected(format!("invalid recovery phrase: {e}"))
+        })?;
+
+        // Step 2: Derive recovery key and X25519 secret
+        let mut recovery_key = recovery_phrase.derive_key();
+        let recovery_x25519_secret = x25519_dalek::StaticSecret::from(
+            <[u8; 32]>::try_from(&recovery_key[..32])
+                .map_err(|_| DeviceError::Keystore("recovery key too short".into()))?,
+        );
+        use zeroize::Zeroize;
+        recovery_key.zeroize();
+
+        // Step 3: Load recovery.json from vault
+        let vault_path = self
+            .store
+            .as_ref()
+            .and_then(|s| s.vault_path())
+            .ok_or_else(|| DeviceError::Keystore("vault_path not set for enrollment".into()))?;
+        let vault_path = vault_path.to_path_buf();
+        let recovery_json_path = vault_path.join("meta/recovery.json");
+        if !recovery_json_path.exists() {
+            return Err(DeviceError::Keystore("meta/recovery.json not found".into()).into());
+        }
+
+        let recovery_json_str = std::fs::read_to_string(&recovery_json_path)
+            .map_err(|e| DeviceError::Keystore(format!("reading recovery.json: {e}")))?;
+        let recovery_json: serde_json::Value = serde_json::from_str(&recovery_json_str)
+            .map_err(|e| DeviceError::Keystore(format!("parsing recovery.json: {e}")))?;
+
+        let eph_pub = hex::decode(recovery_json["ephemeral_public"].as_str().unwrap_or(""))
+            .map_err(|e| DeviceError::Keystore(format!("recovery eph_public hex: {e}")))?;
+        let ct = hex::decode(recovery_json["encrypted_key"].as_str().unwrap_or(""))
+            .map_err(|e| DeviceError::Keystore(format!("recovery encrypted_key hex: {e}")))?;
+        let tag_hex = recovery_json["tag"].as_str().unwrap_or("");
+        let tag_bytes = hex::decode(tag_hex)
+            .map_err(|e| DeviceError::Keystore(format!("recovery tag hex: {e}")))?;
+        let mut tag = [0u8; 16];
+        if tag_bytes.len() != 16 {
+            return Err(DeviceError::Keystore("invalid recovery tag length".into()).into());
+        }
+        tag.copy_from_slice(&tag_bytes);
+
+        // Step 4: HPKE-unwrap Root Key
+        let root_key_bytes =
+            crate::crypto::hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &recovery_x25519_secret)?;
+        let rk_arr: [u8; 64] = root_key_bytes
+            .try_into()
+            .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?;
+        let root_key = RootKey::from_bytes(rk_arr);
+
+        // Step 5: Validate payload (timestamp, nonce, keys) — same as enroll()
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let drift = now.abs_diff(payload.timestamp);
+        if drift > 300 {
+            return Err(DeviceError::EnrollmentRejected(
+                "stale: timestamp outside 5-minute window".into(),
+            )
+            .into());
+        }
+        if self.seen_nonces.contains(&payload.nonce) {
+            return Err(
+                DeviceError::EnrollmentRejected("replay: nonce already used".into()).into(),
+            );
+        }
+        // Record nonce to prevent replay (trim if at cap, same logic as enroll())
+        if self.seen_nonces.len() >= MAX_SEEN_NONCES {
+            self.seen_nonces.remove(0);
+        }
+        self.seen_nonces.push(payload.nonce.clone());
+
+        let enc_pk = hex::decode(&payload.encryption_public_key)
+            .map_err(|_| DeviceError::EnrollmentRejected("invalid encryption key hex".into()))?;
+        let sig_pk = hex::decode(&payload.signing_public_key)
+            .map_err(|_| DeviceError::EnrollmentRejected("invalid signing key hex".into()))?;
+        if enc_pk.len() != 32 || sig_pk.len() != 32 {
+            return Err(DeviceError::EnrollmentRejected("invalid public key length".into()).into());
+        }
+        let mut enc_arr = [0u8; 32];
+        let mut sig_arr = [0u8; 32];
+        enc_arr.copy_from_slice(&enc_pk);
+        sig_arr.copy_from_slice(&sig_pk);
+
+        // Step 6: Reject if this device is already enrolled
+        if self.registry.is_enrolled(&payload.device_id) {
+            return Err(DeviceError::AlreadyEnrolled(payload.device_id.to_string()).into());
+        }
+
+        // Step 7: Enroll into EXISTING registry (non-destructive — old devices stay)
+        let entry = self.registry.enroll_with_id(
+            payload.device_id,
+            payload.name.clone(),
+            enc_arr,
+            sig_arr,
+            None, // No approver — recovery phrase is the authority
+        )?;
+
+        // Step 8: Write keywrap for new device (so the vault is usable on next open)
+        let (x25519_secret, x25519_public) = crate::crypto::hpke_wrap::generate_x25519_keypair();
+        let (eph_pub, ct, tag_out) =
+            crate::crypto::hpke_wrap::wrap_key(root_key.as_bytes(), &x25519_public)?;
+        let keywrap_data = serde_json::json!({
+            "device_id": payload.device_id.to_string(),
+            "ephemeral_public": hex::encode(eph_pub),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag_out),
+        });
+        let keywrap_dir = vault_path.join("meta/keywrap");
+        let _ = std::fs::create_dir_all(&keywrap_dir);
+        atomic_write(
+            &keywrap_dir.join(format!("{}.json", payload.device_id)),
+            &serde_json::to_string_pretty(&keywrap_data).unwrap(),
+        )?;
+
+        // Step 9: Write device-privkey.json for CLI/rotation use
+        let (ed25519_signing, _ed25519_verifying) =
+            crate::crypto::signature::generate_ed25519_keypair();
+        let ed_priv_bytes = ed25519_signing.to_bytes();
+        let privkey_data = serde_json::json!({
+            "x25519_private": hex::encode(x25519_secret.to_bytes()),
+            "ed25519_private": hex::encode(ed_priv_bytes),
+        });
+        let privkey_path = vault_path.join("meta/device-privkey.json");
+        let privkey_tmp = privkey_path.with_extension("json.tmp");
+        std::fs::write(
+            &privkey_tmp,
+            serde_json::to_string_pretty(&privkey_data).unwrap(),
+        )?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
+        }
+        std::fs::rename(&privkey_tmp, &privkey_path)?;
+
+        // Step 10: Persist state
+        self.auto_save_result()?;
+
+        Ok(RecoveryResult {
+            root_key,
+            entry,
+            device_id: payload.device_id,
             x25519_secret,
             ed25519_signing,
         })
