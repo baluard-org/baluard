@@ -3,6 +3,7 @@ import { Transition } from "solid-transition-group";
 import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword, generatePassphrase } from "../lib/utils.js";
 import { IconCopy, IconCheck, IconRefresh } from "./Icon.jsx";
+import { copyToClipboard } from "../lib/clipboard.js";
 import FocusTrap from "./FocusTrap.jsx";
 
 const MODE_PASSWORD = "password";
@@ -47,8 +48,8 @@ export default function GeneratorModal(props) {
     regenerate();
   });
 
-  function handleCopy() {
-    navigator.clipboard.writeText(result());
+  async function handleCopy() {
+    await copyToClipboard(result());
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
   }

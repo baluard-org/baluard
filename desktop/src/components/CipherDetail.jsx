@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { cipherToFlat } from "../lib/cipherSchema.js";
 import { useVault } from "../context/VaultContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
+import { copyToClipboard } from "../lib/clipboard.js";
 import { daemon } from "../lib/daemon.js";
 import { uriStr, formatCardNumber } from "../lib/utils.js";
 import { SECTION_LABEL } from "../lib/helpers.js";
@@ -16,10 +17,10 @@ import CipherAvatar from "./CipherAvatar.jsx";
 function CopyNotesButton(props) {
   const { t } = useI18n();
   const [copied, setCopied] = createSignal(false);
-  function handleCopy() {
-    navigator.clipboard.writeText(props.value || "");
+  async function handleCopy() {
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
+    await copyToClipboard(props.value || "");
   }
   return (
     <button
@@ -142,7 +143,7 @@ export default function CipherDetail(props) {
                   <div class="flex items-center gap-2">
                     <span class="text-2xl font-mono font-bold tracking-[0.3em] text-[var(--color-text)] select-all">{totpCode()?.code?.match(/.{1,3}/g)?.join(" ") || totpCode()?.code}</span>
                     <button
-                      onClick={() => { navigator.clipboard.writeText(totpCode()?.code || ""); setTotpCopied(true); setTimeout(() => setTotpCopied(false), 1800); }}
+                      onClick={async () => { await copyToClipboard(totpCode()?.code || ""); setTotpCopied(true); setTimeout(() => setTotpCopied(false), 1800); }}
                       class="p-1.5 rounded-lg text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                       title={t("entry.copyCode")}
                     >
@@ -256,10 +257,20 @@ export default function CipherDetail(props) {
         <Show when={cipher()?.uris?.length}>
           {(() => {
             const uri = () => uriStr(cipher()?.uris?.[0]);
-            // L4 fix: only treat http(s) and mailto as already-prefixed URIs.
-            // The previous `u.startsWith("http")` also matched `httpfoo...`.
-            const SCHEME_RE = /^(https?|mailto):\/\//i;
-            const launchHref = () => { const u = uri(); return SCHEME_RE.test(u) ? u : `https://${u}`; };
+            // L4 fix: only treat http(s) as already-prefixed URIs. mailto
+            // has no // so it needs special handling. The previous regex
+            // `/^(https?|mailto):\/\//` broke `mailto:user@example.com` by
+            // prepending https://. The new check:
+            //   - mailto:user@host   -> keep as-is (no https:// prefix)
+            //   - http(s)://...      -> keep as-is
+            //   - anything else       -> prepend https://
+            const launchHref = () => {
+              const u = uri();
+              if (!u) return "";
+              if (u.startsWith("mailto:")) return u;
+              if (/^https?:\/\//i.test(u)) return u;
+              return `https://${u}`;
+            };
             const launch = (e) => { e.preventDefault(); openUrl(launchHref()); };
             return (
               <div class="space-y-4 pt-2">

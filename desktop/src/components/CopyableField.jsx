@@ -1,14 +1,15 @@
 import { createSignal, Show } from "solid-js";
 import { IconEye, IconEyeOff, IconCopy, IconCheck } from "./Icon.jsx";
 import { CARD_ROW } from "../lib/helpers.js";
+import { copyToClipboard } from "../lib/clipboard.js";
 
 export default function CopyableField(props) {
   const [copied, setCopied] = createSignal(false);
 
-  function handleCopy() {
-    navigator.clipboard.writeText(props.copyValue ?? (props.value || ""));
+  async function handleCopy() {
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
+    await copyToClipboard(props.copyValue ?? (props.value || ""));
   }
 
   return (
