@@ -84,7 +84,6 @@ pub fn handle_init(
     vault_path: &str,
     profile_str: &str,
     flag_name: Option<String>,
-    flag_subtitle: Option<String>,
     flag_slug: Option<String>,
     flag_theme: Option<String>,
     flag_lang: Option<String>,
@@ -129,8 +128,6 @@ pub fn handle_init(
         }
         None => None,
     };
-
-    let subtitle = flag_subtitle;
 
     // Resolve slug: flag > auto-generate from display name > prompt
     let slug = match flag_slug {
@@ -240,7 +237,7 @@ pub fn handle_init(
     let (_handle, secrets) =
         baluard_core::vault::creation::VaultCreator::new(&resolved_path, &password, "this-device")
             .kdf_profile(profile)
-            .profile(display_name.clone(), subtitle)
+            .profile(display_name.clone(), None)
             .slug(slug.clone())
             .preferences(theme, lang.clone(), auto_lock)
             .execute()?;
