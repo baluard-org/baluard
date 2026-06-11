@@ -357,13 +357,23 @@ impl SyncEngine {
             Ok(oid)
         }
     }
-    /// Returns error if walk terminates before ancestor (shallow clone gap).
-    /// Peer review fix (C2 residual): walks ALL parents of merge commits,
-    /// not just the first parent. A merge commit smuggled through a side
-    /// branch merged into remote history could otherwise bypass signature
-    /// verification on its second-parent lineage.
+    /// Collect all commits between `ancestor` (exclusive) and `descendant`
+    /// (inclusive) for signature verification. Walks ALL parents of merge
+    /// commits (peer review fix for C2 residual: previously first-parent
+    /// only, which let smuggled second-parent commits bypass verification).
+    ///
+    /// Termination is anchored to `local_oid` (local HEAD), not just the
+    /// single `ancestor` OID. If a lineage walks back into any commit
+    /// reachable from local HEAD, it's trusted and the BFS stops there.
+    /// This prevents the regression where a side branch that forked
+    /// *before* the merge base would walk to a root and return a
+    /// misleading "shallow clone" error.
+    ///
+    /// Returns error if walk terminates before reaching any trusted
+    /// commit (shallow clone gap).
     fn collect_commit_range(
         repo: &Repository,
+        local_oid: Oid,
         ancestor: Oid,
         descendant: Oid,
     ) -> Result<Vec<Oid>, BaluardError> {
@@ -371,11 +381,21 @@ impl SyncEngine {
         let mut oids = Vec::new();
         let mut visited: HashSet<Oid> = HashSet::new();
         // BFS frontier. Start with the descendant; we explore its parents
-        // until we reach the ancestor. The ancestor itself is NOT included
-        // in the result (it's the merge base, not a "new" commit).
+        // until we reach a trusted commit (local HEAD or any of its
+        // ancestors, OR the explicit merge-base ancestor).
         let mut frontier: Vec<Oid> = vec![descendant];
         while let Some(current) = frontier.pop() {
-            if current == ancestor {
+            // Stop at the explicit merge base or any commit in local's
+            // trusted history. The `ancestor` check is kept for the common
+            // case where the merge base is on the first-parent lineage
+            // (the fast-forward path); the `graph_descendant_of` check
+            // covers side branches that reconverge into local history
+            // before the merge base.
+            if current == ancestor
+                || repo
+                    .graph_descendant_of(local_oid, current)
+                    .unwrap_or(false)
+            {
                 continue;
             }
             if !visited.insert(current) {
@@ -393,11 +413,16 @@ impl SyncEngine {
                 )
                 .into());
             }
+            // PR-60: propagate parent_id errors instead of silently
+            // skipping. A skipped parent is a lineage that is never
+            // signature-checked — a narrow bypass on corrupt/crafted
+            // objects. The pre-fix code used .unwrap().
             for i in 0..parent_count {
-                if let Ok(p) = commit.parent_id(i) {
-                    if !visited.contains(&p) {
-                        frontier.push(p);
-                    }
+                let p = commit
+                    .parent_id(i)
+                    .map_err(|e| SyncError::Git(format!("parent {i}: {e}")))?;
+                if !visited.contains(&p) {
+                    frontier.push(p);
                 }
             }
         }
@@ -637,7 +662,7 @@ impl SyncEngine {
             let branch = Self::resolve_default_branch(repo);
 
             // D22: Verify commit signatures BEFORE updating any refs or working tree
-            let new_oids = Self::collect_commit_range(repo, local_oid, remote_oid)?;
+            let new_oids = Self::collect_commit_range(repo, local_oid, local_oid, remote_oid)?;
             self.verify_commit_signatures(repo, &new_oids)?;
 
             repo.reference(
@@ -672,7 +697,7 @@ impl SyncEngine {
 
         // D22: Verify commit signatures BEFORE merging remote commits.
         // Collect remote commits from merge_base to remote_oid and verify each.
-        let remote_new_oids = Self::collect_commit_range(repo, merge_base, remote_oid)?;
+        let remote_new_oids = Self::collect_commit_range(repo, local_oid, merge_base, remote_oid)?;
         self.verify_commit_signatures(repo, &remote_new_oids)?;
 
         // Perform merge
@@ -786,7 +811,7 @@ impl SyncEngine {
         let merge_base = repo
             .merge_base(local_oid, remote_oid)
             .map_err(|e| SyncError::Git(format!("merge_base for conflict resolve: {e}")))?;
-        let remote_new_oids = Self::collect_commit_range(repo, merge_base, remote_oid)?;
+        let remote_new_oids = Self::collect_commit_range(repo, local_oid, merge_base, remote_oid)?;
         self.verify_commit_signatures(repo, &remote_new_oids)?;
 
         // Write resolved files to working directory (with path traversal protection)
@@ -1659,7 +1684,7 @@ mod tests {
         // Should return [C, B] in some order
         let dir = tempfile::tempdir().unwrap();
         let (repo, a, _b, c) = build_linear_repo(dir.path());
-        let oids = SyncEngine::collect_commit_range(&repo, a, c).unwrap();
+        let oids = SyncEngine::collect_commit_range(&repo, a, a, c).unwrap();
         let set: std::collections::HashSet<_> = oids.iter().copied().collect();
         assert_eq!(set.len(), 2);
         assert!(!set.contains(&a), "ancestor must NOT be in result");
@@ -1674,7 +1699,7 @@ mod tests {
         // walked B and missed C.
         let dir = tempfile::tempdir().unwrap();
         let (repo, a, b, c, d) = build_diamond_repo(dir.path());
-        let oids = SyncEngine::collect_commit_range(&repo, a, d).unwrap();
+        let oids = SyncEngine::collect_commit_range(&repo, a, a, d).unwrap();
         let set: std::collections::HashSet<_> = oids.iter().copied().collect();
         assert_eq!(set.len(), 3, "should find D, B, and C (not just D and B)");
         assert!(set.contains(&d), "descendant (merge commit) must be in result");
@@ -1764,7 +1789,7 @@ mod tests {
             .unwrap()
         };
 
-        let oids = SyncEngine::collect_commit_range(&repo, a, d).unwrap();
+        let oids = SyncEngine::collect_commit_range(&repo, a, a, d).unwrap();
         let set: std::collections::HashSet<_> = oids.iter().copied().collect();
         assert_eq!(set.len(), 4, "should find D, B, C, E");
         assert!(set.contains(&d));
@@ -1774,9 +1799,13 @@ mod tests {
     }
 
     #[test]
-    fn collect_commit_range_handles_cyclic_history() {
-        // Malformed history where A points to B and B points back to A.
-        // The visited set must prevent infinite loop.
+    fn collect_commit_range_trivial_path_is_single_descendant() {
+        // The "cyclic" test was mislabeled: git cannot construct actual
+        // cycles (content-addressed parents must pre-exist). This test
+        // actually exercises a trivial A->B path where ancestor==local_oid
+        // and the walk should return just [B]. The visited-set cycle guard
+        // IS exercised by the diamond and octopus reconvergence tests above.
+        // Renamed to be honest about what it tests.
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path()).unwrap();
         let sig = git2::Signature::now("Test", "test@example.com").unwrap();
@@ -1789,10 +1818,7 @@ mod tests {
         let tree_oid = repo.index().unwrap().write_tree().unwrap();
         let a_oid = repo.commit(Some("HEAD"), &sig, &sig, "A", &repo.find_tree(tree_oid).unwrap(), &[]).unwrap();
 
-        // Add B with a temporary parent, then rewrite B to have A as its
-        // sole parent (so A is reachable from B). Then we make a fake
-        // history where B's parent loop is A (root). The walk from B
-        // back to A must terminate, not loop.
+        // B: A -> B
         std::fs::write(dir.path().join("b.txt"), "B").unwrap();
         let mut index = repo.index().unwrap();
         index.add_path(std::path::Path::new("b.txt")).unwrap();
@@ -1810,7 +1836,85 @@ mod tests {
             .unwrap();
 
         // A is ancestor of B. Walk from B to A should return just [B].
-        let oids = SyncEngine::collect_commit_range(&repo, a_oid, b_oid).unwrap();
+        let oids = SyncEngine::collect_commit_range(&repo, a_oid, a_oid, b_oid).unwrap();
         assert_eq!(oids, vec![b_oid]);
+    }
+
+    #[test]
+    #[test]
+    fn collect_commit_range_terminates_at_local_trusted_history() {
+        // peer review review: pre-fix BFS walked every lineage to a root,
+        // not just to the merge base. A side branch that forked BEFORE
+        // the merge base would walk to root and return "shallow clone"
+        // error. Fix: BFS terminates when reaching any commit reachable
+        // from local_oid (via graph_descendant_of).
+        //
+        // Topology: A (root) -> B -> C (side from A)
+        //          M = merge(B, C), HEAD = M after reset
+        //          D = child of M
+        //          local_oid = M
+        //
+        // Walk D -> A (merge base). The second-parent lineage of M is
+        // C -> A. Without local_oid anchor, BFS would walk C's parent
+        // A (= merge base) and stop. With local_oid = M, BFS also
+        // stops at M (M is its own ancestor trivially). Result: {D, M}.
+        // C is NOT in result because M (= local_oid) is its ancestor.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+
+        // A (root)
+        std::fs::write(dir.path().join("a.txt"), "A").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("a.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let a_oid = repo.commit(Some("HEAD"), &sig, &sig, "A", &repo.find_tree(tree_oid).unwrap(), &[]).unwrap();
+
+        // B: A -> B
+        std::fs::write(dir.path().join("b.txt"), "B").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("b.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let b_oid = repo.commit(Some("HEAD"), &sig, &sig, "B", &repo.find_tree(tree_oid).unwrap(), &[&repo.find_commit(a_oid).unwrap()]).unwrap();
+
+        // C: side branch from A. Reset HEAD to A first.
+        repo.set_head_detached(a_oid).unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force())).unwrap();
+        std::fs::write(dir.path().join("c.txt"), "C").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("c.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let c_oid = repo.commit(Some("HEAD"), &sig, &sig, "C", &repo.find_tree(tree_oid).unwrap(), &[&repo.find_commit(a_oid).unwrap()]).unwrap();
+
+        // M: merge of B and C. HEAD is at C, so use None to avoid
+        // "current tip is not the first parent" error (B != C).
+        let m_oid = {
+            let b_commit = repo.find_commit(b_oid).unwrap();
+            let c_commit = repo.find_commit(c_oid).unwrap();
+            let parents: Vec<&git2::Commit> = vec![&b_commit, &c_commit];
+            repo.commit(None, &sig, &sig, "M", &repo.find_tree(repo.index().unwrap().write_tree().unwrap()).unwrap(), &parents).unwrap()
+        };
+
+        // D: child of M. Use None for update_ref.
+        let d_oid = {
+            let m_commit = repo.find_commit(m_oid).unwrap();
+            let parents: Vec<&git2::Commit> = vec![&m_commit];
+            let tree_oid = repo.index().unwrap().write_tree().unwrap();
+            repo.commit(None, &sig, &sig, "D", &repo.find_tree(tree_oid).unwrap(), &parents).unwrap()
+        };
+
+        // Walk D -> A (merge base), local_oid = M.
+        // Expected: {D, M}. B and C are ancestors of M (= local_oid),
+        // so BFS stops before collecting them.
+        let oids = SyncEngine::collect_commit_range(&repo, m_oid, a_oid, d_oid).unwrap();
+        let set: std::collections::HashSet<_> = oids.iter().copied().collect();
+        assert!(set.contains(&d_oid), "D must be in result");
+        assert!(set.contains(&m_oid), "M must be in result");
+        assert!(!set.contains(&b_oid), "B (ancestor of local_oid) must NOT be in result");
+        assert!(!set.contains(&c_oid), "C (ancestor of local_oid) must NOT be in result");
+        assert!(!set.contains(&a_oid), "A (merge base) must NOT be in result");
     }
 }
