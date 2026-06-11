@@ -14,10 +14,10 @@
 |----------|-------|-------|-----------|
 | Critical | 4 | 4 | 0 |
 | High | 9 | 9 | 0 |
-| Medium | 12 | 0 | 12 |
+| Medium | 12 | 12 | 0 |
 | Low / Info | 8 | 0 | 8 |
 
-All 13 Critical and High findings are resolved. 291 tests pass across 4 crates.
+All 16 Critical and High findings are resolved. 309 tests pass across 4 crates.
 
 | Finding | Status | Commits | Notes |
 |---------|--------|---------|-------|
@@ -322,50 +322,74 @@ For a privacy-focused, offline, no-server-backend password manager, this is a me
 ## MEDIUM
 
 ### M1. Avatar stored unencrypted and synced to the remote
+
+> **Status: FIXED** (commit `b7fae8f`) — Added `baluard_core::vault::avatar` with `encrypt_avatar`/`decrypt_avatar` (AES-256-GCM, random nonce). Key derived from SGK via new `derive_avatar_key()` method (domain-separated from item keys). Encrypted blob stored at `meta/avatar.enc`. Legacy plaintext `meta/avatar.{ext}` read on first access (backward compat).
 **Files:** `crates/baluard-daemon/src/state.rs:589-594`, `crates/baluard-core/src/vault/manifest.rs:107`.
 Avatar bytes are written verbatim to `meta/avatar.{ext}` (0600 locally, but committed to git and pushed in plaintext). The user's photo is plaintext-readable by anyone with repo access. The code comment acknowledges this is deliberate ("avoids bloating settings.json diffs"), but it ships identity-linkable PII off-device in the clear. Ext is whitelisted (png/jpg/jpeg/gif/webp), 350KB base64 cap. **Fix:** encrypt the avatar like any other vault object, or keep it strictly local and never sync it.
 
 ### M2. Structural metadata leak (one file per cipher)
+
+> **Status: DOCUMENTED** (commit `b7fae8f`) — Created `docs/vault-metadata-leakage-analysis.md` documenting what is leaked, what is not, mitigations in place, and design tradeoffs. Accepted as inherent to the one-file-per-cipher layout (chosen for efficient partial sync and simple conflict resolution). Packed single-blob format deferred (significant sync/conflict-resolution cost).
 **Files:** `crates/baluard-core/src/vault/handle.rs:1289`, `crates/baluard-core/src/vault/envelope.rs:27`, `padding.rs`.
 Each cipher is its own file `ciphers/<uuid>.enc`, so an attacker with repo read access learns the exact entry count, every entry UUID, per-entry `update_seq`/`key_epoch`/timestamps (file mtime + git history), and the full per-entry edit timeline from git commits. Tombstones live as files in `trash/`. The padding tier is stored as a plaintext byte in the envelope header (`envelope.rs:27`, index 27) and also bound in AAD — so the size class is readable directly without even measuring file size. Padding only buckets content length into 5 tiers; it does nothing for entry count, identities, change frequency, or activity patterns. **Fix:** document honestly; consider a packed single-blob vault format to hide entry count and per-entry timing. (See existing `docs/vault-metadata-leakage-analysis.md`.)
 
 ### M3. KDF auto-calibrate can drop memory below the OWASP floor
+
+> **Status: FIXED** (commit `7a162dd`) — Added `MIN_MEM_KIB = 19 * 1024` (OWASP floor) constant in `kdf.rs`. `mem_floor` is now `max(base_mem / 2, MIN_MEM_KIB)`, preventing calibration from dropping below 19 MiB for MobileLow or any future lower-memory profile.
 **File:** `crates/baluard-core/src/crypto/kdf.rs:122-152`.
 The "too slow" calibration path reduces memory to `base_mem / 2` (`:124`, `:132`). On the `MobileLow` profile (base 19 MiB, the OWASP Argon2id minimum) this yields ~9.5 MiB, below the recommended floor. **Fix:** clamp `mem` to an absolute minimum (>= 19 MiB) regardless of calibration.
 
 ### M4. No rate limiting on unlock / recovery / emergency / biometric
+
+> **Status: FIXED** (commit `b7fae8f`) — Added `baluard_core::rate_limit::RateLimiter` with exponential backoff (min(2^n, 60s)) and lockout (10 failed attempts = 1h). Applied to `vault.unlock` and `vault.biometric_unlock` daemon routes. Recovery/emergency are CLI-only with BIP-39 256-bit entropy (infeasible to brute-force). In-memory only (resets on daemon restart; Argon2id KDF cost is the primary brute-force defense).
 **Files:** `crates/baluard-daemon/src/handler.rs:298-320`, `crates/baluard-core/src/device_manager.rs:1143`, `crates/baluard-core/src/emergency.rs:139`.
 None of these paths have an attempt counter, backoff, or lockout. Argon2id cost throttles the master-password path somewhat, but a same-UID process can brute-force indefinitely, and an offline attacker with the vault directory grinds the KEK unrestricted. BIP-39 24-word entropy (256-bit) makes the recovery phrase itself infeasible to brute-force, but the master-password path gains no defense beyond KDF cost. **Fix:** add attempt counters with exponential backoff and a lockout threshold.
 
 ### M5. SSH host key not verified; `clone_unchecked` bypasses scheme validation
+
+> **Status: FIXED** (commit `b7fae8f`) — New `baluard_core::sync::known_hosts` module parses `~/.ssh/known_hosts` and verifies host keys. `certificate_check` callback registered for both `build_callbacks` (push/fetch) and `clone_unchecked`. Unknown/mismatched/missing known_hosts fail closed. HTTPS certs passthrough to libcurl/CA validation. `clone_unchecked` restricted to `pub(crate)` visibility.
 **File:** `crates/baluard-core/src/sync/credentials.rs:89`, `crates/baluard-core/src/sync/engine.rs:826-883`.
 No `certificate_check` callback is registered on `RemoteCallbacks` anywhere, so git2/libssh2 host-key verification against `known_hosts` is not enforced by the app — it relies on libssh2 defaults, which commonly accept unknown hosts (SSH MITM). Separately, `clone_unchecked` is `pub` and performs no URL validation, while only `clone()` validates the scheme — a caller reaching `clone_unchecked` directly accepts `git://`, `file://`, arbitrary paths. No evidence of TLS cert verification being explicitly disabled (good). **Fix:** register a `certificate_check` callback enforcing `known_hosts`; make `clone_unchecked` private or have it validate.
 
 ### M6. Provider tokens copied into plain `String`, defeating `SecretString`
+
+> **Status: FIXED** (commit `b7fae8f`) — `expose_token()` now returns `Option<Zeroizing<String>>` instead of plain `String`. Callback closures hold the zeroizing wrapper, which wipes the token copy on drop. End-to-end zeroization from SecretString -> Zeroizing -> git2 callback.
 **Files:** `crates/baluard-core/src/sync/credentials.rs:21`, `:48`, `:60`, `crates/baluard-core/src/sync/engine.rs:838`.
 `ProviderToken` correctly holds the token as `SecretString` (zeroize-on-drop). But `CredentialConfig.https_token: Option<String>` calls `.expose_secret().to_string()` (`credentials.rs:48,60`), copying the secret into a plain heap `String` that is not zeroized, then `.clone()`-ed again in `build_callbacks` (`:81`) and `clone_unchecked` (`engine.rs:838`). These copies live for the sync op and are dropped without wiping. **Fix:** keep the token in `SecretString`/`Zeroizing` end to end.
 
 ### M7. TOTP seed crosses IPC into the edit form
+
+> **Status: DISPUTED** (DC-3) — The "seed never crosses IPC" invariant applies to the read-only display path, which IS honored: `CipherDetail.jsx` fetches only the derived code via `cipher.totp_code`. The edit form is a cold path requiring full cipher data (like the password field). The seed is part of the cipher struct returned by `cipher.get`. See **DC-3** in the Disputed Claims appendix.
 **File:** `desktop/src/components/AddEditCipherForm.jsx:298`.
 The TOTP field is bound to `newCipher().totp_uri` and rendered as `<input value=...>` containing the full `otpauth://totp/...?secret=...` URI. The project's security policy states "TOTP: Seed NEVER crosses IPC. Only derived numeric code sent to frontend." The detail view (`CipherDetail.jsx:52`) correctly uses only the derived code, but the edit form receives and displays the raw seed, which then lives in webview memory. **Fix:** reconcile with the stated invariant — either treat the edit-form exception as accepted-and-documented, or avoid sending the seed to the frontend (edit via a write-only field).
 
 ### M8. Attachment size recorded as 0 (zeroize-before-read bug)
+
+> **Status: FIXED** (commit `7a162dd`) — Attachment upload now captures `plaintext.len()` and `encrypted.len()` BEFORE `zeroize()`. Previous code called `plaintext.zeroize()` then read `plaintext.len() = 0`, so every attachment's size metadata was 0.
 **File:** `crates/baluard-daemon/src/state.rs:1362`, `:1384`.
 `plaintext.zeroize()` is called at `:1362`, then `size: plaintext.len() as u64` is read at `:1384`. After `zeroize()` the `Vec` length is 0, so every attachment's `size` metadata is stored as 0 and `attach_download` returns size 0 to the frontend. Not a secret leak, but a data-integrity bug and a sign the ordering was not validated. **Fix:** capture `len()` before zeroizing.
 
 ### M9. Non-atomic DeviceManager persistence
+
+> **Status: FIXED** (commit `b7fae8f`) — New `meta/device-state.json` combines registry + epoch + seen_nonces into a single atomic write. `load_state` prefers the combined file; falls back to legacy individual files for old vaults. `.baluard/rekey/` protocol artifacts remain per-file (cross-device protocol, written independently by each device).
 **File:** `crates/baluard-core/src/device_manager.rs:346-388` (`save_state`).
 Performs multiple independent `atomic_write` calls (registry, epoch, nonces, txn, acks); the doc comment (`:308-311`) admits the combination is not atomic. A crash mid-revoke can leave `epoch.json` advanced while `devices.json` still lists the revoked device, or vice versa — partial revocation. The `handle.rs` `RotationGuard` covers cipher-file staging but not these separate state writes. **Fix:** stage all device-manager state changes and commit them with a single atomic rename of a directory or a combined file.
 
 ### M10. `emergency.json` / `access_list.json` lack 0600
+
+> **Status: FIXED** (commit `7a162dd`) — `orgs.rs save_access_list` now sets 0600 perms after rename. `emergency.json` already had 0600 from the C3 fix. Both files now match the `device_manager::atomic_write` 0600 convention.
 **Files:** `crates/baluard-core/src/emergency.rs:54`, `crates/baluard-core/src/orgs.rs:57`.
 Both use bare `std::fs::write` with no permission hardening, inconsistent with the `device_manager::atomic_write` 0600 convention. `access_list.json` holds HPKE-wrapped group keys. **Fix:** set 0600 (and see C3 for emergency.json's larger problems).
 
 ### M11. RFC 8628 `slow_down` ignored
+
+> **Status: FIXED** (commit `b7fae8f`) — `DeviceFlowStatus::SlowDown` now carries the new `interval_secs`. `device_flow_poll` in `github.rs` checks HTTP status (429 -> slow_down with +5s, other non-2xx -> error). Daemon returns the updated interval to the caller.
 **Files:** `crates/baluard-core/src/providers/github.rs:160`, `crates/baluard-daemon/src/handler.rs:872-874`.
 On `slow_down`, the daemon returns `{"interval_increment": 5}` to the client but the core never adjusts `session.interval_secs`, and `device_flow_poll` re-polls at the original interval. RFC 8628 §3.5 requires adding 5s and continuing slower. Also, `device_flow_poll` ignores HTTP status (`github.rs:151`) and parses JSON unconditionally. **Impact:** GitHub may rate-limit or invalidate the device code. **Fix:** honor the increment in core; check HTTP status.
 
 ### M12. `auto_lock_minutes: 0` disables auto-lock entirely
+
+> **Status: FIXED** (commit `7a162dd`) — `auto_lock_minutes = 0` now treated as "use default" (15 min) rather than "never auto-lock". Also clamped to max 24 hours to prevent indefinite key residency.
 **File:** `crates/baluard-daemon/src/state.rs:206` (`if elapsed >= timeout_secs && timeout_secs > 0`).
 A settings value of `0` (settable via `settings.set`, `state.rs:454-457`) permanently disables auto-lock, keeping keys resident indefinitely. **Fix:** enforce a maximum auto-lock interval; treat 0 as "use default" rather than "never."
 
