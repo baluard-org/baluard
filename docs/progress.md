@@ -64,7 +64,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | Nested Folders | Done | Max depth 16. Cascade delete. BFS descendant collection |
 | Archive | Done | Archive/unarchive ciphers. Separate list view |
 | Extra cipher types | Done | BankAccount (10 fields), DriversLicense (12 fields), Passport & ID (13 fields)
-| SSH key generation | Done | Ed25519 (default), RSA 4096, ECDSA P-256. Daemon-side via `ssh-key` crate. OpenSSH format output |
+| SSH key generation | Done | Ed25519 (default), ECDSA P-256. RSA 4096 removed (L7 fix: rsa crate had RUSTSEC-2023-0071 Marvin Attack, no fix). Daemon-side via `ssh-key` crate. OpenSSH format output |
 | User profile | Done | Display name, subtitle, avatar in VaultSettings. Avatar file in vault dir. Sidebar reads from context |
 | Modal accessibility | Done | FocusTrap component (Tab trap, Escape dismiss, auto-focus, restore focus). Applied to all 6 modals |
 | Tag deletion | Done | Hover X on sidebar pills, confirmation modal, tag.delete daemon command |
