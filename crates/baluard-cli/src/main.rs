@@ -49,9 +49,6 @@ enum Commands {
         /// Display name (shown in sidebar).
         #[arg(long)]
         name: Option<String>,
-        /// Subtitle/role (shown under display name).
-        #[arg(long)]
-        subtitle: Option<String>,
         /// Vault slug (machine-friendly ID, e.g. "baluard-personal"). Defaults to auto-generated from name.
         #[arg(long)]
         slug: Option<String>,
@@ -966,7 +963,6 @@ fn main() {
         Commands::Init {
             profile,
             name,
-            subtitle,
             slug,
             theme,
             lang,
@@ -975,7 +971,6 @@ fn main() {
             &cli.vault_path,
             &profile,
             name,
-            subtitle,
             slug,
             theme,
             lang,
