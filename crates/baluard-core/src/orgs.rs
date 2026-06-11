@@ -56,6 +56,12 @@ pub fn save_access_list(vault_path: &Path, list: &AccessList) -> Result<(), Balu
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, &json)?;
     std::fs::rename(&tmp, &path)?;
+    // M10 fix: harden permissions to 0600 (holds HPKE-wrapped group keys)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
     Ok(())
 }
 

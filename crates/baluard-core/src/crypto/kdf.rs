@@ -121,7 +121,11 @@ pub fn auto_calibrate(profile: KdfProfile) -> KdfParams {
         }
     } else {
         // Too slow: reduce time_cost first, then memory.
-        let mem_floor = base_mem / 2;
+        // M3 fix: clamp mem to absolute OWASP floor (19 MiB) regardless of profile.
+        // Prevents calibration from dropping below the security floor for
+        // MobileLow (19 MiB base) or any future lower-memory profile.
+        const MIN_MEM_KIB: u32 = 19 * 1024;
+        let mem_floor = (base_mem / 2).max(MIN_MEM_KIB);
         let mut best_mem = mem;
         let mut best_tc = tc;
 
