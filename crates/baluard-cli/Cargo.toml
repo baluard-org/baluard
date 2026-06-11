@@ -23,6 +23,7 @@ chrono = "0.4"
 prost = { workspace = true }
 zeroize = { workspace = true }
 base64 = { workspace = true }
+getrandom = "0.2"
 
 [build-dependencies]
 prost-build = "0.13"

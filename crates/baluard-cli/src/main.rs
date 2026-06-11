@@ -233,6 +233,15 @@ enum DeviceCommands {
     RotationAbort,
     /// Show current device enrollment details.
     Info,
+    /// Enroll this device into an existing vault using the recovery phrase.
+    /// Non-destructive: existing devices remain in the registry.
+    /// Requires the vault's `enrollment_policy` to be `Personal`.
+    EnrollWithPhrase {
+        /// The 24-word BIP-39 recovery phrase for the existing vault.
+        /// Will prompt if not provided.
+        #[arg(long)]
+        phrase: Option<String>,
+    },
     /// Revoke a device by UUID.
     Revoke {
         /// Device UUID to revoke.
@@ -1046,6 +1055,9 @@ fn main() {
             }
             DeviceCommands::Info => {
                 commands::handle_device_info(mode, &vault_path, cli.socket.as_deref())
+            }
+            DeviceCommands::EnrollWithPhrase { phrase } => {
+                commands::handle_enroll_with_phrase(mode, &vault_path, phrase.as_deref())
             }
             DeviceCommands::Revoke { device_id } => commands::handle_device_revoke(
                 mode,
