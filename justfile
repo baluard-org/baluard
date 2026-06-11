@@ -270,7 +270,7 @@ seed-demo: build-release
 		baluard() { target/release/{{ binary }} --vault-path "$VAULT" --direct "$@"; }
 
 	echo "=== Creating vault at $VAULT ==="
-	baluard init --slug baluard-personal
+	baluard init --slug baluard-personal --name "Esteban"
 
 	echo ""
 	echo "=== Creating folders ==="
