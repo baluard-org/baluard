@@ -152,7 +152,7 @@ All vault commands route through daemon by default. `--direct` falls back to bal
 AES-256-GCM encrypted with cipher's item key. Max 2MB. Stored at `<vault>/entries/<cipher_id>/attachments/<id>.enc`. Plaintext zeroized after use.
 
 ### SSH Key Generation
-Daemon-side via `ssh-key` crate. 3 key types: Ed25519 (default/recommended), RSA 4096 (legacy compat), ECDSA P-256 (FIPS compliance). Returns OpenSSH public key, SHA256 fingerprint, OpenSSH private key PEM. Private key material never crosses IPC boundary.
+Daemon-side via `ssh-key` crate. 2 key types: Ed25519 (default/recommended), ECDSA P-256 (FIPS compliance). RSA 4096 removed in L7 fix (the `rsa` crate had RUSTSEC-2023-0071 Marvin Attack, no upstream fix). Returns OpenSSH public key, SHA256 fingerprint, OpenSSH private key PEM. Private key material never crosses IPC boundary.
 
 ### User Profile
 Display name, subtitle, avatar stored in `VaultSettings`. Avatar as file in vault (`meta/avatar.{ext}`). Sidebar reads from VaultContext profile signals. SettingsModal syncs on close via `createEffect`.

@@ -703,10 +703,12 @@ SSH keypairs are generated in the daemon process using the `ssh-key` crate. Priv
 
 **Key types:**
 - Ed25519 (default, recommended): Fast, modern, 256-bit seed via ed25519-dalek
-- RSA 4096 (legacy compatibility): Generated via ssh-key crate with rand_core adapter bridging rand 0.8 OsRng to rand_core 0.10 traits
+- ~~RSA 4096 (legacy compatibility): Generated via ssh-key crate with rand_core adapter~~ Removed in L7 fix (Marvin Attack advisory, no fix).
 - ECDSA P-256 (FIPS compliance): Generated via ssh-key crate with NIST P-256 curve
 
-**Daemon command:** `ssh.generate_key` accepts `{type: "ed25519"|"rsa4096"|"ecdsa256"}`, returns JSON `{public_key, fingerprint, private_key}` in OpenSSH format.
+**Daemon command:** `ssh.generate_key` accepts `{type: "ed25519"|"ecdsa256"}`, returns JSON `{public_key, fingerprint, private_key}` in OpenSSH format.
+
+**L7 fix:** RSA 4096 removed. The `rsa` crate has RUSTSEC-2023-0071 (Marvin Attack, timing sidechannel, no fix), pulled in transitively by `ssh-key`'s `rsa` feature. Ed25519 (default) and ECDSA P-256 cover modern needs.
 
 **Desktop UI:** `SshKeyGenerator.jsx` component with type selector, generate button with spinner, copy buttons for public key and fingerprint, private key behind warning disclosure (`<details>` element).
 

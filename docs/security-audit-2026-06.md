@@ -410,7 +410,7 @@ A settings value of `0` (settable via `settings.set`, `state.rs:454-457`) perman
 
 ### L1. No clipboard auto-clear for copied secrets
 
-> **Status: FIXED** (commit `0361ab0`) — `CopyButton` now optionally clears the clipboard after 30s (configurable via `autoClearMs` prop). Only clears if the clipboard still contains our value, so we don't stomp on a user-initiated copy of something else. Best-effort; silently skips if clipboard read is denied by permissions.
+> **Status: FIXED** (commit `0361ab0` + revisions `79fdefa`, `9721342`) — `CopyButton` and the shared `lib/clipboard.js` utility auto-clear the clipboard after 30s. Only clears if the clipboard still contains our value, so we don't stomp on a user-initiated copy of something else. Best-effort; silently skips if clipboard read is denied by permissions. All 5 callers (CopyButton, CopyableField, CipherDetail notes/TOTP, GeneratorModal, RecoveryScreen, SshKeyGenerator) route through the shared utility. Originally had a `autoClearMs` prop; removed in round-3 review because no caller wired it (dead config surface).
 `desktop/src/components/CopyButton.jsx:19`, `CipherDetail.jsx:20`/`:145`, `GeneratorModal.jsx:51`, `SshKeyGenerator.jsx:35`, `RecoveryScreen.jsx:13`. All copy secrets (passwords, TOTP codes, SSH private keys, recovery phrase) via `navigator.clipboard.writeText` with no timed clear. Secrets persist in the OS clipboard and clipboard-history managers indefinitely. Common managers clear after ~30s. **Fix:** add a configurable auto-clear timeout.
 
 ### L2. `RecoveryPhrase::Drop` is a no-op
@@ -440,7 +440,7 @@ A settings value of `0` (settable via `settings.set`, `state.rs:454-457`) perman
 
 ### L7. Dependency hygiene
 
-> **Status: PARTIAL** (commit `0361ab0`) — Added `cargo-audit` to `just check` (skipped silently if not installed). `ssh-key 0.7.0-rc.10` is the latest available (no stable release). `rand_core` split is inherent (rand 0.8 uses 0.6, ssh-key 0.7 uses 0.10) and bridged via the `Adapter` struct in `state.rs`.
+> **Status: FIXED** (commits `0361ab0`, `9721342`) — Added `cargo-audit` to `just check` (skipped silently if not installed). Dropped RSA 4096 from `ssh-key` features (`Cargo.toml`: `features = ["ed25519", "ecdsa"]`) to eliminate the transitive `rsa` RUSTSEC-2023-0071 (Marvin Attack, no fix) dependency. Ed25519 (default) and ECDSA P-256 cover modern needs. `rand_core` split is inherent (rand 0.8 uses 0.6, ssh-key 0.7 uses 0.10) and bridged via the `Adapter` struct in `state.rs`. `ssh-key 0.7.0-rc.10` is the latest available (no stable release yet).
 `crates/baluard-daemon/Cargo.toml` pins `ssh-key = "0.7.0-rc.10"` — a release candidate in a security product. There is a `rand_core` version split: workspace uses `rand_core = "0.6"` (with `rand 0.8`) while the daemon's `ssh-key` target deps pull `rand_core = "0.10"`. No `cargo-audit`/`cargo-deny` in the toolchain. **Fix:** pin a stable `ssh-key`; reconcile `rand_core`; add `cargo-audit` to CI (`just check`).
 
 ### L8. Forward secrecy / post-compromise (inherent, document)
