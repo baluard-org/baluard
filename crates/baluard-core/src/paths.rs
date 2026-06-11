@@ -16,8 +16,15 @@ const APP_NAME: &str = "baluard";
 /// macOS: `~/Library/Application Support/baluard/`
 /// Windows: `%LOCALAPPDATA%\baluard\`
 ///
+/// Respects `BALUARD_DATA_DIR` env override. Used by tests to point
+/// at a sandboxed data dir without polluting the real platform path.
+/// Production callers should leave the env var unset.
+///
 /// Use this for the vault, git repo, and all encrypted blobs.
 pub fn data_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("BALUARD_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(APP_NAME)
@@ -119,6 +126,13 @@ pub fn debug_log_path() -> PathBuf {
 mod tests {
     use super::*;
 
+    /// Mutex serialises tests that mutate process-wide env vars.
+    /// `cargo test` runs unit tests in parallel; concurrent `set_var` on
+    /// the same key is a data race (Rust 1.85 makes `set_var` `unsafe`
+    /// for this reason). Holding this lock for the duration of each
+    /// env-mutating test prevents flakes.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn paths_are_consistent() {
         let data = data_dir();
@@ -137,6 +151,7 @@ mod tests {
 
     #[test]
     fn log_dir_respects_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // Save and restore
         let orig = std::env::var("BALUARD_LOG_DIR").ok();
         unsafe { std::env::set_var("BALUARD_LOG_DIR", "/tmp/baluard-test-logs") };
@@ -144,6 +159,19 @@ mod tests {
         match orig {
             Some(v) => unsafe { std::env::set_var("BALUARD_LOG_DIR", v) },
             None => unsafe { std::env::remove_var("BALUARD_LOG_DIR") },
+        }
+    }
+
+    #[test]
+    fn data_dir_respects_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // Save and restore BALUARD_DATA_DIR
+        let orig = std::env::var("BALUARD_DATA_DIR").ok();
+        unsafe { std::env::set_var("BALUARD_DATA_DIR", "/tmp/baluard-test-data") };
+        assert_eq!(data_dir(), PathBuf::from("/tmp/baluard-test-data"));
+        match orig {
+            Some(v) => unsafe { std::env::set_var("BALUARD_DATA_DIR", v) },
+            None => unsafe { std::env::remove_var("BALUARD_DATA_DIR") },
         }
     }
 

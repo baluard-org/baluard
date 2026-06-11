@@ -481,3 +481,303 @@ mod tests {
         assert!(result.is_none());
     }
 }
+
+// ── Active Vault Resolution ──
+
+/// Source of a resolved vault path. Used for daemon startup logging.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VaultSource {
+    /// User passed `--vault-slug` and the slug was found in the registry.
+    ExplicitSlug,
+    /// User passed an explicit `--vault-path`. Registry was not consulted.
+    ExplicitPath,
+    /// Loaded from the registry's `active_vault` field on startup.
+    RegistryActive,
+    /// Registry's `active_vault` pointed at a slug that is no longer
+    /// registered (vanished entry). Daemon falls back to `fallback_path`.
+    /// The String is the missing slug, so the caller can log a precise
+    /// diagnostic instead of a generic "no active vault" message.
+    StaleActive(String),
+    /// No resolution source found; using the fallback path.
+    Fallback,
+}
+
+/// Vault path + the source that determined it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedVault {
+    pub path: PathBuf,
+    pub source: VaultSource,
+    /// Slug if resolved from a slug (ExplicitSlug or RegistryActive), else None.
+    pub slug: Option<String>,
+}
+
+impl std::fmt::Display for ResolvedVault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.source {
+            VaultSource::ExplicitSlug => write!(
+                f,
+                "Serving vault from --vault-slug '{}' at {}",
+                self.slug.as_deref().unwrap_or(""),
+                self.path.display()
+            ),
+            VaultSource::ExplicitPath => {
+                write!(
+                    f,
+                    "Serving vault from --vault-path at {}",
+                    self.path.display()
+                )
+            }
+            VaultSource::RegistryActive => write!(
+                f,
+                "Serving active vault '{}' from registry at {}",
+                self.slug.as_deref().unwrap_or(""),
+                self.path.display()
+            ),
+            VaultSource::StaleActive(stale_slug) => write!(
+                f,
+                "Registry active_vault '{}' is not present in the vault map \
+                 (entry was removed or renamed). Falling back to {}. \
+                 Run `baluard vaults switch <slug>` to repair.",
+                stale_slug,
+                self.path.display()
+            ),
+            VaultSource::Fallback => write!(
+                f,
+                "No active vault in registry, no --vault-slug, no --vault-path. \
+                 Using fallback path {}. Create a vault with `baluard init` to register it.",
+                self.path.display()
+            ),
+        }
+    }
+}
+
+/// Failure modes for `resolve_active_vault`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveError {
+    /// `--vault-slug` was passed but the slug is not in the registry.
+    UnknownSlug(String),
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResolveError::UnknownSlug(s) => write!(f, "Vault '{s}' not found in registry"),
+        }
+    }
+}
+
+impl std::error::Error for ResolveError {}
+
+/// Resolve which vault path the daemon should serve on startup.
+///
+/// Priority (highest first):
+/// 1. `explicit_slug`: must be in the registry. Returns `UnknownSlug` if not.
+/// 2. `explicit_path`: use as-is. Registry is not consulted.
+/// 3. `registry.active_vault`: use that vault's path.
+/// 4. `fallback_path`: last resort (e.g. the legacy `--vault-path` default).
+///
+/// "active_vault" pointing at a slug that no longer exists in `vaults`
+/// is treated as unset and the resolver falls through to `fallback_path`.
+/// Callers should log a warning in that case.
+pub fn resolve_active_vault(
+    explicit_slug: Option<&str>,
+    explicit_path: Option<&Path>,
+    registry: &VaultRegistry,
+    fallback_path: &Path,
+) -> Result<ResolvedVault, ResolveError> {
+    if let Some(slug) = explicit_slug {
+        return match registry.get(slug) {
+            Some(entry) => Ok(ResolvedVault {
+                path: entry.path.clone(),
+                source: VaultSource::ExplicitSlug,
+                slug: Some(slug.to_string()),
+            }),
+            None => Err(ResolveError::UnknownSlug(slug.to_string())),
+        };
+    }
+
+    if let Some(path) = explicit_path {
+        return Ok(ResolvedVault {
+            path: path.to_path_buf(),
+            source: VaultSource::ExplicitPath,
+            slug: None,
+        });
+    }
+
+    if let Some(active_slug) = registry.active_vault.as_deref() {
+        if let Some(entry) = registry.get(active_slug) {
+            return Ok(ResolvedVault {
+                path: entry.path.clone(),
+                source: VaultSource::RegistryActive,
+                slug: Some(active_slug.to_string()),
+            });
+        }
+        // active_vault points at a vanished entry. Surface the stale slug
+        // in the source so the caller can log "active_vault 'X' not in
+        // registry" instead of the generic "no active vault" message.
+        return Ok(ResolvedVault {
+            path: fallback_path.to_path_buf(),
+            source: VaultSource::StaleActive(active_slug.to_string()),
+            slug: Some(active_slug.to_string()),
+        });
+    }
+
+    Ok(ResolvedVault {
+        path: fallback_path.to_path_buf(),
+        source: VaultSource::Fallback,
+        slug: None,
+    })
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    fn reg_with_active(slug: &str, path: &str) -> VaultRegistry {
+        let mut reg = VaultRegistry::default();
+        reg.add(VaultEntry {
+            slug: slug.to_string(),
+            display_name: slug.to_string(),
+            path: PathBuf::from(path),
+            provider: None,
+            remote_url: None,
+            last_synced: None,
+            last_opened: None,
+            vault_id: Uuid::new_v4(),
+        })
+        .unwrap();
+        reg.set_active(slug).unwrap();
+        reg
+    }
+
+    #[test]
+    fn explicit_slug_takes_priority() {
+        // Build a registry with two vaults. `baluard-personal` is the
+        // active_vault, but the caller passes --vault-slug=work, which
+        // must win.
+        let mut combined = VaultRegistry::default();
+        for slug in ["baluard-personal", "work"] {
+            combined
+                .add(VaultEntry {
+                    slug: slug.to_string(),
+                    display_name: slug.to_string(),
+                    path: PathBuf::from(format!("/{slug}")),
+                    provider: None,
+                    remote_url: None,
+                    last_synced: None,
+                    last_opened: None,
+                    vault_id: Uuid::new_v4(),
+                })
+                .unwrap();
+        }
+        combined.set_active("baluard-personal").unwrap();
+
+        let r = resolve_active_vault(
+            Some("work"),
+            Some(Path::new("/ignored")),
+            &combined,
+            Path::new("/fallback"),
+        )
+        .unwrap();
+        assert_eq!(r.source, VaultSource::ExplicitSlug);
+        assert_eq!(r.path, PathBuf::from("/work"));
+        assert_eq!(r.slug.as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn explicit_slug_not_in_registry_errors() {
+        let reg = reg_with_active("baluard-personal", "/active/path");
+        let err =
+            resolve_active_vault(Some("nope"), None, &reg, Path::new("/fallback")).unwrap_err();
+        assert_eq!(err, ResolveError::UnknownSlug("nope".to_string()));
+    }
+
+    #[test]
+    fn explicit_path_used_when_no_slug() {
+        let reg = reg_with_active("baluard-personal", "/active/path");
+        let r = resolve_active_vault(
+            None,
+            Some(Path::new("/custom/path")),
+            &reg,
+            Path::new("/fallback"),
+        )
+        .unwrap();
+        assert_eq!(r.source, VaultSource::ExplicitPath);
+        assert_eq!(r.path, PathBuf::from("/custom/path"));
+        assert!(r.slug.is_none());
+    }
+
+    #[test]
+    fn explicit_path_overrides_active_vault() {
+        // When --vault-path is given, the active_vault is ignored.
+        let reg = reg_with_active("baluard-personal", "/active/path");
+        let r = resolve_active_vault(
+            None,
+            Some(Path::new("/explicit")),
+            &reg,
+            Path::new("/fallback"),
+        )
+        .unwrap();
+        assert_eq!(r.source, VaultSource::ExplicitPath);
+        assert_eq!(r.path, PathBuf::from("/explicit"));
+    }
+
+    #[test]
+    fn registry_active_used_when_no_flags() {
+        let reg = reg_with_active("baluard-personal", "/active/path");
+        let r = resolve_active_vault(None, None, &reg, Path::new("/fallback")).unwrap();
+        assert_eq!(r.source, VaultSource::RegistryActive);
+        assert_eq!(r.path, PathBuf::from("/active/path"));
+        assert_eq!(r.slug.as_deref(), Some("baluard-personal"));
+    }
+
+    #[test]
+    fn no_active_vault_falls_back() {
+        // Registry exists but no active_vault set.
+        let mut reg = VaultRegistry::default();
+        reg.add(VaultEntry {
+            slug: "baluard-personal".to_string(),
+            display_name: "x".into(),
+            path: PathBuf::from("/some/path"),
+            provider: None,
+            remote_url: None,
+            last_synced: None,
+            last_opened: None,
+            vault_id: Uuid::new_v4(),
+        })
+        .unwrap();
+        // No set_active call.
+        let r = resolve_active_vault(None, None, &reg, Path::new("/fallback")).unwrap();
+        assert_eq!(r.source, VaultSource::Fallback);
+        assert_eq!(r.path, PathBuf::from("/fallback"));
+    }
+
+    #[test]
+    fn empty_registry_falls_back() {
+        let reg = VaultRegistry::default();
+        let r = resolve_active_vault(None, None, &reg, Path::new("/fallback")).unwrap();
+        assert_eq!(r.source, VaultSource::Fallback);
+        assert_eq!(r.path, PathBuf::from("/fallback"));
+    }
+
+    #[test]
+    fn active_vault_pointing_to_vanished_entry_yields_stale_source() {
+        // active_vault set to a slug not in vaults map (data inconsistency).
+        // The resolver must surface this as StaleActive so the caller can
+        // log a precise diagnostic instead of a generic fallback message.
+        let reg = VaultRegistry {
+            active_vault: Some("ghost".to_string()),
+            ..VaultRegistry::default()
+        };
+        let r = resolve_active_vault(None, None, &reg, Path::new("/fallback")).unwrap();
+        assert_eq!(r.source, VaultSource::StaleActive("ghost".to_string()));
+        assert_eq!(r.path, PathBuf::from("/fallback"));
+        assert_eq!(r.slug.as_deref(), Some("ghost"));
+    }
+
+    #[test]
+    fn unknown_slug_error_displays_human_message() {
+        let err = ResolveError::UnknownSlug("my-vault".to_string());
+        assert_eq!(err.to_string(), "Vault 'my-vault' not found in registry");
+    }
+}

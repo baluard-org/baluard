@@ -19,6 +19,8 @@ pub mod proto {
 use state::{SharedVaultState, VaultState};
 
 use anyhow::Result;
+use baluard_core::vault::registry::VaultSource;
+use clap::parser::ValueSource;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::UnixListener;
@@ -111,23 +113,90 @@ impl<A: std::io::Write, B: std::io::Write> std::io::Write for MultiWriter<A, B> 
 fn main() -> anyhow::Result<()> {
     init_debug_logging();
 
-    let matches = clap::Command::new("baluard-daemon")
-        .arg(
-            clap::Arg::new("vault-path")
-                .long("vault-path")
-                .short('v')
-                .default_value(DEFAULT_VAULT_PATH)
-                .help("Path to the vault directory"),
-        )
-        .arg(
-            clap::Arg::new("socket")
-                .long("socket")
-                .short('s')
-                .help("Unix socket path (default: platform-specific)"),
-        )
-        .get_matches();
+    let matches =
+        clap::Command::new("baluard-daemon")
+            .arg(
+                clap::Arg::new("vault-path")
+                    .long("vault-path")
+                    .short('v')
+                    .default_value(DEFAULT_VAULT_PATH)
+                    .help("Path to the vault directory. Ignored if --vault-slug is set."),
+            )
+            .arg(clap::Arg::new("vault-slug").long("vault-slug").help(
+                "Target vault by slug. Looks up path in the registry. Overrides --vault-path.",
+            ))
+            .arg(
+                clap::Arg::new("socket")
+                    .long("socket")
+                    .short('s')
+                    .help("Unix socket path (default: platform-specific)"),
+            )
+            .get_matches();
 
-    let vault = matches.get_one::<String>("vault-path").unwrap().clone();
+    // Resolve which vault to serve. Priority: --vault-slug, --vault-path, registry active_vault, default.
+    let explicit_slug = matches.get_one::<String>("vault-slug").map(|s| s.as_str());
+    let explicit_path = match matches.value_source("vault-path") {
+        Some(ValueSource::CommandLine) => {
+            let p = matches.get_one::<String>("vault-path").unwrap();
+            Some(PathBuf::from(p))
+        }
+        // EnvVariable / DefaultValue both mean "user did not pass --vault-path on the CLI".
+        // Note: if an env-var override for vault path is ever added, this arm will
+        // silently ignore it. Intentional for now — there is no such env var.
+        _ => None,
+    };
+
+    // Registry load policy: when the user gives us an explicit vault location
+    // (slug or path), a missing/unreadable registry is non-fatal — they know
+    // where their vault is. When no flag is given, the registry is the source
+    // of truth; a corrupt-but-present registry is a hard error so we never
+    // silently start on the wrong (fallback) vault.
+    let registry_path = baluard_core::vault::registry::VaultRegistry::path();
+    let registry = if explicit_slug.is_some() || explicit_path.is_some() {
+        baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_else(|e| {
+            log::warn!("Failed to load vault registry (using explicit vault flag): {e}");
+            baluard_core::vault::registry::VaultRegistry::default()
+        })
+    } else if !registry_path.exists() {
+        // Fresh install or pre-registry-era vault. No file = no problem.
+        baluard_core::vault::registry::VaultRegistry::default()
+    } else {
+        match baluard_core::vault::registry::VaultRegistry::load_locked() {
+            Ok(reg) => reg,
+            Err(e) => {
+                eprintln!(
+                    "error: registry exists at {} but failed to load: {e}.\n\
+                     Refusing to start — would otherwise serve the wrong vault. \
+                     Inspect or remove the registry and retry.",
+                    registry_path.display()
+                );
+                std::process::exit(1);
+            }
+        }
+    };
+
+    let fallback = PathBuf::from(DEFAULT_VAULT_PATH);
+    let resolved = match baluard_core::vault::registry::resolve_active_vault(
+        explicit_slug,
+        explicit_path.as_deref(),
+        &registry,
+        &fallback,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    match &resolved.source {
+        VaultSource::ExplicitSlug | VaultSource::ExplicitPath | VaultSource::RegistryActive => {
+            log::info!("{resolved}")
+        }
+        VaultSource::StaleActive(_) | VaultSource::Fallback => log::warn!("{resolved}"),
+    }
+
+    let vault = resolved.path.to_string_lossy().into_owned();
     let sock = matches
         .get_one::<String>("socket")
         .cloned()
