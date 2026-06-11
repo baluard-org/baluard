@@ -4,16 +4,16 @@
 //! - Daemon: routes through baluard-daemon via Unix socket (default)
 //! - Direct: calls baluard-core directly (fallback, --direct flag)
 
+use crate::Cli;
 use crate::ConnectMode;
 use crate::VaultAction;
-use crate::Cli;
 use crate::client;
 
 use std::path::Path;
 
-use base64::Engine;
 use baluard_core::types::{CipherInput, KdfProfile};
 use baluard_core::vault::handle::{CipherRead, VaultHandle};
+use base64::Engine;
 use zeroize::Zeroize;
 
 // ── Direct-mode helpers ──
@@ -145,10 +145,14 @@ pub fn handle_init(
             let (cleaned, modified) = baluard_core::vault::slug::clean_slug(&s);
             if let Err(e) = baluard_core::vault::slug::validate_slug(&cleaned) {
                 eprintln!("error: invalid slug '{s}': {e}");
-                if modified { eprintln!("  (auto-corrected to '{cleaned}' but still invalid)"); }
+                if modified {
+                    eprintln!("  (auto-corrected to '{cleaned}' but still invalid)");
+                }
                 std::process::exit(1);
             }
-            if modified { eprintln!("Slug auto-corrected to: {cleaned}"); }
+            if modified {
+                eprintln!("Slug auto-corrected to: {cleaned}");
+            }
             Some(cleaned)
         }
         None => {
@@ -182,7 +186,10 @@ pub fn handle_init(
                 "" | "system" => Some(baluard_core::types::ThemeMode::System),
                 "light" => Some(baluard_core::types::ThemeMode::Light),
                 "dark" => Some(baluard_core::types::ThemeMode::Dark),
-                other => { eprintln!("warning: unknown theme '{other}', using system"); Some(baluard_core::types::ThemeMode::System) }
+                other => {
+                    eprintln!("warning: unknown theme '{other}', using system");
+                    Some(baluard_core::types::ThemeMode::System)
+                }
             }
         }
         None => Some(baluard_core::types::ThemeMode::System),
@@ -200,7 +207,10 @@ pub fn handle_init(
             match input.trim() {
                 "" => Some(15),
                 "0" => None, // disabled
-                n => n.parse::<u32>().ok().or_else(|| { eprintln!("warning: invalid number, using 15"); Some(15) }),
+                n => n.parse::<u32>().ok().or_else(|| {
+                    eprintln!("warning: invalid number, using 15");
+                    Some(15)
+                }),
             }
         }
         None => Some(15),
@@ -1232,10 +1242,7 @@ pub fn handle_enroll_with_phrase(
     // Validate phrase shape (24 words)
     let word_count = phrase_str.split_whitespace().count();
     if word_count != 24 {
-        return Err(format!(
-            "Recovery phrase must be exactly 24 words, got {word_count}"
-        )
-        .into());
+        return Err(format!("Recovery phrase must be exactly 24 words, got {word_count}").into());
     }
 
     // Warn the user about what this does
@@ -1334,17 +1341,14 @@ pub fn handle_enroll_with_phrase(
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(
-                    &privkey_tmp,
-                    std::fs::Permissions::from_mode(0o600),
-                );
+                let _ =
+                    std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
             }
             std::fs::rename(&privkey_tmp, &privkey_path)?;
 
             println!(
                 "Device enrolled: {} ({})",
-                result.entry.name,
-                result.device_id
+                result.entry.name, result.device_id
             );
             println!("Enrollment policy: phrase-based (non-destructive).");
             println!("Existing devices in the registry remain enrolled.");
@@ -1518,7 +1522,9 @@ fn sync_pull_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
     let result = engine.pull(&repo, "origin")?;
     match result {
         baluard_core::sync::engine::PullResult::AlreadyUpToDate => println!("Already up to date."),
-        baluard_core::sync::engine::PullResult::FastForward => println!("Fast-forwarded to latest."),
+        baluard_core::sync::engine::PullResult::FastForward => {
+            println!("Fast-forwarded to latest.")
+        }
         baluard_core::sync::engine::PullResult::Merged => println!("Merged remote changes."),
         baluard_core::sync::engine::PullResult::Conflict { files, .. } => {
             let file_list = files.join(", ");
@@ -1680,6 +1686,7 @@ pub fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error
 
 // ── Edit cipher ──
 
+#[allow(clippy::too_many_arguments)] // Pre-existing: many fields, already structured
 pub fn handle_edit(
     mode: ConnectMode,
     vault_path: &str,
@@ -1733,7 +1740,10 @@ pub fn handle_edit(
                 name: name.clone().unwrap_or_else(|| existing_cipher.name.clone()),
                 folder_id: folder
                     .as_ref()
-                    .map(|f| uuid::Uuid::parse_str(f).map_err(|e| format!("Invalid folder UUID '{f}': {e}")))
+                    .map(|f| {
+                        uuid::Uuid::parse_str(f)
+                            .map_err(|e| format!("Invalid folder UUID '{f}': {e}"))
+                    })
                     .transpose()?
                     .or(existing_cipher.folder_id),
                 kind: existing_cipher.kind.clone(),
@@ -1745,7 +1755,9 @@ pub fn handle_edit(
                 password_history: existing_cipher.password_history.clone(),
                 attachments: existing_cipher.attachments.clone(),
                 archived: existing_cipher.archived,
-                tags: tags.map(|t| t.into_iter().filter(|s| !s.is_empty()).collect()).unwrap_or_else(|| existing_cipher.tags.clone()),
+                tags: tags
+                    .map(|t| t.into_iter().filter(|s| !s.is_empty()).collect())
+                    .unwrap_or_else(|| existing_cipher.tags.clone()),
             };
 
             handle.update_cipher(cipher_id, &input)?;
@@ -2347,7 +2359,10 @@ pub fn handle_tag_rename(
         ConnectMode::Direct => {
             let mut handle = unlock_vault_direct(vault_path)?;
             let updated = handle.rename_tag(old, new)?;
-            println!("Tag '{}' renamed to '{}' ({} entries updated).", old, new, updated);
+            println!(
+                "Tag '{}' renamed to '{}' ({} entries updated).",
+                old, new, updated
+            );
             Ok(())
         }
     }
@@ -2385,7 +2400,8 @@ pub fn handle_tag_delete(
 pub fn handle_vaults(action: &VaultAction, _cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         VaultAction::List => {
-            let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
+            let reg =
+                baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
             if reg.vaults.is_empty() {
                 println!("No vaults registered.");
                 println!("Create one with: baluard init");
@@ -2397,8 +2413,17 @@ pub fn handle_vaults(action: &VaultAction, _cli: &Cli) -> Result<(), Box<dyn std
             slugs.sort();
             for slug in slugs {
                 let entry = reg.vaults.get(slug).unwrap();
-                let active_marker = if reg.active_vault.as_deref() == Some(slug) { "*" } else { " " };
-                println!("{active_marker}{:<29} {:<20} {}", slug, entry.display_name, entry.path.display());
+                let active_marker = if reg.active_vault.as_deref() == Some(slug) {
+                    "*"
+                } else {
+                    " "
+                };
+                println!(
+                    "{active_marker}{:<29} {:<20} {}",
+                    slug,
+                    entry.display_name,
+                    entry.path.display()
+                );
             }
             if let Some(ref active) = reg.active_vault {
                 println!();

@@ -19,7 +19,9 @@ use x25519_dalek::{PublicKey, StaticSecret};
 pub enum EmergencyStatus {
     Inactive,
     /// Advisory: signals intent to recover. Does NOT grant access.
-    Requested { request_time: u64 },
+    Requested {
+        request_time: u64,
+    },
     Approved,
     Revoked,
 }
@@ -408,8 +410,7 @@ mod tests {
         std::fs::write(vault_path.join("meta/emergency.json"), json).unwrap();
 
         // Recovery must fail: signature doesn't match the PINNED owner key
-        let res =
-            recover_emergency_root_key(vault_path, &contact_priv, &owner_vk(&owner_signing));
+        let res = recover_emergency_root_key(vault_path, &contact_priv, &owner_vk(&owner_signing));
         assert!(
             res.is_err(),
             "Bypass A: Must reject grantee's self-signed approval (key not pinned)"
@@ -446,8 +447,7 @@ mod tests {
         std::fs::write(vault_path.join("meta/emergency.json"), json).unwrap();
 
         // Recovery must fail: Requested does NOT grant recovery
-        let res =
-            recover_emergency_root_key(vault_path, &contact_priv, &owner_vk(&owner_signing));
+        let res = recover_emergency_root_key(vault_path, &contact_priv, &owner_vk(&owner_signing));
         assert!(
             res.is_err(),
             "Bypass B: Must reject Requested status (only Approved grants recovery)"

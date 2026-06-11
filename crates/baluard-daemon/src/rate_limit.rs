@@ -188,7 +188,9 @@ fn backoff_for_attempt(attempt: u32) -> Duration {
     if attempt == 0 {
         return Duration::ZERO;
     }
-    let secs = 1u64.checked_shl(attempt.min(6)).unwrap_or(MAX_BACKOFF.as_secs());
+    let secs = 1u64
+        .checked_shl(attempt.min(6))
+        .unwrap_or(MAX_BACKOFF.as_secs());
     Duration::from_secs(secs.min(MAX_BACKOFF.as_secs()))
 }
 

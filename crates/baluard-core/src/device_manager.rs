@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::crypto::signature;
 use crate::devices::DeviceRegistry;
-use crate::error::{DeviceError, BaluardError, KeyError, SyncError};
+use crate::error::{BaluardError, DeviceError, KeyError, SyncError};
 use crate::keys::epoch::{EpochInfo, EpochState};
 use crate::keys::hierarchy::RootKey;
 use crate::keys::rotation::{CommitBarrierSig, RekeyTransaction};
@@ -447,8 +447,9 @@ impl DeviceManagerStore for FileDeviceManagerStore {
                 .map_err(|e| DeviceError::Keystore(format!("parse device-state: {e}")))?;
             let registry: DeviceRegistry = serde_json::from_value(v["registry"].clone())
                 .map_err(|e| DeviceError::Keystore(format!("parse registry in combined: {e}")))?;
-            let epoch: EpochInfo = serde_json::from_value(v["epoch"].clone())
-                .map_err(|e| KeyError::InvalidEpochState(format!("parse epoch in combined: {e}")))?;
+            let epoch: EpochInfo = serde_json::from_value(v["epoch"].clone()).map_err(|e| {
+                KeyError::InvalidEpochState(format!("parse epoch in combined: {e}"))
+            })?;
             let seen_nonces: Vec<String> = serde_json::from_value(v["seen_nonces"].clone())
                 .map_err(|e| DeviceError::Keystore(format!("parse nonces in combined: {e}")))?;
             (registry, epoch, seen_nonces)
@@ -855,9 +856,9 @@ impl DeviceManager {
         // Fail-closed: reject if binding fields are absent (old clients must upgrade).
         // Exception: first device (empty registry) auto-approves without binding.
         if self.registry.count() > 0 {
-            let payload_epoch = payload.epoch.ok_or_else(|| {
-                DeviceError::EnrollmentRejected("missing epoch binding".into())
-            })?;
+            let payload_epoch = payload
+                .epoch
+                .ok_or_else(|| DeviceError::EnrollmentRejected("missing epoch binding".into()))?;
             if payload_epoch != self.epoch.epoch {
                 return Err(DeviceError::EnrollmentRejected(format!(
                     "epoch mismatch: payload has {payload_epoch}, vault has {}",
@@ -872,8 +873,8 @@ impl DeviceManager {
                 return Err(DeviceError::EnrollmentRejected(format!(
                     "registry version mismatch: payload has {payload_reg_ver}, vault has {}",
                     self.registry.version
-                    ))
-                    .into());
+                ))
+                .into());
             }
         }
 
@@ -1810,7 +1811,11 @@ mod tests {
     /// halves are in the payload, so the keywrap is openable by the new device.
     fn make_payload_with_keys(
         name: &str,
-    ) -> (EnrollmentPayload, x25519_dalek::StaticSecret, ed25519_dalek::SigningKey) {
+    ) -> (
+        EnrollmentPayload,
+        x25519_dalek::StaticSecret,
+        ed25519_dalek::SigningKey,
+    ) {
         let (x_sk, x_pk) = hpke_wrap::generate_x25519_keypair();
         let (e_sk, e_pk) = sig::generate_ed25519_keypair();
         let nonce: [u8; 32] = rand::random();
@@ -2390,7 +2395,7 @@ mod tests {
         // Derive the recovery X25519 pubkey from the phrase for storage
         let recovery_key_bytes = ceremony.recovery_phrase.derive_key();
         let recovery_x25519_secret = x25519_dalek::StaticSecret::from(
-            <[u8; 32]>::try_from(&recovery_key_bytes[..32]).unwrap()
+            <[u8; 32]>::try_from(&recovery_key_bytes[..32]).unwrap(),
         );
         let recovery_x25519_public = x25519_dalek::PublicKey::from(&recovery_x25519_secret);
         let recovery_json = serde_json::json!({
@@ -2578,7 +2583,7 @@ mod tests {
 
         // Use same nonce twice
         let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
-        let (mut p1, x1_sk, e1_sk) = make_payload_with_keys("Replay Test 1");
+        let (p1, x1_sk, e1_sk) = make_payload_with_keys("Replay Test 1");
         mgr2.enroll_with_recovery_phrase(
             &p1,
             &phrase_str,
@@ -2657,10 +2662,9 @@ mod tests {
         // using them to open the keywrap and verify the root key.
         use crate::crypto::hpke_wrap;
         let keywrap_path = vault_path.join(format!("meta/keywrap/{}.json", result.device_id));
-        let keywrap_data: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&keywrap_path).expect("keywrap file"),
-        )
-        .expect("parse keywrap");
+        let keywrap_data: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&keywrap_path).expect("keywrap file"))
+                .expect("parse keywrap");
         let eph_pub = hex::decode(keywrap_data["ephemeral_public"].as_str().unwrap()).unwrap();
         let ct = hex::decode(keywrap_data["encrypted_key"].as_str().unwrap()).unwrap();
         let tag_bytes = hex::decode(keywrap_data["tag"].as_str().unwrap()).unwrap();

@@ -110,7 +110,10 @@ impl std::fmt::Debug for ProviderToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProviderToken")
             .field("access_token", &"[REDACTED]")
-            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("expires_at", &self.expires_at)
             .field("scopes", &self.scopes)
             .finish()
@@ -328,10 +331,7 @@ pub trait ForgeProvider: Send + Sync {
     async fn validate_token(&self, token: &ProviderToken) -> Result<ProviderInfo, ProviderError>;
 
     /// Get authenticated user's username.
-    async fn get_authenticated_user(
-        &self,
-        token: &ProviderToken,
-    ) -> Result<String, ProviderError>;
+    async fn get_authenticated_user(&self, token: &ProviderToken) -> Result<String, ProviderError>;
 
     /// List user's repositories (paginated).
     async fn list_repos(
@@ -376,13 +376,17 @@ pub mod mock {
 
     impl MockProvider {
         pub fn github() -> Self {
-            Self { provider_type: Provider::GitHub }
+            Self {
+                provider_type: Provider::GitHub,
+            }
         }
     }
 
     #[async_trait::async_trait]
     impl ForgeProvider for MockProvider {
-        fn provider(&self) -> Provider { self.provider_type }
+        fn provider(&self) -> Provider {
+            self.provider_type
+        }
 
         async fn device_flow_start(&self) -> Result<DeviceFlowSession, ProviderError> {
             Ok(DeviceFlowSession {
@@ -395,11 +399,20 @@ pub mod mock {
             })
         }
 
-        async fn device_flow_poll(&self, _session: &DeviceFlowSession) -> Result<DeviceFlowStatus, ProviderError> {
-            Ok(DeviceFlowStatus::Success(ProviderToken::new("mock-token", "repo")))
+        async fn device_flow_poll(
+            &self,
+            _session: &DeviceFlowSession,
+        ) -> Result<DeviceFlowStatus, ProviderError> {
+            Ok(DeviceFlowStatus::Success(ProviderToken::new(
+                "mock-token",
+                "repo",
+            )))
         }
 
-        async fn authenticate_pat(&self, _token: &str) -> Result<(ProviderToken, ProviderInfo), ProviderError> {
+        async fn authenticate_pat(
+            &self,
+            _token: &str,
+        ) -> Result<(ProviderToken, ProviderInfo), ProviderError> {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -415,7 +428,10 @@ pub mod mock {
             ))
         }
 
-        async fn validate_token(&self, _token: &ProviderToken) -> Result<ProviderInfo, ProviderError> {
+        async fn validate_token(
+            &self,
+            _token: &ProviderToken,
+        ) -> Result<ProviderInfo, ProviderError> {
             Ok(ProviderInfo {
                 provider: self.provider_type,
                 username: "mock-user".into(),
@@ -424,19 +440,34 @@ pub mod mock {
             })
         }
 
-        async fn get_authenticated_user(&self, _token: &ProviderToken) -> Result<String, ProviderError> {
+        async fn get_authenticated_user(
+            &self,
+            _token: &ProviderToken,
+        ) -> Result<String, ProviderError> {
             Ok("mock-user".into())
         }
 
-        async fn list_repos(&self, _token: &ProviderToken, _page: u8, _per_page: u8) -> Result<Vec<VaultRepo>, ProviderError> {
+        async fn list_repos(
+            &self,
+            _token: &ProviderToken,
+            _page: u8,
+            _per_page: u8,
+        ) -> Result<Vec<VaultRepo>, ProviderError> {
             Ok(vec![])
         }
 
-        async fn detect_vault_repos(&self, _token: &ProviderToken) -> Result<Vec<VaultRepo>, ProviderError> {
+        async fn detect_vault_repos(
+            &self,
+            _token: &ProviderToken,
+        ) -> Result<Vec<VaultRepo>, ProviderError> {
             Ok(vec![])
         }
 
-        async fn create_private_repo(&self, _token: &ProviderToken, name: &str) -> Result<VaultRepo, ProviderError> {
+        async fn create_private_repo(
+            &self,
+            _token: &ProviderToken,
+            name: &str,
+        ) -> Result<VaultRepo, ProviderError> {
             Ok(VaultRepo {
                 name: name.into(),
                 full_name: format!("mock-user/{name}"),
@@ -451,7 +482,10 @@ pub mod mock {
             Ok(())
         }
 
-        async fn refresh_token(&self, _token: &ProviderToken) -> Result<Option<ProviderToken>, ProviderError> {
+        async fn refresh_token(
+            &self,
+            _token: &ProviderToken,
+        ) -> Result<Option<ProviderToken>, ProviderError> {
             Ok(None)
         }
     }

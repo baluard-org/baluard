@@ -248,20 +248,24 @@ fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
 /// Dispatch to the correct ForgeProvider implementation based on Provider enum.
 /// Centralizes provider routing so handler code stays provider-agnostic.
 /// L6 fix: returns Result instead of panicking on unimplemented providers.
-fn provider_for(p: baluard_core::providers::types::Provider) -> Result<Box<dyn baluard_core::providers::ForgeProvider>, String> {
+fn provider_for(
+    p: baluard_core::providers::types::Provider,
+) -> Result<Box<dyn baluard_core::providers::ForgeProvider>, String> {
     match p {
-        baluard_core::providers::types::Provider::GitHub => {
-            Ok(Box::new(baluard_core::providers::github::GitHubProvider::new()))
-        }
+        baluard_core::providers::types::Provider::GitHub => Ok(Box::new(
+            baluard_core::providers::github::GitHubProvider::new(),
+        )),
         // Phase 5: GitLab, Codeberg — return error instead of panic
         _ => Err(format!("Provider {:?} not yet implemented", p)),
     }
 }
 
 /// Helper: parse provider name from JSON payload.
-fn parse_provider_name(payload: &str) -> Result<baluard_core::providers::types::Provider, GatewayResponse> {
-    let val: serde_json::Value = serde_json::from_str(payload)
-        .map_err(|e| err_response(format!("Invalid payload: {e}")))?;
+fn parse_provider_name(
+    payload: &str,
+) -> Result<baluard_core::providers::types::Provider, GatewayResponse> {
+    let val: serde_json::Value =
+        serde_json::from_str(payload).map_err(|e| err_response(format!("Invalid payload: {e}")))?;
     let name = val["provider"].as_str().unwrap_or("");
     match name {
         "github" => Ok(baluard_core::providers::types::Provider::GitHub),
@@ -360,11 +364,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
         // H1 fix: master password change (token required)
         "vault.change_password" => {
-            let payload: serde_json::Value =
-                match serde_json::from_str(&req.payload) {
-                    Ok(v) => v,
-                    Err(e) => return err_response(format!("Invalid JSON: {e}")),
-                };
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(e) => return err_response(format!("Invalid JSON: {e}")),
+            };
             let old_pw = match payload["old_password"].as_str() {
                 Some(s) => s,
                 None => return err_response("missing old_password"),
@@ -916,8 +919,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
         // ── Provider auth (no token required, auth happens before vault unlock) ──
         "provider.list" => {
-            use baluard_core::providers::types::Provider;
             use baluard_core::providers::token::ProvidersState;
+            use baluard_core::providers::types::Provider;
             let state_file = ProvidersState::load().unwrap_or_default();
             let mut providers = serde_json::Map::new();
             for p in Provider::all() {
@@ -929,11 +932,14 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     val["auth_method"] = serde_json::Value::String(p.auth_method().to_string());
                     providers.insert(key, val);
                 } else {
-                    providers.insert(key.clone(), serde_json::json!({
-                        "provider": key,
-                        "connected": false,
-                        "auth_method": p.auth_method()
-                    }));
+                    providers.insert(
+                        key.clone(),
+                        serde_json::json!({
+                            "provider": key,
+                            "connected": false,
+                            "auth_method": p.auth_method()
+                        }),
+                    );
                 }
             }
             ok_resp(serde_json::Value::Object(providers).to_string(), token_str)
@@ -951,11 +957,17 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                         Err(e) => return err_response(e),
                     };
                     match prov.device_flow_start().await {
-                        Ok(session) => ok_resp(serde_json::to_string(&session).unwrap_or_default(), token_str),
+                        Ok(session) => ok_resp(
+                            serde_json::to_string(&session).unwrap_or_default(),
+                            token_str,
+                        ),
                         Err(e) => err_response(format!("Device flow start failed: {e}")),
                     }
                 }
-                _ => err_response(format!("Device flow not supported for {}. Use provider.connect_pat.", provider)),
+                _ => err_response(format!(
+                    "Device flow not supported for {}. Use provider.connect_pat.",
+                    provider
+                )),
             }
         }
 
@@ -975,34 +987,47 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             };
             match prov.device_flow_poll(&session).await {
                 Ok(status) => match status {
-                    baluard_core::providers::types::DeviceFlowStatus::Pending => {
-                        ok_resp(serde_json::json!({"status": "pending"}).to_string(), token_str)
-                    }
-                    baluard_core::providers::types::DeviceFlowStatus::SlowDown { interval_secs } => {
+                    baluard_core::providers::types::DeviceFlowStatus::Pending => ok_resp(
+                        serde_json::json!({"status": "pending"}).to_string(),
+                        token_str,
+                    ),
+                    baluard_core::providers::types::DeviceFlowStatus::SlowDown {
+                        interval_secs,
+                    } => {
                         // M11 fix: caller persists this back into the session
                         // and re-polls at the new (longer) interval.
                         ok_resp(serde_json::json!({"status": "slow_down", "interval_secs": interval_secs}).to_string(), token_str)
                     }
-                    baluard_core::providers::types::DeviceFlowStatus::Expired => {
-                        ok_resp(serde_json::json!({"status": "expired"}).to_string(), token_str)
-                    }
+                    baluard_core::providers::types::DeviceFlowStatus::Expired => ok_resp(
+                        serde_json::json!({"status": "expired"}).to_string(),
+                        token_str,
+                    ),
                     baluard_core::providers::types::DeviceFlowStatus::Success(token) => {
                         // Validate token and get user info
                         match prov.validate_token(&token).await {
                             Ok(info) => {
                                 // Store token in keyring
                                 if let Err(e) = baluard_core::providers::token::store_token(
-                                    info.provider, &info.username, &token,
+                                    info.provider,
+                                    &info.username,
+                                    &token,
                                 ) {
                                     return err_response(format!("Keyring error: {e}"));
                                 }
                                 // Store non-sensitive state
-                                let mut state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+                                let mut state_file =
+                                    baluard_core::providers::token::ProvidersState::load()
+                                        .unwrap_or_default();
                                 state_file.set(info.clone());
                                 if let Err(e) = state_file.save() {
                                     // Rollback: remove orphaned keyring entry
-                                    let _ = baluard_core::providers::token::delete_token(info.provider, &info.username);
-                                    return err_response(format!("Failed to save provider state: {e}"));
+                                    let _ = baluard_core::providers::token::delete_token(
+                                        info.provider,
+                                        &info.username,
+                                    );
+                                    return err_response(format!(
+                                        "Failed to save provider state: {e}"
+                                    ));
                                 }
                                 ok_resp(serde_json::json!({"status": "success", "username": info.username}).to_string(), token_str)
                             }
@@ -1037,17 +1062,27 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             match prov.authenticate_pat(&pat).await {
                 Ok((token, info)) => {
                     if let Err(e) = baluard_core::providers::token::store_token(
-                        info.provider, &info.username, &token,
+                        info.provider,
+                        &info.username,
+                        &token,
                     ) {
                         return err_response(format!("Keyring error: {e}"));
                     }
-                    let mut state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+                    let mut state_file =
+                        baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
                     state_file.set(info.clone());
                     if let Err(e) = state_file.save() {
-                        let _ = baluard_core::providers::token::delete_token(info.provider, &info.username);
+                        let _ = baluard_core::providers::token::delete_token(
+                            info.provider,
+                            &info.username,
+                        );
                         return err_response(format!("Failed to save provider state: {e}"));
                     }
-                    ok_resp(serde_json::json!({"status": "success", "username": info.username}).to_string(), token_str)
+                    ok_resp(
+                        serde_json::json!({"status": "success", "username": info.username})
+                            .to_string(),
+                        token_str,
+                    )
                 }
                 Err(e) => err_response(format!("PAT auth failed: {e}")),
             }
@@ -1058,7 +1093,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(p) => p,
                 Err(e) => return e,
             };
-            let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+            let state_file =
+                baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
             match state_file.get(provider) {
                 Some(info) => {
                     match baluard_core::providers::token::load_token(provider, &info.username) {
@@ -1113,7 +1149,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             };
             let page = (payload["page"].as_u64().unwrap_or(1)).min(100) as u8;
             let per_page = (payload["per_page"].as_u64().unwrap_or(30)).min(100) as u8;
-            let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+            let state_file =
+                baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
             let info = match state_file.get(provider) {
                 Some(i) => i,
                 None => return err_response(format!("{} not connected", provider)),
@@ -1137,7 +1174,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(p) => p,
                 Err(e) => return e,
             };
-            let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+            let state_file =
+                baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
             let info = match state_file.get(provider) {
                 Some(i) => i,
                 None => return err_response(format!("{} not connected", provider)),
@@ -1169,7 +1207,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Some(n) => n.to_string(),
                 None => return err_response("Missing repo name"),
             };
-            let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+            let state_file =
+                baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
             let info = match state_file.get(provider) {
                 Some(i) => i,
                 None => return err_response(format!("{} not connected", provider)),
@@ -1201,19 +1240,22 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
             // Resolve provider
             let prov_type = match baluard_core::providers::types::Provider::all()
-                .iter().find(|p| p.to_string() == provider)
+                .iter()
+                .find(|p| p.to_string() == provider)
             {
                 Some(p) => *p,
                 None => return err_response(format!("Unknown provider: {provider}")),
             };
 
             // Load token from keyring
-            let state_file = baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+            let state_file =
+                baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
             let info = match state_file.get(prov_type) {
                 Some(i) => i,
                 None => return err_response(format!("{provider} not connected")),
             };
-            let token = match baluard_core::providers::token::load_token(prov_type, &info.username) {
+            let token = match baluard_core::providers::token::load_token(prov_type, &info.username)
+            {
                 Ok(t) => t,
                 Err(e) => return err_response(format!("Token not found: {e}")),
             };
@@ -1226,7 +1268,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     Ok(Some(m)) => m.slug.clone(),
                     _ => {
                         // Fallback to directory name
-                        vault_path.file_name()
+                        vault_path
+                            .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or("vault")
                             .to_string()
@@ -1249,10 +1292,16 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             // Init git repo + add remote + push (blocking git ops)
             #[cfg(feature = "git-sync")]
             {
-                let slug_for_reg = match baluard_core::vault::registry::BaluardMarker::read_from_vault(&vault_path) {
-                    Ok(Some(m)) => m.slug.clone(),
-                    _ => vault_path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string(),
-                };
+                let slug_for_reg =
+                    match baluard_core::vault::registry::BaluardMarker::read_from_vault(&vault_path)
+                    {
+                        Ok(Some(m)) => m.slug.clone(),
+                        _ => vault_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    };
                 let provider_for_reg = provider.clone();
                 let remote_url = repo.clone_url.clone();
                 let provider_clone = provider.clone();
@@ -1263,27 +1312,36 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     // Init repo if not already a git repo
                     let git_repo = match engine.open_repo() {
                         Ok(r) => r,
-                        Err(_) => engine.init_repo().map_err(|e| format!("Git init failed: {e}"))?,
+                        Err(_) => engine
+                            .init_repo()
+                            .map_err(|e| format!("Git init failed: {e}"))?,
                     };
 
                     // Add origin remote (idempotent check)
                     if let Ok(existing) = engine.get_remote_url(&git_repo, "origin") {
                         if existing != remote_url {
-                            return Err(format!("Remote 'origin' already set to {existing}; disconnect sync first"));
+                            return Err(format!(
+                                "Remote 'origin' already set to {existing}; disconnect sync first"
+                            ));
                         }
                         // Same URL, skip
                     } else {
-                        engine.add_remote(&git_repo, "origin", &remote_url)
+                        engine
+                            .add_remote(&git_repo, "origin", &remote_url)
                             .map_err(|e| format!("Failed to add remote: {e}"))?;
                     }
 
                     // Stage + commit any pending changes, then push
-                    let status = engine.status(&git_repo).map_err(|e| format!("Status check failed: {e}"))?;
+                    let status = engine
+                        .status(&git_repo)
+                        .map_err(|e| format!("Status check failed: {e}"))?;
                     if status.is_dirty() {
-                        engine.commit_all(&git_repo, "")
+                        engine
+                            .commit_all(&git_repo, "")
                             .map_err(|e| format!("Commit failed: {e}"))?;
                     }
-                    engine.push(&git_repo, "origin")
+                    engine
+                        .push(&git_repo, "origin")
                         .map_err(|e| format!("First push failed: {e}"))?;
 
                     Ok(remote_url)
@@ -1297,7 +1355,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
                 // Update registry with sync info
                 if !slug_for_reg.is_empty() {
-                    if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
+                    if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked()
+                    {
                         if let Some(entry) = reg.get_mut(&slug_for_reg) {
                             entry.provider = Some(provider_clone);
                             entry.remote_url = Some(remote_url.clone());
@@ -1311,11 +1370,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     }
                 }
 
-                ok_resp(serde_json::json!({
-                    "status": "synced",
-                    "repo": remote_url,
-                    "provider": provider_for_reg
-                }).to_string(), token_str)
+                ok_resp(
+                    serde_json::json!({
+                        "status": "synced",
+                        "repo": remote_url,
+                        "provider": provider_for_reg
+                    })
+                    .to_string(),
+                    token_str,
+                )
             }
 
             #[cfg(not(feature = "git-sync"))]
@@ -1403,7 +1466,9 @@ fn sync_pull(vault_path: &std::path::Path) -> Result<String, String> {
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let result = engine.pull(&repo, "origin").map_err(|e| format!("{e}"))?;
     let mut msg = match result {
-        baluard_core::sync::engine::PullResult::AlreadyUpToDate => "Already up to date.".to_string(),
+        baluard_core::sync::engine::PullResult::AlreadyUpToDate => {
+            "Already up to date.".to_string()
+        }
         baluard_core::sync::engine::PullResult::FastForward => {
             "Fast-forwarded to latest.".to_string()
         }

@@ -753,9 +753,8 @@ impl VaultHandle {
     /// This file is readable before vault unlock (login screen needs language).
     pub fn save_locale(&self, lang: &str) -> Result<(), BaluardError> {
         let path = self.path.join("meta/locale");
-        std::fs::write(&path, lang).map_err(|e| {
-            VaultError::Metadata(format!("writing meta/locale: {e}"))
-        })?;
+        std::fs::write(&path, lang)
+            .map_err(|e| VaultError::Metadata(format!("writing meta/locale: {e}")))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -768,7 +767,9 @@ impl VaultHandle {
     /// Returns None if file does not exist.
     pub fn load_locale(&self) -> Option<String> {
         let path = self.path.join("meta/locale");
-        std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| s.trim().to_string())
     }
 
     // ── Device Activity ──
@@ -2312,10 +2313,7 @@ impl VaultHandle {
     /// Re-wrap the Root Key in meta/recovery.json after rotation.
     /// Reads the stored recovery X25519 public key and HPKE-wraps the new Root Key.
     /// If recovery.json doesn't exist or lacks the pubkey field, silently skips.
-    fn rewrap_recovery_key(
-        vault_path: &Path,
-        new_root_key: &RootKey,
-    ) -> Result<(), BaluardError> {
+    fn rewrap_recovery_key(vault_path: &Path, new_root_key: &RootKey) -> Result<(), BaluardError> {
         let recovery_path = vault_path.join("meta/recovery.json");
         if !recovery_path.exists() {
             return Ok(());
@@ -2459,7 +2457,8 @@ impl VaultHandle {
             let mut existing = self.try_decrypt_cipher_with_root_key(&old_root, &file)?;
 
             // Re-encrypt attachment blobs with new item key
-            let new_item_key = Self::derive_item_key_from_root(&new_root_key, *cipher_id, new_epoch);
+            let new_item_key =
+                Self::derive_item_key_from_root(&new_root_key, *cipher_id, new_epoch);
             let old_item_key = Self::derive_item_key_from_root(&old_root, *cipher_id, old_epoch);
             for attach_meta in &existing.attachments {
                 let attach_dir = self
@@ -2851,10 +2850,9 @@ impl VaultHandle {
             return;
         }
         if manifest.save(&self.path).is_err() {
-            return;
+            // intentionally ignored: this is the last step, fall through
         }
     }
-
     /// H3 fix: Remove integrity checkpoint on cipher delete.
     /// Prevents false rollback alarms for legitimately deleted entries.
     fn remove_integrity(&self, object_id: &str) {
@@ -2977,7 +2975,10 @@ fn keyring_service(vault_path: &Path) -> String {
 
 /// Load device private keys from OS keyring, falling back to plaintext file.
 /// On successful file read, migrates to keyring and deletes the file.
-fn load_device_privkeys(vault_path: &Path, device_id: Uuid) -> Result<DevicePrivKeys, BaluardError> {
+fn load_device_privkeys(
+    vault_path: &Path,
+    device_id: Uuid,
+) -> Result<DevicePrivKeys, BaluardError> {
     let service = keyring_service(vault_path);
     let account = device_id.to_string();
 

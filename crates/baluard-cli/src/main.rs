@@ -3,8 +3,8 @@
 mod client;
 mod commands;
 
-use clap::{Parser, Subcommand};
 use baluard_core::types::{CipherInput, CipherKind, LoginData};
+use clap::{Parser, Subcommand};
 
 /// How to connect to the vault.
 #[derive(Clone, Copy, Debug)]
@@ -39,6 +39,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)] // Pre-existing: Commands has unit + struct variants of widely different sizes
 enum Commands {
     /// Create a new vault with master password.
     Init {
@@ -617,9 +618,13 @@ enum CipherAddCommand {
 }
 
 /// Parse a folder ID string into a UUID, returning a descriptive error on failure.
-fn parse_folder_id(folder: Option<&String>) -> Result<Option<uuid::Uuid>, Box<dyn std::error::Error>> {
+fn parse_folder_id(
+    folder: Option<&String>,
+) -> Result<Option<uuid::Uuid>, Box<dyn std::error::Error>> {
     folder
-        .map(|f| uuid::Uuid::parse_str(f).map_err(|e| format!("Invalid folder UUID '{f}': {e}").into()))
+        .map(|f| {
+            uuid::Uuid::parse_str(f).map_err(|e| format!("Invalid folder UUID '{f}': {e}").into())
+        })
         .transpose()
 }
 
@@ -644,11 +649,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
                 }
                 None => {
                     let pw = commands::prompt_password("Password: ")?;
-                    if pw.is_empty() {
-                        None
-                    } else {
-                        Some(pw)
-                    }
+                    if pw.is_empty() { None } else { Some(pw) }
                 }
             };
             Ok(CipherInput {
@@ -962,8 +963,24 @@ fn main() {
 
     let result = match cli.command {
         // Init always direct (creates vault on disk)
-        Commands::Init { profile, name, subtitle, slug, theme, lang, auto_lock } =>
-            commands::handle_init(&cli.vault_path, &profile, name, subtitle, slug, theme, lang, auto_lock),
+        Commands::Init {
+            profile,
+            name,
+            subtitle,
+            slug,
+            theme,
+            lang,
+            auto_lock,
+        } => commands::handle_init(
+            &cli.vault_path,
+            &profile,
+            name,
+            subtitle,
+            slug,
+            theme,
+            lang,
+            auto_lock,
+        ),
 
         // Vault lifecycle
         Commands::Unlock => commands::handle_unlock(mode, &vault_path, cli.socket.as_deref()),
@@ -992,12 +1009,10 @@ fn main() {
         },
 
         // Cipher CRUD: daemon-first with direct fallback
-        Commands::Add { cipher } => {
-            match build_cipher_input(cipher) {
-                Ok(input) => commands::handle_add(mode, &vault_path, cli.socket.as_deref(), input),
-                Err(e) => Err(e),
-            }
-        }
+        Commands::Add { cipher } => match build_cipher_input(cipher) {
+            Ok(input) => commands::handle_add(mode, &vault_path, cli.socket.as_deref(), input),
+            Err(e) => Err(e),
+        },
         Commands::Get {
             id,
             decrypt,
@@ -1059,12 +1074,9 @@ fn main() {
             DeviceCommands::EnrollWithPhrase { phrase } => {
                 commands::handle_enroll_with_phrase(mode, &vault_path, phrase.as_deref())
             }
-            DeviceCommands::Revoke { device_id } => commands::handle_device_revoke(
-                mode,
-                &vault_path,
-                cli.socket.as_deref(),
-                &device_id,
-            ),
+            DeviceCommands::Revoke { device_id } => {
+                commands::handle_device_revoke(mode, &vault_path, cli.socket.as_deref(), &device_id)
+            }
         },
 
         // Settings
@@ -1094,9 +1106,7 @@ fn main() {
             TagAction::Create { name } => {
                 commands::handle_tag_create(mode, &vault_path, cli.socket.as_deref(), &name)
             }
-            TagAction::List => {
-                commands::handle_tag_list(mode, &vault_path, cli.socket.as_deref())
-            }
+            TagAction::List => commands::handle_tag_list(mode, &vault_path, cli.socket.as_deref()),
             TagAction::Rename { old, new } => {
                 commands::handle_tag_rename(mode, &vault_path, cli.socket.as_deref(), &old, &new)
             }

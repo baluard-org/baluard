@@ -112,9 +112,10 @@ pub fn store_token(
     token: &ProviderToken,
 ) -> Result<(), super::types::ProviderError> {
     let key = keyring_key(provider, username);
-    let secret = token.to_secret().map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
-    let entry = keyring::Entry::new("baluard", &key)
-        .map_err(|e| keyring_error(&e))?;
+    let secret = token
+        .to_secret()
+        .map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
+    let entry = keyring::Entry::new("baluard", &key).map_err(|e| keyring_error(&e))?;
     entry
         .set_password(secret.expose_secret())
         .map_err(|e| keyring_error(&e))?;
@@ -127,34 +128,25 @@ pub fn load_token(
     username: &str,
 ) -> Result<ProviderToken, super::types::ProviderError> {
     let key = keyring_key(provider, username);
-    let entry = keyring::Entry::new("baluard", &key)
-        .map_err(|e| keyring_error(&e))?;
-    let secret_str = entry
-        .get_password()
-        .map_err(|e| keyring_error(&e))?;
+    let entry = keyring::Entry::new("baluard", &key).map_err(|e| keyring_error(&e))?;
+    let secret_str = entry.get_password().map_err(|e| keyring_error(&e))?;
     let secret = SecretString::new(secret_str.into());
     ProviderToken::from_secret(&secret)
         .map_err(|e| super::types::ProviderError::Keyring(e.to_string()))
 }
 
 /// Delete a provider token from the OS keyring.
-pub fn delete_token(
-    provider: Provider,
-    username: &str,
-) -> Result<(), super::types::ProviderError> {
+pub fn delete_token(provider: Provider, username: &str) -> Result<(), super::types::ProviderError> {
     let key = keyring_key(provider, username);
-    let entry = keyring::Entry::new("baluard", &key)
-        .map_err(|e| keyring_error(&e))?;
-    entry
-        .delete_credential()
-        .map_err(|e| keyring_error(&e))?;
+    let entry = keyring::Entry::new("baluard", &key).map_err(|e| keyring_error(&e))?;
+    entry.delete_credential().map_err(|e| keyring_error(&e))?;
     Ok(())
 }
 
 /// Full provider disconnect: delete keyring token + remove from providers.json.
 pub fn disconnect(provider: Provider) -> Result<(), super::types::ProviderError> {
-    let mut state = ProvidersState::load()
-        .map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
+    let mut state =
+        ProvidersState::load().map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
 
     if let Some(info) = state.remove(provider) {
         // Best-effort keyring deletion
@@ -204,10 +196,7 @@ mod tests {
             keyring_key(Provider::GitHub, "alice"),
             "baluard-github-alice"
         );
-        assert_eq!(
-            keyring_key(Provider::GitLab, "bob"),
-            "baluard-gitlab-bob"
-        );
+        assert_eq!(keyring_key(Provider::GitLab, "bob"), "baluard-gitlab-bob");
     }
 
     #[test]

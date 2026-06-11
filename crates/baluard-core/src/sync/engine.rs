@@ -294,7 +294,12 @@ impl SyncEngine {
     // ── Remote operations ──
 
     /// Add a remote URL.
-    pub fn add_remote(&self, _repo: &Repository, name: &str, url: &str) -> Result<(), BaluardError> {
+    pub fn add_remote(
+        &self,
+        _repo: &Repository,
+        name: &str,
+        url: &str,
+    ) -> Result<(), BaluardError> {
         validate_git_url(url)?;
         _repo
             .remote(name, url)
@@ -408,8 +413,7 @@ impl SyncEngine {
             let parent_count = commit.parent_count();
             if parent_count == 0 {
                 return Err(SyncError::Git(
-                    "shallow clone prevents full signature verification: history truncated"
-                        .into(),
+                    "shallow clone prevents full signature verification: history truncated".into(),
                 )
                 .into());
             }
@@ -563,7 +567,11 @@ impl SyncEngine {
 
         remote
             .push(&[&push_refspec], Some(&mut push_options))
-            .map_err(|e| SyncError::Git(crate::sync::credentials::scrub_git_error(&format!("push: {e}"))))?;
+            .map_err(|e| {
+                SyncError::Git(crate::sync::credentials::scrub_git_error(&format!(
+                    "push: {e}"
+                )))
+            })?;
 
         // Track local HEAD OID for rollback detection
         let pushed_oid = repo
@@ -612,7 +620,11 @@ impl SyncEngine {
             let refspec = format!("refs/heads/*:refs/remotes/{remote_name}/*");
             remote
                 .fetch(&[&refspec], Some(&mut fetch_opts), None)
-                .map_err(|e| SyncError::Git(crate::sync::credentials::scrub_git_error(&format!("fetch: {e}"))))?;
+                .map_err(|e| {
+                    SyncError::Git(crate::sync::credentials::scrub_git_error(&format!(
+                        "fetch: {e}"
+                    )))
+                })?;
 
             // Resolve remote branch dynamically
             let remote_branch = Self::resolve_remote_branch(repo, remote_name);
@@ -816,7 +828,9 @@ impl SyncEngine {
 
         // Write resolved files to working directory (with path traversal protection)
         // Validate ALL paths before any filesystem side-effects.
-        let canonical_vault = self.vault_path.canonicalize()
+        let canonical_vault = self
+            .vault_path
+            .canonicalize()
             .map_err(|e| SyncError::Git(format!("canonicalize vault path: {e}")))?;
 
         for (path, content) in resolved_files {
@@ -826,21 +840,23 @@ impl SyncEngine {
             // Do NOT create dirs before validation — that creates side-effects
             // outside the vault on traversal paths.
             let parent = full_path.parent().unwrap_or(Path::new("."));
-            let canonical_parent = parent.canonicalize()
-                .map_err(|e| SyncError::Git(format!(
-                    "path '{}' parent not under vault: {e}", path
-                )))?;
+            let canonical_parent = parent.canonicalize().map_err(|e| {
+                SyncError::Git(format!("path '{}' parent not under vault: {e}", path))
+            })?;
             if !canonical_parent.starts_with(&canonical_vault) {
                 return Err(SyncError::Git(format!(
-                    "path traversal detected: '{}' escapes vault directory", path
-                )).into());
+                    "path traversal detected: '{}' escapes vault directory",
+                    path
+                ))
+                .into());
             }
-            let canonical_full = canonical_parent
-                .join(full_path.file_name().unwrap_or_default());
+            let canonical_full = canonical_parent.join(full_path.file_name().unwrap_or_default());
             if !canonical_full.starts_with(&canonical_vault) {
                 return Err(SyncError::Git(format!(
-                    "path traversal detected: '{}' escapes vault directory", path
-                )).into());
+                    "path traversal detected: '{}' escapes vault directory",
+                    path
+                ))
+                .into());
             }
 
             // Now safe to create dirs and write
@@ -944,8 +960,8 @@ impl SyncEngine {
         });
         // M5 fix: enforce known_hosts for SSH (HTTPS passthrough).
         callbacks.certificate_check(|cert, host| {
-            use git2::cert::SshHostKeyType;
             use git2::CertificateCheckStatus;
+            use git2::cert::SshHostKeyType;
             if let Some(hostkey) = cert.as_hostkey() {
                 let key_type = match hostkey.hostkey_type() {
                     Some(SshHostKeyType::Ed255219) => "ssh-ed25519",
@@ -971,9 +987,11 @@ impl SyncEngine {
         });
         fetch_opts.remote_callbacks(callbacks);
         builder.fetch_options(fetch_opts);
-        let repo = builder
-            .clone(url, target)
-            .map_err(|e| SyncError::Git(crate::sync::credentials::scrub_git_error(&format!("clone: {e}"))))?;
+        let repo = builder.clone(url, target).map_err(|e| {
+            SyncError::Git(crate::sync::credentials::scrub_git_error(&format!(
+                "clone: {e}"
+            )))
+        })?;
         Ok(repo)
     }
 }
@@ -1541,7 +1559,9 @@ mod tests {
     // ── C2 end-to-end tests (peer review fix) ──
 
     /// Build a small linear history: A -> B -> C. Returns (repo, a, b, c).
-    fn build_linear_repo(dir: &std::path::Path) -> (git2::Repository, git2::Oid, git2::Oid, git2::Oid) {
+    fn build_linear_repo(
+        dir: &std::path::Path,
+    ) -> (git2::Repository, git2::Oid, git2::Oid, git2::Oid) {
         let repo = git2::Repository::init(dir).unwrap();
         let sig = git2::Signature::now("Test", "test@example.com").unwrap();
 
@@ -1601,7 +1621,9 @@ mod tests {
 
     /// Build a diamond history: A -> B -> D, A -> C -> D (merge commit D).
     /// Returns (repo, a, b, c, d).
-    fn build_diamond_repo(dir: &std::path::Path) -> (git2::Repository, git2::Oid, git2::Oid, git2::Oid, git2::Oid) {
+    fn build_diamond_repo(
+        dir: &std::path::Path,
+    ) -> (git2::Repository, git2::Oid, git2::Oid, git2::Oid, git2::Oid) {
         let repo = git2::Repository::init(dir).unwrap();
         let sig = git2::Signature::now("Test", "test@example.com").unwrap();
 
@@ -1611,7 +1633,16 @@ mod tests {
         index.add_path(std::path::Path::new("a.txt")).unwrap();
         index.write().unwrap();
         let tree_oid = repo.index().unwrap().write_tree().unwrap();
-        let a = repo.commit(Some("HEAD"), &sig, &sig, "A", &repo.find_tree(tree_oid).unwrap(), &[]).unwrap();
+        let a = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "A",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[],
+            )
+            .unwrap();
 
         // Commit B: A -> B (updates HEAD, first parent of future merge)
         std::fs::write(dir.join("b.txt"), "B").unwrap();
@@ -1619,45 +1650,43 @@ mod tests {
         index.add_path(std::path::Path::new("b.txt")).unwrap();
         index.write().unwrap();
         let tree_oid = repo.index().unwrap().write_tree().unwrap();
-        let b = repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            "B",
-            &repo.find_tree(tree_oid).unwrap(),
-            &[&repo.find_commit(a).unwrap()],
-        )
-        .unwrap();
+        let b = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "B",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[&repo.find_commit(a).unwrap()],
+            )
+            .unwrap();
 
         // Reset HEAD to A so we can create C as a side branch.
         // `set_head_detached` on A's OID, then commit C with HEAD=A.
         repo.set_head_detached(a).unwrap();
-        repo.checkout_head(Some(
-            git2::build::CheckoutBuilder::default().force(),
-        ))
-        .unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .unwrap();
         std::fs::write(dir.join("c.txt"), "C").unwrap();
         let mut index = repo.index().unwrap();
         index.add_path(std::path::Path::new("c.txt")).unwrap();
         index.write().unwrap();
         let tree_oid = repo.index().unwrap().write_tree().unwrap();
-        let c = repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            "C",
-            &repo.find_tree(tree_oid).unwrap(),
-            &[&repo.find_commit(a).unwrap()],
-        )
-        .unwrap();
+        let c = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "C",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[&repo.find_commit(a).unwrap()],
+            )
+            .unwrap();
 
         // Reset HEAD back to B so the merge commit below has B as the
         // first parent (required by git's commit-when-HEAD-update rule).
         repo.set_head_detached(b).unwrap();
-        repo.checkout_head(Some(
-            git2::build::CheckoutBuilder::default().force(),
-        ))
-        .unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .unwrap();
 
         // Merge D: parents B (current HEAD) and C (second parent)
         std::fs::write(dir.join("d.txt"), "D").unwrap();
@@ -1665,15 +1694,16 @@ mod tests {
         index.add_path(std::path::Path::new("d.txt")).unwrap();
         index.write().unwrap();
         let tree_oid = repo.index().unwrap().write_tree().unwrap();
-        let d = repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            "D",
-            &repo.find_tree(tree_oid).unwrap(),
-            &[&repo.find_commit(b).unwrap(), &repo.find_commit(c).unwrap()],
-        )
-        .unwrap();
+        let d = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "D",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[&repo.find_commit(b).unwrap(), &repo.find_commit(c).unwrap()],
+            )
+            .unwrap();
 
         (repo, a, b, c, d)
     }
@@ -1702,7 +1732,10 @@ mod tests {
         let oids = SyncEngine::collect_commit_range(&repo, a, a, d).unwrap();
         let set: std::collections::HashSet<_> = oids.iter().copied().collect();
         assert_eq!(set.len(), 3, "should find D, B, and C (not just D and B)");
-        assert!(set.contains(&d), "descendant (merge commit) must be in result");
+        assert!(
+            set.contains(&d),
+            "descendant (merge commit) must be in result"
+        );
         assert!(set.contains(&b), "first parent must be in result");
         assert!(set.contains(&c), "second parent must be in result (C2 fix)");
         assert!(!set.contains(&a), "ancestor must NOT be in result");
@@ -1716,11 +1749,17 @@ mod tests {
         let repo = git2::Repository::init(dir.path()).unwrap();
         let sig = git2::Signature::now("Test", "test@example.com").unwrap();
 
-        let commit_on_head = |repo: &git2::Repository, content: &str, parents: &[git2::Oid], msg: &str| -> git2::Oid {
+        let commit_on_head = |repo: &git2::Repository,
+                              content: &str,
+                              parents: &[git2::Oid],
+                              msg: &str|
+         -> git2::Oid {
             let dir = repo.workdir().unwrap();
             std::fs::write(dir.join(format!("{content}.txt")), content).unwrap();
             let mut index = repo.index().unwrap();
-            index.add_path(std::path::Path::new(&format!("{content}.txt"))).unwrap();
+            index
+                .add_path(std::path::Path::new(&format!("{content}.txt")))
+                .unwrap();
             index.write().unwrap();
             let tree_oid = repo.index().unwrap().write_tree().unwrap();
             let parent_commits: Vec<_> = parents
@@ -1746,26 +1785,20 @@ mod tests {
         // After each side-branch commit, HEAD moves to the new commit,
         // so we must reset to A before creating the next side branch.
         repo.set_head_detached(a).unwrap();
-        repo.checkout_head(Some(
-            git2::build::CheckoutBuilder::default().force(),
-        ))
-        .unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .unwrap();
         let c = commit_on_head(&repo, "c", &[a], "C");
 
         // Reset back to A before creating E.
         repo.set_head_detached(a).unwrap();
-        repo.checkout_head(Some(
-            git2::build::CheckoutBuilder::default().force(),
-        ))
-        .unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .unwrap();
         let e = commit_on_head(&repo, "e", &[a], "E");
 
         // Reset HEAD to B so the merge below has B as first parent.
         repo.set_head_detached(b).unwrap();
-        repo.checkout_head(Some(
-            git2::build::CheckoutBuilder::default().force(),
-        ))
-        .unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .unwrap();
 
         // Create octopus merge D with parents B (HEAD), C, E.
         std::fs::write(dir.path().join("d.txt"), "D").unwrap();
@@ -1816,7 +1849,16 @@ mod tests {
         index.add_path(std::path::Path::new("a.txt")).unwrap();
         index.write().unwrap();
         let tree_oid = repo.index().unwrap().write_tree().unwrap();
-        let a_oid = repo.commit(Some("HEAD"), &sig, &sig, "A", &repo.find_tree(tree_oid).unwrap(), &[]).unwrap();
+        let a_oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "A",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[],
+            )
+            .unwrap();
 
         // B: A -> B
         std::fs::write(dir.path().join("b.txt"), "B").unwrap();
@@ -1840,7 +1882,6 @@ mod tests {
         assert_eq!(oids, vec![b_oid]);
     }
 
-    #[test]
     #[test]
     fn collect_commit_range_terminates_at_local_trusted_history() {
         // peer review review: pre-fix BFS walked every lineage to a root,
@@ -1869,7 +1910,16 @@ mod tests {
         index.add_path(std::path::Path::new("a.txt")).unwrap();
         index.write().unwrap();
         let tree_oid = repo.index().unwrap().write_tree().unwrap();
-        let a_oid = repo.commit(Some("HEAD"), &sig, &sig, "A", &repo.find_tree(tree_oid).unwrap(), &[]).unwrap();
+        let a_oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "A",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[],
+            )
+            .unwrap();
 
         // B: A -> B
         std::fs::write(dir.path().join("b.txt"), "B").unwrap();
@@ -1877,17 +1927,36 @@ mod tests {
         index.add_path(std::path::Path::new("b.txt")).unwrap();
         index.write().unwrap();
         let tree_oid = repo.index().unwrap().write_tree().unwrap();
-        let b_oid = repo.commit(Some("HEAD"), &sig, &sig, "B", &repo.find_tree(tree_oid).unwrap(), &[&repo.find_commit(a_oid).unwrap()]).unwrap();
+        let b_oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "B",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[&repo.find_commit(a_oid).unwrap()],
+            )
+            .unwrap();
 
         // C: side branch from A. Reset HEAD to A first.
         repo.set_head_detached(a_oid).unwrap();
-        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force())).unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+            .unwrap();
         std::fs::write(dir.path().join("c.txt"), "C").unwrap();
         let mut index = repo.index().unwrap();
         index.add_path(std::path::Path::new("c.txt")).unwrap();
         index.write().unwrap();
         let tree_oid = repo.index().unwrap().write_tree().unwrap();
-        let c_oid = repo.commit(Some("HEAD"), &sig, &sig, "C", &repo.find_tree(tree_oid).unwrap(), &[&repo.find_commit(a_oid).unwrap()]).unwrap();
+        let c_oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "C",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[&repo.find_commit(a_oid).unwrap()],
+            )
+            .unwrap();
 
         // M: merge of B and C. HEAD is at C, so use None to avoid
         // "current tip is not the first parent" error (B != C).
@@ -1895,7 +1964,17 @@ mod tests {
             let b_commit = repo.find_commit(b_oid).unwrap();
             let c_commit = repo.find_commit(c_oid).unwrap();
             let parents: Vec<&git2::Commit> = vec![&b_commit, &c_commit];
-            repo.commit(None, &sig, &sig, "M", &repo.find_tree(repo.index().unwrap().write_tree().unwrap()).unwrap(), &parents).unwrap()
+            repo.commit(
+                None,
+                &sig,
+                &sig,
+                "M",
+                &repo
+                    .find_tree(repo.index().unwrap().write_tree().unwrap())
+                    .unwrap(),
+                &parents,
+            )
+            .unwrap()
         };
 
         // D: child of M. Use None for update_ref.
@@ -1903,7 +1982,15 @@ mod tests {
             let m_commit = repo.find_commit(m_oid).unwrap();
             let parents: Vec<&git2::Commit> = vec![&m_commit];
             let tree_oid = repo.index().unwrap().write_tree().unwrap();
-            repo.commit(None, &sig, &sig, "D", &repo.find_tree(tree_oid).unwrap(), &parents).unwrap()
+            repo.commit(
+                None,
+                &sig,
+                &sig,
+                "D",
+                &repo.find_tree(tree_oid).unwrap(),
+                &parents,
+            )
+            .unwrap()
         };
 
         // Walk D -> A (merge base), local_oid = M.
@@ -1913,8 +2000,17 @@ mod tests {
         let set: std::collections::HashSet<_> = oids.iter().copied().collect();
         assert!(set.contains(&d_oid), "D must be in result");
         assert!(set.contains(&m_oid), "M must be in result");
-        assert!(!set.contains(&b_oid), "B (ancestor of local_oid) must NOT be in result");
-        assert!(!set.contains(&c_oid), "C (ancestor of local_oid) must NOT be in result");
-        assert!(!set.contains(&a_oid), "A (merge base) must NOT be in result");
+        assert!(
+            !set.contains(&b_oid),
+            "B (ancestor of local_oid) must NOT be in result"
+        );
+        assert!(
+            !set.contains(&c_oid),
+            "C (ancestor of local_oid) must NOT be in result"
+        );
+        assert!(
+            !set.contains(&a_oid),
+            "A (merge base) must NOT be in result"
+        );
     }
 }

@@ -143,8 +143,8 @@ pub fn decrypt_cipher(
     json.zeroize();
     padded.zeroize();
 
-    let raw_data: CipherEnvelopeData = raw_data_result
-        .map_err(|e| VaultError::Corrupt(format!("cipher deserialization: {e}")))?;
+    let raw_data: CipherEnvelopeData =
+        raw_data_result.map_err(|e| VaultError::Corrupt(format!("cipher deserialization: {e}")))?;
 
     let data: CipherData = raw_data.into();
 
