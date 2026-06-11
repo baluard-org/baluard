@@ -51,17 +51,39 @@ fn token_file_path(socket_path: Option<&str>) -> PathBuf {
 }
 
 /// Set the session token (persist to file alongside socket).
+/// H6 fix: atomic creation with 0600 permissions (no TOCTOU race).
 pub fn set_session_token(token: &str, socket_path: Option<&str>) {
     let path = token_file_path(socket_path);
-    if let Err(e) = std::fs::write(&path, token) {
-        eprintln!("warning: could not save session token: {e}");
-        return;
-    }
+
+    // Write atomically: tmp file with 0600, then rename
+    let tmp = path.with_extension("tok.tmp");
+
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        use std::os::unix::fs::OpenOptionsExt;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+        {
+            if f.write_all(token.as_bytes()).is_err() {
+                let _ = std::fs::remove_file(&tmp);
+                return;
+            }
+        } else {
+            return;
+        }
     }
+    #[cfg(not(unix))]
+    {
+        if std::fs::write(&tmp, token).is_err() {
+            return;
+        }
+    }
+
+    let _ = std::fs::rename(&tmp, &path);
 }
 
 /// Get the current session token (read from file).
