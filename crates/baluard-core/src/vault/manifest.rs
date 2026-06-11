@@ -107,6 +107,37 @@ pub struct VaultSettings {
     /// Avatar file extension (e.g. "png", "jpg"). Avatar stored at meta/avatar.{ext}.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_ext: Option<String>,
+    /// Enrollment policy controls how a new device joins this vault.
+    /// - `Personal` (default for new vaults): either an enrolled-device
+    ///   signature OR the recovery phrase can authorize enrollment. The
+    ///   recovery phrase is the root authority and can already perform
+    ///   full disaster recovery; non-destructive enrollment via phrase
+    ///   is a strict subset of that authority.
+    /// - `Strict` (default for existing vaults, backward compat): only an
+    ///   enrolled-device signature can authorize enrollment. Recovery
+    ///   phrase only works via destructive `recover_from_phrase`.
+    /// Migrating from Strict to Personal is a one-way door; re-read docs
+    /// before doing so.
+    #[serde(default = "default_enrollment_policy")]
+    pub enrollment_policy: EnrollmentPolicy,
+}
+
+/// Vault enrollment policy for new device joins.
+///
+/// See `VaultSettings::enrollment_policy` for the full description.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum EnrollmentPolicy {
+    /// New vaults: phrase OR enrolled-device signature can enroll.
+    #[default]
+    Personal,
+    /// Existing vaults: only enrolled-device signature can enroll.
+    Strict,
+}
+
+fn default_enrollment_policy() -> EnrollmentPolicy {
+    // Called when the field is missing from existing settings.json.
+    // Backward compat: old vaults were Strict (required device approval).
+    EnrollmentPolicy::Strict
 }
 
 /// Encrypted user profile fields (stored in meta/profile.enc).
