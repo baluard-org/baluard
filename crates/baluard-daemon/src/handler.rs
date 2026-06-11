@@ -792,6 +792,24 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        // ── Enroll this device into an existing vault via recovery phrase ──
+        // Non-destructive: existing devices remain in the registry.
+        // Requires the vault's `enrollment_policy` to be `Personal`.
+        "vault.enroll_with_phrase" => {
+            let v: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(e) => return err_response(format!("Invalid JSON: {e}")),
+            };
+            let phrase = match v["phrase"].as_str() {
+                Some(p) => p,
+                None => return err_response("missing phrase".to_string()),
+            };
+            match state.enroll_with_recovery_phrase(phrase).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
         // ── Device revocation (token required) ──
         "device.revoke" => {
             let did = req.payload.trim().to_string();

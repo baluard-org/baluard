@@ -1792,6 +1792,102 @@ impl VaultState {
         Ok(json.to_string())
     }
 
+    /// Enroll this device into an existing vault using the recovery phrase.
+    /// Non-destructive: existing devices remain in the registry.
+    /// Requires the vault's `enrollment_policy` to be `Personal`.
+    pub async fn enroll_with_recovery_phrase(&self, phrase: &str) -> Result<String, String> {
+        use baluard_core::device_manager::{DeviceManager, EnrollmentPayload};
+        use rand::RngCore;
+
+        // Validate phrase shape
+        let word_count = phrase.split_whitespace().count();
+        if word_count != 24 {
+            return Err(format!("recovery phrase must be 24 words, got {word_count}"));
+        }
+
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        let vault_path = handle.path.clone();
+
+        // Check enrollment policy
+        let settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+        if settings.enrollment_policy
+            == baluard_core::vault::manifest::EnrollmentPolicy::Strict
+        {
+            return Err("vault is in Strict enrollment mode; recovery phrase \
+                enrollment is disabled. Use 'baluard recover' (destructive) or \
+                change the enrollment_policy setting."
+                .into());
+        }
+        drop(guard);
+
+        // Build EnrollmentPayload for this device
+        let (x25519_secret, x25519_public) =
+            baluard_core::crypto::hpke_wrap::generate_x25519_keypair();
+        let (ed25519_signing, ed25519_verifying) =
+            baluard_core::crypto::signature::generate_ed25519_keypair();
+
+        let mut nonce_bytes = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+
+        let payload = EnrollmentPayload {
+            device_id: uuid::Uuid::new_v4(),
+            encryption_public_key: hex::encode(x25519_public.to_bytes()),
+            signing_public_key: hex::encode(
+                baluard_core::crypto::signature::verifying_key_bytes(&ed25519_verifying),
+            ),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            nonce: hex::encode(nonce_bytes),
+            name: std::env::var("HOSTNAME")
+                .or_else(|_| std::env::var("COMPUTERNAME"))
+                .unwrap_or_else(|_| "Daemon Device".to_string()),
+            vault_id: None,
+            epoch: None,
+            registry_version: None,
+        };
+
+        // Open DeviceManager and call enroll_with_recovery_phrase
+        let mut dm = DeviceManager::load_from_vault(&vault_path)
+            .map_err(|e| format!("load device manager: {e}"))?;
+        let result = dm
+            .enroll_with_recovery_phrase(&payload, phrase)
+            .map_err(|e| format!("enroll: {e}"))?;
+
+        // Persist device-privkey for this device
+        let privkey_data = serde_json::json!({
+            "x25519_private": hex::encode(x25519_secret.to_bytes()),
+            "ed25519_private": hex::encode(ed25519_signing.to_bytes()),
+        });
+        let privkey_path = vault_path.join("meta/device-privkey.json");
+        let privkey_tmp = privkey_path.with_extension("json.tmp");
+        std::fs::write(
+            &privkey_tmp,
+            serde_json::to_string_pretty(&privkey_data).map_err(|e| format!("{e}"))?,
+        )
+        .map_err(|e| format!("write privkey: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(
+                &privkey_tmp,
+                std::fs::Permissions::from_mode(0o600),
+            );
+        }
+        std::fs::rename(&privkey_tmp, &privkey_path)
+            .map_err(|e| format!("rename privkey: {e}"))?;
+
+        let json = serde_json::json!({
+            "device_id": result.device_id.to_string(),
+            "name": result.entry.name,
+            "enrollment_policy": "personal",
+            "non_destructive": true,
+        });
+        Ok(json.to_string())
+    }
+
     /// Create a new vault at the configured vault_path.
     /// Input JSON: {"password": "...", "profile": "desktop_std"}
     /// Returns JSON with vault_id, device_id, recovery_phrase.
