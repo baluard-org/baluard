@@ -190,7 +190,11 @@ impl VaultState {
             loop {
                 interval.tick().await;
 
-                // Read auto_lock_minutes from settings
+                // Read auto_lock_minutes from settings.
+                // M12 fix: 0 is treated as "use default" rather than "never auto-lock".
+                // Also clamp to a sane maximum to prevent indefinite key residency.
+                const DEFAULT_AUTO_LOCK_MINUTES: u32 = 15;
+                const MAX_AUTO_LOCK_MINUTES: u32 = 24 * 60; // 24 hours
                 let timeout_minutes = {
                     let guard = state.inner.read().await;
                     if let Some(handle) = guard.as_ref() {
@@ -198,7 +202,9 @@ impl VaultState {
                             .get_settings()
                             .ok()
                             .and_then(|s| s.auto_lock_minutes)
-                            .unwrap_or(15) // default 15 minutes
+                            .filter(|m| *m > 0)
+                            .unwrap_or(DEFAULT_AUTO_LOCK_MINUTES)
+                            .min(MAX_AUTO_LOCK_MINUTES)
                     } else {
                         continue; // no vault open
                     }
@@ -207,7 +213,7 @@ impl VaultState {
                 let elapsed = state.seconds_since_activity();
                 let timeout_secs = (timeout_minutes as u64) * 60;
 
-                if elapsed >= timeout_secs && timeout_secs > 0 {
+                if elapsed >= timeout_secs {
                     log::info!(
                         "Auto-lock: {}s idle >= {}s timeout, locking vault",
                         elapsed,
@@ -1391,6 +1397,10 @@ impl VaultState {
             baluard_core::vault::attachment::encrypt_attachment(item_key.as_bytes(), &plaintext)
                 .map_err(|e| format!("{e}"))?;
 
+        // M8 fix: capture size before zeroize
+        let plaintext_size = plaintext.len() as u64;
+        let encrypted_size = encrypted.len() as u64;
+
         // Zeroize plaintext after encryption
         plaintext.zeroize();
 
@@ -1414,8 +1424,8 @@ impl VaultState {
         let meta = baluard_core::vault::attachment::AttachmentMeta {
             id: attach_id.clone(),
             filename: filename.to_string(),
-            size: plaintext.len() as u64,
-            encrypted_size: encrypted.len() as u64,
+            size: plaintext_size,
+            encrypted_size,
             mime_type: baluard_core::vault::attachment::detect_mime(filename),
             created_at: now,
         };
