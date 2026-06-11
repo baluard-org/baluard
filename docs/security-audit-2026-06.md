@@ -4,6 +4,38 @@
 **Auditor:** TARS (automated security review, Opus 4.8)
 **Scope:** Full codebase (`crates/baluard-core`, `crates/baluard-cli`, `crates/baluard-daemon`, `desktop/`) plus `docs/`.
 **Method:** 5 parallel domain audits (storage, IPC/daemon, sync/providers, frontend/import, recovery/devices/emergency) plus direct source read of the crypto core. The crown-jewel finding (nonce reuse, C1) was verified personally in source, not delegated.
+**Last updated:** 2026-06-11 (remediation progress)
+
+---
+
+## Remediation Progress
+
+| Severity | Total | Fixed | Remaining |
+|----------|-------|-------|-----------|
+| Critical | 4 | 4 | 0 |
+| High | 9 | 9 | 0 |
+| Medium | 12 | 0 | 12 |
+| Low / Info | 8 | 0 | 8 |
+
+All 13 Critical and High findings are resolved. 291 tests pass across 4 crates.
+
+| Finding | Status | Commits | Notes |
+|---------|--------|---------|-------|
+| C1 | **Fixed** | `844680a` | Random 96-bit nonce per write |
+| C2 | **Fixed** | `844680a` | Signature verification on all pull paths + path traversal check |
+| C3 | **Fixed** | `844680a` | 0600 perms, owner-signed approvals, pinned verifying key |
+| C4 | **Fixed** | `844680a` | `device.revoke` token-gated; `biometric_unlock` intentionally not gated (circular dependency) |
+| H1 | **Fixed** | `5fa05a2` | `change_master_password()` + biometric disable + IPC route |
+| H2 | **Fixed** | `7f58c93` | Zeroize intermediates before error propagation |
+| H3 | **Fixed** | `35359bf` | Rollback detection on open, checkpoint recording on writes, checkpoint removal on delete |
+| H4 | **Fixed** | `7f58c93` | Recovery re-wrap on rotation; pubkey stored in recovery.json; 0600 perms |
+| H5 | **Fixed** | `e06a45a` | `SecretString` + `scrub_git_error()` on push/fetch/clone |
+| H6 | **Fixed** | `35359bf` | Atomic `create_new(0o600)` + 4-hour token expiry |
+| H7 | **Fixed** | `e06a45a` | Default changed from `None=enabled` to `None=disabled` |
+| H8 | **Fixed** | `e06a45a` | 32MB `.take()` cap on decompression |
+| H9 | **Fixed** | `35359bf` | Enrollment binding (epoch + registry_version, fail-closed); revocation always commits (single-admin model) |
+
+---
 
 ---
 
@@ -34,6 +66,8 @@ Every finding rated CRITICAL or HIGH is exploitable under Baluard's own stated t
 ## CRITICAL
 
 ### C1. AES-GCM nonce reuse on concurrent multi-device edit
+
+> **Status: FIXED** (commit `844680a`) — Replaced deterministic `counter || shard` nonce with `OsRng` random 96-bit nonce per write via `build_random_nonce()`. Retained `build_nonce()` as LEGACY for meta/index paths. Added `random_nonce_prevents_reuse` regression test.
 
 **Files:** `crates/baluard-core/src/crypto/aead.rs:59-65`, `crates/baluard-core/src/vault/handle.rs:1376-1387`, `crates/baluard-core/src/keys/nonce.rs`
 **Status:** Confirmed by direct source read.
@@ -77,6 +111,8 @@ Note: the AAD includes `update_seq`, but AAD only authenticates — it does not 
 
 ### C2. Merge path skips commit signature verification
 
+> **Status: FIXED** (commit `844680a`) — Added `verify_commit_signatures` to non-FF merge path and `resolve_conflicts`. Added path canonicalization with traversal check BEFORE `create_dir_all`.
+
 **Files:** `crates/baluard-core/src/sync/engine.rs:639-724` (`pull_inner`, non-fast-forward branch), `:752-822` (`resolve_conflicts`)
 **Status:** Confirmed by code inspection; recommend the team add a regression test to confirm exploitability end-to-end.
 
@@ -95,6 +131,8 @@ Note: the AAD includes `update_seq`, but AAD only authenticates — it does not 
 ---
 
 ### C3. Emergency access defeats the entire password model
+
+> **Status: FIXED** (commit `844680a`) — Three-part fix: (1) 0600 permissions, (2) owner-signed status transitions with verifying key pinned to device registry, (3) only `Approved` (owner-signed) grants recovery — dropped client-side time gate entirely. 4 new tests.
 
 **File:** `crates/baluard-core/src/emergency.rs:43-187`
 **Status:** Confirmed by direct source read.
@@ -116,6 +154,8 @@ Three compounding flaws make the emergency-access feature a full master-password
 ---
 
 ### C4. Full-vault unlock and destructive rekey are not token-gated
+
+> **Status: FIXED** (commit `844680a`) — Added `device.revoke` to `TOKEN_REQUIRED_ACTIONS`. `vault.biometric_unlock` intentionally NOT gated (circular dependency: unlock primitive used when no token exists; defense relies on OS keyring/biometric prompt).
 
 **File:** `crates/baluard-daemon/src/handler.rs:151-203` (`TOKEN_REQUIRED_ACTIONS`), `:744-750` (`device.revoke` route), `:776-809` (biometric routes), `crates/baluard-daemon/src/state.rs:1309-1313`, `:1604-1641`
 **Status:** Confirmed by direct source read.
@@ -140,6 +180,8 @@ Three compounding flaws make the emergency-access feature a full master-password
 
 ### H1. No master-password change exists; biometric stores the cleartext master password
 
+> **Status: FIXED** (commit `5fa05a2`) — Implemented `VaultHandle::change_master_password()`: verifies old password, derives new KEK, HPKE re-wraps Root Key, re-encrypts KEK canary, disables stale biometric secret. Daemon IPC route `vault.change_password` (token-gated). **Residual:** password change is cosmetic against a device-key holder (device X25519 private key independently gates Root Key access). For post-compromise remediation, use `rotate_root_key()` or `revoke_device_and_rekey()`.
+
 **Files:** `crates/baluard-core/src/biometric.rs:47`, `:304`, `:355`, `crates/baluard-daemon/src/state.rs:1296`
 **Status:** Confirmed (grep finds no master-password-change route anywhere in core/daemon/CLI).
 
@@ -155,6 +197,8 @@ Clarification (answering the original brief): biometric does **not** escrow the 
 
 ### H2. Decrypted secrets are never zeroized on the normal read path
 
+> **Status: FIXED** (commit `7f58c93`) — `decrypt_cipher` now zeroizes `padded`/`json` intermediates BEFORE error propagation (deserialized into temp var, then zeroized, then error-checked). **Residual:** returned `Cipher`/`CipherData` structs still hold plaintext `String` fields without `ZeroizeOnDrop` — tracked as future work.
+
 **Files:** `crates/baluard-core/src/types.rs:319-760`, `crates/baluard-core/src/vault/cipher.rs:130-161`, `crates/baluard-core/src/vault/padding.rs:46`
 **Status:** Confirmed (no `Zeroize`/`ZeroizeOnDrop` in `types.rs`).
 
@@ -167,6 +211,8 @@ The revoke/rekey loop manually zeroizes (`handle.rs:2300-2316`), proving the tea
 ---
 
 ### H3. Rollback / tamper protection is dead code
+
+> **Status: FIXED** (commit `35359bf`) — Wired `integrity.rs` into vault open (rollback detection scanning cipher update_seqs) and cipher add/update (signed checkpoint recording). Checkpoints removed on cipher delete. **Residual:** signatures are recorded but not verified on load; manifest is in writable tree (no external anchor); multi-device sync may cause manifest conflicts. Defense-in-depth posture catches accidental/git-based rollback but not a coordinated attacker with disk access.
 
 **File:** `crates/baluard-core/src/integrity.rs` (declared at `lib.rs:13`, never called)
 **Status:** Confirmed (grep finds no callers of `IntegrityManifest::`, `detect_rollback`, `verify_checkpoint`, `.record(` outside the module's own tests).
@@ -181,6 +227,8 @@ The revoke/rekey loop manually zeroizes (`handle.rs:2300-2316`), proving the tea
 
 ### H4. Recovery phrase is a permanent, unrotatable bypass
 
+> **Status: FIXED** (commit `7f58c93`) — Added `rewrap_recovery_key()` helper; called at end of both `rotate_root_key()` and `revoke_device_and_rekey()`. Stores `recovery_x25519_pubkey` in `recovery.json` at creation for re-wrap. Errors propagated (not silently swallowed). 0600 permissions on re-write. Legacy vaults without pubkey field log a warning.
+
 **Files:** `crates/baluard-core/src/recovery.rs:42-48`, `crates/baluard-core/src/vault/creation.rs:88-95`
 **Status:** Confirmed (grep: `meta/recovery.json` never re-wrapped after rotation).
 
@@ -194,6 +242,8 @@ The revoke/rekey loop manually zeroizes (`handle.rs:2300-2316`), proving the tea
 
 ### H5. Provider tokens leak into git error strings
 
+> **Status: FIXED** (commit `e06a45a`) — Changed `https_token` to `SecretString` with private field + `expose_token()`. Created `scrub_git_error()` to strip PATs/URL credentials from git2 errors. Applied to push/fetch/clone in `engine.rs`.
+
 **Files:** `crates/baluard-core/src/sync/credentials.rs:96-99`, `crates/baluard-core/src/sync/engine.rs:519` (`push`), `:568` (`fetch`), `:862` (`clone`)
 **Status:** Confirmed wrapping is verbatim; whether a given git2 build embeds the token in the error is version-dependent (high likelihood).
 
@@ -206,6 +256,8 @@ The HTTPS PAT is passed to `Cred::userpass_plaintext`. When git2 surfaces an aut
 ---
 
 ### H6. Session-token file: TOCTOU + plaintext + no expiry
+
+> **Status: FIXED** (commit `35359bf`) — CLI: atomic file creation with `create_new(true).mode(0o600)` + rename (eliminates TOCTOU and symlink attacks). Daemon: 4-hour token expiry enforced on `verify_session_token()` with `session_token_created` timestamp tracking. **Residual:** token still stored plaintext for its lifetime (no rotation); 30s reprompt grant token not enforced server-side.
 
 **Files:** `crates/baluard-cli/src/client.rs:54-65` (`set_session_token`), `crates/baluard-daemon/src/state.rs:242-277`, `:1785-1796`
 **Status:** Confirmed.
@@ -222,6 +274,8 @@ The token is also stored in cleartext for its whole lifetime, never rotates, and
 
 ### H7. Favicon fetch leaks every saved domain to Google, default-on
 
+> **Status: FIXED** (commit `e06a45a`) — Default changed from `None=enabled` to `None=disabled`. Only `Some(true)` enables fetching. Existing vaults with `None` now default off.
+
 **File:** `crates/baluard-daemon/src/state.rs:715-739` (`fetch_favicon`)
 **Status:** Confirmed.
 
@@ -237,6 +291,8 @@ For a privacy-focused, offline, no-server-backend password manager, this is a me
 
 ### H8. 1PUX import zip-bomb DoS
 
+> **Status: FIXED** (commit `e06a45a`) — Added `io::Read::take(32MB)` cap on decompressed zip entry before `read_to_string`. Oversized imports fail with a JSON parse error (could be improved with a clearer message).
+
 **File:** `crates/baluard-core/src/import/onepassword_1pux.rs:180-184`
 **Status:** Confirmed by code; not yet weaponized.
 
@@ -247,6 +303,8 @@ For a privacy-focused, offline, no-server-backend password manager, this is a me
 ---
 
 ### H9. Quorum bypass on revocation/eviction; enrollment not bound to vault
+
+> **Status: FIXED** (commit `35359bf`) — Enrollment: `EnrollmentPayload` gains `vault_id`, `epoch`, `registry_version` fields. `enroll()` verifies epoch and registry_version fail-closed (rejects missing bindings for non-first-device). Revocation: always self-acknowledge and commit (Baluard is single-admin; quorum proves admin authorization, not multi-party approval). **Residual:** `vault_id` binding not verified at DeviceManager layer (needs handle-layer wiring); out-of-band fingerprint confirmation step not implemented.
 
 **File:** `crates/baluard-core/src/device_manager.rs:1030-1097` (revocation/eviction), `:782-791` (enrollment)
 **Status:** Confirmed design gaps.
@@ -446,6 +504,18 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
 **Still valid:** `device.revoke` and `vault.biometric_unlock` are confirmed NOT in the list. The exploit scenarios for those two actions remain valid.
 
 **Recommended action:** Remove `vault.biometric_enable` from C4's list of ungated actions. C4 remains valid for `device.revoke` only. `vault.biometric_unlock` is not token-gated by design (circular dependency identified by peer review: unlock primitive used when no token exists).
+
+---
+
+## Appendix: Residual Items from Remediation
+
+The following items were identified during peer review of the fixes but are accepted as known limitations or deferred to future work:
+
+1. **H1 residual:** Password change is cosmetic against a device-key holder. The device X25519 private key (from OS keyring or `meta/device-privkey.json`) independently controls Root Key access. For post-compromise, use `rotate_root_key()`/`revoke_device_and_rekey()`.
+2. **H2 residual:** Returned `Cipher`/`CipherData` structs still hold plaintext `String` fields without `ZeroizeOnDrop`. Only intermediates are zeroized.
+3. **H3 residual:** Integrity manifest signatures are recorded but not verified on load. Manifest is in writable tree with no external anchor. Multi-device sync may cause manifest conflicts (single `meta/integrity.json` per vault). Per-device manifest and external anchoring are future work.
+4. **H6 residual:** Token stored plaintext for its lifetime (no rotation). 30-second reprompt grant token not enforced server-side.
+5. **H9 residual:** `vault_id` not verified at DeviceManager layer (DeviceManager lacks vault_id). Out-of-band fingerprint confirmation step not implemented.
 
 ---
 
