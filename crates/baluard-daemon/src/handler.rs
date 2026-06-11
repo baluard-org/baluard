@@ -244,13 +244,14 @@ fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
 
 /// Dispatch to the correct ForgeProvider implementation based on Provider enum.
 /// Centralizes provider routing so handler code stays provider-agnostic.
-fn provider_for(p: baluard_core::providers::types::Provider) -> Box<dyn baluard_core::providers::ForgeProvider> {
+/// L6 fix: returns Result instead of panicking on unimplemented providers.
+fn provider_for(p: baluard_core::providers::types::Provider) -> Result<Box<dyn baluard_core::providers::ForgeProvider>, String> {
     match p {
         baluard_core::providers::types::Provider::GitHub => {
-            Box::new(baluard_core::providers::github::GitHubProvider::new())
+            Ok(Box::new(baluard_core::providers::github::GitHubProvider::new()))
         }
-        // Phase 5: GitLab, Codeberg — will panic if called before impl exists
-        _ => unreachable!("Provider {:?} not yet implemented", p),
+        // Phase 5: GitLab, Codeberg — return error instead of panic
+        _ => Err(format!("Provider {:?} not yet implemented", p)),
     }
 }
 
@@ -917,7 +918,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             };
             match provider.auth_method() {
                 "device-flow" => {
-                    let prov = provider_for(provider);
+                    let prov = match provider_for(provider) {
+                        Ok(p) => p,
+                        Err(e) => return err_response(e),
+                    };
                     match prov.device_flow_start().await {
                         Ok(session) => ok_resp(serde_json::to_string(&session).unwrap_or_default(), token_str),
                         Err(e) => err_response(format!("Device flow start failed: {e}")),
@@ -937,7 +941,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     Ok(s) => s,
                     Err(e) => return err_response(format!("Invalid session: {e}")),
                 };
-            let prov = provider_for(session.provider);
+            let prov = match provider_for(session.provider) {
+                Ok(p) => p,
+                Err(e) => return err_response(e),
+            };
             match prov.device_flow_poll(&session).await {
                 Ok(status) => match status {
                     baluard_core::providers::types::DeviceFlowStatus::Pending => {
@@ -995,7 +1002,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 return err_response("Missing token in payload");
             }
 
-            let prov = provider_for(provider);
+            let prov = match provider_for(provider) {
+                Ok(p) => p,
+                Err(e) => return err_response(e),
+            };
             match prov.authenticate_pat(&pat).await {
                 Ok((token, info)) => {
                     if let Err(e) = baluard_core::providers::token::store_token(
@@ -1025,7 +1035,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Some(info) => {
                     match baluard_core::providers::token::load_token(provider, &info.username) {
                         Ok(token) => {
-                            let prov = provider_for(provider);
+                            let prov = match provider_for(provider) {
+                                Ok(p) => p,
+                                Err(e) => return err_response(e),
+                            };
                             match prov.validate_token(&token).await {
                                 Ok(valid_info) => ok_resp(
                                     serde_json::json!({"valid": true, "username": valid_info.username}).to_string(),
@@ -1081,7 +1094,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(t) => t,
                 Err(e) => return err_response(format!("Token not found: {e}")),
             };
-            let prov = provider_for(provider);
+            let prov = match provider_for(provider) {
+                Ok(p) => p,
+                Err(e) => return err_response(e),
+            };
             match prov.list_repos(&token, page, per_page).await {
                 Ok(repos) => ok_resp(serde_json::to_string(&repos).unwrap_or_default(), token_str),
                 Err(e) => err_response(format!("Failed to list repos: {e}")),
@@ -1102,7 +1118,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(t) => t,
                 Err(e) => return err_response(format!("Token not found: {e}")),
             };
-            let prov = provider_for(provider);
+            let prov = match provider_for(provider) {
+                Ok(p) => p,
+                Err(e) => return err_response(e),
+            };
             match prov.detect_vault_repos(&token).await {
                 Ok(repos) => ok_resp(serde_json::to_string(&repos).unwrap_or_default(), token_str),
                 Err(e) => err_response(format!("Failed to detect vault repos: {e}")),
@@ -1131,7 +1150,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(t) => t,
                 Err(e) => return err_response(format!("Token not found: {e}")),
             };
-            let prov = provider_for(provider);
+            let prov = match provider_for(provider) {
+                Ok(p) => p,
+                Err(e) => return err_response(e),
+            };
             match prov.create_private_repo(&token, &name).await {
                 Ok(repo) => ok_resp(serde_json::to_string(&repo).unwrap_or_default(), token_str),
                 Err(e) => err_response(format!("Failed to create repo: {e}")),
@@ -1187,7 +1209,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             };
 
             // Create private repo on provider
-            let prov = provider_for(prov_type);
+            let prov = match provider_for(prov_type) {
+                Ok(p) => p,
+                Err(e) => return err_response(e),
+            };
             let repo = match prov.create_private_repo(&token, &effective_name).await {
                 Ok(r) => r,
                 Err(e) => return err_response(format!("Failed to create repo: {e}")),

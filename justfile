@@ -96,10 +96,19 @@ lint:
 lint-fix:
 	{{ linuxbrew_env }} cargo clippy --fix --allow-dirty --all-targets
 
+# L7 fix: Run cargo-audit to check for known security advisories in dependencies.
+# Skipped silently if cargo-audit is not installed.
+audit:
+	@if command -v cargo-audit >/dev/null 2>&1; then \
+		cargo audit; \
+	else \
+		echo "cargo-audit not installed (run: cargo install cargo-audit --locked)"; \
+	fi
+
 # ── Full Check ──────────────────────────────────────────────────────────────
 
-# Run all checks: fmt + clippy + test + build
-check: fmt-check lint test build
+# Run all checks: fmt + clippy + audit + test + build
+check: fmt-check lint audit test build
 	@echo "All checks passed."
 
 # ── Desktop (Tauri) ────────────────────────────────────────────────────────

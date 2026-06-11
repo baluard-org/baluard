@@ -5,9 +5,15 @@
 //!
 //! 1PUX format: ZIP containing `export.data` JSON with structure:
 //! { accounts: [{ vaults: [{ items: [{ item: { ... } }] }] }] }
+//!
+//! L3 fix: the raw decrypted export JSON is zeroized after parsing.
+//! The sensitive fields have been copied into CipherInput values; the
+//! raw buffer is no longer needed and is wiped to limit plaintext
+//! lifetime in heap.
 
 use crate::import::ImportResult;
 use crate::types::*;
+use zeroize::Zeroize;
 
 /// Top-level 1PUX export structure.
 #[derive(Debug, serde::Deserialize)]
@@ -96,10 +102,18 @@ pub fn parse(data: &[u8]) -> ImportResult {
     let export: OnePuxExport = match serde_json::from_str(&json_str) {
         Ok(e) => e,
         Err(e) => {
+            // L3 fix: zeroize raw JSON before returning on error.
+            let mut s = json_str;
+            s.zeroize();
             result.skip(format!("Invalid 1PUX JSON: {e}"));
             return result;
         }
     };
+    // L3 fix: zeroize the raw export JSON now that we've parsed it.
+    // The sensitive fields have been copied into CipherInput values;
+    // the raw buffer is no longer needed.
+    let mut s = json_str;
+    s.zeroize();
 
     for account in &export.accounts {
         for vault in &account.vaults {
