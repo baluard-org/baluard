@@ -303,19 +303,17 @@ pub fn run() {
                 // Use tauri-plugin-shell sidecar for bundle-relative binary path.
                 // Binary must exist at src-tauri/binaries/baluard-daemon-{target-triple}
                 //
-                // Default vault path lives alongside the socket.
-                let socket_dir = socket.parent()
-                    .expect("socket path has no parent").to_path_buf();
-                let vault_path = socket_dir.join("vault");
-                log::info!("Starting daemon with --vault-path {} --socket {}",
-                    vault_path.display(), socket.display());
+                // Let the daemon resolve the vault from the registry's
+                // active_vault field. No --vault-path needed — the daemon
+                // reads <data_dir>/registry.json on startup (P1).
+                log::info!("Starting daemon with --socket {}",
+                    socket.display());
 
                     let sidecar_command = app.shell().sidecar("baluard-daemon")
                         .map_err(|e| format!("Sidecar not found: {e}"))?;
 
                     let sidecar_command = sidecar_command
-                        .args(["--vault-path", vault_path.to_str().unwrap_or("."),
-                               "--socket", default_socket_path().to_str().unwrap_or("/tmp/baluard.sock")]);
+                        .args(["--socket", default_socket_path().to_str().unwrap_or("/tmp/baluard.sock")]);
 
                     // Spawn the daemon. We MUST keep the stdout/stderr receiver alive
                     // — dropping it closes the pipe and the daemon can fail on EPIPE
