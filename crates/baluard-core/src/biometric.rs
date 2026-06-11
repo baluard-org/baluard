@@ -107,7 +107,7 @@ mod platform {
             )
         };
 
-        if status == errSecDuplicateItem as i32 {
+        if status == errSecDuplicateItem {
             // Shouldn't happen (we deleted above), but handle gracefully.
             // Update requires a separate query without kSecValueData.
             return Err("keychain item already exists after delete".into());
@@ -276,7 +276,7 @@ mod platform {
             security_framework_sys::keychain_item::SecItemDelete(params.as_concrete_TypeRef())
         };
 
-        if status == errSecItemNotFound as i32 {
+        if status == errSecItemNotFound {
             return Ok(());
         }
 
