@@ -1322,10 +1322,12 @@ impl VaultHandle {
             let envelope_bytes = std::fs::read(&active_path)?;
             super::write_vault_file(&trash_path, &envelope_bytes)?;
             std::fs::remove_file(&active_path)?;
+            self.remove_integrity(&cipher_id.to_string());
             self.rebuild_index()?;
             Ok(())
         } else if trash_path.exists() {
             std::fs::remove_file(&trash_path)?;
+            self.remove_integrity(&cipher_id.to_string());
             self.rebuild_index()?;
             Ok(())
         } else {
@@ -2840,6 +2842,16 @@ impl VaultHandle {
         if manifest.save(&self.path).is_err() {
             return;
         }
+    }
+
+    /// H3 fix: Remove integrity checkpoint on cipher delete.
+    /// Prevents false rollback alarms for legitimately deleted entries.
+    fn remove_integrity(&self, object_id: &str) {
+        let Ok(mut manifest) = crate::integrity::IntegrityManifest::load(&self.path) else {
+            return;
+        };
+        manifest.checkpoints.remove(object_id);
+        let _ = manifest.save(&self.path);
     }
 }
 

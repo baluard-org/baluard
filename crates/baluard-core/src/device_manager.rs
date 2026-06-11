@@ -796,9 +796,14 @@ impl DeviceManager {
             })?;
         }
 
-        // H9 fix: Verify vault binding (epoch + registry version) if present.
+        // H9 fix: Verify vault binding (epoch + registry version).
         // Prevents replay of captured approval against a different vault state.
-        if let Some(payload_epoch) = payload.epoch {
+        // Fail-closed: reject if binding fields are absent (old clients must upgrade).
+        // Exception: first device (empty registry) auto-approves without binding.
+        if self.registry.count() > 0 {
+            let payload_epoch = payload.epoch.ok_or_else(|| {
+                DeviceError::EnrollmentRejected("missing epoch binding".into())
+            })?;
             if payload_epoch != self.epoch.epoch {
                 return Err(DeviceError::EnrollmentRejected(format!(
                     "epoch mismatch: payload has {payload_epoch}, vault has {}",
@@ -806,14 +811,15 @@ impl DeviceManager {
                 ))
                 .into());
             }
-        }
-        if let Some(payload_reg_ver) = payload.registry_version {
+            let payload_reg_ver = payload.registry_version.ok_or_else(|| {
+                DeviceError::EnrollmentRejected("missing registry_version binding".into())
+            })?;
             if payload_reg_ver != self.registry.version as u64 {
                 return Err(DeviceError::EnrollmentRejected(format!(
                     "registry version mismatch: payload has {payload_reg_ver}, vault has {}",
                     self.registry.version
-                ))
-                .into());
+                    ))
+                    .into());
             }
         }
 
@@ -1071,35 +1077,23 @@ impl DeviceManager {
         let (new_root, tx) = self.initiate_rotation(self_device_id)?;
         let new_epoch = tx.new_epoch;
 
-        // H9 fix: Respect quorum on revocation.
-        // Single/2-device vaults: self-ack and commit immediately (no other devices to verify).
-        // Multi-device (3+ remaining): self-ack but do NOT commit. Other devices must ack
-        // before the rotation is finalized. Caller should handle pending state.
-        let remaining = self.registry.count();
-        let quorum = self.registry.quorum_required();
-        let rotation_committed = if remaining <= quorum {
-            // Sufficient quorum with self alone
-            self.epoch.acknowledge(self_device_id);
-            self.commit_rotation()?;
-            true
-        } else {
-            // Self-ack but wait for others
-            self.epoch.acknowledge(self_device_id);
-            // Don't commit — pending_transaction stays active
-            false
-        };
-
-        let new_root_key = if rotation_committed {
-            Some(new_root)
-        } else {
-            None // new_root consumed by pending_transaction
-        };
+        // H9 fix: Always self-acknowledge and commit on revocation.
+        //
+        // Baluard is a single-admin password manager: one user controls all devices.
+        // Quorum here means "enough devices to prove the admin authorized this" — not
+        // multi-party approval. A single remaining device is sufficient proof.
+        // The revoked device's keywrap is deleted by the caller; its old keywrap can't
+        // unwrap the new Root Key because epoch changed.
+        //
+        // For multi-admin org vaults (future), this would need true quorum enforcement.
+        self.epoch.acknowledge(self_device_id);
+        self.commit_rotation()?;
 
         let result = RevokeDeviceResult {
             revoked_device_id: target_device_id,
             revoked_name,
             new_epoch,
-            new_root_key,
+            new_root_key: Some(new_root),
         };
 
         // Auto-persist
@@ -1554,6 +1548,13 @@ mod tests {
         }
     }
 
+    fn make_payload_bound(name: &str, epoch: u64, reg_ver: u64) -> EnrollmentPayload {
+        let mut p = make_payload(name);
+        p.epoch = Some(epoch);
+        p.registry_version = Some(reg_ver);
+        p
+    }
+
     #[test]
     fn first_device_auto_approves() {
         let mut mgr = DeviceManager::new();
@@ -1604,7 +1605,7 @@ mod tests {
         mgr.enroll(&p1, None).unwrap();
 
         // Enroll second device with approval from first
-        let p2 = make_payload("Second");
+        let p2 = make_payload_bound("Second", 0, 1);
         let sign_input = build_enroll_sign_input(&p2).unwrap();
         let approval_sig = sig::sign(&signing_key, &sign_input).unwrap();
 
