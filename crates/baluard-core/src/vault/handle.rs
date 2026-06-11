@@ -147,6 +147,43 @@ impl VaultHandle {
                 .map_err(|e| BaluardError::from(crate::error::KeyError::InvalidEpochState(e)))?;
         }
 
+        // H3 fix: Rollback detection on vault open.
+        // Load integrity manifest and compare against actual file state.
+        // Warn on rollback (don't block: manifest is in writable tree, not externally anchored).
+        if let Ok(manifest) = crate::integrity::IntegrityManifest::load(path) {
+            let mut actual_seqs = HashMap::new();
+            let ciphers_dir = path.join("ciphers");
+            if ciphers_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&ciphers_dir) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name();
+                        let name_str = name.to_string_lossy();
+                        if name_str.ends_with(".enc") {
+                            let object_id = name_str.trim_end_matches(".enc").to_string();
+                            if let Ok(data) = std::fs::read(entry.path()) {
+                                if let Ok(envelope) = crate::vault::envelope::deserialize(&data) {
+                                    actual_seqs.insert(object_id, envelope.header.update_seq);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let rollbacks = manifest.detect_rollback(&actual_seqs);
+            if !rollbacks.is_empty() {
+                eprintln!(
+                    "WARNING: rollback detected! {} object(s) have lower sequence numbers than expected:",
+                    rollbacks.len()
+                );
+                for rb in &rollbacks {
+                    eprintln!(
+                        "  - {} expected_seq={} actual_seq={}",
+                        rb.object_id, rb.expected_seq, rb.actual_seq
+                    );
+                }
+            }
+        }
+
         Ok(VaultHandle {
             path: path.to_path_buf(),
             vault_id,
@@ -1396,6 +1433,7 @@ impl VaultHandle {
         let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
         super::write_vault_file(&file_path, &file.envelope_bytes)?;
         self.rebuild_index()?;
+        self.record_integrity(&cipher_id.to_string(), 1);
 
         Ok(cipher_id)
     }
@@ -1494,6 +1532,7 @@ impl VaultHandle {
 
         super::write_vault_file(&file_path, &file.envelope_bytes)?;
         self.rebuild_index()?;
+        self.record_integrity(&cipher_id.to_string(), new_update_seq);
 
         Ok(())
     }
@@ -2779,6 +2818,28 @@ impl VaultHandle {
         std::fs::rename(&tmp_path, &index_path)?;
 
         Ok(())
+    }
+
+    /// H3 fix: Record integrity checkpoint after cipher writes.
+    /// Best-effort: loads manifest, records checkpoint signed with device Ed25519 key,
+    /// saves. Failures are logged, not propagated (integrity is defense-in-depth, not gating).
+    fn record_integrity(&self, object_id: &str, seq: u64) {
+        let Ok(mut manifest) = crate::integrity::IntegrityManifest::load(&self.path) else {
+            return;
+        };
+        let Ok(privkeys) = load_device_privkeys(&self.path, self.device_id) else {
+            return;
+        };
+        let signing_key = privkeys.ed25519;
+        if manifest
+            .record(object_id, seq, &self.device_id.to_string(), &signing_key)
+            .is_err()
+        {
+            return;
+        }
+        if manifest.save(&self.path).is_err() {
+            return;
+        }
     }
 }
 

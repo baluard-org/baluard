@@ -22,6 +22,9 @@ pub struct VaultState {
     /// Any same-UID process connecting after unlock must present this token
     /// to access cipher data. Prevents the daemon from being a full-vault oracle.
     session_token: RwLock<Option<String>>,
+    /// H6 fix: Timestamp when session token was created (epoch seconds).
+    /// Token expires after SESSION_TOKEN_TTL_SECONDS.
+    session_token_created: AtomicU64,
     /// Last activity timestamp (seconds since epoch). Updated on every IPC request.
     last_activity: AtomicU64,
     /// Cover commit scheduler handle. Cancelled on lock.
@@ -41,6 +44,7 @@ impl VaultState {
             vault_path,
             inner: RwLock::new(None),
             session_token: RwLock::new(None),
+            session_token_created: AtomicU64::new(0),
             last_activity: AtomicU64::new(0),
             cover_timer: RwLock::new(None),
             cover_pending: std::sync::atomic::AtomicBool::new(false),
@@ -217,6 +221,7 @@ impl VaultState {
                         if handle.is_unlocked() {
                             handle.lock();
                             *state.session_token.write().await = None;
+                            state.session_token_created.store(0, Ordering::Relaxed);
                             state.last_activity.store(0, Ordering::Relaxed);
                         }
                     }
@@ -272,6 +277,13 @@ impl VaultState {
         // R7-2: Generate session token on unlock
         let mut token_guard = self.session_token.write().await;
         *token_guard = Some(generate_session_token());
+        self.session_token_created.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            Ordering::Relaxed,
+        );
 
         Ok(())
     }
@@ -290,6 +302,7 @@ impl VaultState {
         // R7-2: Invalidate session token on lock
         let mut token_guard = self.session_token.write().await;
         *token_guard = None;
+        self.session_token_created.store(0, Ordering::Relaxed);
         Ok(())
     }
 
@@ -1788,6 +1801,13 @@ impl VaultState {
         let token = generate_session_token();
         let mut token_guard = self.session_token.write().await;
         *token_guard = Some(token.clone());
+        self.session_token_created.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            Ordering::Relaxed,
+        );
         let response = serde_json::json!({
             "vault_id": secrets.vault_id.to_string(),
             "device_id": secrets.device_id.to_string(),
@@ -1802,7 +1822,24 @@ impl VaultState {
 
     /// Verify a client-provided session token against the stored one.
     /// Uses constant-time comparison to prevent timing side channels.
+    /// H6 fix: rejects expired tokens (default 4-hour TTL).
     pub async fn verify_session_token(&self, provided: &str) -> Result<(), String> {
+        // H6: Check token expiry before comparison
+        const SESSION_TOKEN_TTL_SECONDS: u64 = 4 * 3600; // 4 hours
+        let created = self.session_token_created.load(Ordering::Relaxed);
+        if created > 0 {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if now.saturating_sub(created) > SESSION_TOKEN_TTL_SECONDS {
+                // Expired: clear token and reject
+                *self.session_token.write().await = None;
+                self.session_token_created.store(0, Ordering::Relaxed);
+                return Err("Session token expired. Re-unlock the vault.".into());
+            }
+        }
+
         let guard = self.session_token.read().await;
         match *guard {
             Some(ref stored)
