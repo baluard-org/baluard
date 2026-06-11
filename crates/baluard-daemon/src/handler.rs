@@ -388,6 +388,25 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        // vault.active: token NOT required (reads plaintext registry only)
+        "vault.active" => {
+            match baluard_core::vault::registry::VaultRegistry::load() {
+                Ok(reg) => {
+                    let entry = reg.active_vault
+                        .as_ref()
+                        .and_then(|slug| reg.vaults.get(slug));
+                    match entry {
+                        Some(e) => ok_resp(
+                            serde_json::json!({"slug": e.slug, "display_name": e.display_name}).to_string(),
+                            token_str,
+                        ),
+                        None => err_response("No active vault".to_string()),
+                    }
+                }
+                Err(e) => err_response(format!("Registry error: {e}")),
+            }
+        }
+
         // ── Cipher CRUD (token required, enforced above) ──
         "vault.list" => match state.list_cipher_meta().await {
             Ok(metas) => {

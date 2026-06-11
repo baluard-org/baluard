@@ -28,11 +28,16 @@ function guardedSetStatus(setStatus, from, to) {
 function AuthProvider(props) {
   const [status, setStatus] = createSignal("locked");
   const [vaultInfo, setVaultInfo] = createSignal(null);
+  const [activeVault, setActiveVault] = createSignal(null);
   const [biometricAvailable, setBiometricAvailable] = createSignal(false);
   const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
   const [createPassword, setCreatePassword] = createSignal("");
 
   onMount(() => {
+    // Fetch active vault name from plaintext registry (pre-unlock)
+    daemon("vault.active").then(r => {
+      try { setActiveVault(JSON.parse(r)); } catch {}
+    }).catch(() => {});
     // Check if quick unlock is enabled (daemon keychain + biometry available)
     daemon("vault.biometric_status").then(r => {
       const s = JSON.parse(r);
@@ -90,6 +95,7 @@ function AuthProvider(props) {
   const store = {
     status, setStatus,
     vaultInfo, setVaultInfo,
+    activeVault,
     biometricAvailable,
     recoveryPhrase, setRecoveryPhrase,
     createPassword, setCreatePassword,
