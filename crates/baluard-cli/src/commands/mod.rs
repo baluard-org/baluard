@@ -274,6 +274,37 @@ pub fn handle_init(
         hex::encode(secrets.trust_fingerprint)
     );
 
+    // MANDATORY VERIFICATION: user must re-enter 4 random words to prove
+    // they actually wrote the phrase down. This is not security theater —
+    // the recovery phrase is the only root authority for total device loss.
+    println!();
+    println!("┌──────────────────────────────────────────────────────────────┐");
+    println!("│  WHY THIS MATTERS                                              │");
+    println!("├──────────────────────────────────────────────────────────────┤");
+    println!("│  This 24-word phrase is the ONLY way to recover your vault    │");
+    println!("│  if every device fails. There is no server, no email reset,   │");
+    println!("│  no phone number to call.                                     │");
+    println!("│                                                                │");
+    println!("│  Examples of when you would need it:                           │");
+    println!("│   • You buy a new laptop and your old one is already gone      │");
+    println!("│   • Your phone is lost and your laptop died last month          │");
+    println!("│   • A fire, flood, or theft takes every device at once          │");
+    println!("│   • You return to Baluard after years away                      │");
+    println!("└──────────────────────────────────────────────────────────────┘");
+    println!();
+    println!("Write the phrase on paper. Store it somewhere SAFE (safe,     ");
+    println!("safety deposit box, fireproof bag). Screenshots and password  ");
+    println!("managers are NOT safe enough — they can fail too.              ");
+    println!();
+
+    if !verify_recovery_phrase_interactive(&secrets.recovery_phrase.phrase()) {
+        return Err("Recovery phrase verification failed. Vault was created but phrase \
+             was not confirmed. Re-run `baluard init` and complete the verification step."
+            .into());
+    }
+
+    println!("✓ Recovery phrase verified. Continuing setup.");
+
     println!("Vault files written to: {}", resolved_path.display());
     Ok(())
 }
@@ -285,6 +316,76 @@ fn prompt_password_optional(prompt: &str) -> String {
     let mut buf = String::new();
     let _ = std::io::stdin().read_line(&mut buf);
     buf.trim().to_string()
+}
+
+/// Interactive recovery phrase verification.
+/// Asks the user to re-enter 4 random words from the phrase. Returns true
+/// only if all 4 match. Same algorithm as the desktop UI
+/// (deterministic position selection from phrase hash).
+fn verify_recovery_phrase_interactive(phrase: &str) -> bool {
+    // Pick 4 stable positions (1-indexed) from the phrase via FNV-1a hash
+    let bytes = phrase.as_bytes();
+    let mut hash: u32 = 0x811c9dc5;
+    for &b in bytes {
+        hash ^= b as u32;
+        hash = hash.wrapping_mul(0x01000193);
+    }
+    let mut positions: Vec<usize> = Vec::new();
+    let mut h = hash;
+    while positions.len() < 4 {
+        let pos = (h as usize % 24) + 1;
+        if !positions.contains(&pos) {
+            positions.push(pos);
+        }
+        h = h.wrapping_mul(0x01000193).wrapping_add(0x9e3779b9);
+    }
+    positions.sort();
+
+    let words: Vec<&str> = phrase.split_whitespace().collect();
+    if words.len() != 24 {
+        eprintln!("internal error: recovery phrase is not 24 words");
+        return false;
+    }
+
+    println!("PROVE YOU WROTE IT DOWN");
+    println!("Enter the following 4 words from your recovery phrase:");
+    println!();
+    for (i, &pos) in positions.iter().enumerate() {
+        loop {
+            eprint!("  Word #{}: ", pos);
+            use std::io::Write;
+            std::io::stderr().flush().ok();
+            let mut input = String::new();
+            if std::io::stdin().read_line(&mut input).is_err() {
+                return false;
+            }
+            let got = input.trim().to_lowercase();
+            let expected = words[pos - 1].to_lowercase();
+            if got == expected {
+                eprintln!("  ✓");
+                break;
+            } else if got.is_empty() {
+                eprintln!("  (skipped — try again)");
+                continue;
+            } else {
+                eprintln!("  ✗ does not match. Check your written copy and try again.");
+                // Give the user a way to abort if they're stuck
+                eprint!("  (type 'quit' to abort, or press Enter to retry): ");
+                std::io::stderr().flush().ok();
+                let mut retry = String::new();
+                if std::io::stdin().read_line(&mut retry).is_err() {
+                    return false;
+                }
+                if retry.trim().eq_ignore_ascii_case("quit") {
+                    return false;
+                }
+                // Continue the loop to retry
+            }
+        }
+        // i unused, positions is ordered
+        let _ = i;
+    }
+    true
 }
 
 // ── Unlock ──
