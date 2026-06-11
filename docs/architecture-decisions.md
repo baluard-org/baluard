@@ -450,6 +450,66 @@ New device                          Existing device
 - Nonces stored in `meta/seen-nonces.json` (persisted across restarts)
 - Timestamp: ±5 minute window
 
+### Recovery-Phrase Enrollment (D14-bis, 2026-06-11)
+
+**Motivation.** The original D14 design required an enrolled device to
+approve any new device. This is hostile to single-user, serverless
+workflows: a solo user who loses all devices cannot add a new one
+without a pre-existing device to produce the approval signature.
+The product intent (no central server, easy to use, future-proof)
+demands that the recovery phrase — which is already the root
+authority for `recover_from_phrase` — also work for non-destructive
+enrollment.
+
+**Two-path enrollment controlled by `VaultSettings::enrollment_policy`:**
+
+- `Personal` (default for new vaults): either an enrolled-device
+  signature OR the recovery phrase can authorize enrollment. The
+  recovery phrase is the root authority and can already perform
+  full disaster recovery; non-destructive enrollment via phrase is
+  a strict subset of that authority.
+- `Strict` (default for existing vaults, backward compat): only an
+  enrolled-device signature can authorize enrollment. Recovery
+  phrase only works via destructive `recover_from_phrase`.
+
+**New method:** `DeviceManager::enroll_with_recovery_phrase(payload, phrase)`.
+Non-destructive — enrolls into the existing registry without resetting
+devices. Unwraps Root Key from `meta/recovery.json`, writes a new
+keywrap for the new device, persists state. Reuses the same
+timestamp/nonce replay protection as `enroll()`.
+
+**Mandatory write-down verification.** During vault creation, the
+user MUST re-enter 4 random words from the recovery phrase before
+they can proceed. Positions are deterministic (FNV-1a hash of the
+phrase) so the same phrase always asks for the same words. Applied
+in both desktop (`RecoveryScreen.jsx`) and CLI (`init` flow). This
+is not security theater — it's the only defense against permanent
+vault loss when all devices fail.
+
+**CLI surface:** `baluard devices enroll-with-phrase [--phrase <24 words>]`.
+Prompts for phrase if not provided. Requires typed `enroll` confirmation
+(warns user that the phrase is root authority). Enforces policy:
+rejects if `Strict` with a clear error directing to `baluard recover`.
+
+**IPC surface:** `vault.enroll_with_phrase` (daemon route). Validates
+24-word shape, checks `enrollment_policy`, builds `EnrollmentPayload`
+for the current device, calls `enroll_with_recovery_phrase`, writes
+`meta/device-privkey.json`.
+
+**Threat model.** The recovery phrase is already the root authority:
+`recover_from_phrase` exists for full disaster recovery. Phrase-based
+enrollment is a strict subset of that authority. If the phrase is
+compromised, the vault is already compromised. The master password
+alone remains insufficient to add a device.
+
+**Files:**
+- `crates/baluard-core/src/vault/manifest.rs`: `EnrollmentPolicy` enum
+- `crates/baluard-core/src/device_manager.rs`: `enroll_with_recovery_phrase`
+- `crates/baluard-daemon/src/{state,handler}.rs`: IPC route
+- `crates/baluard-cli/`: subcommand + handler
+- `desktop/src/components/RecoveryScreen.jsx`: verification step
+- `desktop/src/i18n/locales/{en,es}.json`: translations
+
 ### Epoch State Machine
 
 ```
