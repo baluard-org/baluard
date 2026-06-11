@@ -8,7 +8,7 @@ import { sanitizeError } from "../lib/utils.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { buildImportPayload, buildExportPayload } from "../lib/payload.js";
 import { biometryAvailable } from "../lib/biometry.js";
-import { IconX, IconMoon, IconSunFull, IconDownload } from "./Icon.jsx";
+import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 
@@ -51,7 +51,6 @@ export default function SettingsModal() {
 
   // Profile state
   const [displayName, setDisplayName] = createSignal("");
-  const [profileSubtitle, setProfileSubtitle] = createSignal("");
   const [avatarB64, setAvatarB64] = createSignal("");
   const [avatarExt, setAvatarExt] = createSignal("png");
 
@@ -95,7 +94,6 @@ export default function SettingsModal() {
 
       // Load profile
       setDisplayName(data.display_name || "");
-      setProfileSubtitle(data.subtitle || "");
       setAvatarExt(data.avatar_ext || "png");
     } catch (e) {}
 
@@ -130,7 +128,6 @@ export default function SettingsModal() {
     try {
       await daemon("settings.set", JSON.stringify({
         display_name: displayName() || null,
-        subtitle: profileSubtitle() || null,
       }));
       toastSuccess(t("settings.profileSaved"));
     } catch (e) {
@@ -342,33 +339,33 @@ export default function SettingsModal() {
                 <div class="space-y-3">
                   <label class="text-xs font-bold text-[var(--color-text)]">{t("settings.profile")}</label>
                   <p class="text-[10px] text-[var(--color-muted)]">{t("settings.profileDesc")}</p>
-                  <div class="flex items-center gap-4">
-                    <div class="relative group shrink-0">
-                      <Show when={avatarB64()} fallback={
-                        <div class="w-16 h-16 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-lg shadow-md">
-                          {(displayName() || "?").slice(0, 2).toUpperCase()}
-                        </div>
-                      }>
-                        <img
-                          src={`data:image/${avatarExt() === "jpg" ? "jpeg" : avatarExt()};base64,${avatarB64()}`}
-                          alt="Avatar"
-                          class="w-16 h-16 rounded-full object-cover shadow-md"
-                        />
+                  <div class="flex items-start gap-4">
+                    <div class="shrink-0 flex flex-col items-center gap-1">
+                      <div class="relative group">
+                        <Show when={avatarB64()} fallback={
+                          <div class="w-16 h-16 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-lg shadow-md">
+                            {(displayName() || "?").slice(0, 2).toUpperCase()}
+                          </div>
+                        }>
+                          <img
+                            src={`data:image/${avatarExt() === "jpg" ? "jpeg" : avatarExt()};base64,${avatarB64()}`}
+                            alt="Avatar"
+                            class="w-16 h-16 rounded-full object-cover shadow-md"
+                          />
+                        </Show>
+                        <label class="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                          <span class="text-[10px] font-bold text-white">{t("settings.changeAvatar")}</span>
+                          <input type="file" accept="image/*" class="hidden" onChange={handleAvatarUpload} />
+                        </label>
+                      </div>
+                      <Show when={avatarB64()}>
+                        <button
+                          onClick={removeAvatar}
+                          class="text-[10px] text-[var(--color-muted)] hover:text-red-400 cursor-pointer transition-colors"
+                        >{t("settings.removeAvatar")}</button>
                       </Show>
-                      <label class="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
-                        <span class="text-[10px] font-bold text-white">{t("settings.changeAvatar")}</span>
-                        <input type="file" accept="image/*" class="hidden" onChange={handleAvatarUpload} />
-                      </label>
                     </div>
-                    <Show when={avatarB64()}>
-                      <button
-                        onClick={removeAvatar}
-                        class="text-[10px] text-[var(--color-muted)] hover:text-red-400 cursor-pointer transition-colors"
-                      >{t("settings.removeAvatar")}</button>
-                    </Show>
-                  </div>
-                  <div class="grid grid-cols-2 gap-3">
-                    <div>
+                    <div class="flex-1 min-w-0">
                       <label class="text-[10px] font-bold text-[var(--color-muted)] uppercase tracking-wider">{t("settings.displayName")}</label>
                       <input
                         type="text"
@@ -380,25 +377,20 @@ export default function SettingsModal() {
                         autocomplete="off"
                       />
                     </div>
-                    <div>
-                      <label class="text-[10px] font-bold text-[var(--color-muted)] uppercase tracking-wider">{t("settings.subtitle")}</label>
-                      <input
-                        type="text"
-                        placeholder={t("settings.subtitlePlaceholder")}
-                        class="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
-                        value={profileSubtitle()}
-                        onInput={e => setProfileSubtitle(e.target.value)}
-                        onBlur={saveProfile}
-                        autocomplete="off"
-                      />
-                    </div>
                   </div>
                 </div>
 
                 {/* Theme Settings */}
                 <div class="space-y-2">
                   <label class="text-xs font-bold text-[var(--color-text)]">{t("settings.appTheme")}</label>
-                  <div class="grid grid-cols-2 gap-3">
+                  <div class="grid grid-cols-3 gap-3">
+                    <button
+                      onClick={() => setTheme("system")}
+                      class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "system" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
+                    >
+                      <IconMonitor class="w-4 h-4" />
+                      <span class="text-xs font-bold">{t("setup.themeSystem")}</span>
+                    </button>
                     <button
                       onClick={() => setTheme("dark")}
                       class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "dark" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}

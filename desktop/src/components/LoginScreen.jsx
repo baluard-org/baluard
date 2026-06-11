@@ -32,6 +32,9 @@ export default function LoginScreen() {
           </div>
           <h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)]">{t("login.title")}</h1>
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("login.subtitle")}</p>
+          <Show when={auth.activeVault()}>
+            <p class="text-xs text-[var(--color-primary)] mt-2 font-medium">{auth.activeVault().display_name}</p>
+          </Show>
         </div>
 
         <form onSubmit={(e) => { e.preventDefault(); handleUnlock(); }} class="space-y-4">
