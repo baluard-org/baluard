@@ -130,14 +130,7 @@ pub fn handle_init(
         None => None,
     };
 
-    let subtitle = match flag_subtitle {
-        Some(s) => Some(s),
-        None if is_tty() => {
-            let input = prompt_password_optional("Subtitle (optional, Enter to skip): ");
-            if input.is_empty() { None } else { Some(input) }
-        }
-        None => None,
-    };
+    let subtitle = flag_subtitle;
 
     // Resolve slug: flag > auto-generate from display name > prompt
     let slug = match flag_slug {
