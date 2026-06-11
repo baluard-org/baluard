@@ -4,6 +4,7 @@ import { daemon } from "../lib/daemon.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
 import { IconKey, IconCheck, IconCopy, IconRefresh } from "./Icon.jsx";
+import { copyToClipboard } from "../lib/clipboard.js";
 
 const COPY_BTN = "p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer shrink-0";
 
@@ -31,10 +32,10 @@ export default function SshKeyGenerator(props) {
 
   function CopyButton(props) {
     const [copied, setCopied] = createSignal(false);
-    function handleCopy() {
-      navigator.clipboard.writeText(props.value || "");
+    async function handleCopy() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
+      await copyToClipboard(props.value || "");
     }
     return (
       <button onClick={handleCopy} class={COPY_BTN} title={props.title}>

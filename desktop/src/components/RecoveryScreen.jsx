@@ -3,14 +3,15 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { IconNote, IconCopy, IconCheck } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
+import { copyToClipboard } from "../lib/clipboard.js";
 
 export default function RecoveryScreen() {
   const auth = useAuth();
   const { t } = useI18n();
   const [copied, setCopied] = createSignal(false);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(auth.recoveryPhrase());
+  const handleCopy = async () => {
+    await copyToClipboard(auth.recoveryPhrase());
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

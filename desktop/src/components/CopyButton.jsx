@@ -1,5 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import { IconCopy, IconCheck } from "./Icon.jsx";
+import { copyToClipboard } from "../lib/clipboard.js";
 
 /**
  * Reusable copy-to-clipboard button with animated feedback.
@@ -19,32 +20,13 @@ import { IconCopy, IconCheck } from "./Icon.jsx";
  */
 export default function CopyButton(props) {
   const [copied, setCopied] = createSignal(false);
-  const AUTO_CLEAR_MS = () => props.autoClearMs ?? 30000;
 
-  function handleCopy(e) {
+  async function handleCopy(e) {
     e.stopPropagation();
     const value = props.value || "";
-    navigator.clipboard.writeText(value);
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
-
-    // L1 fix: schedule clipboard clear. Only clears if the clipboard
-    // still contains our value, so we don't wipe a user-initiated copy
-    // of something else.
-    const clearMs = AUTO_CLEAR_MS();
-    if (clearMs > 0) {
-      setTimeout(async () => {
-        try {
-          const current = await navigator.clipboard.readText();
-          if (current === value) {
-            await navigator.clipboard.writeText("");
-          }
-        } catch {
-          // Clipboard read may be denied by browser permissions.
-          // Best-effort; if we can't read, we won't try to clear.
-        }
-      }, clearMs);
-    }
+    await copyToClipboard(value, { autoClearMs: props.autoClearMs });
   }
 
   return (
