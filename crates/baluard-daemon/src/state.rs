@@ -561,11 +561,12 @@ impl VaultState {
 
     /// Get avatar image as base64. Returns empty string if no avatar set.
     /// Reads avatar_ext from encrypted profile.enc.
-    /// M1 fix: avatar is AES-256-GCM encrypted at meta/avatar.enc. Falls
-    /// back to plaintext meta/avatar.{ext} for legacy vaults (one-time read).
+    /// M1 fix: avatar is AES-256-GCM encrypted at meta/avatar.enc. On first
+    /// read of a legacy plaintext meta/avatar.{ext}, migrates to encrypted
+    /// storage and deletes the plaintext file.
     pub async fn avatar_get(&self) -> Result<String, String> {
-        let guard = self.inner.read().await;
-        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
         let ext = handle
             .load_profile()
             .ok()
@@ -585,12 +586,24 @@ impl VaultState {
             return Ok(base64::engine::general_purpose::STANDARD.encode(&bytes));
         }
 
-        // Legacy: plaintext meta/avatar.{ext} (pre-M1 fix)
+        // Legacy: plaintext meta/avatar.{ext} (pre-M1 fix). Migrate to
+        // encrypted storage on first read, then delete the plaintext.
         let avatar_path = handle.path.join(format!("meta/avatar.{ext}"));
         if !avatar_path.exists() {
             return Ok(String::new());
         }
         let data = std::fs::read(&avatar_path).map_err(|e| format!("read avatar: {e}"))?;
+        // Migrate: encrypt and write to avatar.enc
+        let key = handle.derive_avatar_key();
+        let blob = baluard_core::vault::avatar::encrypt_avatar(&key, &data)
+            .map_err(|e| format!("{e}"))?;
+        let tmp_path = enc_path.with_extension("enc.tmp");
+        std::fs::write(&tmp_path, &blob).map_err(|e| format!("write avatar: {e}"))?;
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("chmod avatar: {e}"))?;
+        std::fs::rename(&tmp_path, &enc_path).map_err(|e| format!("rename avatar: {e}"))?;
+        // Delete the plaintext legacy file
+        let _ = std::fs::remove_file(&avatar_path);
         use base64::Engine;
         Ok(base64::engine::general_purpose::STANDARD.encode(&data))
     }
@@ -658,18 +671,12 @@ impl VaultState {
             .map_err(|e| format!("chmod avatar: {e}"))?;
         std::fs::rename(&tmp_path, &enc_path).map_err(|e| format!("rename avatar: {e}"))?;
 
-        // Remove old plaintext avatar (any extension) and any old encrypted file
-        if let Some(ref old_ext) = profile.avatar_ext {
-            let old_ext_clean = old_ext.trim().to_lowercase();
-            if old_ext_clean != ext
-                && matches!(
-                    old_ext_clean.as_str(),
-                    "png" | "jpg" | "jpeg" | "gif" | "webp"
-                )
-            {
-                let old_path = handle.path.join(format!("meta/avatar.{old_ext_clean}"));
-                let _ = std::fs::remove_file(&old_path);
-            }
+        // Remove ALL whitelisted legacy plaintext avatar files.
+        // Peer review fix: previously only removed files matching the old ext,
+        // leaving stray plaintext files with the same or different extensions.
+        for legacy_ext in ["png", "jpg", "jpeg", "gif", "webp"] {
+            let legacy_path = handle.path.join(format!("meta/avatar.{legacy_ext}"));
+            let _ = std::fs::remove_file(&legacy_path);
         }
         profile.avatar_ext = Some(ext);
         handle.save_profile(&profile).map_err(|e| format!("{e}"))?;

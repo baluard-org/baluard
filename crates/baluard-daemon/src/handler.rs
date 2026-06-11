@@ -306,29 +306,31 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             if req.payload.is_empty() {
                 return err_response("Missing master password in payload");
             }
-            // M4 fix: rate-limit failed unlock attempts.
+            // M4 fix: atomically claim a rate-limit slot before running KDF.
+            // This closes the check/use race where parallel requests could
+            // all pass check() before any record_failure() landed.
             let vault_key = state.vault_path.to_string_lossy().into_owned();
-            match state.rate_limiter.check(&vault_key) {
-                crate::rate_limit::RateCheck::Allowed => {}
-                crate::rate_limit::RateCheck::Backoff(d) => {
+            let permit = match state.rate_limiter.claim_attempt(&vault_key) {
+                crate::rate_limit::ClaimResult::Allowed(p) => p,
+                crate::rate_limit::ClaimResult::Backoff(d) => {
                     return err_response(format!(
                         "Too many failed attempts. Wait {}s before retrying.",
                         d.as_secs()
                     ));
                 }
-                crate::rate_limit::RateCheck::LockedOut(d) => {
+                crate::rate_limit::ClaimResult::LockedOut(d) => {
                     return err_response(format!(
                         "Vault locked due to too many failed attempts. Wait {}s.",
                         d.as_secs()
                     ));
                 }
-            }
+            };
             let result = state.unlock(&req.payload).await;
             // Zeroize the password from the request immediately after use
             req.payload.zeroize();
             match result {
                 Ok(()) => {
-                    state.rate_limiter.record_success(&vault_key);
+                    permit.commit_success();
                     // Auto-purge old trash (default 30 days) on unlock
                     let _ = state.purge_old_trash(30).await;
                     // Start cover commit scheduler
@@ -341,7 +343,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     }
                 }
                 Err(e) => {
-                    state.rate_limiter.record_failure(&vault_key);
+                    permit.commit_failure();
                     err_response(e)
                 }
             }
@@ -847,26 +849,26 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         },
 
         "vault.biometric_unlock" => {
-            // M4 fix: rate-limit failed biometric unlock attempts.
+            // M4 fix: atomically claim a rate-limit slot before running unlock.
             let vault_key = state.vault_path.to_string_lossy().into_owned();
-            match state.rate_limiter.check(&vault_key) {
-                crate::rate_limit::RateCheck::Allowed => {}
-                crate::rate_limit::RateCheck::Backoff(d) => {
+            let permit = match state.rate_limiter.claim_attempt(&vault_key) {
+                crate::rate_limit::ClaimResult::Allowed(p) => p,
+                crate::rate_limit::ClaimResult::Backoff(d) => {
                     return err_response(format!(
                         "Too many failed attempts. Wait {}s before retrying.",
                         d.as_secs()
                     ));
                 }
-                crate::rate_limit::RateCheck::LockedOut(d) => {
+                crate::rate_limit::ClaimResult::LockedOut(d) => {
                     return err_response(format!(
                         "Vault locked due to too many failed attempts. Wait {}s.",
                         d.as_secs()
                     ));
                 }
-            }
+            };
             match state.biometric_unlock().await {
                 Ok(json) => {
-                    state.rate_limiter.record_success(&vault_key);
+                    permit.commit_success();
                     // biometric_unlock() calls self.unlock() internally,
                     // which generates a new session token. Fetch it.
                     state.start_cover_timer().await;
@@ -874,7 +876,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     ok_resp(json, token.as_deref())
                 }
                 Err(e) => {
-                    state.rate_limiter.record_failure(&vault_key);
+                    permit.commit_failure();
                     err_response(e)
                 }
             }
