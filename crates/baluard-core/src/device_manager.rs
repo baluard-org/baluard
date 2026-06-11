@@ -2627,6 +2627,60 @@ mod tests {
     }
 
     #[test]
+    fn enroll_with_phrase_end_to_end_new_device_can_decrypt() {
+        // PR-8: verify the new device can actually use the vault after
+        // enrollment. The keywrap must be openable with the returned
+        // private key, and the unwrapped root key must equal the original.
+        let (_dir, vault_path, phrase_str) = setup_vault_with_recovery();
+
+        // First device
+        let mut mgr = DeviceManager::new();
+        mgr.epoch.activate().unwrap();
+        mgr.set_vault_path(&vault_path);
+        mgr.enroll(&make_payload("First"), None).unwrap();
+        mgr.auto_save_result().unwrap();
+
+        // Enroll second device via phrase
+        let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
+        let (p2, x_sk, e_sk) = make_payload_with_keys("New Device (e2e)");
+        let result = mgr2
+            .enroll_with_recovery_phrase(
+                &p2,
+                &phrase_str,
+                x_sk,
+                e_sk,
+                crate::vault::manifest::EnrollmentPolicy::Personal,
+            )
+            .unwrap();
+
+        // The method returned the private keys — simulate the new device
+        // using them to open the keywrap and verify the root key.
+        use crate::crypto::hpke_wrap;
+        let keywrap_path = vault_path.join(format!("meta/keywrap/{}.json", result.device_id));
+        let keywrap_data: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&keywrap_path).expect("keywrap file"),
+        )
+        .expect("parse keywrap");
+        let eph_pub = hex::decode(keywrap_data["ephemeral_public"].as_str().unwrap()).unwrap();
+        let ct = hex::decode(keywrap_data["encrypted_key"].as_str().unwrap()).unwrap();
+        let tag_bytes = hex::decode(keywrap_data["tag"].as_str().unwrap()).unwrap();
+        let mut tag = [0u8; 16];
+        tag.copy_from_slice(&tag_bytes);
+
+        let unwrapped = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &result.x25519_secret)
+            .expect("unwrap root key with returned private key");
+
+        // Unwrapped root key must match the root key the method returned
+        // (and that came from recovery.json, which was written by the
+        // original ceremony).
+        assert_eq!(
+            unwrapped,
+            result.root_key.as_bytes().to_vec(),
+            "unwrapped root key must match the original"
+        );
+    }
+
+    #[test]
     fn enroll_with_phrase_rejects_already_enrolled() {
         let (_dir, vault_path, phrase_str) = setup_vault_with_recovery();
 

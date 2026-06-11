@@ -803,11 +803,18 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(v) => v,
                 Err(e) => return err_response(format!("Invalid JSON: {e}")),
             };
-            let phrase = match v["phrase"].as_str() {
-                Some(p) => p,
+            // PR-5: take ownership of the phrase so we can zeroize it
+            // after use. Other sensitive routes (vault.unlock, etc.)
+            // zeroize req.payload; this one handles the phrase specifically.
+            let mut phrase = match v["phrase"].as_str() {
+                Some(p) => p.to_string(),
                 None => return err_response("missing phrase".to_string()),
             };
-            match state.enroll_with_recovery_phrase(phrase).await {
+            let result = state.enroll_with_recovery_phrase(&phrase).await;
+            // Zeroize phrase bytes before any return path.
+            use zeroize::Zeroize;
+            phrase.zeroize();
+            match result {
                 Ok(json) => ok_resp(json, token_str),
                 Err(e) => err_response(e),
             }

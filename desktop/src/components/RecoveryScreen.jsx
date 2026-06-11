@@ -15,9 +15,11 @@ import { copyToClipboard } from "../lib/clipboard.js";
  * lose the vault permanently when all devices fail.
  *
  * The verification positions are deterministic (derived from the phrase
- * itself) so the same phrase always asks for the same words. This
- * prevents an attacker from brute-forcing the positions but keeps the
- * UX predictable for the legitimate user.
+ * itself) so the same phrase always asks for the same words. This is
+ * a UX choice, not a security control: since the full phrase is
+ * displayed on screen, the positions are visible to an attacker. The
+ * verification proves the user *paid attention and wrote something
+ * down*, not that they have cryptographic assurance.
  */
 function pickVerificationPositions(phrase) {
   // Hash the phrase to pick 4 stable positions out of 24.
