@@ -153,7 +153,6 @@
     "sshGenerateKey": "Generar llave",
     "sshKeyType": "Tipo de llave",
     "sshKeyEd25519": "Ed25519",
-    "sshKeyRsa4096": "RSA 4096",
     "sshKeyEcdsa256": "ECDSA P-256",
     "sshKeyGenerating": "Generando...",
     "sshKeyGenerated": "Llave SSH generada",

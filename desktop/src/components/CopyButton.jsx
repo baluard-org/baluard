@@ -6,17 +6,15 @@ import { copyToClipboard } from "../lib/clipboard.js";
  * Reusable copy-to-clipboard button with animated feedback.
  * Shows copy icon → green checkmark + "Copied" label for 1.8s.
  *
- * L1 fix: auto-clears the clipboard after `autoClearMs` (default 30s)
- * to limit how long the secret lives in the OS clipboard/clipboard history.
+ * L1 fix: always auto-clears the clipboard after 30s via copyToClipboard.
  * Only clears if the clipboard still contains the value we wrote
  * (avoids stomping on a user-initiated copy of something else).
  *
  * Props:
- *   value         — string to copy
- *   class?        — extra classes on the button
- *   label?        — optional label shown alongside icon (e.g. "Copy")
- *   title?        — tooltip text
- *   autoClearMs?  — ms before auto-clearing clipboard (default 30000, 0 = disable)
+ *   value   — string to copy
+ *   class?  — extra classes on the button
+ *   label?  — optional label shown alongside icon (e.g. "Copy")
+ *   title?  — tooltip text
  */
 export default function CopyButton(props) {
   const [copied, setCopied] = createSignal(false);
@@ -26,7 +24,10 @@ export default function CopyButton(props) {
     const value = props.value || "";
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
-    await copyToClipboard(value, { autoClearMs: props.autoClearMs });
+    // Use the shared utility's default (30s). If a non-default timeout is
+    // ever needed, add the prop back here AND wire it from at least one
+    // caller — dead config surface is worse than no config.
+    await copyToClipboard(value);
   }
 
   return (

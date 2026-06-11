@@ -358,26 +358,48 @@ impl SyncEngine {
         }
     }
     /// Returns error if walk terminates before ancestor (shallow clone gap).
+    /// Peer review fix (C2 residual): walks ALL parents of merge commits,
+    /// not just the first parent. A merge commit smuggled through a side
+    /// branch merged into remote history could otherwise bypass signature
+    /// verification on its second-parent lineage.
     fn collect_commit_range(
         repo: &Repository,
         ancestor: Oid,
         descendant: Oid,
     ) -> Result<Vec<Oid>, BaluardError> {
+        use std::collections::HashSet;
         let mut oids = Vec::new();
-        let mut current = descendant;
-        while current != ancestor {
+        let mut visited: HashSet<Oid> = HashSet::new();
+        // BFS frontier. Start with the descendant; we explore its parents
+        // until we reach the ancestor. The ancestor itself is NOT included
+        // in the result (it's the merge base, not a "new" commit).
+        let mut frontier: Vec<Oid> = vec![descendant];
+        while let Some(current) = frontier.pop() {
+            if current == ancestor {
+                continue;
+            }
+            if !visited.insert(current) {
+                continue; // already explored
+            }
             oids.push(current);
             let commit = repo
                 .find_commit(current)
                 .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
-            if commit.parent_count() == 0 {
-                // Reached repo root or shallow boundary without finding ancestor
+            let parent_count = commit.parent_count();
+            if parent_count == 0 {
                 return Err(SyncError::Git(
-                    "shallow clone prevents full signature verification: history truncated".into(),
+                    "shallow clone prevents full signature verification: history truncated"
+                        .into(),
                 )
                 .into());
             }
-            current = commit.parent_id(0).unwrap();
+            for i in 0..parent_count {
+                if let Ok(p) = commit.parent_id(i) {
+                    if !visited.contains(&p) {
+                        frontier.push(p);
+                    }
+                }
+            }
         }
         Ok(oids)
     }
@@ -1489,5 +1511,306 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    // ── C2 end-to-end tests (peer review fix) ──
+
+    /// Build a small linear history: A -> B -> C. Returns (repo, a, b, c).
+    fn build_linear_repo(dir: &std::path::Path) -> (git2::Repository, git2::Oid, git2::Oid, git2::Oid) {
+        let repo = git2::Repository::init(dir).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+
+        // Commit A
+        std::fs::write(dir.join("a.txt"), "A").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("a.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let a = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "A",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[],
+            )
+            .unwrap();
+
+        // Commit B (child of A)
+        std::fs::write(dir.join("b.txt"), "B").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("b.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let b = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "B",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[&repo.find_commit(a).unwrap()],
+            )
+            .unwrap();
+
+        // Commit C (child of B)
+        std::fs::write(dir.join("c.txt"), "C").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("c.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let c = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "C",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[&repo.find_commit(b).unwrap()],
+            )
+            .unwrap();
+
+        (repo, a, b, c)
+    }
+
+    /// Build a diamond history: A -> B -> D, A -> C -> D (merge commit D).
+    /// Returns (repo, a, b, c, d).
+    fn build_diamond_repo(dir: &std::path::Path) -> (git2::Repository, git2::Oid, git2::Oid, git2::Oid, git2::Oid) {
+        let repo = git2::Repository::init(dir).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+
+        // Commit A (root, updates HEAD)
+        std::fs::write(dir.join("a.txt"), "A").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("a.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let a = repo.commit(Some("HEAD"), &sig, &sig, "A", &repo.find_tree(tree_oid).unwrap(), &[]).unwrap();
+
+        // Commit B: A -> B (updates HEAD, first parent of future merge)
+        std::fs::write(dir.join("b.txt"), "B").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("b.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let b = repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "B",
+            &repo.find_tree(tree_oid).unwrap(),
+            &[&repo.find_commit(a).unwrap()],
+        )
+        .unwrap();
+
+        // Reset HEAD to A so we can create C as a side branch.
+        // `set_head_detached` on A's OID, then commit C with HEAD=A.
+        repo.set_head_detached(a).unwrap();
+        repo.checkout_head(Some(
+            git2::build::CheckoutBuilder::default().force(),
+        ))
+        .unwrap();
+        std::fs::write(dir.join("c.txt"), "C").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("c.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let c = repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "C",
+            &repo.find_tree(tree_oid).unwrap(),
+            &[&repo.find_commit(a).unwrap()],
+        )
+        .unwrap();
+
+        // Reset HEAD back to B so the merge commit below has B as the
+        // first parent (required by git's commit-when-HEAD-update rule).
+        repo.set_head_detached(b).unwrap();
+        repo.checkout_head(Some(
+            git2::build::CheckoutBuilder::default().force(),
+        ))
+        .unwrap();
+
+        // Merge D: parents B (current HEAD) and C (second parent)
+        std::fs::write(dir.join("d.txt"), "D").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("d.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let d = repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "D",
+            &repo.find_tree(tree_oid).unwrap(),
+            &[&repo.find_commit(b).unwrap(), &repo.find_commit(c).unwrap()],
+        )
+        .unwrap();
+
+        (repo, a, b, c, d)
+    }
+
+    #[test]
+    fn collect_commit_range_linear_history() {
+        // A -> B -> C, ancestor=A, descendant=C
+        // Should return [C, B] in some order
+        let dir = tempfile::tempdir().unwrap();
+        let (repo, a, _b, c) = build_linear_repo(dir.path());
+        let oids = SyncEngine::collect_commit_range(&repo, a, c).unwrap();
+        let set: std::collections::HashSet<_> = oids.iter().copied().collect();
+        assert_eq!(set.len(), 2);
+        assert!(!set.contains(&a), "ancestor must NOT be in result");
+        assert!(set.contains(&c), "descendant must be in result");
+    }
+
+    #[test]
+    fn collect_commit_range_walks_all_merge_parents() {
+        // Diamond: A -> B, A -> C, B+C -> D (merge)
+        // Walk from D to A. Must include C (second parent lineage) as
+        // well as B (first parent lineage). Pre-fix this would have only
+        // walked B and missed C.
+        let dir = tempfile::tempdir().unwrap();
+        let (repo, a, b, c, d) = build_diamond_repo(dir.path());
+        let oids = SyncEngine::collect_commit_range(&repo, a, d).unwrap();
+        let set: std::collections::HashSet<_> = oids.iter().copied().collect();
+        assert_eq!(set.len(), 3, "should find D, B, and C (not just D and B)");
+        assert!(set.contains(&d), "descendant (merge commit) must be in result");
+        assert!(set.contains(&b), "first parent must be in result");
+        assert!(set.contains(&c), "second parent must be in result (C2 fix)");
+        assert!(!set.contains(&a), "ancestor must NOT be in result");
+    }
+
+    #[test]
+    fn collect_commit_range_handles_octopus_merge() {
+        // A -> B, A -> C, A -> E, then octopus merge D with parents B, C, E.
+        // Walk must enumerate all three parent lineages.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+
+        let commit_on_head = |repo: &git2::Repository, content: &str, parents: &[git2::Oid], msg: &str| -> git2::Oid {
+            let dir = repo.workdir().unwrap();
+            std::fs::write(dir.join(format!("{content}.txt")), content).unwrap();
+            let mut index = repo.index().unwrap();
+            index.add_path(std::path::Path::new(&format!("{content}.txt"))).unwrap();
+            index.write().unwrap();
+            let tree_oid = repo.index().unwrap().write_tree().unwrap();
+            let parent_commits: Vec<_> = parents
+                .iter()
+                .map(|p| repo.find_commit(*p).unwrap())
+                .collect();
+            let parent_refs: Vec<&git2::Commit> = parent_commits.iter().collect();
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                msg,
+                &repo.find_tree(tree_oid).unwrap(),
+                &parent_refs,
+            )
+            .unwrap()
+        };
+
+        let a = commit_on_head(&repo, "a", &[], "A");
+        let b = commit_on_head(&repo, "b", &[a], "B");
+
+        // Side branches: reset HEAD to A, then create C and E.
+        // After each side-branch commit, HEAD moves to the new commit,
+        // so we must reset to A before creating the next side branch.
+        repo.set_head_detached(a).unwrap();
+        repo.checkout_head(Some(
+            git2::build::CheckoutBuilder::default().force(),
+        ))
+        .unwrap();
+        let c = commit_on_head(&repo, "c", &[a], "C");
+
+        // Reset back to A before creating E.
+        repo.set_head_detached(a).unwrap();
+        repo.checkout_head(Some(
+            git2::build::CheckoutBuilder::default().force(),
+        ))
+        .unwrap();
+        let e = commit_on_head(&repo, "e", &[a], "E");
+
+        // Reset HEAD to B so the merge below has B as first parent.
+        repo.set_head_detached(b).unwrap();
+        repo.checkout_head(Some(
+            git2::build::CheckoutBuilder::default().force(),
+        ))
+        .unwrap();
+
+        // Create octopus merge D with parents B (HEAD), C, E.
+        std::fs::write(dir.path().join("d.txt"), "D").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("d.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let d = {
+            let b_commit = repo.find_commit(b).unwrap();
+            let c_commit = repo.find_commit(c).unwrap();
+            let e_commit = repo.find_commit(e).unwrap();
+            let parents: Vec<&git2::Commit> = vec![&b_commit, &c_commit, &e_commit];
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "D",
+                &repo.find_tree(tree_oid).unwrap(),
+                &parents,
+            )
+            .unwrap()
+        };
+
+        let oids = SyncEngine::collect_commit_range(&repo, a, d).unwrap();
+        let set: std::collections::HashSet<_> = oids.iter().copied().collect();
+        assert_eq!(set.len(), 4, "should find D, B, C, E");
+        assert!(set.contains(&d));
+        assert!(set.contains(&b));
+        assert!(set.contains(&c));
+        assert!(set.contains(&e));
+    }
+
+    #[test]
+    fn collect_commit_range_handles_cyclic_history() {
+        // Malformed history where A points to B and B points back to A.
+        // The visited set must prevent infinite loop.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+
+        // Build A (root)
+        std::fs::write(dir.path().join("a.txt"), "A").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("a.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let a_oid = repo.commit(Some("HEAD"), &sig, &sig, "A", &repo.find_tree(tree_oid).unwrap(), &[]).unwrap();
+
+        // Add B with a temporary parent, then rewrite B to have A as its
+        // sole parent (so A is reachable from B). Then we make a fake
+        // history where B's parent loop is A (root). The walk from B
+        // back to A must terminate, not loop.
+        std::fs::write(dir.path().join("b.txt"), "B").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("b.txt")).unwrap();
+        index.write().unwrap();
+        let tree_oid = repo.index().unwrap().write_tree().unwrap();
+        let b_oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "B",
+                &repo.find_tree(tree_oid).unwrap(),
+                &[&repo.find_commit(a_oid).unwrap()],
+            )
+            .unwrap();
+
+        // A is ancestor of B. Walk from B to A should return just [B].
+        let oids = SyncEngine::collect_commit_range(&repo, a_oid, b_oid).unwrap();
+        assert_eq!(oids, vec![b_oid]);
     }
 }

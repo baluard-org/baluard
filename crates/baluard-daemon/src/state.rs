@@ -691,18 +691,25 @@ impl VaultState {
         handle.save_locale(lang).map_err(|e| format!("{e}"))
     }
 
-    /// Generate an SSH keypair. Payload: JSON {"type": "ed25519"|"rsa4096"|"ecdsa256"}
+    /// Generate an SSH keypair. Payload: JSON {"type": "ed25519"|"ecdsa256"}
     /// Returns JSON {"public_key": "ssh-ed25519 ...", "fingerprint": "SHA256:...", "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
     /// Key material stays in the daemon process; only formatted strings cross IPC.
+    ///
+    /// L7 fix: RSA 4096 was removed. The `rsa` crate has RUSTSEC-2023-0071
+    /// (Marvin Attack, timing sidechannel, no upstream fix), pulled in
+    /// transitively by `ssh-key`'s `rsa` feature. Ed25519 (default) and
+    /// ECDSA P-256 cover modern needs; RSA 4096 SSH keys are legacy
+    /// compat only and the audit's "must-fix" recommendation was to
+    /// drop the feature.
     pub async fn ssh_generate_key(&self, payload: &str) -> Result<String, String> {
         let v: serde_json::Value =
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let key_type = v["type"].as_str().unwrap_or("ed25519");
 
-        // Validate key type early
-        if !matches!(key_type, "ed25519" | "rsa4096" | "ecdsa256") {
+        // Validate key type early. RSA removed (see L7 fix above).
+        if !matches!(key_type, "ed25519" | "ecdsa256") {
             return Err(format!(
-                "Unknown SSH key type: {key_type}. Use ed25519, rsa4096, or ecdsa256"
+                "Unknown SSH key type: {key_type}. Use ed25519 or ecdsa256"
             ));
         }
 
@@ -738,15 +745,14 @@ impl VaultState {
                 }
             }
             impl ssh_key::rand_core::TryCryptoRng for Adapter {}
-            let algorithm = if key_type == "rsa4096" {
-                ssh_key::Algorithm::Rsa { hash: None }
-            } else {
+            // L7 fix: RSA removed. Only ECDSA P-256 for the non-Ed25519 path.
+            ssh_key::private::PrivateKey::random(
+                &mut Adapter,
                 ssh_key::Algorithm::Ecdsa {
                     curve: ssh_key::EcdsaCurve::NistP256,
-                }
-            };
-            ssh_key::private::PrivateKey::random(&mut Adapter, algorithm)
-                .map_err(|e| format!("SSH key generation failed: {e}"))?
+                },
+            )
+            .map_err(|e| format!("SSH key generation failed: {e}"))?
         };
 
         // Encode public key in OpenSSH format
