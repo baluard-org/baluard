@@ -2385,6 +2385,162 @@ mod tests {
         let loaded = DeviceManager::load_from_vault(vault_path).unwrap();
         assert_eq!(loaded.registry.count(), 1);
     }
+
+    // ── enroll_with_recovery_phrase tests ──
+
+    fn setup_vault_with_recovery() -> (tempfile::TempDir, std::path::PathBuf, String) {
+        use crate::types::KdfProfile;
+        use crate::vault::creation;
+
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().to_path_buf();
+
+        let ceremony = creation::create_vault_ceremony("password", KdfProfile::MobileLow).unwrap();
+        let phrase_str = ceremony.recovery_phrase.phrase();
+
+        std::fs::create_dir_all(vault_path.join("meta/keywrap")).unwrap();
+        std::fs::create_dir_all(vault_path.join("meta")).unwrap();
+
+        let (eph_pub, ct, tag) = &ceremony.wrapped_recovery_key;
+        let recovery_key_bytes = ceremony.recovery_phrase.derive_key();
+        let recovery_x25519_secret = x25519_dalek::StaticSecret::from(
+            <[u8; 32]>::try_from(&recovery_key_bytes[..32]).unwrap(),
+        );
+        let recovery_x25519_public = x25519_dalek::PublicKey::from(&recovery_x25519_secret);
+        let recovery_json = serde_json::json!({
+            "ephemeral_public": hex::encode(eph_pub),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+            "recovery_x25519_pubkey": hex::encode(recovery_x25519_public.as_bytes()),
+        });
+        std::fs::write(
+            vault_path.join("meta/recovery.json"),
+            serde_json::to_string_pretty(&recovery_json).unwrap(),
+        )
+        .unwrap();
+
+        (dir, vault_path, phrase_str)
+    }
+
+    #[test]
+    fn enroll_with_phrase_preserves_existing_devices() {
+        let (_dir, vault_path, phrase_str) = setup_vault_with_recovery();
+
+        // First, enroll a founding device
+        let mut mgr = DeviceManager::new();
+        mgr.epoch.activate().unwrap();
+        mgr.set_vault_path(&vault_path);
+        let p1 = make_payload("Device A");
+        mgr.enroll(&p1, None).unwrap();
+        assert_eq!(mgr.registry.count(), 1);
+
+        // Persist state
+        mgr.auto_save_result().unwrap();
+
+        // Now enroll a second device via recovery phrase (non-destructive)
+        let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
+        let p2 = make_payload("Device B (via phrase)");
+        let result = mgr2.enroll_with_recovery_phrase(&p2, &phrase_str).unwrap();
+
+        // Verify: both devices in registry (old device preserved)
+        assert_eq!(mgr2.registry.count(), 2);
+        assert!(mgr2.registry.is_enrolled(&p1.device_id));
+        assert!(mgr2.registry.is_enrolled(&p2.device_id));
+        assert_eq!(result.entry.name, "Device B (via phrase)");
+    }
+
+    #[test]
+    fn enroll_with_phrase_rejects_wrong_phrase() {
+        let (_dir, vault_path, _correct_phrase) = setup_vault_with_recovery();
+
+        let mut mgr = DeviceManager::new();
+        mgr.epoch.activate().unwrap();
+        mgr.set_vault_path(&vault_path);
+        mgr.enroll(&make_payload("First"), None).unwrap();
+        mgr.auto_save_result().unwrap();
+
+        // Generate a different 24-word phrase
+        use crate::recovery::RecoveryPhrase;
+        let wrong_phrase = RecoveryPhrase::generate().unwrap().phrase();
+
+        let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
+        let p2 = make_payload("Attacker");
+        let result = mgr2.enroll_with_recovery_phrase(&p2, &wrong_phrase);
+        assert!(result.is_err(), "wrong phrase must be rejected");
+    }
+
+    #[test]
+    fn enroll_with_phrase_rejects_stale_timestamp() {
+        let (_dir, vault_path, phrase_str) = setup_vault_with_recovery();
+
+        let mut mgr = DeviceManager::new();
+        mgr.epoch.activate().unwrap();
+        mgr.set_vault_path(&vault_path);
+        mgr.enroll(&make_payload("First"), None).unwrap();
+        mgr.auto_save_result().unwrap();
+
+        let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
+        let mut stale = make_payload("Stale");
+        stale.timestamp = 0; // ancient
+        let result = mgr2.enroll_with_recovery_phrase(&stale, &phrase_str);
+        assert!(result.is_err(), "stale timestamp must be rejected");
+    }
+
+    #[test]
+    fn enroll_with_phrase_rejects_replayed_nonce() {
+        let (_dir, vault_path, phrase_str) = setup_vault_with_recovery();
+
+        let mut mgr = DeviceManager::new();
+        mgr.epoch.activate().unwrap();
+        mgr.set_vault_path(&vault_path);
+        mgr.enroll(&make_payload("First"), None).unwrap();
+        mgr.auto_save_result().unwrap();
+
+        // Use same nonce twice
+        let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
+        let mut p1 = make_payload("Replay Test 1");
+        mgr2.enroll_with_recovery_phrase(&p1, &phrase_str).unwrap();
+        let mut p2 = make_payload("Replay Test 2");
+        p2.nonce = p1.nonce.clone(); // same nonce
+        let result = mgr2.enroll_with_recovery_phrase(&p2, &phrase_str);
+        assert!(result.is_err(), "replayed nonce must be rejected");
+    }
+
+    #[test]
+    fn enroll_with_phrase_writes_keywrap() {
+        let (_dir, vault_path, phrase_str) = setup_vault_with_recovery();
+
+        let mut mgr = DeviceManager::new();
+        mgr.epoch.activate().unwrap();
+        mgr.set_vault_path(&vault_path);
+        mgr.enroll(&make_payload("First"), None).unwrap();
+        mgr.auto_save_result().unwrap();
+
+        let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
+        let p2 = make_payload("Phrase Device");
+        let _ = mgr2.enroll_with_recovery_phrase(&p2, &phrase_str).unwrap();
+
+        // Verify: keywrap file written for new device
+        let keywrap_path = vault_path.join(format!("meta/keywrap/{}.json", p2.device_id));
+        assert!(keywrap_path.exists(), "keywrap should be written");
+    }
+
+    #[test]
+    fn enroll_with_phrase_rejects_already_enrolled() {
+        let (_dir, vault_path, phrase_str) = setup_vault_with_recovery();
+
+        let mut mgr = DeviceManager::new();
+        mgr.epoch.activate().unwrap();
+        mgr.set_vault_path(&vault_path);
+        let p1 = make_payload("Device A");
+        mgr.enroll(&p1, None).unwrap();
+        mgr.auto_save_result().unwrap();
+
+        // Try to re-enroll same device via phrase
+        let mut mgr2 = DeviceManager::load_from_vault(&vault_path).unwrap();
+        let result = mgr2.enroll_with_recovery_phrase(&p1, &phrase_str);
+        assert!(result.is_err(), "already-enrolled device must be rejected");
+    }
 }
 
 #[cfg(test)]

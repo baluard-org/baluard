@@ -275,4 +275,46 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("lang"));
     }
+
+    #[test]
+    fn enrollment_policy_default_is_personal() {
+        // New vaults default to Personal — phrase OR device approval accepted.
+        // M4 product-intent: solo users should not need a second device to recover.
+        assert_eq!(EnrollmentPolicy::default(), EnrollmentPolicy::Personal);
+    }
+
+    #[test]
+    fn enrollment_policy_backward_compat_existing_vaults_default_strict() {
+        // When deserializing old settings.json without the field,
+        // default_enrollment_policy() returns Strict (preserves old behavior).
+        let json = r#"{"auto_lock_minutes": 10}"#;
+        let settings: VaultSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(settings.enrollment_policy, EnrollmentPolicy::Strict);
+    }
+
+    #[test]
+    fn enrollment_policy_roundtrip() {
+        let settings = VaultSettings {
+            enrollment_policy: EnrollmentPolicy::Personal,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: VaultSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.enrollment_policy, EnrollmentPolicy::Personal);
+
+        let settings2 = VaultSettings {
+            enrollment_policy: EnrollmentPolicy::Strict,
+            ..Default::default()
+        };
+        let json2 = serde_json::to_string(&settings2).unwrap();
+        let back2: VaultSettings = serde_json::from_str(&json2).unwrap();
+        assert_eq!(back2.enrollment_policy, EnrollmentPolicy::Strict);
+    }
+
+    #[test]
+    fn enrollment_policy_new_vault_defaults_to_personal() {
+        // New VaultSettings::default() should be Personal (the product-intent default).
+        let settings = VaultSettings::default();
+        assert_eq!(settings.enrollment_policy, EnrollmentPolicy::Personal);
+    }
 }
