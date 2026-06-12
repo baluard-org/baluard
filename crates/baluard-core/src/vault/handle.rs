@@ -2428,6 +2428,17 @@ impl VaultHandle {
                         k.zeroize()
                     }
                 }
+                crate::types::CipherKind::Passkey(d) => {
+                    // The private key is the sensitive material. Zeroize
+                    // after use. prf_key is a derived secret for the PRF
+                    // extension (Phase 5), zeroize too when present.
+                    if let Some(k) = d.private_key.as_mut() {
+                        k.zeroize()
+                    }
+                    if let Some(k) = d.prf_key.as_mut() {
+                        k.zeroize()
+                    }
+                }
                 crate::types::CipherKind::Identity(_)
                 | crate::types::CipherKind::BankAccount(_)
                 | crate::types::CipherKind::DriversLicense(_)

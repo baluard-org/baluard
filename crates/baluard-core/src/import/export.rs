@@ -179,6 +179,12 @@ pub fn export_bw_json(
             CipherKind::BankAccount(_) => 6,
             CipherKind::DriversLicense(_) => 7,
             CipherKind::Passport(_) => 8,
+            // Bitwarden stores passkeys on Login (bw_type=1) with a non-null
+            // `fido2Credentials[]` array. Full round-trip export — including
+            // `fido2Credentials` field population from `PasskeyData` — is
+            // deferred to Phase 1. For now we map to type 1 so the export
+            // still serializes as an empty Login.
+            CipherKind::Passkey(_) => 1,
         };
 
         let (login, secure_note, card, identity, ssh_key, bank_account, drivers_license, passport) =
@@ -285,6 +291,11 @@ pub fn export_bw_json(
                 CipherKind::Passport(data) => {
                     (None, None, None, None, None, None, None, Some(data.clone()))
                 }
+                // Passkey: see note above. For now, all 8 kind fields are
+                // None. Phase 1 will populate `login` with a synthetic
+                // Login (username from user_name, uris=[rp_id]) and add a
+                // top-level `fido2Credentials[]` on the BwExportItem.
+                CipherKind::Passkey(_) => (None, None, None, None, None, None, None, None),
             };
 
         let fields: Vec<BwExportField> = cipher
