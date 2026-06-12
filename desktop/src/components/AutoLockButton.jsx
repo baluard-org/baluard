@@ -28,19 +28,19 @@ export default function AutoLockButton() {
   }
 
   return (
-    <div class="relative">
+    <div class="autolock relative">
       <button
         onClick={() => { const next = !showSettings(); setShowSettings(next); if (next) loadSetting(); }}
         title={t("settings.autolockSettings")}
         aria-label={t("settings.autolockSettings")}
-        class="p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)]"
+        class="autolock__toggle p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)]"
       >
         <IconClock class="w-4 h-4" />
       </button>
       <Show when={showSettings()}>
-        <div class="absolute bottom-full right-0 mb-2 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl p-4 w-56 z-50">
-          <div class="text-xs font-bold text-[var(--color-text)] mb-3">{t("settings.autolockTimeout")}</div>
-          <div class="flex items-center gap-2 mb-3">
+        <div class="autolock__panel absolute bottom-full right-0 mb-2 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl p-4 w-56 z-50">
+          <div class="autolock__title text-xs font-bold text-[var(--color-text)] mb-3">{t("settings.autolockTimeout")}</div>
+          <div class="autolock__field flex items-center gap-2 mb-3">
             <input
               type="number"
               min="1"
@@ -48,22 +48,22 @@ export default function AutoLockButton() {
               value={lockMinutes()}
               onInput={e => setLockMinutes(parseInt(e.target.value) || 15)}
               aria-label={t("settings.autolockTimeout")}
-              class="w-20 px-3 py-2 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] text-center"
+              class="autolock__input w-20 px-3 py-2 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] text-center"
             />
-            <span class="text-xs text-[var(--color-muted)]">{t("settings.minutes")}</span>
+            <span class="autolock__label text-xs text-[var(--color-muted)]">{t("settings.minutes")}</span>
           </div>
           <button
             onClick={saveAutoLock}
-            class="w-full py-1.5 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer"
+            class="autolock__save-btn w-full py-1.5 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer"
           >
             {saved() ? t("settings.saved") : t("settings.save")}
           </button>
-          <div class="text-[10px] text-[var(--color-muted)] mt-2">{t("settings.autolockInactivity")}</div>
+          <div class="autolock__desc text-[10px] text-[var(--color-muted)] mt-2">{t("settings.autolockInactivity")}</div>
  
           {/* Biometric Unlock */}
-          <div class="border-t border-[var(--color-border)] mt-3 pt-3">
-            <div class="flex items-center justify-between">
-              <div class="text-xs font-bold text-[var(--color-text)]">{t("settings.quickUnlock")}</div>
+          <div class="autolock__biometrics border-t border-[var(--color-border)] mt-3 pt-3">
+            <div class="autolock__biometrics-header flex items-center justify-between">
+              <div class="autolock__biometrics-title text-xs font-bold text-[var(--color-text)]">{t("settings.quickUnlock")}</div>
               <button
                 onClick={async () => {
                   try {
@@ -80,14 +80,14 @@ export default function AutoLockButton() {
                     }
                   } catch (e) { toastError(e.message); }
                 }}
-                class="p-1.5 rounded-lg transition-colors cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-primary)]"
+                class="autolock__biometrics-toggle-btn p-1.5 rounded-lg transition-colors cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-primary)]"
                 title={t("settings.quickUnlockDesc")}
                 aria-label={t("settings.quickUnlockDesc")}
               >
                 <IconUser class="w-5 h-5" />
               </button>
             </div>
-            <div class="text-[10px] text-[var(--color-muted)] mt-1">{t("settings.quickUnlockSub")}</div>
+            <div class="autolock__biometrics-desc text-[10px] text-[var(--color-muted)] mt-1">{t("settings.quickUnlockSub")}</div>
           </div>
         </div>
       </Show>

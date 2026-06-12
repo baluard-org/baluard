@@ -47,22 +47,22 @@ const ICON_ACCENT = {
 export default function ToastContainer() {
   return (
     <Show when={toasts().length > 0}>
-      <div class="fixed top-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none" style="max-width: 380px;">
+      <div class="toast-container fixed top-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none" style="max-width: 380px;">
         <For each={toasts()}>
           {(t) => (
             <div
-              class={`pointer-events-auto toast-enter flex items-start gap-2.5 px-4 py-3 rounded-xl border shadow-lg backdrop-blur-sm ${STYLES[t.type]}`}
+              class={`toast-container__toast pointer-events-auto toast-enter flex items-start gap-2.5 px-4 py-3 rounded-xl border shadow-lg backdrop-blur-sm ${STYLES[t.type]}`}
             >
-              <div class={`shrink-0 mt-0.5 ${ICON_ACCENT[t.type]}`}>
+              <div class={`toast-container__toast-icon shrink-0 mt-0.5 ${ICON_ACCENT[t.type]}`}>
                 {ICONS[t.type]}
               </div>
-              <p class="text-xs font-medium leading-relaxed flex-1 min-w-0 break-words">
+              <p class="toast-container__toast-message text-xs font-medium leading-relaxed flex-1 min-w-0 break-words">
                 {t.message}
               </p>
               <Show when={t.manual}>
                 <button
                   onClick={() => dismiss(t.id)}
-                  class="shrink-0 p-0.5 rounded-md opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
+                  class="toast-container__toast-close shrink-0 p-0.5 rounded-md opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
                 >
                   <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="18" y1="6" x2="6" y2="18" />
