@@ -86,11 +86,14 @@ prost-types = "0.13"
 # UniFFI
 uniffi = "0.28"
 
-# WebAuthn / FIDO2 (Phase 0 spike: passkey as authenticator, webauthn-rs as RP)
+# WebAuthn / FIDO2
 passkey = { version = "0.5", default-features = false }
 webauthn-rs = { version = "0.5", default-features = false }
 webauthn-rs-proto = { version = "0.5", default-features = false }
 webauthn-rs-core = { version = "0.5", default-features = false }
+url = "2"
+public-suffix = "0.1"
+coset = "0.4"
 
 # Platform paths
 dirs = "6"

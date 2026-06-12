@@ -41,6 +41,12 @@ csv = "1.3"
 roxmltree = "0.20"
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 uniffi.workspace = true
+# WebAuthn authenticator ceremony (Phase 1)
+passkey = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+public-suffix = { workspace = true, optional = true }
+coset = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -56,17 +62,16 @@ proptest.workspace = true
 tokio.workspace = true
 tempfile = "3"
 # Phase 0.3 spike — see docs/adr/0007-passkey-rs-evaluation.md
-passkey.workspace = true
 webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
 webauthn-rs-proto.workspace = true
 webauthn-rs-core.workspace = true
 url = "2"
 public-suffix = "0.1"
-async-trait = "0.1"
 
 [features]
 default = ["full"]
-full = ["git-sync", "org", "emergency"]
+full = ["git-sync", "org", "emergency", "passkey-ceremony"]
+passkey-ceremony = ["dep:passkey", "dep:url", "dep:public-suffix", "dep:coset", "dep:tokio"]
 git-sync = ["dep:git2"]
 org = []
 emergency = []
