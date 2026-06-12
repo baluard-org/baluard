@@ -74,13 +74,18 @@ pub struct CeremonyCache {
     states: RwLock<HashMap<CeremonyId, CeremonyState>>,
 }
 
+impl Default for CeremonyCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CeremonyCache {
     pub fn new() -> Self {
         Self {
             states: RwLock::new(HashMap::new()),
         }
     }
-
     pub async fn insert(&self, id: CeremonyId, state: CeremonyState) {
         let mut states = self.states.write().await;
         // FIFO eviction if at capacity

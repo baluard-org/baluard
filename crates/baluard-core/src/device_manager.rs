@@ -1782,6 +1782,7 @@ pub fn build_enroll_sign_input(payload: &EnrollmentPayload) -> Result<Vec<u8>, B
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::crypto::{hpke_wrap, signature as sig};

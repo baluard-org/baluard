@@ -646,6 +646,12 @@ enum CipherAddCommand {
         #[arg(long, default_value_t = false)]
         favorite: bool,
     },
+
+    /// Add a cipher from a CipherInput JSON file (use - for stdin).
+    Json {
+        /// Path to JSON file, or - for stdin.
+        path: String,
+    },
 }
 
 /// Parse a folder ID string into a UUID, returning a descriptive error on failure.
@@ -662,6 +668,18 @@ fn parse_folder_id(
 /// Build a CipherInput from a CipherAddCommand subcommand.
 fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn std::error::Error>> {
     match cipher {
+        CipherAddCommand::Json { path } => {
+            let json_str = if path == "-" {
+                use std::io::Read;
+                let mut buf = String::new();
+                std::io::stdin().read_to_string(&mut buf)?;
+                buf
+            } else {
+                std::fs::read_to_string(&path)?
+            };
+            serde_json::from_str(&json_str)
+                .map_err(|e| format!("Invalid CipherInput JSON: {e}").into())
+        }
         CipherAddCommand::Login {
             name,
             username,

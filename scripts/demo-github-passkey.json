@@ -1,0 +1,89 @@
+{
+  "name": "GitHub (Passkey)",
+  "kind": {
+    "type": "login",
+    "data": {
+      "username": "esteban@actitud.xyz",
+      "password": "gh_s3cur3T0k3nH3r3!",
+      "uris": [
+        {
+          "uri": "https://github.com",
+          "match_strategy": "domain"
+        }
+      ],
+      "fido2_credentials": [
+        {
+          "credential_id": "ufJWp8YGlibm1Kd9XQBWN1WAw2jy5In2Xhon9HAqcXE",
+          "key_type": "public-key",
+          "key_algorithm": "ECDSA",
+          "key_curve": "P-256",
+          "key_value": "pQECAzYBAFAAY2hhcmdlX2F1dGhfZGF0YV9iNjRfmZjg2NWUyZmQ3NzRlMGIxMTJjZWE0MWZkYTM1ODIwMDJlNzA3YjQ0NDYxYjQ2MDg0MDA4MDAxMGUwNTA1MzAyMTYwMTIxYzA0",
+          "rp_id": "github.com",
+          "rp_name": "GitHub",
+          "user_handle": [
+            101,
+            49,
+            48,
+            50,
+            52,
+            54,
+            55,
+            52
+          ],
+          "user_name": "esteban@actitud.xyz",
+          "user_display_name": "Esteban Forge",
+          "counter": 42,
+          "aaguid": "00000000-0000-0000-0000-000000000000",
+          "prf_key": null,
+          "private_key": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "private_key_missing": false,
+          "linked_login_id": null,
+          "creation_date": 1718000000,
+          "name": "YubiKey 5C NFC"
+        }
+      ],
+      "totp_uri": null,
+      "autofill_on_page_load": false,
+      "password_revision_date": null
+    }
+  },
+  "notes": "Login with passkey (YubiKey 5C NFC)",
+  "favorite": true,
+  "tags": [
+    "important",
+    "mfa"
+  ]
+}

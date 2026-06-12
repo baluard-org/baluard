@@ -64,9 +64,8 @@ pub fn create_rk_canary(
 pub fn verify_rk_canary(root_key: &RootKey, canary_bytes: &[u8]) -> Result<(), BaluardError> {
     let mut canary_key = derive_rk_canary_key(root_key);
     let envelope = crate::vault::envelope::deserialize(canary_bytes)?;
-    let pt = crate::crypto::aead::decrypt(&canary_key, &envelope).map_err(|e| {
+    let pt = crate::crypto::aead::decrypt(&canary_key, &envelope).inspect_err(|_| {
         canary_key.zeroize();
-        e
     });
     canary_key.zeroize();
     let pt =

@@ -311,6 +311,22 @@ seed-demo: build-release
 	baluard add login --name "Linear" --username "esteban@actitud.xyz" --password "L1n3@rPlan!" --uri "https://linear.app" --tags work --folder "$WORK"
 
 	echo ""
+
+	echo ""
+	echo "=== Seeding login entries with passkeys ==="
+
+	# GitHub — Login with password + passkey (YubiKey 5C NFC)
+	jq --arg fid "$WORK" '.folder_id = $fid' scripts/demo-github-passkey.json | baluard add json -
+
+	# Google — Passkey-only login (no password, iPhone 16 Pro)
+	jq --arg fid "$PERSONAL" '.folder_id = $fid' scripts/demo-google-passkey.json | baluard add json -
+
+	# AWS — Password + 2 passkeys (YubiKey 5Ci + MacBook Touch ID)
+	jq --arg fid "$INFRA" '.folder_id = $fid' scripts/demo-aws-passkey.json | baluard add json -
+
+	# Figma — Imported passkey (missing private key, Bitwarden import scenario)
+	jq --arg fid "$WORK" '.folder_id = $fid' scripts/demo-figma-passkey.json | baluard add json -
+
 	echo "=== Seeding card entries ==="
 
 	baluard add card --name "Visa Platinum" --cardholder-name "Esteban Forge" --brand "Visa" --number "4532123456789012" --exp-month "09" --exp-year "2028" --code "123" --tags personal,important --folder "$FINANCE"
@@ -369,7 +385,7 @@ seed-demo: build-release
 	echo "  Password: baluard99"
 	echo ""
 	echo "  Entries by type:"
-	echo "    Logins:       10"
+	echo "    Logins:       14  (incl. 4 with passkeys)"
 	echo "    Cards:         3"
 	echo "    Notes:         7  (incl. 2 RUT/Carnet)"
 	echo "    Identities:    2"
@@ -378,7 +394,13 @@ seed-demo: build-release
 	echo "    Licenses:      1"
 	echo "    Passports:     1"
 	echo "    ────────────────"
-	echo "    Total:        31"
+	echo "    Total:        35"
+	echo ""
+	echo "  Passkeys:"
+	echo "    GitHub (YubiKey 5C NFC)          — password + passkey"
+	echo "    Google (iPhone 16 Pro)            — passkey-only, no password"
+	echo "    AWS Console (YubiKey 5Ci + Touch ID) — password + TOTP + 2 passkeys"
+	echo "    Figma (Imported)                  — password + passkey, private_key_missing"
 	echo ""
 	echo "  Folders: Personal, Work, Finance, Infrastructure, Travel"
 	echo "  Tags:    important, shared, team, personal, urgent, legacy, backup, mfa, api-key, staging, production"

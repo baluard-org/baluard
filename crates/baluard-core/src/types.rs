@@ -574,8 +574,12 @@ pub struct PasskeyData {
 
 impl Zeroize for PasskeyData {
     fn zeroize(&mut self) {
-        self.prf_key.as_mut().map(|k| k.zeroize());
-        self.private_key.as_mut().map(|k| k.zeroize());
+        if let Some(k) = self.prf_key.as_mut() {
+            k.zeroize();
+        }
+        if let Some(k) = self.private_key.as_mut() {
+            k.zeroize();
+        }
     }
 }
 

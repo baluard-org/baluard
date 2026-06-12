@@ -2464,7 +2464,7 @@ pub fn handle_passkey_list(
                     if let baluard_core::types::CipherKind::Login(data) = &c.kind {
                         if let Some(ref fido2_list) = data.fido2_credentials {
                             for pk in fido2_list {
-                                if rp_id.map_or(true, |rp| pk.rp_id == rp) {
+                                if rp_id.is_none_or(|rp| pk.rp_id == rp) {
                                     passkeys.push(serde_json::json!({
                                         "id": meta.id,
                                         "name": meta.name,
