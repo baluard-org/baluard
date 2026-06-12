@@ -132,7 +132,7 @@ async fn assertion_works_with_registered_passkey() {
         .expect("assertion should succeed");
 
     assert!(!assertion.credential_id_b64.is_empty());
-    assert!(assertion.new_counter == 0, "counter should be non-negative");
+    assert_eq!(assertion.new_counter, 1, "counter should increment after BUG-1 fix (always Some)");
     assert!(!assertion.assertion_response.is_empty());
 }
 
@@ -188,7 +188,7 @@ async fn multi_passkey_different_rps() {
     )
     .await
     .expect("assert A");
-    assert!(assert_a.new_counter == 0);
+    assert!(assert_a.new_counter >= 1);
 
     // Assert against RP B
     let assert_b = run_assertion(
@@ -198,7 +198,7 @@ async fn multi_passkey_different_rps() {
     )
     .await
     .expect("assert B");
-    assert!(assert_b.new_counter == 0);
+    assert!(assert_b.new_counter >= 1);
 
     // Different credential IDs
     assert_ne!(assert_a.credential_id_b64, assert_b.credential_id_b64);
@@ -324,4 +324,55 @@ async fn store_mutation_tracking() {
 
     // Second take should be empty (consumed)
     assert!(clone.take_new_credentials().is_empty());
+}
+
+#[test]
+fn converter_round_trip_passkey_data_to_passkey_and_back() {
+    // Register a real passkey to get a valid PasskeyData with actual COSE key
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let reg = rt.block_on(async {
+        let index = PasskeyIndex::from_ciphers(&[]);
+        run_registration(
+            &Url::parse("https://converter.test").unwrap(),
+            "converter.test".into(),
+            "Converter Test".into(),
+            "user@converter".into(),
+            "User".into(),
+            vec![42],
+            &index,
+        )
+        .await
+        .unwrap()
+    });
+
+    let original = reg.passkey_data;
+
+    // PasskeyData → Passkey (via passkey_data_to_passkey, which is pub(crate))
+    // We test indirectly: PasskeyData → Cipher → PasskeyIndex → ceremony
+    // If the COSE key is malformed, the ceremony will fail.
+    let cipher = make_cipher(original.clone());
+    let index = PasskeyIndex::from_boxed_ciphers(&[cipher]);
+
+    // Index must contain exactly one entry (proves COSE key decoded successfully)
+    assert_eq!(index.entries().len(), 1);
+
+    // The entry must match the original rp_id
+    let (_, idx_data, _) = index.entries().values().next().unwrap();
+    assert_eq!(idx_data.rp_id, "converter.test");
+    assert_eq!(idx_data.credential_id, original.credential_id);
+    assert_eq!(idx_data.counter, original.counter);
+    assert!(!idx_data.private_key_missing);
+    assert!(idx_data.private_key.is_some());
+
+    // Full assertion ceremony must work with the round-tripped credential
+    let assertion = rt.block_on(async {
+        run_assertion(
+            &Url::parse("https://converter.test").unwrap(),
+            "converter.test",
+            &index,
+        )
+        .await
+        .unwrap()
+    });
+    assert_eq!(assertion.credential_id_b64, original.credential_id);
 }

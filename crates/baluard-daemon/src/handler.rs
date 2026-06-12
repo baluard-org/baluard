@@ -245,6 +245,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "passkey.finish_register",
     "passkey.delete",
     "passkey.rename",
+    "passkey.finish_assert",
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.
