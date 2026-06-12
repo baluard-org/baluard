@@ -41,7 +41,8 @@ impl CeremonyState {
     }
 }
 
-/// Opaque handle.
+/// Opaque handle returned by start_* and passed to finish_*.
+/// Must be generated from CSRNG (32 bytes hex minimum) when wired.
 pub type CeremonyId = String;
 
 /// Ceremony state cache. Lives in the daemon's VaultState.

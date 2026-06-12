@@ -2409,7 +2409,7 @@ pub fn handle_passkey_list(
     rp_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let payload = serde_json::json!({
-        "rp_id": rp_id.unwrap_or(""),
+        "rp_id": rp_id,
     })
     .to_string();
     match mode {
@@ -2418,7 +2418,9 @@ pub fn handle_passkey_list(
             if !resp.success {
                 return Err(format!("Daemon error: {}", resp.error_message).into());
             }
-            println!("{}", serde_json::to_string_pretty(&resp.payload)?);
+            let parsed: serde_json::Value = serde_json::from_str(&resp.payload)
+                .unwrap_or_default();
+            println!("{}", serde_json::to_string_pretty(&parsed)?);
         }
         ConnectMode::Direct => {
             let mut handle = unlock_vault_direct(vault_path)?;
