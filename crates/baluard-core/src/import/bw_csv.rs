@@ -79,6 +79,7 @@ pub fn parse(data: &str) -> ImportResult {
                     totp_uri: get(&record, col_totp),
                     autofill_on_page_load: false,
                     password_revision_date: None,
+                    fido2_credentials: None,
                 })
             }
             2 => CipherKind::SecureNote,

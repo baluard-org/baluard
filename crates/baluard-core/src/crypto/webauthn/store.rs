@@ -59,21 +59,28 @@ impl PasskeyIndex {
     fn from_cipher_refs<'a, I: Iterator<Item = &'a Cipher>>(iter: I) -> Self {
         let mut entries = HashMap::new();
         for cipher in iter {
-            if let CipherKind::Passkey(data) = &cipher.kind {
-                if data.private_key_missing || data.private_key.is_none() {
-                    continue;
+            match &cipher.kind {
+                CipherKind::Login(data) => {
+                    if let Some(ref fido2_list) = data.fido2_credentials {
+                        for data in fido2_list {
+                            if data.private_key_missing || data.private_key.is_none() {
+                                continue;
+                            }
+                            let cred_id = match base64::engine::general_purpose::URL_SAFE_NO_PAD
+                                .decode(&data.credential_id)
+                            {
+                                Ok(b) => b,
+                                Err(_) => continue,
+                            };
+                            let pk = match passkey_data_to_passkey(data) {
+                                Some(pk) => pk,
+                                None => continue,
+                            };
+                            entries.insert(cred_id, (pk, data.clone(), cipher.id));
+                        }
+                    }
                 }
-                let cred_id = match base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .decode(&data.credential_id)
-                {
-                    Ok(b) => b,
-                    Err(_) => continue,
-                };
-                let pk = match passkey_data_to_passkey(data) {
-                    Some(pk) => pk,
-                    None => continue,
-                };
-                entries.insert(cred_id, (pk, data.clone(), cipher.id));
+                _ => {}
             }
         }
         Self { entries }

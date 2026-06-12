@@ -3,6 +3,7 @@
 //! BW-compatible JSON export, BW-compatible CSV export, and Baluard encrypted JSON export.
 
 use crate::types::*;
+use base64::Engine;
 
 /// BW JSON export structures
 #[derive(Debug, serde::Serialize)]
@@ -62,6 +63,8 @@ struct BwExportLogin {
     totp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     password_revision_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fido2_credentials: Option<Vec<BwExportFido2Credential>>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -69,6 +72,46 @@ struct BwExportUri {
     uri: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     match_value: Option<u8>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BwExportFido2Credential {
+    credential_id: Option<String>,
+    key_type: Option<String>,
+    key_algorithm: Option<String>,
+    key_curve: Option<String>,
+    key_value: Option<String>,
+    rp_id: Option<String>,
+    user_handle: Option<String>,
+    user_name: Option<String>,
+    counter: Option<String>,
+    rp_name: Option<String>,
+    user_display_name: Option<String>,
+    discoverable: Option<String>,
+    creation_date: Option<String>,
+}
+
+fn passkey_data_to_bw_export(pk: &crate::types::PasskeyData) -> BwExportFido2Credential {
+    BwExportFido2Credential {
+        credential_id: Some(pk.credential_id.clone()),
+        key_type: Some(pk.key_type.clone()),
+        key_algorithm: Some(pk.key_algorithm.clone()),
+        key_curve: Some(pk.key_curve.clone()),
+        key_value: if pk.private_key_missing { None } else { Some(pk.key_value.clone()) },
+        rp_id: Some(pk.rp_id.clone()),
+        user_handle: pk.user_handle.as_ref().map(|h| base64::engine::general_purpose::STANDARD.encode(h)),
+        user_name: pk.user_name.clone(),
+        counter: Some(pk.counter.to_string()),
+        rp_name: pk.rp_name.clone(),
+        user_display_name: pk.user_display_name.clone(),
+        discoverable: Some("true".to_string()),
+        creation_date: if pk.creation_date > 0 {
+            Some(format!("{}", pk.creation_date))
+        } else {
+            None
+        },
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -179,12 +222,6 @@ pub fn export_bw_json(
             CipherKind::BankAccount(_) => 6,
             CipherKind::DriversLicense(_) => 7,
             CipherKind::Passport(_) => 8,
-            // Bitwarden stores passkeys on Login (bw_type=1) with a non-null
-            // `fido2Credentials[]` array. Full round-trip export — including
-            // `fido2Credentials` field population from `PasskeyData` — is
-            // deferred to Phase 1. For now we map to type 1 so the export
-            // still serializes as an empty Login.
-            CipherKind::Passkey(_) => 1,
         };
 
         let (login, secure_note, card, identity, ssh_key, bank_account, drivers_license, passport) =
@@ -203,6 +240,9 @@ pub fn export_bw_json(
                             .collect(),
                         totp: data.totp_uri.clone(),
                         password_revision_date: data.password_revision_date.map(|d| d.to_string()),
+                        fido2_credentials: data.fido2_credentials.as_ref().map(|list| {
+                            list.iter().map(passkey_data_to_bw_export).collect()
+                        }),
                     }),
                     None,
                     None,
@@ -291,11 +331,6 @@ pub fn export_bw_json(
                 CipherKind::Passport(data) => {
                     (None, None, None, None, None, None, None, Some(data.clone()))
                 }
-                // Passkey: see note above. For now, all 8 kind fields are
-                // None. Phase 1 will populate `login` with a synthetic
-                // Login (username from user_name, uris=[rp_id]) and add a
-                // top-level `fido2Credentials[]` on the BwExportItem.
-                CipherKind::Passkey(_) => (None, None, None, None, None, None, None, None),
             };
 
         let fields: Vec<BwExportField> = cipher
@@ -438,6 +473,7 @@ mod tests {
                     totp_uri: None,
                     autofill_on_page_load: false,
                     password_revision_date: None,
+                    fido2_credentials: None,
                 }),
             ),
             make_cipher(

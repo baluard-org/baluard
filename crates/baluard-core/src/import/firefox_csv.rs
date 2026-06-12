@@ -81,6 +81,7 @@ pub fn parse(data: &str) -> ImportResult {
                 totp_uri: None,
                 autofill_on_page_load: false,
                 password_revision_date: None,
+                fido2_credentials: None,
             }),
             favorite: false,
             notes,

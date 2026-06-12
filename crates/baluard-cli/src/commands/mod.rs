@@ -710,19 +710,6 @@ pub fn handle_get(
                                     println!("  Passport:  {v}");
                                 }
                             }
-                            baluard_core::types::CipherKind::Passkey(data) => {
-                                println!("  RP ID:     {}", data.rp_id);
-                                if let Some(ref n) = data.rp_name {
-                                    println!("  RP Name:   {n}");
-                                }
-                                if let Some(ref u) = data.user_name {
-                                    println!("  Username:  {u}");
-                                }
-                                println!("  Counter:   {}", data.counter);
-                                if data.private_key_missing {
-                                    println!("  WARNING:   Imported (no private key, re-register needed)");
-                                }
-                            }
                             baluard_core::types::CipherKind::SecureNote => {}
                         }
                         if let Some(ref n) = c.notes {
@@ -2428,23 +2415,27 @@ pub fn handle_passkey_list(
             let mut passkeys = Vec::new();
             use baluard_core::vault::handle::CipherRead;
             for meta in &metas {
-                if meta.cipher_type != baluard_core::types::CipherType::Passkey {
+                if meta.cipher_type != baluard_core::types::CipherType::Login {
                     continue;
                 }
                 if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
-                    if let baluard_core::types::CipherKind::Passkey(data) = &c.kind {
-                        if rp_id.map_or(true, |rp| data.rp_id == rp) {
-                            passkeys.push(serde_json::json!({
-                                "id": meta.id,
-                                "name": meta.name,
-                                "rp_id": data.rp_id,
-                                "rp_name": data.rp_name,
-                                "user_name": data.user_name,
-                                "counter": data.counter,
-                                "credential_id": data.credential_id,
-                                "private_key_missing": data.private_key_missing,
-                                "created": data.creation_date,
-                            }));
+                    if let baluard_core::types::CipherKind::Login(data) = &c.kind {
+                        if let Some(ref fido2_list) = data.fido2_credentials {
+                            for pk in fido2_list {
+                                if rp_id.map_or(true, |rp| pk.rp_id == rp) {
+                                    passkeys.push(serde_json::json!({
+                                        "id": meta.id,
+                                        "name": meta.name,
+                                        "rp_id": pk.rp_id,
+                                        "rp_name": pk.rp_name,
+                                        "user_name": pk.user_name,
+                                        "counter": pk.counter,
+                                        "credential_id": pk.credential_id,
+                                        "private_key_missing": pk.private_key_missing,
+                                        "created": pk.creation_date,
+                                    }));
+                                }
+                            }
                         }
                     }
                 }
