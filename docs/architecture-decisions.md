@@ -42,18 +42,18 @@ Master Password
 Master KEK
     |
     v (decrypts Identity key)
-Private Key Escrow (metadata/identity.enc)
+Private Key Escrow (meta/device-privkey.json)
     |
     v (yields Device Private Key)
-Decrypts Space Group Key (metadata/access_list.json)
+Decrypts Space Group Key (meta/access_list.json)
     |
     v
 Decrypts Entries (entries/*.enc)
 ```
 
 - **Device Digital Identity**: Each device has an asymmetric keypair (X25519 for HPKE wrapping, Ed25519 for commit signatures).
-- **Private Key Escrow**: The user's device-specific asymmetric private key is symmetrically encrypted by their Master Password and committed to the repository at `metadata/identity.enc`.
-- **OAuth Bootstrapping**: Logging into a new device utilizes GitHub/GitLab OAuth to clone the repository. The user then enters their Master Password to decrypt their device private key from `metadata/identity.enc` and escrow it into the local hardware enclave (Keychain, Secret Service, Android Keystore).
+- **Private Key Escrow**: The user's device-specific asymmetric private key is symmetrically encrypted by their Master Password and committed to the repository at `meta/device-privkey.json` (the OS keyring is the preferred live location; this file is the synced fallback).
+- **OAuth Bootstrapping**: Logging into a new device utilizes GitHub/GitLab OAuth to clone the repository. The user then enters their Master Password to decrypt their device private key from `meta/device-privkey.json` and escrow it into the local hardware enclave (Keychain, Secret Service, Android Keystore).
 - **OAuth Token Storage**: The OAuth Personal Access Token (PAT) used for background git2-rs sync is stored securely in the host OS keyring (Apple Keychain / Secret Service), never committed to Git.
 
 ---
@@ -120,10 +120,10 @@ Mobile apps will bind directly to baluard-core via UniFFI-generated native bindi
 
 ### D9. Zero-Knowledge RBAC B2B & Family Sharing
 
-**Decision: Envelope Asymmetric Key Wrapping via `metadata/access_list.json`**
+**Decision: Envelope Asymmetric Key Wrapping via `meta/access_list.json`**
 
 1. **Space Invitation**: An Admin enters an invitee's email. baluard-core fetches their public key from the Git host.
-2. **Group Key wrapping**: baluard-core encrypts the Space's AES-GCM **Group Key** with the recipient's public key and appends the wrapped payload to `metadata/access_list.json`.
+2. **Group Key wrapping**: baluard-core encrypts the Space's AES-GCM **Group Key** with the recipient's public key and appends the wrapped payload to `meta/access_list.json`.
 3. **Acceptance**: Invitee decrypts the group key with their local device private key.
 4. **Revocation / Offboarding**: The Admin rotates the Group Key. baluard-core re-encrypts the `entries/` directory, updates `access_list.json` for remaining members, and pushes the changes. The evicted user's local instance is instantly locked out of new commits, and all local entries are reduced to unreadable ciphertext.
 
@@ -767,7 +767,7 @@ CLI chains profile + preferences into `VaultCreator` builder before `execute()`.
 - `save_locale()`/`load_locale()` on VaultHandle for plaintext `meta/locale` file
 - `locale.save` daemon route (plaintext write for pre-unlock access)
 
-**CLI (`baluard init`):** `--name`, `--subtitle`, `--theme`, `--lang`, `--auto-lock` flags. OS locale auto-detection (`$LANGUAGE > $LC_ALL > $LC_MESSAGES > $LANG`). Interactive prompts when TTY, hard errors when piped. 8-char minimum enforced as hard error.
+**CLI (`baluard init`):** `--profile`, `--name`, `--slug`, `--theme`, `--lang`, `--auto-lock` flags (no `--subtitle`: removed 2026-06-11). OS locale auto-detection (`$LANGUAGE > $LC_ALL > $LC_MESSAGES > $LANG`). Interactive prompts when TTY, hard errors when piped. 8-char minimum enforced as hard error.
 
 **Desktop (3-step wizard):**
 1. `CreateVaultScreen` -- language selector (auto-detected from `navigator.language`) + password

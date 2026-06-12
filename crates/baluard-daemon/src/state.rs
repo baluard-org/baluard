@@ -5,7 +5,6 @@
 
 use baluard_core::vault::handle::{CipherRead, VaultHandle};
 use base64::Engine;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -597,11 +596,8 @@ impl VaultState {
         let key = handle.derive_avatar_key();
         let blob =
             baluard_core::vault::avatar::encrypt_avatar(&key, &data).map_err(|e| format!("{e}"))?;
-        let tmp_path = enc_path.with_extension("enc.tmp");
-        std::fs::write(&tmp_path, &blob).map_err(|e| format!("write avatar: {e}"))?;
-        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("chmod avatar: {e}"))?;
-        std::fs::rename(&tmp_path, &enc_path).map_err(|e| format!("rename avatar: {e}"))?;
+        baluard_core::vault::write_vault_file(&enc_path, &blob)
+            .map_err(|e| format!("write avatar: {e}"))?;
         // Delete the plaintext legacy file
         let _ = std::fs::remove_file(&avatar_path);
         use base64::Engine;
@@ -663,13 +659,10 @@ impl VaultState {
         let blob = baluard_core::vault::avatar::encrypt_avatar(&key, &bytes)
             .map_err(|e| format!("{e}"))?;
 
-        // Atomic write: tmp + chmod 0600 + rename
+        // Atomic write with 0600 permissions
         let enc_path = handle.path.join("meta/avatar.enc");
-        let tmp_path = enc_path.with_extension("enc.tmp");
-        std::fs::write(&tmp_path, &blob).map_err(|e| format!("write avatar: {e}"))?;
-        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("chmod avatar: {e}"))?;
-        std::fs::rename(&tmp_path, &enc_path).map_err(|e| format!("rename avatar: {e}"))?;
+        baluard_core::vault::write_vault_file(&enc_path, &blob)
+            .map_err(|e| format!("write avatar: {e}"))?;
 
         // Remove ALL whitelisted legacy plaintext avatar files.
         // Peer review fix: previously only removed files matching the old ext,

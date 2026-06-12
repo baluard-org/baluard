@@ -2,17 +2,11 @@
 //!
 //! R7-2: Constant-time comparison for session token verification.
 
-/// Constant-time byte comparison. Prevents timing side channels
-/// when comparing session tokens or other secrets.
+/// Constant-time byte comparison using the `subtle` crate.
+/// Prevents timing side channels when comparing session tokens or other secrets.
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut result: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        result |= x ^ y;
-    }
-    result == 0
+    use subtle::ConstantTimeEq;
+    a.ct_eq(b).into()
 }
 
 #[cfg(test)]

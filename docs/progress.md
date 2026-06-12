@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-06-09
+> Last updated: 2026-06-12
 
 ---
 
@@ -297,7 +297,7 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 
 | Command | Mode | Description |
 |---------|------|-------------|
-| `init [OPTIONS]` | Direct | Create new vault. Flags: `--profile`, `--name`, `--subtitle`, `--theme`, `--lang`, `--auto-lock` |
+| `init [OPTIONS]` | Direct | Create new vault. Flags: `--profile`, `--name`, `--slug`, `--theme`, `--lang`, `--auto-lock` (no `--subtitle`: removed 2026-06-11) |
 | `unlock` | Daemon/Direct | Unlock vault |
 | `lock` | Daemon | Lock vault, zeroize keys |
 | `add <type> ...` | Daemon/Direct | Add cipher (8 subcommands: login, card, secure-note, identity, ssh-key, bank-account, drivers-license, passport) |
@@ -328,17 +328,20 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 baluard/
 ├── proto/                        # Shared Protobuf Schemas (vault, space, auth)
 ├── crates/
-│   ├── baluard-core/               # Rust Core: crypto, keys, vault, padding, sync, import/export, health, biometric, attachments
+│   ├── baluard-core/               # Rust Core: crypto, keys, vault, padding, sync, import/export, health, biometric, attachments, providers, orgs, emergency, integrity, recovery
+│   │   └── src/                    # Layout: crypto/, keys/, vault/, sync/, import/, providers/ subdirs + biometric.rs, device_manager.rs, devices.rs, emergency.rs, health.rs, integrity.rs, orgs.rs, recovery.rs, paths.rs, types.rs, error.rs, lib.rs
 │   ├── baluard-cli/                # Terminal CLI (daemon-first + --direct fallback)
+│   │   └── src/                    # main.rs, client.rs, commands/mod.rs
 │   └── baluard-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState, auto-lock, TOTP, attachments, biometric, SSH key gen)
+│       └── src/                    # main.rs, handler.rs (72 routes), state.rs, rate_limit.rs, socket_path.rs, crypto.rs
 ├── desktop/                      # Tauri v2 Desktop (SolidJS/Tailwind)
+│   ├── src-tauri/                  # Rust backend: daemon sidecar, tray, proto codegen
 │   ├── src/
-│   │   ├── components/         # 25 components (VaultView, CipherDetail, SshKeyGenerator, FocusTrap, etc.)
-│   │   ├── context/             # AuthContext, VaultContext, errorSignal, themeSignal, toastSignal
-│   │   ├── lib/                 # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js
-│   │   ├── __tests__/           # vitest tests (payload, utils, filters, cipherSchema)
+│   │   ├── components/         # 26 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, etc.)
+│   │   ├── context/             # AuthContext.jsx, VaultContext.jsx, themeSignal.js, toastSignal.js
+│   │   ├── lib/                 # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, eff-words.js, wordlist-en.js, wordlist-es.js
+│   │   ├── __tests__/           # vitest tests (89 tests: payload, utils, filters, cipherSchema)
 │   │   └── i18n/locales/        # en.json, es.json (all user-facing strings)
 ├── docs/                         # Architecture & design docs
-├── plans/                        # Implementation plans
 └── justfile                      # Build system
 ```

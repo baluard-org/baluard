@@ -5,11 +5,13 @@
 
 pub mod attachment;
 pub mod avatar;
+pub mod canary;
 pub mod cipher;
 pub mod creation;
 pub mod envelope;
 pub mod handle;
 pub mod index;
+pub mod keywrap;
 pub mod manifest;
 pub mod padding;
 pub mod registry;
@@ -22,7 +24,7 @@ use std::path::Path;
 /// Atomic write with 0600 permissions.
 /// Writes to a `.tmp` file, sets owner-only permissions, then renames to final path.
 /// Prevents partial writes and ensures consistent file permissions across the vault.
-pub(crate) fn write_vault_file(path: &Path, data: &[u8]) -> Result<(), std::io::Error> {
+pub fn write_vault_file(path: &Path, data: &[u8]) -> Result<(), std::io::Error> {
     use std::os::unix::fs::PermissionsExt;
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, data)?;

@@ -45,7 +45,7 @@ pub fn encrypt_cipher(
     update_seq: u64,
 ) -> Result<CipherFile, BaluardError> {
     // Serialize cipher data
-    let cipher_data = CipherData::from_input(input);
+    let cipher_data = CipherEnvelopeData::from_input(input);
     let json = serde_json::to_vec(&cipher_data)
         .map_err(|e| VaultError::Metadata(format!("cipher serialization: {e}")))?;
 
@@ -146,7 +146,7 @@ pub fn decrypt_cipher(
     let raw_data: CipherEnvelopeData =
         raw_data_result.map_err(|e| VaultError::Corrupt(format!("cipher deserialization: {e}")))?;
 
-    let data: CipherData = raw_data.into();
+    let data = raw_data.migrate();
 
     Ok(Cipher {
         id: cipher_id,
@@ -172,111 +172,7 @@ pub fn decrypt_cipher(
     })
 }
 
-/// Internal cipher data for JSON serialization (within the encrypted envelope).
-///
-/// Uses `CipherEnvelopeData` which handles backward-compatible deserialization
-/// and migration from old flat-format ciphers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CipherData {
-    pub name: String,
-    pub folder_id: Option<Uuid>,
-    pub kind: crate::types::CipherKind,
-    #[serde(default)]
-    pub favorite: bool,
-    #[serde(default)]
-    pub reprompt: bool,
-    pub notes: Option<String>,
-    /// Write-only: populated on encrypt for backward compat. Read path uses kind.Login.totp_uri.
-    #[serde(default)]
-    pub totp_uri: Option<String>,
-    pub custom_fields: Vec<crate::types::CustomField>,
-    // Write-only legacy fields: populated on encrypt for backward compat.
-    // Read path uses kind.Login.username/password/uris instead.
-    #[serde(default)]
-    pub username: Option<String>,
-    #[serde(default)]
-    pub password: Option<String>,
-    #[serde(default)]
-    pub uris: Vec<String>,
-    pub created_at: u64,
-    pub updated_at: u64,
-    #[serde(default)]
-    pub password_history: Vec<crate::types::PasswordHistoryEntry>,
-    #[serde(default)]
-    pub attachments: Vec<crate::vault::attachment::AttachmentMeta>,
-    #[serde(default)]
-    pub archived: bool,
-    #[serde(default)]
-    pub tags: Vec<String>,
-}
 
-impl CipherData {
-    fn from_input(input: &CipherInput) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        // Preserve original created_at on updates, use now for new ciphers
-        let created_at = input.created_at.unwrap_or(now);
-
-        // Extract login-specific flat fields for backward compat serialization
-        let (username, password, uris, totp_uri) = match &input.kind {
-            crate::types::CipherKind::Login(data) => (
-                data.username.clone(),
-                data.password.clone(),
-                data.uris.iter().map(|u| u.uri.clone()).collect(),
-                data.totp_uri.clone(),
-            ),
-            _ => (None, None, Vec::new(), None),
-        };
-
-        Self {
-            name: input.name.clone(),
-            folder_id: input.folder_id,
-            kind: input.kind.clone(),
-            favorite: input.favorite,
-            reprompt: input.reprompt,
-            notes: input.notes.clone(),
-            totp_uri,
-            custom_fields: input.custom_fields.clone(),
-            username,
-            password,
-            uris,
-            created_at,
-            updated_at: now,
-            password_history: input.password_history.clone(),
-            attachments: input.attachments.clone(),
-            archived: input.archived,
-            tags: input.tags.clone(),
-        }
-    }
-}
-
-impl From<CipherEnvelopeData> for CipherData {
-    fn from(env: CipherEnvelopeData) -> Self {
-        let migrated = env.migrate();
-        Self {
-            name: migrated.name,
-            folder_id: migrated.folder_id,
-            kind: migrated.kind,
-            favorite: migrated.favorite,
-            reprompt: migrated.reprompt,
-            notes: migrated.notes,
-            totp_uri: migrated.totp_uri,
-            custom_fields: migrated.custom_fields,
-            username: migrated.username,
-            password: migrated.password,
-            uris: migrated.uris,
-            created_at: migrated.created_at,
-            updated_at: migrated.updated_at,
-            password_history: migrated.password_history,
-            attachments: migrated.attachments,
-            archived: migrated.archived,
-            tags: migrated.tags,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
