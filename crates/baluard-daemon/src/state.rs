@@ -38,7 +38,6 @@ pub struct VaultState {
     /// Keyed by vault_path to isolate multi-vault setups.
     pub rate_limiter: crate::rate_limit::RateLimiter,
     /// Phase 1: WebAuthn ceremony state cache (300s TTL).
-    #[cfg(feature = "passkey-ceremony")]
     pub ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache,
 }
 
@@ -55,7 +54,6 @@ impl VaultState {
             cover_pending: std::sync::atomic::AtomicBool::new(false),
             cover_session: AtomicU64::new(0),
             rate_limiter: crate::rate_limit::RateLimiter::new(),
-            #[cfg(feature = "passkey-ceremony")]
             ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache::new(),
         }
     }
@@ -821,32 +819,222 @@ impl VaultState {
         Ok(serde_json::to_string(&passkeys).unwrap_or_else(|_| "[]".into()))
     }
 
-    /// Start a registration ceremony. Returns challenge options.
-    /// Payload: `{ "rp_id": "example.com", "rp_name": "Example", "user_name": "alice", "user_display_name": "Alice" }`
+    /// Start a registration ceremony. Runs passkey-rs ceremony, caches result.
+    /// Payload: `{ "rp_id": "...", "rp_name": "...", "user_name": "...", "user_display_name": "...", "origin": "https://..." }`
     pub async fn passkey_challenge_register(&self, payload: &str) -> Result<String, String> {
-        // TODO: wire passkey-rs ceremony
-        Err("passkey.challenge_register not yet implemented".into())
+        use baluard_core::crypto::webauthn::{run_registration, CeremonyState};
+        use baluard_core::vault::handle::CipherRead;
+
+        self.ceremony_cache.evict_expired().await;
+
+        let v: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let rp_id = v["rp_id"].as_str().ok_or("Missing 'rp_id'")?.to_string();
+        let rp_name = v["rp_name"].as_str().unwrap_or(&rp_id).to_string();
+        let user_name = v["user_name"].as_str().unwrap_or("").to_string();
+        let user_display_name = v["user_display_name"].as_str().unwrap_or(&user_name).to_string();
+        let origin_str = v["origin"].as_str().ok_or("Missing 'origin'")?;
+        let origin = url::Url::parse(origin_str).map_err(|e| format!("Invalid origin: {e}"))?;
+        let user_id: Vec<u8> = v["user_id"].as_str()
+            .map(|s| base64::engine::general_purpose::STANDARD.decode(s).unwrap_or_default())
+            .unwrap_or_else(|| rand::random::<[u8; 32]>().to_vec());
+
+        // Build passkey index from vault
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault is locked")?;
+        let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
+        let mut ciphers = Vec::new();
+        for meta in &metas {
+            if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
+                ciphers.push(c.clone());
+            }
+        }
+        let index = baluard_core::crypto::webauthn::PasskeyIndex::from_boxed_ciphers(&ciphers);
+        drop(guard);
+
+        let result = run_registration(
+            &origin, rp_id.clone(), rp_name.clone(),
+            user_name.clone(), user_display_name.clone(),
+            user_id.clone(), &index,
+        ).await?;
+
+        let ceremony_id = hex::encode(rand::random::<[u8; 32]>());
+
+        self.ceremony_cache.insert(ceremony_id.clone(), CeremonyState::Registration {
+            rp_id,
+            rp_name,
+            user_name,
+            user_display_name,
+            user_id,
+            created_at: std::time::Instant::now(),
+        }).await;
+
+        let pk_data_json = serde_json::to_value(&result.passkey_data)
+            .map_err(|e| format!("Serialize error: {e}"))?;
+
+        let response = serde_json::json!({
+            "ceremony_id": ceremony_id,
+            "credential_id": result.credential_id_b64,
+            "attestation_response": serde_json::from_str::<serde_json::Value>(&result.attestation_response)
+                .unwrap_or_default(),
+            "passkey_data": pk_data_json,
+        });
+
+        Ok(response.to_string())
     }
 
-    /// Complete a registration ceremony.
-    /// Payload: `{ "ceremony_id": "...", "attestation_response": {...} }`
+    /// Complete a registration ceremony. Saves passkey to vault.
+    /// Payload: `{ "ceremony_id": "...", "passkey_data": {...} }`
     pub async fn passkey_finish_register(&self, payload: &str) -> Result<String, String> {
-        // TODO: wire passkey-rs ceremony
-        Err("passkey.finish_register not yet implemented".into())
+        use baluard_core::crypto::webauthn::CeremonyState;
+
+        let v: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let ceremony_id = v["ceremony_id"].as_str().ok_or("Missing 'ceremony_id'")?;
+
+        let state = self.ceremony_cache.remove(ceremony_id).await
+            .ok_or("Ceremony not found or expired")?;
+        match &state {
+            CeremonyState::Registration { .. } => {}
+            _ => return Err("Expected registration ceremony".into()),
+        }
+
+        let pk_data: baluard_core::types::PasskeyData =
+            serde_json::from_value(v["passkey_data"].clone())
+                .map_err(|e| format!("Invalid passkey_data: {e}"))?;
+
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+
+        let input = baluard_core::types::CipherInput {
+            name: format!("{} ({})",
+                pk_data.rp_name.as_deref().unwrap_or(&pk_data.rp_id),
+                pk_data.user_name.as_deref().unwrap_or("passkey")),
+            folder_id: None,
+            favorite: false,
+            reprompt: false,
+            tags: vec!["passkey".to_string()],
+            kind: baluard_core::types::CipherKind::Passkey(pk_data.clone()),
+            notes: None,
+            custom_fields: Vec::new(),
+            created_at: None,
+            password_history: Vec::new(),
+            attachments: Vec::new(),
+            archived: false,
+        };
+
+        let cipher_id = handle.add_cipher(&input).map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({
+            "id": cipher_id.to_string(),
+            "credential_id": pk_data.credential_id,
+        }).to_string())
     }
 
-    /// Start an assertion ceremony. Returns challenge options.
-    /// Payload: `{ "rp_id": "example.com" }`
+    /// Start an assertion ceremony. Runs passkey-rs assertion, caches result.
+    /// Payload: `{ "rp_id": "example.com", "origin": "https://example.com" }`
     pub async fn passkey_challenge_assert(&self, payload: &str) -> Result<String, String> {
-        // TODO: wire passkey-rs ceremony
-        Err("passkey.challenge_assert not yet implemented".into())
+        use baluard_core::crypto::webauthn::{run_assertion, CeremonyState};
+        use baluard_core::vault::handle::CipherRead;
+
+        self.ceremony_cache.evict_expired().await;
+
+        let v: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let rp_id = v["rp_id"].as_str().ok_or("Missing 'rp_id'")?.to_string();
+        let origin_str = v["origin"].as_str().ok_or("Missing 'origin'")?;
+        let origin = url::Url::parse(origin_str).map_err(|e| format!("Invalid origin: {e}"))?;
+
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault is locked")?;
+        let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
+        let mut ciphers = Vec::new();
+        for meta in &metas {
+            if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
+                ciphers.push(c.clone());
+            }
+        }
+        let index = baluard_core::crypto::webauthn::PasskeyIndex::from_boxed_ciphers(&ciphers);
+        drop(guard);
+
+        let result = run_assertion(&origin, &rp_id, &index).await?;
+
+        let ceremony_id = hex::encode(rand::random::<[u8; 32]>());
+
+        self.ceremony_cache.insert(ceremony_id.clone(), CeremonyState::Assertion {
+            rp_id,
+            created_at: std::time::Instant::now(),
+        }).await;
+
+        let response = serde_json::json!({
+            "ceremony_id": ceremony_id,
+            "credential_id": result.credential_id_b64,
+            "new_counter": result.new_counter,
+            "assertion_response": serde_json::from_str::<serde_json::Value>(&result.assertion_response)
+                .unwrap_or_default(),
+        });
+
+        Ok(response.to_string())
     }
 
-    /// Complete an assertion ceremony.
-    /// Payload: `{ "ceremony_id": "...", "assertion_response": {...} }`
+    /// Complete an assertion ceremony. Updates counter in vault.
+    /// Payload: `{ "ceremony_id": "...", "credential_id": "...", "new_counter": 42 }`
     pub async fn passkey_finish_assert(&self, payload: &str) -> Result<String, String> {
-        // TODO: wire passkey-rs ceremony
-        Err("passkey.finish_assert not yet implemented".into())
+        use baluard_core::crypto::webauthn::CeremonyState;
+        use baluard_core::vault::handle::CipherRead;
+
+        let v: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let ceremony_id = v["ceremony_id"].as_str().ok_or("Missing 'ceremony_id'")?;
+
+        let state = self.ceremony_cache.remove(ceremony_id).await
+            .ok_or("Ceremony not found or expired")?;
+        match &state {
+            CeremonyState::Assertion { .. } => {}
+            _ => return Err("Expected assertion ceremony".into()),
+        }
+
+        let credential_id_b64 = v["credential_id"].as_str().ok_or("Missing 'credential_id'")?;
+        let new_counter = v["new_counter"].as_u64().ok_or("Missing 'new_counter'")? as u32;
+
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
+
+        for meta in &metas {
+            if meta.cipher_type != baluard_core::types::CipherType::Passkey {
+                continue;
+            }
+            if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
+                if let baluard_core::types::CipherKind::Passkey(ref data) = c.kind {
+                    if data.credential_id == credential_id_b64 {
+                        let mut updated_data = data.clone();
+                        updated_data.counter = updated_data.counter.max(new_counter);
+                        let input = baluard_core::types::CipherInput {
+                            name: c.name.clone(),
+                            folder_id: c.folder_id,
+                            favorite: c.favorite,
+                            reprompt: c.reprompt,
+                            tags: c.tags.clone(),
+                            kind: baluard_core::types::CipherKind::Passkey(updated_data),
+                            notes: c.notes.clone(),
+                            custom_fields: c.custom_fields.clone(),
+                            created_at: Some(c.created_at),
+                            password_history: c.password_history.clone(),
+                            attachments: c.attachments.clone(),
+                            archived: c.archived,
+                        };
+                        handle.update_cipher(meta.id, &input).map_err(|e| e.to_string())?;
+                        return Ok(serde_json::json!({
+                            "credential_id": credential_id_b64,
+                            "counter": new_counter,
+                        }).to_string());
+                    }
+                }
+            }
+        }
+
+        Err(format!("Passkey credential not found: {credential_id_b64}"))
     }
 
     /// Delete a passkey cipher.

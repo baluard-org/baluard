@@ -2,8 +2,13 @@
 //!
 //! Implements `passkey_authenticator::CredentialStore` so the passkey-rs
 //! Client can look up, save, and update passkey credentials.
+//!
+//! Uses `Arc<Mutex<>>` internally so the daemon can extract ceremony
+//! results (new credential or counter update) after the passkey-rs
+//! `Client::register()` / `Client::authenticate()` call completes.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use passkey::authenticator::{CredentialStore, DiscoverabilitySupport, StoreInfo};
@@ -43,8 +48,17 @@ impl PasskeyIndex {
     /// Build from decrypted ciphers. Skips imported BW passkeys
     /// (private_key_missing) and malformed entries.
     pub fn from_ciphers(ciphers: &[Cipher]) -> Self {
+        Self::from_cipher_refs(ciphers.iter())
+    }
+
+    /// Build from a slice of boxed ciphers (convenience for daemon).
+    pub fn from_boxed_ciphers(ciphers: &[Box<Cipher>]) -> Self {
+        Self::from_cipher_refs(ciphers.iter().map(|b| b.as_ref()))
+    }
+
+    fn from_cipher_refs<'a, I: Iterator<Item = &'a Cipher>>(iter: I) -> Self {
         let mut entries = HashMap::new();
-        for cipher in ciphers {
+        for cipher in iter {
             if let CipherKind::Passkey(data) = &cipher.kind {
                 if data.private_key_missing || data.private_key.is_none() {
                     continue;
@@ -80,7 +94,7 @@ impl PasskeyIndex {
 }
 
 /// Convert `PasskeyData` → `passkey_types::Passkey`.
-fn passkey_data_to_passkey(data: &PasskeyData) -> Option<Passkey> {
+pub(crate) fn passkey_data_to_passkey(data: &PasskeyData) -> Option<Passkey> {
     let private_key_bytes = data.private_key.as_ref()?;
     let cose_key = coset::CoseKey::from_slice(private_key_bytes).ok()?;
     let credential_id = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -100,33 +114,124 @@ fn passkey_data_to_passkey(data: &PasskeyData) -> Option<Passkey> {
     })
 }
 
+/// Convert a `passkey_types::Passkey` (from ceremony result) to `PasskeyData`
+/// for vault storage. The COSE key pair is serialized to CBOR bytes.
+pub fn passkey_to_passkey_data(
+    pk: &Passkey,
+    rp_name: Option<&str>,
+) -> Option<PasskeyData> {
+    let private_key = pk.key.clone().to_vec().ok()?;
+    let credential_id = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(&*pk.credential_id);
+    // Extract public key bytes from COSE key for key_value field.
+    // For ES256, the public key is the x || y coordinates.
+    // We store the full COSE key in private_key (contains both public + private).
+    let key_value = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(&private_key);
+
+    Some(PasskeyData {
+        rp_id: pk.rp_id.clone(),
+        rp_name: rp_name.map(|s| s.to_string()),
+        credential_id,
+        key_type: "public-key".to_string(),
+        key_algorithm: "ECDSA".to_string(),
+        key_curve: "P-256".to_string(),
+        key_value,
+        user_handle: pk.user_handle.as_ref().map(|h| h.to_vec()),
+        user_name: pk.username.clone(),
+        user_display_name: pk.user_display_name.clone(),
+        private_key: Some(private_key),
+        counter: pk.counter.unwrap_or(0),
+        aaguid: Uuid::nil(), // Self-attestation (empty AAGUID)
+        creation_date: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        private_key_missing: false,
+        prf_key: None,
+        linked_login_id: None,
+    })
+}
+
+// ── Inner store (shared behind Arc<Mutex>) ──
+
+struct StoreInner {
+    credentials: HashMap<Vec<u8>, Passkey>,
+    /// New credentials saved during this ceremony (registration).
+    new_credentials: Vec<Passkey>,
+    /// Counter updates during this ceremony (credential_id → new counter).
+    counter_updates: HashMap<Vec<u8>, u32>,
+}
+
 /// In-memory credential store for a single ceremony.
 ///
-/// Built from the vault's passkey index. After the ceremony, the daemon
-/// writes back any changes (new credential or counter update).
+/// Built from the vault's passkey index. Uses `Arc<Mutex<>>` internally
+/// so the daemon can extract ceremony results after the passkey-rs
+/// `Client::register()` / `Client::authenticate()` call completes.
+///
+/// Clone shares the underlying data — keep a clone for post-ceremony
+/// extraction, move the original into the passkey-rs `Authenticator`.
 pub struct BaluardCredentialStore {
-    inner: HashMap<Vec<u8>, Passkey>,
+    inner: Arc<Mutex<StoreInner>>,
+}
+
+impl Clone for BaluardCredentialStore {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 impl BaluardCredentialStore {
     pub fn from_index(index: &PasskeyIndex) -> Self {
-        let inner = index
+        let credentials = index
             .entries()
             .iter()
             .map(|(id, (pk, _, _))| (id.clone(), pk.clone()))
             .collect();
-        Self { inner }
+        Self {
+            inner: Arc::new(Mutex::new(StoreInner {
+                credentials,
+                new_credentials: Vec::new(),
+                counter_updates: HashMap::new(),
+            })),
+        }
+    }
+
+    /// Create an empty store (for registration with no existing passkeys).
+    pub fn empty() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(StoreInner {
+                credentials: HashMap::new(),
+                new_credentials: Vec::new(),
+                counter_updates: HashMap::new(),
+            })),
+        }
+    }
+
+    /// Extract and clear new credentials saved during ceremony.
+    /// Call after `client.register()` to get the new passkey(s).
+    pub fn take_new_credentials(&self) -> Vec<Passkey> {
+        std::mem::take(&mut self.inner.lock().unwrap_or_else(|e| e.into_inner()).new_credentials)
+    }
+
+    /// Extract and clear counter updates from ceremony.
+    /// Call after `client.authenticate()` to get updated counters.
+    pub fn take_counter_updates(&self) -> HashMap<Vec<u8>, u32> {
+        std::mem::take(&mut self.inner.lock().unwrap_or_else(|e| e.into_inner()).counter_updates)
     }
 }
 
 impl Drop for BaluardCredentialStore {
     fn drop(&mut self) {
-        // Clear COSE key material from passkeys on drop.
-        // `Passkey.key` is a `CoseKey` which doesn't impl Zeroize,
-        // so we clear the map to release the key bytes from the HashMap's
-        // memory (best-effort; the allocator may still have copies).
-        // Full zeroization requires upstream `Zeroize` on `coset::CoseKey`.
-        self.inner.clear();
+        // Best-effort: clear key material. Only effective when this is
+        // the last Arc reference. Otherwise the Mutex is still shared.
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.credentials.clear();
+            inner.new_credentials.clear();
+            inner.counter_updates.clear();
+        }
     }
 }
 
@@ -140,11 +245,12 @@ impl CredentialStore for BaluardCredentialStore {
         rp_id: &str,
         _user_handle: Option<&[u8]>,
     ) -> Result<Vec<Passkey>, StatusCode> {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let mut results: Vec<Passkey> = Vec::new();
         match ids {
             Some(descriptors) => {
                 for desc in descriptors {
-                    if let Some(pk) = self.inner.get(&*desc.id) {
+                    if let Some(pk) = inner.credentials.get(&*desc.id) {
                         if pk.rp_id == rp_id {
                             results.push(pk.clone());
                         }
@@ -152,7 +258,7 @@ impl CredentialStore for BaluardCredentialStore {
                 }
             }
             None => {
-                for pk in self.inner.values() {
+                for pk in inner.credentials.values() {
                     if pk.rp_id == rp_id {
                         results.push(pk.clone());
                     }
@@ -169,12 +275,17 @@ impl CredentialStore for BaluardCredentialStore {
         _rp: PublicKeyCredentialRpEntity,
         _options: Options,
     ) -> Result<(), StatusCode> {
-        self.inner.insert(cred.credential_id.to_vec(), cred);
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.new_credentials.push(cred.clone());
+        inner.credentials.insert(cred.credential_id.to_vec(), cred);
         Ok(())
     }
 
     async fn update_credential(&mut self, cred: &Passkey) -> Result<(), StatusCode> {
-        self.inner.insert(cred.credential_id.to_vec(), cred.clone());
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let new_counter = cred.counter.unwrap_or(0);
+        inner.counter_updates.insert(cred.credential_id.to_vec(), new_counter);
+        inner.credentials.insert(cred.credential_id.to_vec(), cred.clone());
         Ok(())
     }
 
