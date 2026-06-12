@@ -11,6 +11,7 @@ import { SECTION_LABEL } from "../lib/helpers.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
 import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
+import FocusTrap from "./FocusTrap.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
 import CipherAvatar from "./CipherAvatar.jsx";
 
@@ -53,6 +54,9 @@ export default function CipherDetail(props) {
       await daemon("passkey.delete", JSON.stringify({ id: pk.cipher_id, credential_id: pk.credential_id }));
       setShowPasskeyDelete(null);
       await vault.refreshCiphers(t);
+      // Re-sync the detail view with the updated cipher
+      const updated = vault.ciphers().find(c => (c.id || c._meta?.id) === pk.cipher_id);
+      if (updated) props.setViewCipher(updated);
     } catch (e) {
       toastError(t("passkey.deleteError"));
     }
@@ -203,10 +207,12 @@ export default function CipherDetail(props) {
                           <p class="text-[var(--color-text)] truncate">{pk.user_name}</p>
                         </div>
                       </Show>
-                      <div>
-                        <span class="text-[var(--color-muted)]">{t("passkey.counter")}</span>
-                        <p class="text-[var(--color-text)]">{pk.counter}</p>
-                      </div>
+                      <Show when={pk.counter > 0}>
+                        <div>
+                          <span class="text-[var(--color-muted)]">{t("passkey.counter")}</span>
+                          <p class="text-[var(--color-text)]">{pk.counter}</p>
+                        </div>
+                      </Show>
                       <div>
                         <span class="text-[var(--color-muted)]">{t("passkey.created")}</span>
                         <p class="text-[var(--color-text)]">{created}</p>
@@ -241,40 +247,38 @@ export default function CipherDetail(props) {
 
         {/* Passkey delete confirmation modal */}
         <Show when={showPasskeyDelete()}>
-          {(() => {
-            const pk = showPasskeyDelete();
-            return (
-              <div
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="passkey-delete-title"
-                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-              >
-                <div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-                  <h3 id="passkey-delete-title" class="text-lg font-bold text-[var(--color-text)] mb-2">{t("passkey.deleteTitle")}</h3>
-                  <div class="text-sm text-[var(--color-muted)] mb-4 space-y-2">
-                    <p>{t("passkey.deleteConfirm", { name: pk.name })}</p>
-                    <Show when={pk.isOnlyAuth}>
-                      <div class="p-3 rounded-xl bg-red-500/10 border border-red-500/20">
-                        <p class="text-red-400 font-semibold text-xs mb-1">{t("passkey.deleteWarningTitle")}</p>
-                        <p class="text-red-400/80 text-xs">{t("passkey.deleteOnlyAuth")}</p>
-                      </div>
-                    </Show>
+          <div
+            ref={(el) => { let dialogRef = el; }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="passkey-delete-title"
+            class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            onClick={(e) => { if (e.target === e.currentTarget) setShowPasskeyDelete(null); }}
+          >
+            <FocusTrap containerRef={() => document.getElementById("passkey-delete-dialog")} onEscape={() => setShowPasskeyDelete(null)} />
+            <div id="passkey-delete-dialog" class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+              <h3 id="passkey-delete-title" class="text-lg font-bold text-[var(--color-text)] mb-2">{t("passkey.deleteTitle")}</h3>
+              <div class="text-sm text-[var(--color-muted)] mb-4 space-y-2">
+                <p>{t("passkey.deleteConfirm", { name: showPasskeyDelete().name })}</p>
+                <Show when={showPasskeyDelete().isOnlyAuth}>
+                  <div class="p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+                    <p class="text-red-400 font-semibold text-xs mb-1">{t("passkey.deleteWarningTitle")}</p>
+                    <p class="text-red-400/80 text-xs">{t("passkey.deleteOnlyAuth")}</p>
                   </div>
-                  <div class="flex gap-3">
-                    <button
-                      onClick={() => setShowPasskeyDelete(null)}
-                      class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-sm font-semibold text-[var(--color-text)] hover:bg-[var(--color-card)] transition-colors cursor-pointer"
-                    >{t("entry.cancel")}</button>
-                    <button
-                      onClick={deletePasskey}
-                      class="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition-colors cursor-pointer"
-                    >{t("passkey.deleteBtn")}</button>
-                  </div>
-                </div>
+                </Show>
               </div>
-            );
-          })()}
+              <div class="flex gap-3">
+                <button
+                  onClick={() => setShowPasskeyDelete(null)}
+                  class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-sm font-semibold text-[var(--color-text)] hover:bg-[var(--color-card)] transition-colors cursor-pointer"
+                >{t("entry.cancel")}</button>
+                <button
+                  onClick={deletePasskey}
+                  class="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition-colors cursor-pointer"
+                >{t("passkey.deleteBtn")}</button>
+              </div>
+            </div>
+          </div>
         </Show>
 
         {/* Card fields */}

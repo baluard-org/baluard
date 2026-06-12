@@ -2561,7 +2561,6 @@ fn cipher_to_json(c: &baluard_core::types::Cipher) -> serde_json::Value {
                                 "rp_id": pk.rp_id,
                                 "rp_name": pk.rp_name,
                                 "user_name": pk.user_name,
-                                "user_display_name": pk.user_display_name,
                                 "name": pk.name,
                                 "counter": pk.counter,
                                 "creation_date": pk.creation_date,
