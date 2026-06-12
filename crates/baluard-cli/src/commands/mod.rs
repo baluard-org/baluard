@@ -710,6 +710,19 @@ pub fn handle_get(
                                     println!("  Passport:  {v}");
                                 }
                             }
+                            baluard_core::types::CipherKind::Passkey(data) => {
+                                println!("  RP ID:     {}", data.rp_id);
+                                if let Some(ref n) = data.rp_name {
+                                    println!("  RP Name:   {n}");
+                                }
+                                if let Some(ref u) = data.user_name {
+                                    println!("  Username:  {u}");
+                                }
+                                println!("  Counter:   {}", data.counter);
+                                if data.private_key_missing {
+                                    println!("  WARNING:   Imported (no private key, re-register needed)");
+                                }
+                            }
                             baluard_core::types::CipherKind::SecureNote => {}
                         }
                         if let Some(ref n) = c.notes {
@@ -2386,6 +2399,127 @@ pub fn handle_tag_delete(
 }
 
 // ── Vaults ──
+
+// ── Passkey commands (Phase 1) ──
+
+pub fn handle_passkey_list(
+    mode: &ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    rp_id: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let payload = serde_json::json!({
+        "rp_id": rp_id.unwrap_or(""),
+    })
+    .to_string();
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("passkey.list", &payload, socket)?;
+            if !resp.success {
+                return Err(format!("Daemon error: {}", resp.error_message).into());
+            }
+            println!("{}", serde_json::to_string_pretty(&resp.payload)?);
+        }
+        ConnectMode::Direct => {
+            let mut handle = unlock_vault_direct(vault_path)?;
+            let metas = handle.list_cipher_meta()?;
+            let mut passkeys = Vec::new();
+            use baluard_core::vault::handle::CipherRead;
+            for meta in &metas {
+                if meta.cipher_type != baluard_core::types::CipherType::Passkey {
+                    continue;
+                }
+                if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
+                    if let baluard_core::types::CipherKind::Passkey(data) = &c.kind {
+                        if rp_id.map_or(true, |rp| data.rp_id == rp) {
+                            passkeys.push(serde_json::json!({
+                                "id": meta.id,
+                                "name": meta.name,
+                                "rp_id": data.rp_id,
+                                "rp_name": data.rp_name,
+                                "user_name": data.user_name,
+                                "counter": data.counter,
+                                "credential_id": data.credential_id,
+                                "private_key_missing": data.private_key_missing,
+                                "created": data.creation_date,
+                            }));
+                        }
+                    }
+                }
+            }
+            println!("{}", serde_json::to_string_pretty(&passkeys)?);
+        }
+    }
+    Ok(())
+}
+
+pub fn handle_passkey_delete(
+    mode: &ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let payload = serde_json::json!({ "id": id }).to_string();
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("passkey.delete", &payload, socket)?;
+            if !resp.success {
+                return Err(format!("Daemon error: {}", resp.error_message).into());
+            }
+        }
+        ConnectMode::Direct => {
+            let mut handle = unlock_vault_direct(vault_path)?;
+            let uuid = uuid::Uuid::parse_str(id)?;
+            handle.delete_cipher(uuid)?;
+        }
+    }
+    println!("Passkey deleted.");
+    Ok(())
+}
+
+pub fn handle_passkey_rename(
+    mode: &ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    id: &str,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let payload = serde_json::json!({ "id": id, "name": name }).to_string();
+    match mode {
+        ConnectMode::Daemon => {
+            let resp = client::request_to("passkey.rename", &payload, socket)?;
+            if !resp.success {
+                return Err(format!("Daemon error: {}", resp.error_message).into());
+            }
+        }
+        ConnectMode::Direct => {
+            let mut handle = unlock_vault_direct(vault_path)?;
+            let uuid = uuid::Uuid::parse_str(id)?;
+            use baluard_core::vault::handle::CipherRead;
+            let cipher = match handle.get_cipher(uuid) {
+                Ok(CipherRead::Decrypted(c)) => c,
+                _ => return Err("Cipher not found".into()),
+            };
+            let input = baluard_core::types::CipherInput {
+                name: name.to_string(),
+                folder_id: cipher.folder_id,
+                favorite: cipher.favorite,
+                reprompt: cipher.reprompt,
+                tags: cipher.tags.clone(),
+                kind: cipher.kind.clone(),
+                notes: cipher.notes.clone(),
+                custom_fields: cipher.custom_fields.clone(),
+                created_at: Some(cipher.created_at),
+                password_history: cipher.password_history.clone(),
+                attachments: cipher.attachments.clone(),
+                archived: cipher.archived,
+            };
+            handle.update_cipher(uuid, &input)?;
+        }
+    }
+    println!("Passkey renamed.");
+    Ok(())
+}
 
 pub fn handle_vaults(action: &VaultAction, _cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     match action {
