@@ -1,9 +1,9 @@
 # Plan: Passkey Support in Baluard
 
-**Status**: Phase 0 complete. Phase 1 next.
+**Status**: Phase 0 + Phase 1 complete. Phase 2 pending.
 **Date**: 2026-06-12
 **Author**: TARS (post Esteban's brief)
-**Reviewers**: peer review (peer `passkey-review` session, two rounds)
+**Reviewers**: External peer review (3 rounds: Phase 0, Phase 1 mid-point, comprehensive Phase 0+1)
 **Goal**: Baluard can **store**, **generate**, and **serve** FIDO2/WebAuthn passkeys for end users. Mobile (iOS + Android) and browser extension clients are the primary delivery surface; the desktop app is the local orchestrator that talks to the daemon.
 
 ---
@@ -18,7 +18,8 @@ We are **not** building a FIDO2 server (no cloud). Baluard is a **software authe
 - v1: initial research and analysis
 - v2: incorporated the first peer review. Major changes: `passkey-rs` evaluation moved to Phase 0 (was deferred); Linux user verification strategy decided (master password re-prompt); conditional mediation added as hard Phase 2 scope; counter git-sync `max()` strategy added; extension `world: "MAIN"` for CSP-strict sites; mobile architecture committed to UniFFI library (no daemon process on mobile); `PasskeyUseModal` deferred to Phase 2; local `webauthn-rs` RP test harness added as hard deliverable.
 - v3: incorporated the second peer review. Approved with fixes. Changes: removed `discoverable: bool` field (invariant is not data); removed contradictory `web_accessible_resources` line in §4.7; added explicit `residentKey: "required"` + `requireResidentKey: true` + `userVerification: "required"` to `authenticatorSelection`; made `coset`/`ciborium` deps conditional on `passkey-rs` rejection; made `uniffi` interface synchronous; added fresh-KDF-verify constraint to Linux UV substitute; rewrote Phase 3 scope to remove stale "Daemon IPC over local network" text contradicting the UniFFI decision; clarified counter race risk as inherent to all synced passkey implementations (not Baluard-specific).
-- v4: Phase 0 implemented and peer-reviewed (peer review peer, 1 blocker + 1 high + 2 medium + 5 low, all fixed). `passkey-rs` 0.5.x adopted (ADR 0007). ES256 only (no EdDSA). 342 tests pass.
+- v4: Phase 0 implemented and peer-reviewed. `passkey-rs` 0.5.x adopted (ADR 0007). ES256 only (no EdDSA). 342 tests pass.
+- v5: Phase 1 implemented (ceremony wiring, daemon IPC, CLI, test harness). Two mid-point peer reviews + comprehensive Phase 0+1 review. 363 tests pass. All actionable findings fixed. Phase 2 prerequisites documented.
 
 ---
 
@@ -405,13 +406,21 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 - **Two peer reviews** passed (12 findings fixed across both rounds)
 
 **Known limitations (documented, Phase 2 tracked):**
-- S1: passkey_data echo-back in finish_register (trust boundary: same-process desktop)
-- S2: COSE key bytes not zeroized on store drop (coset::CoseKey lacks Zeroize)
-- D1: key_value field stores full COSE key (should be public-only in Phase 2)
-- Counter: software authenticator returns 0 (no increment, anti-cloning is hardware-only)
+- S1: passkey_data echo-back in finish_register (trust boundary: same-process desktop). See Phase 2 prerequisites.
+- S2: COSE key bytes not zeroized on store drop (coset::CoseKey lacks Zeroize). See Phase 2 prerequisites.
+- D1: key_value field stores full COSE key (should be public-only in Phase 2). See Phase 2 prerequisites.
 - No browser extension integration yet
 
-**Deferred from plan:**
+**Fixed in comprehensive review (commit 63bb831):**
+- SEC-2: passkey_rename type guard added
+- BUG-1: counter always `Some(n)` — counter now properly increments on assertion
+- COVER: finish_assert in COVER_MUTATION_ACTIONS
+- SEC-3: finish_assert echo-back documented
+- RAND: OsRng for ceremony challenges
+- CACHE: CeremonyCache max 64 pending, FIFO eviction
+- BUG-3: Converter round-trip test
+
+**Still deferred:**
 - Ed25519 support (passkey-rs 0.5.x only supports ES256)
 - Linux UV master-password re-prompt
 - Desktop UI (PasskeyDetail, PasskeyCreateModal)
@@ -482,6 +491,25 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 
 ---
 
+## 5.5. Testing gaps (from comprehensive review, must close before Phase 2)
+
+These gaps were identified during the Phase 0+1 comprehensive peer review. None are blocking for Phase 1 (desktop-only, same-process trust boundary), but all must be closed before Phase 2 ships to browser extension users.
+
+| Gap | Risk | Phase | Tracking |
+|-----|------|-------|----------|
+| No test: `finish_register` with an Assertion ceremony ID (wrong ceremony type) | Low — type guard in code, but untested | Phase 2 | Must add |
+| No test: `finish_assert` with expired ceremony | Medium — success path tested, expiry not | Phase 2 | Must add |
+| No test: malformed COSE key bytes in `private_key` field | Low — silently skipped, should surface error | Phase 2 | Should add |
+| No test: duplicate registration (same RP + user, two ciphers) | Medium — `exclude_credentials` behavior not verified | Phase 2 | Must add |
+| No test: `new_counter = u32::MAX` in `finish_assert` | High — surfaces SEC-1 counter forgery | Phase 2 | Must add after SEC-1 fix |
+| No test: `passkey_rename` on non-passkey cipher (type guard) | Medium — guard added, untested | Phase 1 | Should add |
+| No test: daemon-level ceremony round-trip (`challenge_register` → `finish_register` via `VaultState`) | Medium — catches is_unlocked gaps, write-lock path | Phase 2 | Must add |
+| No test: counter `max(local, remote)` merge logic in sync | High — spec compliance for git-sync | Phase 2 | Must add |
+| No test: epoch rotation preserves passkey ciphers | High — key rotation must not destroy credentials | Phase 2 | Must add |
+| No isolated unit test for `passkey_data_to_passkey` converter | Low — tested indirectly via ceremony | Done | Added in 63bb831 |
+
+---
+
 ## 6. Open questions (Phase 0 resolves, rest is open)
 
 **Resolved in Phase 0** (no longer open):
@@ -513,6 +541,9 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 | WebAuthn ceremony implementation bugs (interop with RPs) | High | High | Hard Phase 1 deliverables: local `webauthn-rs` RP harness as in-process test, FIDO Alliance test vector corpus, `proptest` for COSE/AuthenticatorData, 80%+ coverage. Manual QA on github.com, google.com, cloudflare.com is smoke test only, not acceptance. |
 | **Mobile native OS passkey dialogs are invisible to Baluard** (cross-device scope) | Certain | Medium | Document explicitly in Phase 4 user-facing docs. Chrome Android passkey sheet and Safari iOS passkey sheet bypass the extension; Baluard will not appear. Workaround: use the Baluard browser extension on desktop for cross-device, or rely on synced passkeys on the mobile device itself. |
 | Linux UV has no hardware path (master password re-prompt is the substitute) | Certain | Low | Documented UX downgrade. Re-prompt step is added to the ceremony on Linux. Fixed when platform UV becomes available. |
+| **Phase 2 ceremony redesign risk** (current ceremony runs internally; browser needs external challenge/response flow) | High | High | Structural redesign required. Current `run_registration`/`run_assertion` cannot be used by browser extension as-is. Must split into challenge generation + response verification. Documented in Phase 2 prerequisites. |
+| **Counter forgery via client-supplied values** (finish_register and finish_assert trust echoed data) | Low (Phase 1) / High (Phase 2) | High | Phase 1: same-process desktop client is trusted. Phase 2: browser extension is untrusted. Must store results in CeremonyState before Phase 2. Documented as SEC-1 in Phase 2 prerequisites. |
+| **CeremonyCache unbounded DoS** (no max capacity, authenticated clients can fill memory) | Low (Phase 1) / Medium (Phase 2) | Low | Fixed in 63bb831: max 64 pending ceremonies with FIFO eviction. May need per-client rate limiting in Phase 2. |
 
 ---
 
