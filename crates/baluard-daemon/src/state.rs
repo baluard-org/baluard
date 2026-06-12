@@ -788,26 +788,29 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".into());
         }
 
-        let v: serde_json::Value =
-            serde_json::from_str(payload).unwrap_or_default();
+        let v: serde_json::Value = serde_json::from_str(payload).unwrap_or_default();
         let rp_filter = v["rp_id"].as_str().filter(|s| !s.is_empty());
 
-        
         // TODO(Phase 2): Replace N+1 pattern with batch get method.
         // Performance matters for browser extension autofill trigger.
         let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
         let mut passkeys = Vec::new();
         for meta in &metas {
+            if meta.cipher_type != baluard_core::types::CipherType::Login {
+                continue;
+            }
             if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
                 match &c.kind {
-                    // Embedded passkeys inside Login ciphers (primary path)
                     baluard_core::types::CipherKind::Login(data) => {
+                        let has_password = data.password.is_some();
                         if let Some(ref fido2_list) = data.fido2_credentials {
                             for pk in fido2_list {
                                 if rp_filter.map_or(true, |rp| pk.rp_id == rp) {
                                     passkeys.push(serde_json::json!({
                                         "id": meta.id.to_string(),
-                                        "name": meta.name,
+                                        "login_name": meta.name,
+                                        "has_password": has_password,
+                                        "pk_name": pk.name,
                                         "cipher_type": "login",
                                         "favorite": meta.favorite,
                                         "rp_id": pk.rp_id,
@@ -832,7 +835,7 @@ impl VaultState {
     /// Start a registration ceremony. Runs passkey-rs ceremony, caches result.
     /// Payload: `{ "rp_id": "...", "rp_name": "...", "user_name": "...", "user_display_name": "...", "origin": "https://..." }`
     pub async fn passkey_challenge_register(&self, payload: &str) -> Result<String, String> {
-        use baluard_core::crypto::webauthn::{run_registration, CeremonyState};
+        use baluard_core::crypto::webauthn::{CeremonyState, run_registration};
         use baluard_core::vault::handle::CipherRead;
 
         self.ceremony_cache.evict_expired().await;
@@ -842,17 +845,23 @@ impl VaultState {
         let rp_id = v["rp_id"].as_str().ok_or("Missing 'rp_id'")?.to_string();
         let rp_name = v["rp_name"].as_str().unwrap_or(&rp_id).to_string();
         let user_name = v["user_name"].as_str().unwrap_or("").to_string();
-        let user_display_name = v["user_display_name"].as_str().unwrap_or(&user_name).to_string();
+        let user_display_name = v["user_display_name"]
+            .as_str()
+            .unwrap_or(&user_name)
+            .to_string();
         let origin_str = v["origin"].as_str().ok_or("Missing 'origin'")?;
         let origin = url::Url::parse(origin_str).map_err(|e| format!("Invalid origin: {e}"))?;
-        let user_id: Vec<u8> = v["user_id"].as_str()
+        let user_id: Vec<u8> = v["user_id"]
+            .as_str()
             .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok())
             .unwrap_or_else(|| rand::random::<[u8; 32]>().to_vec());
 
         // Build passkey index from vault
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault is locked")?;
-        if !handle.is_unlocked() { return Err("Vault is locked".into()); }
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".into());
+        }
         let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
         let mut ciphers = Vec::new();
         for meta in &metas {
@@ -864,21 +873,31 @@ impl VaultState {
         drop(guard);
 
         let result = run_registration(
-            &origin, rp_id.clone(), rp_name.clone(),
-            user_name.clone(), user_display_name.clone(),
-            user_id.clone(), &index,
-        ).await?;
+            &origin,
+            rp_id.clone(),
+            rp_name.clone(),
+            user_name.clone(),
+            user_display_name.clone(),
+            user_id.clone(),
+            &index,
+        )
+        .await?;
 
         let ceremony_id = hex::encode(rand::random::<[u8; 32]>());
 
-        self.ceremony_cache.insert(ceremony_id.clone(), CeremonyState::Registration {
-            rp_id,
-            rp_name,
-            user_name,
-            user_display_name,
-            user_id,
-            created_at: std::time::Instant::now(),
-        }).await;
+        self.ceremony_cache
+            .insert(
+                ceremony_id.clone(),
+                CeremonyState::Registration {
+                    rp_id,
+                    rp_name,
+                    user_name,
+                    user_display_name,
+                    user_id,
+                    created_at: std::time::Instant::now(),
+                },
+            )
+            .await;
 
         let pk_data_json = serde_json::to_value(&result.passkey_data)
             .map_err(|e| format!("Serialize error: {e}"))?;
@@ -909,13 +928,13 @@ impl VaultState {
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let ceremony_id = v["ceremony_id"].as_str().ok_or("Missing 'ceremony_id'")?;
 
-        let state = self.ceremony_cache.remove(ceremony_id).await
+        let state = self
+            .ceremony_cache
+            .remove(ceremony_id)
+            .await
             .ok_or("Ceremony not found or expired")?;
         match &state {
-            CeremonyState::Registration { rp_id, user_name, .. } => {
-                // Store rp_id + user_name for cipher matching
-                let _ = (rp_id, user_name);
-            }
+            CeremonyState::Registration { .. } => {}
             _ => return Err("Expected registration ceremony".into()),
         }
 
@@ -969,17 +988,22 @@ impl VaultState {
                     attachments: cipher.attachments.clone(),
                     archived: cipher.archived,
                 };
-                handle.update_cipher(id, &input).map_err(|e| e.to_string())?;
+                handle
+                    .update_cipher(id, &input)
+                    .map_err(|e| e.to_string())?;
                 return Ok(serde_json::json!({
                     "id": id.to_string(),
                     "credential_id": pk_data.credential_id,
-                }).to_string());
+                })
+                .to_string());
             }
             Err("Expected Login kind".into())
         } else {
             // Create new Login cipher with passkey
             let input = baluard_core::types::CipherInput {
-                name: pk_data.rp_name.clone()
+                name: pk_data
+                    .rp_name
+                    .clone()
                     .unwrap_or_else(|| pk_data.rp_id.clone()),
                 folder_id: None,
                 favorite: false,
@@ -1005,14 +1029,15 @@ impl VaultState {
             Ok(serde_json::json!({
                 "id": cipher_id.to_string(),
                 "credential_id": pk_data.credential_id,
-            }).to_string())
+            })
+            .to_string())
         }
     }
 
     /// Start an assertion ceremony. Runs passkey-rs assertion, caches result.
     /// Payload: `{ "rp_id": "example.com", "origin": "https://example.com" }`
     pub async fn passkey_challenge_assert(&self, payload: &str) -> Result<String, String> {
-        use baluard_core::crypto::webauthn::{run_assertion, CeremonyState};
+        use baluard_core::crypto::webauthn::{CeremonyState, run_assertion};
         use baluard_core::vault::handle::CipherRead;
 
         self.ceremony_cache.evict_expired().await;
@@ -1025,7 +1050,9 @@ impl VaultState {
 
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault is locked")?;
-        if !handle.is_unlocked() { return Err("Vault is locked".into()); }
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".into());
+        }
         let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
         let mut ciphers = Vec::new();
         for meta in &metas {
@@ -1040,10 +1067,15 @@ impl VaultState {
 
         let ceremony_id = hex::encode(rand::random::<[u8; 32]>());
 
-        self.ceremony_cache.insert(ceremony_id.clone(), CeremonyState::Assertion {
-            rp_id,
-            created_at: std::time::Instant::now(),
-        }).await;
+        self.ceremony_cache
+            .insert(
+                ceremony_id.clone(),
+                CeremonyState::Assertion {
+                    rp_id,
+                    created_at: std::time::Instant::now(),
+                },
+            )
+            .await;
 
         let response = serde_json::json!({
             "ceremony_id": ceremony_id,
@@ -1072,14 +1104,19 @@ impl VaultState {
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let ceremony_id = v["ceremony_id"].as_str().ok_or("Missing 'ceremony_id'")?;
 
-        let state = self.ceremony_cache.remove(ceremony_id).await
+        let state = self
+            .ceremony_cache
+            .remove(ceremony_id)
+            .await
             .ok_or("Ceremony not found or expired")?;
         match &state {
             CeremonyState::Assertion { .. } => {}
             _ => return Err("Expected assertion ceremony".into()),
         }
 
-        let credential_id_b64 = v["credential_id"].as_str().ok_or("Missing 'credential_id'")?;
+        let credential_id_b64 = v["credential_id"]
+            .as_str()
+            .ok_or("Missing 'credential_id'")?;
         let new_counter = v["new_counter"].as_u64().ok_or("Missing 'new_counter'")? as u32;
 
         let mut guard = self.inner.write().await;
@@ -1106,7 +1143,7 @@ impl VaultState {
                                         baluard_core::types::LoginData {
                                             fido2_credentials: Some(fido2_list.clone()),
                                             ..data.clone()
-                                        }
+                                        },
                                     ),
                                     notes: c.notes.clone(),
                                     custom_fields: c.custom_fields.clone(),
@@ -1115,11 +1152,14 @@ impl VaultState {
                                     attachments: c.attachments.clone(),
                                     archived: c.archived,
                                 };
-                                handle.update_cipher(meta.id, &input).map_err(|e| e.to_string())?;
+                                handle
+                                    .update_cipher(meta.id, &input)
+                                    .map_err(|e| e.to_string())?;
                                 return Ok(serde_json::json!({
                                     "credential_id": credential_id_b64,
                                     "counter": new_counter,
-                                }).to_string());
+                                })
+                                .to_string());
                             }
                         }
                     }
@@ -1130,73 +1170,135 @@ impl VaultState {
         Err(format!("Passkey credential not found: {credential_id_b64}"))
     }
 
-    /// Delete a passkey cipher.
-    /// Payload: `{ "id": "<uuid>" }`
+    /// Delete a specific passkey credential from a Login cipher.
+    /// Payload: `{ "id": "<uuid>", "credential_id": "<base64url>" }`
+    /// If the Login has no other data after removal, deletes the cipher entirely.
     pub async fn passkey_delete(&self, payload: &str) -> Result<(), String> {
+        use baluard_core::vault::handle::CipherRead;
+
         let v: serde_json::Value =
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let id_str = v["id"].as_str().ok_or("Missing 'id'")?;
+        let credential_id = v["credential_id"]
+            .as_str()
+            .ok_or("Missing 'credential_id'")?;
         let id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
 
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault is locked")?;
-        // Verify the cipher has fido2_credentials before deleting
-        use baluard_core::vault::handle::CipherRead;
+
         let cipher = match handle.get_cipher(id) {
-            Ok(CipherRead::Decrypted(ref c)) => c.clone(),
+            Ok(CipherRead::Decrypted(c)) => c,
             _ => return Err("Cipher not found or not decrypted".into()),
         };
         match &cipher.kind {
             baluard_core::types::CipherKind::Login(data) => {
-                if data.fido2_credentials.is_none() || data.fido2_credentials.as_ref().map_or(true, |v| v.is_empty()) {
-                    return Err("Cipher has no passkeys".into());
+                let mut fido2_list = match data.fido2_credentials.clone() {
+                    Some(list) if !list.is_empty() => list,
+                    _ => return Err("Cipher has no passkeys".into()),
+                };
+                let before = fido2_list.len();
+                fido2_list.retain(|pk| pk.credential_id != credential_id);
+                if fido2_list.len() == before {
+                    return Err(format!("Credential not found: {credential_id}"));
                 }
+                if fido2_list.is_empty()
+                    && data.username.is_none()
+                    && data.password.is_none()
+                    && data.uris.is_empty()
+                    && data.totp_uri.is_none()
+                {
+                    drop(cipher);
+                    return handle.delete_cipher(id).map_err(|e| e.to_string());
+                }
+                let updated_data = baluard_core::types::LoginData {
+                    fido2_credentials: if fido2_list.is_empty() {
+                        None
+                    } else {
+                        Some(fido2_list)
+                    },
+                    ..data.clone()
+                };
+                let input = baluard_core::types::CipherInput {
+                    name: cipher.name.clone(),
+                    folder_id: cipher.folder_id,
+                    favorite: cipher.favorite,
+                    reprompt: cipher.reprompt,
+                    tags: cipher.tags.clone(),
+                    kind: baluard_core::types::CipherKind::Login(updated_data),
+                    notes: cipher.notes.clone(),
+                    custom_fields: cipher.custom_fields.clone(),
+                    created_at: Some(cipher.created_at),
+                    password_history: cipher.password_history.clone(),
+                    attachments: cipher.attachments.clone(),
+                    archived: cipher.archived,
+                };
+                drop(cipher);
+                handle.update_cipher(id, &input).map_err(|e| e.to_string())
             }
-            _ => return Err("Not a Login cipher with passkeys".into()),
+            _ => Err("Not a Login cipher".into()),
         }
-        handle.delete_cipher(id).map_err(|e| e.to_string())
     }
 
-    /// Rename a passkey cipher.
-    /// Payload: `{ "id": "<uuid>", "name": "new name" }`
+    /// Rename a specific passkey credential within a Login cipher.
+    /// Payload: `{ "id": "<uuid>", "credential_id": "<base64url>", "name": "new name" }`
+    /// Updates `PasskeyData.name` on the matching credential. Does NOT
+    /// change the Login cipher's display name.
     pub async fn passkey_rename(&self, payload: &str) -> Result<(), String> {
+        use baluard_core::vault::handle::CipherRead;
+
         let v: serde_json::Value =
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let id_str = v["id"].as_str().ok_or("Missing 'id'")?;
-        let name = v["name"].as_str().ok_or("Missing 'name'")?;
+        let credential_id = v["credential_id"]
+            .as_str()
+            .ok_or("Missing 'credential_id'")?;
+        let new_name = v["name"].as_str().ok_or("Missing 'name'")?;
         let id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
 
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault is locked")?;
 
-        use baluard_core::vault::handle::CipherRead;
         let cipher = match handle.get_cipher(id) {
-            Ok(CipherRead::Decrypted(ref c)) => c.clone(),
+            Ok(CipherRead::Decrypted(c)) => c,
             _ => return Err("Cipher not found or not decrypted".into()),
         };
         match &cipher.kind {
             baluard_core::types::CipherKind::Login(data) => {
-                if data.fido2_credentials.is_none() || data.fido2_credentials.as_ref().map_or(true, |v| v.is_empty()) {
-                    return Err("Cipher has no passkeys".into());
+                let mut fido2_list = match data.fido2_credentials.clone() {
+                    Some(list) if !list.is_empty() => list,
+                    _ => return Err("Cipher has no passkeys".into()),
+                };
+                let found = fido2_list
+                    .iter_mut()
+                    .find(|pk| pk.credential_id == credential_id);
+                match found {
+                    Some(pk) => pk.name = Some(new_name.to_string()),
+                    None => return Err(format!("Credential not found: {credential_id}")),
                 }
+                let updated_data = baluard_core::types::LoginData {
+                    fido2_credentials: Some(fido2_list),
+                    ..data.clone()
+                };
+                let input = baluard_core::types::CipherInput {
+                    name: cipher.name.clone(),
+                    folder_id: cipher.folder_id,
+                    favorite: cipher.favorite,
+                    reprompt: cipher.reprompt,
+                    tags: cipher.tags.clone(),
+                    kind: baluard_core::types::CipherKind::Login(updated_data),
+                    notes: cipher.notes.clone(),
+                    custom_fields: cipher.custom_fields.clone(),
+                    created_at: Some(cipher.created_at),
+                    password_history: cipher.password_history.clone(),
+                    attachments: cipher.attachments.clone(),
+                    archived: cipher.archived,
+                };
+                drop(cipher);
+                handle.update_cipher(id, &input).map_err(|e| e.to_string())
             }
-            _ => return Err("Not a Login cipher with passkeys".into()),
-        };
-        let input = baluard_core::types::CipherInput {
-            name: name.to_string(),
-            folder_id: cipher.folder_id,
-            favorite: cipher.favorite,
-            reprompt: cipher.reprompt,
-            tags: cipher.tags.clone(),
-            kind: cipher.kind.clone(),
-            notes: cipher.notes.clone(),
-            custom_fields: cipher.custom_fields.clone(),
-            created_at: Some(cipher.created_at),
-            password_history: cipher.password_history.clone(),
-            attachments: cipher.attachments.clone(),
-            archived: cipher.archived,
-        };
-        handle.update_cipher(id, &input).map_err(|e| e.to_string())
+            _ => Err("Not a Login cipher".into()),
+        }
     }
 
     /// Fetch a favicon for a given domain/URI.
@@ -2452,6 +2554,24 @@ fn cipher_to_json(c: &baluard_core::types::Cipher) -> serde_json::Value {
             json["password"] = serde_json::json!(data.password);
             json["uris"] = serde_json::json!(data.uris);
             json["totp"] = serde_json::json!(data.totp_uri);
+            if let Some(ref fido2_list) = data.fido2_credentials {
+                if !fido2_list.is_empty() {
+                    json["fido2_credentials"] = serde_json::json!(
+                        fido2_list
+                            .iter()
+                            .map(|pk| serde_json::json!({
+                                "credential_id": pk.credential_id,
+                                "rp_id": pk.rp_id,
+                                "rp_name": pk.rp_name,
+                                "user_name": pk.user_name,
+                                "name": pk.name,
+                                "counter": pk.counter,
+                                "private_key_missing": pk.private_key_missing,
+                            }))
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
         }
         baluard_core::types::CipherKind::Card(data) => {
             json["cardholder_name"] = serde_json::json!(data.cardholder_name);

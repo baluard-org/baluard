@@ -445,7 +445,10 @@ impl<'a> VaultCreator<'a> {
                         "{{\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
                         x25519_hex, ed25519_hex
                     );
-                    super::write_vault_file(&path.join("meta/device-privkey.json"), json_str.as_bytes())?;
+                    super::write_vault_file(
+                        &path.join("meta/device-privkey.json"),
+                        json_str.as_bytes(),
+                    )?;
                     x25519_hex.zeroize();
                     ed25519_hex.zeroize();
                     json_str.zeroize();
@@ -549,8 +552,9 @@ impl<'a> VaultCreator<'a> {
                 let canary_data = std::fs::read(&kek_canary_path).map_err(|e| {
                     BaluardError::from(VaultError::Metadata(format!("reading kek canary: {e}")))
                 })?;
-                super::canary::verify_kek_canary(&session_key, &canary_data)
-                    .map_err(|_| BaluardError::from(VaultError::Corrupt("master password incorrect".into())))?;
+                super::canary::verify_kek_canary(&session_key, &canary_data).map_err(|_| {
+                    BaluardError::from(VaultError::Corrupt("master password incorrect".into()))
+                })?;
 
                 let recovery_json_str = std::fs::read_to_string(path.join("meta/recovery.json"))
                     .map_err(|e| {
@@ -567,8 +571,12 @@ impl<'a> VaultCreator<'a> {
                 );
                 recovery_key_bytes.zeroize();
 
-                let root_key_bytes =
-                    hpke_wrap::unwrap_key(&kw.ephemeral_public, &kw.encrypted_key, &kw.tag, &recovery_x25519_secret)?;
+                let root_key_bytes = hpke_wrap::unwrap_key(
+                    &kw.ephemeral_public,
+                    &kw.encrypted_key,
+                    &kw.tag,
+                    &recovery_x25519_secret,
+                )?;
                 let root_key_arr: [u8; 64] = root_key_bytes.try_into().map_err(|_| {
                     BaluardError::from(VaultError::Corrupt(
                         "unwrapped root key not 64 bytes".into(),
@@ -646,7 +654,10 @@ impl<'a> VaultCreator<'a> {
                         "{{\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
                         x25519_hex, ed25519_hex
                     );
-                    super::write_vault_file(&path.join("meta/device-privkey.json"), json_str.as_bytes())?;
+                    super::write_vault_file(
+                        &path.join("meta/device-privkey.json"),
+                        json_str.as_bytes(),
+                    )?;
                     x25519_hex.zeroize();
                     ed25519_hex.zeroize();
                     json_str.zeroize();

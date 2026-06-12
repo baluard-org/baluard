@@ -329,16 +329,22 @@ enum PasskeyAction {
         #[arg(long)]
         rp_id: Option<String>,
     },
-    /// Delete a passkey by cipher ID.
+    /// Delete a passkey credential.
     Delete {
-        /// Cipher ID.
+        /// Login cipher ID.
         id: String,
+        /// Credential ID (base64url) of the passkey to remove.
+        #[arg(long)]
+        credential_id: String,
     },
-    /// Rename a passkey.
+    /// Rename a passkey credential.
     Rename {
-        /// Cipher ID.
+        /// Login cipher ID.
         id: String,
-        /// New name.
+        /// Credential ID (base64url) of the passkey to rename.
+        #[arg(long)]
+        credential_id: String,
+        /// New name for the passkey.
         name: String,
     },
 }
@@ -1140,15 +1146,31 @@ fn main() {
         },
 
         Commands::Passkey { action } => match action {
-            PasskeyAction::List { rp_id } => {
-                commands::handle_passkey_list(&mode, &vault_path, cli.socket.as_deref(), rp_id.as_deref())
-            }
-            PasskeyAction::Delete { id } => {
-                commands::handle_passkey_delete(&mode, &vault_path, cli.socket.as_deref(), &id)
-            }
-            PasskeyAction::Rename { id, name } => {
-                commands::handle_passkey_rename(&mode, &vault_path, cli.socket.as_deref(), &id, &name)
-            }
+            PasskeyAction::List { rp_id } => commands::handle_passkey_list(
+                &mode,
+                &vault_path,
+                cli.socket.as_deref(),
+                rp_id.as_deref(),
+            ),
+            PasskeyAction::Delete { id, credential_id } => commands::handle_passkey_delete(
+                &mode,
+                &vault_path,
+                cli.socket.as_deref(),
+                &id,
+                &credential_id,
+            ),
+            PasskeyAction::Rename {
+                id,
+                credential_id,
+                name,
+            } => commands::handle_passkey_rename(
+                &mode,
+                &vault_path,
+                cli.socket.as_deref(),
+                &id,
+                &credential_id,
+                &name,
+            ),
         },
 
         Commands::Import { format, path } => {

@@ -92,22 +92,58 @@ struct BwExportFido2Credential {
     creation_date: Option<String>,
 }
 
+/// Convert unix timestamp (seconds) to ISO 8601 UTC string ("YYYY-MM-DDTHH:MM:SSZ").
+/// Uses the civil_from_days algorithm (Hinnant) for correctness without chrono.
+fn format_unix_timestamp_as_iso8601(secs: u64) -> String {
+    let days_since_epoch = (secs / 86400) as i64;
+    let rem = secs % 86400;
+    let hour = (rem / 3600) as u8;
+    let minute = ((rem % 3600) / 60) as u8;
+    let second = (rem % 60) as u8;
+
+    // Hinnant civil_from_days
+    let z = days_since_epoch + 719468;
+    let era = if z >= 0 {
+        z / 146097
+    } else {
+        (z - 146096) / 146097
+    };
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 4 + doe / 100 - doe / 400) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y, m, d, hour, minute, second
+    )
+}
+
 fn passkey_data_to_bw_export(pk: &crate::types::PasskeyData) -> BwExportFido2Credential {
     BwExportFido2Credential {
         credential_id: Some(pk.credential_id.clone()),
         key_type: Some(pk.key_type.clone()),
         key_algorithm: Some(pk.key_algorithm.clone()),
         key_curve: Some(pk.key_curve.clone()),
-        key_value: if pk.private_key_missing { None } else { Some(pk.key_value.clone()) },
+        key_value: Some(pk.key_value.clone()),
         rp_id: Some(pk.rp_id.clone()),
-        user_handle: pk.user_handle.as_ref().map(|h| base64::engine::general_purpose::STANDARD.encode(h)),
+        user_handle: pk
+            .user_handle
+            .as_ref()
+            .map(|h| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(h)),
         user_name: pk.user_name.clone(),
         counter: Some(pk.counter.to_string()),
         rp_name: pk.rp_name.clone(),
         user_display_name: pk.user_display_name.clone(),
         discoverable: Some("true".to_string()),
         creation_date: if pk.creation_date > 0 {
-            Some(format!("{}", pk.creation_date))
+            // BW expects ISO 8601 (e.g. "2024-06-12T10:00:00Z").
+            // Simple UTC conversion without chrono dependency.
+            Some(format_unix_timestamp_as_iso8601(pk.creation_date))
         } else {
             None
         },
@@ -240,9 +276,10 @@ pub fn export_bw_json(
                             .collect(),
                         totp: data.totp_uri.clone(),
                         password_revision_date: data.password_revision_date.map(|d| d.to_string()),
-                        fido2_credentials: data.fido2_credentials.as_ref().map(|list| {
-                            list.iter().map(passkey_data_to_bw_export).collect()
-                        }),
+                        fido2_credentials: data
+                            .fido2_credentials
+                            .as_ref()
+                            .map(|list| list.iter().map(passkey_data_to_bw_export).collect()),
                     }),
                     None,
                     None,

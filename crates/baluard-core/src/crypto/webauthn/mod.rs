@@ -11,7 +11,7 @@ pub mod ceremony;
 pub mod store;
 
 pub use ceremony::{
-    BaluardUserValidation, CeremonyCache, CeremonyId, CeremonyState, CEREMONY_TTL,
-    RegistrationResult, AssertionResult, run_registration, run_assertion,
+    AssertionResult, BaluardUserValidation, CEREMONY_TTL, CeremonyCache, CeremonyId, CeremonyState,
+    RegistrationResult, run_assertion, run_registration,
 };
 pub use store::{BaluardCredentialStore, PasskeyIndex};

@@ -10,8 +10,8 @@
 //! 7. Store mutation tracking
 
 use baluard_core::crypto::webauthn::{
-    run_registration, run_assertion, CeremonyCache, CeremonyState, CEREMONY_TTL,
-    BaluardCredentialStore, PasskeyIndex,
+    BaluardCredentialStore, CEREMONY_TTL, CeremonyCache, CeremonyState, PasskeyIndex,
+    run_assertion, run_registration,
 };
 use baluard_core::types::{Cipher, CipherKind, PasskeyData, Tier};
 use base64::Engine;
@@ -38,6 +38,7 @@ fn make_passkey_data(rp_id: &str, user_name: &str, counter: u32) -> PasskeyData 
         counter,
         aaguid: uuid::Uuid::nil(),
         creation_date: 1000,
+        name: None,
         private_key_missing: true,
         prf_key: None,
         linked_login_id: None,
@@ -102,10 +103,7 @@ async fn registration_produces_valid_passkey_data() {
     assert_eq!(pk.key_type, "public-key");
     assert_eq!(pk.key_algorithm, "ECDSA");
     assert_eq!(pk.key_curve, "P-256");
-    assert!(
-        pk.private_key.is_some(),
-        "private key must be present"
-    );
+    assert!(pk.private_key.is_some(), "private key must be present");
     assert!(!pk.private_key_missing);
     assert_eq!(pk.counter, 0);
     assert!(pk.creation_date > 0);
@@ -140,7 +138,10 @@ async fn assertion_works_with_registered_passkey() {
         .expect("assertion should succeed");
 
     assert!(!assertion.credential_id_b64.is_empty());
-    assert_eq!(assertion.new_counter, 1, "counter should increment after BUG-1 fix (always Some)");
+    assert_eq!(
+        assertion.new_counter, 1,
+        "counter should increment after BUG-1 fix (always Some)"
+    );
     assert!(!assertion.assertion_response.is_empty());
 }
 
@@ -257,10 +258,7 @@ async fn ceremony_cache_valid_entry_survives_eviction() {
     cache.evict_expired().await;
 
     let state = cache.remove(&id).await;
-    assert!(
-        state.is_some(),
-        "fresh ceremony should survive eviction"
-    );
+    assert!(state.is_some(), "fresh ceremony should survive eviction");
 }
 
 #[tokio::test]

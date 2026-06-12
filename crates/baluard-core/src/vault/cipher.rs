@@ -172,8 +172,6 @@ pub fn decrypt_cipher(
     })
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
