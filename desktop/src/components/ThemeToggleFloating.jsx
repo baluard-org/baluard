@@ -14,7 +14,7 @@ export default function ThemeToggleFloating() {
         const idx = CYCLE.indexOf(theme());
         setTheme(CYCLE[(idx + 1) % CYCLE.length]);
       }}
-      class="absolute top-4 right-4 p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)] z-10"
+      class="theme-toggle-floating absolute top-4 right-4 p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)] z-10"
       title={t("settings.toggleTheme")}
       aria-label={t("settings.toggleTheme")}
     >

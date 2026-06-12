@@ -35,19 +35,19 @@ export default function CopyButton(props) {
   return (
     <button
       onClick={handleCopy}
-      class={`flex items-center gap-1.5 cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors ${props.class || ""}`}
+      class={`copy-btn flex items-center gap-1.5 cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors ${props.class || ""}`}
       title={props.title || t("recovery.copyToClipboard")}
       aria-label={props.title || t("recovery.copyToClipboard")}
     >
       <Show when={copied()} fallback={
         <IconCopy class="w-4 h-4" />
       }>
-        <span class="copy-feedback">
+        <span class="copy-btn__feedback copy-feedback">
           <IconCheck class="w-4 h-4 text-[var(--color-success)]" />
         </span>
       </Show>
       <Show when={props.label && !copied()}>
-        <span class="text-xs font-semibold">{props.label}</span>
+        <span class="copy-btn__label text-xs font-semibold">{props.label}</span>
       </Show>
     </button>
   );

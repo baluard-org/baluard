@@ -36,12 +36,12 @@ export default function App() {
   });
 
   return (
-    <div class="relative w-full h-full overflow-hidden">
+    <div class="app relative w-full h-full overflow-hidden">
       {/* Toast overlay — always rendered */}
       <ToastContainer />
       {/* Auth screens — covered by vault when unlocked */}
       <Show when={auth.status() !== "unlocked"}>
-        <div class="absolute inset-0">
+        <div class="app__auth absolute inset-0">
           <Show when={auth.status() === "setup"} fallback={
             <Show when={auth.status() === "recovery"} fallback={
               <Show when={auth.status() === "init" || auth.status() === "creating"}
@@ -59,7 +59,7 @@ export default function App() {
 
       {/* Vault — mounts instantly, animates its own entrance */}
       <Show when={auth.status() === "unlocked"}>
-        <div class="absolute inset-0 vault-enter">
+        <div class="app__vault absolute inset-0 vault-enter">
           <VaultProvider>
             <VaultView />
           </VaultProvider>
