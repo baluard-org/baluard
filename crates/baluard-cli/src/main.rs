@@ -160,6 +160,12 @@ enum Commands {
         action: TagAction,
     },
 
+    /// Manage passkeys (FIDO2/WebAuthn credentials).
+    Passkey {
+        #[command(subcommand)]
+        action: PasskeyAction,
+    },
+
     /// Import entries from external format.
     Import {
         /// Format: bw-json, bw-csv, chrome-csv, firefox-csv, lastpass-csv, 1password-1pux, 1password-csv, keepass-xml.
@@ -311,6 +317,28 @@ enum TagAction {
     /// Delete a tag from all entries.
     Delete {
         /// Tag name.
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum PasskeyAction {
+    /// List passkeys, optionally filtered by RP ID.
+    List {
+        /// Filter by relying party ID (e.g. "github.com").
+        #[arg(long)]
+        rp_id: Option<String>,
+    },
+    /// Delete a passkey by cipher ID.
+    Delete {
+        /// Cipher ID.
+        id: String,
+    },
+    /// Rename a passkey.
+    Rename {
+        /// Cipher ID.
+        id: String,
+        /// New name.
         name: String,
     },
 }
@@ -1107,6 +1135,18 @@ fn main() {
             }
             TagAction::Delete { name } => {
                 commands::handle_tag_delete(mode, &vault_path, cli.socket.as_deref(), &name)
+            }
+        },
+
+        Commands::Passkey { action } => match action {
+            PasskeyAction::List { rp_id } => {
+                commands::handle_passkey_list(&mode, &vault_path, cli.socket.as_deref(), rp_id.as_deref())
+            }
+            PasskeyAction::Delete { id } => {
+                commands::handle_passkey_delete(&mode, &vault_path, cli.socket.as_deref(), &id)
+            }
+            PasskeyAction::Rename { id, name } => {
+                commands::handle_passkey_rename(&mode, &vault_path, cli.socket.as_deref(), &id, &name)
             }
         },
 
