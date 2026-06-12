@@ -4,6 +4,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { toastError } from "../context/toastSignal.js";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
+import { setTheme as setGlobalTheme } from "../context/themeSignal.js";
 import { startVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { IconKey } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
@@ -121,7 +122,10 @@ export default function SetupScreen() {
                     {THEME_OPTIONS.map(opt => (
                       <button
                         type="button"
-                        onClick={() => setTheme(opt.value)}
+                        onClick={() => {
+                          setTheme(opt.value);
+                          setGlobalTheme(opt.value);
+                        }}
                         classList={{
                           "flex-1 py-2.5 px-3 rounded-xl text-sm font-medium transition-all cursor-pointer border": true,
                           "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]": theme() === opt.value,

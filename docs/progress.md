@@ -16,9 +16,9 @@
 
 ## Current Status
 
-**0 clippy errors workspace-wide.**
+**0 clippy errors workspace-wide. 358 tests pass.**
 
-Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries.
+Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done** (embedded in LoginData, daemon IPC, CLI).
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
@@ -36,6 +36,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | `workspace` | Done | Rust workspace with baluard-core, baluard-cli, baluard-daemon crates |
 | `proto/schemas` | Done | `vault.proto`, `space.proto`, `auth.proto`. Compiled by prost-build in daemon and CLI |
 | `crypto/aead` | Done | AES-256-GCM with strict AAD binding |
+| `crypto/webauthn` | Done (Phase 0+1) | FIDO2/WebAuthn ceremony via `passkey-rs` 0.5.x. ES256 only. `BaluardCredentialStore` (Arc<Mutex> mutation tracking), `PasskeyIndex` (in-vault passkey lookup), `CeremonyCache` (300s TTL, max 64 pending, FIFO eviction, OsRng challenges). Passkeys embedded in `LoginData::fido2_credentials`. |
 | `vault/handle` | Done | Vault CRUD operations |
 | `vault/creation` | Done | Vault creation ceremony with BIP-39 recovery phrase |
 | `sync/engine` | Done | git2-rs sync: init_repo, commit, push, pull, fetch, Ed25519 signed commits |
@@ -44,6 +45,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | `daemon/socket` | Done | Unix socket listener. 0600 via umask. SIGINT/SIGTERM graceful shutdown |
 | `daemon/handler` | Done | Protobuf gateway. Length-delimited wire. Token-gated IPC. Password zeroized |
 | `daemon/state` | Done | VaultState with Arc<RwLock>. KDF outside write lock. Double-check unlock pattern |
+| `daemon/passkey-ipc` | Done (Phase 1) | 7 passkey routes: list, delete, rename, challenge_register, finish_register, challenge_assert, finish_assert. All token-gated. `delete` and `rename` take `credential_id` (not cipher_id) for multi-passkey Logins. |
 | `cli/dual-mode` | Done | All commands: daemon-first + `--direct` fallback. `--socket <path>` override |
 | `desktop` | Done | SolidJS/Tailwind v4 + Tauri v2. 3-column layout, dark/light themes, tray, daemon spawn |
 | Uniform bucket padding | Done | 5 tiers (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB). Auto-selected via `Tier::fit()` |
@@ -188,7 +190,7 @@ Features parked for the far future. Do not start without explicit confirmation.
 | Item | Description | Blocker |
 |------|-------------|---------|
 | Encrypted JSON export | Baluard-native format (Argon2id + AES-256-GCM). Git clone + recovery phrase already covers disaster recovery | Low priority, needs format documentation |
-| FIDO2 credential storage | On Login cipher type. Requires hardware auth infrastructure | Needs FIDO2-compatible hardware for testing |
+| FIDO2 credential storage | **Done (Phase 0+1)**. Embedded in `LoginData::fido2_credentials: Option<Vec<PasskeyData>>`. ES256 only via `passkey-rs` 0.5.x. Daemon IPC: 7 routes. CLI: list/delete/rename. 358 tests pass. See `docs/plan-passkey-support.md`. | Phase 2+ (browser extension, mobile) |
 
 ### Out of Scope (No Server)
 

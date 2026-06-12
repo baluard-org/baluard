@@ -19,6 +19,6 @@ kotlin {
 }
 
 android {
-    namespace = "xyz.actitud.idtty.mobile"
+    namespace = "xyz.actitud.baluard"
     compileSdk = 34
 }

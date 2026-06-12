@@ -4,6 +4,7 @@ import { sanitizeError } from "../lib/utils.js";
 import { buildAddPayload, buildUpdatePayload, buildGetPayload } from "../lib/payload.js";
 import { consumeVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { toastError, toastWarning } from "./toastSignal.js";
+import { setTheme as setAppTheme } from "./themeSignal.js";
 
 const VaultContext = createContext();
 
@@ -93,6 +94,9 @@ function VaultProvider(props) {
       setDisplayName(data.display_name || "");
       setProfileSubtitle(data.subtitle || "");
       setAvatarExt(data.avatar_ext || "png");
+      if (data.theme) {
+        setAppTheme(data.theme);
+      }
     } catch (e) {
       if (import.meta.env.DEV) console.warn("refreshProfile settings:", e);
     }

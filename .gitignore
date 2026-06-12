@@ -60,7 +60,6 @@ node_modules/
 *.p12
 *.pfx
 *.jks
-idtty-vault/ ──
 *.dmg
 *.msi
 *.AppImage
