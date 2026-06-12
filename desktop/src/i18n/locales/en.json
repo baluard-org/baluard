@@ -239,6 +239,7 @@
     "allItems": "All items",
     "favorites": "Favorites",
     "login": "Login",
+    "passkeys": "Passkeys",
     "card": "Card",
     "identity": "Identity",
     "secureNote": "Secure note",
@@ -352,5 +353,20 @@
     "regenerate": "Regenerate",
     "copy": "Copy",
     "copied": "Copied!"
+  },
+  "passkey": {
+    "sectionTitle": "Passkeys",
+    "rp": "Service",
+    "user": "User",
+    "counter": "Uses",
+    "created": "Created",
+    "imported": "Imported",
+    "missingKeyWarning": "Private key missing. Re-register this passkey with the service to use it.",
+    "deleteBtn": "Remove passkey",
+    "deleteTitle": "Remove passkey?",
+    "deleteConfirm": "Remove passkey \"{{name}}\" from this entry? This cannot be undone.",
+    "deleteWarningTitle": "No other authentication methods",
+    "deleteOnlyAuth": "This entry has no password and this is the only passkey. Removing it means you may lose access to this account. Make sure you have another way to sign in before removing.",
+    "deleteError": "Failed to remove passkey."
   }
 }

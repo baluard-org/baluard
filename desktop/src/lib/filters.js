@@ -16,7 +16,7 @@ export const CATEGORY_TYPE_MAP = {
 };
 
 /** Special categories that don't map 1:1 to a type */
-const SPECIAL_CATEGORIES = new Set(["All items", "Favorites", "Trash", "Archive"]);
+const SPECIAL_CATEGORIES = new Set(["All items", "Favorites", "Passkeys", "Trash", "Archive"]);
 
 /**
  * Select source list based on category.
@@ -37,6 +37,12 @@ export function filterByCategory(ciphers, category) {
   }
   if (category === "Favorites") {
     return ciphers.filter(c => c.favorite || c._meta?.favorite);
+  }
+  if (category === "Passkeys") {
+    return ciphers.filter(c => {
+      const fido2 = c.fido2_credentials || c.kind?.data?.fido2_credentials;
+      return Array.isArray(fido2) && fido2.length > 0;
+    });
   }
   const typeStr = CATEGORY_TYPE_MAP[category];
   if (typeStr) {
