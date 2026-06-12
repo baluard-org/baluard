@@ -423,6 +423,29 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 
 ### Phase 2 — Browser extension (2-3 weeks)
 
+**Mandatory prerequisites (from Phase 0+1 comprehensive review):**
+
+1. **SEC-1 structural fix**: `finish_register` and `finish_assert` MUST NOT trust client-supplied data. CeremonyState must carry the computed results:
+   - `CeremonyState::Registration { passkey_data: PasskeyData, ... }` — finish_register reads from state, not from client payload
+   - `CeremonyState::Assertion { credential_id_b64: String, new_counter: u32, rp_id: String, ... }` — finish_assert reads from state, verifies credential belongs to ceremony's RP
+   - Without this fix: counter forgery (u32::MAX DoS), cross-RP credential update
+
+2. **DESIGN-1 ceremony redesign**: Current `run_registration()`/`run_assertion()` run the full ceremony internally. Browser extension needs:
+   - `challenge_register` → returns challenge bytes to browser (not consumed internally)
+   - Browser calls `navigator.credentials.create({ publicKey: { challenge } })`
+   - Extension intercepts, feeds to daemon, daemon runs authenticator
+   - `finish_register` → accepts `PublicKeyCredential` JSON from browser
+   - Same pattern for assertion
+   - Use passkey-rs `relying_party` verification primitives
+
+3. **passkey_list N+1**: Add `VaultHandle::list_ciphers_by_type(CipherType)` batch method. Browser autofill triggers on every page load — performance critical.
+
+4. **key_value field**: Extract public key (x || y coordinates) from COSE key instead of storing full private key. Rename to `public_key_value`.
+
+5. **COSE key zeroize**: Wrap private key bytes in zeroizing container or document the upstream gap with a tracking issue against coset.
+
+**Extension implementation:**
+
 - Extension scaffolding: `manifest.json` (MV3), `page-script.js`, `content-script.js`, `background.js`. **`page-script.js` injected via `chrome.scripting.executeScript({ world: "MAIN" })`** — required for CSP-strict sites.
 - Native messaging host: `extension-host` binary (Rust crate)
 - SolidJS popup for passkey selection (`PasskeyUseModal` lives here)
