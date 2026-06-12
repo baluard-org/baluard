@@ -239,6 +239,7 @@
     "allItems": "Todos los elementos",
     "favorites": "Favoritos",
     "login": "Inicio de sesión",
+    "passkeys": "Claves de acceso",
     "card": "Tarjeta",
     "identity": "Identidad",
     "secureNote": "Nota segura",
@@ -352,5 +353,20 @@
     "regenerate": "Regenerar",
     "copy": "Copiar",
     "copied": "¡Copiado!"
+  },
+  "passkey": {
+    "sectionTitle": "Claves de acceso",
+    "rp": "Servicio",
+    "user": "Usuario",
+    "counter": "Usos",
+    "created": "Creada",
+    "imported": "Importada",
+    "missingKeyWarning": "Falta la clave privada. Registra nuevamente esta clave de acceso con el servicio para poder usarla.",
+    "deleteBtn": "Eliminar clave de acceso",
+    "deleteTitle": "¿Eliminar clave de acceso?",
+    "deleteConfirm": "¿Eliminar la clave de acceso \"{{name}}\" de esta entrada? Esta acción no se puede deshacer.",
+    "deleteWarningTitle": "Sin otros métodos de autenticación",
+    "deleteOnlyAuth": "Esta entrada no tiene contraseña y esta es la única clave de acceso. Eliminarla significa que podrías perder el acceso a esta cuenta. Asegúrate de tener otra forma de iniciar sesión antes de eliminarla.",
+    "deleteError": "Error al eliminar la clave de acceso."
   }
 }

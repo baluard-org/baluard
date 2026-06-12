@@ -9,7 +9,7 @@ import { buildFolderCreatePayload } from "../lib/payload.js";
 import { selectSource, filterByCategory, filterByFolder, filterByTag, searchCiphers } from "../lib/filters.js";
 import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
-import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox } from "./Icon.jsx";
+import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox } from "./Icon.jsx";
 import CipherRow from "./CipherRow.jsx";
 import CipherDetail from "./CipherDetail.jsx";
 import AddEditCipherForm from "./AddEditCipherForm.jsx";
@@ -60,6 +60,7 @@ export default function VaultView() {
     { id: "allItems", name: "All items", icon: <IconGrid class="w-4 h-4 shrink-0" /> },
     { id: "favorites", name: "Favorites", icon: <IconHeart class="w-4 h-4 shrink-0" /> },
     { id: "login", name: "Login", icon: <IconLock class="w-4 h-4 shrink-0" /> },
+    { id: "passkeys", name: "Passkeys", icon: <IconFingerprint class="w-4 h-4 shrink-0" /> },
     { id: "card", name: "Card", icon: <IconCard class="w-4 h-4 shrink-0" /> },
     { id: "identity", name: "Identity", icon: <IconIdentity class="w-4 h-4 shrink-0" /> },
     { id: "secureNote", name: "Secure note", icon: <IconNote class="w-4 h-4 shrink-0" /> },

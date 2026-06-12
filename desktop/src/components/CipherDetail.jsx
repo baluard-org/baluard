@@ -5,10 +5,11 @@ import { useVault } from "../context/VaultContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { copyToClipboard } from "../lib/clipboard.js";
 import { daemon } from "../lib/daemon.js";
+import { toastError } from "../context/toastSignal.js";
 import { uriStr, formatCardNumber } from "../lib/utils.js";
 import { SECTION_LABEL } from "../lib/helpers.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
-import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh } from "./Icon.jsx";
+import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
 import CipherAvatar from "./CipherAvatar.jsx";
@@ -43,6 +44,19 @@ export default function CipherDetail(props) {
   const [totpCode, setTotpCode] = createSignal(null);
   const [attachLoading, setAttachLoading] = createSignal(false);
   const [totpCopied, setTotpCopied] = createSignal(false);
+  const [showPasskeyDelete, setShowPasskeyDelete] = createSignal(null); // { cipher_id, credential_id, name, isOnlyAuth }
+
+  async function deletePasskey() {
+    const pk = showPasskeyDelete();
+    if (!pk) return;
+    try {
+      await daemon("passkey.delete", JSON.stringify({ id: pk.cipher_id, credential_id: pk.credential_id }));
+      setShowPasskeyDelete(null);
+      await vault.refreshCiphers(t);
+    } catch (e) {
+      toastError(t("passkey.deleteError"));
+    }
+  }
 
   const cipher = () => props.cipher;
 
@@ -157,6 +171,110 @@ export default function CipherDetail(props) {
               </div>
             </Show>
           </div>
+        </Show>
+
+        {/* Passkeys section */}
+        <Show when={(cipher()?.type === "login" || !cipher()?.type) && (cipher()?.fido2_credentials?.length > 0)}>
+          <div class="space-y-3">
+            <h4 class={SECTION_LABEL}>{t("passkey.sectionTitle")}</h4>
+            <For each={cipher()?.fido2_credentials || []}>
+              {(pk, i) => {
+                const created = pk.creation_date ? new Date(pk.creation_date * 1000).toLocaleDateString() : "-";
+                const isMissing = pk.private_key_missing;
+                return (
+                  <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] space-y-2">
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <IconFingerprint class="w-4 h-4 text-[var(--color-primary)] shrink-0" />
+                        <span class="text-sm font-semibold text-[var(--color-text)] truncate">{pk.name || pk.rp_name || pk.rp_id}</span>
+                      </div>
+                      <Show when={isMissing}>
+                        <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20">{t("passkey.imported")}</span>
+                      </Show>
+                    </div>
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      <div>
+                        <span class="text-[var(--color-muted)]">{t("passkey.rp")}</span>
+                        <p class="text-[var(--color-text)] font-mono truncate">{pk.rp_id}</p>
+                      </div>
+                      <Show when={pk.user_name}>
+                        <div>
+                          <span class="text-[var(--color-muted)]">{t("passkey.user")}</span>
+                          <p class="text-[var(--color-text)] truncate">{pk.user_name}</p>
+                        </div>
+                      </Show>
+                      <div>
+                        <span class="text-[var(--color-muted)]">{t("passkey.counter")}</span>
+                        <p class="text-[var(--color-text)]">{pk.counter}</p>
+                      </div>
+                      <div>
+                        <span class="text-[var(--color-muted)]">{t("passkey.created")}</span>
+                        <p class="text-[var(--color-text)]">{created}</p>
+                      </div>
+                    </div>
+                    <Show when={isMissing}>
+                      <p class="text-[10px] text-amber-600">{t("passkey.missingKeyWarning")}</p>
+                    </Show>
+                    <div class="flex justify-end pt-1">
+                      <button
+                        onClick={() => {
+                          const c = cipher();
+                          const fido2 = c?.fido2_credentials || [];
+                          const hasPassword = !!c?.password;
+                          const hasOtherPasskeys = fido2.length > 1;
+                          setShowPasskeyDelete({
+                            cipher_id: c.id || c._meta?.id,
+                            credential_id: pk.credential_id,
+                            name: pk.name || pk.rp_name || pk.rp_id,
+                            isOnlyAuth: !hasPassword && !hasOtherPasskeys,
+                          });
+                        }}
+                        class="text-xs text-red-500 hover:text-red-400 transition-colors cursor-pointer"
+                      >{t("passkey.deleteBtn")}</button>
+                    </div>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
+
+        {/* Passkey delete confirmation modal */}
+        <Show when={showPasskeyDelete()}>
+          {(() => {
+            const pk = showPasskeyDelete();
+            return (
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="passkey-delete-title"
+                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+              >
+                <div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                  <h3 id="passkey-delete-title" class="text-lg font-bold text-[var(--color-text)] mb-2">{t("passkey.deleteTitle")}</h3>
+                  <div class="text-sm text-[var(--color-muted)] mb-4 space-y-2">
+                    <p>{t("passkey.deleteConfirm", { name: pk.name })}</p>
+                    <Show when={pk.isOnlyAuth}>
+                      <div class="p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+                        <p class="text-red-400 font-semibold text-xs mb-1">{t("passkey.deleteWarningTitle")}</p>
+                        <p class="text-red-400/80 text-xs">{t("passkey.deleteOnlyAuth")}</p>
+                      </div>
+                    </Show>
+                  </div>
+                  <div class="flex gap-3">
+                    <button
+                      onClick={() => setShowPasskeyDelete(null)}
+                      class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-sm font-semibold text-[var(--color-text)] hover:bg-[var(--color-card)] transition-colors cursor-pointer"
+                    >{t("entry.cancel")}</button>
+                    <button
+                      onClick={deletePasskey}
+                      class="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition-colors cursor-pointer"
+                    >{t("passkey.deleteBtn")}</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </Show>
 
         {/* Card fields */}
