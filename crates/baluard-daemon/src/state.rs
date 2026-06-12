@@ -836,12 +836,13 @@ impl VaultState {
         let origin_str = v["origin"].as_str().ok_or("Missing 'origin'")?;
         let origin = url::Url::parse(origin_str).map_err(|e| format!("Invalid origin: {e}"))?;
         let user_id: Vec<u8> = v["user_id"].as_str()
-            .map(|s| base64::engine::general_purpose::STANDARD.decode(s).unwrap_or_default())
+            .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok())
             .unwrap_or_else(|| rand::random::<[u8; 32]>().to_vec());
 
         // Build passkey index from vault
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() { return Err("Vault is locked".into()); }
         let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
         let mut ciphers = Vec::new();
         for meta in &metas {
@@ -885,6 +886,12 @@ impl VaultState {
 
     /// Complete a registration ceremony. Saves passkey to vault.
     /// Payload: `{ "ceremony_id": "...", "passkey_data": {...} }`
+    ///
+    /// SECURITY NOTE (Phase 1 only): passkey_data is echoed from the
+    /// challenge_register response. This is acceptable within the same-process
+    /// trust boundary (desktop). Phase 2 (browser extension) MUST store
+    /// passkey_data in CeremonyState and retrieve it here, never trusting
+    /// client-supplied data.
     pub async fn passkey_finish_register(&self, payload: &str) -> Result<String, String> {
         use baluard_core::crypto::webauthn::CeremonyState;
 
@@ -947,6 +954,7 @@ impl VaultState {
 
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() { return Err("Vault is locked".into()); }
         let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
         let mut ciphers = Vec::new();
         for meta in &metas {

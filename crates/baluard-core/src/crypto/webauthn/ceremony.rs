@@ -273,8 +273,7 @@ pub async fn run_assertion(
         .encode(&*authenticated.raw_id);
 
     let new_counter = counter_updates
-        .values()
-        .next()
+        .get(&*authenticated.raw_id)
         .copied()
         .unwrap_or(0);
 

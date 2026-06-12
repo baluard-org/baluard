@@ -123,9 +123,8 @@ pub fn passkey_to_passkey_data(
     let private_key = pk.key.clone().to_vec().ok()?;
     let credential_id = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .encode(&*pk.credential_id);
-    // Extract public key bytes from COSE key for key_value field.
-    // For ES256, the public key is the x || y coordinates.
-    // We store the full COSE key in private_key (contains both public + private).
+    // key_value stores the full COSE key (CBOR-encoded, same bytes as private_key).
+    // In Phase 2, extract just the public key (x || y coordinates) for interop.
     let key_value = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .encode(&private_key);
 

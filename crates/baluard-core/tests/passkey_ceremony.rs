@@ -132,7 +132,7 @@ async fn assertion_works_with_registered_passkey() {
         .expect("assertion should succeed");
 
     assert!(!assertion.credential_id_b64.is_empty());
-    assert!(assertion.new_counter >= 0, "counter should be non-negative");
+    assert!(assertion.new_counter == 0, "counter should be non-negative");
     assert!(!assertion.assertion_response.is_empty());
 }
 
@@ -188,7 +188,7 @@ async fn multi_passkey_different_rps() {
     )
     .await
     .expect("assert A");
-    assert!(assert_a.new_counter >= 0);
+    assert!(assert_a.new_counter == 0);
 
     // Assert against RP B
     let assert_b = run_assertion(
@@ -198,7 +198,7 @@ async fn multi_passkey_different_rps() {
     )
     .await
     .expect("assert B");
-    assert!(assert_b.new_counter >= 0);
+    assert!(assert_b.new_counter == 0);
 
     // Different credential IDs
     assert_ne!(assert_a.credential_id_b64, assert_b.credential_id_b64);
