@@ -2414,6 +2414,16 @@ impl VaultHandle {
                     if let Some(t) = d.totp_uri.as_mut() {
                         t.zeroize()
                     }
+                    if let Some(ref mut fido2_list) = d.fido2_credentials {
+                        for pk in fido2_list.iter_mut() {
+                            if let Some(k) = pk.private_key.as_mut() {
+                                k.zeroize()
+                            }
+                            if let Some(k) = pk.prf_key.as_mut() {
+                                k.zeroize()
+                            }
+                        }
+                    }
                 }
                 crate::types::CipherKind::Card(d) => {
                     if let Some(n) = d.number.as_mut() {
@@ -2425,17 +2435,6 @@ impl VaultHandle {
                 }
                 crate::types::CipherKind::SshKey(d) => {
                     if let Some(k) = d.private_key.as_mut() {
-                        k.zeroize()
-                    }
-                }
-                crate::types::CipherKind::Passkey(d) => {
-                    // The private key is the sensitive material. Zeroize
-                    // after use. prf_key is a derived secret for the PRF
-                    // extension (Phase 5), zeroize too when present.
-                    if let Some(k) = d.private_key.as_mut() {
-                        k.zeroize()
-                    }
-                    if let Some(k) = d.prf_key.as_mut() {
                         k.zeroize()
                     }
                 }
@@ -2968,6 +2967,7 @@ mod tests {
                 totp_uri: None,
                 autofill_on_page_load: false,
                 password_revision_date: None,
+                    fido2_credentials: None,
             }),
             favorite: false,
             notes: None,
@@ -3017,6 +3017,7 @@ mod tests {
                 uris: vec![],
                 totp_uri: None,
                 autofill_on_page_load: false,
+                    fido2_credentials: None,
                 password_revision_date: None,
             }),
             favorite: false,
@@ -3057,6 +3058,7 @@ mod tests {
                 password: Some("val".into()),
                 uris: vec![],
                 totp_uri: None,
+                    fido2_credentials: None,
                 autofill_on_page_load: false,
                 password_revision_date: None,
             }),
@@ -3109,6 +3111,7 @@ mod tests {
                 username: Some("user@gh.com".into()),
                 password: Some("s3cret".into()),
                 uris: vec![],
+                    fido2_credentials: None,
                 totp_uri: None,
                 autofill_on_page_load: false,
                 password_revision_date: None,

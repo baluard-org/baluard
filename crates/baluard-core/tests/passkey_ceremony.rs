@@ -13,7 +13,7 @@ use baluard_core::crypto::webauthn::{
     run_registration, run_assertion, CeremonyCache, CeremonyState, CEREMONY_TTL,
     BaluardCredentialStore, PasskeyIndex,
 };
-use baluard_core::types::{Cipher, CipherKind, CipherType, PasskeyData, Tier};
+use baluard_core::types::{Cipher, CipherKind, PasskeyData, Tier};
 use base64::Engine;
 use url::Url;
 
@@ -53,7 +53,15 @@ fn make_cipher(pk_data: PasskeyData) -> Box<Cipher> {
             pk_data.user_name.as_deref().unwrap_or("passkey")
         ),
         folder_id: None,
-        kind: CipherKind::Passkey(pk_data),
+        kind: CipherKind::Login(baluard_core::types::LoginData {
+            username: pk_data.user_name.clone(),
+            uris: vec![baluard_core::types::LoginUri {
+                uri: format!("https://{}", pk_data.rp_id),
+                match_strategy: baluard_core::types::UriMatchStrategy::Domain,
+            }],
+            fido2_credentials: Some(vec![pk_data]),
+            ..Default::default()
+        }),
         favorite: false,
         reprompt: false,
         notes: None,

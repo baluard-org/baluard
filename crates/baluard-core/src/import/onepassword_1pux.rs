@@ -251,6 +251,7 @@ fn parse_login(fields: &[&OnePuxField]) -> Option<CipherKind> {
         totp_uri: field_value(fields, "totp"),
         autofill_on_page_load: false,
         password_revision_date: None,
+                fido2_credentials: None,
     }))
 }
 

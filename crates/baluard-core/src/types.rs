@@ -313,10 +313,6 @@ pub enum CipherType {
     BankAccount,
     DriversLicense,
     Passport,
-    /// FIDO2/WebAuthn passkey. See [`PasskeyData`].
-    /// Discoverable (resident) credentials only; `residentKey: "required"` is
-    /// always set in `authenticatorSelection` (per docs/plan-passkey-support.md §4.5).
-    Passkey,
 }
 
 /// Login-specific cipher data.
@@ -334,6 +330,12 @@ pub struct LoginData {
     pub autofill_on_page_load: bool,
     #[serde(default)]
     pub password_revision_date: Option<u64>,
+    /// FIDO2/WebAuthn passkeys embedded in this login cipher.
+    /// Mirrors Bitwarden's `fido2Credentials[]` sub-array on Login items.
+    /// A single Login can hold multiple passkeys (e.g., multiple devices
+    /// registered for the same RP). `None` = no passkeys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fido2_credentials: Option<Vec<PasskeyData>>,
 }
 
 /// Card-specific cipher data.
@@ -593,10 +595,6 @@ pub enum CipherKind {
     BankAccount(BankAccountData),
     DriversLicense(DriversLicenseData),
     Passport(PassportData),
-    /// FIDO2/WebAuthn passkey cipher. See [`PasskeyData`].
-    /// First-class variant per docs/plan-passkey-support.md §4.1 (deviation
-    /// from Bitwarden's `fido2Credentials[]` sub-array on Login).
-    Passkey(PasskeyData),
 }
 
 impl CipherKind {
@@ -611,7 +609,6 @@ impl CipherKind {
             CipherKind::BankAccount(_) => CipherType::BankAccount,
             CipherKind::DriversLicense(_) => CipherType::DriversLicense,
             CipherKind::Passport(_) => CipherType::Passport,
-            CipherKind::Passkey(_) => CipherType::Passkey,
         }
     }
 }
@@ -822,6 +819,7 @@ impl CipherEnvelopeData {
                     totp_uri: self.totp_uri.take(),
                     autofill_on_page_load: false,
                     password_revision_date: None,
+                fido2_credentials: None,
                 });
             }
             _ => {
@@ -1086,6 +1084,7 @@ mod tests {
             totp_uri: None,
             autofill_on_page_load: true,
             password_revision_date: Some(1234567890),
+            fido2_credentials: None,
         });
         let json = serde_json::to_string(&login).unwrap();
         let back: CipherKind = serde_json::from_str(&json).unwrap();
@@ -1230,157 +1229,59 @@ mod tests {
                 assert_eq!(data.passport_number.as_deref(), Some("P12345"));
             }
             _ => panic!("expected Passport"),
-        }
+    }
 
-        // Passkey (Phase 0.1)
-        let aaguid = Uuid::parse_str("b1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f").unwrap();
-        let linked_login = Uuid::new_v4();
-        let passkey = CipherKind::Passkey(PasskeyData {
+    #[test]
+    fn login_data_with_fido2_credentials_round_trips() {
+        let pk = PasskeyData {
             credential_id: "ufJWp8YGlibm1Kd9XQBWN1WAw2jy5In2Xhon9HAqcXE".into(),
             key_type: "public-key".into(),
-            key_algorithm: "EDDSA".into(),
-            key_curve: "ED25519".into(),
+            key_algorithm: "ECDSA".into(),
+            key_curve: "P-256".into(),
             key_value: "AQCAgIA".into(),
             rp_id: "github.com".into(),
             rp_name: Some("GitHub".into()),
-            user_handle: Some(vec![1, 2, 3, 4, 5, 6, 7, 8]),
+            user_handle: Some(vec![1, 2, 3, 4]),
             user_name: Some("alex@example.com".into()),
-            user_display_name: Some("Alex Müller".into()),
+            user_display_name: Some("Alex".into()),
             counter: 0,
-            aaguid,
+            aaguid: Uuid::nil(),
             prf_key: None,
             private_key: Some(vec![0u8; 32]),
             private_key_missing: false,
-            linked_login_id: Some(linked_login),
+            linked_login_id: None,
             creation_date: 1718000000,
+        };
+        let login = CipherKind::Login(LoginData {
+            username: Some("alex@example.com".into()),
+            password: Some("s3cret".into()),
+            uris: vec![LoginUri { uri: "https://github.com".into(), match_strategy: UriMatchStrategy::Domain }],
+            totp_uri: None,
+            autofill_on_page_load: false,
+            password_revision_date: None,
+            fido2_credentials: Some(vec![pk]),
         });
-        let json = serde_json::to_string(&passkey).unwrap();
+        let json = serde_json::to_string(&login).unwrap();
         let back: CipherKind = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.cipher_type(), CipherType::Passkey);
         match back {
-            CipherKind::Passkey(data) => {
-                assert_eq!(data.credential_id, "ufJWp8YGlibm1Kd9XQBWN1WAw2jy5In2Xhon9HAqcXE");
-                assert_eq!(data.key_type, "public-key");
-                assert_eq!(data.key_algorithm, "EDDSA");
-                assert_eq!(data.key_curve, "ED25519");
-                assert_eq!(data.rp_id, "github.com");
-                assert_eq!(data.rp_name.as_deref(), Some("GitHub"));
-                assert_eq!(data.user_handle.as_deref(), Some(&[1u8, 2, 3, 4, 5, 6, 7, 8][..]));
-                assert_eq!(data.user_name.as_deref(), Some("alex@example.com"));
-                assert_eq!(data.user_display_name.as_deref(), Some("Alex Müller"));
-                assert_eq!(data.counter, 0);
-                assert_eq!(data.aaguid, aaguid);
-                assert_eq!(data.private_key.as_deref().map(|v| v.len()), Some(32));
-                assert!(!data.private_key_missing);
-                assert_eq!(data.linked_login_id, Some(linked_login));
-                assert_eq!(data.creation_date, 1718000000);
+            CipherKind::Login(data) => {
+                assert_eq!(data.username.as_deref(), Some("alex@example.com"));
+                let fido2 = data.fido2_credentials.unwrap();
+                assert_eq!(fido2.len(), 1);
+                assert_eq!(fido2[0].rp_id, "github.com");
+                assert_eq!(fido2[0].user_name.as_deref(), Some("alex@example.com"));
             }
-            _ => panic!("expected Passkey"),
+            _ => panic!("expected Login"),
         }
     }
 
     #[test]
-    fn passkey_imported_from_bitwarden_has_missing_private_key() {
-        // BW exports include fido2Credentials[] but not the private key.
-        // The import must mark these ciphers as view-only.
-        let passkey = PasskeyData {
-            credential_id: "ufJWp8YGlibm1Kd9XQBWN1WAw2jy5In2Xhon9HAqcXE".into(),
-            key_type: "public-key".into(),
-            key_algorithm: "ECDSA".into(),
-            key_curve: "P-256".into(),
-            key_value: "AQCAgIA".into(),
-            rp_id: "github.com".into(),
-            rp_name: Some("GitHub".into()),
-            user_handle: None,
-            user_name: Some("alex@example.com".into()),
-            user_display_name: None,
-            counter: 0,
-            aaguid: Uuid::nil(),
-            prf_key: None,
-            private_key: None,
-            private_key_missing: true,
-            linked_login_id: None,
-            creation_date: 0,
-        };
-        let json = serde_json::to_string(&passkey).unwrap();
-        let back: PasskeyData = serde_json::from_str(&json).unwrap();
-        assert!(back.private_key_missing);
-        assert!(back.private_key.is_none());
-        // The user must re-register to make this passkey usable.
-        // The desktop UI enforces this by checking `private_key_missing`
-        // before serving an assertion.
+    fn login_data_without_fido2_omits_field() {
+        let login = CipherKind::Login(LoginData::default());
+        let json = serde_json::to_string(&login).unwrap();
+        assert!(!json.contains("fido2_credentials"));
     }
-
-    #[test]
-    fn passkey_cipher_type_round_trip() {
-        // CipherKind::Passkey → CipherType::Passkey → back.
-        let passkey = CipherKind::Passkey(PasskeyData {
-            credential_id: "abc".into(),
-            key_type: "public-key".into(),
-            key_algorithm: "ECDSA".into(),
-            key_curve: "P-256".into(),
-            key_value: "xyz".into(),
-            rp_id: "example.com".into(),
-            aaguid: Uuid::nil(),
-            creation_date: 1,
-            rp_name: None,
-            user_handle: None,
-            user_name: None,
-            user_display_name: None,
-            counter: 0,
-            prf_key: None,
-            private_key: None,
-            private_key_missing: false,
-            linked_login_id: None,
-        });
-        assert_eq!(passkey.cipher_type(), CipherType::Passkey);
-        let ct = passkey.cipher_type();
-        let json = serde_json::to_string(&ct).unwrap();
-        assert_eq!(json, "\"passkey\"");
-        let back: CipherType = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, CipherType::Passkey);
-    }
-
-    #[test]
-    fn passkey_cipher_type_default_is_login() {
-        // Backward compatibility: default cipher type is still Login.
-        // Phase 0 of docs/plan-passkey-support.md says no migration needed
-        // for existing vaults; adding a new variant is additive.
-        assert_eq!(CipherType::default(), CipherType::Login);
-    }
-
-    #[test]
-    fn passkey_has_no_linked_fields() {
-        // Per docs/plan-passkey-support.md §4.1: passkey has no linked fields.
-        // The existing `_ => None` arm in resolve_linked_field already
-        // returns None for any cipher kind that doesn't match. This test
-        // documents that contract for passkey explicitly.
-        let passkey = PasskeyData {
-            credential_id: "abc".into(),
-            key_type: "public-key".into(),
-            key_algorithm: "EDDSA".into(),
-            key_curve: "ED25519".into(),
-            key_value: "xyz".into(),
-            rp_id: "example.com".into(),
-            aaguid: Uuid::nil(),
-            creation_date: 1,
-            rp_name: None,
-            user_handle: None,
-            user_name: None,
-            user_display_name: None,
-            counter: 0,
-            prf_key: None,
-            private_key: None,
-            private_key_missing: false,
-            linked_login_id: None,
-        };
-        let cipher = make_cipher(CipherKind::Passkey(passkey));
-        // No linked field type should resolve against a passkey.
-        assert_eq!(resolve_linked_field(&cipher, &LinkedFieldType::LoginUsername), None);
-        assert_eq!(resolve_linked_field(&cipher, &LinkedFieldType::LoginPassword), None);
-        assert_eq!(resolve_linked_field(&cipher, &LinkedFieldType::CardNumber), None);
-        assert_eq!(resolve_linked_field(&cipher, &LinkedFieldType::IdentityEmail), None);
-    }
+}
 
     #[test]
     fn migration_old_flat_format_to_login() {

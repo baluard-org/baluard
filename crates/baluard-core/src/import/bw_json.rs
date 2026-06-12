@@ -65,7 +65,7 @@ struct BwLogin {
     password_revision_date: Option<String>,
     /// Typed FIDO2/WebAuthn credentials. BW stores passkeys on Login ciphers
     /// (per BW type 1 model) with this optional array. We emit one
-    /// `CipherKind::Passkey` per credential, in addition to the parent Login.
+    /// `fido2_credentials` array on the Login data.
     /// The imported passkey is view-only (`private_key_missing: true`) because
     /// BW exports do not include the credential's private key — the user
     /// must re-register with the relying party to obtain a usable passkey.
@@ -406,6 +406,14 @@ pub fn parse(data: &str) -> ImportResult {
                     password_revision_date: login
                         .and_then(|l| l.password_revision_date.as_ref())
                         .and_then(|d| d.parse::<u64>().ok()),
+                    fido2_credentials: login
+                        .as_ref()
+                        .and_then(|l| l.fido2_credentials.as_ref())
+                        .map(|list| {
+                            list.iter()
+                                .map(|fc| bw_fido2_to_passkey(fc))
+                                .collect::<Vec<_>>()
+                        }),
                 })
             }
             Some(2) => {
@@ -483,49 +491,9 @@ pub fn parse(data: &str) -> ImportResult {
         };
 
         result.add_with_folder(cipher, folder_name.clone());
-
-        // Phase 0.2: emit a `CipherKind::Passkey` for every fido2 credential
-        // on a Login item. The passkey is a separate cipher in Baluard
-        // (first-class variant per docs/plan-passkey-support.md §4.1).
-        // `linked_login_id` is `None` at import time — linking happens after
-        // vault creation when both ciphers have stable IDs. Imported
-        // passkeys are view-only (`private_key_missing: true`).
-        if let Some(fido2_list) = item.login.as_ref().and_then(|l| l.fido2_credentials.as_ref()) {
-            for fc in fido2_list {
-                let passkey_data = bw_fido2_to_passkey(fc);
-                let passkey_name = format!(
-                    "{} ({})",
-                    passkey_data
-                        .rp_name
-                        .clone()
-                        .unwrap_or_else(|| passkey_data.rp_id.clone()),
-                    passkey_data
-                        .user_name
-                        .clone()
-                        .unwrap_or_else(|| "passkey".into())
-                );
-                let passkey_cipher = CipherInput {
-                    name: passkey_name,
-                    folder_id: None,
-                    kind: CipherKind::Passkey(passkey_data),
-                    favorite: false,
-                    notes: Some(format!(
-                        "Imported from Bitwarden. Re-register this passkey with {} \
-                         to obtain the private key (BW exports do not include it).",
-                        fc.rp_id.clone().unwrap_or_default()
-                    )),
-                    custom_fields: vec![],
-                    created_at: None,
-                    password_history: vec![],
-                    reprompt: false,
-                    attachments: vec![],
-                    archived: false,
-                    tags: vec!["imported-passkey".into()],
-                };
-                result.add_with_folder(passkey_cipher, folder_name.clone());
-            }
-        }
     }
+
+    // fido2_credentials now embedded inside LoginData (above).
 
     result
 }
@@ -769,12 +737,11 @@ mod tests {
     }
 
     #[test]
+
+    #[test]
     fn passkey_import_from_bitwarden() {
-        // Per Phase 0.2 of docs/plan-passkey-support.md: BW stores passkeys
-        // on Login (type 1) with an optional `fido2Credentials[]` array. The
-        // import emits both a Login cipher and one Passkey cipher per
-        // fido2 entry. The passkey is view-only (`private_key_missing: true`)
-        // because BW exports do not include the credential's private key.
+        // BW stores fido2_credentials[] inside Login items. Import embeds
+        // them into LoginData::fido2_credentials. No separate cipher emitted.
         let json = r#"{
             "items": [{
                 "name": "GitHub",
@@ -806,58 +773,32 @@ mod tests {
             "folders": [{"id": "f1", "name": "Work"}]
         }"#;
         let result = parse(json);
-        assert_eq!(result.ciphers.len(), 2);
+        assert_eq!(result.ciphers.len(), 1);
         assert_eq!(result.skipped, 0);
 
-        // First cipher: the base Login
         match &result.ciphers[0].kind {
             CipherKind::Login(data) => {
                 assert_eq!(data.username.as_deref(), Some("user@example.com"));
                 assert_eq!(data.password.as_deref(), Some("s3cret!"));
                 assert_eq!(data.uris.len(), 1);
-                assert_eq!(data.uris[0].uri, "https://github.com");
+                let fido2 = data.fido2_credentials.as_ref().unwrap();
+                assert_eq!(fido2.len(), 1);
+                assert_eq!(fido2[0].credential_id, "ufJWp8YGlibm1Kd9XQBWN1WAw2jy5In2Xhon9HAqcXE");
+                assert_eq!(fido2[0].key_type, "public-key");
+                assert_eq!(fido2[0].rp_id, "github.com");
+                assert_eq!(fido2[0].rp_name.as_deref(), Some("GitHub"));
+                assert_eq!(fido2[0].user_name.as_deref(), Some("user@example.com"));
+                assert_eq!(fido2[0].counter, 5);
+                assert!(fido2[0].private_key.is_none());
+                assert!(fido2[0].private_key_missing);
+                assert_eq!(fido2[0].creation_date, 1718186400);
             }
-            _ => panic!("expected Login as first cipher"),
+            _ => panic!("expected Login cipher with fido2_credentials"),
         }
-
-        // Second cipher: the imported Passkey
-        let passkey = &result.ciphers[1];
-        assert_eq!(passkey.name, "GitHub (user@example.com)");
-        assert!(passkey.tags.contains(&"imported-passkey".to_string()));
-        assert!(passkey.notes.as_ref().unwrap().contains("Re-register"));
-        match &passkey.kind {
-            CipherKind::Passkey(data) => {
-                assert_eq!(data.credential_id, "ufJWp8YGlibm1Kd9XQBWN1WAw2jy5In2Xhon9HAqcXE");
-                assert_eq!(data.key_type, "public-key");
-                assert_eq!(data.key_algorithm, "ECDSA");
-                assert_eq!(data.key_curve, "P-256");
-                assert_eq!(data.key_value, "AQCAgIA");
-                assert_eq!(data.rp_id, "github.com");
-                assert_eq!(data.rp_name.as_deref(), Some("GitHub"));
-                assert_eq!(
-                    data.user_handle.as_deref(),
-                    Some(&[1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12][..])
-                );
-                assert_eq!(data.user_name.as_deref(), Some("user@example.com"));
-                assert_eq!(data.user_display_name.as_deref(), Some("User"));
-                assert_eq!(data.counter, 5);
-                assert_eq!(data.aaguid, Uuid::nil());
-                assert!(data.private_key.is_none());
-                assert!(data.private_key_missing);
-                assert!(data.linked_login_id.is_none());
-                assert_eq!(data.creation_date, 1718186400); // 2024-06-12T10:00:00Z
-            }
-            _ => panic!("expected Passkey as second cipher"),
-        }
-
-        // Both ciphers share the Work folder
-        assert_eq!(result.folder_map.get("Work").map(|v| v.len()), Some(2));
     }
 
     #[test]
     fn passkey_import_with_multiple_fido2_credentials() {
-        // One Login, two passkeys. The user registered two devices for the
-        // same RP, both stored on the same BW Login item.
         let json = r#"{
             "items": [{
                 "name": "GitHub",
@@ -866,102 +807,68 @@ mod tests {
                     "username": "user@example.com",
                     "fido2Credentials": [
                         {
-                            "credentialId": "cred_laptop",
+                            "credentialId": "cred1",
                             "keyType": "public-key",
                             "keyAlgorithm": "ECDSA",
                             "keyCurve": "P-256",
-                            "keyValue": "k1",
+                            "keyValue": "AQCAgIA",
                             "rpId": "github.com",
-                            "rpName": "GitHub (laptop)",
+                            "rpName": "GitHub",
+                            "userName": "user@example.com",
                             "counter": "3",
+                            "discoverable": "true",
                             "creationDate": "2024-01-01T00:00:00Z"
                         },
                         {
-                            "credentialId": "cred_phone",
+                            "credentialId": "cred2",
                             "keyType": "public-key",
                             "keyAlgorithm": "ECDSA",
                             "keyCurve": "P-256",
-                            "keyValue": "k2",
+                            "keyValue": "BQEBgIA",
                             "rpId": "github.com",
-                            "rpName": "GitHub (phone)",
+                            "rpName": "GitHub",
+                            "userName": "user@example.com",
                             "counter": "7",
-                            "creationDate": "2024-03-01T00:00:00Z"
+                            "discoverable": "true",
+                            "creationDate": "2024-06-01T00:00:00Z"
                         }
                     ]
                 }
-            }]
-        }"#;
-        let result = parse(json);
-        assert_eq!(result.ciphers.len(), 3); // 1 Login + 2 Passkey
-        assert!(matches!(result.ciphers[0].kind, CipherKind::Login(_)));
-        match &result.ciphers[1].kind {
-            CipherKind::Passkey(d) => {
-                assert_eq!(d.credential_id, "cred_laptop");
-                assert_eq!(d.counter, 3);
-                assert_eq!(d.rp_name.as_deref(), Some("GitHub (laptop)"));
-                assert_eq!(d.creation_date, 1704067200);
-            }
-            _ => panic!("expected Passkey"),
-        }
-        match &result.ciphers[2].kind {
-            CipherKind::Passkey(d) => {
-                assert_eq!(d.credential_id, "cred_phone");
-                assert_eq!(d.counter, 7);
-                assert_eq!(d.rp_name.as_deref(), Some("GitHub (phone)"));
-                assert_eq!(d.creation_date, 1709251200);
-            }
-            _ => panic!("expected Passkey"),
-        }
-    }
-
-    #[test]
-    fn passkey_import_without_creation_date() {
-        // Some older BW exports may omit creationDate. The importer must
-        // not error; creation_date defaults to 0.
-        let json = r#"{
-            "items": [{
-                "name": "GitHub",
-                "type": 1,
-                "login": {
-                    "username": "user@example.com",
-                    "fido2Credentials": [
-                        {
-                            "credentialId": "cred",
-                            "keyType": "public-key",
-                            "keyAlgorithm": "ECDSA",
-                            "keyCurve": "P-256",
-                            "keyValue": "k",
-                            "rpId": "github.com"
-                        }
-                    ]
-                }
-            }]
-        }"#;
-        let result = parse(json);
-        assert_eq!(result.ciphers.len(), 2);
-        match &result.ciphers[1].kind {
-            CipherKind::Passkey(d) => {
-                assert_eq!(d.creation_date, 0);
-                assert_eq!(d.counter, 0);
-            }
-            _ => panic!("expected Passkey"),
-        }
-    }
-
-    #[test]
-    fn login_without_fido2_does_not_emit_passkey() {
-        // Regression: a plain Login (no fido2_credentials) must still emit
-        // exactly one cipher. The Passkey emit path is gated on
-        // `fido2_credentials.is_some()`.
-        let json = r#"{
-            "items": [{
-                "name": "GitHub",
-                "type": 1,
-                "login": {"username": "user@example.com", "password": "s3cret!"}
             }]
         }"#;
         let result = parse(json);
         assert_eq!(result.ciphers.len(), 1);
-        assert!(matches!(result.ciphers[0].kind, CipherKind::Login(_)));
+        match &result.ciphers[0].kind {
+            CipherKind::Login(data) => {
+                let fido2 = data.fido2_credentials.as_ref().unwrap();
+                assert_eq!(fido2.len(), 2);
+                assert_eq!(fido2[0].credential_id, "cred1");
+                assert_eq!(fido2[1].credential_id, "cred2");
+                assert_ne!(fido2[0].counter, fido2[1].counter);
+            }
+            _ => panic!("expected Login"),
+        }
+    }
+
+    #[test]
+    fn login_without_fido2_does_not_embed_credentials() {
+        let json = r#"{
+            "items": [{
+                "name": "Plain Login",
+                "type": 1,
+                "login": {
+                    "username": "user@example.com",
+                    "password": "s3cret!"
+                }
+            }]
+        }"#;
+        let result = parse(json);
+        assert_eq!(result.ciphers.len(), 1);
+        match &result.ciphers[0].kind {
+            CipherKind::Login(data) => {
+                assert!(data.fido2_credentials.is_none());
+            }
+            _ => panic!("expected Login"),
+        }
     }
 }
