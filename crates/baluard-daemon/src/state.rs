@@ -800,31 +800,28 @@ impl VaultState {
                 continue;
             }
             if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
-                match &c.kind {
-                    baluard_core::types::CipherKind::Login(data) => {
-                        let has_password = data.password.is_some();
-                        if let Some(ref fido2_list) = data.fido2_credentials {
-                            for pk in fido2_list {
-                                if rp_filter.map_or(true, |rp| pk.rp_id == rp) {
-                                    passkeys.push(serde_json::json!({
-                                        "id": meta.id.to_string(),
-                                        "login_name": meta.name,
-                                        "has_password": has_password,
-                                        "pk_name": pk.name,
-                                        "cipher_type": "login",
-                                        "favorite": meta.favorite,
-                                        "rp_id": pk.rp_id,
-                                        "rp_name": pk.rp_name,
-                                        "user_name": pk.user_name,
-                                        "credential_id": pk.credential_id,
-                                        "counter": pk.counter,
-                                        "private_key_missing": pk.private_key_missing,
-                                    }));
-                                }
+                if let baluard_core::types::CipherKind::Login(data) = &c.kind {
+                    let has_password = data.password.is_some();
+                    if let Some(ref fido2_list) = data.fido2_credentials {
+                        for pk in fido2_list {
+                            if rp_filter.is_none_or(|rp| pk.rp_id == rp) {
+                                passkeys.push(serde_json::json!({
+                                    "id": meta.id.to_string(),
+                                    "login_name": meta.name,
+                                    "has_password": has_password,
+                                    "pk_name": pk.name,
+                                    "cipher_type": "login",
+                                    "favorite": meta.favorite,
+                                    "rp_id": pk.rp_id,
+                                    "rp_name": pk.rp_name,
+                                    "user_name": pk.user_name,
+                                    "credential_id": pk.credential_id,
+                                    "counter": pk.counter,
+                                    "private_key_missing": pk.private_key_missing,
+                                }));
                             }
                         }
                     }
-                    _ => {}
                 }
             }
         }

@@ -1,0 +1,65 @@
+{
+  "name": "Figma (Imported Passkey)",
+  "kind": {
+    "type": "login",
+    "data": {
+      "username": "esteban@actitud.xyz",
+      "password": "F1gm@D3sign!",
+      "uris": [
+        {
+          "uri": "https://figma.com",
+          "match_strategy": "domain"
+        }
+      ],
+      "fido2_credentials": [
+        {
+          "credential_id": "Qm9VGtY4xKl2R7fZpMnS8iAwJcC3qE6dUbN5hTkvXwPy",
+          "key_type": "public-key",
+          "key_algorithm": "ECDSA",
+          "key_curve": "P-256",
+          "key_value": "pQECAzYBAFAAY2hhcmdlX2F1dGhfZGF0YV9iNjRfmZjg2NWUyZmQ3NzRlMGIxMTJjZWE0MWZkYTM1ODIwMDJlNzA3YjQ0NDYxYjQ2MDg0MDA4MDAxMGUwNTA1MzAyMTYwMTIxYzA0",
+          "rp_id": "figma.com",
+          "rp_name": "Figma",
+          "user_handle": [
+            100,
+            101,
+            115,
+            105,
+            103,
+            110,
+            64,
+            97,
+            99,
+            116,
+            105,
+            116,
+            117,
+            100,
+            46,
+            120,
+            121,
+            122
+          ],
+          "user_name": "esteban@actitud.xyz",
+          "user_display_name": "Esteban Forge",
+          "counter": 0,
+          "aaguid": "00000000-0000-0000-0000-000000000000",
+          "prf_key": null,
+          "private_key": null,
+          "private_key_missing": true,
+          "linked_login_id": null,
+          "creation_date": 1718600000,
+          "name": "Imported (no key)"
+        }
+      ],
+      "totp_uri": null,
+      "autofill_on_page_load": false,
+      "password_revision_date": null
+    }
+  },
+  "notes": "Imported from Bitwarden. Private key missing.",
+  "favorite": false,
+  "tags": [
+    "work"
+  ]
+}

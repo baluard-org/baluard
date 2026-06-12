@@ -16,8 +16,6 @@
 
 ## Current Status
 
-**0 clippy errors workspace-wide. 360 tests pass.**
-
 Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done** (embedded in LoginData, daemon IPC, CLI).
 
 **Monorepo Structure**:
