@@ -2,6 +2,7 @@ import { Show } from "solid-js";
 import { Transition } from "solid-transition-group";
 import { useI18n } from "../i18n/index.jsx";
 import FocusTrap from "./FocusTrap.jsx";
+import { Button } from "./Primitives.jsx";
 
 export default function ArchiveConfirmModal(props) {
   const { t } = useI18n();
@@ -23,18 +24,18 @@ export default function ArchiveConfirmModal(props) {
             <h3 id="archive-confirm-title" class="text-lg font-bold text-[var(--color-text)] mb-2">{t("entry.archiveTitle")}</h3>
             <p id="archive-confirm-desc" class="text-sm text-[var(--color-muted)] mb-6">{t("entry.archiveConfirm")}</p>
             <div class="flex gap-3">
-              <button
+              <Button
                 onClick={() => props.setShow(false)}
-                class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] font-semibold transition-all cursor-pointer"
+                class="flex-1 py-2.5"
               >
                 {t("entry.cancel")}
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => { props.onConfirm?.(); props.setShow(false); }}
-                class="flex-1 py-2.5 rounded-xl bg-amber-950/40 text-amber-400 border border-amber-900/30 hover:bg-amber-950/60 font-semibold transition-all cursor-pointer"
+                class="flex-1 py-2.5 bg-amber-950/40 text-amber-400 border border-amber-900/30 hover:bg-amber-950/65"
               >
                 {t("entry.archive")}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

@@ -10,7 +10,7 @@
   --color-border: #1d3a3d;
   --color-border-focus: #b3e55c;
   --color-text: #f3f4f6;
-  --color-muted: #8fa3a6;
+  --color-muted: #a2b7ba;
   --color-primary: #b3e55c;
   --color-primary-text: #102427;
   --color-primary-hover: #c5f279;
@@ -29,13 +29,19 @@
   --color-border: #d1dbdb;
   --color-border-focus: #102427;
   --color-text: #102427;
-  --color-muted: #5e7275;
+  --color-muted: #495c5f;
   --color-primary: #102427;
   --color-primary-text: #ffffff;
   --color-primary-hover: #1b383c;
   --color-accent: #7c3aed;
   --color-danger: #ef4444;
   --color-success: #10b981;
+}
+
+/* Global focus outlines for keyboard navigation accessibility */
+*:focus-visible {
+  outline: 2px solid var(--color-primary) !important;
+  outline-offset: 2px !important;
 }
 
 body {
