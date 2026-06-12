@@ -96,24 +96,40 @@ All commands run from the project root. `just` reads the `justfile`.
 ```
 crates/baluard-core/     # All crypto, vault format, key lifecycle, git sync
   src/crypto/          # KDF, AEAD, HKDF, HPKE, Ed25519, TOTP (RFC 6238)
-  src/keys/            # Key hierarchy, epochs, rotation
-  src/vault/           # Vault handle, cipher CRUD, padding, folders
-  src/sync/            # Git sync engine (git2-rs)
+  src/keys/            # Key hierarchy, epochs, rotation, nonces
+  src/vault/           # Vault handle, cipher CRUD, padding, folders, manifest, canary, attachment, avatar, slug
+  src/sync/            # Git sync engine (git2-rs), conflict resolution, state machine, known_hosts, credentials
+  src/import/          # 8 import parsers (bw_json/csv, chrome/firefox/lastpass/1password_csv, 1pux, keepass) + 2 exports
+  src/providers/       # Git provider abstraction: github, gitlab, codeberg adapters + token store
+  src/biometric.rs     # OS-keychain-backed MP escrow
+  src/device_manager.rs# Device registry, rotation, activity, enrollment
+  src/devices.rs       # Device entry types
+  src/emergency.rs     # Break-glass access
+  src/health.rs        # Password health report
+  src/integrity.rs     # Canary checks + rollback manifest
+  src/orgs.rs          # Team sharing / RBAC
+  src/recovery.rs      # BIP-39 recovery
   src/paths.rs         # Platform-correct base dirs (data, socket, logs, token)
   src/types.rs         # CipherKind, CipherInput, CipherMeta, all data structs
+  src/error.rs         # BaluardError enum
 crates/baluard-cli/      # Terminal client (clap)
+  src/main.rs          # Command dispatch + clap definitions
   src/client.rs        # Protobuf socket client, session tokens
-  src/commands/        # Dual-mode handlers (daemon + --direct)
+  src/commands/        # Dual-mode handlers (daemon + --direct) -- single mod.rs file
 crates/baluard-daemon/   # Background IPC daemon
-  src/handler.rs       # Protobuf routing, password zeroize
+  src/main.rs          # tokio listener, SIGINT/SIGTERM, 0600 perms
+  src/handler.rs       # Protobuf routing (~72 routes), password zeroize, token-gated
   src/state.rs         # VaultState (Arc<RwLock<Option<VaultHandle>>>)
+  src/rate_limit.rs    # Per-action rate limiting
+  src/socket_path.rs   # Platform socket path resolution
+  src/crypto.rs        # Crypto module glue
 desktop/               # Tauri v2 + SolidJS + Tailwind
   src-tauri/           # Rust backend (sidecar daemon management)
   src/                 # SolidJS frontend
-    __tests__/          # Vitest tests (96 tests: payload, utils, filters, cipherSchema)
-    components/         # 19 components including Icon.jsx (40+ SVG icons)
-    context/            # AuthContext, VaultContext, errorSignal, themeSignal
-    lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, eff-words.js
+    __tests__/          # Vitest tests (89 tests: payload 32, utils 32, filters 18, cipherSchema 7)
+    components/         # 26 components including Icon.jsx (40+ SVG icons)
+    context/            # AuthContext.jsx, VaultContext.jsx, themeSignal.js, toastSignal.js
+    lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, eff-words.js, wordlist-en.js, wordlist-es.js
 proto/                 # Protobuf schemas (compiled via prost)
 docs/                  # Architecture & design docs
 ```

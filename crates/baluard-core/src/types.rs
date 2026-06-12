@@ -731,6 +731,47 @@ impl CipherEnvelopeData {
         }
         self
     }
+
+    /// Create from a CipherInput, extracting flat login fields for backward compat.
+    pub fn from_input(input: &CipherInput) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let created_at = input.created_at.unwrap_or(now);
+
+        // Extract login-specific flat fields for backward compat serialization
+        let (username, password, uris, totp_uri) = match &input.kind {
+            CipherKind::Login(data) => (
+                data.username.clone(),
+                data.password.clone(),
+                data.uris.iter().map(|u| u.uri.clone()).collect(),
+                data.totp_uri.clone(),
+            ),
+            _ => (None, None, Vec::new(), None),
+        };
+
+        Self {
+            name: input.name.clone(),
+            folder_id: input.folder_id,
+            kind: input.kind.clone(),
+            favorite: input.favorite,
+            reprompt: input.reprompt,
+            notes: input.notes.clone(),
+            totp_uri,
+            custom_fields: input.custom_fields.clone(),
+            username,
+            password,
+            uris,
+            created_at,
+            updated_at: now,
+            password_history: input.password_history.clone(),
+            attachments: input.attachments.clone(),
+            archived: input.archived,
+            tags: input.tags.clone(),
+        }
+    }
 }
 
 /// Decrypted cipher data.

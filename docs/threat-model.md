@@ -38,7 +38,7 @@
 
 ### T4: Evicted Space Member (Offboarding Revocation)
 - **Threat**: Evicted member tries to decrypt new entries pushed to the Space.
-- **Control**: The Admin rotates the Space Group Key. Every remaining entry is re-encrypted with the new Group Key. The access list `metadata/access_list.json` is updated to exclude the evicted member's public key wrapper. Future commits are unreadable to the evicted user.
+- **Control**: The Admin rotates the Space Group Key. Every remaining entry is re-encrypted with the new Group Key. The access list `meta/access_list.json` is updated to exclude the evicted member's public key wrapper. Future commits are unreadable to the evicted user.
 
 ### T5: Active Git Remote Adversary (Swap/Rollback)
 - **Threat**: The git remote host (or any party with push access) modifies vault entries by renaming, replacing, or rolling back encrypted files. Without integrity binding, the victim decrypts the wrong entry and sends its contents to an attacker-controlled service (CVE-2020-28086 class attack).

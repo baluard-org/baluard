@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Updated:** 2026-06-10
+**Updated:** 2026-06-12
 
 ## OVERVIEW
 Project: **Baluard** (Git-native password manager)
@@ -41,7 +41,7 @@ baluard/
 │       ├── App.jsx             # Root component (thin provider wrapper)
 │       ├── components/         # 26 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, etc.)
 │       ├── context/            # AuthContext, VaultContext, errorSignal, themeSignal, toastSignal
-│       ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js
+│       ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, eff-words.js, wordlist-{en,es}.js
 │       ├── __tests__/          # vitest tests (payload, utils, filters, cipherSchema)
 │       └── i18n/locales/       # en.json, es.json (all user-facing strings)
 ├── proto/                      # Protobuf schemas (compiled via prost)
@@ -158,7 +158,7 @@ Daemon-side via `ssh-key` crate. 2 key types: Ed25519 (default/recommended), ECD
 Display name, subtitle, avatar stored in `VaultSettings`. Avatar as file in vault (`meta/avatar.{ext}`). Sidebar reads from VaultContext profile signals. SettingsModal syncs on close via `createEffect`.
 
 ### Vault Creation Wizard
-Multi-step wizard for both CLI and desktop. CLI: `baluard init` with `--name`, `--subtitle`, `--theme`, `--lang`, `--auto-lock` flags + interactive fallback. Desktop: 3-step flow (language+password -> recovery phrase -> profile+preferences). `VaultCreator` builder chains `.profile()` + `.preferences()` on `execute()`. Desktop applies post-creation via `settings.set` + `locale.save` IPC.
+Multi-step wizard for both CLI and desktop. CLI: `baluard init` with `--profile`, `--name`, `--slug`, `--theme`, `--lang`, `--auto-lock` flags + interactive fallback. Desktop: 3-step flow (language+password -> recovery phrase -> profile+preferences). `VaultCreator` builder chains `.profile()` + `.preferences()` on `execute()`. Desktop applies post-creation via `settings.set` + `locale.save` IPC. `--subtitle` was removed (2026-06-11) after the profile step absorbed it.
 
 ### ThemeMode
 Typed enum (`Light`/`Dark`/`System`) replacing `Option<String>` on `VaultSettings.theme`. Case-insensitive serde for backward compat. Default: `System`.

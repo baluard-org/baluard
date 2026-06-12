@@ -57,6 +57,10 @@ pub struct VaultCreationResult {
 }
 
 /// Execute the vault creation ceremony in memory.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use VaultCreator builder instead. This function will be removed in a future release."
+)]
 pub fn create_vault_ceremony(
     master_password: &str,
     profile: KdfProfile,
@@ -100,51 +104,10 @@ pub fn create_vault_ceremony(
     let trust_fingerprint = hasher.finalize().into();
 
     // Step 9: KEK canary (encrypted with Session Key for password verification)
-    let canary_nonce = crate::crypto::aead::build_nonce(0, vault_id);
-    let canary_header = crate::types::EnvelopeHeader {
-        version: crate::BALUARD_VERSION,
-        alg_id: crate::ALG_AES_256_GCM,
-        key_epoch: 0,
-        nonce_counter: 0,
-        update_seq: 0,
-        tier: None,
-    };
-    let canary_envelope = crate::crypto::aead::encrypt(
-        &session_key,
-        b"baluard-kek-ok",
-        b"baluard-kek-canary-v1",
-        &canary_nonce,
-        canary_header,
-    )?;
-    let kek_canary = crate::vault::envelope::serialize(&canary_envelope)?;
+    let kek_canary = super::canary::create_kek_canary(&session_key, vault_id)?;
 
     // Step 10: Root Key canary (encrypted with RK-derived key for Root Key verification)
-    let rk_canary_key = {
-        use hkdf::Hkdf;
-        use sha2::Sha256;
-        let hkdf = Hkdf::<Sha256>::new(None, root_key.as_bytes());
-        let mut key = [0u8; 32];
-        hkdf.expand(b"baluard-rk-canary-v1", &mut key)
-            .expect("32 bytes is valid for HKDF-SHA256");
-        key
-    };
-    let rk_canary_nonce = crate::crypto::aead::build_nonce(0, vault_id);
-    let rk_canary_header = crate::types::EnvelopeHeader {
-        version: crate::BALUARD_VERSION,
-        alg_id: crate::ALG_AES_256_GCM,
-        key_epoch: 1,
-        nonce_counter: 0,
-        update_seq: 0,
-        tier: None,
-    };
-    let rk_canary_envelope = crate::crypto::aead::encrypt(
-        &rk_canary_key,
-        b"baluard-rk-ok",
-        b"baluard-rk-canary-v1",
-        &rk_canary_nonce,
-        rk_canary_header,
-    )?;
-    let rk_canary = crate::vault::envelope::serialize(&rk_canary_envelope)?;
+    let rk_canary = super::canary::create_rk_canary(&root_key, vault_id, 1)?;
 
     Ok(VaultCreationResult {
         vault_id,
@@ -354,26 +317,6 @@ impl<'a> VaultCreator<'a> {
         };
 
         let path = self.path.clone();
-        let write_secret = |file_path: &Path, data: &[u8]| -> Result<(), BaluardError> {
-            std::fs::write(file_path, data).map_err(|e| {
-                BaluardError::from(VaultError::Corrupt(format!(
-                    "Write {}: {e}",
-                    file_path.display()
-                )))
-            })?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(file_path, std::fs::Permissions::from_mode(0o600))
-                    .map_err(|e| {
-                        BaluardError::from(VaultError::Corrupt(format!(
-                            "chmod {}: {e}",
-                            file_path.display()
-                        )))
-                    })?;
-            }
-            Ok(())
-        };
 
         match &self.mode {
             CeremonyMode::Create => {
@@ -434,50 +377,8 @@ impl<'a> VaultCreator<'a> {
                 let trust_fingerprint: [u8; 32] = hasher.finalize().into();
 
                 // Canaries
-                let canary_nonce = crate::crypto::aead::build_nonce(0, vault_id);
-                let canary_header = crate::types::EnvelopeHeader {
-                    version: crate::BALUARD_VERSION,
-                    alg_id: crate::ALG_AES_256_GCM,
-                    key_epoch: 0,
-                    nonce_counter: 0,
-                    update_seq: 0,
-                    tier: None,
-                };
-                let canary_envelope = crate::crypto::aead::encrypt(
-                    &session_key,
-                    b"baluard-kek-ok",
-                    b"baluard-kek-canary-v1",
-                    &canary_nonce,
-                    canary_header,
-                )?;
-                let kek_canary = crate::vault::envelope::serialize(&canary_envelope)?;
-
-                let mut rk_canary_key = {
-                    use hkdf::Hkdf;
-                    use sha2::Sha256;
-                    let hkdf = Hkdf::<Sha256>::new(None, root_key.as_bytes());
-                    let mut key = [0u8; 32];
-                    hkdf.expand(b"baluard-rk-canary-v1", &mut key).unwrap();
-                    key
-                };
-                let rk_canary_nonce = crate::crypto::aead::build_nonce(0, vault_id);
-                let rk_canary_header = crate::types::EnvelopeHeader {
-                    version: crate::BALUARD_VERSION,
-                    alg_id: crate::ALG_AES_256_GCM,
-                    key_epoch: 1,
-                    nonce_counter: 0,
-                    update_seq: 0,
-                    tier: None,
-                };
-                let rk_canary_envelope = crate::crypto::aead::encrypt(
-                    &rk_canary_key,
-                    b"baluard-rk-ok",
-                    b"baluard-rk-canary-v1",
-                    &rk_canary_nonce,
-                    rk_canary_header,
-                )?;
-                let rk_canary = crate::vault::envelope::serialize(&rk_canary_envelope)?;
-                rk_canary_key.zeroize();
+                let kek_canary = super::canary::create_kek_canary(&session_key, vault_id)?;
+                let rk_canary = super::canary::create_rk_canary(&root_key, vault_id, 1)?;
 
                 let mut registry = crate::devices::DeviceRegistry::new();
                 let pub_enc = device_x25519_public;
@@ -491,12 +392,12 @@ impl<'a> VaultCreator<'a> {
                 )?;
 
                 // Write Files
-                write_secret(
+                super::write_vault_file(
                     &path.join("meta/devices.json"),
                     serde_json::to_string_pretty(&registry).unwrap().as_bytes(),
                 )?;
 
-                write_secret(
+                super::write_vault_file(
                     &path.join("meta/kdf-params.json"),
                     serde_json::to_string_pretty(&kdf_params)
                         .unwrap()
@@ -509,7 +410,7 @@ impl<'a> VaultCreator<'a> {
                     "encrypted_key": hex::encode(wrapped_root_key.1),
                     "tag": hex::encode(wrapped_root_key.2),
                 });
-                write_secret(
+                super::write_vault_file(
                     &path.join(format!("meta/keywrap/{device_id}.json")),
                     serde_json::to_string_pretty(&keywrap_data)
                         .unwrap()
@@ -523,7 +424,7 @@ impl<'a> VaultCreator<'a> {
                     // H4 fix: store recovery X25519 public key for re-wrapping on rotation
                     "recovery_x25519_pubkey": hex::encode(recovery_x25519_public.as_bytes()),
                 });
-                write_secret(
+                super::write_vault_file(
                     &path.join("meta/recovery.json"),
                     serde_json::to_string_pretty(&recovery_data)
                         .unwrap()
@@ -544,14 +445,14 @@ impl<'a> VaultCreator<'a> {
                         "{{\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
                         x25519_hex, ed25519_hex
                     );
-                    write_secret(&path.join("meta/device-privkey.json"), json_str.as_bytes())?;
+                    super::write_vault_file(&path.join("meta/device-privkey.json"), json_str.as_bytes())?;
                     x25519_hex.zeroize();
                     ed25519_hex.zeroize();
                     json_str.zeroize();
                 }
 
-                write_secret(&path.join("meta/kek-canary.enc"), &kek_canary)?;
-                write_secret(&path.join("meta/rk-canary.enc"), &rk_canary)?;
+                super::write_vault_file(&path.join("meta/kek-canary.enc"), &kek_canary)?;
+                super::write_vault_file(&path.join("meta/rk-canary.enc"), &rk_canary)?;
 
                 // Write .baluard marker file (vault detection, not secret)
                 if let Some(ref slug) = self.slug {
@@ -580,11 +481,14 @@ impl<'a> VaultCreator<'a> {
 
                 let mut device_manager = DeviceManager::new();
                 device_manager.set_vault_path(&path);
+                device_manager.epoch = crate::keys::epoch::EpochInfo::new(1);
                 device_manager.epoch.activate().map_err(|e| {
                     BaluardError::from(crate::error::KeyError::InvalidEpochState(e))
                 })?;
                 // H6 fix: sync registry so device_manager.is_enrolled() works
                 device_manager.registry = registry.clone();
+                // Persist DeviceManager state so VaultHandle::open() can reload it
+                device_manager.save_to_vault()?;
 
                 let handle = VaultHandle {
                     path: path.clone(),
@@ -645,14 +549,8 @@ impl<'a> VaultCreator<'a> {
                 let canary_data = std::fs::read(&kek_canary_path).map_err(|e| {
                     BaluardError::from(VaultError::Metadata(format!("reading kek canary: {e}")))
                 })?;
-                let canary_envelope = crate::vault::envelope::deserialize(&canary_data)?;
-                let canary_pt = crate::crypto::aead::decrypt(&session_key, &canary_envelope)
-                    .map_err(|_| {
-                        BaluardError::from(VaultError::Corrupt("master password incorrect".into()))
-                    })?;
-                if canary_pt != b"baluard-kek-ok" {
-                    return Err(VaultError::Corrupt("master password incorrect".into()).into());
-                }
+                super::canary::verify_kek_canary(&session_key, &canary_data)
+                    .map_err(|_| BaluardError::from(VaultError::Corrupt("master password incorrect".into())))?;
 
                 let recovery_json_str = std::fs::read_to_string(path.join("meta/recovery.json"))
                     .map_err(|e| {
@@ -660,32 +558,7 @@ impl<'a> VaultCreator<'a> {
                             "reading recovery wrapped key: {e}"
                         )))
                     })?;
-                let recovery_json: serde_json::Value = serde_json::from_str(&recovery_json_str)
-                    .map_err(|e| {
-                        BaluardError::from(VaultError::Corrupt(format!(
-                            "recovery json format: {e}"
-                        )))
-                    })?;
-
-                let eph_pub = hex::decode(recovery_json["ephemeral_public"].as_str().unwrap_or(""))
-                    .map_err(|e| {
-                        BaluardError::from(VaultError::Corrupt(format!("recovery eph_public: {e}")))
-                    })?;
-                let ct = hex::decode(recovery_json["encrypted_key"].as_str().unwrap_or(""))
-                    .map_err(|e| {
-                        BaluardError::from(VaultError::Corrupt(format!(
-                            "recovery encrypted key: {e}"
-                        )))
-                    })?;
-                let tag_hex = recovery_json["tag"].as_str().unwrap_or("");
-                let mut tag = [0u8; 16];
-                let tag_bytes = hex::decode(tag_hex).map_err(|e| {
-                    BaluardError::from(VaultError::Corrupt(format!("recovery tag hex: {e}")))
-                })?;
-                if tag_bytes.len() != 16 {
-                    return Err(VaultError::Corrupt("invalid tag length".into()).into());
-                }
-                tag.copy_from_slice(&tag_bytes);
+                let kw = super::keywrap::parse_keywrap_json(&recovery_json_str)?;
 
                 let recovery_phrase_obj = RecoveryPhrase::from_phrase(phrase_str)?;
                 let mut recovery_key_bytes = recovery_phrase_obj.derive_key();
@@ -695,7 +568,7 @@ impl<'a> VaultCreator<'a> {
                 recovery_key_bytes.zeroize();
 
                 let root_key_bytes =
-                    hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &recovery_x25519_secret)?;
+                    hpke_wrap::unwrap_key(&kw.ephemeral_public, &kw.encrypted_key, &kw.tag, &recovery_x25519_secret)?;
                 let root_key_arr: [u8; 64] = root_key_bytes.try_into().map_err(|_| {
                     BaluardError::from(VaultError::Corrupt(
                         "unwrapped root key not 64 bytes".into(),
@@ -710,26 +583,7 @@ impl<'a> VaultCreator<'a> {
                 let rk_canary_data = std::fs::read(&rk_canary_path).map_err(|e| {
                     BaluardError::from(VaultError::Metadata(format!("reading rk canary: {e}")))
                 })?;
-                let rk_canary_envelope = crate::vault::envelope::deserialize(&rk_canary_data)?;
-                let mut rk_canary_key = {
-                    use hkdf::Hkdf;
-                    use sha2::Sha256;
-                    let hkdf = Hkdf::<Sha256>::new(None, root_key.as_bytes());
-                    let mut key = [0u8; 32];
-                    hkdf.expand(b"baluard-rk-canary-v1", &mut key).unwrap();
-                    key
-                };
-                let rk_canary_pt = crate::crypto::aead::decrypt(
-                    &rk_canary_key,
-                    &rk_canary_envelope,
-                )
-                .map_err(|_| {
-                    BaluardError::from(VaultError::Corrupt("root key verification failed".into()))
-                })?;
-                rk_canary_key.zeroize();
-                if rk_canary_pt != b"baluard-rk-ok" {
-                    return Err(VaultError::Corrupt("root key verification failed".into()).into());
-                }
+                super::canary::verify_rk_canary(&root_key, &rk_canary_data)?;
 
                 let registry_path = path.join("meta/devices.json");
                 let mut registry = if registry_path.exists() {
@@ -758,7 +612,7 @@ impl<'a> VaultCreator<'a> {
                     None, // First device: no approver
                 )?;
 
-                write_secret(
+                super::write_vault_file(
                     &registry_path,
                     serde_json::to_string_pretty(&registry).unwrap().as_bytes(),
                 )?;
@@ -771,7 +625,7 @@ impl<'a> VaultCreator<'a> {
                     "encrypted_key": hex::encode(wrapped_root_key.1),
                     "tag": hex::encode(wrapped_root_key.2),
                 });
-                write_secret(
+                super::write_vault_file(
                     &path.join(format!("meta/keywrap/{device_id}.json")),
                     serde_json::to_string_pretty(&keywrap_data)
                         .unwrap()
@@ -792,7 +646,7 @@ impl<'a> VaultCreator<'a> {
                         "{{\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
                         x25519_hex, ed25519_hex
                     );
-                    write_secret(&path.join("meta/device-privkey.json"), json_str.as_bytes())?;
+                    super::write_vault_file(&path.join("meta/device-privkey.json"), json_str.as_bytes())?;
                     x25519_hex.zeroize();
                     ed25519_hex.zeroize();
                     json_str.zeroize();
@@ -806,11 +660,14 @@ impl<'a> VaultCreator<'a> {
 
                 let mut device_manager = DeviceManager::new();
                 device_manager.set_vault_path(&path);
+                device_manager.epoch = crate::keys::epoch::EpochInfo::new(1);
                 device_manager.epoch.activate().map_err(|e| {
                     BaluardError::from(crate::error::KeyError::InvalidEpochState(e))
                 })?;
                 // H6 fix: sync registry so device_manager.is_enrolled() works
                 device_manager.registry = registry.clone();
+                // Persist DeviceManager state so VaultHandle::open() can reload it
+                device_manager.save_to_vault()?;
 
                 let handle = VaultHandle {
                     path: path.clone(),
