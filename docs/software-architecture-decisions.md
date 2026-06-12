@@ -27,7 +27,7 @@ To eliminate metadata leaks (website names, usernames, specific file sizes) and 
    - **M Bucket (100 KB)**: Extended Secure Notes
    - **L Bucket (250 KB)**: Small Attachments, Scanned IDs
    - **XL Bucket (2 MB)**: Larger documents or media files
-3. **Index Lookup (`index.enc`)**: An encrypted lookup table mapping human-readable metadata (URLs, Titles) to their corresponding hashed filenames under `entries/`. Decrypted on demand by baluard-core.
+3. **Index Lookup (`meta/index.enc`)**: An encrypted lookup table mapping human-readable metadata (URLs, Titles) to their corresponding hashed filenames under `entries/`. Decrypted on demand by baluard-core.
 
 ---
 
@@ -64,7 +64,7 @@ Decrypts Entries (entries/*.enc)
 
 **Decision: Automatic Index Rebuild & File Conflict Resolution**
 
-- **Index Auto-Heal**: If `index.enc` experiences a Git conflict due to concurrent multi-device updates, baluard-core resolves the conflict programmatically. It decrypts the entire local `entries/` folder, reconstructs the index table from scratch, and silently force-pushes the clean resolution.
+- **Index Auto-Heal**: If `meta/index.enc` experiences a Git conflict due to concurrent multi-device updates, baluard-core resolves the conflict programmatically. It decrypts the entire local `entries/` folder, reconstructs the index table from scratch, and silently force-pushes the clean resolution.
 - **Entry Conflict Healing**: If a single padded file (`entries/3a7f82...enc`) experiences a conflict, baluard-core renames the local version, accepts the remote commit, and flags a notification to the UI layer: *"Two updates happened at once. Which do you keep?"*
 
 ---

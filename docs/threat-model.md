@@ -83,8 +83,19 @@
 - **Residual**: The phrase IS the root of trust. If compromised, full vault access is possible from any device. No mitigating control exists beyond physical protection. With `EnrollmentPolicy::Personal`, the phrase can also be used to enroll new devices (non-destructive). With `Strict`, it only works via destructive `recover_from_phrase`.
 
 ### T14: Cover Commit Correlation
-- **Threat**: Despite cover commits, an adversary correlates real commits (accompanying entry changes) with cover commits (no-op) by analyzing commit diff sizes or timing patterns.
-- **Control**: Cover commits use CSPRNG-backed timing jitter on push/pull intervals. Commit content is padded to uniform bucket sizes, so diff sizes are indistinguishable from real commits. The adversary can only observe commit frequency, not content.
+- **Threat**: A git remote adversary (compromised host, MITM, or rogue admin) observes commit timestamps, push timing, frequency patterns, and tree diffs to infer active usage hours, edit frequency, file count changes, or silence gaps.
+- **Control**: Cover commits use CSPRNG-backed timing jitter on push/pull intervals. Commit content is padded to uniform bucket sizes, so diff sizes are indistinguishable from real commits.
+- **Defense Mechanism**: Cover commits are no-op commits (same tree as HEAD) combined with static commit messages (`COMMIT_MESSAGE` in engine.rs), a generic git author (`"Baluard User" <vault@baluard.local>`), encrypted metadata, timestamp normalization on vault lock, and jitter delay before network operations (`apply_push_jitter`).
+- **Scheduling Policy**:
+  * **Triggered Cover Commits**: After every real vault operation that triggers a `commit_all()`, a cover commit is scheduled at a uniform random delay (Min: 30 minutes, Max: 4 hours).
+  * **Periodic Cover Commits**: A background timer fires cover commits independently of user activity at random intervals of 2–6 hours (jittered ±30 minutes) if the vault is unlocked.
+  * **Push Policy**: Cover commits accumulate locally and push on the next sync push or periodic auto-sync to avoid detectable push correlation patterns.
+  * **Interactions**:
+    * *Real commit*: Schedule cover commit at T+random(30m, 4h).
+    * *Timer fires*: Create no-op commit if vault is unlocked.
+    * *Push*: Push all local commits (real + cover) with jitter.
+    * *Lock*: Cancel pending cover commit timers.
+    * *Unlock*: Start periodic cover timer.
 - **Residual**: High-frequency push patterns may still leak usage timing. Mitigation is probabilistic, not deterministic.
 
 ## 2. Platform Trust Boundaries

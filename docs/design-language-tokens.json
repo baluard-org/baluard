@@ -10,7 +10,7 @@
       "accent_lime": "#b3e55c",
       "accent_lavender": "#cfc6f9",
       "text_primary": "#f3f4f6",
-      "text_muted": "#8fa3a6",
+      "text_muted": "#a2b7ba",
       "danger": "#ef4444",
       "success": "#10b981"
     },
@@ -24,7 +24,7 @@
       "accent_teal": "#102427",
       "accent_purple": "#7c3aed",
       "text_primary": "#102427",
-      "text_muted": "#5e7275",
+      "text_muted": "#495c5f",
       "danger": "#ef4444",
       "success": "#10b981"
     }

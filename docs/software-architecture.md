@@ -19,7 +19,7 @@ baluard/
 │   │       ├── vault/          # Padding engine (5KB/30KB/100KB/250KB/2MB tiers), envelope, manifest, CRUD, canary, attachment, avatar, slug
 │   │       ├── sync/           # git2-rs sync engine, conflict auto-heal, state machine, known_hosts, credentials
 │   │       ├── import/         # 8 import parsers (bw_json, bw_csv, chrome_csv, firefox_csv, lastpass_csv, 1password_1pux, 1password_csv, keepass_xml) + 2 export formats
-│   │       ├── providers/      # Git provider abstraction: github, gitlab, codeberg adapters + token store
+│   │       ├── providers/      # Git provider abstraction: github adapter + token store
 │   │       ├── biometric.rs    # OS-keychain-backed master password escrow (macOS Security.framework + cross-platform keyring)
 │   │       ├── device_manager.rs # Device registry, rotation, activity, enrollment
 │   │       ├── devices.rs      # Lower-level device entry types
