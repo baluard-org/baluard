@@ -1,6 +1,6 @@
 # Plan: Passkey Support in Baluard
 
-**Status**: Phase 0 + Phase 1 complete. Phase 2 pending.
+**Status**: Phase 0 + Phase 1 complete. Phase 2 pending. **Model rework done (2026-06-12)**: passkeys embedded in `LoginData::fido2_credentials` (no standalone `CipherKind::Passkey`).
 **Date**: 2026-06-12
 **Author**: TARS (post Esteban's brief)
 **Reviewers**: External peer review (3 rounds: Phase 0, Phase 1 mid-point, comprehensive Phase 0+1)
@@ -20,6 +20,7 @@ We are **not** building a FIDO2 server (no cloud). Baluard is a **software authe
 - v3: incorporated the second peer review. Approved with fixes. Changes: removed `discoverable: bool` field (invariant is not data); removed contradictory `web_accessible_resources` line in §4.7; added explicit `residentKey: "required"` + `requireResidentKey: true` + `userVerification: "required"` to `authenticatorSelection`; made `coset`/`ciborium` deps conditional on `passkey-rs` rejection; made `uniffi` interface synchronous; added fresh-KDF-verify constraint to Linux UV substitute; rewrote Phase 3 scope to remove stale "Daemon IPC over local network" text contradicting the UniFFI decision; clarified counter race risk as inherent to all synced passkey implementations (not Baluard-specific).
 - v4: Phase 0 implemented and peer-reviewed. `passkey-rs` 0.5.x adopted (ADR 0007). ES256 only (no EdDSA). 342 tests pass.
 - v5: Phase 1 implemented (ceremony wiring, daemon IPC, CLI, test harness). Two mid-point peer reviews + comprehensive Phase 0+1 review. 363 tests pass. All actionable findings fixed. Phase 2 prerequisites documented.
+- v6 (2026-06-12): **Model rework**. Removed `CipherType::Passkey` and `CipherKind::Passkey(PasskeyData)`. Passkeys now embedded inside `LoginData::fido2_credentials: Option<Vec<PasskeyData>>` (Bitwarden-compatible). Added `PasskeyData.name: Option<String>` for per-credential naming. `passkey.delete` and `passkey.rename` now take `credential_id` (not just cipher_id). `passkey.list` response gained `login_name`, `has_password`, `pk_name` for context. Export uses ISO 8601 for `creation_date` and `URL_SAFE_NO_PAD` for `user_handle`. Peer review of rework: 3 blockers + 3 high + 2 medium + 2 low + 2 feature gaps, all fixed. 358 tests pass.
 
 ---
 
@@ -179,25 +180,29 @@ There is **no first-party "webauthn-rs-authenticator"** crate. The standard patt
 
 **File**: `crates/baluard-core/src/types.rs`
 
-Add:
-- `CipherType::Passkey` variant
+**No new `CipherKind` or `CipherType` variant.** Passkeys are embedded inside `LoginData`:
+
+- `LoginData` gains `fido2_credentials: Option<Vec<PasskeyData>>` (BW-compatible, `#[serde(default, skip_serializing_if = "Option::is_none")]`)
 - `PasskeyData` struct mirroring Bitwarden's fido2 credential fields, plus:
-  - `private_key: EncryptedPrivateKey` — the credential's private key, wrapped under the cipher item key
+  - `private_key: Option<Vec<u8>>` — the credential's private key, encrypted under the cipher item key
   - `aaguid: Uuid` — which Baluard platform produced this
   - `user_handle: Option<Vec<u8>>` — RP-assigned user handle
-  - `discoverable: bool` — always `true` for Baluard. **Drop the field entirely** — an invariant is not data, it's a documentation claim that future code will branch on expecting variation. Discoverability is enforced by always sending `residentKey: "required"` in `authenticatorSelection` (see §4.5).
-  - `prf_key: Option<EncryptedPrfKey>` — for the PRF extension
+  - `prf_key: Option<Vec<u8>>` — for the PRF extension
   - `linked_login_id: Option<Uuid>` — points to a `CipherKind::Login` for the same RP, for UX deduplication. Set when the user creates the passkey from inside an existing Login detail view; `None` if created standalone.
-- `CipherKind::Passkey(PasskeyData)` variant in the tagged enum
-- `CipherType::Passkey` in the cipher_type enum
-- Update `cipher_type()` and `match` in `resolve_linked_field` (passkey has no linked fields)
-- `CipherMeta` and `CipherInput` already use `CipherKind` so no structural change
+  - `name: Option<String>` — per-credential display name (e.g. "YubiKey 5C", "iPhone 15"). `None` falls back to `rp_name` or `rp_id`.
+- Discoverability is not a field — it's enforced by always sending `residentKey: "required"` in `authenticatorSelection` (see §4.5).
+
+**Rationale for embedded model (Bitwarden-compatible)**: BW stores fido2 credentials inside Login items, not as separate cipher types (PM-3807 merged Sep 2023 removed standalone Fido2Key). This makes multi-credential Logins natural (one Login, two devices, two passkeys), avoids N+1 cipher explosions, and preserves UX grouping (one entry per RP). Baluard is alpha — no migration needed from a prior standalone model.
+
+**`LoginData::fido2_credentials` accessor methods** (defined in `types.rs`):
+- Default-empty constructor. `fido2_credentials.is_none()` is the natural "no passkeys" state.
+- `Option::is_none()` after `retain()` if the list goes empty — no zombie empty Vecs.
 
 **Note on `private_key`**: This is a divergence from Bitwarden. We store the private key encrypted inside the cipher (Bitwarden does not, because it relies on platform authenticators). For a cross-device flow, this is necessary: the same passkey must sign on desktop, mobile, and extension. Storing it encrypted under the item key is consistent with how TOTP secrets and SSH private keys are stored today. Item key never crosses IPC. Private key is decrypted to memory on demand, used to sign, zeroized.
 
-**Epoch rotation**: `revoke_device_and_rekey()` re-encrypts all cipher envelopes under the new epoch. Passkey ciphers participate like all other ciphers — the wrapped `private_key` is re-wrapped under the new item key. No special handling required. The plan must call this out explicitly: do not "optimize" rotation to skip passkey ciphers, or you will silently lose every passkey. Add a unit test that asserts passkey ciphers survive `revoke_device_and_rekey()`.
+**Epoch rotation**: `revoke_device_and_rekey()` re-encrypts all cipher envelopes under the new epoch. Logins with fido2_credentials participate like all other ciphers — the wrapped `private_key` (per-credential) is re-wrapped under the new item key. No special handling required. The plan must call this out explicitly: do not "optimize" rotation to skip Login ciphers, or you will silently lose every passkey. Add a unit test that asserts fido2_credentials survive `revoke_device_and_rekey()`.
 
-**Tier**: Passkey ciphers will typically fit in `Xs` (5KB) — the metadata is small, no URIs, no notes. The private key is 32 bytes (Ed25519) or 32 bytes (ES256 scalar), COSE public key ~80 bytes, all metadata < 1KB serialized.
+**Tier**: Login ciphers with passkeys will typically fit in `Xs` (5KB) — the metadata is small, no URIs for passkey-only Logins. A Login with both password and passkey will fit in `S` (30KB). The private key is 32 bytes per passkey, COSE public key ~80 bytes, all metadata < 1KB serialized per credential.
 
 ### 4.2 Vault CRUD
 
@@ -238,18 +243,20 @@ Add routes (JSON-in-string `GatewayRequest.payload`):
 | Action | Direction | Purpose |
 |---|---|---|
 | `passkey.challenge_register` | desktop → daemon | `{rp_id, rp_name, user_name, user_display_name, user_id}` → `{publicKey, state}` (PublicKeyCredentialCreationOptions JSON). The daemon's response sets `authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "required" }` always. |
-| `passkey.finish_register` | desktop → daemon | `{name, attestation_response, state}` → `Passkey cipher` |
+| `passkey.finish_register` | desktop → daemon | `{name, attestation_response, state}` → `Passkey cipher` (embedded in LoginData). Phase 1: trust client-supplied `passkey_data` echo. Phase 2 MUST store in `CeremonyState::Registration`. |
 | `passkey.challenge_assert` | desktop → daemon | `{rp_id, allow_credentials?}` → `{publicKey, state}` (PublicKeyCredentialRequestOptions JSON) |
-| `passkey.finish_assert` | desktop → daemon | `{assertion_response, state}` → `{verified: bool, cipher_id, sign_count}` |
-| `passkey.list` | desktop → daemon | `{}` → `[PasskeyMeta]` |
-| `passkey.delete` | desktop → daemon | `{cipher_id}` → `{}` |
-| `passkey.rename` | desktop → daemon | `{cipher_id, name}` → `{}` |
+| `passkey.finish_assert` | desktop → daemon | `{assertion_response, state}` → `{verified: bool, cipher_id, sign_count}`. Updates counter inside Login's `fido2_credentials` (max of local + new). |
+| `passkey.list` | desktop → daemon | `{}` → `[{credential_id, rp_id, rp_name, user_name, name, counter, private_key_missing, login_name, has_password, pk_name, ...}]` — one entry per credential (not per cipher) across all Logins. `login_name` + `has_password` give the desktop UI context for "linked vs standalone". |
+| `passkey.delete` | desktop → daemon | `{cipher_id, credential_id}` → `{}`. Removes the specific `PasskeyData` from `Login.fido2_credentials`. If Login has no other data, deletes the cipher entirely. |
+| `passkey.rename` | desktop → daemon | `{cipher_id, credential_id, name}` → `{}`. Updates `PasskeyData.name`. Does NOT change the Login cipher's display name. |
 
-State management: registration/assertion `state` is a short-lived, in-memory map keyed by `state_id` (random 128-bit). **300-second TTL** (matches Chrome's WebAuthn user-interaction timeout — 60s is too short for users who fail a biometric once and retry). On finish, state is consumed. On timeout, evicted. This matches `webauthn-rs` semantics.
+State management: registration/assertion `state` is a short-lived, in-memory map keyed by `state_id` (random 128-bit). **300-second TTL** (matches Chrome's WebAuthn user-interaction timeout — 60s is too short for users who fail a biometric once and retry). On finish, state is consumed. On timeout, evicted. This matches `webauthn-rs` semantics. `CeremonyCache` enforces **max 64 pending ceremonies** with FIFO eviction (defense against memory exhaustion from authenticated clients).
 
 **Token-gated**: all routes require session token (existing pattern).
 
 **Private key never serialized over IPC**. The cipher on disk has the encrypted private key; the daemon decrypts it on `finish_register`/`finish_assert` calls, keeps the plaintext in a `Zeroizing<Vec<u8>>` for the duration of the call, zeroizes on drop. No persistent in-memory cache of private keys (defense in depth — if the daemon process is dumped, only the current call's key is exposed, not the entire fleet).
+
+**Login pre-filter in `passkey.list`**: iterate `cipher_meta` with `cipher_type == CipherType::Login` filter BEFORE decrypting, to avoid a full N-decrypt pass on every list call (5x speedup for a 500-item vault). Phase 1 has a TODO for `list_ciphers_by_type` batch method to eliminate the remaining per-cipher decrypt.
 
 ### 4.6 Desktop (Tauri/SolidJS)
 
@@ -360,24 +367,24 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 
 ### Phase 0 — Schema + import + decision gates ✅ COMPLETE
 
-**Completed**: 2026-06-12. 342 tests pass. Peer-reviewed by peer review peer (blocker + high + medium + low, all fixed).
+**Completed**: 2026-06-12. 342 tests pass at v5. **Reworked to embedded model in commit 823d538 (358 tests pass)**. Peer-reviewed by external peer review (Phase 0 + Phase 1: 3 rounds). Then again after rework: 12 findings, all fixed in commit ad3e1e0.
 
 #### 0.1 Schema (`types.rs`) ✅
-- `CipherType::Passkey` enum variant added (serde: `"passkey"`)
-- `CipherKind::Passkey(PasskeyData)` variant added (tagged JSON: `{type: "passkey", data: {...}}`)
-- `PasskeyData` struct: `credential_id`, `key_type`, `key_algorithm`, `key_curve`, `key_value`, `rp_id`, `rp_name`, `user_handle` (Vec<u8>), `user_name`, `user_display_name`, `counter` (u32), `aaguid` (Uuid), `prf_key` (Option<Vec<u8>>), `private_key` (Option<Vec<u8>>), `private_key_missing` (bool), `linked_login_id` (Option<Uuid>), `creation_date` (u64)
+- **`LoginData::fido2_credentials: Option<Vec<PasskeyData>>`** added (Bitwarden-compatible)
+- `PasskeyData` struct: `credential_id`, `key_type`, `key_algorithm`, `key_curve`, `key_value`, `rp_id`, `rp_name`, `user_handle` (Vec<u8>), `user_name`, `user_display_name`, `counter` (u32), `aaguid` (Uuid), `prf_key` (Option<Vec<u8>>), `private_key` (Option<Vec<u8>>), `private_key_missing` (bool), `linked_login_id` (Option<Uuid>), `creation_date` (u64), `name` (Option<String>, per-credential display name added in v6)
 - Manual `Zeroize` + `Drop` impl on `PasskeyData` — only `private_key` and `prf_key` are zeroized on drop (non-sensitive fields are skipped)
-- Exhaustiveness updated in `export.rs` (Passkey maps to `bw_type=1`) and `handle.rs` (zeroize private_key/prf_key)
-- 4 schema tests: round-trip, import missing key, cipher type, no linked fields
+- **No standalone `CipherKind::Passkey` or `CipherType::Passkey` variant** (removed in v6 rework). Passkeys are only stored inside LoginData.
+- Vault handle's cipher zeroize match block zeroizes `Login.d.fido2_credentials[].private_key` and `prf_key` on cipher drop
+- 2 schema tests: LoginData with fido2 round-trip, LoginData without fido2 omits field
 
 #### 0.2 BW Import (`bw_json.rs`) ✅
 - `BwFido2Credential` struct mirrors BW's JSON shape
 - `bw_fido2_to_passkey()` converter (sets `private_key_missing: true`, `aaguid: Uuid::nil()`)
 - `parse_iso8601_to_unix()` using Hinnant's algorithm (no chrono dep)
-- Import emits both Login + one Passkey cipher per `fido2Credentials[]` entry; passkey gets tag `"imported-passkey"` and re-register notes
+- **Import embeds fido2 credentials directly into `LoginData.fido2_credentials`** — no separate Passkey ciphers emitted
 - Password history dates also parsed via `parse_iso8601_to_unix` (not raw u64 parse)
 - `user_handle` base64 decode tolerant of both URL_SAFE_NO_PAD and STANDARD encoding
-- 4 import tests: single passkey, multiple fido2, missing creation_date, plain login regression
+- 3 import tests: single passkey embedded in Login, multiple fido2 in one Login, plain Login (no fido2) is unchanged
 
 #### 0.3 passkey-rs Spike ✅
 - Workspace deps added: `passkey 0.5`, `webauthn-rs 0.5`, `webauthn-rs-proto 0.5`, `webauthn-rs-core 0.5`
@@ -392,18 +399,19 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 - **`passkey-rs`**: ✅ Adopted. ADR 0007.
 - **Linux user verification**: ✅ Master password re-prompt with fresh KDF verify.
 - **FIDO Alliance MDS AAGUID registration**: Deferred to Phase 5 polish.
+- **Standalone vs embedded passkey storage**: ✅ Embedded inside `LoginData` (Bitwarden-compatible). Decided after BW import research (PM-3807 removed standalone Fido2Key from BW).
 
 ### Phase 1 — Generate + serve on desktop (2-3 weeks) ✅ COMPLETE
 
-**Implemented in commits:** b1292e8, 27beb22, 60dc213, ce47f95, 4fabc4e, 60a47e8, 003e3e6
+**Implemented in commits:** b1292e8, 27beb22, 60dc213, ce47f95, 4fabc4e, 60a47e8, 003e3e6, 823d538, ad3e1e0
 
 **What shipped:**
-- **Ceremony module** (`crypto/webauthn/`): `BaluardCredentialStore` (Arc<Mutex> mutation tracking), `PasskeyIndex`, `CeremonyCache` (300s TTL), `BaluardUserValidation` (Phase 1: always-allow)
+- **Ceremony module** (`crypto/webauthn/`): `BaluardCredentialStore` (Arc<Mutex> mutation tracking), `PasskeyIndex` (indexes passkeys from `Login.fido2_credentials`), `CeremonyCache` (300s TTL, max 64 pending, FIFO eviction, OsRng challenges), `BaluardUserValidation` (Phase 1: always-allow)
 - **Ceremony runner**: `run_registration()`, `run_assertion()` using passkey-rs Client. ES256 only (coset::iana::Algorithm::ES256). Platform authenticator, resident key required.
-- **Daemon IPC**: 7 routes (list, delete, rename, challenge_register, finish_register, challenge_assert, finish_assert). All token-gated. Cover commit tracking. Type guard on delete.
-- **CLI commands**: `baluard passkey list [--rp-id]`, `delete --id`, `rename --id --name`. Daemon + direct mode.
-- **Test harness**: 8 ceremony tests (362 total). Registration, assertion, multi-RP, cache TTL, index filtering, store mutation tracking.
-- **Two peer reviews** passed (12 findings fixed across both rounds)
+- **Daemon IPC**: 7 routes (list, delete, rename, challenge_register, finish_register, challenge_assert, finish_assert). All token-gated. Cover commit tracking. Type guard on delete. **`passkey.delete` and `passkey.rename` take `credential_id`** (B1+B2 fix) — remove/rename only the specific PasskeyData, not the entire Login cipher.
+- **CLI commands**: `baluard passkey list [--rp-id]`, `delete --id <login_id> --credential-id <cred_id>`, `rename --id <login_id> --credential-id <cred_id> --name <name>`. Daemon + direct mode.
+- **Test harness**: 8 ceremony tests + 2 Login-fido2 schema tests. 358 total. Registration, assertion, multi-RP, cache TTL, index filtering, store mutation tracking.
+- **Three peer reviews** passed: Phase 0 (1B+1H+2M+5L), Phase 1 mid-point (B1-B4+S1+FG1+M4), Phase 0+1 comprehensive (9 items), plus post-rework review (3B+3H+2M+2L+2FG) — all 30+ findings fixed across all rounds.
 
 **Known limitations (documented, Phase 2 tracked):**
 - S1: passkey_data echo-back in finish_register (trust boundary: same-process desktop). See Phase 2 prerequisites.
@@ -419,6 +427,20 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 - RAND: OsRng for ceremony challenges
 - CACHE: CeremonyCache max 64 pending, FIFO eviction
 - BUG-3: Converter round-trip test
+
+**Fixed in rework review (commit ad3e1e0):**
+- B1: passkey_delete takes credential_id, removes specific entry; deletes Login only if no other data
+- B2: passkey_rename updates PasskeyData.name (new field), not Login cipher name
+- B3: handle_get CLI displays fido2_credentials in both daemon and direct text modes
+- H1: Export user_handle uses URL_SAFE_NO_PAD
+- H2: Export creation_date uses ISO 8601 (Hinnant civil_from_days, no chrono dep)
+- H3: Removed dead `let _ = (rp_id, user_name)` code in finish_register
+- M1: passkey_list adds Login pre-filter (cipher_type check before decrypt)
+- M2: Export key_value always included (public key, not secret)
+- L1: cargo fmt applied
+- L2: Removed duplicate `#[test]` attribute in bw_json.rs
+- FG1: delete/rename IPC routes require credential_id parameter
+- FG2: passkey_list response includes login_name, has_password, pk_name
 
 **Still deferred:**
 - Ed25519 support (passkey-rs 0.5.x only supports ES256)
@@ -526,7 +548,7 @@ These gaps were identified during the Phase 0+1 comprehensive peer review. None 
 5. **Interaction with `docs/2fa-analysis.md` Tier 2**: that doc proposes using FIDO2 *for vault unlock*. This plan is about FIDO2 *as a stored item*. They are independent and both are planned. Tier 2 becomes a separate plan after this one lands.
 6. **Browser extension safety**: an extension that intercepts WebAuthn on every page is a fingerprinting/tracking concern. **Recommendation**: extension is opt-in, only active when `enable_passkeys` is true. Show a clear visual indicator when active. Same model as 1Password and Bitwarden.
 7. **Mobile ↔ desktop passkey use**: when mobile is not on the same network as desktop, how does the mobile auto-fill reach a passkey that's only on the desktop? **Recommendation**: Phase 3 requires the passkey to be synced to the mobile device. Cross-vault passkey use is a Phase 4+ feature.
-8. **Backward compatibility of cipher schema**: adding a new `CipherKind` variant is backward-compatible for serialization (existing clients ignore unknown variants). Deserialization is also tolerant as long as we add the new variant to the default fallback chain. **Recommendation**: `#[serde(default)]` on `PasskeyData`; do not set `Passkey` as the default kind. **No migration needed for existing vaults.**
+8. ~~**Backward compatibility of cipher schema**~~: **Resolved in v6 rework**. Passkeys are embedded inside `LoginData` (no new `CipherKind` variant). `LoginData::fido2_credentials` is `#[serde(default, skip_serializing_if = "Option::is_none")]` so existing Login ciphers with no fido2 field deserialize unchanged. New ciphers emitted by the current code embed fido2 inline. **No migration needed for existing vaults** (in either direction).
 
 ---
 
@@ -544,6 +566,10 @@ These gaps were identified during the Phase 0+1 comprehensive peer review. None 
 | **Phase 2 ceremony redesign risk** (current ceremony runs internally; browser needs external challenge/response flow) | High | High | Structural redesign required. Current `run_registration`/`run_assertion` cannot be used by browser extension as-is. Must split into challenge generation + response verification. Documented in Phase 2 prerequisites. |
 | **Counter forgery via client-supplied values** (finish_register and finish_assert trust echoed data) | Low (Phase 1) / High (Phase 2) | High | Phase 1: same-process desktop client is trusted. Phase 2: browser extension is untrusted. Must store results in CeremonyState before Phase 2. Documented as SEC-1 in Phase 2 prerequisites. |
 | **CeremonyCache unbounded DoS** (no max capacity, authenticated clients can fill memory) | Low (Phase 1) / Medium (Phase 2) | Low | Fixed in 63bb831: max 64 pending ceremonies with FIFO eviction. May need per-client rate limiting in Phase 2. |
+| **Multi-credential Login data loss** (passkey delete accidentally removes Login cipher that has password + TOTP) | High | High | Fixed in ad3e1e0 (B1): `passkey.delete` takes `credential_id` and removes only the matching entry. If Login has no other data, deletes the cipher. If Login has password/URIs/TOTP, preserves the cipher with the remaining credentials. |
+| **Login cipher renamed when user tries to rename a passkey** (passkey.rewrite uses cipher_id + name, corrupts Login display name) | High | High | Fixed in ad3e1e0 (B2): `passkey.rename` takes `credential_id` + new name, updates `PasskeyData.name` field. Login cipher name is preserved. |
+| **CLI `baluard get` shows Login with no passkey visibility** (Passkey display arm removed during rework, not re-added) | Medium | Medium | Fixed in ad3e1e0 (B3): handle_get Login arm now displays `fido2_credentials` in both daemon and direct text modes — shows rp_id, user_name, counter, and import warning per credential. |
+| **BW export round-trip broken** (user_handle uses STANDARD base64, BW expects URL_SAFE_NO_PAD; creation_date emitted as unix integer, BW expects ISO 8601) | Medium | Medium | Fixed in ad3e1e0 (H1+H2): export now uses URL_SAFE_NO_PAD and ISO 8601 (Hinnant civil_from_days, no chrono dep). |
 
 ---
 

@@ -70,7 +70,7 @@ Adopt `passkey` 0.5.x as the authenticator library. Use `webauthn-rs` 0.5.x as t
 ```
 
 Baluard's `CredentialStore` impl will:
-- Look up passkeys from decrypted `CipherKind::Passkey` entries
+- Look up passkeys from decrypted `CipherKind::Login.fido2_credentials` entries (passkeys are embedded inside LoginData, Bitwarden-compatible model — no standalone Passkey cipher variant)
 - Store new passkeys as encrypted cipher envelopes
 - Private key bytes wrapped under the item key (same as all other cipher types)
 
@@ -112,7 +112,11 @@ async-trait = "0.1"
 
 ## Next Steps
 
-- [ ] Phase 0.4: Implement `BaluardCredentialStore` (bridges passkey store trait to cipher envelopes)
-- [ ] Phase 0.4: Implement `BaluardUserValidation` (OS biometrics + master password re-prompt)
-- [ ] Phase 1: Wire daemon IPC routes for passkey ceremony
-- [ ] Phase 1: Desktop UI for passkey creation and autofill
+- [x] Phase 0.4: Implement `BaluardCredentialStore` (bridges passkey store trait to cipher envelopes)
+- [x] Phase 0.4: Implement `BaluardUserValidation` (Phase 1: always-allow; OS biometrics deferred to Phase 2)
+- [x] Phase 1: Wire daemon IPC routes for passkey ceremony
+- [ ] Phase 2: Browser extension integration (page script, native messaging host, conditional mediation)
+- [ ] Phase 3: Mobile UniFFI bindings + CredentialProviderService / ASCredentialProviderViewController
+- [ ] Phase 4: Cross-device assertion (QR pairing + local channel)
+
+**Status as of 2026-06-12**: Phase 0+1 complete, 358 tests pass. Phase 2+ pending. See `docs/plan-passkey-support.md` for full plan.

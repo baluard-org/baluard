@@ -114,6 +114,15 @@ export default function SettingsModal() {
     } catch (e) {}
   }
 
+  async function changeTheme(t) {
+    setTheme(t);
+    try {
+      await daemon("settings.set", JSON.stringify({ theme: t }));
+    } catch (e) {
+      if (import.meta.env.DEV) console.error("Failed to save theme:", e);
+    }
+  }
+
   async function toggleFetchFavicons() {
     const next = !fetchFavicons();
     setFetchFavicons(next);
@@ -385,21 +394,21 @@ export default function SettingsModal() {
                   <label class="text-xs font-bold text-[var(--color-text)]">{t("settings.appTheme")}</label>
                   <div class="grid grid-cols-3 gap-3">
                     <button
-                      onClick={() => setTheme("system")}
+                      onClick={() => changeTheme("system")}
                       class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "system" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
                     >
                       <IconMonitor class="w-4 h-4" />
                       <span class="text-xs font-bold">{t("setup.themeSystem")}</span>
                     </button>
                     <button
-                      onClick={() => setTheme("dark")}
+                      onClick={() => changeTheme("dark")}
                       class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "dark" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
                     >
                       <IconMoon class="w-4 h-4" />
                       <span class="text-xs font-bold">{t("settings.darkMode")}</span>
                     </button>
                     <button
-                      onClick={() => setTheme("light")}
+                      onClick={() => changeTheme("light")}
                       class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "light" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
                     >
                       <IconSunFull class="w-4 h-4" />

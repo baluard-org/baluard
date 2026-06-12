@@ -22,6 +22,7 @@ baluard/
 │   │       ├── vault/          # Vault handle, cipher CRUD, envelope, padding, attachments
 │   │       ├── sync/           # Git sync engine (git2-rs), conflict resolution
 │   │       ├── import/         # Import parsers (8 formats) + export (2 formats)
+│   │       ├── crypto/webauthn/  # FIDO2/WebAuthn ceremony: store.rs, ceremony.rs, mod.rs
 │   │       ├── device_manager.rs # Device fleet: registry, rotation, activity, enrollment
 │   │       ├── paths.rs        # Platform-correct base dirs (data, socket, logs, token)
 │   │       ├── types.rs        # CipherKind, CipherInput, CipherMeta, CustomFieldType, etc.
@@ -94,7 +95,8 @@ Implications:
 * **Rust**: Edition 2024, MSRV 1.85. Feature flags: `full` (default) = `git-sync` + `org` + `emergency`. `thiserror` for library errors, `anyhow` for CLI. `proptest` for property-based tests.
 * **JS/TS**: ES modules, SolidJS, Vite. Tailwind for layout. `crypto.getRandomValues` only (never `Math.random`).
 * **Protobuf**: proto3, `baluard.vault` package. Compiled via prost in daemon + CLI.
-* **Security**: AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket 0600. Zeroize on drop for key material and TOTP secrets.
+* **Security**: AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket 0600. Zeroize on drop for key material, TOTP secrets, and passkey private keys.
+* **WebAuthn/Passkey**: passkey-rs 0.5.x for ceremony. ES256 only. Private key encrypted under item key, never crosses IPC, zeroized on drop. Counter `max(local, remote)` for git-sync safety.
 
 ## DEBUG LOGGING
 `just desktop-debug` runs the desktop app with `BALUARD_DEBUG=1`. Logs go to `./logs/` at cwd.
@@ -119,8 +121,11 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 * **Daemon vault state**: `crates/baluard-daemon/src/state.rs`
 * **Desktop frontend**: `desktop/src/App.jsx`
 * **Device fleet**: `crates/baluard-core/src/device_manager.rs`
+* **Passkey ceremony (WebAuthn)**: `crates/baluard-core/src/crypto/webauthn/`
+* **Passkey data structure**: `crates/baluard-core/src/types.rs` (`PasskeyData`)
+* **Passkey plan**: `docs/plan-passkey-support.md` (authoritative)
+* **Passkey ADR**: `docs/adr/0007-passkey-rs-evaluation.md`
 * **Protobuf schemas**: `proto/`
-* **Design docs**: `docs/architecture-decisions.md` (authoritative)
 
 ## KEY CONCEPTS
 
@@ -128,7 +133,7 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 Master Password -> KEK (Argon2id) -> Device Private Key (X25519, HPKE-escrowed) -> Root Key (512-bit, per-epoch) -> Space Group Key (256-bit) -> Item Keys (256-bit, HKDF-derived).
 
 ### CipherKind
-Serde-tagged enum: `#[serde(tag = "type", content = "data")]`. 8 variants: Login, Card, Identity, SshKey, BankAccount, DriversLicense, Passport, SecureNote. Invalid states unrepresentable. Tagged JSON: `{type: "login", data: {...}}`.
+Serde-tagged enum: `#[serde(tag = "type", content = "data")]`. 8 variants: Login, Card, Identity, SshKey, BankAccount, DriversLicense, Passport, SecureNote. Invalid states unrepresentable. Tagged JSON: `{type: "login", data: {...}}`. **Passkeys are embedded inside `LoginData::fido2_credentials: Option<Vec<PasskeyData>>`** (Bitwarden-compatible model, no standalone Passkey variant in CipherKind).
 
 ### CipherMeta
 `vault.list` returns `CipherMeta` with `id`, `name`, `cipher_type`, `favorite`, `username`. Desktop uses `vault.list_full` (batch endpoint: all decrypted ciphers + folders + trash + archived in 1 IPC call) instead of N+1 `vault.list` + N×`vault.get`.
@@ -175,6 +180,21 @@ All modals use `<FocusTrap>` component: `role="dialog"`, `aria-modal`, `aria-lab
 ### Tag Deletion
 Hover X on sidebar tag pills triggers confirmation modal. Calls `tag.delete` daemon command. Removes tag from all ciphers + rebuilds index.
 
+### Passkeys (FIDO2/WebAuthn)
+Passkeys are stored **inside `LoginData::fido2_credentials: Option<Vec<PasskeyData>>`** (Bitwarden-compatible, no standalone cipher variant). A single Login can hold multiple passkeys (e.g. one for YubiKey, one for iPhone). BW imports embed fido2 credentials directly in Login. Each `PasskeyData` contains: `credential_id`, `key_type`, `key_algorithm`, `key_curve`, `key_value` (COSE public key), `rp_id`, `rp_name`, `user_handle`, `user_name`, `user_display_name`, `counter`, `aaguid`, `prf_key`, `private_key` (encrypted under item key), `private_key_missing`, `linked_login_id`, `creation_date`, `name` (per-credential display name).
+
+- **Algorithm**: ES256 only (passkey-rs 0.5.x limitation)
+- **WebAuthn library**: `passkey-rs` 0.5.x (1Password), wraps `coset` for COSE
+- **Ceremony module**: `crates/baluard-core/src/crypto/webauthn/` (mod.rs, store.rs, ceremony.rs)
+- **Daemon IPC**: 7 routes (list, delete, rename, challenge_register, finish_register, challenge_assert, finish_assert). All token-gated.
+- **State cache**: `CeremonyCache` (300s TTL, max 64 pending, FIFO eviction, OsRng challenges)
+- **CLI**: `baluard passkey list/delete/rename`. `--credential-id` required for delete/rename.
+- **delete/rename semantics**: take `(cipher_id, credential_id)`. Only the matching `PasskeyData` is removed/renamed. Login cipher itself is preserved unless it has no other data (no password, no TOTP, no URIs) and only one passkey is removed.
+- **Private key**: encrypted under cipher item key, never crosses IPC, zeroized on drop
+- **Counter**: `max(local, remote)` on git-sync. `PasskeyIndex` indexes all ciphers' fido2 credentials for fast lookup during assertion.
+- **Two-phase ceremony** (Phase 1 trust model): `challenge_*` runs the ceremony + caches state, `finish_*` consumes state + persists cipher. Echo-back of passkey_data accepted in Phase 1 (same-process desktop). Phase 2 (browser extension) MUST store results in `CeremonyState` to prevent client forgery — see SEC-1 in `docs/plan-passkey-support.md`.
+- **BaluardCredentialStore** trait impl: bridges passkey-rs `CredentialStore` to cipher envelopes. `Arc<Mutex<StoreInner>>` for mutation tracking via `take_new_credentials()` + `take_counter_updates()`.
+
 ## GOTCHAS
 * **Password history**: Auto-appended on password change. Cap 10 entries (FIFO).
 * **Folder depth**: Max 16 levels. `delete_folder` cascades via BFS descendant collection.
@@ -190,6 +210,9 @@ Hover X on sidebar tag pills triggers confirmation modal. Calls `tag.delete` dae
 * **FocusTrap**: All modals use `<FocusTrap>` component for keyboard accessibility (Tab trap, Escape dismiss, auto-focus, restore focus).
 * **Locale file**: `meta/locale` is plaintext (not secret data). Needed before vault unlock for login screen i18n. Written by both CLI (`VaultCreator`) and desktop (`locale.save` IPC).
 * **Auth `setup` state**: Recovery screen transitions to `setup` (not `unlocked`). SetupScreen unlocks vault + applies profile/prefs before transitioning to `unlocked`.
+* **Passkey embedded in Login**: No standalone `CipherKind::Passkey` variant. Passkeys live in `LoginData::fido2_credentials`. `passkey.delete` and `passkey.rename` take `credential_id` (base64url) as a required arg to identify which passkey in a multi-credential Login. `passkey.list` returns `login_name`, `has_password`, `pk_name` per passkey for context.
+* **Passkey private key storage**: Encrypted under the Login's item key, never crosses IPC. BW imports mark `private_key_missing: true` (re-register needed). Zeroized in vault handle's cipher zeroize match block.
+* **WebAuthn ceremony trust model (Phase 1)**: `passkey_data` is echoed from `challenge_*` to `finish_*` in Phase 1 (same-process desktop = trusted). Phase 2 (browser extension = untrusted) MUST store results in `CeremonyState` to prevent counter forgery + cross-RP credential update.
 
 ## UX PRINCIPLES
 * **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden.
