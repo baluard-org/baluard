@@ -16,7 +16,7 @@
 
 ## Current Status
 
-**0 clippy errors workspace-wide. 358 tests pass.**
+**0 clippy errors workspace-wide. 360 tests pass.**
 
 Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done** (embedded in LoginData, daemon IPC, CLI).
 
@@ -190,7 +190,7 @@ Features parked for the far future. Do not start without explicit confirmation.
 | Item | Description | Blocker |
 |------|-------------|---------|
 | Encrypted JSON export | Baluard-native format (Argon2id + AES-256-GCM). Git clone + recovery phrase already covers disaster recovery | Low priority, needs format documentation |
-| FIDO2 credential storage | **Done (Phase 0+1)**. Embedded in `LoginData::fido2_credentials: Option<Vec<PasskeyData>>`. ES256 only via `passkey-rs` 0.5.x. Daemon IPC: 7 routes. CLI: list/delete/rename. 358 tests pass. See `docs/plan-passkey-support.md`. | Phase 2+ (browser extension, mobile) |
+| FIDO2 credential storage | **Done (Phase 0+1)**. Embedded in `LoginData::fido2_credentials: Option<Vec<PasskeyData>>`. ES256 only via `passkey-rs` 0.5.x. Daemon IPC: 7 routes. CLI: list/delete/rename. 360 tests pass. See `docs/plan-passkey-support.md`. | Phase 2+ (browser extension, mobile) |
 
 ### Out of Scope (No Server)
 

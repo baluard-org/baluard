@@ -21,7 +21,6 @@ use passkey::types::webauthn::{
 use rand::RngCore;
 use tokio::sync::RwLock;
 use url::Url;
-use uuid::Uuid;
 
 use crate::types::PasskeyData;
 

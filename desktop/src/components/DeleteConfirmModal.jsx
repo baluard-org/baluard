@@ -2,6 +2,7 @@ import { Show } from "solid-js";
 import { Transition } from "solid-transition-group";
 import { useI18n } from "../i18n/index.jsx";
 import FocusTrap from "./FocusTrap.jsx";
+import { Button } from "./Primitives.jsx";
 
 export default function DeleteConfirmModal(props) {
   const { t } = useI18n();
@@ -27,18 +28,19 @@ export default function DeleteConfirmModal(props) {
                 : t("entry.moveToTrashConfirm")}
             </p>
             <div class="flex gap-3">
-              <button
+              <Button
                 onClick={() => props.setShowDeleteConfirm(false)}
-                class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] font-semibold transition-all cursor-pointer"
+                class="flex-1 py-2.5"
               >
                 {t("entry.cancel")}
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => { props.onDelete?.(props.viewCipher?.id); props.setShowDeleteConfirm(false); }}
-                class="flex-1 py-2.5 rounded-xl bg-red-950/40 text-red-400 border border-red-900/30 hover:bg-red-950/60 font-semibold transition-all cursor-pointer"
+                variant="danger"
+                class="flex-1 py-2.5"
               >
                 {props.selectedCategory === "Trash" ? t("entry.deletePermanently") : t("entry.delete")}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
