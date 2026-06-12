@@ -8,3 +8,5 @@ pub mod hpke_wrap;
 pub mod kdf;
 pub mod signature;
 pub mod totp;
+#[cfg(feature = "passkey-ceremony")]
+pub mod webauthn;
