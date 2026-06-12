@@ -777,6 +777,76 @@ impl VaultState {
         serde_json::to_string(&result).map_err(|e| format!("JSON serialization: {e}"))
     }
 
+    // ── Generator history ──
+
+    /// Add a generated password/passphrase to history.
+    /// Payload: `{ "value": "...", "kind": "password", "params": { "length": 16, ... } }`
+    /// Returns the updated history list (display-capped, newest first).
+    pub async fn generator_history_add(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+
+        let v: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+
+        let value = v["value"]
+            .as_str()
+            .ok_or("Missing 'value' field")?
+            .to_string();
+        let kind_str = v["kind"].as_str().unwrap_or("password");
+        let kind = match kind_str {
+            "passphrase" => baluard_core::types::GeneratorKind::Passphrase,
+            _ => baluard_core::types::GeneratorKind::Password,
+        };
+        let params: baluard_core::types::GeneratorParams = serde_json::from_value(
+            v["params"].clone(),
+        )
+        .unwrap_or(baluard_core::types::GeneratorParams {
+            length: if matches!(kind, baluard_core::types::GeneratorKind::Password) {
+                16
+            } else {
+                5
+            },
+            upper: true,
+            numbers: true,
+            symbols: true,
+            separator: None,
+        });
+
+        let entry = baluard_core::types::GeneratorHistoryEntry {
+            value,
+            kind,
+            params,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+
+        let display = handle
+            .add_generator_history_entry(entry)
+            .map_err(|e| format!("{e}"))?;
+
+        serde_json::to_string(&display).map_err(|e| format!("JSON serialization: {e}"))
+    }
+
+    /// List generator history (display-capped, newest first).
+    pub async fn generator_history_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        let display = handle
+            .list_generator_history_display()
+            .map_err(|e| format!("{e}"))?;
+        serde_json::to_string(&display).map_err(|e| format!("JSON serialization: {e}"))
+    }
+
+    /// Clear all generator history.
+    pub async fn generator_history_clear(&self) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+        handle.clear_generator_history().map_err(|e| format!("{e}"))
+    }
+
     // ── Passkey ceremony (Phase 1) ──
 
     /// List passkey ciphers, optionally filtered by rp_id.

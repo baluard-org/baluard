@@ -16,6 +16,7 @@ const FOLDERS_INFO: &[u8] = b"baluard-folders-v1";
 const TAGS_INFO: &[u8] = b"baluard-tags-v1";
 const PROFILE_INFO: &[u8] = b"baluard-profile-v1";
 const ACTIVITY_INFO: &[u8] = b"baluard-activity-v1";
+const GENERATOR_HISTORY_INFO: &[u8] = b"baluard-generator-history-v1";
 
 /// Derive a 32-byte Session Key from KEK.
 ///
@@ -96,6 +97,16 @@ pub fn derive_activity_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError>
     Ok(key)
 }
 
+/// Derive a 32-byte Generator History Key from Root Key.
+/// Used to encrypt/decrypt `meta/generator-history.enc`.
+pub fn derive_generator_history_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, root_key);
+    let mut key = [0u8; 32];
+    hkdf.expand(GENERATOR_HISTORY_INFO, &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
 fn derive_key(kek: &[u8; 32], info: &[u8]) -> Result<[u8; 32], CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, kek);
     let mut key = [0u8; 32];
@@ -170,6 +181,20 @@ mod tests {
         assert_ne!(idx, fld);
         assert_ne!(idx, tag);
         assert_ne!(fld, tag);
+    }
+
+    #[test]
+    fn generator_history_key_deterministic_and_unique() {
+        let rk = [42u8; 64];
+        let k1 = derive_generator_history_key(&rk).unwrap();
+        let k2 = derive_generator_history_key(&rk).unwrap();
+        assert_eq!(k1, k2);
+        // Must differ from all other derived keys
+        assert_ne!(k1, derive_profile_key(&rk).unwrap());
+        assert_ne!(k1, derive_index_key(&rk).unwrap());
+        assert_ne!(k1, derive_folders_key(&rk).unwrap());
+        assert_ne!(k1, derive_tags_key(&rk).unwrap());
+        assert_ne!(k1, derive_activity_key(&rk).unwrap());
     }
 
     #[test]
