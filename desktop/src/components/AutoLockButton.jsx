@@ -32,6 +32,7 @@ export default function AutoLockButton() {
       <button
         onClick={() => { const next = !showSettings(); setShowSettings(next); if (next) loadSetting(); }}
         title={t("settings.autolockSettings")}
+        aria-label={t("settings.autolockSettings")}
         class="p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)]"
       >
         <IconClock class="w-4 h-4" />
@@ -46,6 +47,7 @@ export default function AutoLockButton() {
               max="120"
               value={lockMinutes()}
               onInput={e => setLockMinutes(parseInt(e.target.value) || 15)}
+              aria-label={t("settings.autolockTimeout")}
               class="w-20 px-3 py-2 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] text-center"
             />
             <span class="text-xs text-[var(--color-muted)]">{t("settings.minutes")}</span>
@@ -57,7 +59,7 @@ export default function AutoLockButton() {
             {saved() ? t("settings.saved") : t("settings.save")}
           </button>
           <div class="text-[10px] text-[var(--color-muted)] mt-2">{t("settings.autolockInactivity")}</div>
-
+ 
           {/* Biometric Unlock */}
           <div class="border-t border-[var(--color-border)] mt-3 pt-3">
             <div class="flex items-center justify-between">
@@ -80,6 +82,7 @@ export default function AutoLockButton() {
                 }}
                 class="p-1.5 rounded-lg transition-colors cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-primary)]"
                 title={t("settings.quickUnlockDesc")}
+                aria-label={t("settings.quickUnlockDesc")}
               >
                 <IconUser class="w-5 h-5" />
               </button>

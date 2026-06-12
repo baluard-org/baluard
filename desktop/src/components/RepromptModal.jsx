@@ -3,6 +3,7 @@ import { Transition } from "solid-transition-group";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import FocusTrap from "./FocusTrap.jsx";
+import { Button, Input } from "./Primitives.jsx";
 
 let repromptCallback = null;
 
@@ -52,27 +53,26 @@ export default function RepromptModal(props) {
             <Show when={failed()}>
               <div class="mb-3 p-2 rounded-lg bg-red-950/40 border border-red-900/30 text-red-300 text-xs">{t("errors.invalidPassword")}</div>
             </Show>
-            <input
+            <Input
               type="password"
               autocomplete="current-password"
-              autocorrect="off"
-              autocapitalize="off"
-              spellcheck="false"
               placeholder={t("login.passwordPlaceholder")}
               value={password()}
               onInput={e => { setPassword(e.target.value); setFailed(false); }}
               onKeyPress={e => { if (e.key === "Enter") handleConfirm(); }}
-              class="w-full px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] mb-4"
+              class="mb-4"
+              aria-label={t("entry.confirmPassword")}
             />
             <div class="flex gap-3">
-              <button
+              <Button
                 onClick={() => { setShow(false); setPassword(""); setFailed(false); }}
-                class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] font-semibold transition-all cursor-pointer"
-              >{t("entry.cancel")}</button>
-              <button
+                class="flex-1 py-2.5"
+              >{t("entry.cancel")}</Button>
+              <Button
                 onClick={handleConfirm}
-                class="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] font-semibold transition-all cursor-pointer"
-              >{t("entry.confirm")}</button>
+                variant="primary"
+                class="flex-1 py-2.5"
+              >{t("entry.confirm")}</Button>
             </div>
           </div>
         </div>

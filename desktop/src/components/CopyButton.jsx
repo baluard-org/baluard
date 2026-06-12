@@ -1,6 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import { IconCopy, IconCheck } from "./Icon.jsx";
 import { copyToClipboard } from "../lib/clipboard.js";
+import { useI18n } from "../i18n/index.jsx";
 
 /**
  * Reusable copy-to-clipboard button with animated feedback.
@@ -17,6 +18,7 @@ import { copyToClipboard } from "../lib/clipboard.js";
  *   title?  — tooltip text
  */
 export default function CopyButton(props) {
+  const { t } = useI18n();
   const [copied, setCopied] = createSignal(false);
 
   async function handleCopy(e) {
@@ -34,7 +36,8 @@ export default function CopyButton(props) {
     <button
       onClick={handleCopy}
       class={`flex items-center gap-1.5 cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors ${props.class || ""}`}
-      title={props.title || "Copy to clipboard"}
+      title={props.title || t("recovery.copyToClipboard")}
+      aria-label={props.title || t("recovery.copyToClipboard")}
     >
       <Show when={copied()} fallback={
         <IconCopy class="w-4 h-4" />

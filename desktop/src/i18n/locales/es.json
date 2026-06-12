@@ -179,6 +179,7 @@
     "tabData": "Importación / exportación de datos",
     "tabDevices": "Dispositivos",
     "appTheme": "Tema de la aplicación",
+    "toggleTheme": "Cambiar tema",
     "darkMode": "Modo oscuro",
     "lightMode": "Modo claro",
     "autolockDesc": "Bloquea automáticamente la bóveda después de un período de inactividad.",
