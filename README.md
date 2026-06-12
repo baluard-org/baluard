@@ -41,7 +41,7 @@ For full documentation, see **[docs/index.md](docs/index.md)**.
 
 | Document | Description |
 |----------|-------------|
-| [Architecture Decisions](docs/architecture-decisions.md) | Design rationale, device fleet (DOMAIN 5), device lifecycle & rotation (DOMAIN 6) |
+| [Architecture Decisions](docs/software-architecture-decisions.md) | Design rationale, device fleet (DOMAIN 5), device lifecycle & rotation (DOMAIN 6) |
 | [Software Architecture](docs/software-architecture.md) | Component diagram, data flows, IPC protocol, key lifecycle, cryptographic ceremonies |
 | [Threat Model](docs/threat-model.md) | Adversaries, attack surfaces, mitigations |
 | [2FA Analysis](docs/2fa-analysis.md) | TOTP implementation, RFC 6238/4226 compliance |
