@@ -565,6 +565,11 @@ pub struct PasskeyData {
     pub linked_login_id: Option<Uuid>,
     /// Unix timestamp (seconds) when this credential was registered.
     pub creation_date: u64,
+    /// Optional display name for this specific passkey credential.
+    /// Set by the user (e.g. "YubiKey 5C", "iPhone 15"). When `None`,
+    /// the UI shows `rp_name` or `rp_id` as fallback.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 impl Zeroize for PasskeyData {
@@ -819,7 +824,7 @@ impl CipherEnvelopeData {
                     totp_uri: self.totp_uri.take(),
                     autofill_on_page_load: false,
                     password_revision_date: None,
-                fido2_credentials: None,
+                    fido2_credentials: None,
                 });
             }
             _ => {
@@ -1229,59 +1234,63 @@ mod tests {
                 assert_eq!(data.passport_number.as_deref(), Some("P12345"));
             }
             _ => panic!("expected Passport"),
-    }
+        }
 
-    #[test]
-    fn login_data_with_fido2_credentials_round_trips() {
-        let pk = PasskeyData {
-            credential_id: "ufJWp8YGlibm1Kd9XQBWN1WAw2jy5In2Xhon9HAqcXE".into(),
-            key_type: "public-key".into(),
-            key_algorithm: "ECDSA".into(),
-            key_curve: "P-256".into(),
-            key_value: "AQCAgIA".into(),
-            rp_id: "github.com".into(),
-            rp_name: Some("GitHub".into()),
-            user_handle: Some(vec![1, 2, 3, 4]),
-            user_name: Some("alex@example.com".into()),
-            user_display_name: Some("Alex".into()),
-            counter: 0,
-            aaguid: Uuid::nil(),
-            prf_key: None,
-            private_key: Some(vec![0u8; 32]),
-            private_key_missing: false,
-            linked_login_id: None,
-            creation_date: 1718000000,
-        };
-        let login = CipherKind::Login(LoginData {
-            username: Some("alex@example.com".into()),
-            password: Some("s3cret".into()),
-            uris: vec![LoginUri { uri: "https://github.com".into(), match_strategy: UriMatchStrategy::Domain }],
-            totp_uri: None,
-            autofill_on_page_load: false,
-            password_revision_date: None,
-            fido2_credentials: Some(vec![pk]),
-        });
-        let json = serde_json::to_string(&login).unwrap();
-        let back: CipherKind = serde_json::from_str(&json).unwrap();
-        match back {
-            CipherKind::Login(data) => {
-                assert_eq!(data.username.as_deref(), Some("alex@example.com"));
-                let fido2 = data.fido2_credentials.unwrap();
-                assert_eq!(fido2.len(), 1);
-                assert_eq!(fido2[0].rp_id, "github.com");
-                assert_eq!(fido2[0].user_name.as_deref(), Some("alex@example.com"));
+        #[test]
+        fn login_data_with_fido2_credentials_round_trips() {
+            let pk = PasskeyData {
+                credential_id: "ufJWp8YGlibm1Kd9XQBWN1WAw2jy5In2Xhon9HAqcXE".into(),
+                key_type: "public-key".into(),
+                key_algorithm: "ECDSA".into(),
+                key_curve: "P-256".into(),
+                key_value: "AQCAgIA".into(),
+                rp_id: "github.com".into(),
+                rp_name: Some("GitHub".into()),
+                user_handle: Some(vec![1, 2, 3, 4]),
+                user_name: Some("alex@example.com".into()),
+                user_display_name: Some("Alex".into()),
+                counter: 0,
+                aaguid: Uuid::nil(),
+                prf_key: None,
+                private_key: Some(vec![0u8; 32]),
+                private_key_missing: false,
+                linked_login_id: None,
+                creation_date: 1718000000,
+                name: None,
+            };
+            let login = CipherKind::Login(LoginData {
+                username: Some("alex@example.com".into()),
+                password: Some("s3cret".into()),
+                uris: vec![LoginUri {
+                    uri: "https://github.com".into(),
+                    match_strategy: UriMatchStrategy::Domain,
+                }],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+                fido2_credentials: Some(vec![pk]),
+            });
+            let json = serde_json::to_string(&login).unwrap();
+            let back: CipherKind = serde_json::from_str(&json).unwrap();
+            match back {
+                CipherKind::Login(data) => {
+                    assert_eq!(data.username.as_deref(), Some("alex@example.com"));
+                    let fido2 = data.fido2_credentials.unwrap();
+                    assert_eq!(fido2.len(), 1);
+                    assert_eq!(fido2[0].rp_id, "github.com");
+                    assert_eq!(fido2[0].user_name.as_deref(), Some("alex@example.com"));
+                }
+                _ => panic!("expected Login"),
             }
-            _ => panic!("expected Login"),
+        }
+
+        #[test]
+        fn login_data_without_fido2_omits_field() {
+            let login = CipherKind::Login(LoginData::default());
+            let json = serde_json::to_string(&login).unwrap();
+            assert!(!json.contains("fido2_credentials"));
         }
     }
-
-    #[test]
-    fn login_data_without_fido2_omits_field() {
-        let login = CipherKind::Login(LoginData::default());
-        let json = serde_json::to_string(&login).unwrap();
-        assert!(!json.contains("fido2_credentials"));
-    }
-}
 
     #[test]
     fn migration_old_flat_format_to_login() {

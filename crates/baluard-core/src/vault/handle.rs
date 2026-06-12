@@ -245,7 +245,12 @@ impl VaultHandle {
 
         // Step 5: HPKE-decapsulate Root Key using device private key (keyring or file)
         let privkeys = load_device_privkeys(&self.path, self.device_id)?;
-        let unwrapped = hpke_wrap::unwrap_key(&kw.ephemeral_public, &kw.encrypted_key, &kw.tag, &privkeys.x25519)?;
+        let unwrapped = hpke_wrap::unwrap_key(
+            &kw.ephemeral_public,
+            &kw.encrypted_key,
+            &kw.tag,
+            &privkeys.x25519,
+        )?;
         let rk_bytes: [u8; 64] = unwrapped
             .try_into()
             .map_err(|_| VaultError::Corrupt("unwrapped root key not 64 bytes".into()))?;
@@ -1151,8 +1156,6 @@ impl VaultHandle {
         };
         crate::vault::cipher::decrypt_cipher(self.vault_id, file.id, file, &item_key)
     }
-
-
 
     /// Derive an item key from the cached Space Group Key in UnlockedState.
     /// DESIGN-3: Uses the SGK already held in UnlockedState, avoiding redundant derivation.
@@ -2917,15 +2920,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let password = "test-password-unlock-flow";
 
-        let (handle, _secrets) = creation::VaultCreator::new(
-            dir.path(),
-            password,
-            "test-device",
-        )
-        .kdf_profile(KdfProfile::MobileLow)
-        .initialize_git(false)
-        .execute()
-        .unwrap();
+        let (handle, _secrets) = creation::VaultCreator::new(dir.path(), password, "test-device")
+            .kdf_profile(KdfProfile::MobileLow)
+            .initialize_git(false)
+            .execute()
+            .unwrap();
         drop(handle); // Release locks so tests can re-open
 
         (dir, password.to_string())
@@ -2967,7 +2966,7 @@ mod tests {
                 totp_uri: None,
                 autofill_on_page_load: false,
                 password_revision_date: None,
-                    fido2_credentials: None,
+                fido2_credentials: None,
             }),
             favorite: false,
             notes: None,
@@ -3017,7 +3016,7 @@ mod tests {
                 uris: vec![],
                 totp_uri: None,
                 autofill_on_page_load: false,
-                    fido2_credentials: None,
+                fido2_credentials: None,
                 password_revision_date: None,
             }),
             favorite: false,
@@ -3058,7 +3057,7 @@ mod tests {
                 password: Some("val".into()),
                 uris: vec![],
                 totp_uri: None,
-                    fido2_credentials: None,
+                fido2_credentials: None,
                 autofill_on_page_load: false,
                 password_revision_date: None,
             }),
@@ -3111,7 +3110,7 @@ mod tests {
                 username: Some("user@gh.com".into()),
                 password: Some("s3cret".into()),
                 uris: vec![],
-                    fido2_credentials: None,
+                fido2_credentials: None,
                 totp_uri: None,
                 autofill_on_page_load: false,
                 password_revision_date: None,

@@ -11,13 +11,13 @@ use base64::Engine;
 use coset::iana;
 use passkey::authenticator::{Authenticator, UserCheck, UserValidationMethod};
 use passkey::client::{Client, DefaultClientData};
+use passkey::types::Bytes;
 use passkey::types::ctap2::Aaguid;
 use passkey::types::webauthn::{
     AttestationConveyancePreference, AuthenticatorAttachment, AuthenticatorSelectionCriteria,
     CredentialCreationOptions, CredentialRequestOptions, PublicKeyCredentialCreationOptions,
     PublicKeyCredentialUserEntity, ResidentKeyRequirement, UserVerificationRequirement,
 };
-use passkey::types::Bytes;
 use rand::RngCore;
 use tokio::sync::RwLock;
 use url::Url;
@@ -116,10 +116,7 @@ impl CeremonyCache {
 
     /// Evict expired entries. Call at ceremony entry points.
     pub async fn evict_expired(&self) {
-        self.states
-            .write()
-            .await
-            .retain(|_, s| !s.is_expired());
+        self.states.write().await.retain(|_, s| !s.is_expired());
     }
 }
 
@@ -246,8 +243,8 @@ pub async fn run_registration(
         .next()
         .ok_or("Registration produced no credential")?;
 
-    let credential_id_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(&*passkey.credential_id);
+    let credential_id_b64 =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*passkey.credential_id);
 
     let passkey_data = store::passkey_to_passkey_data(&passkey, Some(&rp_name))
         .ok_or("Failed to convert ceremony result to PasskeyData")?;
@@ -308,8 +305,8 @@ pub async fn run_assertion(
     // Extract counter updates from the store
     let counter_updates = extraction_clone.take_counter_updates();
 
-    let credential_id_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(&*authenticated.raw_id);
+    let credential_id_b64 =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*authenticated.raw_id);
 
     let new_counter = counter_updates
         .get(&*authenticated.raw_id)

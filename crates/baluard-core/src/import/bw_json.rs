@@ -109,15 +109,12 @@ struct BwFido2Credential {
 fn bw_fido2_to_passkey(fc: &BwFido2Credential) -> PasskeyData {
     use base64::Engine;
 
-    let user_handle = fc
-        .user_handle
-        .as_deref()
-        .and_then(|s| {
-            base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .decode(s)
-                .or_else(|_| base64::engine::general_purpose::STANDARD.decode(s))
-                .ok()
-        });
+    let user_handle = fc.user_handle.as_deref().and_then(|s| {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(s)
+            .or_else(|_| base64::engine::general_purpose::STANDARD.decode(s))
+            .ok()
+    });
 
     let counter = fc
         .counter
@@ -149,6 +146,7 @@ fn bw_fido2_to_passkey(fc: &BwFido2Credential) -> PasskeyData {
         private_key_missing: true,
         linked_login_id: None,
         creation_date,
+        name: None,
     }
 }
 
@@ -737,8 +735,6 @@ mod tests {
     }
 
     #[test]
-
-    #[test]
     fn passkey_import_from_bitwarden() {
         // BW stores fido2_credentials[] inside Login items. Import embeds
         // them into LoginData::fido2_credentials. No separate cipher emitted.
@@ -783,7 +779,10 @@ mod tests {
                 assert_eq!(data.uris.len(), 1);
                 let fido2 = data.fido2_credentials.as_ref().unwrap();
                 assert_eq!(fido2.len(), 1);
-                assert_eq!(fido2[0].credential_id, "ufJWp8YGlibm1Kd9XQBWN1WAw2jy5In2Xhon9HAqcXE");
+                assert_eq!(
+                    fido2[0].credential_id,
+                    "ufJWp8YGlibm1Kd9XQBWN1WAw2jy5In2Xhon9HAqcXE"
+                );
                 assert_eq!(fido2[0].key_type, "public-key");
                 assert_eq!(fido2[0].rp_id, "github.com");
                 assert_eq!(fido2[0].rp_name.as_deref(), Some("GitHub"));

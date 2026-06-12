@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use base64::Engine;
+use coset::CborSerializable;
 use passkey::authenticator::{CredentialStore, DiscoverabilitySupport, StoreInfo};
 use passkey::types::{
     Passkey,
@@ -22,8 +24,6 @@ use passkey::types::{
     webauthn::PublicKeyCredentialDescriptor,
 };
 use uuid::Uuid;
-use base64::Engine;
-use coset::CborSerializable;
 
 use crate::types::{Cipher, CipherKind, PasskeyData};
 
@@ -123,17 +123,12 @@ pub(crate) fn passkey_data_to_passkey(data: &PasskeyData) -> Option<Passkey> {
 
 /// Convert a `passkey_types::Passkey` (from ceremony result) to `PasskeyData`
 /// for vault storage. The COSE key pair is serialized to CBOR bytes.
-pub fn passkey_to_passkey_data(
-    pk: &Passkey,
-    rp_name: Option<&str>,
-) -> Option<PasskeyData> {
+pub fn passkey_to_passkey_data(pk: &Passkey, rp_name: Option<&str>) -> Option<PasskeyData> {
     let private_key = pk.key.clone().to_vec().ok()?;
-    let credential_id = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(&*pk.credential_id);
+    let credential_id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*pk.credential_id);
     // key_value stores the full COSE key (CBOR-encoded, same bytes as private_key).
     // In Phase 2, extract just the public key (x || y coordinates) for interop.
-    let key_value = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(&private_key);
+    let key_value = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&private_key);
 
     Some(PasskeyData {
         rp_id: pk.rp_id.clone(),
@@ -156,6 +151,7 @@ pub fn passkey_to_passkey_data(
         private_key_missing: false,
         prf_key: None,
         linked_login_id: None,
+        name: None,
     })
 }
 
@@ -219,13 +215,25 @@ impl BaluardCredentialStore {
     /// Extract and clear new credentials saved during ceremony.
     /// Call after `client.register()` to get the new passkey(s).
     pub fn take_new_credentials(&self) -> Vec<Passkey> {
-        std::mem::take(&mut self.inner.lock().unwrap_or_else(|e| e.into_inner()).new_credentials)
+        std::mem::take(
+            &mut self
+                .inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .new_credentials,
+        )
     }
 
     /// Extract and clear counter updates from ceremony.
     /// Call after `client.authenticate()` to get updated counters.
     pub fn take_counter_updates(&self) -> HashMap<Vec<u8>, u32> {
-        std::mem::take(&mut self.inner.lock().unwrap_or_else(|e| e.into_inner()).counter_updates)
+        std::mem::take(
+            &mut self
+                .inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .counter_updates,
+        )
     }
 }
 
@@ -290,8 +298,12 @@ impl CredentialStore for BaluardCredentialStore {
     async fn update_credential(&mut self, cred: &Passkey) -> Result<(), StatusCode> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let new_counter = cred.counter.unwrap_or(0);
-        inner.counter_updates.insert(cred.credential_id.to_vec(), new_counter);
-        inner.credentials.insert(cred.credential_id.to_vec(), cred.clone());
+        inner
+            .counter_updates
+            .insert(cred.credential_id.to_vec(), new_counter);
+        inner
+            .credentials
+            .insert(cred.credential_id.to_vec(), cred.clone());
         Ok(())
     }
 

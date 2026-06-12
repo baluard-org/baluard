@@ -51,13 +51,8 @@ pub fn create_rk_canary(
         update_seq: 0,
         tier: None,
     };
-    let envelope = crate::crypto::aead::encrypt(
-        &canary_key,
-        RK_CANARY_PT,
-        RK_CANARY_AAD,
-        &nonce,
-        header,
-    )?;
+    let envelope =
+        crate::crypto::aead::encrypt(&canary_key, RK_CANARY_PT, RK_CANARY_AAD, &nonce, header)?;
     canary_key.zeroize();
 
     crate::vault::envelope::serialize(&envelope).map_err(Into::into)
@@ -66,10 +61,7 @@ pub fn create_rk_canary(
 /// Verify a Root Key against an RK canary envelope.
 ///
 /// Decrypts the envelope and checks the plaintext matches `RK_CANARY_PT`.
-pub fn verify_rk_canary(
-    root_key: &RootKey,
-    canary_bytes: &[u8],
-) -> Result<(), BaluardError> {
+pub fn verify_rk_canary(root_key: &RootKey, canary_bytes: &[u8]) -> Result<(), BaluardError> {
     let mut canary_key = derive_rk_canary_key(root_key);
     let envelope = crate::vault::envelope::deserialize(canary_bytes)?;
     let pt = crate::crypto::aead::decrypt(&canary_key, &envelope).map_err(|e| {
@@ -77,9 +69,8 @@ pub fn verify_rk_canary(
         e
     });
     canary_key.zeroize();
-    let pt = pt.map_err(|_| {
-        crate::error::VaultError::Corrupt("root key verification failed".into())
-    })?;
+    let pt =
+        pt.map_err(|_| crate::error::VaultError::Corrupt("root key verification failed".into()))?;
     if pt != RK_CANARY_PT {
         return Err(crate::error::VaultError::Corrupt(
             "root key verification failed (plaintext mismatch)".into(),
@@ -100,10 +91,7 @@ const KEK_CANARY_AAD: &[u8] = b"baluard-kek-canary-v1";
 ///
 /// Encrypts the canary plaintext with the session key derived from KEK.
 /// Returns serialized envelope bytes for `meta/kek-canary.enc`.
-pub fn create_kek_canary(
-    session_key: &[u8; 32],
-    vault_id: Uuid,
-) -> Result<Vec<u8>, BaluardError> {
+pub fn create_kek_canary(session_key: &[u8; 32], vault_id: Uuid) -> Result<Vec<u8>, BaluardError> {
     let nonce = crate::crypto::aead::build_nonce(0, vault_id);
     let header = EnvelopeHeader {
         version: BALUARD_VERSION,
@@ -113,27 +101,18 @@ pub fn create_kek_canary(
         update_seq: 0,
         tier: None,
     };
-    let envelope = crate::crypto::aead::encrypt(
-        session_key,
-        KEK_CANARY_PT,
-        KEK_CANARY_AAD,
-        &nonce,
-        header,
-    )?;
+    let envelope =
+        crate::crypto::aead::encrypt(session_key, KEK_CANARY_PT, KEK_CANARY_AAD, &nonce, header)?;
     crate::vault::envelope::serialize(&envelope).map_err(Into::into)
 }
 
 /// Verify a KEK/session key against a KEK canary envelope.
 ///
 /// Returns `Ok(())` if decryption succeeds and plaintext matches.
-pub fn verify_kek_canary(
-    session_key: &[u8; 32],
-    canary_bytes: &[u8],
-) -> Result<(), BaluardError> {
+pub fn verify_kek_canary(session_key: &[u8; 32], canary_bytes: &[u8]) -> Result<(), BaluardError> {
     let envelope = crate::vault::envelope::deserialize(canary_bytes)?;
-    let pt = crate::crypto::aead::decrypt(session_key, &envelope).map_err(|_| {
-        crate::error::VaultError::Corrupt("master password incorrect".into())
-    })?;
+    let pt = crate::crypto::aead::decrypt(session_key, &envelope)
+        .map_err(|_| crate::error::VaultError::Corrupt("master password incorrect".into()))?;
     if pt != KEK_CANARY_PT {
         return Err(crate::error::VaultError::Corrupt(
             "master password incorrect (KEK canary plaintext mismatch)".into(),

@@ -402,23 +402,23 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         },
 
         // vault.active: token NOT required (reads plaintext registry only)
-        "vault.active" => {
-            match baluard_core::vault::registry::VaultRegistry::load() {
-                Ok(reg) => {
-                    let entry = reg.active_vault
-                        .as_ref()
-                        .and_then(|slug| reg.vaults.get(slug));
-                    match entry {
-                        Some(e) => ok_resp(
-                            serde_json::json!({"slug": e.slug, "display_name": e.display_name}).to_string(),
-                            token_str,
-                        ),
-                        None => err_response("No active vault".to_string()),
-                    }
+        "vault.active" => match baluard_core::vault::registry::VaultRegistry::load() {
+            Ok(reg) => {
+                let entry = reg
+                    .active_vault
+                    .as_ref()
+                    .and_then(|slug| reg.vaults.get(slug));
+                match entry {
+                    Some(e) => ok_resp(
+                        serde_json::json!({"slug": e.slug, "display_name": e.display_name})
+                            .to_string(),
+                        token_str,
+                    ),
+                    None => err_response("No active vault".to_string()),
                 }
-                Err(e) => err_response(format!("Registry error: {e}")),
             }
-        }
+            Err(e) => err_response(format!("Registry error: {e}")),
+        },
 
         // ── Cipher CRUD (token required, enforced above) ──
         "vault.list" => match state.list_cipher_meta().await {
@@ -923,24 +923,18 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(e) => err_response(e),
             }
         }
-        "passkey.finish_register" => {
-            match state.passkey_finish_register(&req.payload).await {
-                Ok(json) => ok_resp(json, token_str),
-                Err(e) => err_response(e),
-            }
-        }
-        "passkey.challenge_assert" => {
-            match state.passkey_challenge_assert(&req.payload).await {
-                Ok(json) => ok_resp(json, token_str),
-                Err(e) => err_response(e),
-            }
-        }
-        "passkey.finish_assert" => {
-            match state.passkey_finish_assert(&req.payload).await {
-                Ok(json) => ok_resp(json, token_str),
-                Err(e) => err_response(e),
-            }
-        }
+        "passkey.finish_register" => match state.passkey_finish_register(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "passkey.challenge_assert" => match state.passkey_challenge_assert(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "passkey.finish_assert" => match state.passkey_finish_assert(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
         "passkey.delete" => match state.passkey_delete(&req.payload).await {
             Ok(()) => ok_resp("{}", token_str),
             Err(e) => err_response(e),

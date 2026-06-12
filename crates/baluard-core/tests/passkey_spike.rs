@@ -13,13 +13,13 @@
 
 use passkey::authenticator::{Authenticator, MemoryStore, UserCheck, UserValidationMethod};
 use passkey::client::{Client, DefaultClientData};
+use passkey::types::Bytes;
 use passkey::types::ctap2::Aaguid;
 use passkey::types::webauthn::{
     AttestationConveyancePreference, AuthenticatorAttachment, AuthenticatorSelectionCriteria,
     CredentialCreationOptions, CredentialRequestOptions, PublicKeyCredentialCreationOptions,
     PublicKeyCredentialUserEntity, ResidentKeyRequirement, UserVerificationRequirement,
 };
-use passkey::types::Bytes;
 use url::Url;
 use uuid::Uuid;
 use webauthn_rs::prelude::*;
@@ -88,8 +88,8 @@ fn challenge_to_passkey_options(
     user_name: &str,
     user_display_name: &str,
 ) -> CredentialCreationOptions {
-    let v: serde_json::Value = serde_json::to_value(chal.public_key.clone())
-        .expect("serialize CreationChallengeResponse");
+    let v: serde_json::Value =
+        serde_json::to_value(chal.public_key.clone()).expect("serialize CreationChallengeResponse");
     let mut opts: PublicKeyCredentialCreationOptions =
         serde_json::from_value(v).expect("deserialize into passkey types");
     // Override the user (webauthn-rs uses the empty default; passkey-rs
@@ -122,9 +122,7 @@ fn challenge_to_passkey_options(
 /// RequestChallengeResponse has `public_key` field with
 /// `PublicKeyCredentialRequestOptions`. We need to convert to passkey-rs
 /// types.
-fn auth_challenge_to_passkey_options(
-    chal: &RequestChallengeResponse,
-) -> CredentialRequestOptions {
+fn auth_challenge_to_passkey_options(chal: &RequestChallengeResponse) -> CredentialRequestOptions {
     let v: serde_json::Value =
         serde_json::to_value(&chal.public_key).expect("serialize RequestChallengeResponse");
     let mut opts: passkey::types::webauthn::PublicKeyCredentialRequestOptions =
@@ -144,12 +142,7 @@ async fn registration_round_trips_through_webauthn_rs() {
     // authenticator; not used directly but keeps the allocation alive.
     let user_uuid = Uuid::new_v4();
     let (chal, reg_state) = webauthn
-        .start_passkey_registration(
-            user_uuid,
-            "spike@baluard.test",
-            "Spike User",
-            None,
-        )
+        .start_passkey_registration(user_uuid, "spike@baluard.test", "Spike User", None)
         .expect("start reg");
 
     let opts = challenge_to_passkey_options(
@@ -183,12 +176,7 @@ async fn assertion_round_trips_through_webauthn_rs() {
     // authenticator; not used directly but keeps the allocation alive.
     let user_uuid = Uuid::new_v4();
     let (chal, reg_state) = webauthn
-        .start_passkey_registration(
-            user_uuid,
-            "spike@baluard.test",
-            "Spike User",
-            None,
-        )
+        .start_passkey_registration(user_uuid, "spike@baluard.test", "Spike User", None)
         .expect("start reg");
 
     let opts = challenge_to_passkey_options(

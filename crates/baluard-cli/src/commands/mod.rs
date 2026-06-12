@@ -568,6 +568,27 @@ pub fn handle_get(
                     if !c["totp"].is_null() {
                         println!("  TOTP:      {}", c["totp"]);
                     }
+                    if let Some(fido2_list) = c["fido2_credentials"].as_array() {
+                        if !fido2_list.is_empty() {
+                            println!("  Passkeys:");
+                            for pk in fido2_list {
+                                let pk_name = pk["name"]
+                                    .as_str()
+                                    .or(pk["rp_name"].as_str())
+                                    .unwrap_or(pk["rp_id"].as_str().unwrap_or("?"));
+                                println!("    - {} ({})", pk_name, pk["rp_id"]);
+                                if let Some(u) = pk["user_name"].as_str() {
+                                    println!("      User:     {u}");
+                                }
+                                println!("      Counter:  {}", pk["counter"]);
+                                if pk["private_key_missing"].as_bool() == Some(true) {
+                                    println!(
+                                        "      WARNING:  Imported (no private key, re-register needed)"
+                                    );
+                                }
+                            }
+                        }
+                    }
                     println!("  Tier:      {}", c["tier"]);
                     println!("  Epoch:     {}", c["epoch"]);
                     println!("  Seq:       {}", c["seq"]);
@@ -660,6 +681,28 @@ pub fn handle_get(
                                 }
                                 if let Some(ref t) = data.totp_uri {
                                     println!("  TOTP:      {t}");
+                                }
+                                if let Some(ref fido2_list) = data.fido2_credentials {
+                                    if !fido2_list.is_empty() {
+                                        println!("  Passkeys:");
+                                        for pk in fido2_list {
+                                            let pk_name = pk
+                                                .name
+                                                .as_deref()
+                                                .or(pk.rp_name.as_deref())
+                                                .unwrap_or(&pk.rp_id);
+                                            println!("    - {} ({})", pk_name, pk.rp_id);
+                                            if let Some(ref u) = pk.user_name {
+                                                println!("      User:     {u}");
+                                            }
+                                            println!("      Counter:  {}", pk.counter);
+                                            if pk.private_key_missing {
+                                                println!(
+                                                    "      WARNING:  Imported (no private key, re-register needed)"
+                                                );
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             baluard_core::types::CipherKind::Card(data) => {
@@ -2405,12 +2448,11 @@ pub fn handle_passkey_list(
             if !resp.success {
                 return Err(format!("Daemon error: {}", resp.error_message).into());
             }
-            let parsed: serde_json::Value = serde_json::from_str(&resp.payload)
-                .unwrap_or_default();
+            let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap_or_default();
             println!("{}", serde_json::to_string_pretty(&parsed)?);
         }
         ConnectMode::Direct => {
-            let mut handle = unlock_vault_direct(vault_path)?;
+            let handle = unlock_vault_direct(vault_path)?;
             let metas = handle.list_cipher_meta()?;
             let mut passkeys = Vec::new();
             use baluard_core::vault::handle::CipherRead;
@@ -2451,8 +2493,9 @@ pub fn handle_passkey_delete(
     vault_path: &str,
     socket: Option<&str>,
     id: &str,
+    credential_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let payload = serde_json::json!({ "id": id }).to_string();
+    let payload = serde_json::json!({ "id": id, "credential_id": credential_id }).to_string();
     match mode {
         ConnectMode::Daemon => {
             let resp = client::request_to("passkey.delete", &payload, socket)?;
@@ -2463,7 +2506,58 @@ pub fn handle_passkey_delete(
         ConnectMode::Direct => {
             let mut handle = unlock_vault_direct(vault_path)?;
             let uuid = uuid::Uuid::parse_str(id)?;
-            handle.delete_cipher(uuid)?;
+            use baluard_core::vault::handle::CipherRead;
+            let cipher = match handle.get_cipher(uuid) {
+                Ok(CipherRead::Decrypted(c)) => c,
+                _ => return Err("Cipher not found".into()),
+            };
+            match &cipher.kind {
+                baluard_core::types::CipherKind::Login(data) => {
+                    let mut fido2_list = match data.fido2_credentials.clone() {
+                        Some(list) if !list.is_empty() => list,
+                        _ => return Err("Cipher has no passkeys".into()),
+                    };
+                    let before = fido2_list.len();
+                    fido2_list.retain(|pk| pk.credential_id != credential_id);
+                    if fido2_list.len() == before {
+                        return Err(format!("Credential not found: {credential_id}").into());
+                    }
+                    if fido2_list.is_empty()
+                        && data.username.is_none()
+                        && data.password.is_none()
+                        && data.uris.is_empty()
+                        && data.totp_uri.is_none()
+                    {
+                        drop(cipher);
+                        return handle.delete_cipher(uuid).map_err(|e| e.into());
+                    }
+                    let updated_data = baluard_core::types::LoginData {
+                        fido2_credentials: if fido2_list.is_empty() {
+                            None
+                        } else {
+                            Some(fido2_list)
+                        },
+                        ..data.clone()
+                    };
+                    let input = baluard_core::types::CipherInput {
+                        name: cipher.name.clone(),
+                        folder_id: cipher.folder_id,
+                        favorite: cipher.favorite,
+                        reprompt: cipher.reprompt,
+                        tags: cipher.tags.clone(),
+                        kind: baluard_core::types::CipherKind::Login(updated_data),
+                        notes: cipher.notes.clone(),
+                        custom_fields: cipher.custom_fields.clone(),
+                        created_at: Some(cipher.created_at),
+                        password_history: cipher.password_history.clone(),
+                        attachments: cipher.attachments.clone(),
+                        archived: cipher.archived,
+                    };
+                    drop(cipher);
+                    handle.update_cipher(uuid, &input)?;
+                }
+                _ => return Err("Not a Login cipher".into()),
+            }
         }
     }
     println!("Passkey deleted.");
@@ -2475,9 +2569,11 @@ pub fn handle_passkey_rename(
     vault_path: &str,
     socket: Option<&str>,
     id: &str,
+    credential_id: &str,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let payload = serde_json::json!({ "id": id, "name": name }).to_string();
+    let payload =
+        serde_json::json!({ "id": id, "credential_id": credential_id, "name": name }).to_string();
     match mode {
         ConnectMode::Daemon => {
             let resp = client::request_to("passkey.rename", &payload, socket)?;
@@ -2493,21 +2589,41 @@ pub fn handle_passkey_rename(
                 Ok(CipherRead::Decrypted(c)) => c,
                 _ => return Err("Cipher not found".into()),
             };
-            let input = baluard_core::types::CipherInput {
-                name: name.to_string(),
-                folder_id: cipher.folder_id,
-                favorite: cipher.favorite,
-                reprompt: cipher.reprompt,
-                tags: cipher.tags.clone(),
-                kind: cipher.kind.clone(),
-                notes: cipher.notes.clone(),
-                custom_fields: cipher.custom_fields.clone(),
-                created_at: Some(cipher.created_at),
-                password_history: cipher.password_history.clone(),
-                attachments: cipher.attachments.clone(),
-                archived: cipher.archived,
-            };
-            handle.update_cipher(uuid, &input)?;
+            match &cipher.kind {
+                baluard_core::types::CipherKind::Login(data) => {
+                    let mut fido2_list = match data.fido2_credentials.clone() {
+                        Some(list) if !list.is_empty() => list,
+                        _ => return Err("Cipher has no passkeys".into()),
+                    };
+                    let found = fido2_list
+                        .iter_mut()
+                        .find(|pk| pk.credential_id == credential_id);
+                    match found {
+                        Some(pk) => pk.name = Some(name.to_string()),
+                        None => return Err(format!("Credential not found: {credential_id}").into()),
+                    }
+                    let updated_data = baluard_core::types::LoginData {
+                        fido2_credentials: Some(fido2_list),
+                        ..data.clone()
+                    };
+                    let input = baluard_core::types::CipherInput {
+                        name: cipher.name.clone(),
+                        folder_id: cipher.folder_id,
+                        favorite: cipher.favorite,
+                        reprompt: cipher.reprompt,
+                        tags: cipher.tags.clone(),
+                        kind: baluard_core::types::CipherKind::Login(updated_data),
+                        notes: cipher.notes.clone(),
+                        custom_fields: cipher.custom_fields.clone(),
+                        created_at: Some(cipher.created_at),
+                        password_history: cipher.password_history.clone(),
+                        attachments: cipher.attachments.clone(),
+                        archived: cipher.archived,
+                    };
+                    handle.update_cipher(uuid, &input)?;
+                }
+                _ => return Err("Not a Login cipher".into()),
+            }
         }
     }
     println!("Passkey renamed.");
