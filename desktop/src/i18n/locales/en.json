@@ -179,6 +179,7 @@
     "tabData": "Data Import / Export",
     "tabDevices": "Devices",
     "appTheme": "App Theme",
+    "toggleTheme": "Toggle theme",
     "darkMode": "Dark Mode",
     "lightMode": "Light Mode",
     "autolockDesc": "Automatically locks the vault after a period of inactivity.",

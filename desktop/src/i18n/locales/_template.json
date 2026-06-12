@@ -125,6 +125,7 @@
     "tabData": "TAB_DATA",
     "tabDevices": "TAB_DEVICES",
     "appTheme": "APP_THEME",
+    "toggleTheme": "TOGGLE_THEME",
     "darkMode": "DARK_MODE",
     "lightMode": "LIGHT_MODE",
     "autolockDesc": "AUTOLOCK_DESCRIPTION",
