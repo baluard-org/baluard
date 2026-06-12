@@ -352,7 +352,19 @@
     "wordlistDesc": "3,344 words (EFF English + BIP-39 Spanish)",
     "regenerate": "Regenerate",
     "copy": "Copy",
-    "copied": "Copied!"
+    "copied": "Copied!",
+    "history": "History",
+    "historyEmpty": "No generated passwords yet",
+    "historyClear": "Clear history",
+    "historyClearConfirm": "Clear all generator history? This cannot be undone.",
+    "passwordWord": "Password",
+    "passphraseWord": "Passphrase",
+    "lengthLabel": "Length",
+    "wordsLabel": "Words",
+    "timeJustNow": "just now",
+    "timeMinutesAgo": "{n}m ago",
+    "timeHoursAgo": "{n}h ago",
+    "timeDaysAgo": "{n}d ago"
   },
   "passkey": {
     "sectionTitle": "Passkeys",

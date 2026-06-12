@@ -776,6 +776,134 @@ impl VaultHandle {
         Ok(())
     }
 
+    // ── Generator History ──
+
+    /// Maximum stored entries (FIFO cap).
+    const MAX_GENERATOR_HISTORY: usize = 100;
+    /// Maximum entries returned to UI.
+    const DISPLAY_GENERATOR_HISTORY: usize = 67;
+
+    /// Load encrypted generator history from meta/generator-history.enc.
+    /// Returns empty vec if file doesn't exist yet.
+    pub fn load_generator_history(
+        &self,
+    ) -> Result<Vec<crate::types::GeneratorHistoryEntry>, BaluardError> {
+        let enc_path = self.path.join("meta/generator-history.enc");
+        if !enc_path.exists() {
+            return Ok(vec![]);
+        }
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let key = hkdf_derive::derive_generator_history_key(unlocked.root_key.as_bytes())
+            .map_err(|e| VaultError::Metadata(format!("generator history key derivation: {e}")))?;
+        let data = std::fs::read(&enc_path)?;
+        let envelope = crate::vault::envelope::deserialize(&data)?;
+        let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
+        let entries: Vec<crate::types::GeneratorHistoryEntry> = serde_json::from_slice(&decrypted)
+            .map_err(|e| VaultError::Metadata(format!("generator history decrypt parse: {e}")))?;
+        Ok(entries)
+    }
+
+    /// Append a generator history entry, enforce FIFO cap, persist.
+    /// Returns the updated list (capped to DISPLAY_GENERATOR_HISTORY).
+    pub fn add_generator_history_entry(
+        &self,
+        entry: crate::types::GeneratorHistoryEntry,
+    ) -> Result<Vec<crate::types::GeneratorHistoryEntry>, BaluardError> {
+        let mut history = self.load_generator_history()?;
+        history.push(entry);
+        // FIFO cap: trim oldest
+        if history.len() > Self::MAX_GENERATOR_HISTORY {
+            history.drain(0..history.len() - Self::MAX_GENERATOR_HISTORY);
+        }
+        self.save_generator_history(&history)?;
+        // Return display-capped slice (latest first)
+        let display = Self::display_slice(&history);
+        Ok(display)
+    }
+
+    /// Clear all generator history (deletes the encrypted file).
+    pub fn clear_generator_history(&self) -> Result<(), BaluardError> {
+        let enc_path = self.path.join("meta/generator-history.enc");
+        if enc_path.exists() {
+            std::fs::remove_file(&enc_path)?;
+        }
+        Ok(())
+    }
+
+    /// Get latest DISPLAY_GENERATOR_HISTORY entries (newest first).
+    pub fn list_generator_history_display(
+        &self,
+    ) -> Result<Vec<crate::types::GeneratorHistoryEntry>, BaluardError> {
+        let history = self.load_generator_history()?;
+        Ok(Self::display_slice(&history))
+    }
+
+    /// Merge histories from two sync sides by timestamp, dedupe, cap at MAX.
+    /// Returns merged list sorted newest-first.
+    ///
+    /// **Not yet wired into the sync engine.** Currently, `generator-history.enc`
+    /// is treated as an opaque AEAD blob by git merge (last-writer-wins on
+    /// binary conflict). This function is kept as a utility for when the sync
+    /// engine gains a decrypt-merge-reencrypt path for vault metadata files.
+    pub fn merge_generator_history(
+        local: &[crate::types::GeneratorHistoryEntry],
+        remote: &[crate::types::GeneratorHistoryEntry],
+    ) -> Vec<crate::types::GeneratorHistoryEntry> {
+        use std::collections::HashSet;
+        let mut seen: HashSet<(String, u64)> = HashSet::new();
+        let mut merged: Vec<crate::types::GeneratorHistoryEntry> = Vec::new();
+        // Interleave newest-first
+        let mut all: Vec<&crate::types::GeneratorHistoryEntry> =
+            local.iter().chain(remote.iter()).collect();
+        all.sort_by_key(|b| std::cmp::Reverse(b.created_at));
+        for entry in all {
+            let key = (entry.value.clone(), entry.created_at);
+            if seen.insert(key) {
+                merged.push(entry.clone());
+            }
+            if merged.len() >= Self::MAX_GENERATOR_HISTORY {
+                break;
+            }
+        }
+        merged
+    }
+
+    /// Save generator history to meta/generator-history.enc (atomic write).
+    fn save_generator_history(
+        &self,
+        entries: &[crate::types::GeneratorHistoryEntry],
+    ) -> Result<(), BaluardError> {
+        if entries.is_empty() {
+            return self.clear_generator_history();
+        }
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let key = hkdf_derive::derive_generator_history_key(unlocked.root_key.as_bytes())
+            .map_err(|e| VaultError::Metadata(format!("generator history key derivation: {e}")))?;
+        let json = serde_json::to_vec(entries)
+            .map_err(|e| VaultError::Metadata(format!("generator history serialization: {e}")))?;
+        let enc_path = self.path.join("meta/generator-history.enc");
+        self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
+        Ok(())
+    }
+
+    /// Return the display-capped slice of history (newest first).
+    fn display_slice(
+        history: &[crate::types::GeneratorHistoryEntry],
+    ) -> Vec<crate::types::GeneratorHistoryEntry> {
+        let start = history
+            .len()
+            .saturating_sub(Self::DISPLAY_GENERATOR_HISTORY);
+        let mut slice: Vec<_> = history[start..].to_vec();
+        slice.reverse(); // newest first
+        slice
+    }
+
     // ── Folder CRUD ──
 
     /// List all folders (decrypts from meta/folders.enc, falls back to plaintext folders.json).

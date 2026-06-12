@@ -196,6 +196,10 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.avatar.get",
     "vault.avatar.set",
     "ssh.generate_key",
+    // Generator history
+    "generator.history_add",
+    "generator.history_list",
+    "generator.history_clear",
     // Phase 1: passkey ceremony routes
     "passkey.challenge_register",
     "passkey.finish_register",
@@ -909,6 +913,20 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
         "ssh.generate_key" => match state.ssh_generate_key(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        // ── Generator history ──
+        "generator.history_add" => match state.generator_history_add(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "generator.history_list" => match state.generator_history_list().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "generator.history_clear" => match state.generator_history_clear().await {
+            Ok(()) => ok_resp("{}", token_str),
             Err(e) => err_response(e),
         },
 

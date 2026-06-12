@@ -352,7 +352,19 @@
     "wordlistDesc": "3,344 palabras (EFF inglés + BIP-39 español)",
     "regenerate": "Regenerar",
     "copy": "Copiar",
-    "copied": "¡Copiado!"
+    "copied": "¡Copiado!",
+    "history": "Historial",
+    "historyEmpty": "Aún no hay contraseñas generadas",
+    "historyClear": "Borrar historial",
+    "historyClearConfirm": "¿Borrar todo el historial del generador? Esta acción no se puede deshacer.",
+    "passwordWord": "Contraseña",
+    "passphraseWord": "Frase de contraseña",
+    "lengthLabel": "Longitud",
+    "wordsLabel": "Palabras",
+    "timeJustNow": "ahora mismo",
+    "timeMinutesAgo": "hace {n}m",
+    "timeHoursAgo": "hace {n}h",
+    "timeDaysAgo": "hace {n}d"
   },
   "passkey": {
     "sectionTitle": "Claves de acceso",

@@ -759,6 +759,53 @@ pub struct PasswordHistoryEntry {
     pub last_used_date: u64,
 }
 
+/// Kind of generated value (password or passphrase).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum GeneratorKind {
+    #[default]
+    Password,
+    Passphrase,
+}
+
+/// Generation parameters stored per entry for "regenerate with same settings".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GeneratorParams {
+    /// Password: length. Passphrase: word count.
+    pub length: u32,
+    pub upper: bool,
+    pub numbers: bool,
+    pub symbols: bool,
+    /// Passphrase-specific.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub separator: Option<String>,
+}
+
+/// A single generator history entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GeneratorHistoryEntry {
+    pub value: String,
+    pub kind: GeneratorKind,
+    pub params: GeneratorParams,
+    /// Unix timestamp when generated.
+    pub created_at: u64,
+}
+
+impl zeroize::Zeroize for GeneratorHistoryEntry {
+    fn zeroize(&mut self) {
+        self.value.zeroize();
+        if let Some(ref mut sep) = self.params.separator {
+            sep.zeroize();
+        }
+    }
+}
+
+impl Drop for GeneratorHistoryEntry {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 /// Backward-compatible cipher data within the encrypted envelope.
 ///
 /// Handles two formats:
