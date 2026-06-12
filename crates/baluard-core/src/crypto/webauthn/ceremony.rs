@@ -18,6 +18,7 @@ use passkey::types::webauthn::{
     PublicKeyCredentialUserEntity, ResidentKeyRequirement, UserVerificationRequirement,
 };
 use passkey::types::Bytes;
+use rand::RngCore;
 use tokio::sync::RwLock;
 use url::Url;
 use uuid::Uuid;
@@ -51,11 +52,14 @@ pub enum CeremonyState {
 
 impl CeremonyState {
     pub fn is_expired(&self) -> bool {
-        let at = match self {
-            Self::Registration { created_at, .. } => created_at,
-            Self::Assertion { created_at, .. } => created_at,
-        };
-        at.elapsed() > CEREMONY_TTL
+        self.created_at().elapsed() > CEREMONY_TTL
+    }
+
+    pub fn created_at(&self) -> Instant {
+        match self {
+            Self::Registration { created_at, .. } => *created_at,
+            Self::Assertion { created_at, .. } => *created_at,
+        }
     }
 }
 
@@ -64,6 +68,9 @@ impl CeremonyState {
 pub type CeremonyId = String;
 
 /// Ceremony state cache. Lives in the daemon's VaultState.
+/// Max 64 pending ceremonies per vault, FIFO eviction when full.
+pub const MAX_PENDING_CEREMONIES: usize = 64;
+
 pub struct CeremonyCache {
     states: RwLock<HashMap<CeremonyId, CeremonyState>>,
 }
@@ -76,7 +83,31 @@ impl CeremonyCache {
     }
 
     pub async fn insert(&self, id: CeremonyId, state: CeremonyState) {
-        self.states.write().await.insert(id, state);
+        let mut states = self.states.write().await;
+        // FIFO eviction if at capacity
+        while states.len() >= MAX_PENDING_CEREMONIES {
+            // Evict oldest entry (lowest Instant)
+            if let Some(oldest_key) = states
+                .iter()
+                .filter(|(_, s)| s.is_expired())
+                .map(|(k, _)| k.clone())
+                .next()
+            {
+                states.remove(&oldest_key);
+            } else {
+                // No expired entries; evict the oldest by creation time
+                let oldest = states
+                    .iter()
+                    .min_by_key(|(_, s)| s.created_at())
+                    .map(|(k, _)| k.clone());
+                if let Some(key) = oldest {
+                    states.remove(&key);
+                } else {
+                    break;
+                }
+            }
+        }
+        states.insert(id, state);
     }
 
     pub async fn remove(&self, id: &str) -> Option<CeremonyState> {
@@ -179,7 +210,11 @@ pub async fn run_registration(
                 display_name: user_display_name.clone(),
                 name: user_name.clone(),
             },
-            challenge: Bytes::from(rand::random::<[u8; 32]>().to_vec()),
+            challenge: Bytes::from({
+                let mut buf = [0u8; 32];
+                rand::rngs::OsRng.fill_bytes(&mut buf);
+                buf.to_vec()
+            }),
             pub_key_cred_params: vec![passkey::types::webauthn::PublicKeyCredentialParameters {
                 ty: passkey::types::webauthn::PublicKeyCredentialType::PublicKey,
                 alg: iana::Algorithm::ES256,
@@ -249,7 +284,11 @@ pub async fn run_assertion(
 
     let options = CredentialRequestOptions {
         public_key: passkey::types::webauthn::PublicKeyCredentialRequestOptions {
-            challenge: Bytes::from(rand::random::<[u8; 32]>().to_vec()),
+            challenge: Bytes::from({
+                let mut buf = [0u8; 32];
+                rand::rngs::OsRng.fill_bytes(&mut buf);
+                buf.to_vec()
+            }),
             rp_id: Some(rp_id.to_string()),
             allow_credentials: None, // None = discoverable
             timeout: Some(60_000),

@@ -109,7 +109,7 @@ pub(crate) fn passkey_data_to_passkey(data: &PasskeyData) -> Option<Passkey> {
         user_handle: data.user_handle.clone().map(Into::into),
         username: data.user_name.clone(),
         user_display_name: data.user_display_name.clone(),
-        counter: if data.counter > 0 { Some(data.counter) } else { None },
+        counter: Some(data.counter),
         extensions: Default::default(),
     })
 }

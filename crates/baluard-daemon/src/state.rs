@@ -793,6 +793,8 @@ impl VaultState {
         let rp_filter = v["rp_id"].as_str().filter(|s| !s.is_empty());
 
         
+        // TODO(Phase 2): Replace N+1 pattern with batch get method.
+        // Performance matters for browser extension autofill trigger.
         let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
         let mut passkeys = Vec::new();
         for meta in &metas {
@@ -987,6 +989,12 @@ impl VaultState {
 
     /// Complete an assertion ceremony. Updates counter in vault.
     /// Payload: `{ "ceremony_id": "...", "credential_id": "...", "new_counter": 42 }`
+    ///
+    /// SECURITY NOTE (Phase 1 only): credential_id and new_counter are echoed
+    /// from the challenge_assert response. Phase 2 MUST store these in
+    /// CeremonyState::Assertion and verify credential_id belongs to the RP
+    /// from the ceremony. A malicious client could otherwise forge counters
+    /// or update cross-RP credentials.
     pub async fn passkey_finish_assert(&self, payload: &str) -> Result<String, String> {
         use baluard_core::crypto::webauthn::CeremonyState;
         use baluard_core::vault::handle::CipherRead;
@@ -1078,7 +1086,8 @@ impl VaultState {
 
         use baluard_core::vault::handle::CipherRead;
         let cipher = match handle.get_cipher(id) {
-            Ok(CipherRead::Decrypted(c)) => c,
+            Ok(CipherRead::Decrypted(ref c)) if matches!(&c.kind, baluard_core::types::CipherKind::Passkey(_)) => c.clone(),
+            Ok(CipherRead::Decrypted(_)) => return Err("Not a passkey cipher".into()),
             _ => return Err("Cipher not found or not decrypted".into()),
         };
         let input = baluard_core::types::CipherInput {
