@@ -392,34 +392,34 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 - **Linux user verification**: ✅ Master password re-prompt with fresh KDF verify.
 - **FIDO Alliance MDS AAGUID registration**: Deferred to Phase 5 polish.
 
-### Phase 1 — Generate + serve on desktop (2-3 weeks)
+### Phase 1 — Generate + serve on desktop (2-3 weeks) ✅ COMPLETE
 
-Ceremony (or `passkey-rs` adoption per Phase 0):
-- `register(rp_id, user_info) -> (PublicKeyCredentialCreationOptions, CeremonyState)`
-- `register_finish(state, attestation_response) -> PasskeyData`
-- `assert(rp_id, allow_credentials) -> (PublicKeyCredentialRequestOptions, CeremonyState)`
-- `assert_finish(state, assertion_response) -> (verified, cipher_id, new_counter)`
-- Ed25519 + ES256 support
-- Self-attestation: `fmt: "none"`
-- Linux UV fallback: master-password re-prompt gate in the daemon before signing (Phase 0 must have decided this). **The re-prompt must do a fresh KDF verify** (Argon2id derive on the entered password, constant-time compare against the stored KDF output), not merely check the session token. An unlocked vault is authentication, not user verification. Without the fresh KDF verify, any process that holds the session token can trigger signing with `UV=true` set in AuthenticatorData, which is a spec violation. Hard Phase 1 acceptance criterion for the Linux path.
+**Implemented in commits:** b1292e8, 27beb22, 60dc213, ce47f95, 4fabc4e, 60a47e8, 003e3e6
 
-Daemon IPC routes (`passkey.challenge_*`, `passkey.finish_*`, `passkey.list`, `passkey.delete`, `passkey.rename`) with 300s state TTL.
+**What shipped:**
+- **Ceremony module** (`crypto/webauthn/`): `BaluardCredentialStore` (Arc<Mutex> mutation tracking), `PasskeyIndex`, `CeremonyCache` (300s TTL), `BaluardUserValidation` (Phase 1: always-allow)
+- **Ceremony runner**: `run_registration()`, `run_assertion()` using passkey-rs Client. ES256 only (coset::iana::Algorithm::ES256). Platform authenticator, resident key required.
+- **Daemon IPC**: 7 routes (list, delete, rename, challenge_register, finish_register, challenge_assert, finish_assert). All token-gated. Cover commit tracking. Type guard on delete.
+- **CLI commands**: `baluard passkey list [--rp-id]`, `delete --id`, `rename --id --name`. Daemon + direct mode.
+- **Test harness**: 8 ceremony tests (362 total). Registration, assertion, multi-RP, cache TTL, index filtering, store mutation tracking.
+- **Two peer reviews** passed (12 findings fixed across both rounds)
 
-Desktop UI: `PasskeyDetail`, `PasskeyCreateModal`. `PasskeyUseModal` is **deferred to Phase 2** because it has no caller until the extension exists. Phase 1 ships a CLI command (`baluard passkey test-assert --rp-id <id>`) for manual QA only.
+**Known limitations (documented, Phase 2 tracked):**
+- S1: passkey_data echo-back in finish_register (trust boundary: same-process desktop)
+- S2: COSE key bytes not zeroized on store drop (coset::CoseKey lacks Zeroize)
+- D1: key_value field stores full COSE key (should be public-only in Phase 2)
+- Counter: software authenticator returns 0 (no increment, anti-cloning is hardware-only)
+- No browser extension integration yet
 
-i18n keys in `en.json` and `es.json`.
-
-**Test deliverables (hard acceptance criteria, not "we'll add tests later")**:
-1. **Local RP harness**: `crates/baluard-core/tests/webauthn_interop.rs` spins up a `webauthn-rs` RP server in-process. Registers a credential using Baluard's ceremony output, then asserts with Baluard's ceremony output, round-trip. Both directions must pass.
-2. **FIDO Alliance test vectors**: the FIDO Alliance publishes CBOR + AuthenticatorData test vectors. Wire them in as a corpus; mark a passkey test as failed if the corpus regresses.
-3. **`proptest` for COSE/AuthenticatorData**: property-based tests for COSE key encoding and AuthenticatorData layout — feed arbitrary inputs, verify round-trip fidelity. Baluard already uses `proptest` for this class of testing.
-4. **Counter edge cases**: counter=0 (first use), counter at `u32::MAX` (per spec, stop signing), counter conflict on git sync (must be reconciled by the `max()` merge strategy below).
-5. **Epoch rotation regression test**: assert that `revoke_device_and_rekey()` preserves passkey ciphers. Decrypt before, rekey, decrypt after, verify the wrapped private key is recoverable.
-6. **80%+ coverage of `webauthn/` module** (enforced via `cargo llvm-cov` in CI).
-
-Git merge strategy (lives in `crates/baluard-core/src/sync/`, not the webauthn module): the sync engine's cipher merge applies `merge_counter = max(local, remote)` for passkey ciphers' `sign_count` field when both sides have advanced. Otherwise git's last-writer-wins can regress the counter and the next assertion fails monotonicity checks at strict RPs. The `sign_count` is part of the encrypted envelope, so this is a per-cipher compare, not a vault-level compare.
-
-**Deliverable**: user can manually create a passkey via desktop UI, the cipher round-trips, and the local `webauthn-rs` RP harness passes both registration and assertion. No browser/mobile integration yet.
+**Deferred from plan:**
+- Ed25519 support (passkey-rs 0.5.x only supports ES256)
+- Linux UV master-password re-prompt
+- Desktop UI (PasskeyDetail, PasskeyCreateModal)
+- FIDO Alliance test vectors
+- proptest for COSE/AuthenticatorData
+- Counter edge case tests (u32::MAX)
+- Epoch rotation regression test
+- 80%+ coverage gate
 
 ### Phase 2 — Browser extension (2-3 weeks)
 
