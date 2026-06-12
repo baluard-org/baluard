@@ -241,6 +241,10 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "settings.set",
     "vault.avatar.set",
     "device.revoke",
+    // Phase 1: passkey mutations
+    "passkey.finish_register",
+    "passkey.delete",
+    "passkey.rename",
 ];
 
 /// Build a success GatewayResponse. Attaches session token if available.

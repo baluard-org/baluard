@@ -119,6 +119,17 @@ impl BaluardCredentialStore {
     }
 }
 
+impl Drop for BaluardCredentialStore {
+    fn drop(&mut self) {
+        // Clear COSE key material from passkeys on drop.
+        // `Passkey.key` is a `CoseKey` which doesn't impl Zeroize,
+        // so we clear the map to release the key bytes from the HashMap's
+        // memory (best-effort; the allocator may still have copies).
+        // Full zeroization requires upstream `Zeroize` on `coset::CoseKey`.
+        self.inner.clear();
+    }
+}
+
 #[async_trait]
 impl CredentialStore for BaluardCredentialStore {
     type PasskeyItem = Passkey;

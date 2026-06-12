@@ -38,6 +38,7 @@ pub struct VaultState {
     /// Keyed by vault_path to isolate multi-vault setups.
     pub rate_limiter: crate::rate_limit::RateLimiter,
     /// Phase 1: WebAuthn ceremony state cache (300s TTL).
+    #[cfg(feature = "passkey-ceremony")]
     pub ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache,
 }
 
@@ -54,6 +55,7 @@ impl VaultState {
             cover_pending: std::sync::atomic::AtomicBool::new(false),
             cover_session: AtomicU64::new(0),
             rate_limiter: crate::rate_limit::RateLimiter::new(),
+            #[cfg(feature = "passkey-ceremony")]
             ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache::new(),
         }
     }
@@ -790,7 +792,7 @@ impl VaultState {
 
         let v: serde_json::Value =
             serde_json::from_str(payload).unwrap_or_default();
-        let rp_filter = v["rp_id"].as_str();
+        let rp_filter = v["rp_id"].as_str().filter(|s| !s.is_empty());
 
         
         let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
@@ -857,6 +859,12 @@ impl VaultState {
 
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault is locked")?;
+        // Verify it's a passkey cipher before deleting
+        match handle.get_cipher(id) {
+            Ok(CipherRead::Decrypted(ref c))
+                if matches!(&c.kind, baluard_core::types::CipherKind::Passkey(_)) => {}
+            _ => return Err("Not a passkey cipher".into()),
+        }
         handle.delete_cipher(id).map_err(|e| e.to_string())
     }
 
