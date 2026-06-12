@@ -93,6 +93,7 @@ impl CeremonyCache {
 }
 
 /// Result of a successful registration ceremony.
+#[derive(Debug)]
 pub struct RegistrationResult {
     /// New passkey data ready for vault storage.
     pub passkey_data: PasskeyData,
@@ -103,6 +104,7 @@ pub struct RegistrationResult {
 }
 
 /// Result of a successful assertion ceremony.
+#[derive(Debug)]
 pub struct AssertionResult {
     /// Base64url-encoded credential ID that was used.
     pub credential_id_b64: String,
