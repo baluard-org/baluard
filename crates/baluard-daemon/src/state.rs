@@ -37,6 +37,8 @@ pub struct VaultState {
     /// M4 fix: Per-vault rate limiter for sensitive operations.
     /// Keyed by vault_path to isolate multi-vault setups.
     pub rate_limiter: crate::rate_limit::RateLimiter,
+    /// Phase 1: WebAuthn ceremony state cache (300s TTL).
+    pub ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache,
 }
 
 impl VaultState {
@@ -52,6 +54,7 @@ impl VaultState {
             cover_pending: std::sync::atomic::AtomicBool::new(false),
             cover_session: AtomicU64::new(0),
             rate_limiter: crate::rate_limit::RateLimiter::new(),
+            ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache::new(),
         }
     }
 
@@ -772,6 +775,123 @@ impl VaultState {
         });
 
         serde_json::to_string(&result).map_err(|e| format!("JSON serialization: {e}"))
+    }
+
+    // ── Passkey ceremony (Phase 1) ──
+
+    /// List passkey ciphers, optionally filtered by rp_id.
+    /// Payload: `{ "rp_id": "example.com" }` or `{}` for all.
+    pub async fn passkey_list(&self, payload: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+
+        let v: serde_json::Value =
+            serde_json::from_str(payload).unwrap_or_default();
+        let rp_filter = v["rp_id"].as_str();
+
+        
+        let metas = handle.list_cipher_meta().map_err(|e| e.to_string())?;
+        let mut passkeys = Vec::new();
+        for meta in &metas {
+            if meta.cipher_type != baluard_core::types::CipherType::Passkey {
+                continue;
+            }
+            if let Ok(CipherRead::Decrypted(ref c)) = handle.get_cipher(meta.id) {
+                if let baluard_core::types::CipherKind::Passkey(data) = &c.kind {
+                    if rp_filter.map_or(true, |rp| data.rp_id == rp) {
+                        let mut json = serde_json::to_value(c)
+                            .unwrap_or_default();
+                        json["_meta"] = serde_json::json!({
+                            "id": meta.id.to_string(),
+                            "name": meta.name,
+                            "cipher_type": meta.cipher_type,
+                            "favorite": meta.favorite,
+                        });
+                        passkeys.push(json);
+                    }
+                }
+            }
+        }
+
+        Ok(serde_json::to_string(&passkeys).unwrap_or_else(|_| "[]".into()))
+    }
+
+    /// Start a registration ceremony. Returns challenge options.
+    /// Payload: `{ "rp_id": "example.com", "rp_name": "Example", "user_name": "alice", "user_display_name": "Alice" }`
+    pub async fn passkey_challenge_register(&self, payload: &str) -> Result<String, String> {
+        // TODO: wire passkey-rs ceremony
+        Err("passkey.challenge_register not yet implemented".into())
+    }
+
+    /// Complete a registration ceremony.
+    /// Payload: `{ "ceremony_id": "...", "attestation_response": {...} }`
+    pub async fn passkey_finish_register(&self, payload: &str) -> Result<String, String> {
+        // TODO: wire passkey-rs ceremony
+        Err("passkey.finish_register not yet implemented".into())
+    }
+
+    /// Start an assertion ceremony. Returns challenge options.
+    /// Payload: `{ "rp_id": "example.com" }`
+    pub async fn passkey_challenge_assert(&self, payload: &str) -> Result<String, String> {
+        // TODO: wire passkey-rs ceremony
+        Err("passkey.challenge_assert not yet implemented".into())
+    }
+
+    /// Complete an assertion ceremony.
+    /// Payload: `{ "ceremony_id": "...", "assertion_response": {...} }`
+    pub async fn passkey_finish_assert(&self, payload: &str) -> Result<String, String> {
+        // TODO: wire passkey-rs ceremony
+        Err("passkey.finish_assert not yet implemented".into())
+    }
+
+    /// Delete a passkey cipher.
+    /// Payload: `{ "id": "<uuid>" }`
+    pub async fn passkey_delete(&self, payload: &str) -> Result<(), String> {
+        let v: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let id_str = v["id"].as_str().ok_or("Missing 'id'")?;
+        let id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
+
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        handle.delete_cipher(id).map_err(|e| e.to_string())
+    }
+
+    /// Rename a passkey cipher.
+    /// Payload: `{ "id": "<uuid>", "name": "new name" }`
+    pub async fn passkey_rename(&self, payload: &str) -> Result<(), String> {
+        let v: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let id_str = v["id"].as_str().ok_or("Missing 'id'")?;
+        let name = v["name"].as_str().ok_or("Missing 'name'")?;
+        let id = uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID: {e}"))?;
+
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+
+        use baluard_core::vault::handle::CipherRead;
+        let cipher = match handle.get_cipher(id) {
+            Ok(CipherRead::Decrypted(c)) => c,
+            _ => return Err("Cipher not found or not decrypted".into()),
+        };
+        let input = baluard_core::types::CipherInput {
+            name: name.to_string(),
+            folder_id: cipher.folder_id,
+            favorite: cipher.favorite,
+            reprompt: cipher.reprompt,
+            tags: cipher.tags.clone(),
+            kind: cipher.kind.clone(),
+            notes: cipher.notes.clone(),
+            custom_fields: cipher.custom_fields.clone(),
+            created_at: Some(cipher.created_at),
+            password_history: cipher.password_history.clone(),
+            attachments: cipher.attachments.clone(),
+            archived: cipher.archived,
+        };
+        handle.update_cipher(id, &input).map_err(|e| e.to_string())
     }
 
     /// Fetch a favicon for a given domain/URI.
@@ -2101,6 +2221,15 @@ fn cipher_to_json(c: &baluard_core::types::Cipher) -> serde_json::Value {
             json["issuing_authority"] = serde_json::json!(data.issuing_authority);
             json["issue_date"] = serde_json::json!(data.issue_date);
             json["expiration_date"] = serde_json::json!(data.expiration_date);
+        }
+        baluard_core::types::CipherKind::Passkey(data) => {
+            json["rp_id"] = serde_json::json!(data.rp_id);
+            json["rp_name"] = serde_json::json!(data.rp_name);
+            json["user_name"] = serde_json::json!(data.user_name);
+            json["user_display_name"] = serde_json::json!(data.user_display_name);
+            json["credential_id"] = serde_json::json!(data.credential_id);
+            json["counter"] = serde_json::json!(data.counter);
+            json["private_key_missing"] = serde_json::json!(data.private_key_missing);
         }
         baluard_core::types::CipherKind::SecureNote => {}
     }

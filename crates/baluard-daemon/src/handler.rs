@@ -196,6 +196,14 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.avatar.get",
     "vault.avatar.set",
     "ssh.generate_key",
+    // Phase 1: passkey ceremony routes
+    "passkey.challenge_register",
+    "passkey.finish_register",
+    "passkey.challenge_assert",
+    "passkey.finish_assert",
+    "passkey.list",
+    "passkey.delete",
+    "passkey.rename",
     "provider.repos",
     "provider.vault_repos",
     "provider.create_repo",
@@ -896,6 +904,44 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
         "ssh.generate_key" => match state.ssh_generate_key(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        // ── Passkey ceremony (Phase 1) ──
+        "passkey.list" => match state.passkey_list(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "passkey.challenge_register" => {
+            match state.passkey_challenge_register(&req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "passkey.finish_register" => {
+            match state.passkey_finish_register(&req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "passkey.challenge_assert" => {
+            match state.passkey_challenge_assert(&req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "passkey.finish_assert" => {
+            match state.passkey_finish_assert(&req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "passkey.delete" => match state.passkey_delete(&req.payload).await {
+            Ok(()) => ok_resp("{}", token_str),
+            Err(e) => err_response(e),
+        },
+        "passkey.rename" => match state.passkey_rename(&req.payload).await {
+            Ok(()) => ok_resp("{}", token_str),
             Err(e) => err_response(e),
         },
 
