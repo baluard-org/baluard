@@ -212,6 +212,8 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "provider.vault_repos",
     "provider.create_repo",
     "vault.setup_sync",
+    "sync.status_json",
+    "sync.disconnect",
     // C4 fix: device.revoke triggers destructive rekey, must be token-gated
     "device.revoke",
     // M4/PR-2: recovery-phrase enrollment mutates the device registry and
@@ -686,6 +688,14 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(e) => err_response(e),
             }
         }
+        "sync.status_json" => match sync_status_json(&state.vault_path) {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "sync.disconnect" => match sync_disconnect(&state.vault_path) {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
 
         // ── Settings (token required) ──
         "settings.get" => match state.settings_get().await {
@@ -1630,6 +1640,101 @@ fn sync_log(vault_path: &std::path::Path, limit: usize) -> Result<String, String
     Ok(result)
 }
 
+#[cfg(feature = "git-sync")]
+fn infer_provider_from_url(url: &str) -> Option<String> {
+    if url.contains("github.com") {
+        Some("github".to_string())
+    } else if url.contains("gitlab.com") {
+        Some("gitlab".to_string())
+    } else if url.contains("codeberg.org") {
+        Some("codeberg".to_string())
+    } else {
+        None
+    }
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_status_json(vault_path: &std::path::Path) -> Result<String, String> {
+    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let repo = match engine.open_repo() {
+        Ok(r) => r,
+        Err(_) => {
+            // Not a git repo
+            let resp = serde_json::json!({
+                "initialized": false,
+                "has_remote": false,
+                "remote_url": null,
+                "provider": null,
+                "dirty": false
+            });
+            return serde_json::to_string(&resp).map_err(|e| format!("JSON error: {e}"));
+        }
+    };
+
+    let status = engine.status(&repo).map_err(|e| format!("{e}"))?;
+    let remote_url = engine.get_remote_url(&repo, "origin").ok();
+    let provider = remote_url.as_deref().and_then(infer_provider_from_url);
+
+    let log = engine.log(&repo, 1).map_err(|e| format!("{e}"))?;
+    let last_commit = log.first().map(|c| {
+        serde_json::json!({
+            "id": c.id.clone(),
+            "message": c.message.trim().to_string(),
+            "time": c.time
+        })
+    });
+
+    let resp = serde_json::json!({
+        "initialized": true,
+        "has_remote": remote_url.is_some(),
+        "remote_url": remote_url,
+        "provider": provider,
+        "dirty": status.is_dirty(),
+        "last_commit": last_commit
+    });
+    serde_json::to_string(&resp).map_err(|e| format!("JSON error: {e}"))
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_disconnect(vault_path: &std::path::Path) -> Result<String, String> {
+    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let repo = engine
+        .open_repo()
+        .map_err(|e| format!("No git repo: {e}"))?;
+
+    // Verify origin exists
+    let remote_url = engine
+        .get_remote_url(&repo, "origin")
+        .map_err(|e| format!("No 'origin' remote: {e}"))?;
+
+    // Remove the remote
+    engine
+        .remove_remote(&repo, "origin")
+        .map_err(|e| format!("Failed to remove remote: {e}"))?;
+
+    // Clear sync fields in registry
+    let slug = baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)
+        .ok()
+        .flatten()
+        .map(|m| m.slug);
+    if let Some(ref slug_str) = slug {
+        if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
+            if let Some(entry) = reg.get_mut(slug_str) {
+                entry.provider = None;
+                entry.remote_url = None;
+                entry.last_synced = None;
+            }
+            let _ = reg.save_locked();
+        }
+    }
+
+    let resp = serde_json::json!({
+        "disconnected": true,
+        "removed_url": remote_url
+    });
+    serde_json::to_string(&resp).map_err(|e| format!("JSON error: {e}"))
+}
+
 #[cfg(not(feature = "git-sync"))]
 fn sync_init(_p: &std::path::Path) -> Result<String, String> {
     Err("git-sync feature not enabled".into())
@@ -1652,6 +1757,14 @@ fn sync_status(_p: &std::path::Path) -> Result<String, String> {
 }
 #[cfg(not(feature = "git-sync"))]
 fn sync_log(_p: &std::path::Path, _n: usize) -> Result<String, String> {
+    Err("git-sync feature not enabled".into())
+}
+#[cfg(not(feature = "git-sync"))]
+fn sync_status_json(_p: &std::path::Path) -> Result<String, String> {
+    Err("git-sync feature not enabled".into())
+}
+#[cfg(not(feature = "git-sync"))]
+fn sync_disconnect(_p: &std::path::Path) -> Result<String, String> {
     Err("git-sync feature not enabled".into())
 }
 

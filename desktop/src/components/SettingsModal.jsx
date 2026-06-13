@@ -8,9 +8,10 @@ import { sanitizeError } from "../lib/utils.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { buildImportPayload, buildExportPayload } from "../lib/payload.js";
 import { biometryAvailable } from "../lib/biometry.js";
-import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor } from "./Icon.jsx";
+import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
+import SyncTab from "./SyncTab.jsx";
 
 export default function SettingsModal() {
   const vault = useVault();
@@ -331,6 +332,15 @@ export default function SettingsModal() {
                 </Show>
               </button>
               <button
+                onClick={() => setActiveTab("sync")}
+                class={`py-3 text-xs font-bold transition-all relative cursor-pointer ${activeTab() === "sync" ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
+              >
+                {t("settings.tabSync")}
+                <Show when={activeTab() === "sync"}>
+                  <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
+                </Show>
+              </button>
+              <button
                 onClick={() => setActiveTab("devices")}
                 class={`py-3 text-xs font-bold transition-all relative cursor-pointer ${activeTab() === "devices" ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
               >
@@ -581,6 +591,10 @@ export default function SettingsModal() {
                     {message()}
                   </div>
                 </Show>
+              </Show>
+
+              <Show when={activeTab() === "sync"}>
+                <SyncTab />
               </Show>
 
               <Show when={activeTab() === "devices"}>

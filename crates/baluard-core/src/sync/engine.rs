@@ -548,6 +548,13 @@ impl SyncEngine {
         Ok(url.to_string())
     }
 
+    /// Remove a remote by name.
+    pub fn remove_remote(&self, repo: &Repository, name: &str) -> Result<(), BaluardError> {
+        repo.remote_delete(name)
+            .map_err(|e| SyncError::Git(format!("remote delete '{name}': {e}")))?;
+        Ok(())
+    }
+
     /// Push to remote. Uses "origin" by default.
     pub fn push(&self, repo: &Repository, remote_name: &str) -> Result<(), BaluardError> {
         let mut remote = repo
