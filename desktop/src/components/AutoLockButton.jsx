@@ -1,4 +1,4 @@
-import { IconClock, IconUser } from "./Icon.jsx";
+import { IconClock, IconFingerprint } from "./Icon.jsx";
 import { createSignal, Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
@@ -84,7 +84,7 @@ export default function AutoLockButton() {
                 title={t("settings.quickUnlockDesc")}
                 aria-label={t("settings.quickUnlockDesc")}
               >
-                <IconUser class="w-5 h-5" />
+                <IconFingerprint class="w-5 h-5" />
               </button>
             </div>
             <div class="autolock__biometrics-desc text-[10px] text-[var(--color-muted)] mt-1">{t("settings.quickUnlockSub")}</div>

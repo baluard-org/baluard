@@ -177,6 +177,8 @@ mod tests {
             username: "testuser".into(),
             scopes: "repo".into(),
             connected_at: 1700000000,
+            instance_url: None,
+            client_id: None,
         });
 
         let json = serde_json::to_string_pretty(&state).unwrap();
@@ -207,7 +209,7 @@ mod tests {
         let restored = ProviderToken::from_secret(&secret).unwrap();
         assert_eq!(restored.access_token().expose_secret(), "ghp_test123");
         assert_eq!(restored.scopes, "repo");
-        assert!(restored.refresh_token.is_none());
+        assert!(restored.refresh_token().is_none());
         assert!(restored.expires_at.is_none());
     }
 

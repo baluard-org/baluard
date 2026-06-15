@@ -21,6 +21,7 @@ baluard/
 │   │       ├── keys/           # Key hierarchy (Root/SGK/Item/Session), epochs, rotation
 │   │       ├── vault/          # Vault handle, cipher CRUD, envelope, padding, attachments
 │   │       ├── sync/           # Git sync engine (git2-rs), conflict resolution
+│   │       ├── providers/      # Git providers: ForgeProvider trait (github, gitlab, codeberg), OAuth device/web flow, PAT, keyring tokens, providers.json
 │   │       ├── import/         # Import parsers (8 formats) + export (2 formats)
 │   │       ├── crypto/webauthn/  # FIDO2/WebAuthn ceremony: store.rs, ceremony.rs, mod.rs
 │   │       ├── device_manager.rs # Device fleet: registry, rotation, activity, enrollment
@@ -116,6 +117,7 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 * **Platform paths (data, socket, logs)**: `crates/baluard-core/src/paths.rs`
 * **CipherKind & data structs**: `crates/baluard-core/src/types.rs`
 * **Git sync**: `crates/baluard-core/src/sync/`
+* **Git providers (ForgeProvider trait, OAuth/PAT)**: `crates/baluard-core/src/providers/`
 * **CLI commands**: `crates/baluard-cli/src/commands/mod.rs`
 * **Daemon IPC**: `crates/baluard-daemon/src/handler.rs`
 * **Daemon vault state**: `crates/baluard-daemon/src/state.rs`
@@ -125,6 +127,8 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 * **Passkey data structure**: `crates/baluard-core/src/types.rs` (`PasskeyData`)
 * **Passkey plan**: `docs/plan-passkey-support.md` (authoritative)
 * **Passkey ADR**: `docs/adr/0007-passkey-rs-evaluation.md`
+* **Git provider app registration & tokens**: `docs/git-provider-apps-and-tokens.md`
+* **Git provider sync plan**: `docs/plan-git-providers-multi-vault.md`
 * **Protobuf schemas**: `proto/`
 
 ## KEY CONCEPTS
@@ -213,6 +217,13 @@ Passkeys are stored **inside `LoginData::fido2_credentials: Option<Vec<PasskeyDa
 * **Passkey embedded in Login**: No standalone `CipherKind::Passkey` variant. Passkeys live in `LoginData::fido2_credentials`. `passkey.delete` and `passkey.rename` take `credential_id` (base64url) as a required arg to identify which passkey in a multi-credential Login. `passkey.list` returns `login_name`, `has_password`, `pk_name` per passkey for context.
 * **Passkey private key storage**: Encrypted under the Login's item key, never crosses IPC. BW imports mark `private_key_missing: true` (re-register needed). Zeroized in vault handle's cipher zeroize match block.
 * **WebAuthn ceremony trust model (Phase 1)**: `passkey_data` is echoed from `challenge_*` to `finish_*` in Phase 1 (same-process desktop = trusted). Phase 2 (browser extension = untrusted) MUST store results in `CeremonyState` to prevent counter forgery + cross-RP credential update.
+* **Git provider default client_ids are placeholders**: GitLab (`REPLACE_WITH_GITLAB_CLIENT_ID`) + Codeberg (`REPLACE_WITH_CODEBERG_CLIENT_ID`) are sentinels, not real OAuth apps. Replace before the automatic flows work for third-party users. Users can override via Advanced Options in the meantime.
+* **Git provider device flow scope**: GitLab requires the `api` scope for `POST /projects` (repo creation). `read_repository`/`write_repository` are insufficient. Broad but unavoidable; documented at connect time.
+* **Codeberg OAuth = full account access**: Forgejo OAuth2 tokens have no scope support. The scoped PAT (`write:repository`) is more secure. Desktop surfaces `codebergFullAccessWarning` at connect.
+* **connect_pat config ordering**: `parse_provider_config` MUST run before `req.payload.zeroize()` (B2 fix) or Advanced Options overrides are silently dropped.
+* **GitLab token refresh is rolling**: GitLab invalidates the prior access+refresh pair on refresh. Concurrent refreshes must be serialized (per-provider mutex in `ensure_valid_token`).
+* **Web-OAuth session keyed by provider**: `OAUTH_SESSIONS` is `HashMap<Provider, OAuthSession>`, not a single global Option (B1 fix). Restarting a flow for the same provider aborts the prior callback listener (JoinHandle abort, frees the port).
+* **Codeberg endpoint**: use `/user/repos` (returns array directly). `/repos/list` does not exist; `/repos/search` wraps in `{ok, data}`.
 
 ## UX PRINCIPLES
 * **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden.

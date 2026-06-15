@@ -15,7 +15,7 @@ use super::types::{
 };
 
 /// GitHub OAuth app client ID (public, no secret needed for device flow).
-const GITHUB_CLIENT_ID: &str = "Ov23liuGmBAmBRWm3Ni";
+pub(crate) const GITHUB_CLIENT_ID: &str = "Ov23liuGmBAmBRWm3Ni";
 
 /// GitHub device flow endpoints.
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
@@ -23,13 +23,26 @@ const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 
 pub struct GitHubProvider {
     http: reqwest::Client,
+    config: super::types::ProviderConfig,
 }
 
 impl GitHubProvider {
+    /// New with the public default instance + project OAuth app.
     pub fn new() -> Self {
+        Self::with_config(super::types::ProviderConfig::defaults())
+    }
+
+    /// New with overrides (Advanced Options: client_id, instance_url).
+    pub fn with_config(config: super::types::ProviderConfig) -> Self {
         Self {
             http: reqwest::Client::new(),
+            config,
         }
+    }
+
+    /// Effective client_id for this instance.
+    fn client_id(&self) -> String {
+        self.config.effective_client_id(Provider::GitHub)
     }
 
     /// Build an octocrab client from a token.
@@ -71,10 +84,11 @@ impl ForgeProvider for GitHubProvider {
 
     async fn device_flow_start(&self) -> Result<DeviceFlowSession, ProviderError> {
         let client = &self.http;
+        let client_id = self.client_id();
         let resp = client
             .post(DEVICE_CODE_URL)
             .header("Accept", "application/json")
-            .form(&[("client_id", GITHUB_CLIENT_ID), ("scope", "repo")])
+            .form(&[("client_id", client_id.as_str()), ("scope", "repo")])
             .send()
             .await
             .map_err(|e| ProviderError::Api(e.to_string()))?;
@@ -130,11 +144,12 @@ impl ForgeProvider for GitHubProvider {
         }
 
         let client = &self.http;
+        let client_id = self.client_id();
         let resp = client
             .post(ACCESS_TOKEN_URL)
             .header("Accept", "application/json")
             .form(&[
-                ("client_id", GITHUB_CLIENT_ID),
+                ("client_id", client_id.as_str()),
                 ("device_code", &session.device_code),
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ])
@@ -214,6 +229,8 @@ impl ForgeProvider for GitHubProvider {
             username: user.login,
             scopes: token.scopes.clone(),
             connected_at: now,
+            instance_url: self.config.instance_url.clone(),
+            client_id: self.config.client_id.clone(),
         })
     }
 
@@ -340,8 +357,8 @@ mod tests {
     #[test]
     fn provider_auth_method() {
         assert_eq!(Provider::GitHub.auth_method(), "device-flow");
-        assert_eq!(Provider::GitLab.auth_method(), "pat");
-        assert_eq!(Provider::Codeberg.auth_method(), "pat");
+        assert_eq!(Provider::GitLab.auth_method(), "device-flow");
+        assert_eq!(Provider::Codeberg.auth_method(), "web-oauth");
     }
 
     #[test]

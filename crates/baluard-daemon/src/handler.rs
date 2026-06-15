@@ -211,6 +211,8 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "provider.repos",
     "provider.vault_repos",
     "provider.create_repo",
+    "provider.oauth_start_web",
+    "provider.oauth_status_web",
     "vault.setup_sync",
     "sync.status_json",
     "sync.disconnect",
@@ -266,16 +268,23 @@ fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
 
 /// Dispatch to the correct ForgeProvider implementation based on Provider enum.
 /// Centralizes provider routing so handler code stays provider-agnostic.
+/// `config` carries Advanced Options overrides (client_id, instance_url);
+/// defaults are applied inside each provider when a field is `None`.
 /// L6 fix: returns Result instead of panicking on unimplemented providers.
 fn provider_for(
     p: baluard_core::providers::types::Provider,
+    config: baluard_core::providers::ProviderConfig,
 ) -> Result<Box<dyn baluard_core::providers::ForgeProvider>, String> {
     match p {
         baluard_core::providers::types::Provider::GitHub => Ok(Box::new(
-            baluard_core::providers::github::GitHubProvider::new(),
+            baluard_core::providers::github::GitHubProvider::with_config(config),
         )),
-        // Phase 5: GitLab, Codeberg — return error instead of panic
-        _ => Err(format!("Provider {:?} not yet implemented", p)),
+        baluard_core::providers::types::Provider::GitLab => Ok(Box::new(
+            baluard_core::providers::gitlab::GitLabProvider::with_config(config),
+        )),
+        baluard_core::providers::types::Provider::Codeberg => Ok(Box::new(
+            baluard_core::providers::codeberg::CodebergProvider::with_config(config),
+        )),
     }
 }
 
@@ -292,6 +301,410 @@ fn parse_provider_name(
         "codeberg" => Ok(baluard_core::providers::types::Provider::Codeberg),
         _ => Err(err_response(format!("Unknown provider: {name}"))),
     }
+}
+
+/// Helper: parse Advanced Options overrides (client_id, instance_url) from a
+/// JSON payload. Both optional; absent => None => provider public default.
+fn parse_provider_config(payload: &str) -> baluard_core::providers::ProviderConfig {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return baluard_core::providers::ProviderConfig::defaults();
+    };
+    baluard_core::providers::ProviderConfig {
+        client_id: val["client_id"].as_str().map(str::to_string),
+        instance_url: val["instance_url"].as_str().map(str::to_string),
+    }
+}
+
+/// Per-provider async mutex guarding token refresh. Prevents two concurrent
+/// ops (e.g. sync.push + provider.status) from both refreshing a GitLab token
+/// at the same instant — GitLab invalidates the old refresh_token on use, so
+/// the loser of that race would disconnect spuriously. H6.
+static REFRESH_LOCKS: std::sync::LazyLock<
+    std::sync::Mutex<
+        std::collections::HashMap<
+            baluard_core::providers::types::Provider,
+            std::sync::Arc<tokio::sync::Mutex<()>>,
+        >,
+    >,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+async fn refresh_lock_for(
+    provider: baluard_core::providers::types::Provider,
+) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    let mut map = REFRESH_LOCKS.lock().unwrap();
+    map.entry(provider)
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
+
+/// Load a provider token, auto-refreshing if expired.
+///
+/// GitLab OAuth tokens expire every 2h and carry a refresh_token; GitHub PATs
+/// and long-lived OAuth tokens never expire. When a token is expired and
+/// refresh succeeds, the new token is re-stored to the keyring before return
+/// so subsequent operations (including git2 credential callbacks) see the
+/// fresh value. On refresh failure the stored credentials are cleared and an
+/// error is returned so the desktop can transition to State D (re-auth).
+///
+/// H6: uses a per-provider async mutex + double-checked locking so concurrent
+/// callers don't race on refresh (GitLab rolling refresh invalidates the loser).
+async fn ensure_valid_token(
+    provider: baluard_core::providers::types::Provider,
+    info: &baluard_core::providers::ProviderInfo,
+) -> Result<baluard_core::providers::ProviderToken, GatewayResponse> {
+    // Fast path: not expired.
+    let token = baluard_core::providers::token::load_token(provider, &info.username)
+        .map_err(|e| err_response(format!("Token not found: {e}")))?;
+    if !token.is_expired() {
+        return Ok(token);
+    }
+
+    // Slow path: acquire per-provider refresh lock.
+    let lock = refresh_lock_for(provider).await;
+    let _guard = lock.lock().await;
+
+    // Re-read after acquiring the lock (double-checked locking): a concurrent
+    // caller may have already refreshed this token while we waited.
+    let token = baluard_core::providers::token::load_token(provider, &info.username)
+        .map_err(|e| err_response(format!("Token not found: {e}")))?;
+    if !token.is_expired() {
+        return Ok(token);
+    }
+
+    let prov = match provider_for(provider, info.config()) {
+        Ok(p) => p,
+        Err(e) => return Err(err_response(e)),
+    };
+
+    match prov.refresh_token(&token).await {
+        Ok(Some(new_token)) => {
+            if let Err(e) =
+                baluard_core::providers::token::store_token(provider, &info.username, &new_token)
+            {
+                return Err(err_response(format!(
+                    "Keyring error storing refreshed token: {e}"
+                )));
+            }
+            log::info!(
+                "[daemon] refreshed expired {:?} token for @{}",
+                provider,
+                info.username
+            );
+            Ok(new_token)
+        }
+        Ok(None) => {
+            // Token is expired but provider returned no refresh (e.g. PAT with
+            // user-set expiry). Clear credentials and prompt re-auth.
+            let _ = baluard_core::providers::token::disconnect(provider);
+            Err(err_response(format!(
+                "{:?} token expired and cannot be refreshed. Please reconnect.",
+                provider
+            )))
+        }
+        Err(e) => {
+            let _ = baluard_core::providers::token::disconnect(provider);
+            Err(err_response(format!(
+                "{:?} token refresh failed: {e}. Please reconnect.",
+                provider
+            )))
+        }
+    }
+}
+
+/// Refresh any connected provider whose token is expired, before a sync op.
+///
+/// git2 credential callbacks load tokens straight from the keyring; if a
+/// GitLab token lapsed between operations, the push/pull would fail with an
+/// auth error. Calling this first keeps the keyring entry fresh. GitHub
+/// tokens never expire (refresh is a no-op). Errors are logged but non-fatal:
+/// a failed refresh surfaces on the subsequent sync attempt, not here.
+async fn refresh_connected_tokens_if_needed() {
+    let state = match baluard_core::providers::token::ProvidersState::load() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    for provider in baluard_core::providers::types::Provider::all() {
+        if let Some(info) = state.get(*provider) {
+            if let Err(_) = ensure_valid_token(*provider, info).await {
+                log::warn!("[daemon] pre-sync token refresh failed for {:?}", provider);
+            }
+        }
+    }
+}
+
+// ── Web-OAuth (auth-code + PKCE) callback infrastructure ──
+// Used by Codeberg/Forgejo (no device flow). The daemon starts a localhost
+// TCP listener, the desktop opens the auth URL in a browser, the provider
+// redirects to http://127.0.0.1:<port>/callback?code=...&state=... and the
+// daemon exchanges the code for a token.
+
+// ── Web-OAuth (auth-code + PKCE) callback infrastructure ──
+// Used by Codeberg/Forgejo (no device flow). The daemon starts a localhost
+// TCP listener, the desktop opens the auth URL in a browser, the provider
+// redirects to http://127.0.0.1:<port>/callback?code=...&state=... and the
+// daemon exchanges the code for a token.
+//
+// B1 fix: sessions are keyed by provider (not a single global Option) so a
+// concurrent flow for a different provider cannot overwrite another. M4 fix:
+// starting a new flow for the SAME provider aborts the prior listener task,
+// freeing its port immediately instead of waiting for the 5-min timeout.
+
+struct OAuthSession {
+    result: Option<Result<String, String>>, // Ok(username) | Err(msg)
+    /// Handle to the callback listener task. Aborted when the same provider
+    /// starts a new flow, dropping the listener and closing its port.
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+static OAUTH_SESSIONS: std::sync::LazyLock<
+    tokio::sync::Mutex<
+        std::collections::HashMap<baluard_core::providers::types::Provider, OAuthSession>,
+    >,
+> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Start a web-OAuth flow: bind a loopback listener, build the auth URL,
+/// spawn the callback handler, return the URL for the desktop to open.
+async fn start_web_oauth(
+    provider: baluard_core::providers::types::Provider,
+    config: baluard_core::providers::ProviderConfig,
+) -> Result<String, String> {
+    let prov = provider_for(provider, config.clone())?;
+
+    // Bind a random loopback port for the callback. RFC 8252 §7.3 says loopback
+    // redirects allow any port, so we bind :0 (OS-assigned). Forgejo's OAuth2
+    // provider is documented to honor this for public clients registered with
+    // `http://127.0.0.1/` as the redirect URI.
+    //
+    // TODO(H1, release-gate): verify Codeberg (Forgejo) actually accepts a
+    // dynamic-port redirect at runtime before shipping the automatic flow.
+    // If Codeberg requires an exact registered port, register a fixed port
+    // here and change the bind to `127.0.0.1:<FIXED>` to match. Test
+    // end-to-end against codeberg.org. Tracked in docs/git-provider-apps-
+    // and-tokens.md §9.6. Until verified, Codeberg users fall back to PAT.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| format!("Failed to bind callback listener: {e}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("Failed to get listener addr: {e}"))?
+        .port();
+    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+
+    let oauth = prov
+        .oauth_start(&redirect_uri)
+        .await
+        .map_err(|e| format!("oauth_start failed: {e}"))?;
+
+    // Spawn the callback listener (accepts one connection, then exits).
+    let verifier = oauth.code_verifier.clone();
+    let expected_state = oauth.state.clone();
+    let task = tokio::spawn(async move {
+        handle_oauth_callback(
+            listener,
+            provider,
+            config,
+            verifier,
+            expected_state,
+            redirect_uri,
+        )
+        .await;
+    });
+
+    // Replace any prior session for this provider: abort its listener (M4) so
+    // its port is freed immediately, then record the new one.
+    {
+        let mut sessions = OAUTH_SESSIONS.lock().await;
+        if let Some(mut old) = sessions.insert(
+            provider,
+            OAuthSession {
+                result: None,
+                task: Some(task),
+            },
+        ) {
+            if let Some(t) = old.task.take() {
+                t.abort();
+            }
+        }
+    }
+
+    Ok(oauth.auth_url)
+}
+
+/// Accept one HTTP request on the callback listener, extract code+state,
+/// exchange for token, store result in the session.
+async fn handle_oauth_callback(
+    listener: tokio::net::TcpListener,
+    provider: baluard_core::providers::types::Provider,
+    config: baluard_core::providers::ProviderConfig,
+    verifier: String,
+    expected_state: String,
+    redirect_uri: String,
+) {
+    // Accept one connection (timeout after 5 minutes).
+    let (mut sock, _) =
+        match tokio::time::timeout(std::time::Duration::from_secs(300), listener.accept()).await {
+            Ok(Ok(conn)) => conn,
+            _ => {
+                set_oauth_result(provider, Err("callback timeout".into())).await;
+                return;
+            }
+        };
+
+    // Read the HTTP request until the header terminator (\r\n\r\n). M3: a
+    // single read() is not guaranteed to return all data; loop until the
+    // terminator appears or we hit the buffer cap.
+    let mut buf = vec![0u8; 8192];
+    let mut total = 0;
+    loop {
+        if total >= buf.len() {
+            break; // header too large; proceed with what we have
+        }
+        let n = match sock.read(&mut buf[total..]).await {
+            Ok(0) => break, // EOF
+            Ok(n) => n,
+            Err(_) => break,
+        };
+        total += n;
+        if String::from_utf8_lossy(&buf[..total]).contains("\r\n\r\n") {
+            break;
+        }
+    }
+    let request = String::from_utf8_lossy(&buf[..total]);
+
+    // Extract code + state from the request line: GET /callback?code=X&state=Y
+    let (code, state) = match parse_callback_query(&request) {
+        Some(pair) => pair,
+        None => {
+            let _ = respond_html(&mut sock, "Missing code or state in callback.").await;
+            set_oauth_result(provider, Err("missing code/state".into())).await;
+            return;
+        }
+    };
+
+    if state != expected_state {
+        let _ = respond_html(&mut sock, "CSRF state mismatch. Authentication aborted.").await;
+        set_oauth_result(provider, Err("CSRF state mismatch".into())).await;
+        return;
+    }
+
+    // Exchange code for token.
+    let prov = match provider_for(provider, config) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = respond_html(&mut sock, &format!("Provider error: {e}")).await;
+            set_oauth_result(provider, Err(e)).await;
+            return;
+        }
+    };
+
+    match prov.oauth_exchange(&code, &verifier, &redirect_uri).await {
+        Ok((token, info)) => {
+            if let Err(e) =
+                baluard_core::providers::token::store_token(info.provider, &info.username, &token)
+            {
+                let _ = respond_html(&mut sock, &format!("Keyring error: {e}")).await;
+                set_oauth_result(provider, Err(format!("Keyring: {e}"))).await;
+                return;
+            }
+            let mut state_file =
+                baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
+            state_file.set(info.clone());
+            if let Err(e) = state_file.save() {
+                let _ = baluard_core::providers::token::delete_token(info.provider, &info.username);
+                let _ = respond_html(&mut sock, &format!("State save error: {e}")).await;
+                set_oauth_result(provider, Err(format!("State: {e}"))).await;
+                return;
+            }
+            let _ = respond_html(
+                &mut sock,
+                "Authentication successful! You can close this tab and return to Baluard.",
+            )
+            .await;
+            set_oauth_result(provider, Ok(info.username)).await;
+        }
+        Err(e) => {
+            let _ = respond_html(&mut sock, &format!("Authentication failed: {e}")).await;
+            set_oauth_result(provider, Err(e.to_string())).await;
+        }
+    }
+}
+
+/// Escape HTML metacharacters. H2: provider API error bodies may contain
+/// <, >, &, ", ' — interpolating them raw into the callback response page is
+/// an XSS surface (local-only, but fail closed).
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+async fn respond_html(sock: &mut tokio::net::TcpStream, msg: &str) -> std::io::Result<()> {
+    let safe = html_escape(msg);
+    let body = format!(
+        "<html><body style='font-family:sans-serif;text-align:center;padding:40px'>\
+         <h2>{safe}</h2></body></html>"
+    );
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    sock.write_all(response.as_bytes()).await
+}
+
+async fn set_oauth_result(
+    provider: baluard_core::providers::types::Provider,
+    result: Result<String, String>,
+) {
+    let mut sessions = OAUTH_SESSIONS.lock().await;
+    if let Some(s) = sessions.get_mut(&provider) {
+        s.result = Some(result);
+    }
+}
+
+/// Parse code + state from a GET request line: `GET /callback?code=X&state=Y HTTP/1.1`.
+fn parse_callback_query(request: &str) -> Option<(String, String)> {
+    let first_line = request.lines().next()?;
+    let path = first_line.split_whitespace().nth(1)?;
+    let query = path.split('?').nth(1)?;
+    let mut code = None;
+    let mut state = None;
+    for pair in query.split('&') {
+        let mut kv = pair.splitn(2, '=');
+        match kv.next()? {
+            "code" => code = kv.next().map(urldecode),
+            "state" => state = kv.next().map(urldecode),
+            _ => {}
+        }
+    }
+    Some((code?, state?))
+}
+
+/// Minimal URL-decoder for %XX sequences.
+fn urldecode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        if bytes[i] == b'+' {
+            out.push(b' ');
+        } else {
+            out.push(bytes[i]);
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Route a GatewayRequest to the appropriate baluard-core function.
@@ -665,14 +1078,20 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(e) => err_response(e),
             }
         }
-        "sync.push" => match sync_push(&state.vault_path) {
-            Ok(msg) => ok_resp(msg, token_str),
-            Err(e) => err_response(e),
-        },
-        "sync.pull" => match sync_pull(&state.vault_path) {
-            Ok(msg) => ok_resp(msg, token_str),
-            Err(e) => err_response(e),
-        },
+        "sync.push" => {
+            refresh_connected_tokens_if_needed().await;
+            match sync_push(&state.vault_path) {
+                Ok(msg) => ok_resp(msg, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+        "sync.pull" => {
+            refresh_connected_tokens_if_needed().await;
+            match sync_pull(&state.vault_path) {
+                Ok(msg) => ok_resp(msg, token_str),
+                Err(e) => err_response(e),
+            }
+        }
         "sync.status" => match sync_status(&state.vault_path) {
             Ok(msg) => ok_resp(msg, token_str),
             Err(e) => err_response(e),
@@ -1044,7 +1463,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             };
             match provider.auth_method() {
                 "device-flow" => {
-                    let prov = match provider_for(provider) {
+                    let config = parse_provider_config(&req.payload);
+                    let prov = match provider_for(provider, config) {
                         Ok(p) => p,
                         Err(e) => return err_response(e),
                     };
@@ -1056,14 +1476,22 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                         Err(e) => err_response(format!("Device flow start failed: {e}")),
                     }
                 }
-                _ => err_response(format!(
-                    "Device flow not supported for {}. Use provider.connect_pat.",
-                    provider
-                )),
+                _ => {
+                    // H4/M6: point the caller at the right flow for the auth method.
+                    let hint = match provider.auth_method() {
+                        "web-oauth" => "provider.oauth_start_web",
+                        _ => "provider.connect_pat",
+                    };
+                    err_response(format!(
+                        "Device flow not supported for {}. Use {}.",
+                        provider, hint
+                    ))
+                }
             }
         }
 
         "provider.connect_poll" => {
+            let config = parse_provider_config(&req.payload);
             let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
                 Ok(p) => p,
                 Err(e) => return err_response(format!("Invalid payload: {e}")),
@@ -1073,7 +1501,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     Ok(s) => s,
                     Err(e) => return err_response(format!("Invalid session: {e}")),
                 };
-            let prov = match provider_for(session.provider) {
+            let prov = match provider_for(session.provider, config) {
                 Ok(p) => p,
                 Err(e) => return err_response(e),
             };
@@ -1136,6 +1564,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(p) => p,
                 Err(e) => return e,
             };
+            // B2: parse config BEFORE zeroizing req.payload, else Advanced
+            // Options overrides (client_id, instance_url) are silently lost.
+            let config = parse_provider_config(&req.payload);
             let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
                 Ok(p) => p,
                 Err(e) => return err_response(format!("Invalid payload: {e}")),
@@ -1147,7 +1578,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 return err_response("Missing token in payload");
             }
 
-            let prov = match provider_for(provider) {
+            let prov = match provider_for(provider, config) {
                 Ok(p) => p,
                 Err(e) => return err_response(e),
             };
@@ -1189,9 +1620,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
             match state_file.get(provider) {
                 Some(info) => {
-                    match baluard_core::providers::token::load_token(provider, &info.username) {
+                    match ensure_valid_token(provider, info).await {
                         Ok(token) => {
-                            let prov = match provider_for(provider) {
+                            let prov = match provider_for(provider, info.config()) {
                                 Ok(p) => p,
                                 Err(e) => return err_response(e),
                             };
@@ -1206,8 +1637,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                                 ),
                             }
                         }
-                        Err(e) => ok_resp(
-                            serde_json::json!({"valid": false, "error": format!("Token not found: {e}")}).to_string(),
+                        Err(_) => ok_resp(
+                            serde_json::json!({"valid": false, "error": "token expired or unavailable"}).to_string(),
                             token_str,
                         ),
                     }
@@ -1230,6 +1661,57 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
+        "provider.oauth_start_web" => {
+            let provider = match parse_provider_name(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return e,
+            };
+            if provider.auth_method() != "web-oauth" {
+                return err_response(format!(
+                    "Web-OAuth not supported for {}. Use {}.",
+                    provider,
+                    if provider.auth_method() == "device-flow" {
+                        "device flow"
+                    } else {
+                        "PAT"
+                    }
+                ));
+            }
+            let config = parse_provider_config(&req.payload);
+            match start_web_oauth(provider, config).await {
+                Ok(auth_url) => ok_resp(
+                    serde_json::json!({"auth_url": auth_url}).to_string(),
+                    token_str,
+                ),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "provider.oauth_status_web" => {
+            let provider = match parse_provider_name(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return e,
+            };
+            let sessions = OAUTH_SESSIONS.lock().await;
+            match sessions.get(&provider) {
+                Some(s) => match &s.result {
+                    Some(Ok(username)) => ok_resp(
+                        serde_json::json!({"status": "success", "username": username}).to_string(),
+                        token_str,
+                    ),
+                    Some(Err(msg)) => ok_resp(
+                        serde_json::json!({"status": "error", "error": msg}).to_string(),
+                        token_str,
+                    ),
+                    None => ok_resp(
+                        serde_json::json!({"status": "pending"}).to_string(),
+                        token_str,
+                    ),
+                },
+                None => err_response("No web-OAuth session in progress for this provider"),
+            }
+        }
+
         "provider.repos" => {
             let provider = match parse_provider_name(&req.payload) {
                 Ok(p) => p,
@@ -1247,11 +1729,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Some(i) => i,
                 None => return err_response(format!("{} not connected", provider)),
             };
-            let token = match baluard_core::providers::token::load_token(provider, &info.username) {
+            let token = match ensure_valid_token(provider, info).await {
                 Ok(t) => t,
-                Err(e) => return err_response(format!("Token not found: {e}")),
+                Err(e) => return e,
             };
-            let prov = match provider_for(provider) {
+            let prov = match provider_for(provider, info.config()) {
                 Ok(p) => p,
                 Err(e) => return err_response(e),
             };
@@ -1272,11 +1754,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Some(i) => i,
                 None => return err_response(format!("{} not connected", provider)),
             };
-            let token = match baluard_core::providers::token::load_token(provider, &info.username) {
+            let token = match ensure_valid_token(provider, info).await {
                 Ok(t) => t,
-                Err(e) => return err_response(format!("Token not found: {e}")),
+                Err(e) => return e,
             };
-            let prov = match provider_for(provider) {
+            let prov = match provider_for(provider, info.config()) {
                 Ok(p) => p,
                 Err(e) => return err_response(e),
             };
@@ -1305,11 +1787,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Some(i) => i,
                 None => return err_response(format!("{} not connected", provider)),
             };
-            let token = match baluard_core::providers::token::load_token(provider, &info.username) {
+            let token = match ensure_valid_token(provider, info).await {
                 Ok(t) => t,
-                Err(e) => return err_response(format!("Token not found: {e}")),
+                Err(e) => return e,
             };
-            let prov = match provider_for(provider) {
+            let prov = match provider_for(provider, info.config()) {
                 Ok(p) => p,
                 Err(e) => return err_response(e),
             };
@@ -1346,10 +1828,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Some(i) => i,
                 None => return err_response(format!("{provider} not connected")),
             };
-            let token = match baluard_core::providers::token::load_token(prov_type, &info.username)
-            {
+            let token = match ensure_valid_token(prov_type, info).await {
                 Ok(t) => t,
-                Err(e) => return err_response(format!("Token not found: {e}")),
+                Err(e) => return e,
             };
 
             // Default repo name to vault slug if not provided
@@ -1372,7 +1853,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             };
 
             // Create private repo on provider
-            let prov = match provider_for(prov_type) {
+            let prov = match provider_for(prov_type, info.config()) {
                 Ok(p) => p,
                 Err(e) => return err_response(e),
             };
@@ -1640,17 +2121,34 @@ fn sync_log(vault_path: &std::path::Path, limit: usize) -> Result<String, String
     Ok(result)
 }
 
+/// Infer the provider from a remote URL. Tries the hardcoded public
+/// hostnames first, then falls back to matching against any connected
+/// provider's persisted `instance_url` (self-hosted GitLab/Forgejo). H5:
+/// without the fallback, self-hosted instances always return None and the
+/// desktop can't show State C even though sync is active.
 #[cfg(feature = "git-sync")]
 fn infer_provider_from_url(url: &str) -> Option<String> {
     if url.contains("github.com") {
-        Some("github".to_string())
-    } else if url.contains("gitlab.com") {
-        Some("gitlab".to_string())
-    } else if url.contains("codeberg.org") {
-        Some("codeberg".to_string())
-    } else {
-        None
+        return Some("github".to_string());
     }
+    if url.contains("gitlab.com") {
+        return Some("gitlab".to_string());
+    }
+    if url.contains("codeberg.org") {
+        return Some("codeberg".to_string());
+    }
+    // Self-hosted: match against connected providers' effective instance host.
+    if let Ok(state) = baluard_core::providers::token::ProvidersState::load() {
+        for provider in baluard_core::providers::types::Provider::all() {
+            if let Some(info) = state.get(*provider) {
+                let instance = info.effective_instance_url();
+                if url.contains(&instance) {
+                    return Some(provider.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(feature = "git-sync")]

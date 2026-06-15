@@ -8,7 +8,7 @@ import { sanitizeError } from "../lib/utils.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { buildImportPayload, buildExportPayload } from "../lib/payload.js";
 import { biometryAvailable } from "../lib/biometry.js";
-import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh } from "./Icon.jsx";
+import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 import SyncTab from "./SyncTab.jsx";
@@ -358,22 +358,26 @@ export default function SettingsModal() {
                 <div class="space-y-3">
                   <label class="text-xs font-bold text-[var(--color-text)]">{t("settings.profile")}</label>
                   <p class="text-[10px] text-[var(--color-muted)]">{t("settings.profileDesc")}</p>
-                  <div class="flex items-start gap-4">
-                    <div class="shrink-0 flex flex-col items-center gap-1">
-                      <div class="relative group">
+                  <div class="flex items-center gap-4">
+                    <div class="shrink-0 flex flex-col items-center gap-1.5">
+                      <div class="relative w-16 h-16">
                         <Show when={avatarB64()} fallback={
-                          <div class="w-16 h-16 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-lg shadow-md">
+                          <div class="w-full h-full rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-lg shadow-md border border-[var(--color-border)]">
                             {(displayName() || "?").slice(0, 2).toUpperCase()}
                           </div>
                         }>
                           <img
                             src={`data:image/${avatarExt() === "jpg" ? "jpeg" : avatarExt()};base64,${avatarB64()}`}
                             alt="Avatar"
-                            class="w-16 h-16 rounded-full object-cover shadow-md"
+                            class="w-full h-full rounded-full object-cover shadow-md border border-[var(--color-border)]"
                           />
                         </Show>
-                        <label class="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
-                          <span class="text-[10px] font-bold text-white">{t("settings.changeAvatar")}</span>
+                        <label
+                          class="absolute bottom-0 right-0 w-6 h-6 rounded-full bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] flex items-center justify-center cursor-pointer shadow-md border border-[var(--color-sidebar)] transition-all hover:scale-105 active:scale-95"
+                          title={t("settings.changeAvatar")}
+                          aria-label={t("settings.changeAvatar")}
+                        >
+                          <IconPencil class="w-3 h-3" />
                           <input type="file" accept="image/*" class="hidden" onChange={handleAvatarUpload} />
                         </label>
                       </div>

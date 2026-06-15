@@ -10,9 +10,10 @@ Durable decisions that apply across all phases:
 - **`.baluard` marker**: JSON at vault root (`{ version, vault_id, slug }`). Tracked in git. Machine-readable detection mechanism.
 - **Local layout**: `<data_dir>/vaults/<slug>/` for managed vaults. Imported vaults stay at original path. Registry stores absolute paths.
 - **Registry**: `<data_dir>/registry.json`. Atomic writes (temp + rename). Cross-process locking via `fd-lock`.
-- **Provider trait**: `ForgeProvider` with native `async fn` methods. Two-phase device flow (`start` + `poll`). `ProviderToken` wraps `SecretString` with `refresh_token` + `expires_at`.
-- **Keyring**: `baluard-<provider>-<username>`. `providers.json` stores non-sensitive lookup state (username, scopes, connected_at).
-- **Auth strategy**: GitHub gets device flow (octocrab). GitLab and Codeberg get PAT only. No `client_secret` in codebase.
+- **Provider trait**: `ForgeProvider` with native `async fn` methods. Two-phase device flow (`start` + `poll`) for GitHub/GitLab. Web-OAuth (`oauth_start` + `oauth_exchange`, PKCE) for Codeberg. `ProviderToken` wraps `access_token` + `refresh_token` as `SecretString` with `expires_at`.
+- **Keyring**: `baluard-<provider>-<username>`. `providers.json` stores non-sensitive lookup state (username, scopes, connected_at, instance_url, client_id).
+- **Auth strategy**: GitHub gets device flow (octocrab). GitLab gets device flow (reqwest; public client, no `client_secret` — supported since GitLab 17.9). Codeberg gets web-OAuth (auth-code + PKCE, reqwest; Forgejo has no device flow). PAT is an Advanced Options fallback for all three. No `client_secret` in codebase.
+- **ProviderConfig**: `{ client_id, instance_url }` (both `Option`, None = public default). Enables self-hosted instances + user-owned OAuth apps. Persisted on `ProviderInfo` in `providers.json`.
 - **Credential transport**: git2-rs `RemoteCallbacks::credentials()` callback. No external credential helper binary.
 - **CLI cross-vault**: `--vault <slug>` on non-active vault uses `--direct` mode. Daemon serves only the active vault.
 - **OAuth scopes**: GitHub `repo`, GitLab `read_repository` + `write_repository`, Codeberg `repository`.
@@ -127,24 +128,40 @@ Redesign desktop wizard first screen: three buttons (new vault, open local vault
 
 ## Phase 5: GitLab + Codeberg Providers
 
-**User stories**: 6, 11
+**Status**: Implemented (2026-06-15). Peer-reviewed by peer review: 2 blockers + 7 high + 6 medium + 6 low findings, all addressed.
 
-### What to build
+### What was built
 
-Implement `GitLabProvider` and `CodebergProvider` using `gitlab` and `forgejo-api` crates respectively. Both PAT-only (no device flow). PAT input UI: text field with link to provider's token generation page. GitLab token refresh (tokens expire in 2 hours): daemon checks `expires_at` before operations, auto-refreshes, stores updated token to keyring. Codeberg: no expiry, long-lived PAT. Provider selection screen shows all three with auth method indicator (device flow icon for GitHub, PAT icon for others). `detect_vault_repos` uses three-tier strategy per provider (search API for GitLab on gitlab.com, list+fetch for Codeberg).
+**GitLab** (`crates/baluard-core/src/providers/gitlab.rs`): device flow (RFC 8628) as the PRIMARY auth method (GitLab supports it since 17.9). OAuth tokens expire 2h with a refresh_token; daemon auto-refreshes via `ensure_valid_token()` before any op + before `sync.push`/`sync.pull`. PAT fallback (detected by `glpat-` prefix, sent as `PRIVATE-TOKEN`). Requires the `api` scope (broader scopes are insufficient for `POST /projects`).
+
+**Codeberg** (`crates/baluard-core/src/providers/codeberg.rs`): web-OAuth (auth-code + PKCE) as the primary flow. Forgejo has NO device flow, so the daemon runs a localhost `TcpListener` for the OAuth callback (`OAUTH_SESSIONS` keyed by provider, JoinHandle abort on restart). Forgejo OAuth tokens have no scope support (full account access) — the scoped PAT (`write:repository`) is documented as the more secure fallback, surfaced via Advanced Options.
+
+Both providers use **raw reqwest** (not the `gitlab`/`forgejo-api` crates the original plan named) — PAT-only REST is trivial with zero new deps. Same git2-rs credential callback works for all three.
+
+### Design decisions (diverged from original plan text)
+- Device flow for GitLab (not PAT-only as the plan said) — user-friendly automatic flow.
+- Web-OAuth PKCE for Codeberg (not PAT-only) — only browser-based option (no device flow).
+- PAT moved into Advanced Options for ALL providers (power-user escape hatch); automatic flows are primary.
+- `ProviderConfig { client_id, instance_url }` enables self-hosted instances + user-owned OAuth apps.
+- One active instance per provider in v1 (switching = disconnect + reconnect).
 
 ### Acceptance criteria
 
-- [ ] `GitLabProvider` implements full `ForgeProvider` trait with PAT auth
-- [ ] `CodebergProvider` implements full `ForgeProvider` trait with PAT auth
-- [ ] GitLab PAT validated against API before storing
-- [ ] GitLab token refresh: daemon auto-refreshes expiring tokens, stores updated token
-- [ ] GitLab refresh failure: clear credentials, surface re-auth prompt
-- [ ] Provider selection shows all three providers with auth method (device flow / PAT)
-- [ ] PAT input UI includes link to provider's token generation page
-- [ ] `provider.vault_repos` works for GitLab and Codeberg (list+fetch detection)
-- [ ] `vault.setup_sync` and `vault.clone_remote` work with GitLab and Codeberg repos
-- [ ] Same git2-rs credential callback works for all three providers
+- [x] `GitLabProvider` implements full `ForgeProvider` trait (device flow + PAT + repo ops + 2h refresh)
+- [x] `CodebergProvider` implements full `ForgeProvider` trait (web-OAuth + PAT + repo ops)
+- [x] GitLab token validated against `/api/v4/user` before storing
+- [x] GitLab token refresh: daemon auto-refreshes expiring tokens, stores updated token (per-provider mutex, double-checked locking)
+- [x] GitLab refresh failure: clear credentials, surface re-auth prompt (desktop State D)
+- [x] Provider selection shows all three providers with auth method (device-flow / web-oauth / PAT label)
+- [x] PAT input under Advanced Options includes scope hint (write:repository for Codeberg)
+- [x] `provider.vault_repos` works for GitLab and Codeberg (list+fetch `.baluard`, concurrent per page via JoinSet)
+- [ ] `vault.clone_remote` works with GitLab and Codeberg repos (Phase 4, not yet implemented)
+- [x] Same git2-rs credential callback works for all three providers (token as password, username from URL)
+
+### Known limitations
+- `provider.oauth_start_web`/`oauth_status_web` are desktop-only routes; CLI does not yet drive the Codeberg web-OAuth flow.
+- Codeberg OAuth2 redirect URI with dynamic loopback port needs live verification before release (TODO(H1) in `handler.rs`, tracked in `docs/git-provider-apps-and-tokens.md` §9.6).
+- Default GitLab/Codeberg client_ids are placeholders until project OAuth apps are registered.
 
 ---
 
