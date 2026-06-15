@@ -1,8 +1,12 @@
 # PRD: Git Provider Sync + Multi-Vault Foundation
 
 **Date:** 2026-06-10
-**Status:** Draft
+**Status:** Draft (original requirements record)
 **Author:** Esteban (product), TARS (architecture)
+
+> **Implementation note (2026-06-15):** Phases 1-3 + 5 + provider selection UI are **Done**. Phase 4 (clone) and Phase 6 (switching) remain. This PRD is the original requirements record; for current implementation reality see `docs/plan-git-providers-multi-vault.md` (Phase 5) and `docs/git-provider-apps-and-tokens.md` (provider app registration + token strategy).
+>
+> **Key divergences from this PRD:** (1) GitLab uses **device flow** as primary auth (it does NOT require `client_secret` — that claim in §5 was incorrect; GitLab supports public-client device flow since 17.9). (2) Codeberg uses **web-OAuth (auth-code + PKCE)** as primary, not PAT-only. (3) Providers use **raw `reqwest`**, not the `gitlab`/`forgejo-api` crates named in §5. (4) PAT is an Advanced Options fallback for all three, not the primary path for GitLab/Codeberg.
 
 ---
 

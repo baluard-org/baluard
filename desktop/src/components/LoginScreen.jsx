@@ -5,7 +5,7 @@ import { daemon } from "../lib/daemon.js";
 import { biometryPrompt } from "../lib/biometry.js";
 import { toastError } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
-import { IconLock, IconUser } from "./Icon.jsx";
+import { IconLock, IconFingerprint } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 
 export default function LoginScreen() {
@@ -80,7 +80,7 @@ export default function LoginScreen() {
               }}
               class="login-screen__quick-unlock-btn w-full mt-2 py-3 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
             >
-              <IconUser class="w-4 h-4" />
+              <IconFingerprint class="w-4 h-4" />
               {t("login.quickUnlock")}
             </button>
           </Show>

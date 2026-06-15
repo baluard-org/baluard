@@ -34,8 +34,8 @@ impl Provider {
     /// Auth method label for this provider.
     pub fn auth_method(&self) -> &'static str {
         match self {
-            Self::GitHub => "device-flow",
-            Self::GitLab | Self::Codeberg => "pat",
+            Self::GitHub | Self::GitLab => "device-flow",
+            Self::Codeberg => "web-oauth",
         }
     }
 
@@ -43,7 +43,11 @@ impl Provider {
     pub fn default_scopes(&self) -> &'static str {
         match self {
             Self::GitHub => "repo",
-            Self::GitLab => "read_repository write_repository",
+            // GitLab POST /projects requires the `api` scope (read_repository /
+            // write_repository are insufficient for repo creation). `api` is
+            // broad but unavoidable for a managed-sync client; user consents
+            // at OAuth/PAT time.
+            Self::GitLab => "api",
             Self::Codeberg => "repository",
         }
     }
@@ -55,6 +59,64 @@ impl Provider {
             Self::GitLab => Some("https://gitlab.com/-/user_settings/personal_access_tokens"),
             Self::Codeberg => Some("https://codeberg.org/user/settings/applications"),
         }
+    }
+
+    /// Default public instance base URL (no trailing slash).
+    pub fn default_instance_url(&self) -> &'static str {
+        match self {
+            Self::GitHub => "https://github.com",
+            Self::GitLab => "https://gitlab.com",
+            Self::Codeberg => "https://codeberg.org",
+        }
+    }
+
+    /// Default OAuth client_id (placeholder for GitLab/Codeberg until project
+    /// apps are registered; GitHub is the real public client_id).
+    pub fn default_client_id(&self) -> &'static str {
+        match self {
+            Self::GitHub => super::github::GITHUB_CLIENT_ID,
+            Self::GitLab => "REPLACE_WITH_GITLAB_CLIENT_ID",
+            Self::Codeberg => "REPLACE_WITH_CODEBERG_CLIENT_ID",
+        }
+    }
+}
+
+/// Provider connection config. `None` fields mean "use the provider's public
+/// default". Overrides come from the Advanced Options UI and are persisted in
+/// `ProviderInfo` so later operations reuse the same instance + client_id
+/// (e.g. GitLab token refresh needs the original client_id).
+///
+/// One active instance per provider is supported in v1: switching instances
+/// means disconnect + reconnect (new token overwrites the keyring entry).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProviderConfig {
+    /// OAuth client_id override. `None` = `Provider::default_client_id()`.
+    pub client_id: Option<String>,
+    /// Instance base URL override (self-hosted GitLab/Forgejo). `None` =
+    /// `Provider::default_instance_url()`.
+    pub instance_url: Option<String>,
+}
+
+impl ProviderConfig {
+    /// All defaults (public instance + project OAuth app).
+    pub fn defaults() -> Self {
+        Self::default()
+    }
+
+    /// Effective client_id: override or provider default.
+    pub fn effective_client_id(&self, provider: Provider) -> String {
+        self.client_id
+            .clone()
+            .unwrap_or_else(|| provider.default_client_id().to_string())
+    }
+
+    /// Effective instance base URL (no trailing slash): override or default.
+    pub fn effective_instance_url(&self, provider: Provider) -> String {
+        let url = self
+            .instance_url
+            .clone()
+            .unwrap_or_else(|| provider.default_instance_url().to_string());
+        url.trim_end_matches('/').to_string()
     }
 }
 
@@ -97,8 +159,10 @@ pub enum DeviceFlowStatus {
 pub struct ProviderToken {
     /// Access token (primary credential). Never logged or printed.
     access_token: SecretString,
-    /// Refresh token (GitLab uses this, GitHub doesn't).
-    pub refresh_token: Option<String>,
+    /// Refresh token (GitLab/Codeberg OAuth). Also a credential: stored as
+    /// SecretString so it cannot be cloned/format!-ed without ExposeSecret.
+    /// Zeroized on drop via SecretString's own Drop.
+    refresh_token: Option<SecretString>,
     /// Unix timestamp when token expires (None = never).
     pub expires_at: Option<u64>,
     /// Scopes granted.
@@ -124,7 +188,10 @@ impl Clone for ProviderToken {
     fn clone(&self) -> Self {
         Self {
             access_token: SecretString::new(self.access_token.expose_secret().to_string().into()),
-            refresh_token: self.refresh_token.clone(),
+            refresh_token: self
+                .refresh_token
+                .as_ref()
+                .map(|r| SecretString::new(r.expose_secret().to_string().into())),
             expires_at: self.expires_at,
             scopes: self.scopes.clone(),
         }
@@ -133,8 +200,8 @@ impl Clone for ProviderToken {
 
 impl Zeroize for ProviderToken {
     fn zeroize(&mut self) {
-        // SecretString handles its own zeroize, but zeroize the other fields
-        self.refresh_token.zeroize();
+        // access_token + refresh_token are SecretString (own zeroize on drop).
+        // Zeroize the remaining plaintext fields.
         self.expires_at.zeroize();
         self.scopes.zeroize();
     }
@@ -146,13 +213,17 @@ impl Drop for ProviderToken {
     }
 }
 
-// Custom serde: serialize access_token as plain string, deserialize into SecretString.
+// Custom serde: serialize secrets as plain strings (wrapped atomically in
+// a SecretString for keyring storage via to_secret), deserialize into SecretString.
 impl Serialize for ProviderToken {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let mut s = serializer.serialize_struct("ProviderToken", 4)?;
         s.serialize_field("access_token", self.access_token.expose_secret())?;
-        s.serialize_field("refresh_token", &self.refresh_token)?;
+        s.serialize_field(
+            "refresh_token",
+            &self.refresh_token.as_ref().map(|r| r.expose_secret()),
+        )?;
         s.serialize_field("expires_at", &self.expires_at)?;
         s.serialize_field("scopes", &self.scopes)?;
         s.end()
@@ -171,7 +242,7 @@ impl<'de> Deserialize<'de> for ProviderToken {
         let h = Helper::deserialize(deserializer)?;
         Ok(Self {
             access_token: SecretString::new(h.access_token.into()),
-            refresh_token: h.refresh_token,
+            refresh_token: h.refresh_token.map(|r| SecretString::new(r.into())),
             expires_at: h.expires_at,
             scopes: h.scopes,
         })
@@ -189,7 +260,7 @@ impl ProviderToken {
         }
     }
 
-    /// Create a token with expiry and refresh (GitLab OAuth style).
+    /// Create a token with expiry and refresh (GitLab/Codeberg OAuth style).
     pub fn with_refresh(
         access_token: impl Into<String>,
         refresh_token: impl Into<String>,
@@ -198,15 +269,20 @@ impl ProviderToken {
     ) -> Self {
         Self {
             access_token: SecretString::new(access_token.into().into()),
-            refresh_token: Some(refresh_token.into()),
+            refresh_token: Some(SecretString::new(refresh_token.into().into())),
             expires_at: Some(expires_at),
             scopes: scopes.into(),
         }
     }
 
-    /// Access the underlying token string. Requires `ExposeSecret` in scope.
+    /// Access the underlying access token. Requires `ExposeSecret` in scope.
     pub fn access_token(&self) -> &SecretString {
         &self.access_token
+    }
+
+    /// Access the refresh token, if present. Requires `ExposeSecret` in scope.
+    pub fn refresh_token(&self) -> Option<&SecretString> {
+        self.refresh_token.as_ref()
     }
 
     /// Check if token is expired or about to expire (5 min buffer).
@@ -246,6 +322,40 @@ pub struct ProviderInfo {
     pub scopes: String,
     /// Unix timestamp of connection.
     pub connected_at: u64,
+    /// Instance base URL override (self-hosted). `None` = public default.
+    /// Backward-compat: absent in old providers.json => public default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_url: Option<String>,
+    /// OAuth client_id override. `None` = project default app.
+    /// Backward-compat: absent in old providers.json => project default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+}
+
+impl ProviderInfo {
+    /// Build a `ProviderConfig` from the persisted overrides.
+    pub fn config(&self) -> ProviderConfig {
+        ProviderConfig {
+            client_id: self.client_id.clone(),
+            instance_url: self.instance_url.clone(),
+        }
+    }
+
+    /// Effective instance base URL (no trailing slash).
+    pub fn effective_instance_url(&self) -> String {
+        self.config().effective_instance_url(self.provider)
+    }
+
+    /// Hostname of the connected instance (for display / keyring keying).
+    pub fn instance_host(&self) -> String {
+        self.effective_instance_url()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .to_string()
+    }
 }
 
 /// A vault repo detected on a provider.
@@ -300,6 +410,71 @@ pub enum ProviderError {
 
     #[error("{0}")]
     Other(String),
+}
+
+/// PKCE code_verifier: random 43-128 chars from the unreserved set
+/// (RFC 7636 §4.1). Length randomized within the allowed range for entropy.
+pub fn generate_code_verifier() -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+    let mut rng = rand::thread_rng();
+    let len: usize = rng.gen_range(43..=128);
+    (0..len)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
+}
+
+/// PKCE S256 code_challenge: BASE64URL_NO_PAD(SHA256(verifier)).
+pub fn code_challenge_s256(verifier: &str) -> String {
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(hash)
+}
+
+/// Random CSRF state for OAuth (32 bytes hex-encoded).
+pub fn generate_state() -> String {
+    let bytes: [u8; 32] = rand::random();
+    hex::encode(bytes)
+}
+
+/// Current Unix timestamp in seconds. Shared helper used by providers
+/// (avoids duplicating the SystemTime boilerplate per provider).
+pub(crate) fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Minimal percent-encoder for path/query segments. Encodes everything except
+/// unreserved chars (RFC 3986). Shared helper used by providers.
+pub(crate) fn urlencoding_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for &b in input.as_bytes() {
+        let unreserved = b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~');
+        if unreserved {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
+/// Web-OAuth (authorization-code + PKCE) start response.
+/// The code_verifier stays in daemon memory (never crosses IPC to the browser).
+pub struct OAuthStart {
+    /// Full authorization URL to open in the user's browser.
+    pub auth_url: String,
+    /// PKCE code_verifier (daemon retains, browser never sees it).
+    pub code_verifier: String,
+    /// CSRF state parameter (also returned by the provider redirect).
+    pub state: String,
 }
 
 /// The ForgeProvider trait: async interface for all git hosting providers.
@@ -363,6 +538,28 @@ pub trait ForgeProvider: Send + Sync {
         &self,
         token: &ProviderToken,
     ) -> Result<Option<ProviderToken>, ProviderError>;
+
+    /// Start a web-OAuth (auth-code + PKCE) flow. Returns auth_url + PKCE
+    /// state for the daemon to retain. Default: unsupported (device-flow
+    /// providers don't need this).
+    async fn oauth_start(&self, _redirect_uri: &str) -> Result<OAuthStart, ProviderError> {
+        Err(ProviderError::Other(
+            "web-OAuth not supported by this provider".into(),
+        ))
+    }
+
+    /// Exchange an authorization code for tokens (completes web-OAuth).
+    /// Default: unsupported.
+    async fn oauth_exchange(
+        &self,
+        _code: &str,
+        _code_verifier: &str,
+        _redirect_uri: &str,
+    ) -> Result<(ProviderToken, ProviderInfo), ProviderError> {
+        Err(ProviderError::Other(
+            "web-OAuth not supported by this provider".into(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -424,6 +621,8 @@ pub mod mock {
                     username: "mock-user".into(),
                     scopes: "repo".into(),
                     connected_at: now,
+                    instance_url: None,
+                    client_id: None,
                 },
             ))
         }
@@ -437,6 +636,8 @@ pub mod mock {
                 username: "mock-user".into(),
                 scopes: "repo".into(),
                 connected_at: 0,
+                instance_url: None,
+                client_id: None,
             })
         }
 

@@ -73,7 +73,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | Toast notifications | Done | toastSignal.js standalone signals. All user feedback via toasts | |
 | Orgs | Done | Team/org sharing. HPKE key wrapping. Auto-rekey on member removal |
 | Emergency access | Done | Break-glass access. Pre-wrapped Root Key. Advisory time gate |
-| Providers | Done | GitHub/GitLab adapters. OAuth + PAT. Auto-create vault repo |
+| Providers | Done | GitHub (device flow) / GitLab (device flow + 2h refresh) / Codeberg (web-OAuth PKCE) adapters. OAuth + PAT fallback. Advanced Options for self-hosted + user-owned apps. Auto-create vault repo |
 
 ### BW Parity Phases 1-8
 
@@ -177,9 +177,9 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 | **Phase 2** | Provider trait + GitHub auth (device flow + PAT) + keyring + daemon routes | **Done** |
 | **Phase 3** | GitHub repo operations + first sync + credential wiring | **Done** |
 | Phase 4 | Remote vault clone + three-screen wizard | Not started |
-| Phase 5 | GitLab + Codeberg providers | Not started |
+| **Phase 5** | GitLab (device flow + PAT + 2h refresh) + Codeberg (web-OAuth PKCE + PAT) providers | **Done** |
 | Phase 6 | Vault switching + CLI polish | Not started |
-| Provider selection UI | Desktop flow to pick provider and authenticate | Not started |
+| Provider selection UI | Desktop SyncTab: device-flow (GitHub/GitLab) + web-OAuth (Codeberg) + PAT under Advanced Options | **Done** |
 
 ### Nice to Have / Future
 

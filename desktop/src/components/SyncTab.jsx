@@ -26,16 +26,25 @@ export default function SyncTab() {
 
   const [authSession, setAuthSession] = createSignal(null);
   const [selectedProvider, setSelectedProvider] = createSignal(null);
-  const [patToken, setPatToken] = createSignal("");
   const [repoName, setRepoName] = createSignal("baluard-vault");
   const [showDisconnectModal, setShowDisconnectModal] = createSignal(false);
   const [revokeToken, setRevokeToken] = createSignal(false);
+  // Advanced Options: power users override the OAuth client_id (independence
+  // from Baluard's app) or point at a self-hosted instance. Blank = defaults.
+  const [showAdvanced, setShowAdvanced] = createSignal(false);
+  const [advClientId, setAdvClientId] = createSignal("");
+  const [advInstanceUrl, setAdvInstanceUrl] = createSignal("");
+  const [advPat, setAdvPat] = createSignal("");
+  // Web-OAuth (Codeberg PKCE): auth URL opened in browser, status polled.
+  const [webOAuthUrl, setWebOAuthUrl] = createSignal(null);
+  let webPollTimer = null;
 
   let pollTimer = null;
   let disconnectDialogRef;
 
   onCleanup(() => {
     if (pollTimer) clearTimeout(pollTimer);
+    if (webPollTimer) clearTimeout(webPollTimer);
   });
 
   onMount(loadState);
@@ -98,7 +107,7 @@ export default function SyncTab() {
     setSubState("authenticating");
     setError(null);
     try {
-      const raw = await daemon("provider.connect_start", JSON.stringify({ provider }));
+      const raw = await daemon("provider.connect_start", JSON.stringify({ provider, ...buildOverrides() }));
       const session = JSON.parse(raw);
       setAuthSession(session);
       schedulePoll(session);
@@ -132,6 +141,9 @@ export default function SyncTab() {
         cancelPoll();
         setSubState("idle");
         setAuthSession(null);
+        setAdvClientId("");
+        setAdvInstanceUrl("");
+        setShowAdvanced(false);
         await loadState();
         toastSuccess(t("sync.connectedAs", { username: result.username || "" }));
       }
@@ -148,29 +160,38 @@ export default function SyncTab() {
 
   function cancelAuth() {
     cancelPoll();
+    cancelWebPoll();
     setAuthSession(null);
     setSelectedProvider(null);
     setSubState("idle");
     setError(null);
+    setAdvClientId("");
+    setAdvInstanceUrl("");
+    setAdvPat("");
+    setShowAdvanced(false);
+    setWebOAuthUrl(null);
   }
 
   // ── PAT Auth ──
 
   async function submitPat(provider) {
-    if (!patToken().trim()) return;
+    if (!advPat().trim()) return;
     setSelectedProvider(provider);
     setSubState("authenticating");
     setError(null);
     try {
       const raw = await daemon(
         "provider.connect_pat",
-        JSON.stringify({ provider, token: patToken().trim() })
+        JSON.stringify({ provider, token: advPat().trim(), ...buildOverrides() })
       );
       const result = JSON.parse(raw);
       if (result.status === "success") {
-        setPatToken("");
+        setAdvPat("");
         setSubState("idle");
         setSelectedProvider(null);
+        setAdvClientId("");
+        setAdvInstanceUrl("");
+        setShowAdvanced(false);
         await loadState();
         toastSuccess(t("sync.connectedAs", { username: result.username || "" }));
       }
@@ -178,6 +199,63 @@ export default function SyncTab() {
       setError(sanitizeError(e, t));
       setSubState("error");
     }
+  }
+
+  // ── Web-OAuth (Codeberg PKCE) ──
+
+  async function startWebOAuth(provider) {
+    setSelectedProvider(provider);
+    setSubState("authenticating");
+    setError(null);
+    try {
+      const raw = await daemon("provider.oauth_start_web", JSON.stringify({ provider, ...buildOverrides() }));
+      const result = JSON.parse(raw);
+      setWebOAuthUrl(result.auth_url);
+      // Auto-open in browser via anchor click (Tauri shell.open is also an option)
+      if (typeof window !== "undefined" && window.__TAURI__) {
+        window.__TAURI__.shell.open(result.auth_url);
+      }
+      scheduleWebPoll();
+    } catch (e) {
+      setError(sanitizeError(e, t));
+      setSubState("error");
+    }
+  }
+
+  function scheduleWebPoll() {
+    webPollTimer = setTimeout(pollWebOAuth, 2000);
+  }
+
+  async function pollWebOAuth() {
+    webPollTimer = null;
+    try {
+      const raw = await daemon("provider.oauth_status_web");
+      const result = JSON.parse(raw);
+      if (result.status === "pending") {
+        scheduleWebPoll();
+      } else if (result.status === "success") {
+        cancelWebPoll();
+        setSubState("idle");
+        setWebOAuthUrl(null);
+        setAdvClientId("");
+        setAdvInstanceUrl("");
+        setShowAdvanced(false);
+        await loadState();
+        toastSuccess(t("sync.connectedAs", { username: result.username || "" }));
+      } else if (result.status === "error") {
+        setError(t("sync.webOAuthError") + " " + (result.error || ""));
+        setSubState("error");
+        cancelWebPoll();
+      }
+    } catch (e) {
+      setError(sanitizeError(e, t));
+      setSubState("error");
+      cancelWebPoll();
+    }
+  }
+
+  function cancelWebPoll() {
+    if (webPollTimer) { clearTimeout(webPollTimer); webPollTimer = null; }
   }
 
   // ── Repo Setup ──
@@ -189,6 +267,20 @@ export default function SyncTab() {
       if (providers[key]?.connected) return key;
     }
     return null;
+  }
+
+  // Auth method for a provider key, derived from provider.list ("device-flow" | "pat").
+  function authMethodFor(key) {
+    return providerList()?.[key]?.auth_method || "pat";
+  }
+
+  // Build optional overrides object for connect payloads. Only includes
+  // non-empty fields so the daemon applies provider defaults when omitted.
+  function buildOverrides() {
+    const o = {};
+    if (advClientId().trim()) o.client_id = advClientId().trim();
+    if (advInstanceUrl().trim()) o.instance_url = advInstanceUrl().trim();
+    return o;
   }
 
   async function createAndSetupRepo() {
@@ -216,8 +308,10 @@ export default function SyncTab() {
     try {
       // Try creating the repo. If it already exists (partial failure), skip to setup.
       let repoNameUsed = repoName() || "baluard-vault";
+      let repoCreated = false;
       try {
         await daemon("provider.create_repo", JSON.stringify({ provider, name: repoNameUsed }));
+        repoCreated = true;
       } catch (createErr) {
         const msg = sanitizeError(createErr, t).toLowerCase();
         if (msg.includes("already exists") || msg.includes("already") || msg.includes("422")) {
@@ -227,10 +321,21 @@ export default function SyncTab() {
         }
       }
 
-      await daemon("vault.setup_sync", JSON.stringify({ provider, repo_name: repoNameUsed }));
-      setSubState("idle");
-      await loadState();
-      toastSuccess(t("sync.statusActive"));
+      try {
+        await daemon("vault.setup_sync", JSON.stringify({ provider, repo_name: repoNameUsed }));
+        setSubState("idle");
+        await loadState();
+        toastSuccess(t("sync.statusActive"));
+      } catch (setupErr) {
+        // M1: if we created the repo but setup_sync failed, it's orphaned on
+        // the provider. Surface that so the user can clean it up manually.
+        if (repoCreated) {
+          setError(`${sanitizeError(setupErr, t)} ${t("sync.errorRepoCreatePartial", { provider: providerLabel(provider) })}`);
+        } else {
+          setError(sanitizeError(setupErr, t));
+        }
+        setSubState("error");
+      }
     } catch (e) {
       setError(sanitizeError(e, t));
       setSubState("error");
@@ -313,7 +418,12 @@ export default function SyncTab() {
   }
 
   function providerLabel(key) {
-    return t(`sync.provider${key.charAt(0).toUpperCase() + key.slice(1)}`);
+    const map = {
+      github: "providerGitHub",
+      gitlab: "providerGitLab",
+      codeberg: "providerCodeberg",
+    };
+    return t(`sync.${map[key] || key}`);
   }
 
   // ── Render ──
@@ -354,26 +464,83 @@ export default function SyncTab() {
                       return (
                         <button
                           onClick={() => {
-                            if (key === "github") startDeviceFlow(key);
+                            // M5: guard double-submit while a flow is in flight.
+                            if (subState() !== "idle") return;
+                            const method = authMethodFor(key);
+                            // PAT in Advanced Options overrides the automatic flow.
+                            if (advPat().trim()) { setSelectedProvider(key); setSubState("authenticating"); submitPat(key); }
+                            else if (method === "device-flow") startDeviceFlow(key);
+                            else if (method === "web-oauth") startWebOAuth(key);
                             else { setSelectedProvider(key); setSubState("authenticating"); }
                           }}
                           class={`flex items-center gap-3 p-4 rounded-xl border transition-all cursor-pointer ${style.bg} ${style.border} hover:opacity-80`}
                         >
                           <span class={`text-sm font-bold ${style.text}`}>{providerLabel(key)}</span>
                           <span class="text-[10px] text-[var(--color-muted)] ml-auto">
-                            {info?.auth_method === "device-flow" ? t("sync.authMethodDeviceFlow") : t("sync.authMethodPat")}
+                            {(() => {
+                              const m = info?.auth_method;
+                              if (m === "device-flow") return t("sync.authMethodDeviceFlow");
+                              if (m === "web-oauth") return t("sync.authMethodWebOAuth");
+                              return t("sync.authMethodPat");
+                            })()}
                           </span>
                         </button>
                       );
                     }}
                   </For>
                 </div>
+
+                {/* Advanced Options: override client_id (independence) or instance (self-hosted). */}
+                <div class="border-t border-[var(--color-border)] pt-3 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvanced(!showAdvanced())}
+                    class="flex items-center gap-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                  >
+                    <span class="text-[8px]">{showAdvanced() ? "\u25BE" : "\u25B8"}</span>
+                    {t("sync.advancedOptions")}
+                  </button>
+                  <Show when={showAdvanced()}>
+                    <p class="text-[10px] text-[var(--color-muted)] leading-relaxed">{t("sync.advancedOptionsHint")}</p>
+                    <div>
+                      <label class="text-[10px] text-[var(--color-muted)]">{t("sync.advancedClientId")}</label>
+                      <input
+                        type="text"
+                        value={advClientId()}
+                        onInput={(e) => setAdvClientId(e.target.value)}
+                        placeholder={t("sync.advancedClientIdPlaceholder")}
+                        class="w-full mt-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                      />
+                    </div>
+                    <div>
+                      <label class="text-[10px] text-[var(--color-muted)]">{t("sync.advancedInstanceUrl")}</label>
+                      <input
+                        type="text"
+                        value={advInstanceUrl()}
+                        onInput={(e) => setAdvInstanceUrl(e.target.value)}
+                        placeholder={t("sync.advancedInstanceUrlPlaceholder")}
+                        class="w-full mt-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                      />
+                    </div>
+                    <div>
+                      <label class="text-[10px] text-[var(--color-muted)]">{t("sync.advancedPat")}</label>
+                      <input
+                        type="password"
+                        value={advPat()}
+                        onInput={(e) => setAdvPat(e.target.value)}
+                        placeholder={t("sync.advancedPatPlaceholder")}
+                        class="w-full mt-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                      />
+                      <p class="text-[9px] text-[var(--color-muted)] mt-1">{t("sync.advancedPatHint")}</p>
+                    </div>
+                  </Show>
+                </div>
               </Show>
 
-              {/* GitHub Device Flow */}
-              <Show when={subState() === "authenticating" && selectedProvider() === "github" && authSession()}>
+              {/* Device Flow (GitHub, GitLab) */}
+              <Show when={subState() === "authenticating" && selectedProvider() && authMethodFor(selectedProvider()) === "device-flow" && authSession()}>
                 <div class="p-4 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-3">
-                  <h5 class="text-xs font-bold text-[var(--color-text)]">{t("sync.deviceFlowTitle")}</h5>
+                  <h5 class="text-xs font-bold text-[var(--color-text)]">{t("sync.deviceFlowTitle", { provider: providerLabel(selectedProvider()) })}</h5>
                   <p class="text-[10px] text-[var(--color-muted)]">{t("sync.deviceFlowInstructions")}</p>
                   <div class="text-center py-2">
                     <span class="text-lg font-mono font-bold text-[var(--color-primary)] tracking-widest">{authSession().user_code}</span>
@@ -385,7 +552,7 @@ export default function SyncTab() {
                       rel="noopener noreferrer"
                       class="px-4 py-2 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold hover:bg-[var(--color-primary-hover)] transition-all"
                     >
-                      {t("sync.deviceFlowOpenLink")}
+                      {t("sync.deviceFlowOpenLink", { provider: providerLabel(selectedProvider()) })}
                     </a>
                   </div>
                   <div class="flex items-center justify-center gap-2 text-[10px] text-[var(--color-muted)]">
@@ -398,44 +565,36 @@ export default function SyncTab() {
                 </div>
               </Show>
 
-              {/* PAT Input (GitLab/Codeberg) */}
-              <Show when={subState() === "authenticating" && selectedProvider() && selectedProvider() !== "github"}>
+              {/* Web-OAuth (Codeberg PKCE) */}
+              <Show when={subState() === "authenticating" && selectedProvider() && authMethodFor(selectedProvider()) === "web-oauth" && webOAuthUrl()}>
                 <div class="p-4 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-3">
-                  <h5 class="text-xs font-bold text-[var(--color-text)]">{t("sync.patTitle", { provider: providerLabel(selectedProvider()) })}</h5>
-                  <p class="text-[10px] text-[var(--color-muted)]">{t("sync.patInstructions")}</p>
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="password"
-                      placeholder={t("sync.patPlaceholder")}
-                      value={patToken()}
-                      onInput={(e) => setPatToken(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") submitPat(selectedProvider()); }}
-                      class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
-                      autofocus
-                    />
-                    <button
-                      onClick={() => submitPat(selectedProvider())}
-                      disabled={!patToken().trim()}
-                      class="px-4 py-2 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer disabled:opacity-40"
-                    >
-                      {t("sync.connect")}
-                    </button>
-                    <button onClick={cancelAuth} class="px-2 py-2 text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer text-xs">
-                      {t("entry.cancel")}
-                    </button>
-                  </div>
-                  <Show when={selectedProvider() === "gitlab" || selectedProvider() === "codeberg"}>
+                  <h5 class="text-xs font-bold text-[var(--color-text)]">{t("sync.webOAuthTitle", { provider: providerLabel(selectedProvider()) })}</h5>
+                  <p class="text-[10px] text-[var(--color-muted)]">{t("sync.webOAuthInstructions")}</p>
+                  <Show when={selectedProvider() === "codeberg"}>
+                    <div class="p-2 rounded-lg bg-yellow-950/20 border border-yellow-900/30">
+                      <p class="text-[10px] text-yellow-300 leading-relaxed">{t("sync.codebergFullAccessWarning")}</p>
+                    </div>
+                  </Show>
+                  <div class="flex justify-center">
                     <a
-                      href={selectedProvider() === "gitlab" ? "https://gitlab.com/-/user_settings/personal_access_tokens" : "https://codeberg.org/user/settings/applications"}
+                      href={webOAuthUrl()}
                       target="_blank"
                       rel="noopener noreferrer"
-                      class="text-[10px] text-[var(--color-primary)] hover:underline"
+                      class="px-4 py-2 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold hover:bg-[var(--color-primary-hover)] transition-all"
                     >
-                      {t("sync.patGenerateToken")}
+                      {t("sync.webOAuthOpenLink", { provider: providerLabel(selectedProvider()) })}
                     </a>
-                  </Show>
+                  </div>
+                  <div class="flex items-center justify-center gap-2 text-[10px] text-[var(--color-muted)]">
+                    <IconRefresh class="w-3 h-3 animate-spin" />
+                    {t("sync.webOAuthWaiting")}
+                  </div>
+                  <button onClick={cancelAuth} class="w-full text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">
+                    {t("entry.cancel")}
+                  </button>
                 </div>
               </Show>
+
             </div>
           </Show>
 
