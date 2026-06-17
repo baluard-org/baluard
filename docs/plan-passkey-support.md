@@ -389,7 +389,7 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 #### 0.3 passkey-rs Spike ✅
 - Workspace deps added: `passkey 0.5`, `webauthn-rs 0.5`, `webauthn-rs-proto 0.5`, `webauthn-rs-core 0.5`
 - Spike test in `crates/baluard-core/tests/passkey_spike.rs` (2 tests: registration + assertion round-trip through webauthn-rs)
-- **Verdict: `passkey-rs` 0.5.x adopted** — documented in `docs/adr/0007-passkey-rs-evaluation.md`
+- **Verdict: `passkey-rs` 0.5.x adopted** — documented in `docs/plan-passkey-rs-evaluation.md`
 - ES256 only (passkey-rs limitation; no EdDSA support in v0.5.x)
 - JSON serde bridge between passkey-rs and webauthn-rs types works cleanly
 - `UserValidationMethod` is async trait with `check_user()`, `is_presence_enabled()`, `is_verification_enabled()` — Baluard will implement with OS biometric gates
@@ -535,7 +535,7 @@ These gaps were identified during the Phase 0+1 comprehensive peer review. None 
 ## 6. Open questions (Phase 0 resolves, rest is open)
 
 **Resolved in Phase 0** (no longer open):
-1. `passkey-rs` vs hand-rolled ceremony: ✅ `passkey-rs` 0.5.x adopted. ADR at `docs/adr/0007-passkey-rs-evaluation.md`. Registration + assertion round-trip through webauthn-rs verified.
+1. `passkey-rs` vs hand-rolled ceremony: ✅ `passkey-rs` 0.5.x adopted. ADR at `docs/plan-passkey-rs-evaluation.md`. Registration + assertion round-trip through webauthn-rs verified.
 2. Linux user verification: ✅ Re-prompt master password with fresh KDF verify. Documented UX downgrade.
 3. Mobile architecture: ✅ `baluard-core` as a library via UniFFI, no daemon process on mobile.
 4. Counter git-sync conflict: ✅ `merge_counter = max(local, remote)` per-cipher. After sync, stored counter is `max(local, remote)` before the next assertion; authenticator always writes `counter + 1` at assertion time.
@@ -588,7 +588,7 @@ These gaps were identified during the Phase 0+1 comprehensive peer review. None 
 ## 9. Files to be created / modified (summary)
 
 **New**:
-- `docs/adr/0007-passkey-rs-evaluation.md` — Phase 0 decision record ✅
+- `docs/plan-passkey-rs-evaluation.md` — Phase 0 decision record ✅
 - `crates/baluard-core/tests/passkey_spike.rs` — Phase 0 spike test ✅
 - `crates/baluard-core/src/crypto/webauthn/mod.rs` — ceremony logic (or thin wrapper if `passkey-rs` adopted)
 - `crates/baluard-core/src/crypto/webauthn/ceremony.rs` — register/assert
