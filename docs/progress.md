@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-06-12
+> Last updated: 2026-06-17
 
 ---
 
@@ -178,7 +178,7 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 | **Phase 3** | GitHub repo operations + first sync + credential wiring | **Done** |
 | Phase 4 | Remote vault clone + three-screen wizard | Not started |
 | **Phase 5** | GitLab (device flow + PAT + 2h refresh) + Codeberg (web-OAuth PKCE + PAT) providers | **Done** |
-| Phase 6 | Vault switching + CLI polish | Not started |
+| **Phase 6** | Vault switching + CLI polish — **design complete, not implemented**. Reworked 2026-06-17 from lock-on-switch to keep-unlocked/switch-pointer model (daemon holds map of open vaults + `active` pointer; switch = pointer flip, no re-prompt). peer-reviewed (peer): Approve. See Phase 6 section in plan + T15 in threat-model. | **Design done, not implemented** |
 | Provider selection UI | Desktop SyncTab: device-flow (GitHub/GitLab) + web-OAuth (Codeberg) + PAT under Advanced Options | **Done** |
 
 ### Nice to Have / Future
