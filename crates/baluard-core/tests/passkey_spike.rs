@@ -7,7 +7,7 @@
 //! JSON-serializable types.
 //!
 //! See `docs/plan-passkey-support.md` Phase 0 and
-//! `docs/adr/0007-passkey-rs-evaluation.md` for the verdict.
+//! `docs/plan-passkey-rs-evaluation.md` for the verdict.
 
 #![allow(clippy::needless_update)]
 

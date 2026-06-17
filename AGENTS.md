@@ -41,8 +41,8 @@ baluard/
 ├── desktop/                    # Tauri v2 + SolidJS frontend
 │   └── src/
 │       ├── App.jsx             # Root component (thin provider wrapper)
-│       ├── components/         # 26 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, etc.)
-│       ├── context/            # AuthContext, VaultContext, errorSignal, themeSignal, toastSignal
+│       ├── components/         # UI components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, etc.)
+│       ├── context/            # AuthContext, VaultContext, themeSignal, toastSignal
 │       ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, eff-words.js, wordlist-{en,es}.js
 │       ├── __tests__/          # vitest tests (payload, utils, filters, cipherSchema)
 │       └── i18n/locales/       # en.json, es.json (all user-facing strings)
@@ -126,9 +126,9 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 * **Passkey ceremony (WebAuthn)**: `crates/baluard-core/src/crypto/webauthn/`
 * **Passkey data structure**: `crates/baluard-core/src/types.rs` (`PasskeyData`)
 * **Passkey plan**: `docs/plan-passkey-support.md` (authoritative)
-* **Passkey ADR**: `docs/adr/0007-passkey-rs-evaluation.md`
 * **Git provider app registration & tokens**: `docs/git-provider-apps-and-tokens.md`
 * **Git provider sync plan**: `docs/plan-git-providers-multi-vault.md`
+* **Post-quantum readiness**: `docs/post-quantum-readiness.md` (PQC status: data-at-rest PQ-safe, identity layer is the gap)
 * **Protobuf schemas**: `proto/`
 
 ## KEY CONCEPTS
