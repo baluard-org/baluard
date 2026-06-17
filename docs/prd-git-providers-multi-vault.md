@@ -300,8 +300,10 @@ Three-tier strategy, tried in order:
 
 - `VaultState` currently holds a single vault path and handle.
 - New: `VaultState` reads `active_vault` from registry on startup.
-- **CLI `--vault <slug>` targeting a different vault uses `--direct` mode** (in-process, no daemon). The daemon only serves the active vault. CLI commands targeting the active vault route through daemon as before.
-- `vaults.switch` daemon route: zeroizes all key material from current vault (Root Key, SGK, Item Keys, session token), loads new vault, generates new session token. Blocks until complete. In-flight requests receive error response.
+- **Phase 6 multi-vault model (design revision 2026-06-17):** the daemon no longer serves a single active vault. It holds every opened vault in an in-memory map `HashMap<String, Arc<VaultState>>` plus an `active` slug pointer. A vault is inserted into the map on first open/unlock (lazy). Users can keep two or more vaults unlocked at once and switch between them instantly; each unlocked vault stays unlocked according to **its own** `auto_lock_minutes` setting, auto-locking independently. See `docs/plan-git-providers-multi-vault.md` Phase 6 and the security note in `docs/threat-model.md` (T15).
+- **CLI `--vault <slug>`** targets a specific vault. If that vault is already open in the daemon map (even if not active), the request routes through the daemon with the slug attached. `--direct` mode (in-process, no daemon) is the fallback only for a vault the daemon has never opened, or when the daemon is not running.
+- `vaults.switch` daemon route: **pointer flip only.** Validates the target slug is registered, sets `active = Some(slug)`, touches the registry's `last_opened`. Does **not** zeroize the previously-active vault and does **not** rotate any session token. Returns `{ active, state }` where `state` is `unlocked`/`locked`/`closed` so the caller knows whether to present an unlock prompt. Switching is therefore instant and never invalidates in-flight requests to other vaults (the handler resolves the target vault once per request, avoiding a TOCTOU on `active`).
+- `vaults.close` daemon route (new): removes one vault from the in-memory map, clearing `active` if it was active, without affecting other open vaults. Returns immediately (Arc-drain): in-flight handlers holding a cloned `Arc<VaultState>` finish and zeroize on last drop. No busy/retry.
 
 New daemon routes:
 
@@ -318,9 +320,11 @@ New daemon routes:
 | `provider.create_repo` | Create a private repo on provider. **Verify `private: true` on response.** If public, delete repo immediately and return error. Never push vault data to a public repo. |
 | `vault.setup_sync` | Connect current vault to a provider repo + first push |
 | `vault.clone_remote` | Clone a remote vault, add to registry |
-| `vaults.list` | List all vaults in registry |
-| `vaults.switch` | Switch daemon to a different vault (zeroize current, load new) |
-| `vaults.set_active` | Set the active/default vault |
+| `vaults.list` | List all vaults in registry, each with live state (`unlocked`/`locked`/`closed`) |
+| `vaults.switch` | Flip the live `active` pointer to another slug (no zeroization, no token change); returns target state |
+| `vaults.set_active` | Persist the default/active vault slug in the registry |
+| `vaults.active` | Return the current active slug + its state |
+| `vaults.close` | Remove one vault from the in-memory map (clears `active` if active); Arc-drain — returns immediately, in-flight handlers finish and zeroize on last drop |
 
 ### 11. Git Credential Transport
 
@@ -331,9 +335,10 @@ New daemon routes:
 
 ### 12. CLI Changes
 
-- `baluard --vault <slug>` flag on all commands to target a specific vault. If slug differs from active vault, implicitly uses `--direct` mode.
-- `baluard vaults list` to show registered vaults.
-- `baluard vaults switch <slug>` to change active vault.
+- `baluard --vault <slug>` flag on all commands to target a specific vault. Routes through the daemon (with slug) if that vault is open in the daemon map; otherwise falls back to `--direct` mode.
+- `baluard vaults list` to show registered vaults (with live state: unlocked/locked/closed, last opened).
+- `baluard vaults switch <slug>` to flip the active vault instantly; prompts for the master password if the target is locked/closed.
+- `baluard vaults close <slug>` to lock and unload a single vault without affecting others.
 - `baluard provider connect <github|gitlab|codeberg>` to authenticate (GitHub: device flow, others: prompts for PAT).
 - `baluard provider disconnect <provider>` to remove credentials.
 - `baluard provider repos <provider>` to list remote repos.
@@ -398,7 +403,7 @@ Principle of least privilege. Exact scopes requested per provider:
 - **Vault registry**: test CRUD operations, active vault switching, atomic write verification, concurrent access via file locking.
 - **Provider trait**: mock implementations for all provider operations, test daemon routing with mocked providers.
 - **Token refresh**: mock token expiry and verify refresh flow. Test refresh failure path (clear credentials).
-- **Vault switch security**: verify all key material zeroized before new vault loads, session token changes.
+- **Vault switch semantics**: verify `vaults.switch` flips only the `active` pointer (no zeroization, no session-token change), and that a previously-active vault remains unlocked after the switch. Verify per-vault auto-lock fires independently.
 
 ### Integration Tests
 
@@ -422,7 +427,7 @@ Principle of least privilege. Exact scopes requested per provider:
 4. Token refresh + lifecycle (critical, security)
 5. Marker file operations (high, simple)
 6. Full sync flow with mocked provider (high, complex)
-7. Vault switch security (high, security)
+7. Vault switch semantics: keep-unlocked, per-vault auto-lock (high, security)
 8. Desktop wizard flow (medium, UI-level)
 
 ---
@@ -434,8 +439,7 @@ Principle of least privilege. Exact scopes requested per provider:
 - **Self-hosted GitLab/Gitea/Forgejo instances.** Architecture supports it, UI and config not included.
 - **SSH deploy keys.** HTTPS + PAT/OAuth token only for this PRD.
 - **Mobile (JIT sync).** Provider auth layer will be reusable, but mobile integration is out of scope.
-- **Multiple vaults unlocked simultaneously.** Single active vault, swappable. Multi-unlock is a future architectural decision.
-- **Multiple accounts on same provider.** Current keyring design stores one token per provider. Multi-account requires a separate credential selection UI. Documented as future constraint.
+- **Multiple accounts on same provider.**** Current keyring design stores one token per provider. Multi-account requires a separate credential selection UI. Documented as future constraint.
 - **Encrypted JSON export.** Already in "nice to have" in progress.md.
 - **FIDO2 credential storage.** Already in "nice to have" in progress.md.
 
