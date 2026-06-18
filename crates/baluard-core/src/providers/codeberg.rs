@@ -140,7 +140,7 @@ impl ForgeProvider for CodebergProvider {
         let state = generate_state();
         let client_id = self.client_id();
 
-        let params = vec![
+        let params = [
             ("client_id", client_id.as_str()),
             ("redirect_uri", redirect_uri),
             ("response_type", "code"),

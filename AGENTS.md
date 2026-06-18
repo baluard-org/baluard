@@ -33,11 +33,13 @@ baluard/
 │   │       ├── main.rs         # Command dispatch
 │   │       ├── client.rs       # Protobuf socket client
 │   │       └── commands/       # Dual-mode handlers
-│   └── baluard-daemon/           # Background IPC daemon
+│   └── baluard-daemon/           # Background IPC daemon (lib + bin)
 │       └── src/
+│           ├── lib.rs          # Library surface (re-exports host/state/handler for tests)
 │           ├── main.rs         # Socket listener, SIGINT/SIGTERM, 0600 perms
-│           ├── handler.rs      # Protobuf routing, token-gated IPC
-│           └── state.rs        # VaultState (Arc<RwLock>), auto-lock
+│           ├── host.rs         # VaultHost (Phase 6 multi-vault map + active pointer)
+│           ├── handler.rs      # Protobuf routing, per-vault token-gated IPC
+│           └── state.rs        # VaultState (per-vault handle, session token, cover timer, auto-lock)
 ├── desktop/                    # Tauri v2 + SolidJS frontend
 │   └── src/
 │       ├── App.jsx             # Root component (thin provider wrapper)
@@ -119,8 +121,8 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 * **Git sync**: `crates/baluard-core/src/sync/`
 * **Git providers (ForgeProvider trait, OAuth/PAT)**: `crates/baluard-core/src/providers/`
 * **CLI commands**: `crates/baluard-cli/src/commands/mod.rs`
-* **Daemon IPC**: `crates/baluard-daemon/src/handler.rs`
-* **Daemon vault state**: `crates/baluard-daemon/src/state.rs`
+* **Daemon IPC**: `crates/baluard-daemon/src/handler.rs` (host-level dispatcher) + `host.rs` (`VaultHost` multi-vault map)
+* **Daemon vault state**: `crates/baluard-daemon/src/state.rs` (`VaultState`, one per open vault) + `host.rs` (`VaultHost` holds the map + active pointer)
 * **Desktop frontend**: `desktop/src/App.jsx`
 * **Device fleet**: `crates/baluard-core/src/device_manager.rs`
 * **Passkey ceremony (WebAuthn)**: `crates/baluard-core/src/crypto/webauthn/`
@@ -144,6 +146,9 @@ Serde-tagged enum: `#[serde(tag = "type", content = "data")]`. 8 variants: Login
 
 ### Daemon Wire Format
 JSON strings inside `GatewayRequest.payload`. `get_cipher` returns BOTH nested `kind` object AND flat top-level fields. `update_cipher` parses `kind` from payload (does NOT clone existing kind). `vault.list_full` returns all decrypted ciphers + folders + trash + archived in a single IPC call (used by desktop for fast unlock).
+
+### VaultHost (Phase 6 Multi-Vault)
+Daemon shares `Arc<VaultHost>` across handlers (replaces pre-Phase 6 single `Arc<VaultState>`). `VaultHost` wraps ONE `RwLock<VaultHostInner>` holding both `vaults: HashMap<String, Arc<VaultState>>` AND `active: Option<String>`. **Invariant: if `active` is `Some(slug)`, slug MUST be in the map.** Switch = pointer flip only (no zeroization, no token change). Per-vault session tokens (vault-A token rejected for vault-B op). Handler snapshots target `Arc<VaultState>` once per request (no TOCTOU). `vaults.close` = Arc-drain (returns immediately, in-flight handlers zeroize on last drop). Single auto-lock walker iterates map every 30s. Routes: `vaults.list/switch/active/close/set_active/lock_all`. CLI: `baluard vaults list|switch <slug>|close <slug>|set-default <slug>`. Desktop: `VaultSwitcher` dropdown + 30s heartbeat. **Lock-all on resign-active:** Tauri `WindowEvent::Focused(false)` fires `vaults.lock_all` (desktop clears token cache, refreshes on focus regain). OS suspend/screen-lock hooks still TBD (platform-specific). **mlock budget:** `VaultHost::log_mlock_budget` logs resident key bytes (96 B/vault: RootKey+SGK) + RLIMIT_MEMLOCK after every unlock (T15 legibility).
 
 ### IPC
 Unix domain sockets. 0600 via umask. Peer credential verification (SO_PEERCRED/getpeereid). `--socket` overrides default. Token-gated: 256-bit session token on unlock, constant-time comparison. All platform paths centralized in `baluard_core::paths` (`crates/baluard-core/src/paths.rs`).

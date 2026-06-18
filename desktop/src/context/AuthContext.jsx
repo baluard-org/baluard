@@ -32,6 +32,10 @@ function AuthProvider(props) {
   const [biometricAvailable, setBiometricAvailable] = createSignal(false);
   const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
   const [createPassword, setCreatePassword] = createSignal("");
+  // Phase 6: when the user picks a locked/closed vault from the switcher,
+  // this holds the target slug so the unlock screen unlocks THAT vault
+  // (not the previously-active one). Cleared on successful unlock.
+  const [switchTarget, setSwitchTarget] = createSignal(null);
 
   onMount(() => {
     // Fetch active vault name from plaintext registry (pre-unlock)
@@ -50,12 +54,21 @@ function AuthProvider(props) {
   async function unlock(t) {
     const password = loginPasswordRef?.value;
     if (!password) return;
+    const target = switchTarget();
     guardedSetStatus(setStatus, status(), "unlocking");
     try {
-      await daemon("vault.open");
-      const infoStr = await daemon("vault.unlock", password);
+      // Phase 6: if a switch target is set, unlock THAT vault; otherwise
+      // unlock the active one. vault.unlock opens + unlocks + inserts into
+      // the daemon map + makes it active in one round-trip.
+      const payload = target
+        ? JSON.stringify({ slug: target, password })
+        : password;
+      const slugArg = target || null;
+      await daemon("vault.open", "", slugArg);
+      const infoStr = await daemon("vault.unlock", payload, slugArg);
       if (loginPasswordRef) loginPasswordRef.value = "";
       try { setVaultInfo(JSON.parse(infoStr)); } catch {}
+      setSwitchTarget(null);
       startVaultPrefetch();
       guardedSetStatus(setStatus, status(), "unlocked");
     } catch (e) {
@@ -99,6 +112,7 @@ function AuthProvider(props) {
     biometricAvailable,
     recoveryPhrase, setRecoveryPhrase,
     createPassword, setCreatePassword,
+    switchTarget, setSwitchTarget,
     setLoginPasswordRef: (r) => { loginPasswordRef = r; },
     unlock, lock, createVault,
   };

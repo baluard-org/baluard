@@ -167,6 +167,8 @@ Both providers use **raw reqwest** (not the `gitlab`/`forgejo-api` crates the or
 
 ## Phase 6: Vault Switching + CLI Polish
 
+**Status**: Implemented 2026-06-17. 11 integration tests pass (`crates/baluard-daemon/tests/phase6_switching.rs`).
+
 **User stories**: 23, 24
 
 > **Design revision (2026-06-17):** Phase 6 was reworked from a *lock-on-switch*
@@ -422,8 +424,8 @@ window. This is a deliberate UX-for-exposure trade:
 - [ ] `vaults.close` returns success immediately (Arc-drain); in-flight handlers holding a cloned Arc complete and zeroize on last drop; new requests to the closed slug are rejected
 - [ ] `Arc::strong_count` is NOT used as a synchronization primitive
 - [ ] Cover-commit timers are per-`VaultState`, keyed to `locked`/`unlocked`, never to `active`; a switch does not touch any cover timer
-- [ ] Lock-all fires on screen lock / system sleep / lid-close / app-resign-active (every unlocked vault locks, not just active)
-- [ ] Daemon logs total mlocked bytes across all open vaults at unlock time
+- [~] Lock-all fires on app-resign-active (Tauri `WindowEvent::Focused(false)` → `vaults.lock_all` route + frontend token-cache clear + focus-regain refresh). OS suspend / screen-lock / lid-close need platform-specific hooks (macOS NSWorkspace, Linux login1 D-Bus PrepareForSleep, Windows WM_POWERBROADCAST/SessionSwitch) — documented as follow-up in `desktop/src-tauri/src/lib.rs`.
+- [x] Daemon logs total mlocked bytes across all open vaults at unlock time (`VaultHost::log_mlock_budget` after unlock; RLIMIT_MEMLOCK hint + 2x warning on Unix)
 - [ ] Switch to unregistered slug returns a clear error
 - [ ] `baluard vaults list` shows state column (unlocked/locked/closed) + last opened
 - [ ] `baluard vaults switch <slug>` flips active vault; prompts for password if locked

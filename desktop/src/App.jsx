@@ -3,6 +3,7 @@ import { useI18n } from "./i18n/index.jsx";
 import { daemon } from "./lib/daemon.js";
 import { useAuth } from "./context/AuthContext.jsx";
 import { VaultProvider } from "./context/VaultContext.jsx";
+import { VaultSwitcherProvider } from "./context/VaultSwitcherContext.jsx";
 
 import LoginScreen from "./components/LoginScreen.jsx";
 import RecoveryScreen from "./components/RecoveryScreen.jsx";
@@ -60,9 +61,11 @@ export default function App() {
       {/* Vault — mounts instantly, animates its own entrance */}
       <Show when={auth.status() === "unlocked"}>
         <div class="app__vault absolute inset-0 vault-enter">
-          <VaultProvider>
-            <VaultView />
-          </VaultProvider>
+          <VaultSwitcherProvider>
+            <VaultProvider>
+              <VaultView />
+            </VaultProvider>
+          </VaultSwitcherProvider>
         </div>
       </Show>
     </div>

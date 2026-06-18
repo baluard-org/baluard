@@ -5,8 +5,11 @@
 //!
 //! Wire protocol: length-delimited Protobuf (varint prefix).
 
+use crate::host::{SharedVaultHost, SnapshotError, VaultPresence};
 use crate::proto::{GatewayRequest, GatewayResponse};
-use crate::state::SharedVaultState;
+use crate::state::{SharedVaultState, VaultState};
+
+use std::sync::Arc;
 
 use anyhow::Result;
 use base64::Engine;
@@ -21,7 +24,7 @@ const MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
 
 /// Handle a single client connection (length-delimited Protobuf frames).
 /// Verifies peer UID matches daemon UID on Linux (SO_PEERCRED).
-pub async fn handle_connection(mut stream: UnixStream, state: SharedVaultState) -> Result<()> {
+pub async fn handle_connection(mut stream: UnixStream, host: SharedVaultHost) -> Result<()> {
     // Peer credential check: reject connections from different UIDs
     verify_peer_uid(&stream)?;
 
@@ -64,7 +67,7 @@ pub async fn handle_connection(mut stream: UnixStream, state: SharedVaultState) 
             }
         };
 
-        let response = route_request(request, &state).await;
+        let response = route_host_request(request, &host).await;
         let resp_bytes = response.encode_to_vec();
         write_frame(&mut writer, &resp_bytes).await?;
     }
@@ -425,7 +428,7 @@ async fn refresh_connected_tokens_if_needed() {
     };
     for provider in baluard_core::providers::types::Provider::all() {
         if let Some(info) = state.get(*provider) {
-            if let Err(_) = ensure_valid_token(*provider, info).await {
+            if ensure_valid_token(*provider, info).await.is_err() {
                 log::warn!("[daemon] pre-sync token refresh failed for {:?}", provider);
             }
         }
@@ -707,9 +710,549 @@ fn urldecode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Extract the slug field from a JSON payload. Returns `None` when the
+/// payload is not JSON, has no `slug` field, or the field is empty. Used to
+/// route vault-level requests to a specific vault in the host map.
+fn extract_slug(payload: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    v.get("slug")
+        .and_then(|s| s.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Top-level Phase 6 dispatcher. Host-level routes (no target vault needed)
+/// are served here; everything else resolves a target `Arc<VaultState>` and
+/// delegates to `route_request`. The snapshot is taken ONCE per request so a
+/// mid-request `switch` cannot re-route an in-flight operation.
+pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
+    log::debug!(
+        "[daemon] <- action={} has_token={} slug={} payload_slug={}",
+        req.action,
+        !req.session_token.is_empty(),
+        req.slug,
+        extract_slug(&req.payload).is_some()
+    );
+
+    // ── Host-level routes: no target vault needed ──
+    match req.action.as_str() {
+        "ping" => return ok_resp("pong", None),
+
+        // `vaults.*` routes operate on the host map + registry.
+        "vaults.list" => {
+            let rows = host.list().await;
+            return ok_resp(
+                serde_json::to_string(&serde_json::json!({"vaults": rows})).unwrap_or_default(),
+                None,
+            );
+        }
+        "vaults.active" => {
+            let slug = host.active_slug().await;
+            return match slug {
+                Some(s) => {
+                    let presence = match host.get(&s).await {
+                        Some(state) => {
+                            if state.is_unlocked().await {
+                                VaultPresence::Unlocked
+                            } else {
+                                VaultPresence::Locked
+                            }
+                        }
+                        None => VaultPresence::Closed,
+                    };
+                    ok_resp(
+                        serde_json::json!({
+                            "slug": s,
+                            "presence": presence.as_str(),
+                        })
+                        .to_string(),
+                        None,
+                    )
+                }
+                None => err_response("No active vault".to_string()),
+            };
+        }
+        "vaults.switch" => {
+            let slug = match extract_slug(&req.payload) {
+                Some(s) => s,
+                None => return err_response("Missing 'slug' for vaults.switch"),
+            };
+            match host.switch(&slug).await {
+                Ok(outcome) => {
+                    // Touch registry last_opened OUTSIDE the host write lock
+                    // (no I/O in the critical section — best-effort metadata).
+                    if let Ok(mut reg) = baluard_core::vault::registry::VaultRegistry::load_locked()
+                    {
+                        reg.touch(&outcome.slug);
+                        let _ = reg.save_locked();
+                    }
+                    return ok_resp(
+                        serde_json::json!({
+                            "active": outcome.slug,
+                            "presence": outcome.presence.as_str(),
+                        })
+                        .to_string(),
+                        None,
+                    );
+                }
+                Err(crate::host::SwitchError::UnknownSlug(s)) => {
+                    return err_response(format!(
+                        "Vault '{s}' is not open in the daemon. \
+                         Run `baluard unlock --vault {s}` or switch to an open vault."
+                    ));
+                }
+                Err(crate::host::SwitchError::Registry(e)) => {
+                    return err_response(format!("Registry error: {e}"));
+                }
+            }
+        }
+        "vaults.set_active" => {
+            let slug = match extract_slug(&req.payload) {
+                Some(s) => s,
+                None => return err_response("Missing 'slug' for vaults.set_active"),
+            };
+            match host.set_active_registry(&slug).await {
+                Ok(()) => return ok_resp(serde_json::json!({"active": slug}).to_string(), None),
+                Err(crate::host::SwitchError::UnknownSlug(s)) => {
+                    return err_response(format!("Vault '{s}' not found in registry"));
+                }
+                Err(crate::host::SwitchError::Registry(e)) => {
+                    return err_response(format!("Registry error: {e}"));
+                }
+            }
+        }
+        "vaults.close" => {
+            let slug = match extract_slug(&req.payload) {
+                Some(s) => s,
+                None => return err_response("Missing 'slug' for vaults.close"),
+            };
+            let removed = host.close(&slug).await;
+            return if removed {
+                ok_resp(serde_json::json!({"closed": slug}).to_string(), None)
+            } else {
+                err_response(format!(
+                    "Vault '{slug}' was not open in the daemon (already closed)"
+                ))
+            };
+        }
+
+        // vaults.lock_all: lock every currently-unlocked vault (zeroize all
+        // key material). Fired by the desktop on screen-lock / system sleep /
+        // window-blur (app resign-active) so a device becoming unattended
+        // caps multi-vault exposure immediately instead of waiting for each
+        // vault's idle timer. No token: this is a defensive primitive, not a
+        // data-access op. Returns the count of vaults locked.
+        "vaults.lock_all" => {
+            let locked = host.lock_all().await;
+            log::info!("[daemon] lock_all fired: locked {locked} vault(s)");
+            return ok_resp(serde_json::json!({"locked": locked}).to_string(), None);
+        }
+
+        // vault.active (singular): legacy alias for the active-vault lookup.
+        // L1: host-level so it works pre-unlock (it only reads the plaintext
+        // registry; previously it required a vault snapshot, which was odd
+        // and failed when no vault was open). vaults.active (plural) is the
+        // richer Phase 6 route (includes presence); this stays for back-compat
+        // with the desktop's onMount pre-unlock probe.
+        "vault.active" => {
+            return match baluard_core::vault::registry::VaultRegistry::load() {
+                Ok(reg) => {
+                    let entry = reg
+                        .active_vault
+                        .as_ref()
+                        .and_then(|slug| reg.vaults.get(slug));
+                    match entry {
+                        Some(e) => ok_resp(
+                            serde_json::json!({
+                                "slug": e.slug,
+                                "display_name": e.display_name
+                            })
+                            .to_string(),
+                            None,
+                        ),
+                        None => err_response("No active vault".to_string()),
+                    }
+                }
+                Err(e) => err_response(format!("Registry error: {e}")),
+            };
+        }
+
+        // Provider routes: split by whether they need a vault (NEW-1).
+        //
+        // The UN-GATED provider routes (list / connect_* / status / disconnect)
+        // operate on the keyring + providers.json only — no vault needed. They
+        // run pre-unlock (first-run sync setup) via a sentinel VaultState that
+        // these arms never dereference. Without this they fell through to
+        // snapshot_target and failed with "No active vault" on a fresh
+        // install (H2).
+        //
+        // The TOKEN-GATED provider routes (oauth_start_web / oauth_status_web
+        // / repos / vault_repos / create_repo) DO require a vault — they're in
+        // TOKEN_REQUIRED_ACTIONS, so route_request checks the session token.
+        // Routing them through the tokenless sentinel would always reject
+        // them (NEW-1 regression). They fall through to snapshot_target so
+        // they resolve a real vault and check against ITS token.
+        "provider.list"
+        | "provider.connect_start"
+        | "provider.connect_poll"
+        | "provider.connect_pat"
+        | "provider.status"
+        | "provider.disconnect" => {
+            let sentinel = std::sync::Arc::new(VaultState::new(std::path::PathBuf::new()));
+            return route_request(req, &sentinel).await;
+        }
+
+        // provider.oauth_start_web / oauth_status_web / repos / vault_repos /
+        // create_repo → fall through to the vault-snapshot path below.
+        _ => {}
+    }
+
+    // ── Vault lifecycle: open / unlock / create need host-level handling ──
+    // because they may insert a fresh VaultState into the map.
+    if req.action.as_str() == "vault.unlock" {
+        return handle_vault_unlock(req, host).await;
+    }
+    if req.action.as_str() == "vault.create" {
+        return handle_vault_create(req, host).await;
+    }
+    if req.action.as_str() == "vault.open" {
+        return handle_vault_open(req, host).await;
+    }
+
+    // ── Everything else: resolve target slug + snapshot, then delegate ──
+    // Phase 6: target slug resolution priority: req.slug (proto field, M2) →
+    // payload JSON `slug` (legacy/inline) → active pointer. req.slug is the
+    // primary path now; the payload fallback covers older clients.
+    let explicit_slug = if !req.slug.is_empty() {
+        Some(req.slug.clone())
+    } else {
+        extract_slug(&req.payload)
+    };
+    let snapshot = match host.snapshot_target(explicit_slug.as_deref()).await {
+        Ok(pair) => pair,
+        Err(SnapshotError::NoActive) => {
+            return err_response(
+                "No active vault. Open or unlock one first, or pass a 'slug'.".to_string(),
+            );
+        }
+        Err(SnapshotError::SlugNotOpen(slug)) => {
+            return err_response(format!(
+                "Vault '{slug}' is not open in the daemon. \
+                 Run `baluard unlock --vault {slug}` first."
+            ));
+        }
+    };
+
+    // The (slug, Arc<VaultState>) snapshot is now pinned for this request.
+    let _slug_for_log = snapshot.0.clone();
+    let state: SharedVaultState = snapshot.1;
+    route_request(req, &state).await
+}
+
+/// `vault.unlock` (Phase 6): takes an explicit `slug` (or falls back to
+/// active). If the slug is not yet in the host map, looks up its path in
+/// the registry, builds a fresh `VaultState`, and inserts it. Then runs
+/// KDF + unlock on that state. Returns `{ slug, token, info }`.
+async fn handle_vault_unlock(mut req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
+    // Payload is the master password (plaintext) OR JSON {"slug":"...", "password":"..."}.
+    // Support both: try JSON first, fall back to plain-string for backward compat.
+    let (slug, password) = match serde_json::from_str::<serde_json::Value>(&req.payload) {
+        Ok(v) if v.get("password").is_some() || v.get("slug").is_some() => {
+            let s = v.get("slug").and_then(|x| x.as_str()).map(String::from);
+            let p = v
+                .get("password")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            (s, zeroize::Zeroizing::new(p))
+        }
+        _ => (None, zeroize::Zeroizing::new(req.payload.clone())),
+    };
+
+    // Resolve the slug: req.slug (proto field, M2) > payload `slug` > active.
+    let slug = if !req.slug.is_empty() {
+        Some(req.slug.clone())
+    } else {
+        slug
+    };
+    let slug = match slug {
+        Some(s) if !s.is_empty() => Some(s),
+        _ => host.active_slug().await,
+    };
+
+    // Look up or atomically create the VaultState for this slug (H1: the
+    // get-or-insert runs under ONE write lock so two concurrent unlocks of
+    // the same not-yet-mapped slug share a single VaultState + token).
+    let (slug, state) = match slug {
+        Some(s) => {
+            // NEW-2: resolve the vault path from the registry UNCONDITIONALLY
+            // (a cheap file read). Previously this was gated on
+            // `host.get(&s).is_none()`, which left a race: if get() returned
+            // Some but the vault was close()'d before get_or_insert_with, the
+            // closure ran with reg_path=None and fabricated a bogus
+            // /tmp/baluard-{slug} path — poisoning the map. Resolving
+            // unconditionally closes that window; the /tmp fallback is gone.
+            let path = match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                Ok(reg) => match reg.get(&s) {
+                    Some(entry) => entry.path.clone(),
+                    None => {
+                        req.payload.zeroize();
+                        return err_response(format!("Vault '{s}' not found in registry"));
+                    }
+                },
+                Err(e) => {
+                    req.payload.zeroize();
+                    return err_response(format!("Registry error: {e}"));
+                }
+            };
+            let state = host
+                .get_or_insert_with(&s, move || {
+                    // Runs at most once, under the host write lock. `path` is
+                    // always the real registry path here (no bogus fallback).
+                    Arc::new(VaultState::new(path))
+                })
+                .await;
+            (s, state)
+        }
+        None => {
+            req.payload.zeroize();
+            return err_response(
+                "No active vault and no 'slug' given. Run `baluard unlock --vault <slug>`."
+                    .to_string(),
+            );
+        }
+    };
+
+    // Rate-limit (M4) before KDF.
+    let vault_key = state.vault_path.to_string_lossy().into_owned();
+    let permit = match state.rate_limiter.claim_attempt(&vault_key) {
+        crate::rate_limit::ClaimResult::Allowed(p) => p,
+        crate::rate_limit::ClaimResult::Backoff(d) => {
+            req.payload.zeroize();
+            return err_response(format!(
+                "Too many failed attempts. Wait {}s before retrying.",
+                d.as_secs()
+            ));
+        }
+        crate::rate_limit::ClaimResult::LockedOut(d) => {
+            req.payload.zeroize();
+            return err_response(format!(
+                "Vault locked due to too many failed attempts. Wait {}s.",
+                d.as_secs()
+            ));
+        }
+    };
+
+    let result = state.unlock(&password).await;
+    req.payload.zeroize();
+
+    match result {
+        Ok(()) => {
+            permit.commit_success();
+            let _ = state.purge_old_trash(30).await;
+            state.start_cover_timer().await;
+
+            // Phase 6 / T15: log the aggregate mlock footprint now that one
+            // more vault is unlocked. Best-effort diagnostic; mlock failure
+            // itself stays silent per T6.
+            host.log_mlock_budget().await;
+
+            // Make this vault the active focus if there is no active yet.
+            // (Switching on every unlock would surprise users mid-flow.)
+            if host.active_slug().await.is_none() {
+                // Best-effort: ignore errors (slug may already be in map).
+                let _ = host.switch(&slug).await;
+            }
+
+            let token = state.get_session_token().await;
+            let info = match state.info().await {
+                Ok(i) => i,
+                Err(e) => return err_response(e),
+            };
+            // Embed slug + token so the caller can file the per-vault token.
+            let mut info_val: serde_json::Value = serde_json::from_str(&info).unwrap_or_default();
+            info_val["slug"] = serde_json::json!(slug);
+            ok_resp(
+                serde_json::to_string(&info_val).unwrap_or(info),
+                token.as_deref(),
+            )
+        }
+        Err(e) => {
+            permit.commit_failure();
+            err_response(e)
+        }
+    }
+}
+
+/// `vault.open` (Phase 6): ensures the vault is loaded in the host map
+/// (locked). Idempotent — no-op if already present. Backward-compat shim
+/// for clients that call `vault.open` before `vault.unlock`.
+async fn handle_vault_open(req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
+    // M2: prefer req.slug (proto field), then payload slug, then active.
+    let slug = if !req.slug.is_empty() {
+        req.slug.clone()
+    } else {
+        match extract_slug(&req.payload) {
+            Some(s) => s,
+            None => match host.active_slug().await {
+                Some(s) => s,
+                None => {
+                    return err_response(
+                        "vault.open needs a 'slug' or an active vault to open.".to_string(),
+                    );
+                }
+            },
+        }
+    };
+
+    // Already in map? Done (no registry read needed).
+    if let Some(state) = host.get(&slug).await {
+        return match state.info().await {
+            Ok(info) => ok_resp(info, None),
+            Err(e) => err_response(e),
+        };
+    }
+
+    // Not in map: resolve path from registry, then atomic get-or-insert (H1).
+    let reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
+        Ok(r) => r,
+        Err(e) => return err_response(format!("Registry error: {e}")),
+    };
+    let Some(entry) = reg.get(&slug) else {
+        return err_response(format!("Vault '{slug}' not found in registry"));
+    };
+    let path = entry.path.clone();
+    let slug_for_closure = slug.clone();
+    let state = host
+        .get_or_insert_with(&slug, move || {
+            // Runs at most once, under the host write lock.
+            let state = Arc::new(VaultState::new(path.clone()));
+            // Open the handle (locked). Best-effort inside the closure: if it
+            // fails the VaultState is still inserted (locked, no handle) and
+            // the caller sees the error via info(). We spawn the open outside.
+            state
+        })
+        .await;
+    // Open runs outside the closure (it's async + we don't want to hold the
+    // host write lock across disk I/O). If another caller already opened it,
+    // open() is a redundant no-op (sets inner = Some(handle); harmless).
+    if let Err(e) = state.open().await {
+        return err_response(e);
+    }
+    let _ = slug_for_closure;
+    match state.info().await {
+        Ok(info) => ok_resp(info, None),
+        Err(e) => err_response(e),
+    }
+}
+
+/// `vault.create` (Phase 6): creates a new vault, inserts it into the map,
+/// sets it active, and registers it in the registry.
+async fn handle_vault_create(mut req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
+    if req.payload.is_empty() {
+        return err_response("Missing vault creation JSON in payload");
+    }
+    // Determine slug from payload (preferred) or marker after creation.
+    let slug_hint = extract_slug(&req.payload);
+    // The VaultState::create_vault() expects a vault_path to already be set
+    // on the state. We need a path. Resolve from slug (registry will create
+    // the entry later) or fall back to the data_dir vaults/<slug> layout.
+    let slug = slug_hint.unwrap_or_else(|| {
+        // Synthesize a slug from a UUID if none was provided. Caller can
+        // rename later via the registry.
+        format!("vault-{}", &uuid::Uuid::new_v4().to_string()[..8])
+    });
+    let vault_path = baluard_core::paths::vaults_dir().join(&slug);
+
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    let result = state.create_vault(&req.payload).await;
+    req.payload.zeroize();
+    match result {
+        Ok(json) => {
+            // M3: atomic try-insert — reject a slug already present in the
+            // map instead of silently replacing (which would orphan the
+            // existing VaultState + its token). Combined with the disk guard
+            // inside create_vault (kdf-params.json exists) and the registry
+            // add() below, this closes the "on disk + in map + active but
+            // absent from registry" hole.
+            if let Err(_existing) = host.try_insert(slug.clone(), state.clone()).await {
+                // Clean up the vault we just created on disk so we don't
+                // leave a stray directory. Best-effort.
+                let _ = std::fs::remove_dir_all(&vault_path);
+                return err_response(format!(
+                    "A vault '{slug}' is already open in the daemon. \
+                     Close it first or pick a different slug."
+                ));
+            }
+            let _ = host.switch(&slug).await;
+
+            // Register in the registry so vaults.list sees it. The marker
+            // is written by create_vault; read it back for the vault_id.
+            let vault_id =
+                match baluard_core::vault::registry::BaluardMarker::read_from_vault(&vault_path) {
+                    Ok(Some(m)) => m.vault_id,
+                    _ => uuid::Uuid::new_v4(),
+                };
+            let display_name = serde_json::from_str::<serde_json::Value>(&json)
+                .ok()
+                .and_then(|v| v["vault_name"].as_str().map(String::from))
+                .unwrap_or_else(|| slug.clone());
+            let entry = baluard_core::vault::registry::VaultEntry {
+                slug: slug.clone(),
+                display_name,
+                path: vault_path.clone(),
+                provider: None,
+                remote_url: None,
+                last_synced: None,
+                last_opened: Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                ),
+                vault_id,
+            };
+            // M3: surface registry errors instead of swallowing them. A
+            // collision here (slug already registered) means the vault was
+            // created + inserted + made active, but the registry refused —
+            // warn loudly so the user can reconcile.
+            match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                Ok(mut reg) => {
+                    if let Err(e) = reg.add(entry) {
+                        log::warn!(
+                            "[daemon] vault.create: registry add failed for '{slug}': {e}. \
+                             Vault is open in the daemon but not registered."
+                        );
+                    }
+                    let _ = reg.set_active(&slug);
+                    if let Err(e) = reg.save_locked() {
+                        log::warn!("[daemon] vault.create: registry save failed: {e}");
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[daemon] vault.create: registry load failed: {e}. \
+                         Vault is open in the daemon but not registered."
+                    );
+                }
+            }
+
+            // Embed slug + token for the caller.
+            let mut val: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+            val["slug"] = serde_json::json!(slug);
+            let body = serde_json::to_string(&val).unwrap_or_else(|_| json.clone());
+            ok_resp(body, state.get_session_token().await.as_deref())
+        }
+        Err(e) => err_response(e),
+    }
+}
+
 /// Route a GatewayRequest to the appropriate baluard-core function.
 ///
 /// R7-2: Protected actions require a valid session token obtained at unlock.
+/// Phase 6: the caller already resolved the target `Arc<VaultState>`; the
+/// token check here is per-vault (constant-time compare against THIS vault's
+/// token only). A vault-A token is rejected for a vault-B operation.
 async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
     log::debug!(
         "[daemon] <- action={} has_token={}",
@@ -731,62 +1274,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
     state.touch_activity();
 
     let resp = match req.action.as_str() {
-        "ping" => ok_resp("pong", None),
-
-        // ── Vault lifecycle (no token required) ──
-        "vault.open" => match state.open().await {
-            Ok(()) => match state.info().await {
-                Ok(info) => ok_resp(info, token_str),
-                Err(e) => err_response(e),
-            },
-            Err(e) => err_response(e),
-        },
-
-        "vault.unlock" => {
-            if req.payload.is_empty() {
-                return err_response("Missing master password in payload");
-            }
-            // M4 fix: atomically claim a rate-limit slot before running KDF.
-            // This closes the check/use race where parallel requests could
-            // all pass check() before any record_failure() landed.
-            let vault_key = state.vault_path.to_string_lossy().into_owned();
-            let permit = match state.rate_limiter.claim_attempt(&vault_key) {
-                crate::rate_limit::ClaimResult::Allowed(p) => p,
-                crate::rate_limit::ClaimResult::Backoff(d) => {
-                    return err_response(format!(
-                        "Too many failed attempts. Wait {}s before retrying.",
-                        d.as_secs()
-                    ));
-                }
-                crate::rate_limit::ClaimResult::LockedOut(d) => {
-                    return err_response(format!(
-                        "Vault locked due to too many failed attempts. Wait {}s.",
-                        d.as_secs()
-                    ));
-                }
-            };
-            let result = state.unlock(&req.payload).await;
-            // Zeroize the password from the request immediately after use
-            req.payload.zeroize();
-            match result {
-                Ok(()) => {
-                    permit.commit_success();
-                    // Auto-purge old trash (default 30 days) on unlock
-                    let _ = state.purge_old_trash(30).await;
-                    // Start cover commit scheduler
-                    state.start_cover_timer().await;
-                    // Token was just generated inside unlock(). Fetch it.
-                    let token = state.get_session_token().await;
-                    match state.info().await {
-                        Ok(info) => ok_resp(info, token.as_deref()),
-                        Err(e) => err_response(e),
-                    }
-                }
-                Err(e) => {
-                    permit.commit_failure();
-                    err_response(e)
-                }
-            }
+        // L1: ping / vault.open / vault.unlock / vault.create / vault.active
+        // are intercepted by route_host_request before reaching here; their
+        // arms were removed to avoid confusion + a refactor hazard. Any of
+        // those actions arriving here means routing is broken — fail loudly.
+        "ping" | "vault.open" | "vault.unlock" | "vault.create" | "vault.active" => {
+            return err_response(format!(
+                "INTERNAL: action '{}' reached route_request (should be handled at host level)",
+                req.action
+            ));
         }
 
         "vault.lock" => match state.lock().await {
@@ -818,25 +1314,6 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         "vault.info" => match state.info().await {
             Ok(info) => ok_resp(info, token_str),
             Err(e) => err_response(e),
-        },
-
-        // vault.active: token NOT required (reads plaintext registry only)
-        "vault.active" => match baluard_core::vault::registry::VaultRegistry::load() {
-            Ok(reg) => {
-                let entry = reg
-                    .active_vault
-                    .as_ref()
-                    .and_then(|slug| reg.vaults.get(slug));
-                match entry {
-                    Some(e) => ok_resp(
-                        serde_json::json!({"slug": e.slug, "display_name": e.display_name})
-                            .to_string(),
-                        token_str,
-                    ),
-                    None => err_response("No active vault".to_string()),
-                }
-            }
-            Err(e) => err_response(format!("Registry error: {e}")),
         },
 
         // ── Cipher CRUD (token required, enforced above) ──
@@ -1049,20 +1526,6 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
-
-        "vault.create" => {
-            if req.payload.is_empty() {
-                return err_response("Missing vault creation JSON in payload");
-            }
-            match state.create_vault(&req.payload).await {
-                Ok(json) => {
-                    // R7-2 fix: token is embedded in response JSON by create_vault,
-                    // but we also need it in the proto field for CLI extraction.
-                    ok_resp(json, state.get_session_token().await.as_deref())
-                }
-                Err(e) => err_response(e),
-            }
-        }
 
         // ── Sync (token required, enforced above) ──
         "sync.init" => match sync_init(&state.vault_path) {

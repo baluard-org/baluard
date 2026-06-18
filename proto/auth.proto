@@ -13,6 +13,7 @@ message GatewayRequest {
   string action = 1;
   string payload = 2;
   string session_token = 4;  // R7-2: per-session auth token (set after unlock)
+  string slug = 5;            // Phase 6: target vault slug (per-request routing; empty = active vault)
 }
 
 message GatewayResponse {

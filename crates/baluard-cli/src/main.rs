@@ -255,10 +255,24 @@ enum DeviceCommands {
 
 #[derive(Subcommand)]
 enum VaultAction {
-    /// List all registered vaults.
+    /// List all registered vaults with their in-daemon state.
     List,
-    /// Switch active vault.
+    /// Switch the active vault (instant if already unlocked;
+    /// prompts for the master password if locked).
     Switch {
+        /// Vault slug.
+        slug: String,
+    },
+    /// Close a vault: remove it from the daemon's in-memory map.
+    /// Keys zeroize once any in-flight request drains. The vault stays
+    /// registered; reopen with `baluard vaults switch <slug>`.
+    Close {
+        /// Vault slug.
+        slug: String,
+    },
+    /// Set the default vault for next launch (persists `active_vault` in
+    /// the registry). Distinct from `switch`, which is the live focus change.
+    SetDefault {
         /// Vault slug.
         slug: String,
     },
@@ -984,7 +998,15 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
 fn main() {
     let cli = Cli::parse();
 
-    // Resolve --vault flag: translate slug to vault path + force direct mode
+    // Resolve --vault flag.
+    //
+    // Phase 6 / M2: under the keep-unlocked / switch-pointer model the daemon
+    // holds every opened vault in a map. `--vault <slug>` now routes each
+    // request to that vault via the proto `slug` field WITHOUT mutating the
+    // global active pointer or the registry — so read-only commands like
+    // `baluard --vault work list` are side-effect-free and don't race a
+    // concurrently-running desktop. If the daemon is unreachable we fall
+    // back to direct mode (preserves single-shot scripting).
     let vault_path = if let Some(ref vault_slug) = cli.vault {
         match baluard_core::vault::registry::VaultRegistry::load() {
             Ok(reg) => match reg.get(vault_slug) {
@@ -1003,9 +1025,26 @@ fn main() {
         cli.vault_path.clone()
     };
 
-    // --vault forces direct mode (daemon only serves active vault)
-    let forced_direct = cli.vault.is_some();
-    let mode = if cli.direct || forced_direct {
+    // If --vault <slug> was given, install the per-request slug override so
+    // every daemon call targets that vault without a global switch. Then pick
+    // the connect mode: --direct wins if explicitly asked or if the daemon is
+    // unreachable. Otherwise stay in daemon mode and let per-request slug
+    // routing do the targeting.
+    let forced_direct = if cli.direct {
+        true
+    } else if let Some(ref vault_slug) = cli.vault {
+        // Install the override (idempotent — single process).
+        client::set_vault_slug_override(vault_slug);
+        // Daemon reachability check: a ping tells us the daemon is up. If the
+        // vault isn't open in the map the daemon will reject the per-request
+        // slug with a clear error; the user can `baluard unlock --vault <slug>`
+        // first. We do NOT fall back to --direct on "slug not open" because
+        // that would silently re-KDF on every invocation.
+        client::request_to("ping", "", cli.socket.as_deref()).is_err()
+    } else {
+        false
+    };
+    let mode = if forced_direct {
         ConnectMode::Direct
     } else {
         ConnectMode::Daemon
