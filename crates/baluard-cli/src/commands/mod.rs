@@ -2630,55 +2630,163 @@ pub fn handle_passkey_rename(
     Ok(())
 }
 
-pub fn handle_vaults(action: &VaultAction, _cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_vaults(action: &VaultAction, cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     match action {
-        VaultAction::List => {
-            let reg =
-                baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
-            if reg.vaults.is_empty() {
-                println!("No vaults registered.");
-                println!("Create one with: baluard init");
-                return Ok(());
-            }
-            println!("{:<30} {:<20} PATH", "SLUG", "NAME");
-            println!("{}", "-".repeat(80));
-            let mut slugs: Vec<&str> = reg.vaults.keys().map(|s| s.as_str()).collect();
-            slugs.sort();
-            for slug in slugs {
-                let entry = reg.vaults.get(slug).unwrap();
-                let active_marker = if reg.active_vault.as_deref() == Some(slug) {
-                    "*"
-                } else {
-                    " "
-                };
-                println!(
-                    "{active_marker}{:<29} {:<20} {}",
-                    slug,
-                    entry.display_name,
-                    entry.path.display()
-                );
-            }
-            if let Some(ref active) = reg.active_vault {
-                println!();
-                println!("Active: {active}");
-            }
-            Ok(())
-        }
-        VaultAction::Switch { slug } => {
-            let mut reg = baluard_core::vault::registry::VaultRegistry::load_locked()?;
-            if !reg.exists(slug) {
-                eprintln!("error: vault '{slug}' not found in registry");
-                eprintln!("Registered vaults:");
-                for s in reg.list_slugs() {
-                    eprintln!("  {s}");
-                }
-                std::process::exit(1);
-            }
-            reg.set_active(slug)?;
-            reg.touch(slug);
-            reg.save_locked()?;
-            println!("Active vault set to: {slug}");
-            Ok(())
-        }
+        VaultAction::List => vaults_list(cli),
+        VaultAction::Switch { slug } => vaults_switch(slug, cli),
+        VaultAction::Close { slug } => vaults_close(slug, cli),
+        VaultAction::SetDefault { slug } => vaults_set_default(slug, cli),
     }
+}
+
+/// Print every registered vault with its in-daemon state. Prefers the
+/// daemon's `vaults.list` (which joins the registry with the in-memory
+/// map) so the STATE column is accurate; falls back to a registry-only
+/// read when the daemon is not running.
+fn vaults_list(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    // Try the daemon first for live state.
+    let daemon_rows: Option<Vec<serde_json::Value>> = (|| {
+        let resp = client::request_to("vaults.list", "", cli.socket.as_deref()).ok()?;
+        if !resp.success {
+            return None;
+        }
+        let v: serde_json::Value = serde_json::from_str(&resp.payload).ok()?;
+        v.get("vaults").and_then(|a| a.as_array()).cloned()
+    })();
+
+    if let Some(rows) = daemon_rows {
+        if rows.is_empty() {
+            println!("No vaults registered.");
+            println!("Create one with: baluard init");
+            return Ok(());
+        }
+        println!(
+            "  {:<24} {:<20} {:<10} {:<10} PROVIDER",
+            "SLUG", "NAME", "STATE", "ACTIVE"
+        );
+        println!("  {}", "-".repeat(82));
+        for row in &rows {
+            let slug = row["slug"].as_str().unwrap_or("");
+            let name = row["display_name"].as_str().unwrap_or("");
+            let presence = row["presence"].as_str().unwrap_or("closed");
+            let active = if row["active"].as_bool().unwrap_or(false) {
+                "*"
+            } else {
+                " "
+            };
+            let provider = row["provider"].as_str().unwrap_or("");
+            println!(
+                "  {:<24} {:<20} {:<10} {:<9} {}",
+                slug, name, presence, active, provider
+            );
+        }
+        println!();
+        println!(
+            "  STATE: unlocked = keys resident | locked = open, keys zeroized | closed = not loaded"
+        );
+        println!("  ACTIVE: '*' marks the live focus vault.");
+        return Ok(());
+    }
+
+    // Daemon not reachable: fall back to a registry-only read.
+    let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
+    if reg.vaults.is_empty() {
+        println!("No vaults registered.");
+        println!("Create one with: baluard init");
+        return Ok(());
+    }
+    eprintln!("(daemon not reachable; showing registry only — state column unavailable)");
+    println!("{:<30} {:<20} PATH", "SLUG", "NAME");
+    println!("{}", "-".repeat(80));
+    let mut slugs: Vec<&str> = reg.vaults.keys().map(|s| s.as_str()).collect();
+    slugs.sort();
+    for slug in slugs {
+        let entry = reg.vaults.get(slug).unwrap();
+        let active_marker = if reg.active_vault.as_deref() == Some(slug) {
+            "*"
+        } else {
+            " "
+        };
+        println!(
+            "{active_marker}{:<29} {:<20} {}",
+            slug,
+            entry.display_name,
+            entry.path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Flip the live active vault via the daemon. If the target is locked (or
+/// not yet loaded), prompt for the master password and unlock it first.
+/// Per the Phase 6 keep-unlocked model, switching to an already-unlocked
+/// vault is instant — no KDF, no re-prompt, and the previously active
+/// vault stays unlocked on its own auto-lock schedule.
+fn vaults_switch(slug: &str, cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    // First: ensure the slug is registered. The daemon errors if it isn't.
+    let reg = baluard_core::vault::registry::VaultRegistry::load_locked()?;
+    if !reg.exists(slug) {
+        eprintln!("error: vault '{slug}' not found in registry");
+        eprintln!("Registered vaults:");
+        for s in reg.list_slugs() {
+            eprintln!("  {s}");
+        }
+        std::process::exit(1);
+    }
+
+    // Try the daemon switch. If the slug isn't open in the map yet, the
+    // daemon returns an error pointing at `baluard unlock --vault <slug>`;
+    // we drive that unlock inline so `switch` is one command.
+    let payload = serde_json::json!({ "slug": slug }).to_string();
+    let resp = client::request_to("vaults.switch", &payload, cli.socket.as_deref())?;
+    if resp.success {
+        println!("Active vault: {slug}");
+        return Ok(());
+    }
+
+    // The daemon refused (slug not open, or locked). Treat either case as
+    // "unlock then re-switch". Prompt for the master password and call
+    // vault.unlock with the slug — that opens + unlocks + inserts into
+    // the map + makes it active in one round-trip.
+    if resp.error_message.contains("not open")
+        || resp.error_message.contains("locked")
+        || resp.error_message.contains("No active")
+    {
+        let mut password = prompt_password(&format!("Master password for '{slug}': "))?;
+        let unlock_payload = serde_json::json!({ "slug": slug, "password": password }).to_string();
+        password.zeroize();
+        let unlock_resp =
+            client::request_to("vault.unlock", &unlock_payload, cli.socket.as_deref())?;
+        if !unlock_resp.success {
+            return Err(format!("Unlock failed: {}", unlock_resp.error_message).into());
+        }
+        println!("Active vault: {slug} (unlocked)");
+        return Ok(());
+    }
+
+    Err(resp.error_message.into())
+}
+
+/// Remove a vault from the daemon's in-memory map. Keys zeroize once any
+/// in-flight request drains. The vault stays registered for re-opening.
+fn vaults_close(slug: &str, cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    let payload = serde_json::json!({ "slug": slug }).to_string();
+    let resp = client::request_to("vaults.close", &payload, cli.socket.as_deref())?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+    println!("Vault '{slug}' closed (removed from daemon map).");
+    Ok(())
+}
+
+/// Persist `active_vault` in the registry so the next daemon launch picks
+/// this vault as the default focus.
+fn vaults_set_default(slug: &str, cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    let payload = serde_json::json!({ "slug": slug }).to_string();
+    let resp = client::request_to("vaults.set_active", &payload, cli.socket.as_deref())?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+    println!("Default vault for next launch: {slug}");
+    Ok(())
 }

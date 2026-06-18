@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-06-17
+> Last updated: 2026-06-17 (Phase 6 shipped)
 
 ---
 
@@ -178,7 +178,7 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 | **Phase 3** | GitHub repo operations + first sync + credential wiring | **Done** |
 | Phase 4 | Remote vault clone + three-screen wizard | Not started |
 | **Phase 5** | GitLab (device flow + PAT + 2h refresh) + Codeberg (web-OAuth PKCE + PAT) providers | **Done** |
-| **Phase 6** | Vault switching + CLI polish — **design complete, not implemented**. Reworked 2026-06-17 from lock-on-switch to keep-unlocked/switch-pointer model (daemon holds map of open vaults + `active` pointer; switch = pointer flip, no re-prompt). peer-reviewed (peer): Approve. See Phase 6 section in plan + T15 in threat-model. | **Design done, not implemented** |
+| **Phase 6** | Vault switching + CLI polish — **implemented**. Keep-unlocked/switch-pointer model: daemon holds `RwLock<VaultHostInner>` with `HashMap<String, Arc<VaultState>>` + `active` pointer (one critical section). Switch = pointer flip (no zeroization, no token change). Per-vault session tokens. `vaults.list/switch/active/close/set_active` routes. `vault.unlock` returns `{slug, token}`. Single auto-lock checker walks the map. 11 integration tests pass. | **Done** |
 | Provider selection UI | Desktop SyncTab: device-flow (GitHub/GitLab) + web-OAuth (Codeberg) + PAT under Advanced Options | **Done** |
 
 ### Nice to Have / Future
@@ -237,6 +237,20 @@ Features parked for the far future. Do not start without explicit confirmation.
 - JSON strings inside `GatewayRequest.payload`. Proto updates cosmetic until typed migration planned
 - `get_cipher` returns BOTH nested `kind` object AND flat top-level fields
 - `update_cipher` parses `kind` from payload JSON (does NOT clone existing kind)
+
+### VaultHost (Phase 6 Multi-Vault)
+
+- Daemon shares an `Arc<VaultHost>` across all connection handlers (replaces the pre-Phase 6 single `Arc<VaultState>`).
+- `VaultHost` wraps a single `RwLock<VaultHostInner>` holding both `vaults: HashMap<String, Arc<VaultState>>` AND the `active: Option<String>` pointer. ONE lock for both → the invariant "if `active` is `Some(slug)`, slug is in the map" is provably maintained (no two-lock race).
+- **Switch = pointer flip only.** `vaults.switch` sets `active`, touches registry `last_opened` OUTSIDE the host lock, returns `{active, presence}`. No zeroization, no token change.
+- **Per-vault session tokens.** `vault.unlock` returns `{slug, token}`. Token check is per-vault: a request must carry the token matching the TARGETED vault (constant-time compare against that vault's token only). Desktop keeps a `Map<slug, token>` in `SessionTokens`.
+- **Handler snapshots the target `Arc<VaultState>` once per request** via `snapshot_target(slug_or_none)`. Removes the TOCTOU where a mid-request `switch` would re-route an in-flight op.
+- **`vaults.close` = Arc-drain.** Removes the entry, clears `active` if it was active, returns immediately. In-flight handlers holding a cloned Arc finish and zeroize on last drop. `Arc::strong_count` is NOT used as a sync primitive.
+- **Auto-lock is a single walker.** One tokio task ticks every 30s, iterates the map, applies each vault's own `auto_lock_minutes` + `last_activity`. Active-pointer-on-autolock policy: when the active vault auto-locks, `active` is LEFT pointing at it (re-unlock UX for the same vault, not the picker).
+- **Cover timers are per-`VaultState`**, keyed to locked/unlocked, never to `active`. A switch touches no cover timer.
+- **Routes:** `vaults.list`, `vaults.switch`, `vaults.active`, `vaults.close`, `vaults.set_active` (host-level, no token); `vault.unlock`/`vault.lock`/`vault.open`/`vault.create` take an explicit `slug` (or fall back to active); all cipher/sync/settings routes accept a `slug` in the JSON payload or fall back to active.
+- **CLI:** `baluard vaults list` shows STATE column (unlocked/locked/closed). `baluard vaults switch <slug>` prompts for password if locked. `baluard vaults close <slug>` unloads. `baluard vaults set-default <slug>` persists registry `active_vault`. `baluard --vault <slug>` uses the daemon when the vault is open in the map, `--direct` otherwise.
+- **Desktop:** `VaultSwitcher` dropdown in sidebar header. `VaultSwitcherContext` polls `vaults.list` on mount + 30s heartbeat. Picking an unlocked vault = instant switch + `vault.list_full` refetch. Picking a locked/closed vault routes through AuthContext's `switchTarget` signal to the unlock screen for that slug.
 
 ### Import/Export
 

@@ -26,13 +26,46 @@ use proto::{GatewayRequest, GatewayResponse};
 
 // R7-2: Session token persisted to a file so it survives across CLI invocations.
 // Each `cargo run` is a separate process; thread-local storage dies with it.
+
+// Phase 6 / M2: process-global vault slug override set by `--vault <slug>`.
+// When set, every daemon request carries this slug via the proto `slug` field
+// so the daemon routes to that vault WITHOUT mutating the global active
+// pointer or registry `last_opened`. Read-only commands (list/get) thus stay
+// side-effect-free. CLI invocations are single-process, so a OnceLock is safe.
+static VAULT_SLUG_OVERRIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Set the `--vault <slug>` override for this process. Called once from
+/// main() before dispatching the command.
+pub fn set_vault_slug_override(slug: &str) {
+    let _ = VAULT_SLUG_OVERRIDE.set(slug.to_string());
+}
+
+/// The active `--vault` slug override, if any.
+pub fn vault_slug_override() -> Option<&'static str> {
+    VAULT_SLUG_OVERRIDE.get().map(|s| s.as_str())
+}
 // Token file lives alongside the socket with 0600 perms.
 
 /// Get the token file path.
-/// When using default socket: uses `baluard_core::paths::token_path()`.
-/// When using explicit socket: derives alongside it (non-Windows) or in data_dir (Windows).
+///
+/// NEW-3: when a `--vault <slug>` override is active, the token file is
+/// slug-specific so each vault unlocked via the CLI keeps its own token.
+/// Without this, `baluard --vault work list` would send whatever token
+/// happened to be on file (the last-unlocked vault's), which the daemon
+/// rejects per-vault. The slug-specific file sits alongside the default
+/// token file with a `.<slug>` suffix.
+///
+/// When using default socket: uses `baluard_core::paths::token_path()` as
+/// the base. When using explicit socket: derives alongside it (non-Windows)
+/// or in data_dir (Windows).
 fn token_file_path(socket_path: Option<&str>) -> PathBuf {
-    match socket_path {
+    token_file_path_for(socket_path, vault_slug_override())
+}
+
+/// Same as `token_file_path` but with an explicit slug (used internally so
+/// the override is read exactly once per call).
+fn token_file_path_for(socket_path: Option<&str>, slug: Option<&str>) -> PathBuf {
+    let base = match socket_path {
         None => baluard_core::paths::token_path(),
         Some(p) => {
             let sock = PathBuf::from(p);
@@ -47,6 +80,15 @@ fn token_file_path(socket_path: Option<&str>) -> PathBuf {
                 sock.with_extension("tok")
             }
         }
+    };
+    match slug.filter(|s| !s.is_empty()) {
+        // Insert a `.<slug>` segment before the `.tok` extension so per-vault
+        // tokens coexist with the default (active-vault) token file.
+        Some(s) => {
+            let with_slug = format!("{}.{}.tok", base.with_extension("").to_string_lossy(), s);
+            PathBuf::from(with_slug)
+        }
+        None => base,
     }
 }
 
@@ -106,10 +148,28 @@ pub fn clear_session_token(socket_path: Option<&str>) {
 
 /// Send a request to the daemon at a specific socket path.
 /// Zeroizes the payload and wire bytes after the response is received.
+///
+/// `slug` (Phase 6 / M2): target vault for this request. When set, the daemon
+/// routes to that vault via `req.slug` WITHOUT mutating the global active
+/// pointer — so read-only commands stay side-effect-free. Empty = active.
 pub fn request_to(
     action: &str,
     payload: &str,
     socket_path: Option<&str>,
+) -> Result<GatewayResponse> {
+    request_to_with_slug(
+        action,
+        payload,
+        socket_path,
+        vault_slug_override().unwrap_or(""),
+    )
+}
+
+fn request_to_with_slug(
+    action: &str,
+    payload: &str,
+    socket_path: Option<&str>,
+    slug: &str,
 ) -> Result<GatewayResponse> {
     let socket = socket_path
         .map(PathBuf::from)
@@ -121,6 +181,7 @@ pub fn request_to(
         action: action.to_string(),
         payload: payload.to_string(),
         session_token: get_session_token(socket_path).unwrap_or_default(),
+        slug: slug.to_string(),
     };
     let mut body = req.encode_to_vec();
 

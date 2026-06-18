@@ -21,6 +21,7 @@ import GeneratorModal from "./GeneratorModal.jsx";
 import RepromptModal from "./RepromptModal.jsx";
 import SettingsModal from "./SettingsModal.jsx";
 import { FolderTree } from "./FolderTree.jsx";
+import VaultSwitcher from "./VaultSwitcher.jsx";
 
 export default function VaultView() {
   const auth = useAuth();
@@ -190,6 +191,16 @@ export default function VaultView() {
               <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
               <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" title={t("vault.statusUnlocked")}></span>
             </span>
+          </div>
+
+          {/* Phase 6: vault switcher (instant switch between open vaults) */}
+          <div class="px-3 pt-3">
+            <VaultSwitcher onLockedTarget={(slug) => {
+              // A locked/closed vault was picked: re-route through the unlock
+              // screen for that slug. AuthContext reads `activeVault` + the
+              // target slug signal to render the right prompt.
+              if (auth.setSwitchTarget) auth.setSwitchTarget(slug);
+            }} />
           </div>
 
           {/* Navigation Scroll Area */}

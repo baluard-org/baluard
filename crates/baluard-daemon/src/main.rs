@@ -1,22 +1,14 @@
 //! Baluard IPC daemon.
 //!
 //! Background Unix socket (or Named Pipes on Windows) server that holds
-//! an unlocked vault in memory and responds to Protobuf gateway requests
+//! every opened vault in memory and responds to Protobuf gateway requests
 //! from CLI, Tauri webview, and browser extension clients.
+//!
+//! This is the thin binary wrapper. All logic lives in the library crate
+//! (`baluard_daemon`) so it is unit/integration-testable.
 
-mod crypto;
-mod handler;
-mod rate_limit;
-pub mod socket_path;
-mod state;
-pub mod proto {
-    #![allow(dead_code)]
-    include!(concat!(env!("OUT_DIR"), "/baluard.auth.rs"));
-    include!(concat!(env!("OUT_DIR"), "/baluard.vault.rs"));
-    include!(concat!(env!("OUT_DIR"), "/baluard.space.rs"));
-}
-
-use state::{SharedVaultState, VaultState};
+use baluard_daemon::host::{SharedVaultHost, VaultHost};
+use baluard_daemon::state::VaultState;
 
 use anyhow::Result;
 use baluard_core::vault::registry::VaultSource;
@@ -201,20 +193,38 @@ fn main() -> anyhow::Result<()> {
         .get_one::<String>("socket")
         .cloned()
         .unwrap_or_else(|| {
-            socket_path::default_socket_path()
+            baluard_daemon::socket_path::default_socket_path()
                 .to_string_lossy()
                 .into_owned()
         });
 
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async { run(&sock, &vault).await })
+    rt.block_on(async { run(&sock, &vault, &resolved.slug).await })
 }
 
-async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
-    let vault_state: SharedVaultState = Arc::new(VaultState::new(PathBuf::from(vault_path)));
+async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) -> Result<()> {
+    let host: SharedVaultHost = VaultHost::shared();
 
-    // Spawn auto-lock background timer
-    VaultState::spawn_auto_lock_checker(vault_state.clone());
+    // Lazy-load the resolved active vault into the host map (locked state).
+    // The map starts with at most one entry; the rest fill as the user
+    // switches/unlocks. We do NOT unlock here — the user still has to
+    // present the master password.
+    if let Some(slug) = active_slug {
+        // Read the path from the registry (the slug was resolved from the
+        // registry or --vault-slug, so it must be present).
+        let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
+        if let Some(entry) = reg.get(slug) {
+            let state = Arc::new(VaultState::new(entry.path.clone()));
+            host.insert(slug.clone(), state).await;
+            // Best-effort: make it the active focus. Errors (e.g. empty map
+            // races) are non-fatal.
+            let _ = host.switch(slug).await;
+        }
+    }
+
+    // Spawn the single multi-vault auto-lock checker. Iterates the host map
+    // every 30s and applies each vault's own auto_lock_minutes.
+    host.spawn_auto_lock_checker();
 
     // Ensure socket parent directory exists.
     if let Some(parent) = std::path::Path::new(socket_path).parent() {
@@ -246,6 +256,7 @@ async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
 
     log::info!("baluard-daemon listening on {socket_path} (0600)");
     log::info!("Vault path: {vault_path}");
+    let _ = vault_path; // kept for log line; host is source of truth
 
     // Graceful shutdown on SIGINT or SIGTERM
     #[cfg(unix)]
@@ -267,22 +278,25 @@ async fn run(socket_path: &str, vault_path: &str) -> Result<()> {
     };
 
     tokio::select! {
-        result = accept_loop(&listener, vault_state.clone()) => result?,
+        result = accept_loop(&listener, host.clone()) => result?,
         result = shutdown => result?,
     }
 
-    // Lock vault before exit (zeroizes keys)
-    let _ = vault_state.lock().await;
+    // Phase 6: lock every open vault before exit (zeroizes all key material).
+    let locked = host.lock_all().await;
+    if locked > 0 {
+        log::info!("Locked {locked} vault(s) on shutdown.");
+    }
     let _ = std::fs::remove_file(socket_path);
     Ok(())
 }
 
-async fn accept_loop(listener: &UnixListener, vault_state: SharedVaultState) -> Result<()> {
+async fn accept_loop(listener: &UnixListener, host: SharedVaultHost) -> Result<()> {
     loop {
         let (stream, _addr) = listener.accept().await?;
-        let state = vault_state.clone();
+        let host = host.clone();
         tokio::spawn(async move {
-            if let Err(e) = handler::handle_connection(stream, state).await {
+            if let Err(e) = baluard_daemon::handler::handle_connection(stream, host).await {
                 log::error!("Connection error: {e}");
             }
         });

@@ -189,57 +189,40 @@ impl VaultState {
         now.saturating_sub(last)
     }
 
-    /// Spawn auto-lock background checker. Checks every 30s.
-    pub fn spawn_auto_lock_checker(state: Arc<Self>) {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
-            loop {
-                interval.tick().await;
+    /// Decide whether this single vault should auto-lock now. Reads its own
+    /// `auto_lock_minutes` from settings + `last_activity`. Returns `false`
+    /// for any locked or unopened vault (nothing to do).
+    ///
+    /// Used by both the legacy single-vault checker and the Phase 6 host
+    /// walker. The actual `lock()` happens in the caller so this method is
+    /// side-effect free (no cover-timer / session-token churn on a `false`).
+    ///
+    /// M12 fix: 0 is treated as "use default" rather than "never auto-lock".
+    /// Also clamps to a sane maximum to prevent indefinite key residency.
+    pub async fn should_auto_lock(&self) -> bool {
+        const DEFAULT_AUTO_LOCK_MINUTES: u32 = 15;
+        const MAX_AUTO_LOCK_MINUTES: u32 = 24 * 60; // 24 hours
 
-                // Read auto_lock_minutes from settings.
-                // M12 fix: 0 is treated as "use default" rather than "never auto-lock".
-                // Also clamp to a sane maximum to prevent indefinite key residency.
-                const DEFAULT_AUTO_LOCK_MINUTES: u32 = 15;
-                const MAX_AUTO_LOCK_MINUTES: u32 = 24 * 60; // 24 hours
-                let timeout_minutes = {
-                    let guard = state.inner.read().await;
-                    if let Some(handle) = guard.as_ref() {
-                        handle
-                            .get_settings()
-                            .ok()
-                            .and_then(|s| s.auto_lock_minutes)
-                            .filter(|m| *m > 0)
-                            .unwrap_or(DEFAULT_AUTO_LOCK_MINUTES)
-                            .min(MAX_AUTO_LOCK_MINUTES)
-                    } else {
-                        continue; // no vault open
-                    }
-                };
-
-                let elapsed = state.seconds_since_activity();
-                let timeout_secs = (timeout_minutes as u64) * 60;
-
-                if elapsed >= timeout_secs {
-                    log::info!(
-                        "Auto-lock: {}s idle >= {}s timeout, locking vault",
-                        elapsed,
-                        timeout_secs
-                    );
-                    state.stop_cover_timer().await;
-                    state.cover_pending.store(false, Ordering::Relaxed);
-                    state.cover_session.fetch_add(1, Ordering::Relaxed);
-                    let mut guard = state.inner.write().await;
-                    if let Some(handle) = guard.as_mut() {
-                        if handle.is_unlocked() {
-                            handle.lock();
-                            *state.session_token.write().await = None;
-                            state.session_token_created.store(0, Ordering::Relaxed);
-                            state.last_activity.store(0, Ordering::Relaxed);
-                        }
-                    }
-                }
+        let timeout_minutes = {
+            let guard = self.inner.read().await;
+            let Some(handle) = guard.as_ref() else {
+                return false; // no vault open
+            };
+            if !handle.is_unlocked() {
+                return false; // already locked
             }
-        });
+            handle
+                .get_settings()
+                .ok()
+                .and_then(|s| s.auto_lock_minutes)
+                .filter(|m| *m > 0)
+                .unwrap_or(DEFAULT_AUTO_LOCK_MINUTES)
+                .min(MAX_AUTO_LOCK_MINUTES)
+        };
+
+        let elapsed = self.seconds_since_activity();
+        let timeout_secs = (timeout_minutes as u64) * 60;
+        elapsed >= timeout_secs
     }
 
     /// Open a vault from disk (locked state).
@@ -338,7 +321,6 @@ impl VaultState {
     }
 
     /// Check if vault is currently unlocked.
-    #[allow(dead_code)]
     pub async fn is_unlocked(&self) -> bool {
         let guard = self.inner.read().await;
         guard.as_ref().is_some_and(|h| h.is_unlocked())

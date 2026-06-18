@@ -96,12 +96,13 @@ fn decode_varint(data: &[u8]) -> Result<(u64, usize), String> {
 
 #[cfg(unix)]
 fn send_request(action: &str, payload: &str) -> Result<String, String> {
-    send_request_with_token(action, payload, "").map(|(data, _)| data)
+    send_request_with_token(action, payload, "", "").map(|(data, _)| data)
 }
 
-/// Send a Protobuf request with session token. Returns (payload, optional_new_token).
+/// Send a Protobuf request with session token + slug. Returns (payload, optional_new_token).
+/// `slug` (Phase 6 / M2): target vault; empty = active vault.
 #[cfg(unix)]
-fn send_request_with_token(action: &str, payload: &str, token: &str) -> Result<(String, Option<String>), String> {
+fn send_request_with_token(action: &str, payload: &str, token: &str, slug: &str) -> Result<(String, Option<String>), String> {
     use std::os::unix::net::UnixStream;
 
     let socket = default_socket_path();
@@ -120,6 +121,7 @@ fn send_request_with_token(action: &str, payload: &str, token: &str) -> Result<(
         action: action.to_string(),
         payload: payload.to_string(),
         session_token: token.to_string(),
+        slug: slug.to_string(),
     };
     let body = req.encode_to_vec();
 
@@ -168,7 +170,7 @@ fn send_request_with_token(action: &str, payload: &str, token: &str) -> Result<(
 }
 
 #[cfg(not(unix))]
-fn send_request_with_token(_action: &str, _payload: &str, _token: &str) -> Result<(String, Option<String>), String> {
+fn send_request_with_token(_action: &str, _payload: &str, _token: &str, _slug: &str) -> Result<(String, Option<String>), String> {
     Err("IPC not yet implemented on this platform".into())
 }
 
@@ -185,23 +187,46 @@ struct DaemonResponse {
 fn daemon_request(
     action: String,
     payload: String,
-    token: State<SessionToken>,
+    slug: Option<String>,
+    tokens: State<SessionTokens>,
 ) -> DaemonResponse {
-    log::debug!("[desktop] -> action={action} payload_len={}", payload.len());
+    log::debug!("[desktop] -> action={action} slug={slug:?} payload_len={}", payload.len());
 
-    // Inject stored session token into request
-    let stored_token = token.0.lock().unwrap()
-        .as_ref().map(|z| z.as_str().to_owned()).unwrap_or_default();
+    // Inject the stored session token for this slug (if any) into the request.
+    // When slug is None, the daemon targets the active vault — we send an
+    // empty token and rely on the daemon's per-vault check.
+    let stored_token = slug
+        .as_ref()
+        .and_then(|s| tokens.0.lock().unwrap().get(s).map(|z| z.as_str().to_owned()))
+        .unwrap_or_default();
 
-    match send_request_with_token(&action, &payload, &stored_token) {
+    match send_request_with_token(&action, &payload, &stored_token, slug.as_deref().unwrap_or("")) {
         Ok((data, new_token)) => {
             log::debug!("[desktop] <- action={action} success=true payload_len={}", data.len());
-            // On lock, clear the session token
+            let mut map = tokens.0.lock().unwrap();
+            // On lock for a slug, drop that slug's token. On unlock/create,
+            // store the returned token under the slug.
             if action == "vault.lock" {
-                *token.0.lock().unwrap() = None;
+                if let Some(s) = &slug {
+                    map.remove(s);
+                } else {
+                    // No slug: legacy lock-all path. Clear everything.
+                    map.clear();
+                }
             } else if let Some(t) = new_token {
-                // Store token returned by unlock/create
-                *token.0.lock().unwrap() = Some(zeroize::Zeroizing::new(t));
+                // File the token under the slug. Prefer the explicit slug;
+                // otherwise parse it from the response payload (vault.unlock /
+                // vault.create always return {slug}). If neither yields a slug,
+                // don't store — a slug-less token would never be read back
+                // (slug-less requests send an empty token).
+                let key = slug.clone().or_else(|| {
+                    serde_json::from_str::<serde_json::Value>(&data)
+                        .ok()
+                        .and_then(|v| v["slug"].as_str().map(String::from))
+                });
+                if let Some(k) = key {
+                    map.insert(k, zeroize::Zeroizing::new(t));
+                }
             }
             DaemonResponse {
                 success: true,
@@ -211,10 +236,19 @@ fn daemon_request(
         }
         Err(ref e) => {
             log::warn!("[desktop] <- action={action} error={e}");
-            // Clear stale token on session/auth errors so next request
-            // doesn't keep sending an invalid token
-            if e.contains("session token") || e.contains("locked") || e.contains("Vault is") {
-                *token.0.lock().unwrap() = None;
+            // M1: only drop the TARGETED slug's token on a token/lock error.
+            // Clearing the whole map on a slug-less error caused a re-unlock
+            // storm across every open vault. For slug-less errors we leave
+            // the map alone — the 30s heartbeat + next-request rejection is
+            // the backstop. Match the specific daemon error strings, not a
+            // bare "locked" substring (too broad — "locked" appears in many
+            // unrelated messages).
+            let is_token_or_lock_err = e.contains("session token")
+                || e.contains("Vault is locked");
+            if is_token_or_lock_err {
+                if let Some(s) = &slug {
+                    tokens.0.lock().unwrap().remove(s);
+                }
             }
             DaemonResponse {
                 success: false,
@@ -231,9 +265,59 @@ fn daemon_status() -> bool {
     send_request("ping", "").is_ok()
 }
 
-/// Stored session token obtained from daemon at unlock/create.
-/// Zeroizes on drop for consistent security posture with the rest of the codebase.
-struct SessionToken(Mutex<Option<zeroize::Zeroizing<String>>>);
+/// Lock every currently-unlocked vault (Phase 6 defensive primitive).
+///
+/// Fired by the desktop on screen-lock / system sleep / app-resign-active
+/// (window blur) so a device becoming unattended caps multi-vault key
+/// exposure immediately instead of waiting for each vault's idle timer.
+/// Clears the per-vault session token map on success; the daemon zeroizes
+/// all key material. Non-blocking on daemon errors (a down daemon has no
+/// keys to lock).
+#[tauri::command]
+fn lock_all_vaults(tokens: State<SessionTokens>) -> bool {
+    log::info!("[desktop] system event → lock_all_vaults");
+    // Clear our token cache first so the frontend treats every vault as
+    // locked even if the daemon RPC is slow.
+    tokens.0.lock().unwrap().clear();
+    match send_request("vaults.lock_all", "") {
+        Ok(payload) => {
+            log::info!("[desktop] lock_all succeeded: {payload}");
+            true
+        }
+        // Daemon unreachable or returned a daemon-level error string: a
+        // down daemon has no keys to lock, and we already cleared the token
+        // cache above so the frontend state is consistent.
+        Err(e) => {
+            log::warn!("[desktop] lock_all RPC failed: {e}");
+            false
+        }
+    }
+}
+
+/// Stored session tokens obtained from daemon at unlock/create, keyed by
+/// vault slug. Per Phase 6, each unlocked vault has its own token; a
+/// vault-A token is rejected for any vault-B operation. The frontend keeps
+/// a `Map<slug, token>` in lockstep with this.
+struct SessionTokens(std::sync::Mutex<std::collections::HashMap<String, zeroize::Zeroizing<String>>>);
+
+/// Phase 6 / T15 / M4: blur-lock debounce state.
+///
+/// `WindowEvent::Focused(false)` fires on every focus loss (alt-tab, native
+/// file dialogs, Spotlight, even tooltips). Locking all vaults on each would
+/// be punishing for a daily driver. We arm a short debounce: on blur, set
+/// `blurred` and schedule a lock after `BLUR_LOCK_DELAY`; if focus returns
+/// within that window (transient blur), the pending lock is aborted. Genuine
+/// app-switches (blurred longer than the delay) still lock.
+struct BlurLockState {
+    blurred: std::sync::atomic::AtomicBool,
+    pending: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+}
+
+/// Debounce window for blur-triggered lock-all. Transient blurs (menus,
+/// tooltips, brief alt-tab) within this window do NOT lock; genuine
+/// app-switches (blurred longer) do. Tuned for password-manager UX: short
+/// enough to be secure, long enough to ignore UI chatter.
+const BLUR_LOCK_DELAY: std::time::Duration = std::time::Duration::from_millis(1500);
 
 // ── App entry ──
 
@@ -244,7 +328,11 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_biometry::init())
         .manage(Mutex::new(None::<Daemon>))
-        .manage(SessionToken(Mutex::new(None::<zeroize::Zeroizing<String>>)))
+        .manage(SessionTokens(std::sync::Mutex::new(std::collections::HashMap::new())))
+        .manage(BlurLockState {
+            blurred: std::sync::atomic::AtomicBool::new(false),
+            pending: std::sync::Mutex::new(None),
+        })
         .setup(|app| {
             // Always log to file for debuggability.
             // BALUARD_LOG_DIR overrides log directory; defaults to socket dir.
@@ -411,14 +499,107 @@ pub fn run() {
 
             Ok(())
         })
-        // Close → hide to tray instead of quitting
+        // Window events → defensive lock-all.
+        //
+        // Phase 6 / T15: when the main window loses focus (app resign-active)
+        // we lock every currently-unlocked vault. This caps multi-vault key
+        // exposure the moment the device becomes unattended, instead of
+        // waiting for each vault's idle timer. Close still hides to tray.
+        //
+        // NOTE: OS suspend / screen-lock hooks are platform-specific and
+        // not yet wired here. Tauri v2 has no cross-platform power-event
+        // API; the remaining pieces are:
+        //   macOS:  NSWorkspaceDidSleepNotification / NSWorkspaceScreensDidSleepNotification
+        //   Linux:  org.freedesktop.login1.Manager PrepareForSleep (D-Bus)
+        //   Windows: WM_POWERBROADCAST (PBT_APMQUERYSUSPEND) / SessionSwitch (WTS_SESSION_LOCK)
+        // Window blur covers the common "switched away from the app" case
+        // today; the OS hooks above are the follow-up.
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                WindowEvent::Focused(false) => {
+                    // M4: arm a debounced lock-all. Transient blurs (menus,
+                    // tooltips, brief alt-tab) cancel before the delay elapses;
+                    // genuine app-switches lock after BLUR_LOCK_DELAY.
+                    let app = window.app_handle();
+                    if let Some(blur) = app.try_state::<BlurLockState>() {
+                        blur.blurred
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                        // Cancel any previously-armed lock.
+                        if let Some(handle) = blur.pending.lock().unwrap().take() {
+                            handle.abort();
+                        }
+                        // The whole debounce (sleep + recheck + lock + clear)
+                        // runs on the blocking pool. This avoids needing
+                        // `tokio::time::sleep` (tokio is not a direct dep of
+                        // this crate; `tauri::async_runtime` doesn't re-export
+                        // its timer) and keeps the synchronous `send_request`
+                        // off the async runtime. `abort()` cancels the thread
+                        // (the JoinHandle, not the OS thread) — the sleep may
+                        // run to completion on abort, but the blurred flag is
+                        // rechecked before locking so an aborted-then-focused
+                        // window won't spuriously lock.
+                        let app_handle = app.clone();
+                        let handle = tauri::async_runtime::spawn(async move {
+                            let app_for_blocking = app_handle.clone();
+                            let _ = tauri::async_runtime::spawn_blocking(
+                                move || -> bool {
+                                    std::thread::sleep(BLUR_LOCK_DELAY);
+                                    // Re-check the flag: a Focused(true) during
+                                    // the sleep sets it to false + aborts us.
+                                    let Some(blur) =
+                                        app_for_blocking.try_state::<BlurLockState>()
+                                    else {
+                                        return false;
+                                    };
+                                    if !blur
+                                        .blurred
+                                        .load(std::sync::atomic::Ordering::Relaxed)
+                                    {
+                                        return false;
+                                    }
+                                    let _ = send_request("vaults.lock_all", "");
+                                    log::info!(
+                                        "[desktop] window blur (debounced) → lock_all fired"
+                                    );
+                                    true
+                                },
+                            )
+                            .await;
+                            // Clear the per-vault token cache now that every
+                            // vault is locked, so the UI treats them as locked
+                            // without waiting for a rejection.
+                            if let Some(tokens) =
+                                app_handle.try_state::<SessionTokens>()
+                            {
+                                tokens.0.lock().unwrap().clear();
+                            }
+                        });
+                        *blur.pending.lock().unwrap() = Some(handle);
+                    }
+                }
+                WindowEvent::Focused(true) => {
+                    // Focus returned: cancel any pending blur-lock and clear
+                    // the blurred flag.
+                    if let Some(blur) = window.app_handle().try_state::<BlurLockState>() {
+                        blur.blurred
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
+                        if let Some(handle) = blur.pending.lock().unwrap().take() {
+                            handle.abort();
+                        }
+                    }
+                }
+                _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![daemon_request, daemon_status])
+        .invoke_handler(tauri::generate_handler![
+            daemon_request,
+            daemon_status,
+            lock_all_vaults
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

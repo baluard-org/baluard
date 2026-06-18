@@ -39,3 +39,6 @@ rand_core = "0.10"
 [features]
 default = ["git-sync"]
 git-sync = ["baluard-core/git-sync"]
+
+[dev-dependencies]
+tempfile = "3"
