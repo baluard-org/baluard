@@ -37,11 +37,18 @@ function AuthProvider(props) {
   // (not the previously-active one). Cleared on successful unlock.
   const [switchTarget, setSwitchTarget] = createSignal(null);
 
+  async function refreshActiveVault() {
+    try {
+      const r = await daemon("vault.active");
+      setActiveVault(JSON.parse(r));
+    } catch {
+      setActiveVault(null);
+    }
+  }
+
   onMount(() => {
     // Fetch active vault name from plaintext registry (pre-unlock)
-    daemon("vault.active").then(r => {
-      try { setActiveVault(JSON.parse(r)); } catch {}
-    }).catch(() => {});
+    refreshActiveVault();
     // Check if quick unlock is enabled (daemon keychain + biometry available)
     daemon("vault.biometric_status").then(r => {
       const s = JSON.parse(r);
@@ -114,7 +121,7 @@ function AuthProvider(props) {
     createPassword, setCreatePassword,
     switchTarget, setSwitchTarget,
     setLoginPasswordRef: (r) => { loginPasswordRef = r; },
-    unlock, lock, createVault,
+    unlock, lock, createVault, refreshActiveVault,
   };
 
   return (
