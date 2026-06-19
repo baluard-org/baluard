@@ -188,44 +188,65 @@ fn daemon_request(
     action: String,
     payload: String,
     slug: Option<String>,
-    tokens: State<SessionTokens>,
+    store: State<Mutex<SessionStore>>,
 ) -> DaemonResponse {
     log::debug!("[desktop] -> action={action} slug={slug:?} payload_len={}", payload.len());
 
-    // Inject the stored session token for this slug (if any) into the request.
-    // When slug is None, the daemon targets the active vault — we send an
-    // empty token and rely on the daemon's per-vault check.
-    let stored_token = slug
+    // Resolve the effective slug for THIS request. When the caller omits it,
+    // the daemon targets the active vault — but the token check is still
+    // per-vault, so we must send the ACTIVE vault's token. Fall back to the
+    // tracked active_slug to look it up. (M2/Phase 6: no-slug requests like
+    // `vault.list_full` would otherwise send an empty token and be rejected.)
+    let active_slug = store.lock().unwrap().active_slug.clone();
+    let effective_slug = slug.clone().or(active_slug.clone());
+    let stored_token = effective_slug
         .as_ref()
-        .and_then(|s| tokens.0.lock().unwrap().get(s).map(|z| z.as_str().to_owned()))
+        .and_then(|s| store.lock().unwrap().tokens.get(s).map(|z| z.as_str().to_owned()))
         .unwrap_or_default();
 
     match send_request_with_token(&action, &payload, &stored_token, slug.as_deref().unwrap_or("")) {
         Ok((data, new_token)) => {
             log::debug!("[desktop] <- action={action} success=true payload_len={}", data.len());
-            let mut map = tokens.0.lock().unwrap();
+            let mut st = store.lock().unwrap();
             // On lock for a slug, drop that slug's token. On unlock/create,
             // store the returned token under the slug.
             if action == "vault.lock" {
                 if let Some(s) = &slug {
-                    map.remove(s);
+                    st.tokens.remove(s);
+                    if st.active_slug.as_deref() == Some(s.as_str()) {
+                        st.active_slug = None;
+                    }
                 } else {
                     // No slug: legacy lock-all path. Clear everything.
-                    map.clear();
+                    st.tokens.clear();
+                    st.active_slug = None;
                 }
             } else if let Some(t) = new_token {
                 // File the token under the slug. Prefer the explicit slug;
                 // otherwise parse it from the response payload (vault.unlock /
                 // vault.create always return {slug}). If neither yields a slug,
-                // don't store — a slug-less token would never be read back
-                // (slug-less requests send an empty token).
+                // don't store — a slug-less token would never be read back.
                 let key = slug.clone().or_else(|| {
                     serde_json::from_str::<serde_json::Value>(&data)
                         .ok()
                         .and_then(|v| v["slug"].as_str().map(String::from))
                 });
                 if let Some(k) = key {
-                    map.insert(k, zeroize::Zeroizing::new(t));
+                    st.tokens.insert(k.clone(), zeroize::Zeroizing::new(t));
+                    // Unlock/create make the vault active.
+                    st.active_slug = Some(k);
+                }
+            } else {
+                // No new token issued (e.g. vaults.switch flips an already-
+                // unlocked vault). Still track the active focus from the
+                // response so subsequent slug-less requests resolve right.
+                if action == "vaults.switch" || action == "vaults.set_active" {
+                    if let Some(a) = serde_json::from_str::<serde_json::Value>(&data)
+                        .ok()
+                        .and_then(|v| v["active"].as_str().map(String::from))
+                    {
+                        st.active_slug = Some(a);
+                    }
                 }
             }
             DaemonResponse {
@@ -246,8 +267,13 @@ fn daemon_request(
             let is_token_or_lock_err = e.contains("session token")
                 || e.contains("Vault is locked");
             if is_token_or_lock_err {
-                if let Some(s) = &slug {
-                    tokens.0.lock().unwrap().remove(s);
+                let target = slug.as_ref().or(active_slug.as_ref());
+                if let Some(s) = target {
+                    let mut st = store.lock().unwrap();
+                    st.tokens.remove(s);
+                    if st.active_slug.as_deref() == Some(s.as_str()) {
+                        st.active_slug = None;
+                    }
                 }
             }
             DaemonResponse {
@@ -274,11 +300,14 @@ fn daemon_status() -> bool {
 /// all key material. Non-blocking on daemon errors (a down daemon has no
 /// keys to lock).
 #[tauri::command]
-fn lock_all_vaults(tokens: State<SessionTokens>) -> bool {
+fn lock_all_vaults(store: State<Mutex<SessionStore>>) -> bool {
     log::info!("[desktop] system event → lock_all_vaults");
     // Clear our token cache first so the frontend treats every vault as
     // locked even if the daemon RPC is slow.
-    tokens.0.lock().unwrap().clear();
+    let mut st = store.lock().unwrap();
+    st.tokens.clear();
+    st.active_slug = None;
+    drop(st);
     match send_request("vaults.lock_all", "") {
         Ok(payload) => {
             log::info!("[desktop] lock_all succeeded: {payload}");
@@ -298,7 +327,17 @@ fn lock_all_vaults(tokens: State<SessionTokens>) -> bool {
 /// vault slug. Per Phase 6, each unlocked vault has its own token; a
 /// vault-A token is rejected for any vault-B operation. The frontend keeps
 /// a `Map<slug, token>` in lockstep with this.
-struct SessionTokens(std::sync::Mutex<std::collections::HashMap<String, zeroize::Zeroizing<String>>>);
+///
+/// `active_slug` tracks which vault the UI is currently focused on. The
+/// daemon resolves a slug-less request to the active vault, but it STILL
+/// requires that vault's session token — so for a slug-less request we look
+/// up the token under `active_slug`. Updated on unlock/create/switch/
+/// set_active. Without this, `vault.list_full` (always slug-less) would send
+/// an empty token and be rejected with "Invalid session token".
+struct SessionStore {
+    tokens: std::collections::HashMap<String, zeroize::Zeroizing<String>>,
+    active_slug: Option<String>,
+}
 
 /// Phase 6 / T15 / M4: blur-lock debounce state.
 ///
@@ -328,7 +367,10 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_biometry::init())
         .manage(Mutex::new(None::<Daemon>))
-        .manage(SessionTokens(std::sync::Mutex::new(std::collections::HashMap::new())))
+        .manage(Mutex::new(SessionStore {
+            tokens: std::collections::HashMap::new(),
+            active_slug: None,
+        }))
         .manage(BlurLockState {
             blurred: std::sync::atomic::AtomicBool::new(false),
             pending: std::sync::Mutex::new(None),
@@ -572,10 +614,12 @@ pub fn run() {
                             // Clear the per-vault token cache now that every
                             // vault is locked, so the UI treats them as locked
                             // without waiting for a rejection.
-                            if let Some(tokens) =
-                                app_handle.try_state::<SessionTokens>()
+                            if let Some(store) =
+                                app_handle.try_state::<Mutex<SessionStore>>()
                             {
-                                tokens.0.lock().unwrap().clear();
+                                let mut st = store.lock().unwrap();
+                                st.tokens.clear();
+                                st.active_slug = None;
                             }
                         });
                         *blur.pending.lock().unwrap() = Some(handle);
