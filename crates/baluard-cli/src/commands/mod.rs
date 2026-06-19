@@ -2667,6 +2667,7 @@ pub fn handle_vaults(action: &VaultAction, cli: &Cli) -> Result<(), Box<dyn std:
         VaultAction::Switch { slug } => vaults_switch(slug, cli),
         VaultAction::Close { slug } => vaults_close(slug, cli),
         VaultAction::SetDefault { slug } => vaults_set_default(slug, cli),
+        VaultAction::Prune { dry_run } => vaults_prune(*dry_run),
     }
 }
 
@@ -2822,5 +2823,72 @@ fn vaults_set_default(slug: &str, cli: &Cli) -> Result<(), Box<dyn std::error::E
         return Err(resp.error_message.into());
     }
     println!("Default vault for next launch: {slug}");
+    Ok(())
+}
+
+/// Drop registry entries whose vault directory no longer exists on disk.
+/// Reads/writes the registry directly (no daemon needed), so it works even
+/// when the daemon is not running. If the active vault is among the stale,
+/// the first remaining slug (alphabetical) is promoted so a daemon launch
+/// still auto-selects a usable vault instead of landing on a stale pointer.
+fn vaults_prune(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use baluard_core::vault::registry::VaultRegistry;
+
+    let mut reg = VaultRegistry::load_locked()?;
+
+    // Collect stale slugs: the entry exists in the registry but its vault
+    // directory is gone. Sorted for stable, reviewable output.
+    let stale: Vec<String> = {
+        let mut s: Vec<String> = reg
+            .vaults
+            .iter()
+            .filter(|(_, e)| !std::path::Path::new(&e.path).exists())
+            .map(|(slug, _)| slug.clone())
+            .collect();
+        s.sort();
+        s
+    };
+
+    if stale.is_empty() {
+        println!("No stale vault entries. Registry has {} vault(s).", reg.vaults.len());
+        return Ok(());
+    }
+
+    if dry_run {
+        println!("Would remove {} stale entr(y/ies):", stale.len());
+    } else {
+        println!("Removing {} stale entr(y/ies):", stale.len());
+    }
+    for slug in &stale {
+        let path = reg
+            .vaults
+            .get(slug)
+            .map(|e| e.path.display().to_string())
+            .unwrap_or_default();
+        println!("  {slug}  ->  {path}");
+    }
+
+    if dry_run {
+        println!("\n(dry run; registry unchanged. Re-run without --dry-run to apply.)");
+        return Ok(());
+    }
+
+    for slug in &stale {
+        reg.remove(slug); // also clears active_vault if it was this slug
+    }
+
+    // Promote a successor if pruning nulled the active pointer.
+    if reg.active_vault.is_none() && !reg.vaults.is_empty() {
+        let mut remaining: Vec<&String> = reg.vaults.keys().collect();
+        remaining.sort();
+        if let Some(next) = remaining.first() {
+            reg.active_vault = Some((*next).clone());
+            println!("\nActive vault was pruned; promoted '{next}'.");
+        }
+    }
+
+    let kept = reg.vaults.len();
+    reg.save_locked()?;
+    println!("\nDone. {kept} vault(s) remain in the registry.");
     Ok(())
 }

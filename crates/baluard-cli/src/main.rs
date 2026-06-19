@@ -220,7 +220,7 @@ enum Commands {
     /// Ping the daemon to check connectivity.
     Ping,
 
-    /// Manage vaults (list, switch).
+    /// Manage vaults (list, switch, prune stale).
     Vaults {
         #[command(subcommand)]
         action: VaultAction,
@@ -275,6 +275,16 @@ enum VaultAction {
     SetDefault {
         /// Vault slug.
         slug: String,
+    },
+    /// Remove registry entries whose vault directory no longer exists on
+    /// disk (e.g. deleted or never-restored `/tmp` test vaults). The vault
+    /// files are not touched; only stale registry pointers are dropped.
+    /// If the active vault is pruned, the first remaining slug (alphabetical)
+    /// is promoted so the daemon still auto-selects on next launch.
+    Prune {
+        /// Show what would be removed without changing the registry.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
