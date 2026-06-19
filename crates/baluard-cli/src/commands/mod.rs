@@ -310,7 +310,14 @@ pub fn handle_init(
     println!("managers are NOT safe enough — they can fail too.              ");
     println!();
 
-    if !verify_recovery_phrase_interactive(&secrets.recovery_phrase.phrase()) {
+    // Scripting mode (BALUARD_PASSWORD set, e.g. `just seed-demo`) cannot
+    // interactively verify words, and verification only slows automated runs.
+    // The phrase is already printed above; just continue.
+    let scripting = std::env::var("BALUARD_PASSWORD").is_ok();
+    if scripting {
+        println!();
+        println!("✓ Recovery phrase shown above (verification skipped in scripting mode).");
+    } else if !verify_recovery_phrase_interactive(&secrets.recovery_phrase.phrase()) {
         // PR-6 fix: roll back the newly-created vault. Previously we left
         // it on disk and told the user to re-run `baluard init`, which
         // would fail with "vault already exists." Now we delete the
@@ -332,9 +339,9 @@ pub fn handle_init(
         return Err("Recovery phrase verification failed. Vault rolled back. \
              Re-run `baluard init` and complete the verification step."
             .into());
+    } else {
+        println!("✓ Recovery phrase verified. Continuing setup.");
     }
-
-    println!("✓ Recovery phrase verified. Continuing setup.");
 
     println!("Vault files written to: {}", resolved_path.display());
     Ok(())
