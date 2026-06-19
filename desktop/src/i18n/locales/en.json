@@ -80,9 +80,7 @@
       "closeVault": "Close {name} (remove from daemon)",
       "stateUnlocked": "Unlocked",
       "stateLocked": "Locked",
-      "stateClosed": "Closed",
-      "unlockPromptTitle": "Unlock {name}",
-      "unlockPromptBody": "Enter the master password for this vault to switch to it."
+      "stateClosed": "Closed"
     },
     "categoriesTitle": "Categories",
     "foldersTitle": "Folders",

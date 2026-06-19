@@ -1,15 +1,18 @@
 import { Show } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
+import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { daemon } from "../lib/daemon.js";
 import { biometryPrompt } from "../lib/biometry.js";
 import { toastError } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
 import { IconLock, IconFingerprint } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
+import VaultSwitcher from "./VaultSwitcher.jsx";
 
 export default function LoginScreen() {
   const auth = useAuth();
+  const switcher = useVaultSwitcher();
   const { t } = useI18n();
   let passwordRef;
 
@@ -32,8 +35,17 @@ export default function LoginScreen() {
           </div>
           <h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)]">{t("login.title")}</h1>
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("login.subtitle")}</p>
-          <Show when={auth.activeVault()}>
-            <p class="text-xs text-[var(--color-primary)] mt-2 font-medium">{auth.activeVault().display_name}</p>
+          <Show when={switcher.vaults().length > 1} fallback={
+            <Show when={auth.activeVault()}>
+              <p class="text-xs text-[var(--color-primary)] mt-2 font-medium">{auth.activeVault().display_name}</p>
+            </Show>
+          }>
+            <div class="w-full mt-4 text-left">
+              <VaultSwitcher onLockedTarget={(slug) => {
+                auth.setSwitchTarget(slug);
+                auth.refreshActiveVault();
+              }} />
+            </div>
           </Show>
         </div>
 

@@ -22,10 +22,13 @@ import RepromptModal from "./RepromptModal.jsx";
 import SettingsModal from "./SettingsModal.jsx";
 import { FolderTree } from "./FolderTree.jsx";
 import VaultSwitcher from "./VaultSwitcher.jsx";
+import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
+import { IconSwitch } from "./Icon.jsx";
 
 export default function VaultView() {
   const auth = useAuth();
   const vault = useVault();
+  const switcher = useVaultSwitcher();
   const { t } = useI18n();
 
   // Local state (was global signals)
@@ -193,15 +196,7 @@ export default function VaultView() {
             </span>
           </div>
 
-          {/* Phase 6: vault switcher (instant switch between open vaults) */}
-          <div class="px-3 pt-3">
-            <VaultSwitcher onLockedTarget={(slug) => {
-              // A locked/closed vault was picked: re-route through the unlock
-              // screen for that slug. AuthContext reads `activeVault` + the
-              // target slug signal to render the right prompt.
-              if (auth.setSwitchTarget) auth.setSwitchTarget(slug);
-            }} />
-          </div>
+
 
           {/* Navigation Scroll Area */}
           <div class="p-3 space-y-4 overflow-y-auto max-h-[calc(100vh-160px)]">
@@ -336,21 +331,32 @@ export default function VaultView() {
         {/* Sidebar Footer */}
         <div class="p-4 border-t border-[var(--color-border)] flex items-center justify-between gap-3 bg-[var(--color-sidebar)]">
           <div class="flex items-center gap-3 min-w-0 flex-1">
-            <Show when={vault.avatarB64()} fallback={
-              <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-xs shadow-md shrink-0">
-                {(vault.displayName() || "?").slice(0, 2).toUpperCase()}
+            <VaultSwitcher onLockedTarget={(slug) => {
+              if (auth.setSwitchTarget) auth.setSwitchTarget(slug);
+            }}>
+              <div class="relative shrink-0">
+                <Show when={vault.avatarB64()} fallback={
+                  <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-xs shadow-md">
+                    {(vault.displayName() || "?").slice(0, 2).toUpperCase()}
+                  </div>
+                }>
+                  <img
+                    src={`data:image/${vault.avatarExt() === "jpg" ? "jpeg" : vault.avatarExt()};base64,${vault.avatarB64()}`}
+                    alt=""
+                    class="w-9 h-9 rounded-full object-cover shadow-md"
+                  />
+                </Show>
+                <Show when={switcher.vaults().length > 1}>
+                  <span class="absolute -bottom-1 -right-1 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-[var(--color-primary)] text-[var(--color-primary-text)] shadow-md border border-[var(--color-sidebar)]">
+                    <IconSwitch class="w-2.5 h-2.5" />
+                  </span>
+                </Show>
               </div>
-            }>
-              <img
-                src={`data:image/${vault.avatarExt() === "jpg" ? "jpeg" : vault.avatarExt()};base64,${vault.avatarB64()}`}
-                alt=""
-                class="w-9 h-9 rounded-full object-cover shadow-md shrink-0"
-              />
-            </Show>
-            <div class="min-w-0 flex-1">
-              <div class="text-xs font-bold text-[var(--color-text)] truncate leading-none">{vault.displayName() || t("settings.profile")}</div>
-              <div class="text-[9px] text-[var(--color-muted)] truncate mt-1">{vault.profileSubtitle() || ""}</div>
-            </div>
+              <div class="min-w-0 flex-1">
+                <div class="text-xs font-bold text-[var(--color-text)] truncate leading-none">{vault.displayName() || t("settings.profile")}</div>
+                <div class="text-[9px] text-[var(--color-muted)] truncate mt-1">{vault.profileSubtitle() || ""}</div>
+              </div>
+            </VaultSwitcher>
           </div>
           <div class="flex items-center gap-1.5 shrink-0">
             <button

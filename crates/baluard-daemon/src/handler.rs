@@ -777,6 +777,20 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
                 Some(s) => s,
                 None => return err_response("Missing 'slug' for vaults.switch"),
             };
+            // If the vault is in the registry but not in the host map (closed), load and open it.
+            if host.get(&slug).await.is_none() {
+                if let Ok(reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
+                    if let Some(entry) = reg.get(&slug) {
+                        let path = entry.path.clone();
+                        let state = host
+                            .get_or_insert_with(&slug, move || {
+                                Arc::new(VaultState::new(path.clone()))
+                            })
+                            .await;
+                        let _ = state.open().await;
+                    }
+                }
+            }
             match host.switch(&slug).await {
                 Ok(outcome) => {
                     // Touch registry last_opened OUTSIDE the host write lock
@@ -1097,9 +1111,37 @@ async fn handle_vault_open(req: GatewayRequest, host: &SharedVaultHost) -> Gatew
             None => match host.active_slug().await {
                 Some(s) => s,
                 None => {
-                    return err_response(
-                        "vault.open needs a 'slug' or an active vault to open.".to_string(),
-                    );
+                    // Fall back to registry active or first alphabetical whose path exists
+                    if let Ok(reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
+                        let mut candidates = Vec::new();
+                        if let Some(active) = reg.active() {
+                            if std::path::Path::new(&active.path).exists() {
+                                candidates.push(active.slug.clone());
+                            }
+                        }
+                        let mut others = Vec::new();
+                        for entry in reg.vaults.values() {
+                            if Some(&entry.slug) != reg.active().map(|a| &a.slug)
+                                && std::path::Path::new(&entry.path).exists()
+                            {
+                                others.push(entry.slug.clone());
+                            }
+                        }
+                        others.sort();
+                        candidates.extend(others);
+
+                        if !candidates.is_empty() {
+                            candidates[0].clone()
+                        } else {
+                            return err_response(
+                                "vault.open needs a 'slug' or an active vault to open.".to_string(),
+                            );
+                        }
+                    } else {
+                        return err_response(
+                            "vault.open needs a 'slug' or an active vault to open.".to_string(),
+                        );
+                    }
                 }
             },
         }
@@ -1107,6 +1149,10 @@ async fn handle_vault_open(req: GatewayRequest, host: &SharedVaultHost) -> Gatew
 
     // Already in map? Done (no registry read needed).
     if let Some(state) = host.get(&slug).await {
+        // Make this vault the active focus in the host if there is no active slug set.
+        if host.active_slug().await.is_none() {
+            let _ = host.switch(&slug).await;
+        }
         return match state.info().await {
             Ok(info) => ok_resp(info, None),
             Err(e) => err_response(e),
@@ -1122,15 +1168,10 @@ async fn handle_vault_open(req: GatewayRequest, host: &SharedVaultHost) -> Gatew
         return err_response(format!("Vault '{slug}' not found in registry"));
     };
     let path = entry.path.clone();
-    let slug_for_closure = slug.clone();
     let state = host
         .get_or_insert_with(&slug, move || {
             // Runs at most once, under the host write lock.
-            let state = Arc::new(VaultState::new(path.clone()));
-            // Open the handle (locked). Best-effort inside the closure: if it
-            // fails the VaultState is still inserted (locked, no handle) and
-            // the caller sees the error via info(). We spawn the open outside.
-            state
+            Arc::new(VaultState::new(path.clone()))
         })
         .await;
     // Open runs outside the closure (it's async + we don't want to hold the
@@ -1139,7 +1180,11 @@ async fn handle_vault_open(req: GatewayRequest, host: &SharedVaultHost) -> Gatew
     if let Err(e) = state.open().await {
         return err_response(e);
     }
-    let _ = slug_for_closure;
+
+    // Make this vault the active focus in the host if there is no active slug set.
+    if host.active_slug().await.is_none() {
+        let _ = host.switch(&slug).await;
+    }
     match state.info().await {
         Ok(info) => ok_resp(info, None),
         Err(e) => err_response(e),

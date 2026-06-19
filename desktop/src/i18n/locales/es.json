@@ -80,9 +80,7 @@
       "closeVault": "Cerrar {name} (quitar del demonio)",
       "stateUnlocked": "Desbloqueada",
       "stateLocked": "Bloqueada",
-      "stateClosed": "Cerrada",
-      "unlockPromptTitle": "Desbloquear {name}",
-      "unlockPromptBody": "Ingresa la contraseña maestra de esta bóveda para cambiar a ella."
+      "stateClosed": "Cerrada"
     },
     "categoriesTitle": "Categorías",
     "foldersTitle": "Carpetas",
