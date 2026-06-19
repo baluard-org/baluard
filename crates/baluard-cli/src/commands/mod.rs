@@ -265,8 +265,21 @@ pub fn handle_init(
     println!("  Epoch:    1");
     println!("  Device:   {}", secrets.device_id);
     println!();
+    // Print the 24-word phrase numbered and grouped into 3 rows of 8.
+    // Numbering makes the mandatory re-entry verification step trivial to
+    // confirm against during testing (and real use).
     println!("=== RECOVERY PHRASE (write this down!) ===");
-    println!("{}", secrets.recovery_phrase.phrase());
+    let phrase = secrets.recovery_phrase.phrase();
+    let words: Vec<&str> = phrase.split_whitespace().collect();
+    for (i, word) in words.iter().enumerate() {
+        if i % 8 != 0 {
+            print!(" ");
+        }
+        print!("{:>2}. {:<8}", i + 1, word);
+        if i % 8 == 7 || i == words.len() - 1 {
+            println!();
+        }
+    }
     println!("=== END RECOVERY PHRASE ===");
     println!();
     println!(
