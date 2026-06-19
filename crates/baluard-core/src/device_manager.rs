@@ -830,7 +830,7 @@ impl DeviceManager {
                 .registry
                 .devices
                 .get(&approval.approver_device_id)
-                .unwrap();
+                .expect("approver enrollment verified above");
             let approver_vk_bytes: [u8; 32] = hex::decode(&approver_entry.signing_public_key)
                 .map_err(|_| DeviceError::Keystore("invalid approver key".into()))?
                 .try_into()
@@ -957,7 +957,12 @@ impl DeviceManager {
             }
         }
 
-        Ok((new_root, self.pending_transaction.as_ref().unwrap()))
+        Ok((
+            new_root,
+            self.pending_transaction
+                .as_ref()
+                .expect("set to Some(tx) above"),
+        ))
     }
 
     /// Record an acknowledgment from a device for the pending rotation.
@@ -999,7 +1004,11 @@ impl DeviceManager {
         }
 
         // Verify signature
-        let device_entry = self.registry.devices.get(&ack.device_id).unwrap();
+        let device_entry = self
+            .registry
+            .devices
+            .get(&ack.device_id)
+            .expect("enrollment verified above");
         let vk_bytes: [u8; 32] = hex::decode(&device_entry.signing_public_key)
             .map_err(|_| DeviceError::Keystore("invalid signing key".into()))?
             .try_into()

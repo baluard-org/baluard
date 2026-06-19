@@ -2138,7 +2138,10 @@ pub fn handle_health(socket: Option<&str>) -> Result<(), Box<dyn std::error::Err
 
     if weak > 0 {
         println!("Weak passwords ({}):", weak);
-        for entry in report["weak"].as_array().unwrap() {
+        for entry in report["weak"]
+            .as_array()
+            .expect("len > 0 verified by `weak` count")
+        {
             println!(
                 "  {} - {}",
                 entry["name"].as_str().unwrap_or("?"),
@@ -2150,7 +2153,10 @@ pub fn handle_health(socket: Option<&str>) -> Result<(), Box<dyn std::error::Err
 
     if reused > 0 {
         println!("Reused passwords ({}):", reused);
-        for entry in report["reused"].as_array().unwrap() {
+        for entry in report["reused"]
+            .as_array()
+            .expect("len > 0 verified by `reused` count")
+        {
             println!(
                 "  {} - {}",
                 entry["name"].as_str().unwrap_or("?"),
@@ -2162,7 +2168,10 @@ pub fn handle_health(socket: Option<&str>) -> Result<(), Box<dyn std::error::Err
 
     if old > 0 {
         println!("Old passwords ({}):", old);
-        for entry in report["old"].as_array().unwrap() {
+        for entry in report["old"]
+            .as_array()
+            .expect("len > 0 verified by `old` count")
+        {
             println!(
                 "  {} - {}",
                 entry["name"].as_str().unwrap_or("?"),
@@ -2241,8 +2250,10 @@ pub fn handle_attach_download(
 
     let result: serde_json::Value = serde_json::from_str(&resp.payload)?;
     use base64::Engine;
-    let mut data = base64::engine::general_purpose::STANDARD
-        .decode(result["data_base64"].as_str().unwrap())?;
+    let data_b64 = result["data_base64"]
+        .as_str()
+        .ok_or_else(|| "daemon response missing data_base64 field".to_string())?;
+    let mut data = base64::engine::general_purpose::STANDARD.decode(data_b64)?;
     std::fs::write(output_path, &data)?;
 
     // Zeroize after writing
@@ -2714,7 +2725,10 @@ fn vaults_list(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     let mut slugs: Vec<&str> = reg.vaults.keys().map(|s| s.as_str()).collect();
     slugs.sort();
     for slug in slugs {
-        let entry = reg.vaults.get(slug).unwrap();
+        let entry = reg
+            .vaults
+            .get(slug)
+            .expect("slug sourced from vaults.keys()");
         let active_marker = if reg.active_vault.as_deref() == Some(slug) {
             "*"
         } else {

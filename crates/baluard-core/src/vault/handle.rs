@@ -2167,7 +2167,7 @@ impl VaultHandle {
         let mut staged_renames: Vec<(PathBuf, PathBuf)> = Vec::new();
         for (cipher_id, is_trash) in &all_ids {
             let dir = if *is_trash { "trash" } else { "ciphers" };
-            let file_path = self.path.join(format!("{dir}/{cipher_id}.enc"));
+            let file_path = self.path.join(dir).join(format!("{cipher_id}.enc"));
             if !file_path.exists() {
                 continue;
             }
@@ -2465,7 +2465,7 @@ impl VaultHandle {
         let mut staged_renames: Vec<(PathBuf, PathBuf)> = Vec::new();
         for (cipher_id, is_trash) in &all_ids {
             let dir = if *is_trash { "trash" } else { "ciphers" };
-            let file_path = self.path.join(format!("{dir}/{cipher_id}.enc"));
+            let file_path = self.path.join(dir).join(format!("{cipher_id}.enc"));
             if !file_path.exists() {
                 continue;
             }
