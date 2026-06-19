@@ -78,6 +78,8 @@
       "switchedTo": "Switched to {name}",
       "closed": "Closed {name}",
       "closeVault": "Close {name} (remove from daemon)",
+      "unlockTitle": "Unlock vault",
+      "unlockBody": "Enter the master password to unlock this vault.",
       "stateUnlocked": "Unlocked",
       "stateLocked": "Locked",
       "stateClosed": "Closed"

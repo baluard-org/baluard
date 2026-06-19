@@ -78,6 +78,8 @@
       "switchedTo": "Cambiado a {name}",
       "closed": "Cerrada {name}",
       "closeVault": "Cerrar {name} (quitar del demonio)",
+      "unlockTitle": "Desbloquear bóveda",
+      "unlockBody": "Introduce la contraseña maestra para desbloquear esta bóveda.",
       "stateUnlocked": "Desbloqueada",
       "stateLocked": "Bloqueada",
       "stateClosed": "Cerrada"

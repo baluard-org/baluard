@@ -42,20 +42,25 @@ export default function VaultSwitcher(props) {
   async function pick(row) {
     setOpen(false);
     if (row.active) return;
-    try {
-      const outcome = await switcher.switchTo(row.slug);
-      if (outcome.presence === "unlocked") {
-        // Instant switch: refetch the new active vault's data.
+    // Branch on the row's current presence BEFORE flipping the daemon's
+    // active pointer. For an already-unlocked vault we switch + refetch
+    // (instant). For a locked/closed vault we hand off to the unlock flow
+    // WITHOUT switching — switching first would leave the active pointer on
+    // a locked vault if the user cancels, breaking slug-less requests for
+    // the still-displayed vault.
+    if (row.presence === "unlocked") {
+      try {
+        await switcher.switchTo(row.slug);
         if (vault) {
           await vault.refreshCiphers(t);
         }
         toastSuccess(t("vault.vaultSwitcher.switchedTo", { name: row.display_name }));
-      } else {
-        // Locked or closed: hand off to the unlock flow.
-        if (props.onLockedTarget) props.onLockedTarget(row.slug);
+      } catch (e) {
+        toastError(sanitizeError(e, t));
       }
-    } catch (e) {
-      toastError(sanitizeError(e, t));
+    } else {
+      // Locked or closed: hand off to the unlock flow (modal).
+      if (props.onLockedTarget) props.onLockedTarget(row);
     }
   }
 

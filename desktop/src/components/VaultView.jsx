@@ -22,6 +22,7 @@ import RepromptModal from "./RepromptModal.jsx";
 import SettingsModal from "./SettingsModal.jsx";
 import { FolderTree } from "./FolderTree.jsx";
 import VaultSwitcher from "./VaultSwitcher.jsx";
+import SwitchUnlockModal from "./SwitchUnlockModal.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { IconSwitch } from "./Icon.jsx";
 
@@ -43,6 +44,9 @@ export default function VaultView() {
   const [showEmptyTrashConfirm, setShowEmptyTrashConfirm] = createSignal(false);
   const [showNewFolder, setShowNewFolder] = createSignal(false);
   const [deleteTagName, setDeleteTagName] = createSignal(null);
+  // Phase 6: vault picked from the switcher that needs unlocking. When set,
+  // SwitchUnlockModal renders over the current view. Cleared on success/cancel.
+  const [switchUnlockTarget, setSwitchUnlockTarget] = createSignal(null);
 
   // Init: load ciphers on first mount
   onMount(async () => {
@@ -331,8 +335,8 @@ export default function VaultView() {
         {/* Sidebar Footer */}
         <div class="p-4 border-t border-[var(--color-border)] flex items-center justify-between gap-3 bg-[var(--color-sidebar)]">
           <div class="flex items-center gap-3 min-w-0 flex-1">
-            <VaultSwitcher onLockedTarget={(slug) => {
-              if (auth.setSwitchTarget) auth.setSwitchTarget(slug);
+            <VaultSwitcher onLockedTarget={(row) => {
+              setSwitchUnlockTarget({ slug: row.slug, display_name: row.display_name });
             }}>
               <div class="relative shrink-0">
                 <Show when={vault.avatarB64()} fallback={
@@ -561,6 +565,13 @@ export default function VaultView() {
           </Switch>
         </Transition>
       </div>
+
+      {/* Phase 6: unlock a locked vault picked from the switcher, in place. */}
+      <SwitchUnlockModal
+        target={switchUnlockTarget()}
+        onClose={() => setSwitchUnlockTarget(null)}
+        onUnlocked={() => vault.refreshCiphers(t)}
+      />
     </div>
   );
 }

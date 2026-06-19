@@ -41,8 +41,13 @@ export default function LoginScreen() {
             </Show>
           }>
             <div class="w-full mt-4 text-left">
-              <VaultSwitcher onLockedTarget={(slug) => {
-                auth.setSwitchTarget(slug);
+              <VaultSwitcher onLockedTarget={async (row) => {
+                // Pre-unlock: moving the active pointer is safe (nothing is
+                // unlocked yet) and is what makes the pick visibly change the
+                // selection. Contrast with the unlocked view, where the
+                // pointer must NOT move until the target actually unlocks.
+                await switcher.switchTo(row.slug);
+                auth.setSwitchTarget(row.slug);
                 auth.refreshActiveVault();
               }} />
             </div>
