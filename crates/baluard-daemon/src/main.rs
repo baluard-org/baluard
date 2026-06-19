@@ -205,20 +205,30 @@ fn main() -> anyhow::Result<()> {
 async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) -> Result<()> {
     let host: SharedVaultHost = VaultHost::shared();
 
-    // Lazy-load the resolved active vault into the host map (locked state).
-    // The map starts with at most one entry; the rest fill as the user
-    // switches/unlocks. We do NOT unlock here — the user still has to
-    // present the master password.
+    // Lazy-load the resolved active vault into the host map (opened but
+    // locked). The map starts with at most one entry; the rest fill as the
+    // user switches/unlocks. We do NOT unlock here — the user still has to
+    // present the master password. Opening here (rather than lazily on the
+    // first request) keeps the no-slug `vault.open` path honest: a
+    // registered-and-present vault returns locked info instead of failing.
     if let Some(slug) = active_slug {
         // Read the path from the registry (the slug was resolved from the
         // registry or --vault-slug, so it must be present).
         let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
         if let Some(entry) = reg.get(slug) {
             let state = Arc::new(VaultState::new(entry.path.clone()));
-            host.insert(slug.clone(), state).await;
-            // Best-effort: make it the active focus. Errors (e.g. empty map
-            // races) are non-fatal.
-            let _ = host.switch(slug).await;
+            host.insert(slug.clone(), state.clone()).await;
+            if state.open().await.is_ok() {
+                // Opened (locked). Make it the active focus.
+                let _ = host.switch(slug).await;
+            } else {
+                // Path vanished or unreadable (e.g. stale active_vault).
+                // Evict so the no-slug `vault.open` fallback can pick a
+                // vault whose path still exists. Non-fatal: the registry
+                // may still hold other usable vaults.
+                log::warn!("Active vault '{slug}' could not be opened; evicted from host");
+                host.close(slug).await;
+            }
         }
     }
 
