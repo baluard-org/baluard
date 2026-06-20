@@ -190,19 +190,23 @@ impl VaultState {
     }
 
     /// Decide whether this single vault should auto-lock now. Reads its own
-    /// `auto_lock_minutes` from settings + `last_activity`. Returns `false`
+    /// `vault_timeout` policy from settings + `last_activity`. Returns `false`
     /// for any locked or unopened vault (nothing to do).
     ///
-    /// Used by both the legacy single-vault checker and the Phase 6 host
-    /// walker. The actual `lock()` happens in the caller so this method is
-    /// side-effect free (no cover-timer / session-token churn on a `false`).
+    /// Used by the Phase 6 host walker. The actual `lock()` happens in the
+    /// caller so this method is side-effect free (no cover-timer /
+    /// session-token churn on a `false`).
     ///
-    /// M12 fix: 0 is treated as "use default" rather than "never auto-lock".
-    /// Also clamps to a sane maximum to prevent indefinite key residency.
+    /// Policy mapping:
+    /// - `Minutes(n)` -> idle check (elapsed >= n minutes)
+    /// - `OnAppExit` -> never by idle (the vault locks when the app exits)
+    /// - `Immediately` -> never here (driven by the desktop blur event, not
+    ///   the walker; see `vaults.on_app_blur`)
+    ///
+    /// No maximum cap: the user's explicit choice is respected. The natural
+    /// backstop is app exit (the daemon sidecar dies on quit, keys are
+    /// in-memory only) + manual lock.
     pub async fn should_auto_lock(&self) -> bool {
-        const DEFAULT_AUTO_LOCK_MINUTES: u32 = 15;
-        const MAX_AUTO_LOCK_MINUTES: u32 = 24 * 60; // 24 hours
-
         let timeout_minutes = {
             let guard = self.inner.read().await;
             let Some(handle) = guard.as_ref() else {
@@ -214,15 +218,32 @@ impl VaultState {
             handle
                 .get_settings()
                 .ok()
-                .and_then(|s| s.auto_lock_minutes)
-                .filter(|m| *m > 0)
-                .unwrap_or(DEFAULT_AUTO_LOCK_MINUTES)
-                .min(MAX_AUTO_LOCK_MINUTES)
+                .map(|s| s.vault_timeout)
+                .unwrap_or_default()
+                .idle_minutes()
+        };
+
+        let Some(timeout_minutes) = timeout_minutes else {
+            return false; // OnAppExit / Immediately -> not idle-timed
         };
 
         let elapsed = self.seconds_since_activity();
         let timeout_secs = (timeout_minutes as u64) * 60;
         elapsed >= timeout_secs
+    }
+
+    /// Read this vault's timeout policy. Falls back to the default when the
+    /// vault is closed/locked or settings can't be read. Used by the desktop
+    /// blur event to decide whether this vault locks on app background.
+    pub async fn timeout_policy(&self) -> baluard_core::vault::manifest::VaultTimeout {
+        let guard = self.inner.read().await;
+        let Some(handle) = guard.as_ref() else {
+            return baluard_core::vault::manifest::VaultTimeout::default_for_new();
+        };
+        handle
+            .get_settings()
+            .map(|s| s.vault_timeout)
+            .unwrap_or_default()
     }
 
     /// Open a vault from disk (locked state).
@@ -477,9 +498,10 @@ impl VaultState {
 
         let mut settings = handle.get_settings().map_err(|e| format!("{e}"))?;
 
-        if let Some(v) = partial.get("auto_lock_minutes") {
-            settings.auto_lock_minutes = serde_json::from_value(v.clone())
-                .map_err(|e| format!("Invalid auto_lock_minutes: {e}"))?;
+        // Vault timeout policy token (e.g. "15m", "immediately", "on_app_exit").
+        if let Some(v) = partial.get("vault_timeout") {
+            settings.vault_timeout = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid vault_timeout: {e}"))?;
         }
         if let Some(v) = partial.get("theme") {
             settings.theme =

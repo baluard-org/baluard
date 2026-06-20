@@ -1,18 +1,21 @@
 import { IconClock, IconFingerprint } from "./Icon.jsx";
-import { createSignal, Show } from "solid-js";
+import { createSignal, Show, For } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
+import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 
 export default function AutoLockButton() {
   const { t } = useI18n();
   const [showSettings, setShowSettings] = createSignal(false);
-  const [lockMinutes, setLockMinutes] = createSignal(15);
+  const [timeoutToken, setTimeoutToken] = createSignal("15m");
   const [saved, setSaved] = createSignal(false);
 
-  async function saveAutoLock() {
+  async function saveAutoLock(token) {
+    const next = normalizeVaultTimeout(token);
+    setTimeoutToken(next);
     try {
-      await daemon("settings.set", JSON.stringify({ auto_lock_minutes: lockMinutes() }));
+      await daemon("settings.set", JSON.stringify({ vault_timeout: next }));
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {
@@ -23,7 +26,7 @@ export default function AutoLockButton() {
   async function loadSetting() {
     try {
       const data = JSON.parse(await daemon("settings.get"));
-      if (data.auto_lock_minutes) setLockMinutes(data.auto_lock_minutes);
+      setTimeoutToken(normalizeVaultTimeout(data.vault_timeout));
     } catch (e) {}
   }
 
@@ -40,24 +43,19 @@ export default function AutoLockButton() {
       <Show when={showSettings()}>
         <div class="autolock__panel absolute bottom-full right-0 mb-2 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-xl p-4 w-56 z-50">
           <div class="autolock__title text-xs font-bold text-[var(--color-text)] mb-3">{t("settings.autolockTimeout")}</div>
-          <div class="autolock__field flex items-center gap-2 mb-3">
-            <input
-              type="number"
-              min="1"
-              max="120"
-              value={lockMinutes()}
-              onInput={e => setLockMinutes(parseInt(e.target.value) || 15)}
-              aria-label={t("settings.autolockTimeout")}
-              class="autolock__input w-20 px-3 py-2 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] text-center"
-            />
-            <span class="autolock__label text-xs text-[var(--color-muted)]">{t("settings.minutes")}</span>
-          </div>
-          <button
-            onClick={saveAutoLock}
-            class="autolock__save-btn w-full py-1.5 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer"
+          <select
+            value={timeoutToken()}
+            onChange={(e) => saveAutoLock(e.currentTarget.value)}
+            aria-label={t("settings.autolockTimeout")}
+            class="autolock__select w-full px-3 py-2 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] cursor-pointer mb-2"
           >
-            {saved() ? t("settings.saved") : t("settings.save")}
-          </button>
+            <For each={VAULT_TIMEOUT_PRESETS}>
+              {(p) => <option value={p.token}>{t(`settings.timeoutPreset.${p.token}`)}</option>}
+            </For>
+          </select>
+          <Show when={saved()}>
+            <div class="autolock__saved text-[10px] text-[var(--color-primary)] font-bold mb-1">{t("settings.saved")}</div>
+          </Show>
           <div class="autolock__desc text-[10px] text-[var(--color-muted)] mt-2">{t("settings.autolockInactivity")}</div>
  
           {/* Biometric Unlock */}

@@ -573,7 +573,7 @@ impl VaultHandle {
         let settings_path = self.path.join("meta/settings.json");
         if !settings_path.exists() {
             return Ok(crate::vault::manifest::VaultSettings {
-                auto_lock_minutes: None,
+                vault_timeout: crate::vault::manifest::VaultTimeout::default_for_new(),
                 theme: None,
                 lang: None,
                 default_uri_match: None,

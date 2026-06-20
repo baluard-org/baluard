@@ -233,7 +233,7 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
     }
 
     // Spawn the single multi-vault auto-lock checker. Iterates the host map
-    // every 30s and applies each vault's own auto_lock_minutes.
+    // every 30s and applies each vault's own vault_timeout policy.
     host.spawn_auto_lock_checker();
 
     // Ensure socket parent directory exists.

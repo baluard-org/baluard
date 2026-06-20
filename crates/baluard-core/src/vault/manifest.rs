@@ -8,6 +8,137 @@ use uuid::Uuid;
 
 use crate::types::DeviceId;
 
+/// Vault auto-lock policy (chosen from the desktop dropdown preset list).
+///
+/// A single choice from a preset list (see the desktop dropdown). The wire
+/// form is a lowercase string token so the frontend deals with one scalar:
+/// - `"immediately"`  -> lock the moment the app loses focus (blur/minimize)
+/// - `"1m"`..`"4h"`  -> lock after N minutes of daemon inactivity
+/// - `"on_app_exit"` -> no idle lock; the vault locks when the app exits
+///   (the daemon is a sidecar that dies on quit, so keys are gone and the
+///   vault starts locked next launch)
+///
+/// The wire form is a lowercase string token (e.g. `"15m"`, `"2h"`). The
+/// deserializer accepts only string tokens; an unknown token falls back to
+/// the default.
+///
+/// The OS power-event triggers from the Bitwarden reference UI (On system
+/// lock / sleep / idle) require platform-specific hooks that are not yet
+/// wired (see the TODO in desktop/src-tauri/src/lib.rs). They are omitted
+/// from the preset list until those hooks ship; fail-closed over shipping
+/// options that silently do nothing.
+///
+/// FUTURE NICE-TO-HAVE: a true "Never" that keeps the vault unlocked across
+/// app/computer restart is NOT implemented. It would require persisting an
+/// unlock secret (KEK or master password) to the OS keychain + auto-unlocking
+/// on launch, plus a warning that the user is deferring security to the OS
+/// (full-disk encryption + a strong login password). Tracked as a follow-up;
+/// do not add a "never" option until that lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaultTimeout {
+    /// Lock as soon as the app is backgrounded / minimized / loses focus.
+    Immediately,
+    /// Lock after `minutes` of daemon inactivity (no IPC requests).
+    Minutes(u32),
+    /// No idle timer. The vault locks only when the app exits (the daemon
+    /// sidecar dies on quit, so keys never survive a restart).
+    OnAppExit,
+}
+
+impl VaultTimeout {
+    /// Default policy for new vaults: 15 minutes of inactivity.
+    pub fn default_for_new() -> Self {
+        VaultTimeout::Minutes(15)
+    }
+
+    /// Whether the daemon's idle walker should evaluate this policy.
+    /// `Immediately` is driven by the desktop blur event (not the walker);
+    /// `OnAppExit` never auto-locks by idle.
+    pub fn is_idle_timed(&self) -> bool {
+        matches!(self, VaultTimeout::Minutes(_))
+    }
+
+    /// Minutes of inactivity before an idle lock, or `None` if not idle-timed.
+    /// No cap: the user's explicit choice is respected. The natural backstop
+    /// is app exit (the daemon sidecar dies on quit, keys are in-memory only).
+    pub fn idle_minutes(&self) -> Option<u32> {
+        match self {
+            VaultTimeout::Minutes(m) => Some(*m),
+            _ => None,
+        }
+    }
+
+    /// Stable wire token for serialization + frontend consumption.
+    pub fn as_token(&self) -> String {
+        match self {
+            VaultTimeout::Immediately => "immediately".to_string(),
+            VaultTimeout::Minutes(m) => format!("{m}m"),
+            VaultTimeout::OnAppExit => "on_app_exit".to_string(),
+        }
+    }
+
+    /// Parse a wire token (or a bare integer of minutes) into a policy.
+    /// Unknown / empty -> default. Used by the deserializer + `settings.set`.
+    pub fn from_token(raw: &str) -> Self {
+        let s = raw.trim().to_ascii_lowercase();
+        match s.as_str() {
+            "" | "default" => VaultTimeout::default_for_new(),
+            "immediately" | "instant" | "now" => VaultTimeout::Immediately,
+            "on_app_exit" => VaultTimeout::OnAppExit,
+            other => {
+                // Duration tokens: "15m", "15", "90m", "2h", etc.
+                if let Some(mins) = parse_minutes_token(other) {
+                    return VaultTimeout::Minutes(mins);
+                }
+                VaultTimeout::default_for_new()
+            }
+        }
+    }
+}
+
+impl Default for VaultTimeout {
+    fn default() -> Self {
+        VaultTimeout::default_for_new()
+    }
+}
+
+/// Parse a duration token into minutes. Accepts `"15m"`, `"15"`, `"2h"`,
+/// `"90"`. Returns `None` when it is not a recognizable duration.
+fn parse_minutes_token(s: &str) -> Option<u32> {
+    if let Some(rest) = s.strip_suffix('h') {
+        return rest.parse::<u32>().ok().map(|h| h.saturating_mul(60));
+    }
+    let digits = s.strip_suffix('m').unwrap_or(s);
+    digits.parse::<u32>().ok()
+}
+
+impl Serialize for VaultTimeout {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.as_token())
+    }
+}
+
+impl<'de> Deserialize<'de> for VaultTimeout {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            // Wire form: lowercase string token.
+            serde_json::Value::String(s) => Ok(VaultTimeout::from_token(&s)),
+            serde_json::Value::Null => Ok(VaultTimeout::default_for_new()),
+            other => Err(Error::custom(format!(
+                "invalid vault_timeout: expected a string token, got {other}"
+            ))),
+        }
+    }
+}
+
 /// Device registry entry (stored in meta/devices.json).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceEntry {
@@ -82,7 +213,9 @@ pub enum TrashObjectType {
 /// Vault settings (stored encrypted in meta/settings.enc, last-write-wins).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VaultSettings {
-    pub auto_lock_minutes: Option<u32>,
+    /// Auto-lock policy token.
+    #[serde(default, deserialize_with = "VaultTimeout::deserialize")]
+    pub vault_timeout: VaultTimeout,
     pub theme: Option<crate::types::ThemeMode>,
     /// Language code (e.g. "en", "es"). Persisted separately in plaintext meta/locale.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -201,7 +334,7 @@ mod tests {
 
     #[test]
     fn vault_settings_rejects_unknown_uri_match_strategy() {
-        let json = r#"{"auto_lock_minutes": 10, "default_uri_match": "exakt"}"#;
+        let json = r#"{"vault_timeout": "10m", "default_uri_match": "exakt"}"#;
         let result: Result<VaultSettings, _> = serde_json::from_str(json);
         assert!(
             result.is_err(),
@@ -288,7 +421,7 @@ mod tests {
     fn enrollment_policy_backward_compat_existing_vaults_default_strict() {
         // When deserializing old settings.json without the field,
         // default_enrollment_policy() returns Strict (preserves old behavior).
-        let json = r#"{"auto_lock_minutes": 10}"#;
+        let json = r#"{"vault_timeout": "10m"}"#;
         let settings: VaultSettings = serde_json::from_str(json).unwrap();
         assert_eq!(settings.enrollment_policy, EnrollmentPolicy::Strict);
     }
@@ -317,5 +450,63 @@ mod tests {
         // New VaultSettings::default() should be Personal (the product-intent default).
         let settings = VaultSettings::default();
         assert_eq!(settings.enrollment_policy, EnrollmentPolicy::Personal);
+    }
+
+    #[test]
+    fn vault_timeout_default_is_15_minutes() {
+        assert_eq!(VaultTimeout::default(), VaultTimeout::Minutes(15));
+        assert_eq!(
+            VaultSettings::default().vault_timeout,
+            VaultTimeout::Minutes(15)
+        );
+    }
+
+    #[test]
+    fn vault_timeout_string_token_roundtrip() {
+        // Deserialization: every token maps to the expected policy.
+        for (token, expected) in [
+            ("immediately", VaultTimeout::Immediately),
+            ("1m", VaultTimeout::Minutes(1)),
+            ("15m", VaultTimeout::Minutes(15)),
+            ("2h", VaultTimeout::Minutes(120)),
+            ("on_app_exit", VaultTimeout::OnAppExit),
+        ] {
+            let json = format!("{{\"vault_timeout\": \"{token}\"}}");
+            let settings: VaultSettings = serde_json::from_str(&json).unwrap();
+            assert_eq!(settings.vault_timeout, expected, "failed for token {token}");
+        }
+
+        // Serialization is canonical-by-minutes: Minutes(120) -> "120m",
+        // not "2h". Hour tokens are convenience aliases on input only.
+        assert_eq!(
+            serde_json::to_string(&VaultTimeout::Minutes(120)).unwrap(),
+            "\"120m\""
+        );
+        assert_eq!(
+            serde_json::to_string(&VaultTimeout::OnAppExit).unwrap(),
+            "\"on_app_exit\""
+        );
+        assert_eq!(
+            serde_json::to_string(&VaultTimeout::Immediately).unwrap(),
+            "\"immediately\""
+        );
+    }
+
+    #[test]
+    fn vault_timeout_respects_arbitrarily_long_window() {
+        // No MAX cap: the user's explicit choice is respected. The stored
+        // value is honored as-is.
+        let json = r#"{"vault_timeout": "9999m"}"#;
+        let settings: VaultSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(settings.vault_timeout, VaultTimeout::Minutes(9999));
+        assert_eq!(settings.vault_timeout.idle_minutes(), Some(9999));
+    }
+
+    #[test]
+    fn vault_timeout_idle_flags() {
+        assert!(VaultTimeout::Minutes(5).is_idle_timed());
+        assert!(!VaultTimeout::Immediately.is_idle_timed());
+        assert!(!VaultTimeout::OnAppExit.is_idle_timed());
+        assert_eq!(VaultTimeout::OnAppExit.idle_minutes(), None);
     }
 }

@@ -311,6 +311,33 @@ impl VaultHost {
         locked
     }
 
+    /// Lock only the open vaults whose timeout policy is `Immediately`. Called
+    /// by the desktop on window blur / minimize so backgrounding the app
+    /// honors each vault's own policy instead of unconditionally locking
+    /// everything (the old behavior). Returns the number locked. Other
+    /// policies (`Minutes`, `OnAppExit`) are left for the idle
+    /// walker / app-exit to handle.
+    pub async fn lock_blur_vaults(&self) -> usize {
+        use baluard_core::vault::manifest::VaultTimeout;
+
+        // Snapshot the arcs once, drop the host lock, then check each vault's
+        // policy + lock (both acquire the vault's inner lock — never nested
+        // under the host lock).
+        let open: Vec<Arc<VaultState>> = {
+            let guard = self.inner.read().await;
+            guard.vaults.values().cloned().collect()
+        };
+        let mut locked = 0usize;
+        for state in open {
+            if state.timeout_policy().await == VaultTimeout::Immediately
+                && state.lock().await.is_ok()
+            {
+                locked += 1;
+            }
+        }
+        locked
+    }
+
     /// Phase 6 / T15: log the aggregate `mlock` footprint across all open
     /// vaults.
     ///
@@ -404,7 +431,7 @@ impl VaultHost {
     // ── auto-lock ──
 
     /// Single background task that walks the vault map every 30s and
-    /// applies each vault's own `auto_lock_minutes` + `last_activity`.
+    /// applies each vault's own `vault_timeout` + `last_activity`.
     ///
     /// Active-pointer-on-autolock policy: when the active vault auto-locks,
     /// `active` is LEFT pointing at it. The next implicit-`active` request
