@@ -60,6 +60,18 @@ function VaultProvider(props) {
 
   // ── Data fetchers ──
 
+  // Reset vault-scoped navigation + filters. Called when the active vault
+  // changes (switcher) so a stale category/folder/tag/search selection or
+  // pane from the previous vault doesn't carry over. VaultView resets its
+  // own local state (viewCipher/newCipher) separately.
+  function resetNavigation() {
+    setSelectedCategory("All items");
+    setSelectedFolder(null);
+    setSelectedTag(null);
+    setSearchQuery("");
+    setActivePane("welcome");
+  }
+
   async function refreshCiphers(t) {
     try {
       const prefetch = consumeVaultPrefetch();
@@ -229,6 +241,7 @@ function VaultProvider(props) {
     displayName, profileSubtitle, avatarB64, avatarExt,
     // Actions
     refreshCiphers, refreshDeviceFleet, refreshProfile,
+    resetNavigation,
     addCipher, updateCipher, getCipher,
     deleteCipher, restoreCipher, archiveCipher, unarchiveCipher, deleteTag,
   };

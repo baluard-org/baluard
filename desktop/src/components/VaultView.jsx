@@ -1,4 +1,4 @@
-import { createSignal, createMemo, onMount, onCleanup, Show, For, Switch, Match } from "solid-js";
+import { createSignal, createMemo, createEffect, onMount, onCleanup, Show, For, Switch, Match } from "solid-js";
 import { Transition } from "solid-transition-group";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useVault } from "../context/VaultContext.jsx";
@@ -51,6 +51,21 @@ export default function VaultView() {
   // Init: load ciphers on first mount
   onMount(async () => {
     await vault.refreshCiphers(t);
+  });
+
+  // Reset vault-scoped view state when the active vault changes (instant
+  // switch OR switch-unlock modal). An open detail/edit pane, a half-filled
+  // add form, or a stale folder/tag/search filter from the previous vault
+  // must not survive a vault change. `lastSwitchSlug` guards the initial
+  // run so first mount doesn't reset.
+  let lastSwitchSlug = switcher.activeSlug();
+  createEffect(() => {
+    const slug = switcher.activeSlug();
+    if (slug === lastSwitchSlug) return;
+    lastSwitchSlug = slug;
+    setViewCipher(null);
+    setNewCipher({ ...EMPTY_CIPHER });
+    vault.resetNavigation();
   });
 
   // Close add menu on outside click
@@ -570,7 +585,12 @@ export default function VaultView() {
       <SwitchUnlockModal
         target={switchUnlockTarget()}
         onClose={() => setSwitchUnlockTarget(null)}
-        onUnlocked={() => vault.refreshCiphers(t)}
+        onUnlocked={async () => {
+          await vault.refreshCiphers(t);
+          // Refresh the switcher so activeSlug updates to the newly-active
+          // vault — that fires the createEffect above which resets the view.
+          await switcher.refresh();
+        }}
       />
     </div>
   );
