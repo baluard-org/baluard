@@ -9,13 +9,14 @@ const AuthContext = createContext();
 
 // Valid auth state transitions. Dev-only guard.
 const VALID_AUTH_TRANSITIONS = {
-  locked:    ["unlocking", "init"],
+  locked:    ["unlocking", "init", "welcome"],
   unlocking: ["unlocked", "locked"],
   unlocked:  ["locked"],
   init:      ["creating", "locked"],
   creating:  ["recovery", "init"],
   recovery:  ["setup", "init", "locked"],
   setup:     ["unlocked", "locked"],
+  welcome:   ["init", "locked"],
 };
 
 function guardedSetStatus(setStatus, from, to) {

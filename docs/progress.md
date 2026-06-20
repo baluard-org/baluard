@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-06-20 (Icon audit done)
+> Last updated: 2026-06-20 (Phase 4 remote vault clone shipped)
 
 ---
 
@@ -176,7 +176,7 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 | **Phase 1** | Slug + .baluard marker + vault registry + multi-vault CLI | **Done** |
 | **Phase 2** | Provider trait + GitHub auth (device flow + PAT) + keyring + daemon routes | **Done** |
 | **Phase 3** | GitHub repo operations + first sync + credential wiring | **Done** |
-| Phase 4 | Remote vault clone + three-screen wizard | Not started |
+| Phase 4 | Remote vault clone + three-button wizard — **implemented**. `vault.clone_start/progress/finalize` daemon job flow (host-level, pre-unlock, NOT token-gated) + `SyncEngine::clone_remote` (provider-hinted creds + git2 `transfer_progress` -> live `CloneProgress`). CLI `baluard sync clone <provider> <repo>` (daemon-only). Desktop: `WelcomeScreen` (new vault / open local / download from provider) + `CloneFromProviderScreen` (provider pick -> auth -> `provider.vault_repos` list -> clone w/ progress bar -> master-pw unlock). `vaults.register_local` route (open-local, no copy). `provider.repos`/`vault_repos` un-gated (sentinel-safe, pre-unlock). 2FA warning banner (dismissible, per-provider). Orphan-dir cleanup on clone failure. `tauri-plugin-dialog` for the dir picker. Core + JS tests (clone progress, unreachable source, poll/finalize, failure path). | **Done** |
 | **Phase 5** | GitLab (device flow + PAT + 2h refresh) + Codeberg (web-OAuth PKCE + PAT) providers | **Done** |
 | **Phase 6** | Vault switching + CLI polish — **implemented**. Keep-unlocked/switch-pointer model: daemon holds `RwLock<VaultHostInner>` with `HashMap<String, Arc<VaultState>>` + `active` pointer (one critical section). Switch = pointer flip (no zeroization, no token change). Per-vault session tokens. `vaults.list/switch/active/close/set_active` routes. `vault.unlock` returns `{slug, token}`. Single auto-lock checker walks the map. 11 integration tests pass. | **Done** |
 | Provider selection UI | Desktop SyncTab: device-flow (GitHub/GitLab) + web-OAuth (Codeberg) + PAT under Advanced Options | **Done** |

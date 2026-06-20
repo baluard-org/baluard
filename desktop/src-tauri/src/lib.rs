@@ -366,6 +366,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_biometry::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(None::<Daemon>))
         .manage(Mutex::new(SessionStore {
             tokens: std::collections::HashMap::new(),

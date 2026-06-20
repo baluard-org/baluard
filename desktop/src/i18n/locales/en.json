@@ -2,6 +2,10 @@
   "app": {
     "name": "Baluard"
   },
+  "common": {
+    "back": "Back",
+    "dismiss": "Dismiss"
+  },
   "login": {
     "title": "Baluard",
     "subtitle": "Enter master password",
@@ -10,6 +14,28 @@
     "unlocking": "Unlocking...",
     "createNew": "Create new vault",
     "quickUnlock": "Quick Unlock"
+  },
+  "welcome": {
+    "title": "Welcome to Baluard",
+    "subtitle": "Git-backed password storage. No server, fully offline.",
+    "newVault": "Create a new vault",
+    "openLocal": "Open an existing local vault",
+    "downloadFromProvider": "Download a vault from a provider"
+  },
+  "clone": {
+    "title": "Download Vault",
+    "pickProvider": "Choose where your vault is stored.",
+    "pickRepo": "Select the vault to download.",
+    "cloning": "Downloading vault...",
+    "cloned": "Vault downloaded",
+    "enterPassword": "Enter the master password to unlock it.",
+    "objects": "objects",
+    "noVaultRepos": "No Baluard vaults found in this account.",
+    "twoFaWarning": "For your safety, enable two-factor authentication on your provider account. Baluard stores an access token on this device.",
+    "webOAuthOpened": "Your browser opened to sign in.",
+    "webOAuthRelink": "Reopen sign-in page",
+    "timeout": "Download timed out.",
+    "failed": "Download failed."
   },
   "create": {
     "title": "Create Vault",
@@ -271,6 +297,7 @@
     "authMethodWebOAuth": "Browser Sign-in",
     "authMethodPat": "Personal Access Token",
     "connect": "Connect",
+    "connecting": "Connecting...",
     "connectedAs": "Connected as @{username}",
     "disconnect": "Disconnect Sync",
     "disconnectConfirmTitle": "Disconnect Sync?",

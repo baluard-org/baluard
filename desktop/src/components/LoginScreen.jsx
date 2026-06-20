@@ -105,7 +105,7 @@ export default function LoginScreen() {
 
         <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4">
           <button
-            onClick={() => auth.setStatus("init")}
+            onClick={() => auth.setStatus("welcome")}
             class="login-screen__create-btn text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
           >
             {t("login.createNew")}

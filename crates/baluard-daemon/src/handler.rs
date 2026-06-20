@@ -212,7 +212,6 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "passkey.delete",
     "passkey.rename",
     "provider.repos",
-    "provider.vault_repos",
     "provider.create_repo",
     "provider.oauth_start_web",
     "provider.oauth_status_web",
@@ -850,6 +849,66 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
             };
         }
 
+        // vaults.register_local (Phase 4): register an existing local vault
+        // directory (already has a .baluard marker) into the registry without
+        // copying it. Used by the "Open local vault" entry point. Pre-unlock /
+        // host-level: validates the marker + path, adds the entry, sets it
+        // active. Returns { slug, vault_id }.
+        "vaults.register_local" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(e) => return err_response(format!("Invalid payload: {e}")),
+            };
+            let Some(path_str) = payload["path"].as_str() else {
+                return err_response("Missing 'path' for vaults.register_local");
+            };
+            let path = std::path::PathBuf::from(path_str);
+            let marker =
+                match baluard_core::vault::registry::BaluardMarker::read_from_vault(&path) {
+                    Ok(Some(m)) => m,
+                    Ok(None) => {
+                        return err_response(
+                            "Not a Baluard vault: no .baluard marker found at the selected path",
+                        )
+                    }
+                    Err(e) => return err_response(format!("Failed to read marker: {e}")),
+                };
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let entry = baluard_core::vault::registry::VaultEntry {
+                slug: marker.slug.clone(),
+                display_name: marker.slug.clone(),
+                path: path.clone(),
+                provider: None,
+                remote_url: None,
+                last_synced: None,
+                last_opened: Some(now),
+                vault_id: marker.vault_id,
+            };
+            match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                Ok(mut reg) => {
+                    if let Err(e) = reg.add(entry.clone()) {
+                        return err_response(format!("Registry add failed: {e}"));
+                    }
+                    let _ = reg.set_active(&entry.slug);
+                    if let Err(e) = reg.save_locked() {
+                        return err_response(format!("Registry save failed: {e}"));
+                    }
+                    return ok_resp(
+                        serde_json::json!({
+                            "slug": entry.slug,
+                            "vault_id": entry.vault_id,
+                        })
+                        .to_string(),
+                        None,
+                    );
+                }
+                Err(e) => return err_response(format!("Registry load failed: {e}")),
+            }
+        }
+
         // vaults.lock_all: lock every currently-unlocked vault (zeroize all
         // key material). Fired by the desktop on screen-lock / system sleep /
         // window-blur (app resign-active) so a device becoming unattended
@@ -913,23 +972,30 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
         // install (H2).
         //
         // The TOKEN-GATED provider routes (oauth_start_web / oauth_status_web
-        // / repos / vault_repos / create_repo) DO require a vault — they're in
+        // / create_repo) DO require a vault — they're in
         // TOKEN_REQUIRED_ACTIONS, so route_request checks the session token.
         // Routing them through the tokenless sentinel would always reject
         // them (NEW-1 regression). They fall through to snapshot_target so
         // they resolve a real vault and check against ITS token.
+        // (Phase 4: repos / vault_repos were moved to the un-gated arm above
+        // because the clone/download flow lists repos before any unlock.)
         "provider.list"
         | "provider.connect_start"
         | "provider.connect_poll"
         | "provider.connect_pat"
         | "provider.status"
-        | "provider.disconnect" => {
+        | "provider.disconnect"
+        // Phase 4: repos / vault_repos are read-only provider operations
+        // (keyring token only, no vault state) and must work pre-unlock for
+        // the download-from-provider flow on a fresh device.
+        | "provider.repos"
+        | "provider.vault_repos" => {
             let sentinel = std::sync::Arc::new(VaultState::new(std::path::PathBuf::new()));
             return route_request(req, &sentinel).await;
         }
 
-        // provider.oauth_start_web / oauth_status_web / repos / vault_repos /
-        // create_repo → fall through to the vault-snapshot path below.
+        // provider.oauth_start_web / oauth_status_web / create_repo
+        // → fall through to the vault-snapshot path below.
         _ => {}
     }
 
@@ -943,6 +1009,16 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     }
     if req.action.as_str() == "vault.open" {
         return handle_vault_open(req, host).await;
+    }
+    // Phase 4 remote vault clone: host-level, pre-unlock (NOT token-gated).
+    if req.action.as_str() == "vault.clone_start" {
+        return handle_vault_clone_start(req, host).await;
+    }
+    if req.action.as_str() == "vault.clone_progress" {
+        return handle_vault_clone_progress(req, host).await;
+    }
+    if req.action.as_str() == "vault.clone_finalize" {
+        return handle_vault_clone_finalize(req, host).await;
     }
 
     // ── Everything else: resolve target slug + snapshot, then delegate ──
@@ -1302,6 +1378,351 @@ async fn handle_vault_create(mut req: GatewayRequest, host: &SharedVaultHost) ->
         }
         Err(e) => err_response(e),
     }
+}
+
+/// Mutable per-job state for a remote vault clone. The clone thread updates
+/// `phase`/`error`/`result_*`; `progress` (a separate Arc) is updated by git2's
+/// `transfer_progress` callback. Polled by `vault.clone_progress`.
+#[cfg(feature = "git-sync")]
+#[derive(Clone)]
+struct CloneJobState {
+    phase: String,
+    error: Option<String>,
+    result_slug: Option<String>,
+    result_path: Option<String>,
+}
+
+#[cfg(feature = "git-sync")]
+#[derive(Clone)]
+struct CloneJob {
+    state: Arc<std::sync::Mutex<CloneJobState>>,
+    progress: Arc<std::sync::Mutex<baluard_core::sync::engine::CloneProgress>>,
+}
+
+/// Bundled parameters for a background clone (avoids the clippy
+/// `too_many_arguments` lint and keeps the `spawn_blocking` closure tidy).
+#[cfg(feature = "git-sync")]
+struct CloneParams {
+    state: Arc<std::sync::Mutex<CloneJobState>>,
+    progress: Arc<std::sync::Mutex<baluard_core::sync::engine::CloneProgress>>,
+    clone_url: String,
+    target: std::path::PathBuf,
+    slug: String,
+    display_name: String,
+    provider: baluard_core::providers::types::Provider,
+    provider_str: String,
+}
+
+#[cfg(feature = "git-sync")]
+static CLONE_JOBS: std::sync::LazyLock<
+    tokio::sync::Mutex<std::collections::HashMap<uuid::Uuid, CloneJob>>,
+> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// `vault.clone_start` (Phase 4): kick off a background clone of a remote
+/// vault repo. Payload JSON: `{ clone_url, provider, slug, display_name }`.
+/// Returns `{ job_id }` immediately; poll with `vault.clone_progress`.
+///
+/// Pre-unlock route (no vault open), so it lives at host level and is NOT in
+/// `TOKEN_REQUIRED_ACTIONS`. The slug comes from `provider.vault_repos`
+/// (the `.baluard` marker carries it), avoiding a temp-dir dance.
+#[cfg(feature = "git-sync")]
+async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) -> GatewayResponse {
+    if req.payload.is_empty() {
+        return err_response("Missing clone JSON in payload".to_string());
+    }
+    let v: serde_json::Value = match serde_json::from_str(&req.payload) {
+        Ok(v) => v,
+        Err(e) => return err_response(format!("Invalid clone JSON: {e}")),
+    };
+    let Some(clone_url) = v["clone_url"].as_str().map(str::to_string) else {
+        return err_response("Missing 'clone_url' in clone payload".to_string());
+    };
+    let Some(slug) = v["slug"].as_str().map(str::to_string) else {
+        return err_response("Missing 'slug' in clone payload".to_string());
+    };
+    let display_name = v["display_name"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| slug.clone());
+    let provider_str = v["provider"].as_str().unwrap_or("");
+    let provider: baluard_core::providers::types::Provider = match provider_str {
+        "github" => baluard_core::providers::types::Provider::GitHub,
+        "gitlab" => baluard_core::providers::types::Provider::GitLab,
+        "codeberg" => baluard_core::providers::types::Provider::Codeberg,
+        other => return err_response(format!("Unknown provider: {other}")),
+    };
+
+    let target = baluard_core::paths::vaults_dir().join(&slug);
+    if target.exists() {
+        return err_response(format!(
+            "Target directory already exists: {}. Pick a different slug or remove it.",
+            target.display()
+        ));
+    }
+    if let Ok(reg) = baluard_core::vault::registry::VaultRegistry::load_locked() {
+        if reg.exists(&slug) {
+            return err_response(format!(
+                "A vault '{slug}' is already registered. Remove it first."
+            ));
+        }
+    }
+
+    // Ensure the provider token is fresh before the clone thread reads it
+    // from the keyring (mirrors sync.push's refresh-before-op).
+    refresh_connected_tokens_if_needed().await;
+
+    let job_id = uuid::Uuid::new_v4();
+    let state = Arc::new(std::sync::Mutex::new(CloneJobState {
+        phase: "cloning".to_string(),
+        error: None,
+        result_slug: None,
+        result_path: None,
+    }));
+    let progress = Arc::new(std::sync::Mutex::new(
+        baluard_core::sync::engine::CloneProgress::default(),
+    ));
+    {
+        let mut jobs = CLONE_JOBS.lock().await;
+        jobs.insert(
+            job_id,
+            CloneJob {
+                state: state.clone(),
+                progress: progress.clone(),
+            },
+        );
+    }
+
+    let state_arc = state.clone();
+    let provider_str_owned = provider_str.to_string();
+    tokio::task::spawn_blocking(move || {
+        run_clone_to_completion(CloneParams {
+            state: state_arc,
+            progress,
+            clone_url,
+            target,
+            slug,
+            display_name,
+            provider,
+            provider_str: provider_str_owned,
+        })
+    });
+
+    ok_resp(
+        serde_json::json!({ "job_id": job_id.to_string() }).to_string(),
+        None,
+    )
+}
+
+/// Blocking worker: clone -> verify `.baluard` marker -> register in the
+/// registry -> mark the job done. On any failure, cleans up the partial
+/// clone directory (orphan prevention) and records the error.
+#[cfg(feature = "git-sync")]
+fn run_clone_to_completion(params: CloneParams) {
+    let CloneParams {
+        state,
+        progress,
+        clone_url,
+        target,
+        slug,
+        display_name,
+        provider,
+        provider_str,
+    } = params;
+    let result = baluard_core::sync::engine::SyncEngine::clone_remote(
+        &clone_url,
+        &target,
+        provider,
+        progress.clone(),
+    );
+    match result {
+        Ok(_repo) => {
+            {
+                let mut s = state.lock().unwrap();
+                s.phase = "registering".to_string();
+            }
+            // Verify this is actually a Baluard vault (has the marker).
+            let vault_id =
+                match baluard_core::vault::registry::BaluardMarker::read_from_vault(&target) {
+                    Ok(Some(m)) => m.vault_id,
+                    _ => {
+                        let _ = std::fs::remove_dir_all(&target);
+                        let mut s = state.lock().unwrap();
+                        s.phase = "failed".to_string();
+                        s.error = Some(
+                            "Cloned repository has no .baluard marker (not a Baluard vault)"
+                                .to_string(),
+                        );
+                        return;
+                    }
+                };
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let entry = baluard_core::vault::registry::VaultEntry {
+                slug: slug.clone(),
+                display_name: display_name.clone(),
+                path: target.clone(),
+                provider: Some(provider_str.clone()),
+                remote_url: Some(clone_url.clone()),
+                last_synced: Some(now),
+                last_opened: Some(now),
+                vault_id,
+            };
+            let reg_err: Option<String> =
+                match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                    Ok(mut reg) => match reg.add(entry) {
+                        Ok(()) => match reg.set_active(&slug) {
+                            Ok(()) => reg
+                                .save_locked()
+                                .err()
+                                .map(|e| format!("registry save: {e}")),
+                            Err(e) => Some(format!("registry set_active: {e}")),
+                        },
+                        Err(e) => Some(format!("registry add: {e}")),
+                    },
+                    Err(e) => Some(format!("registry load: {e}")),
+                };
+            if let Some(msg) = reg_err {
+                let _ = std::fs::remove_dir_all(&target);
+                let mut s = state.lock().unwrap();
+                s.phase = "failed".to_string();
+                s.error = Some(format!("Registration failed: {msg}"));
+                return;
+            }
+            let mut s = state.lock().unwrap();
+            s.phase = "done".to_string();
+            s.result_slug = Some(slug.clone());
+            s.result_path = Some(target.to_string_lossy().to_string());
+        }
+        Err(e) => {
+            // Orphan prevention: remove any partial clone left on disk.
+            let _ = std::fs::remove_dir_all(&target);
+            let mut s = state.lock().unwrap();
+            s.phase = "failed".to_string();
+            s.error = Some(format!("{e}"));
+        }
+    }
+}
+
+#[cfg(feature = "git-sync")]
+fn parse_job_id(payload: &str) -> Result<uuid::Uuid, GatewayResponse> {
+    let v: serde_json::Value =
+        serde_json::from_str(payload).map_err(|e| err_response(format!("Invalid payload: {e}")))?;
+    let id_str = v["job_id"]
+        .as_str()
+        .ok_or_else(|| err_response("Missing 'job_id' in payload".to_string()))?;
+    uuid::Uuid::parse_str(id_str).map_err(|e| err_response(format!("Invalid job_id: {e}")))
+}
+
+/// `vault.clone_progress`: poll a clone job. Returns phase/objects/bytes/pct.
+#[cfg(feature = "git-sync")]
+async fn handle_vault_clone_progress(
+    req: GatewayRequest,
+    _host: &SharedVaultHost,
+) -> GatewayResponse {
+    let job_id = match parse_job_id(&req.payload) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let job_arc = {
+        let jobs = CLONE_JOBS.lock().await;
+        match jobs.get(&job_id).cloned() {
+            Some(j) => j,
+            None => return err_response(format!("Unknown clone job: {job_id}")),
+        }
+    };
+    let s = job_arc
+        .state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let p = job_arc.progress.lock().unwrap_or_else(|e| e.into_inner());
+    let pct = if p.total_objects > 0 {
+        (p.objects_received as u64 * 100 / p.total_objects as u64) as u32
+    } else {
+        0
+    };
+    ok_resp(
+        serde_json::json!({
+            "phase": s.phase,
+            "objects_received": p.objects_received,
+            "total_objects": p.total_objects,
+            "bytes_received": p.bytes_received,
+            "pct": pct,
+            "error": s.error,
+            "done": s.phase == "done",
+        })
+        .to_string(),
+        None,
+    )
+}
+
+/// `vault.clone_finalize`: consume a finished job, return `{ slug, path }`,
+/// remove it from the job map. The caller then runs `vault.unlock <slug>`
+/// (which resolves the path from the registry and inserts into the host map).
+#[cfg(feature = "git-sync")]
+async fn handle_vault_clone_finalize(
+    req: GatewayRequest,
+    _host: &SharedVaultHost,
+) -> GatewayResponse {
+    let job_id = match parse_job_id(&req.payload) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let job_arc = {
+        let mut jobs = CLONE_JOBS.lock().await;
+        match jobs.remove(&job_id) {
+            Some(j) => j,
+            None => return err_response(format!("Unknown clone job: {job_id}")),
+        }
+    };
+    let s = job_arc
+        .state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    match s.phase.as_str() {
+        "done" => {
+            let p = job_arc.progress.lock().unwrap_or_else(|e| e.into_inner());
+            ok_resp(
+                serde_json::json!({
+                    "slug": s.result_slug,
+                    "path": s.result_path,
+                    "objects": p.objects_received,
+                    "bytes": p.bytes_received,
+                })
+                .to_string(),
+                None,
+            )
+        }
+        "failed" => err_response(s.error.unwrap_or_else(|| "clone failed".to_string())),
+        phase => err_response(format!(
+            "Clone not finished (phase: {phase}). Poll progress first."
+        )),
+    }
+}
+
+#[cfg(not(feature = "git-sync"))]
+async fn handle_vault_clone_start(
+    _req: GatewayRequest,
+    _host: &SharedVaultHost,
+) -> GatewayResponse {
+    err_response("git-sync feature not enabled".to_string())
+}
+#[cfg(not(feature = "git-sync"))]
+async fn handle_vault_clone_progress(
+    _req: GatewayRequest,
+    _host: &SharedVaultHost,
+) -> GatewayResponse {
+    err_response("git-sync feature not enabled".to_string())
+}
+#[cfg(not(feature = "git-sync"))]
+async fn handle_vault_clone_finalize(
+    _req: GatewayRequest,
+    _host: &SharedVaultHost,
+) -> GatewayResponse {
+    err_response("git-sync feature not enabled".to_string())
 }
 
 /// Route a GatewayRequest to the appropriate baluard-core function.

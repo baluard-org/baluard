@@ -14,6 +14,7 @@
   "dependencies": {
     "@choochmeque/tauri-plugin-biometry-api": "^0.2.8",
     "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2.0.0",
     "solid-js": "^1.9.0",
     "solid-transition-group": "^0.3.0"

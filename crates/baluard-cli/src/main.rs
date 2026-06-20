@@ -394,6 +394,16 @@ enum SyncAction {
         #[arg(long, default_value = "10")]
         limit: usize,
     },
+    /// Clone a remote vault from a provider (daemon only).
+    Clone {
+        /// Provider: github, gitlab, or codeberg.
+        provider: String,
+        /// Repository full name (e.g. user/vault).
+        repo: String,
+        /// Override the local slug (default: repo name).
+        #[arg(long)]
+        slug: Option<String>,
+    },
 }
 
 // ── Cipher Add Subcommands ─────────────────────────────────────────────────
@@ -1103,6 +1113,18 @@ fn main() {
             SyncAction::Log { limit } => {
                 commands::handle_sync_log(mode, &vault_path, cli.socket.as_deref(), limit)
             }
+            SyncAction::Clone {
+                provider,
+                repo,
+                slug,
+            } => commands::handle_sync_clone(
+                mode,
+                &vault_path,
+                cli.socket.as_deref(),
+                &provider,
+                &repo,
+                slug.as_deref(),
+            ),
         },
 
         // Cipher CRUD: daemon-first with direct fallback

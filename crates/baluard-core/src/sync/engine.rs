@@ -42,6 +42,23 @@ pub struct SyncEngine {
     signing_key: Option<ed25519_dalek::SigningKey>,
 }
 
+/// Fetch progress for a clone operation, surfaced from git2's
+/// `transfer_progress` callback. Cloned (cheap) into the daemon's job state
+/// so the desktop can render a live progress bar.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CloneProgress {
+    /// Objects received so far.
+    pub objects_received: usize,
+    /// Total objects the server announced (may grow during fetch).
+    pub total_objects: usize,
+    /// Raw bytes received.
+    pub bytes_received: usize,
+    /// Deltas indexed so far.
+    pub indexed_deltas: usize,
+    /// Total deltas to index.
+    pub total_deltas: usize,
+}
+
 #[cfg(feature = "git-sync")]
 impl SyncEngine {
     /// Create a new SyncEngine for a vault at the given path.
@@ -1001,6 +1018,92 @@ impl SyncEngine {
         })?;
         Ok(repo)
     }
+
+    /// Clone a remote vault repo with provider-specific credentials and
+    /// progress reporting. Used by the daemon's `vault.clone_start` flow.
+    ///
+    /// Differs from [`clone`]/[`clone_unchecked`] in two ways:
+    /// - uses `load_with_hint(target, Some(provider))` so a multi-provider
+    ///   install authenticates with the correct token rather than "first
+    ///   connected provider" (avoids wrong-token 401s on clone).
+    /// - wires git2's `transfer_progress` callback into `progress` so the
+    ///   daemon can poll objects/bytes for a live progress bar.
+    pub fn clone_remote(
+        url: &str,
+        target: &Path,
+        provider: crate::providers::types::Provider,
+        progress: std::sync::Arc<std::sync::Mutex<CloneProgress>>,
+    ) -> Result<Repository, BaluardError> {
+        validate_git_url(url)?;
+        let mut builder = RepoBuilder::new();
+        let cred_config = CredentialConfig::load_with_hint(target, Some(provider));
+        let mut fetch_opts = FetchOptions::new();
+        let https_token = cred_config.expose_token();
+        let prog = progress.clone();
+        let mut callbacks = git2::RemoteCallbacks::new();
+        callbacks.credentials(move |_url, username_from_url, allowed_types| {
+            if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+                let user = username_from_url.unwrap_or("git");
+                if let Ok(cred) = git2::Cred::ssh_key_from_agent(user) {
+                    return Ok(cred);
+                }
+            }
+            if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                if let Some(ref token) = https_token {
+                    let user = username_from_url.unwrap_or("git");
+                    return git2::Cred::userpass_plaintext(user, token.as_str());
+                }
+            }
+            if allowed_types.contains(git2::CredentialType::DEFAULT) {
+                return git2::Cred::default();
+            }
+            Err(git2::Error::from_str("no credential source available"))
+        });
+        callbacks.certificate_check(|cert, host| {
+            use git2::CertificateCheckStatus;
+            use git2::cert::SshHostKeyType;
+            if let Some(hostkey) = cert.as_hostkey() {
+                let key_type = match hostkey.hostkey_type() {
+                    Some(SshHostKeyType::Ed255219) => "ssh-ed25519",
+                    Some(SshHostKeyType::Rsa) => "ssh-rsa",
+                    Some(SshHostKeyType::Dss) => "ssh-dss",
+                    Some(SshHostKeyType::Ecdsa256) => "ecdsa-sha2-nistp256",
+                    Some(SshHostKeyType::Ecdsa384) => "ecdsa-sha2-nistp384",
+                    Some(SshHostKeyType::Ecdsa521) => "ecdsa-sha2-nistp521",
+                    _ => "",
+                };
+                let key = hostkey.hostkey().unwrap_or(&[]);
+                match crate::sync::known_hosts::verify_host_key(host, key_type, key) {
+                    crate::sync::known_hosts::HostKeyResult::Known => {
+                        Ok(CertificateCheckStatus::CertificateOk)
+                    }
+                    _ => Err(git2::Error::from_str(&format!(
+                        "SSH host key for {host} not in known_hosts"
+                    ))),
+                }
+            } else {
+                Ok(CertificateCheckStatus::CertificatePassthrough)
+            }
+        });
+        callbacks.transfer_progress(move |p| {
+            if let Ok(mut g) = prog.lock() {
+                g.objects_received = p.received_objects();
+                g.total_objects = p.total_objects();
+                g.bytes_received = p.received_bytes();
+                g.indexed_deltas = p.indexed_deltas();
+                g.total_deltas = p.total_deltas();
+            }
+            true
+        });
+        fetch_opts.remote_callbacks(callbacks);
+        builder.fetch_options(fetch_opts);
+        let repo = builder.clone(url, target).map_err(|e| {
+            SyncError::Git(crate::sync::credentials::scrub_git_error(&format!(
+                "clone: {e}"
+            )))
+        })?;
+        Ok(repo)
+    }
 }
 
 /// Validate that a git URL uses an allowed scheme.
@@ -1307,6 +1410,58 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let engine = SyncEngine::new(dir.path(), "test-device");
         (dir, engine)
+    }
+
+    /// Phase 4: clone_remote must surface fetch progress via the
+    /// transfer_progress callback (the daemon polls it for the desktop bar)
+    /// and clone from a provider-hinted source. file:// is permitted under
+    /// #[cfg(test)], so a local repo stands in for a remote provider.
+    #[test]
+    fn clone_remote_updates_progress() {
+        let (dir, engine) = make_test_repo();
+        std::fs::write(dir.path().join("cipher.enc"), b"\x01\x02\x03").unwrap();
+        let _ = engine.init_repo().unwrap();
+
+        let clone_dir = tempfile::tempdir().unwrap();
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(CloneProgress::default()));
+        let cloned = SyncEngine::clone_remote(
+            &format!("file://{}", dir.path().display()),
+            clone_dir.path(),
+            crate::providers::types::Provider::GitHub,
+            progress.clone(),
+        )
+        .expect("clone_remote should succeed for a local file:// source");
+
+        // Clone produced a working repo with the content.
+        assert!(clone_dir.path().join("cipher.enc").exists());
+        assert!(clone_dir.path().join(".git").exists());
+        let _ = cloned;
+
+        // Progress was surfaced by the transfer_progress callback. A
+        // single-commit repo transfers at least one object.
+        let p = progress.lock().unwrap();
+        assert!(
+            p.total_objects >= 1,
+            "total_objects should be >= 1, got {}",
+            p.total_objects
+        );
+        assert_eq!(p.objects_received, p.total_objects);
+    }
+
+    /// Phase 4: a bad source URL must surface an error (adversarial: the
+    /// caller must not get a silent success on a non-existent remote).
+    #[test]
+    fn clone_remote_rejects_unreachable_source() {
+        let clone_dir = tempfile::tempdir().unwrap();
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(CloneProgress::default()));
+        let url = format!("file://{}/does-not-exist", clone_dir.path().display());
+        let result = SyncEngine::clone_remote(
+            &url,
+            clone_dir.path(),
+            crate::providers::types::Provider::GitLab,
+            progress,
+        );
+        assert!(result.is_err(), "cloning a non-existent source must fail");
     }
 
     #[test]
