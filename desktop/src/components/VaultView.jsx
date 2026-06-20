@@ -53,11 +53,7 @@ export default function VaultView() {
     await vault.refreshCiphers(t);
   });
 
-  // Reset vault-scoped view state when the active vault changes (instant
-  // switch OR switch-unlock modal). An open detail/edit pane, a half-filled
-  // add form, or a stale folder/tag/search filter from the previous vault
-  // must not survive a vault change. `lastSwitchSlug` guards the initial
-  // run so first mount doesn't reset.
+  const [switching, setSwitching] = createSignal(false);
   let lastSwitchSlug = switcher.activeSlug();
   createEffect(() => {
     const slug = switcher.activeSlug();
@@ -66,6 +62,11 @@ export default function VaultView() {
     setViewCipher(null);
     setNewCipher({ ...EMPTY_CIPHER });
     vault.resetNavigation();
+    
+    // Trigger vault switching transition animation
+    setSwitching(true);
+    const timer = setTimeout(() => setSwitching(false), 200);
+    onCleanup(() => clearTimeout(timer));
   });
 
   // Close add menu on outside click
@@ -395,7 +396,7 @@ export default function VaultView() {
       </div>
 
       {/* Column 2: Vault Items List Pane */}
-      <div class="w-[360px] bg-[var(--color-list)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0 select-none">
+      <div class={`w-[360px] bg-[var(--color-list)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0 select-none transition-all duration-200 ease-out ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
         <div class="flex-1 flex flex-col min-h-0">
 
           {/* Header Action Bar */}
@@ -506,7 +507,7 @@ export default function VaultView() {
       </div>
 
       {/* Column 3: Main Details / Edit Panel */}
-      <div class="flex-1 bg-[var(--color-detail)] flex flex-col min-w-0 relative">
+      <div class={`flex-1 bg-[var(--color-detail)] flex flex-col min-w-0 relative transition-all duration-200 ease-out ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
 
         <Transition name="slide" mode="out-in">
           <Switch>
