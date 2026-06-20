@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Updated:** 2026-06-12
+**Updated:** 2026-06-20
 
 ## OVERVIEW
 Project: **Baluard** (Git-native password manager)
@@ -10,6 +10,15 @@ License: GPL-3.0
 Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets.
 
 **Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell.
+
+## STATUS
+Baluard is pre-1.0 Work In Progress. **Breakage is expected and OK.** Move things forward; do not preserve backwards compatibility at the cost of progress. The vault format, IPC routes/JSON payloads, CLI flags, protobuf schema, and config shapes may all change without notice, deprecation period, shim, or migration path. No stable API/ABI contract exists yet.
+
+Implications for contributors (human + agent):
+* Prefer the cleaner design over the compatible one.
+* Breaking a route, flag, field, or format? Just do it, and update every call site in the same change.
+* No deprecation periods, compat layers, or feature flags to keep old behavior alive (yet).
+* **Still load-bearing (NOT "breakage"):** the crypto/security invariants in CODING STANDARDS (AES-256-GCM, Argon2id, X25519/Ed25519, HPKE, zeroize-on-drop, 0600 socket, token-gating). Those must not regress.
 
 ## STRUCTURE
 ```
@@ -95,6 +104,7 @@ Implications:
 * Tauri v2 WebView2: bundled on Windows, WebKit on macOS/Linux (system-provided on these versions).
 
 ## CODING STANDARDS
+* **Compatibility**: Pre-1.0 WIP (see STATUS). Backwards compatibility is NOT a goal yet. Break vault format, IPC routes/payloads, CLI flags, protobuf, and config freely; update all call sites in the same change. Crypto/security invariants below stay load-bearing.
 * **Rust**: Edition 2024, MSRV 1.85. Feature flags: `full` (default) = `git-sync` + `org` + `emergency`. `thiserror` for library errors, `anyhow` for CLI. `proptest` for property-based tests.
 * **JS/TS**: ES modules, SolidJS, Vite. Tailwind for layout. `crypto.getRandomValues` only (never `Math.random`).
 * **Protobuf**: proto3, `baluard.vault` package. Compiled via prost in daemon + CLI.
