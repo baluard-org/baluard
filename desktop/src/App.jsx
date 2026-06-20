@@ -9,6 +9,7 @@ import LoginScreen from "./components/LoginScreen.jsx";
 import RecoveryScreen from "./components/RecoveryScreen.jsx";
 import CreateVaultScreen from "./components/CreateVaultScreen.jsx";
 import SetupScreen from "./components/SetupScreen.jsx";
+import WelcomeScreen from "./components/WelcomeScreen.jsx";
 import VaultView from "./components/VaultView.jsx";
 import ToastContainer from "./components/ToastContainer.jsx";
 
