@@ -1530,6 +1530,99 @@ pub fn handle_sync_log(
     }
 }
 
+/// `baluard sync clone <provider> <repo>`: clone a remote vault from a
+/// provider into the local registry via the daemon's job flow
+/// (clone_start -> poll clone_progress -> clone_finalize). Daemon-only: clone
+/// registers a brand-new vault entry, which is a host-level operation that
+/// does not fit the per-vault `--direct` model.
+pub fn handle_sync_clone(
+    mode: ConnectMode,
+    _vault_path: &str,
+    socket: Option<&str>,
+    provider: &str,
+    repo: &str,
+    slug_override: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if matches!(mode, ConnectMode::Direct) {
+        return Err(
+            "Clone requires the daemon (it registers a new vault). Run without --direct.".into(),
+        );
+    }
+    let host = match provider {
+        "github" => "github.com",
+        "gitlab" => "gitlab.com",
+        "codeberg" => "codeberg.org",
+        other => return Err(format!("Unknown provider: {other}").into()),
+    };
+    let clone_url = format!("https://{host}/{repo}.git");
+    let slug = slug_override
+        .map(str::to_string)
+        .unwrap_or_else(|| repo.rsplit('/').next().unwrap_or(repo).to_string());
+
+    let start_payload = serde_json::json!({
+        "clone_url": clone_url,
+        "provider": provider,
+        "slug": slug,
+        "display_name": slug,
+    })
+    .to_string();
+    let resp = client::request_to("vault.clone_start", &start_payload, socket)?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+    let job_id = serde_json::from_str::<serde_json::Value>(&resp.payload)?["job_id"]
+        .as_str()
+        .ok_or("daemon returned no job_id")?
+        .to_string();
+
+    // Poll progress until done/failed (10-minute deadline).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    let mut last_pct = u32::MAX;
+    loop {
+        if std::time::Instant::now() > deadline {
+            return Err("clone timed out".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let resp = client::request_to(
+            "vault.clone_progress",
+            &serde_json::json!({ "job_id": job_id }).to_string(),
+            socket,
+        )?;
+        if !resp.success {
+            return Err(resp.error_message.into());
+        }
+        let v: serde_json::Value = serde_json::from_str(&resp.payload)?;
+        let phase = v["phase"].as_str().unwrap_or("");
+        let done = v["done"].as_bool().unwrap_or(false);
+        let pct = v["pct"].as_u64().unwrap_or(0) as u32;
+        if pct != last_pct {
+            let objs = v["objects_received"].as_u64().unwrap_or(0);
+            println!("Cloning... {pct}% ({objs} objects, {phase})");
+            last_pct = pct;
+        }
+        if done || phase == "failed" {
+            break;
+        }
+    }
+
+    let resp = client::request_to(
+        "vault.clone_finalize",
+        &serde_json::json!({ "job_id": job_id }).to_string(),
+        socket,
+    )?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+    let v: serde_json::Value = serde_json::from_str(&resp.payload)?;
+    let out_slug = v["slug"].as_str().unwrap_or(&slug);
+    let path = v["path"].as_str().unwrap_or("?");
+    let objects = v["objects"].as_u64().unwrap_or(0);
+    let bytes = v["bytes"].as_u64().unwrap_or(0);
+    println!("Cloned vault '{out_slug}' to {path} ({objects} objects, {bytes} bytes).");
+    println!("Unlock with: baluard --vault {out_slug} unlock");
+    Ok(())
+}
+
 // ── Sync direct implementations ──
 
 #[cfg(feature = "git-sync")]

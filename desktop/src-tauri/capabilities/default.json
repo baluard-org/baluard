@@ -18,6 +18,7 @@
       ]
     },
     "shell:allow-kill",
-    "biometry:default"
+    "biometry:default",
+    "dialog:default"
   ]
 }

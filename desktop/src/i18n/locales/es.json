@@ -271,6 +271,7 @@
     "authMethodWebOAuth": "Inicio de sesión en navegador",
     "authMethodPat": "Token de acceso personal",
     "connect": "Conectar",
+    "connecting": "Conectando...",
     "connectedAs": "Conectado como @{username}",
     "disconnect": "Desconectar sincronización",
     "disconnectConfirmTitle": "¿Desconectar sincronización?",
