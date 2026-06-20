@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-06-17 (Phase 6 shipped)
+> Last updated: 2026-06-20 (Icon audit done)
 
 ---
 
@@ -166,8 +166,8 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| Icon review | Audit all icons across desktop for visual correctness | Not started |
-| Broken/wrong icons | Identify and fix misaligned, missing, or incorrect icons | Not started |
+| Icon review | Audit all icons across desktop for visual correctness | **Done** |
+| Broken/wrong icons | Identify and fix misaligned, missing, or incorrect icons | **Done** |
 
 ### Git Online Providers Auth & Sync
 
