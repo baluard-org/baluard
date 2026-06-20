@@ -111,7 +111,7 @@ export default function VaultSwitcher(props) {
 
   return (
     <div
-      class="relative"
+      class="relative w-full"
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -143,7 +143,7 @@ export default function VaultSwitcher(props) {
         <button
           type="button"
           onClick={handleToggle}
-          class="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer hover:opacity-90 transition-opacity"
+          class="w-full flex items-center gap-3 min-w-0 text-left cursor-pointer hover:opacity-90 transition-opacity"
           aria-haspopup="listbox"
           aria-expanded={open()}
           title={t("vault.vaultSwitcher.tooltip")}
@@ -161,9 +161,7 @@ export default function VaultSwitcher(props) {
         <div
           role="listbox"
           aria-label={t("vault.vaultSwitcher.listLabel")}
-          class={`absolute left-0 z-50 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-2xl overflow-hidden max-h-80 overflow-y-auto ${
-            props.children ? "bottom-full mb-2 w-64 -translate-y-1" : "top-full mt-1 w-full"
-          }`}
+          class="absolute left-0 z-50 bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl shadow-2xl overflow-hidden max-h-80 overflow-y-auto top-full mt-1 w-full"
         >
           <For each={switcher.vaults()}>
             {(row, index) => (

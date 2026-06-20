@@ -199,199 +199,197 @@ export default function VaultView() {
       <SettingsModal />
 
       {/* Column 1: Left Navigation Sidebar */}
-      <div class="w-[260px] bg-[var(--color-sidebar)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0 select-none">
-        <div>
-          {/* Header Brand */}
-          <div class="p-6 pb-4 border-b border-[var(--color-border)] flex items-center justify-between">
-            <div class="flex items-center gap-3">
+      <div class="w-[260px] bg-[var(--color-sidebar)] border-r border-[var(--color-border)] flex flex-col shrink-0 select-none h-full">
+        {/* Unified Sidebar Header */}
+        <div class="p-5 border-b border-[var(--color-border)] space-y-4">
+          {/* Brand Row & Quick Actions */}
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
               <div class="w-8 h-8 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] flex items-center justify-center shadow">
                 <IconLock class="w-4.5 h-4.5 text-[var(--color-primary)]" />
               </div>
-              <span class="text-lg font-bold tracking-tight text-[var(--color-text)]">{t("app.name")}</span>
+              <span class="text-base font-extrabold tracking-tight text-[var(--color-text)]">{t("app.name")}</span>
             </div>
-            <span class="flex h-2.5 w-2.5 relative">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" title={t("vault.statusUnlocked")}></span>
-            </span>
+            
+            {/* Quick Actions (Settings & Lock) */}
+            <div class="flex items-center gap-1.5">
+              <button
+                onClick={() => vault.setShowSettingsModal(true)}
+                title={t("settings.openSettings")}
+                class="p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)]"
+              >
+                <IconCog class="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => auth.lock(t)}
+                title={t("vault.lock")}
+                class="p-2 rounded-xl border border-[var(--color-border)] hover:border-red-900/50 hover:bg-red-950/20 text-[var(--color-muted)] hover:text-red-400 transition-all cursor-pointer bg-[var(--color-card)]"
+              >
+                <IconLock class="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
-
-
-          {/* Navigation Scroll Area */}
-          <div class="p-3 space-y-4 overflow-y-auto max-h-[calc(100vh-160px)]">
-            {/* Categories */}
-            <div>
-              <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">
-                {t("vault.categoriesTitle")}
-              </div>
-              <div class="space-y-0.5 mt-1">
-                <For each={categories}>
-                  {(cat) => (
-                    <button
-                      onClick={() => { vault.setSelectedCategory(cat.name); vault.setSelectedFolder(null); vault.setSelectedTag(null); }}
-                      class={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between text-left cursor-pointer ${
-                        vault.selectedCategory() === cat.name
-                          ? "bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] shadow-sm"
-                          : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"
-                      }`}
-                    >
-                      <div class="flex items-center gap-3">
-                        {cat.icon}
-                        <span>{t("categories." + cat.id)}</span>
-                      </div>
-                      <Show when={cat.name === "All items"}>
-                        <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
-                          {vault.ciphers().length}
-                        </span>
-                      </Show>
-                      <Show when={cat.name === "Trash"}>
-                        <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
-                          {vault.trashCiphers().length}
-                        </span>
-                      </Show>
-                      <Show when={cat.name === "Archive"}>
-                        <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
-                          {vault.archivedCiphers().length}
-                        </span>
-                      </Show>
-                    </button>
-                  )}
-                </For>
-              </div>
-            </div>
-
-            {/* Folders */}
-            <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
-              <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between">
-                <span>{t("vault.foldersTitle")}</span>
-                <button
-                  onClick={() => setShowNewFolder(!showNewFolder())}
-                  class="p-1 rounded-md border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer flex items-center justify-center"
-                  title={t("vault.newFolder")}
-                >
-                  <IconPlus class="w-3 h-3" />
-                </button>
-              </div>
-              <div class="space-y-0.5 mt-1">
-                <Show when={showNewFolder()}>
-                  <div class="flex items-center gap-1 py-1.5 rounded-xl" style={{ "padding-left": "14px", "padding-right": "6px" }}>
-                    <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary)] opacity-50" />
-                    <input
-                      class="flex-1 min-w-0 bg-transparent border-b border-[var(--color-primary)] text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-muted)] pb-px"
-                      placeholder={t("vault.folderNamePlaceholder")}
-                      autofocus
-                      onKeyDown={async (e) => {
-                        if (e.key === "Enter") {
-                          const name = e.target.value.trim();
-                          if (!name) return;
-                          try {
-                            await daemon("folder.create", JSON.stringify(buildFolderCreatePayload(name)));
-                            await vault.refreshCiphers(t);
-                          } catch (err) { toastError(sanitizeError(err, t)); }
-                          setShowNewFolder(false);
-                        } else if (e.key === "Escape") {
-                          setShowNewFolder(false);
-                        }
-                      }}
-                      onBlur={() => setShowNewFolder(false)}
+          {/* Active Vault Switcher Card */}
+          <VaultSwitcher onLockedTarget={(row) => {
+            setSwitchUnlockTarget({ slug: row.slug, display_name: row.display_name });
+          }}>
+            <div class="w-full flex items-center justify-between p-2.5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] bg-[var(--color-card)]/50 hover:bg-[var(--color-card)] transition-all cursor-pointer">
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="relative shrink-0">
+                  <Show when={vault.avatarB64()} fallback={
+                    <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-xs shadow-md">
+                      {(vault.displayName() || "?").slice(0, 2).toUpperCase()}
+                    </div>
+                  }>
+                    <img
+                      src={`data:image/${vault.avatarExt() === "jpg" ? "jpeg" : vault.avatarExt()};base64,${vault.avatarB64()}`}
+                      alt=""
+                      class="w-9 h-9 rounded-full object-cover shadow-md"
                     />
-                  </div>
-                </Show>
-                <Show when={vault.folders() && vault.folders().length > 0}>
-                  <FolderTree folders={vault.folders() || []} selectedFolder={vault.selectedFolder} setSelectedFolder={vault.setSelectedFolder} />
-                </Show>
-                <button
-                  onClick={() => vault.setSelectedFolder(null)}
-                  class={`flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${!vault.selectedFolder() ? "bg-[var(--color-sidebar)] text-[var(--color-text)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
-                  style={{ "padding-left": "14px", "padding-right": "6px" }}
-                >
-                  <IconFolder class="w-3.5 h-3.5 shrink-0" />
-                  <span>{t("entry.noFolder")}</span>
-                </button>
-                <Show when={vault.tags() && vault.tags().length > 0}>
-                   <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
-                     <div class="flex items-center justify-between mb-2" style={{ "padding-left": "14px", "padding-right": "14px" }}>
-                       <h3 class="text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.tagsHeader")}</h3>
-                       <Show when={vault.selectedTag()}>
-                         <button
-                           onClick={() => vault.setSelectedTag(null)}
-                           class="px-2 py-0.5 text-[9px] font-bold normal-case border border-[var(--color-border)] bg-[var(--color-card)] rounded-md text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer"
-                         >
-                           {t("entry.clearTagFilter")}
-                         </button>
-                       </Show>
-                     </div>
-                     <div class="flex flex-wrap gap-1" style={{ "padding-left": "6px", "padding-right": "6px" }}>
-                       <For each={vault.tags() || []}>
-                         {tag => (
-                           <div class="group relative">
-                             <button
-                               onClick={() => { vault.setSelectedTag(vault.selectedTag() === tag ? null : tag); }}
-                               class={`px-2 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${vault.selectedTag() === tag ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]" : "bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
-                             >
-                               {tag}
-                             </button>
-                             <button
-                               onClick={(e) => { e.stopPropagation(); setDeleteTagName(tag); }}
-                               class="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-red-400 hover:border-red-400 flex items-center justify-center text-[9px] leading-none opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                               title={t("entry.delete")}
-                             >×</button>
-                           </div>
-                         )}
-                       </For>
-                     </div>
-                   </div>
-                 </Show>
+                  </Show>
+                  <Show when={switcher.vaults().length > 1}>
+                    <span class="absolute -bottom-1 -right-1 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-[var(--color-primary)] text-[var(--color-primary-text)] shadow-md border border-[var(--color-sidebar)]">
+                      <IconSwitch class="w-2.5 h-2.5" />
+                    </span>
+                  </Show>
+                </div>
+                <div class="min-w-0 text-left">
+                  <div class="text-xs font-bold text-[var(--color-text)] truncate leading-none">{vault.displayName() || t("settings.profile")}</div>
+                  <div class="text-[9px] text-[var(--color-muted)] truncate mt-1">{vault.profileSubtitle() || ""}</div>
+                </div>
               </div>
+              <IconChevronDown class="w-3.5 h-3.5 text-[var(--color-muted)] shrink-0 ml-2" />
             </div>
-          </div>
+          </VaultSwitcher>
         </div>
 
-        {/* Sidebar Footer */}
-        <div class="p-4 border-t border-[var(--color-border)] flex items-center justify-between gap-3 bg-[var(--color-sidebar)]">
-          <div class="flex items-center gap-3 min-w-0 flex-1">
-            <VaultSwitcher onLockedTarget={(row) => {
-              setSwitchUnlockTarget({ slug: row.slug, display_name: row.display_name });
-            }}>
-              <div class="relative shrink-0">
-                <Show when={vault.avatarB64()} fallback={
-                  <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--color-accent)] to-[var(--color-primary)] flex items-center justify-center text-[var(--color-sidebar)] font-extrabold text-xs shadow-md">
-                    {(vault.displayName() || "?").slice(0, 2).toUpperCase()}
-                  </div>
-                }>
-                  <img
-                    src={`data:image/${vault.avatarExt() === "jpg" ? "jpeg" : vault.avatarExt()};base64,${vault.avatarB64()}`}
-                    alt=""
-                    class="w-9 h-9 rounded-full object-cover shadow-md"
-                  />
-                </Show>
-                <Show when={switcher.vaults().length > 1}>
-                  <span class="absolute -bottom-1 -right-1 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-[var(--color-primary)] text-[var(--color-primary-text)] shadow-md border border-[var(--color-sidebar)]">
-                    <IconSwitch class="w-2.5 h-2.5" />
-                  </span>
-                </Show>
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="text-xs font-bold text-[var(--color-text)] truncate leading-none">{vault.displayName() || t("settings.profile")}</div>
-                <div class="text-[9px] text-[var(--color-muted)] truncate mt-1">{vault.profileSubtitle() || ""}</div>
-              </div>
-            </VaultSwitcher>
+        {/* Navigation Scroll Area */}
+        <div class="p-3 space-y-4 overflow-y-auto flex-1 min-h-0">
+          {/* Categories */}
+          <div>
+            <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">
+              {t("vault.categoriesTitle")}
+            </div>
+            <div class="space-y-0.5 mt-1">
+              <For each={categories}>
+                {(cat) => (
+                  <button
+                    onClick={() => { vault.setSelectedCategory(cat.name); vault.setSelectedFolder(null); vault.setSelectedTag(null); }}
+                    class={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between text-left cursor-pointer ${
+                      vault.selectedCategory() === cat.name
+                        ? "bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-text)] shadow-sm"
+                        : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"
+                    }`}
+                  >
+                    <div class="flex items-center gap-3">
+                      {cat.icon}
+                      <span>{t("categories." + cat.id)}</span>
+                    </div>
+                    <Show when={cat.name === "All items"}>
+                      <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
+                        {vault.ciphers().length}
+                      </span>
+                    </Show>
+                    <Show when={cat.name === "Trash"}>
+                      <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
+                        {vault.trashCiphers().length}
+                      </span>
+                    </Show>
+                    <Show when={cat.name === "Archive"}>
+                      <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
+                        {vault.archivedCiphers().length}
+                      </span>
+                    </Show>
+                  </button>
+                )}
+              </For>
+            </div>
           </div>
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button
-              onClick={() => vault.setShowSettingsModal(true)}
-              title={t("settings.openSettings")}
-              class="p-2 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[var(--color-muted)] hover:text-[var(--color-text)] transition-all cursor-pointer bg-[var(--color-card)]"
-            >
-              <IconCog class="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => auth.lock(t)}
-              title={t("vault.lock")}
-              class="p-2 rounded-xl border border-[var(--color-border)] hover:border-red-900/50 hover:bg-red-950/20 text-[var(--color-muted)] hover:text-red-400 transition-all cursor-pointer bg-[var(--color-card)]"
-            >
-              <IconLock class="w-4 h-4" />
-            </button>
+
+          {/* Folders */}
+          <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
+            <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)] flex items-center justify-between">
+              <span>{t("vault.foldersTitle")}</span>
+              <button
+                onClick={() => setShowNewFolder(!showNewFolder())}
+                class="p-1 rounded-md border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer flex items-center justify-center"
+                title={t("vault.newFolder")}
+              >
+                <IconPlus class="w-3 h-3" />
+              </button>
+            </div>
+            <div class="space-y-0.5 mt-1">
+              <Show when={showNewFolder()}>
+                <div class="flex items-center gap-1 py-1.5 rounded-xl" style={{ "padding-left": "14px", "padding-right": "6px" }}>
+                  <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary)] opacity-50" />
+                  <input
+                    class="flex-1 min-w-0 bg-transparent border-b border-[var(--color-primary)] text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-muted)] pb-px"
+                    placeholder={t("vault.folderNamePlaceholder")}
+                    autofocus
+                    onKeyDown={async (e) => {
+                      if (e.key === "Enter") {
+                        const name = e.target.value.trim();
+                        if (!name) return;
+                        try {
+                          await daemon("folder.create", JSON.stringify(buildFolderCreatePayload(name)));
+                          await vault.refreshCiphers(t);
+                        } catch (err) { toastError(sanitizeError(err, t)); }
+                        setShowNewFolder(false);
+                      } else if (e.key === "Escape") {
+                        setShowNewFolder(false);
+                      }
+                    }}
+                    onBlur={() => setShowNewFolder(false)}
+                  />
+                </div>
+              </Show>
+              <Show when={vault.folders() && vault.folders().length > 0}>
+                <FolderTree folders={vault.folders() || []} selectedFolder={vault.selectedFolder} setSelectedFolder={vault.setSelectedFolder} />
+              </Show>
+              <button
+                onClick={() => vault.setSelectedFolder(null)}
+                class={`flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${!vault.selectedFolder() ? "bg-[var(--color-sidebar)] text-[var(--color-text)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
+                style={{ "padding-left": "14px", "padding-right": "6px" }}
+              >
+                <IconFolder class="w-3.5 h-3.5 shrink-0" />
+                <span>{t("entry.noFolder")}</span>
+              </button>
+              <Show when={vault.tags() && vault.tags().length > 0}>
+                <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
+                  <div class="flex items-center justify-between mb-2" style={{ "padding-left": "14px", "padding-right": "14px" }}>
+                    <h3 class="text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.tagsHeader")}</h3>
+                    <Show when={vault.selectedTag()}>
+                      <button
+                        onClick={() => vault.setSelectedTag(null)}
+                        class="px-2 py-0.5 text-[9px] font-bold normal-case border border-[var(--color-border)] bg-[var(--color-card)] rounded-md text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer"
+                      >
+                        {t("entry.clearTagFilter")}
+                      </button>
+                    </Show>
+                  </div>
+                  <div class="flex flex-wrap gap-1" style={{ "padding-left": "6px", "padding-right": "6px" }}>
+                    <For each={vault.tags() || []}>
+                      {tag => (
+                        <div class="group relative">
+                          <button
+                            onClick={() => { vault.setSelectedTag(vault.selectedTag() === tag ? null : tag); }}
+                            class={`px-2 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${vault.selectedTag() === tag ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]" : "bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                          >
+                            {tag}
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDeleteTagName(tag); }}
+                            class="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[var(--color-card)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-red-400 hover:border-red-400 flex items-center justify-center text-[9px] leading-none opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                            title={t("entry.delete")}
+                          >×</button>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </Show>
+            </div>
           </div>
         </div>
       </div>
