@@ -266,7 +266,7 @@ export default function VaultView() {
         </div>
 
         {/* Navigation Scroll Area */}
-        <div class="p-3 space-y-4 overflow-y-auto flex-1 min-h-0">
+        <div class={`p-3 space-y-4 overflow-y-auto flex-1 min-h-0 transition-all duration-200 ease-out ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
           {/* Categories */}
           <div>
             <div class="px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">
