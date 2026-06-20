@@ -862,6 +862,18 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
             return ok_resp(serde_json::json!({"locked": locked}).to_string(), None);
         }
 
+        // vaults.on_app_blur: policy-driven lock on window blur / minimize.
+        // Replaces the old unconditional lock_all the desktop fired on every
+        // focus loss. Now each vault locks only if its timeout policy is
+        // `Immediately`; `Minutes`/`OnAppExit` are left alone (the
+        // idle walker + app exit already cover them). Returns the
+        // count locked so the desktop can clear just those tokens.
+        "vaults.on_app_blur" => {
+            let locked = host.lock_blur_vaults().await;
+            log::info!("[daemon] on_app_blur: locked {locked} Immediately-policy vault(s)");
+            return ok_resp(serde_json::json!({"locked": locked}).to_string(), None);
+        }
+
         // vault.active (singular): legacy alias for the active-vault lookup.
         // L1: host-level so it works pre-unlock (it only reads the plaintext
         // registry; previously it required a vault snapshot, which was odd

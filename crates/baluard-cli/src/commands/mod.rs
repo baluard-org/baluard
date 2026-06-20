@@ -190,20 +190,24 @@ pub fn handle_init(
         None => Some(detect_locale()),
     };
 
-    let auto_lock = match flag_auto_lock {
-        Some(m) => Some(m),
+    let vault_timeout: Option<baluard_core::vault::manifest::VaultTimeout> = match flag_auto_lock {
+        Some(0) => None, // no "never" option yet; fall back to creator default
+        Some(m) => Some(baluard_core::vault::manifest::VaultTimeout::Minutes(m)),
         None if is_tty() => {
-            let input = prompt_password_optional("Auto-lock minutes [default: 15, 0 to disable]: ");
+            let input = prompt_password_optional("Auto-lock minutes [default: 15]: ");
             match input.trim() {
-                "" => Some(15),
-                "0" => None, // disabled
-                n => n.parse::<u32>().ok().or_else(|| {
-                    eprintln!("warning: invalid number, using 15");
-                    Some(15)
-                }),
+                "" | "0" => None, // use creator default (15m)
+                n => n
+                    .parse::<u32>()
+                    .ok()
+                    .map(baluard_core::vault::manifest::VaultTimeout::Minutes)
+                    .or_else(|| {
+                        eprintln!("warning: invalid number, using default 15m");
+                        None
+                    }),
             }
         }
-        None => Some(15),
+        None => None, // use creator default (15m)
     };
 
     println!("Creating vault...");
@@ -239,7 +243,7 @@ pub fn handle_init(
             .kdf_profile(profile)
             .profile(display_name.clone(), None)
             .slug(slug.clone())
-            .preferences(theme, lang.clone(), auto_lock)
+            .preferences(theme, lang.clone(), vault_timeout)
             .execute()?;
 
     // Register vault in registry (fatal on failure)
@@ -1852,8 +1856,10 @@ pub fn handle_settings_set(
         .ok_or("Usage: baluard settings set key=value")?;
 
     let payload = match key {
-        "auto_lock_minutes" => {
-            serde_json::json!({"auto_lock_minutes": value.parse::<u32>().map_err(|e: std::num::ParseIntError| format!("Invalid number: {e}"))?})
+        "vault_timeout" => {
+            // Validate via the core parser so the daemon never sees garbage.
+            let policy = baluard_core::vault::manifest::VaultTimeout::from_token(value);
+            serde_json::json!({ "vault_timeout": policy.as_token() })
         }
         "theme" => serde_json::json!({"theme": value}),
         "default_uri_match" => {
@@ -1863,7 +1869,7 @@ pub fn handle_settings_set(
         }
         _ => {
             return Err(format!(
-                "Unknown setting: {key}. Available: auto_lock_minutes, theme, default_uri_match"
+                "Unknown setting: {key}. Available: vault_timeout, theme, default_uri_match"
             )
             .into());
         }
@@ -2850,7 +2856,10 @@ fn vaults_prune(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if stale.is_empty() {
-        println!("No stale vault entries. Registry has {} vault(s).", reg.vaults.len());
+        println!(
+            "No stale vault entries. Registry has {} vault(s).",
+            reg.vaults.len()
+        );
         return Ok(());
     }
 

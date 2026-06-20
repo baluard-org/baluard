@@ -223,7 +223,7 @@ pub struct VaultCreator<'a> {
     slug: Option<String>,
     theme: Option<crate::types::ThemeMode>,
     lang: Option<String>,
-    auto_lock_minutes: Option<u32>,
+    vault_timeout: Option<crate::vault::manifest::VaultTimeout>,
 }
 
 impl<'a> Drop for VaultCreator<'a> {
@@ -249,7 +249,7 @@ impl<'a> VaultCreator<'a> {
             slug: None,
             theme: None,
             lang: None,
-            auto_lock_minutes: None,
+            vault_timeout: None,
         }
     }
 
@@ -301,11 +301,11 @@ impl<'a> VaultCreator<'a> {
         mut self,
         theme: Option<crate::types::ThemeMode>,
         lang: Option<String>,
-        auto_lock_minutes: Option<u32>,
+        vault_timeout: Option<crate::vault::manifest::VaultTimeout>,
     ) -> Self {
         self.theme = theme;
         self.lang = lang;
-        self.auto_lock_minutes = auto_lock_minutes;
+        self.vault_timeout = vault_timeout;
         self
     }
 
@@ -720,7 +720,7 @@ impl<'a> VaultCreator<'a> {
         let has_profile = self.display_name.is_some() || self.subtitle.is_some();
         let has_prefs = self.theme.is_some()
             || self.lang.is_some()
-            || self.auto_lock_minutes.is_some()
+            || self.vault_timeout.is_some()
             || self.slug.is_some();
 
         if has_profile {
@@ -740,8 +740,8 @@ impl<'a> VaultCreator<'a> {
             if let Some(ref lang) = self.lang {
                 settings.lang = Some(lang.clone());
             }
-            if let Some(auto_lock) = self.auto_lock_minutes {
-                settings.auto_lock_minutes = Some(auto_lock);
+            if let Some(timeout) = self.vault_timeout {
+                settings.vault_timeout = timeout;
             }
             if let Some(ref slug) = self.slug {
                 settings.slug = Some(slug.clone());
@@ -883,7 +883,7 @@ mod tests {
             .preferences(
                 Some(crate::types::ThemeMode::Dark),
                 Some("es".into()),
-                Some(30),
+                Some(crate::vault::manifest::VaultTimeout::Minutes(30)),
             )
             .execute()
             .unwrap();
@@ -897,7 +897,10 @@ mod tests {
         let settings = handle.get_settings().unwrap();
         assert_eq!(settings.theme, Some(crate::types::ThemeMode::Dark));
         assert_eq!(settings.lang.as_deref(), Some("es"));
-        assert_eq!(settings.auto_lock_minutes, Some(30));
+        assert_eq!(
+            settings.vault_timeout,
+            crate::vault::manifest::VaultTimeout::Minutes(30)
+        );
 
         // Verify locale file
         assert_eq!(handle.load_locale().as_deref(), Some("es"));
@@ -924,7 +927,10 @@ mod tests {
         let settings = handle.get_settings().unwrap();
         assert!(settings.theme.is_none());
         assert!(settings.lang.is_none());
-        assert!(settings.auto_lock_minutes.is_none());
+        assert_eq!(
+            settings.vault_timeout,
+            crate::vault::manifest::VaultTimeout::default_for_new()
+        );
 
         assert!(handle.load_locale().is_none());
         assert!(!path.join("meta/locale").exists());

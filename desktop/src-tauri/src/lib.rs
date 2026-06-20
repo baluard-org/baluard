@@ -541,12 +541,13 @@ pub fn run() {
 
             Ok(())
         })
-        // Window events → defensive lock-all.
+        // Window events → defensive (policy-driven) lock.
         //
         // Phase 6 / T15: when the main window loses focus (app resign-active)
-        // we lock every currently-unlocked vault. This caps multi-vault key
-        // exposure the moment the device becomes unattended, instead of
-        // waiting for each vault's idle timer. Close still hides to tray.
+        // we ask the daemon to lock only the vaults whose timeout policy is
+        // `Immediately`. Other policies (Minutes / OnAppExit) are
+        // honored: backgrounding the app alone no longer forces a lock.
+        // Close still hides to tray.
         //
         // NOTE: OS suspend / screen-lock hooks are platform-specific and
         // not yet wired here. Tauri v2 has no cross-platform power-event
@@ -603,24 +604,22 @@ pub fn run() {
                                     {
                                         return false;
                                     }
-                                    let _ = send_request("vaults.lock_all", "");
+                                    let _ = send_request("vaults.on_app_blur", "");
                                     log::info!(
-                                        "[desktop] window blur (debounced) → lock_all fired"
+                                        "[desktop] window blur (debounced) → on_app_blur fired"
                                     );
                                     true
                                 },
                             )
                             .await;
-                            // Clear the per-vault token cache now that every
-                            // vault is locked, so the UI treats them as locked
-                            // without waiting for a rejection.
-                            if let Some(store) =
-                                app_handle.try_state::<Mutex<SessionStore>>()
-                            {
-                                let mut st = store.lock().unwrap();
-                                st.tokens.clear();
-                                st.active_slug = None;
-                            }
+                            // NOTE: we deliberately do NOT clear the per-vault
+                            // token cache here. `on_app_blur` only locks vaults
+                            // whose policy is `Immediately`; a `Minutes`/`Never`
+                            // vault stays unlocked and must keep its token.
+                            // Clearing all tokens would make unlocked vaults
+                            // appear locked (empty token → daemon rejection).
+                            // The daemon remains authoritative; the frontend's
+                            // 30s heartbeat re-syncs per-vault presence.
                         });
                         *blur.pending.lock().unwrap() = Some(handle);
                     }

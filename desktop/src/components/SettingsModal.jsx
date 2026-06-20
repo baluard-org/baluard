@@ -7,6 +7,7 @@ import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { buildImportPayload, buildExportPayload } from "../lib/payload.js";
+import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 import { biometryAvailable } from "../lib/biometry.js";
 import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
@@ -20,8 +21,8 @@ export default function SettingsModal() {
 
   const [activeTab, setActiveTab] = createSignal("general"); // "general" or "data"
   
-  // Auto-lock state
-  const [lockMinutes, setLockMinutes] = createSignal(15);
+  // Auto-lock state (vault timeout policy token)
+  const [timeoutToken, setTimeoutToken] = createSignal("15m");
   const [saved, setSaved] = createSignal(false);
 
   // Biometric state
@@ -77,7 +78,7 @@ export default function SettingsModal() {
     try {
       // Load auto lock
       const data = JSON.parse(await daemon("settings.get"));
-      if (data.auto_lock_minutes) setLockMinutes(data.auto_lock_minutes);
+      setTimeoutToken(normalizeVaultTimeout(data.vault_timeout));
       // Favicon setting (default: enabled)
       setFetchFavicons(data.fetch_favicons !== false);
 
@@ -107,9 +108,11 @@ export default function SettingsModal() {
     }
   }
 
-  async function saveAutoLock() {
+  async function saveAutoLock(token) {
+    const next = normalizeVaultTimeout(token);
+    setTimeoutToken(next);
     try {
-      await daemon("settings.set", JSON.stringify({ auto_lock_minutes: lockMinutes() }));
+      await daemon("settings.set", JSON.stringify({ vault_timeout: next }));
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {}
@@ -438,23 +441,19 @@ export default function SettingsModal() {
                     <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.autolockDesc")}</span>
                   </div>
                   <div class="flex items-center gap-3">
-                    <div class="flex items-center gap-2 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-xl px-3 py-1.5 flex-1 max-w-[200px]">
-                      <input
-                        type="number"
-                        min="1"
-                        max="120"
-                        value={lockMinutes()}
-                        onInput={e => setLockMinutes(parseInt(e.target.value) || 15)}
-                        class="w-full bg-transparent text-sm text-[var(--color-text)] outline-none font-bold text-center"
-                      />
-                      <span class="text-xs text-[var(--color-muted)]">{t("settings.minutes")}</span>
-                    </div>
-                    <button
-                      onClick={saveAutoLock}
-                      class="px-5 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-md"
+                    <select
+                      value={timeoutToken()}
+                      onChange={(e) => saveAutoLock(e.currentTarget.value)}
+                      class="flex-1 px-3 py-2.5 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all cursor-pointer"
+                      aria-label={t("settings.autolockTimeout")}
                     >
-                      {saved() ? t("settings.saved") : t("settings.save")}
-                    </button>
+                      <For each={VAULT_TIMEOUT_PRESETS}>
+                        {(p) => <option value={p.token}>{t(`settings.timeoutPreset.${p.token}`)}</option>}
+                      </For>
+                    </select>
+                    <Show when={saved()}>
+                      <span class="text-[10px] text-[var(--color-primary)] font-bold shrink-0">{t("settings.saved")}</span>
+                    </Show>
                   </div>
                 </div>
 

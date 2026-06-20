@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createSignal, For } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { toastError } from "../context/toastSignal.js";
@@ -7,6 +7,7 @@ import { sanitizeError } from "../lib/utils.js";
 import { setTheme as setGlobalTheme } from "../context/themeSignal.js";
 import { startVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { IconKey } from "./Icon.jsx";
+import { VAULT_TIMEOUT_PRESETS, DEFAULT_VAULT_TIMEOUT } from "../lib/vaultTimeout.js";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 
@@ -20,7 +21,7 @@ export default function SetupScreen() {
   const auth = useAuth();
   const { t, locale } = useI18n();
   const [theme, setTheme] = createSignal("system");
-  const [autoLock, setAutoLock] = createSignal("15");
+  const [timeoutToken, setTimeoutToken] = createSignal(DEFAULT_VAULT_TIMEOUT);
   const [displayName, setDisplayName] = createSignal("");
   const [subtitle, setSubtitle] = createSignal("");
   const [submitting, setSubmitting] = createSignal(false);
@@ -38,14 +39,11 @@ export default function SetupScreen() {
       }
 
       // Apply preferences via settings.set
-      const al = autoLock().trim();
       const settingsPayload = {
         theme: theme(),
         lang: locale(),
+        vault_timeout: timeoutToken(),
       };
-      if (al !== "" && al !== "0") {
-        settingsPayload.auto_lock_minutes = parseInt(al, 10) || 15;
-      }
       await daemon("settings.set", JSON.stringify(settingsPayload));
 
       // Save plaintext locale for pre-unlock access
@@ -143,17 +141,16 @@ export default function SetupScreen() {
                   <label for="setup-auto-lock" class="block text-sm font-medium text-[var(--color-text)] mb-2">
                     {t("setup.autoLockLabel")}
                   </label>
-                  <div class="flex items-center gap-2">
-                    <input
-                      id="setup-auto-lock"
-                      type="number"
-                      min="0"
-                      value={autoLock()}
-                      onInput={e => setAutoLock(e.target.value)}
-                      class="w-24 px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
-                    />
-                    <span class="text-sm text-[var(--color-muted)]">{t("setup.autoLockMinutes")}</span>
-                  </div>
+                  <select
+                    id="setup-auto-lock"
+                    value={timeoutToken()}
+                    onChange={(e) => setTimeoutToken(e.currentTarget.value)}
+                    class="w-full px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all cursor-pointer"
+                  >
+                    <For each={VAULT_TIMEOUT_PRESETS}>
+                      {(p) => <option value={p.token}>{t(`setup.timeoutPreset.${p.token}`)}</option>}
+                    </For>
+                  </select>
                 </div>
               </div>
             </fieldset>
