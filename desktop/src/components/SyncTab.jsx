@@ -1,6 +1,7 @@
 import { createSignal, Show, For, onMount, onCleanup } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
+import { createProviderConnect } from "../lib/providerConnect.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess } from "../context/toastSignal.js";
 import { IconUpload, IconDownload, IconRefresh, IconAlert } from "./Icon.jsx";
@@ -37,15 +38,21 @@ export default function SyncTab() {
   const [advPat, setAdvPat] = createSignal("");
   // Web-OAuth (Codeberg PKCE): auth URL opened in browser, status polled.
   const [webOAuthUrl, setWebOAuthUrl] = createSignal(null);
-  let webPollTimer = null;
 
-  let pollTimer = null;
   let disconnectDialogRef;
 
-  onCleanup(() => {
-    if (pollTimer) clearTimeout(pollTimer);
-    if (webPollTimer) clearTimeout(webPollTimer);
+  // Provider auth flow (device-flow / web-oauth / PAT) shared with the
+  // download-from-provider wizard. onUpdate mirrors the phase into the
+  // signals the JSX already binds to (authSession for the device code,
+  // webOAuthUrl for the browser link).
+  const conn = createProviderConnect({
+    t,
+    onUpdate: (info) => {
+      if (info.phase === "device-flow" && info.session) setAuthSession(info.session);
+      else if (info.phase === "web-oauth") setWebOAuthUrl(info.url);
+    },
   });
+  onCleanup(() => conn.dispose());
 
   onMount(loadState);
 
@@ -100,67 +107,47 @@ export default function SyncTab() {
     }
   }
 
-  // ── GitHub Device Flow ──
+  // ── Provider connect (device-flow / web-oauth / PAT) ──
+  // Consolidated in lib/providerConnect.js. This maps the flow's phase into
+  // the signals the JSX binds to and mirrors the old per-method success/error
+  // handling (reset advanced fields, reload, toast on success; error on reject).
 
-  async function startDeviceFlow(provider) {
+  async function connectProvider(provider) {
     setSelectedProvider(provider);
     setSubState("authenticating");
     setError(null);
+    setAuthSession(null);
+    setWebOAuthUrl(null);
     try {
-      const raw = await daemon("provider.connect_start", JSON.stringify({ provider, ...buildOverrides() }));
-      const session = JSON.parse(raw);
-      setAuthSession(session);
-      schedulePoll(session);
+      const advanced = {};
+      if (advClientId().trim()) advanced.client_id = advClientId().trim();
+      if (advInstanceUrl().trim()) advanced.instance_url = advInstanceUrl().trim();
+      const result = await conn.connect(provider, {
+        pat: advPat().trim() || undefined,
+        advanced,
+      });
+      // Success: reset advanced fields, reload state, toast (mirrors old flows).
+      setSubState("idle");
+      setAuthSession(null);
+      setWebOAuthUrl(null);
+      setSelectedProvider(null);
+      setAdvClientId("");
+      setAdvInstanceUrl("");
+      setAdvPat("");
+      setShowAdvanced(false);
+      await loadState();
+      toastSuccess(t("sync.connectedAs", { username: result.username || "" }));
     } catch (e) {
       setError(sanitizeError(e, t));
       setSubState("error");
+      setAuthSession(null);
+      setWebOAuthUrl(null);
+      conn.dispose();
     }
-  }
-
-  function schedulePoll(session) {
-    const delay = (session.interval_secs || 5) * 1000;
-    pollTimer = setTimeout(() => pollDeviceFlow(session), delay);
-  }
-
-  async function pollDeviceFlow(session) {
-    pollTimer = null;
-    try {
-      const raw = await daemon("provider.connect_poll", JSON.stringify(session));
-      const result = JSON.parse(raw);
-
-      if (result.status === "pending") {
-        schedulePoll(session);
-      } else if (result.status === "slow_down") {
-        session.interval_secs = result.interval_secs;
-        setAuthSession({ ...session });
-        schedulePoll(session);
-      } else if (result.status === "expired") {
-        setError(t("sync.deviceFlowExpired"));
-        setSubState("error");
-      } else if (result.status === "success") {
-        cancelPoll();
-        setSubState("idle");
-        setAuthSession(null);
-        setAdvClientId("");
-        setAdvInstanceUrl("");
-        setShowAdvanced(false);
-        await loadState();
-        toastSuccess(t("sync.connectedAs", { username: result.username || "" }));
-      }
-    } catch (e) {
-      setError(sanitizeError(e, t));
-      setSubState("error");
-      cancelPoll();
-    }
-  }
-
-  function cancelPoll() {
-    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   }
 
   function cancelAuth() {
-    cancelPoll();
-    cancelWebPoll();
+    conn.dispose();
     setAuthSession(null);
     setSelectedProvider(null);
     setSubState("idle");
@@ -170,92 +157,6 @@ export default function SyncTab() {
     setAdvPat("");
     setShowAdvanced(false);
     setWebOAuthUrl(null);
-  }
-
-  // ── PAT Auth ──
-
-  async function submitPat(provider) {
-    if (!advPat().trim()) return;
-    setSelectedProvider(provider);
-    setSubState("authenticating");
-    setError(null);
-    try {
-      const raw = await daemon(
-        "provider.connect_pat",
-        JSON.stringify({ provider, token: advPat().trim(), ...buildOverrides() })
-      );
-      const result = JSON.parse(raw);
-      if (result.status === "success") {
-        setAdvPat("");
-        setSubState("idle");
-        setSelectedProvider(null);
-        setAdvClientId("");
-        setAdvInstanceUrl("");
-        setShowAdvanced(false);
-        await loadState();
-        toastSuccess(t("sync.connectedAs", { username: result.username || "" }));
-      }
-    } catch (e) {
-      setError(sanitizeError(e, t));
-      setSubState("error");
-    }
-  }
-
-  // ── Web-OAuth (Codeberg PKCE) ──
-
-  async function startWebOAuth(provider) {
-    setSelectedProvider(provider);
-    setSubState("authenticating");
-    setError(null);
-    try {
-      const raw = await daemon("provider.oauth_start_web", JSON.stringify({ provider, ...buildOverrides() }));
-      const result = JSON.parse(raw);
-      setWebOAuthUrl(result.auth_url);
-      // Auto-open in browser via anchor click (Tauri shell.open is also an option)
-      if (typeof window !== "undefined" && window.__TAURI__) {
-        window.__TAURI__.shell.open(result.auth_url);
-      }
-      scheduleWebPoll();
-    } catch (e) {
-      setError(sanitizeError(e, t));
-      setSubState("error");
-    }
-  }
-
-  function scheduleWebPoll() {
-    webPollTimer = setTimeout(pollWebOAuth, 2000);
-  }
-
-  async function pollWebOAuth() {
-    webPollTimer = null;
-    try {
-      const raw = await daemon("provider.oauth_status_web");
-      const result = JSON.parse(raw);
-      if (result.status === "pending") {
-        scheduleWebPoll();
-      } else if (result.status === "success") {
-        cancelWebPoll();
-        setSubState("idle");
-        setWebOAuthUrl(null);
-        setAdvClientId("");
-        setAdvInstanceUrl("");
-        setShowAdvanced(false);
-        await loadState();
-        toastSuccess(t("sync.connectedAs", { username: result.username || "" }));
-      } else if (result.status === "error") {
-        setError(t("sync.webOAuthError") + " " + (result.error || ""));
-        setSubState("error");
-        cancelWebPoll();
-      }
-    } catch (e) {
-      setError(sanitizeError(e, t));
-      setSubState("error");
-      cancelWebPoll();
-    }
-  }
-
-  function cancelWebPoll() {
-    if (webPollTimer) { clearTimeout(webPollTimer); webPollTimer = null; }
   }
 
   // ── Repo Setup ──
@@ -272,15 +173,6 @@ export default function SyncTab() {
   // Auth method for a provider key, derived from provider.list ("device-flow" | "pat").
   function authMethodFor(key) {
     return providerList()?.[key]?.auth_method || "pat";
-  }
-
-  // Build optional overrides object for connect payloads. Only includes
-  // non-empty fields so the daemon applies provider defaults when omitted.
-  function buildOverrides() {
-    const o = {};
-    if (advClientId().trim()) o.client_id = advClientId().trim();
-    if (advInstanceUrl().trim()) o.instance_url = advInstanceUrl().trim();
-    return o;
   }
 
   async function createAndSetupRepo() {
@@ -466,12 +358,7 @@ export default function SyncTab() {
                           onClick={() => {
                             // M5: guard double-submit while a flow is in flight.
                             if (subState() !== "idle") return;
-                            const method = authMethodFor(key);
-                            // PAT in Advanced Options overrides the automatic flow.
-                            if (advPat().trim()) { setSelectedProvider(key); setSubState("authenticating"); submitPat(key); }
-                            else if (method === "device-flow") startDeviceFlow(key);
-                            else if (method === "web-oauth") startWebOAuth(key);
-                            else { setSelectedProvider(key); setSubState("authenticating"); }
+                            connectProvider(key);
                           }}
                           class={`flex items-center gap-3 p-4 rounded-xl border transition-all cursor-pointer ${style.bg} ${style.border} hover:opacity-80`}
                         >
