@@ -204,5 +204,16 @@ select option {
   animation: copyPop 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* macOS specific layout adjustments for overlay title bar */
+.platform-mac .vault__sidebar,
+.platform-mac .vault__list,
+.platform-mac .vault__detail {
+  padding-top: 28px;
+}
+
+.platform-mac .theme-toggle-floating {
+  top: 36px;
+}
+
 
 

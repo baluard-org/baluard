@@ -200,7 +200,7 @@ export default function VaultView() {
       <SettingsModal />
 
       {/* Column 1: Left Navigation Sidebar */}
-      <div class="w-[260px] bg-[var(--color-sidebar)] border-r border-[var(--color-border)] flex flex-col shrink-0 select-none h-full">
+      <div class="vault__sidebar w-[260px] bg-[var(--color-sidebar)] border-r border-[var(--color-border)] flex flex-col shrink-0 select-none h-full relative">
         {/* Unified Sidebar Header */}
         <div class="p-5 border-b border-[var(--color-border)] space-y-4">
           {/* Brand Row & Quick Actions */}
@@ -396,7 +396,7 @@ export default function VaultView() {
       </div>
 
       {/* Column 2: Vault Items List Pane */}
-      <div class={`w-[360px] bg-[var(--color-list)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0 select-none transition-all duration-200 ease-out ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
+      <div class={`vault__list w-[360px] bg-[var(--color-list)] border-r border-[var(--color-border)] flex flex-col justify-between shrink-0 select-none transition-all duration-200 ease-out ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
         <div class="flex-1 flex flex-col min-h-0">
 
           {/* Header Action Bar */}
@@ -507,7 +507,7 @@ export default function VaultView() {
       </div>
 
       {/* Column 3: Main Details / Edit Panel */}
-      <div class={`flex-1 bg-[var(--color-detail)] flex flex-col min-w-0 relative transition-all duration-200 ease-out ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
+      <div class={`vault__detail flex-1 bg-[var(--color-detail)] flex flex-col min-w-0 relative transition-all duration-200 ease-out ${switching() ? "opacity-40 scale-[0.99] filter blur-[0.5px]" : "opacity-100 scale-100 filter-none"}`}>
 
         <Transition name="slide" mode="out-in">
           <Switch>
