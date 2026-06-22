@@ -323,6 +323,14 @@ fn lock_all_vaults(store: State<Mutex<SessionStore>>) -> bool {
     }
 }
 
+/// Reveal the main window once the frontend has finished loading and rendering,
+/// avoiding the white flash.
+#[tauri::command]
+fn show_window(window: tauri::WebviewWindow) {
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
 /// Stored session tokens obtained from daemon at unlock/create, keyed by
 /// vault slug. Per Phase 6, each unlocked vault has its own token; a
 /// vault-A token is rejected for any vault-B operation. The frontend keeps
@@ -642,7 +650,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             daemon_request,
             daemon_status,
-            lock_all_vaults
+            lock_all_vaults,
+            show_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -24,4 +24,9 @@ async function lockAllVaults() {
   return invoke("lock_all_vaults");
 }
 
-export { daemon, lockAllVaults };
+// Instruct the Tauri backend to reveal the main window once frontend has mounted/loaded.
+async function showWindow() {
+  return invoke("show_window");
+}
+
+export { daemon, lockAllVaults, showWindow };
