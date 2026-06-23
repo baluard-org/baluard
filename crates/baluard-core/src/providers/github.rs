@@ -96,6 +96,24 @@ impl ForgeProvider for GitHubProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+            // 404 on /login/device/code is GitHub's signal that the OAuth
+            // App has not enabled the Device Authorization flow toggle
+            // (opt-in per https://github.blog/changelog/2022-03-16-enable-
+            // oauth-device-authentication-flow-for-apps/). Surface that
+            // distinct cause so the user / maintainer knows to flip the
+            // toggle rather than chasing a generic network/credential bug.
+            if status == 404 {
+                return Err(ProviderError::Api(
+                    "GitHub returned 404 for /login/device/code. The OAuth \
+                     App registered with this client_id has not enabled \
+                     the Device Authorization flow (opt-in per app since \
+                     March 2022). Enable it in the app's settings: \
+                     https://github.com/settings/developers → click the \
+                     app → 'Device flow' → Enable. See \
+                     docs/git-provider-apps-and-tokens.md §3.2."
+                        .into(),
+                ));
+            }
             return Err(ProviderError::Api(format!(
                 "device flow start failed: {status}: {body}"
             )));
