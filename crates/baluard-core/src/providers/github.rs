@@ -15,7 +15,7 @@ use super::types::{
 };
 
 /// GitHub OAuth app client ID (public, no secret needed for device flow).
-pub(crate) const GITHUB_CLIENT_ID: &str = "Ov23liuGmBAmBRWm3Ni";
+pub(crate) const GITHUB_CLIENT_ID: &str = "Ov23liTCidT2TQDLP4No";
 
 /// GitHub device flow endpoints.
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
