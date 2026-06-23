@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-06-20 (Phase 4 remote vault clone shipped)
+> Last updated: 2026-06-23 (Phase 4 hardening: `provider.disconnect` wired to `revoke_token`)
 
 ---
 

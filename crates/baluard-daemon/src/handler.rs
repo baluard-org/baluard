@@ -268,28 +268,6 @@ fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
     }
 }
 
-/// Dispatch to the correct ForgeProvider implementation based on Provider enum.
-/// Centralizes provider routing so handler code stays provider-agnostic.
-/// `config` carries Advanced Options overrides (client_id, instance_url);
-/// defaults are applied inside each provider when a field is `None`.
-/// L6 fix: returns Result instead of panicking on unimplemented providers.
-fn provider_for(
-    p: baluard_core::providers::types::Provider,
-    config: baluard_core::providers::ProviderConfig,
-) -> Result<Box<dyn baluard_core::providers::ForgeProvider>, String> {
-    match p {
-        baluard_core::providers::types::Provider::GitHub => Ok(Box::new(
-            baluard_core::providers::github::GitHubProvider::with_config(config),
-        )),
-        baluard_core::providers::types::Provider::GitLab => Ok(Box::new(
-            baluard_core::providers::gitlab::GitLabProvider::with_config(config),
-        )),
-        baluard_core::providers::types::Provider::Codeberg => Ok(Box::new(
-            baluard_core::providers::codeberg::CodebergProvider::with_config(config),
-        )),
-    }
-}
-
 /// Helper: parse provider name from JSON payload.
 fn parse_provider_name(
     payload: &str,
@@ -373,9 +351,9 @@ async fn ensure_valid_token(
         return Ok(token);
     }
 
-    let prov = match provider_for(provider, info.config()) {
+    let prov = match baluard_core::providers::provider_for(provider, info.config()) {
         Ok(p) => p,
-        Err(e) => return Err(err_response(e)),
+        Err(e) => return Err(err_response(e.to_string())),
     };
 
     match prov.refresh_token(&token).await {
@@ -470,7 +448,8 @@ async fn start_web_oauth(
     provider: baluard_core::providers::types::Provider,
     config: baluard_core::providers::ProviderConfig,
 ) -> Result<String, String> {
-    let prov = provider_for(provider, config.clone())?;
+    let prov = baluard_core::providers::provider_for(provider, config.clone())
+        .map_err(|e| e.to_string())?;
 
     // Bind a random loopback port for the callback. RFC 8252 §7.3 says loopback
     // redirects allow any port, so we bind :0 (OS-assigned). Forgejo's OAuth2
@@ -590,11 +569,11 @@ async fn handle_oauth_callback(
     }
 
     // Exchange code for token.
-    let prov = match provider_for(provider, config) {
+    let prov = match baluard_core::providers::provider_for(provider, config) {
         Ok(p) => p,
         Err(e) => {
             let _ = respond_html(&mut sock, &format!("Provider error: {e}")).await;
-            set_oauth_result(provider, Err(e)).await;
+            set_oauth_result(provider, Err(e.to_string())).await;
             return;
         }
     };
@@ -2405,9 +2384,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             match provider.auth_method() {
                 "device-flow" => {
                     let config = parse_provider_config(&req.payload);
-                    let prov = match provider_for(provider, config) {
+                    let prov = match baluard_core::providers::provider_for(provider, config) {
                         Ok(p) => p,
-                        Err(e) => return err_response(e),
+                        Err(e) => return err_response(e.to_string()),
                     };
                     match prov.device_flow_start().await {
                         Ok(session) => ok_resp(
@@ -2442,9 +2421,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     Ok(s) => s,
                     Err(e) => return err_response(format!("Invalid session: {e}")),
                 };
-            let prov = match provider_for(session.provider, config) {
+            let prov = match baluard_core::providers::provider_for(session.provider, config) {
                 Ok(p) => p,
-                Err(e) => return err_response(e),
+                Err(e) => return err_response(e.to_string()),
             };
             match prov.device_flow_poll(&session).await {
                 Ok(status) => match status {
@@ -2519,9 +2498,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 return err_response("Missing token in payload");
             }
 
-            let prov = match provider_for(provider, config) {
+            let prov = match baluard_core::providers::provider_for(provider, config) {
                 Ok(p) => p,
-                Err(e) => return err_response(e),
+                Err(e) => return err_response(e.to_string()),
             };
             match prov.authenticate_pat(&pat).await {
                 Ok((token, info)) => {
@@ -2563,9 +2542,12 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Some(info) => {
                     match ensure_valid_token(provider, info).await {
                         Ok(token) => {
-                            let prov = match provider_for(provider, info.config()) {
+                            let prov = match baluard_core::providers::provider_for(
+                                provider,
+                                info.config(),
+                            ) {
                                 Ok(p) => p,
-                                Err(e) => return err_response(e),
+                                Err(e) => return err_response(e.to_string()),
                             };
                             match prov.validate_token(&token).await {
                                 Ok(valid_info) => ok_resp(
@@ -2596,7 +2578,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(p) => p,
                 Err(e) => return e,
             };
-            match baluard_core::providers::token::disconnect(provider) {
+            // Best-effort server-side token revocation (Phase 4 wiring) then
+            // local keyring + providers.json cleanup. Local cleanup always
+            // runs even if the revoke call fails (network, PAT, no API).
+            match baluard_core::providers::revoke_and_disconnect(provider).await {
                 Ok(()) => ok_resp("disconnected", token_str),
                 Err(e) => err_response(format!("Disconnect failed: {e}")),
             }
@@ -2674,9 +2659,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(t) => t,
                 Err(e) => return e,
             };
-            let prov = match provider_for(provider, info.config()) {
+            let prov = match baluard_core::providers::provider_for(provider, info.config()) {
                 Ok(p) => p,
-                Err(e) => return err_response(e),
+                Err(e) => return err_response(e.to_string()),
             };
             match prov.list_repos(&token, page, per_page).await {
                 Ok(repos) => ok_resp(serde_json::to_string(&repos).unwrap_or_default(), token_str),
@@ -2699,9 +2684,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(t) => t,
                 Err(e) => return e,
             };
-            let prov = match provider_for(provider, info.config()) {
+            let prov = match baluard_core::providers::provider_for(provider, info.config()) {
                 Ok(p) => p,
-                Err(e) => return err_response(e),
+                Err(e) => return err_response(e.to_string()),
             };
             match prov.detect_vault_repos(&token).await {
                 Ok(repos) => ok_resp(serde_json::to_string(&repos).unwrap_or_default(), token_str),
@@ -2732,9 +2717,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(t) => t,
                 Err(e) => return e,
             };
-            let prov = match provider_for(provider, info.config()) {
+            let prov = match baluard_core::providers::provider_for(provider, info.config()) {
                 Ok(p) => p,
-                Err(e) => return err_response(e),
+                Err(e) => return err_response(e.to_string()),
             };
             match prov.create_private_repo(&token, &name).await {
                 Ok(repo) => ok_resp(serde_json::to_string(&repo).unwrap_or_default(), token_str),
@@ -2794,9 +2779,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             };
 
             // Create private repo on provider
-            let prov = match provider_for(prov_type, info.config()) {
+            let prov = match baluard_core::providers::provider_for(prov_type, info.config()) {
                 Ok(p) => p,
-                Err(e) => return err_response(e),
+                Err(e) => return err_response(e.to_string()),
             };
             let repo = match prov.create_private_repo(&token, &effective_name).await {
                 Ok(r) => r,

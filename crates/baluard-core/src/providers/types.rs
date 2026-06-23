@@ -565,16 +565,23 @@ pub trait ForgeProvider: Send + Sync {
 #[cfg(test)]
 pub mod mock {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Mock provider for unit tests. All operations succeed with dummy data.
+    /// `revoked_calls` counts how many times `revoke_token` was invoked —
+    /// tests can share an `Arc<AtomicUsize>` between the factory and the
+    /// assertion site to verify the trait method is called by the wiring.
     pub struct MockProvider {
         pub provider_type: Provider,
+        pub revoked_calls: Arc<AtomicUsize>,
     }
 
     impl MockProvider {
         pub fn github() -> Self {
             Self {
                 provider_type: Provider::GitHub,
+                revoked_calls: Arc::new(AtomicUsize::new(0)),
             }
         }
     }
@@ -680,6 +687,7 @@ pub mod mock {
         }
 
         async fn revoke_token(&self, _token: &ProviderToken) -> Result<(), ProviderError> {
+            self.revoked_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
 
