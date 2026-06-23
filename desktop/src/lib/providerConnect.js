@@ -10,6 +10,7 @@
 //   await conn.connect("github");           // resolves { username } on success
 //   conn.dispose();                         // clears any pending timers
 
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { daemon } from "./daemon.js";
 import { sanitizeError } from "./utils.js";
 
@@ -50,9 +51,10 @@ export function createProviderConnect({ t, onUpdate }) {
 	}
 
 	function openInBrowser(url) {
-		if (typeof window !== "undefined" && window.__TAURI__?.shell?.open) {
-			window.__TAURI__.shell.open(url);
-		}
+		// Tauri 2.x: openUrl from @tauri-apps/plugin-opener launches the
+		// system browser for external URLs. The old `window.__TAURI__.shell.open`
+		// API was Tauri 1.x and no longer works in 2.x.
+		openUrl(url);
 	}
 
 	// ── Device flow (GitHub / GitLab) ──
