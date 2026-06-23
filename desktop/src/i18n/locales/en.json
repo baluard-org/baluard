@@ -20,7 +20,7 @@
     "subtitle": "Git-backed password storage. No server, fully offline.",
     "newVault": "Create a new vault",
     "openLocal": "Open an existing local vault",
-    "downloadFromProvider": "Get a vault from GitHub, GitLab, or Codeberg"
+    "downloadFromProvider": "Open a vault saved online"
   },
   "clone": {
     "title": "Download Vault",
