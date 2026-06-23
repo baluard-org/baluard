@@ -10,7 +10,7 @@
     "passwordPlaceholder": "MASTER_PASSWORD",
     "unlock": "UNLOCK",
     "unlocking": "UNLOCKING...",
-    "createNew": "CREATE_NEW_VAULT",
+    "useDifferent": "USE_DIFFERENT_VAULT",
     "quickUnlock": "QUICK_UNLOCK"
   },
   "create": {
