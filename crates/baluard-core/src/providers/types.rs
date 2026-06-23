@@ -70,14 +70,32 @@ impl Provider {
         }
     }
 
-    /// Default OAuth client_id (placeholder for GitLab/Codeberg until project
-    /// apps are registered; GitHub is the real public client_id).
-    pub fn default_client_id(&self) -> &'static str {
-        match self {
-            Self::GitHub => super::github::GITHUB_CLIENT_ID,
-            Self::GitLab => "REPLACE_WITH_GITLAB_CLIENT_ID",
-            Self::Codeberg => "REPLACE_WITH_CODEBERG_CLIENT_ID",
-        }
+    /// Resolved OAuth client_id with this priority chain:
+    /// 1. `BALUARD_GITHUB_CLIENT_ID` / `BALUARD_GITLAB_CLIENT_ID` /
+    ///    `BALUARD_CODEBERG_CLIENT_ID` env var (loaded from process env,
+    ///    which `dotenvy` populates from `.env` at startup). Empty string
+    ///    is treated as unset.
+    /// 2. The embedded default (real GitHub app; placeholder for GitLab +
+    ///    Codeberg until the project app is registered — see
+    ///    `docs/git-provider-apps-and-tokens.md` §3/§4/§5).
+    ///
+    /// Returns `String` (not `&'static str`) because env-var reads are
+    /// owned. Callers that need the embedded default without env influence
+    /// (e.g. tests) can compare against the consts directly.
+    pub fn default_client_id(&self) -> String {
+        let env_var = match self {
+            Self::GitHub => "BALUARD_GITHUB_CLIENT_ID",
+            Self::GitLab => "BALUARD_GITLAB_CLIENT_ID",
+            Self::Codeberg => "BALUARD_CODEBERG_CLIENT_ID",
+        };
+        std::env::var(env_var)
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| match self {
+                Self::GitHub => super::github::GITHUB_CLIENT_ID.to_string(),
+                Self::GitLab => "REPLACE_WITH_GITLAB_CLIENT_ID".to_string(),
+                Self::Codeberg => "REPLACE_WITH_CODEBERG_CLIENT_ID".to_string(),
+            })
     }
 }
 
@@ -103,11 +121,13 @@ impl ProviderConfig {
         Self::default()
     }
 
-    /// Effective client_id: override or provider default.
+    /// Effective client_id: explicit override (`client_id` field), then
+    /// the env-var-aware default. The env-var chain lives inside
+    /// `Provider::default_client_id`.
     pub fn effective_client_id(&self, provider: Provider) -> String {
         self.client_id
             .clone()
-            .unwrap_or_else(|| provider.default_client_id().to_string())
+            .unwrap_or_else(|| provider.default_client_id())
     }
 
     /// Effective instance base URL (no trailing slash): override or default.
@@ -697,5 +717,119 @@ pub mod mock {
         ) -> Result<Option<ProviderToken>, ProviderError> {
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Serialises tests that mutate the `BALUARD_*_CLIENT_ID` env vars.
+    /// `cargo test` runs unit tests in parallel; concurrent `set_var` on
+    /// the same key is a data race (Rust 1.85 marks `set_var` `unsafe`).
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Save a snapshot of the three client_id env vars and return a closure
+    /// that restores them. Used with `ENV_LOCK` to keep tests independent.
+    fn snapshot_client_id_env() -> impl Drop {
+        struct Restore {
+            github: Option<String>,
+            gitlab: Option<String>,
+            codeberg: Option<String>,
+        }
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                restore("BALUARD_GITHUB_CLIENT_ID", self.github.take());
+                restore("BALUARD_GITLAB_CLIENT_ID", self.gitlab.take());
+                restore("BALUARD_CODEBERG_CLIENT_ID", self.codeberg.take());
+            }
+        }
+        fn restore(key: &str, val: Option<String>) {
+            match val {
+                Some(v) => unsafe { std::env::set_var(key, v) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+        Restore {
+            github: std::env::var("BALUARD_GITHUB_CLIENT_ID").ok(),
+            gitlab: std::env::var("BALUARD_GITLAB_CLIENT_ID").ok(),
+            codeberg: std::env::var("BALUARD_CODEBERG_CLIENT_ID").ok(),
+        }
+    }
+
+    #[test]
+    fn env_override_takes_precedence_over_embedded() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _restore = snapshot_client_id_env();
+
+        unsafe { std::env::set_var("BALUARD_GITHUB_CLIENT_ID", "test-github-override") };
+        assert_eq!(Provider::GitHub.default_client_id(), "test-github-override");
+
+        unsafe { std::env::set_var("BALUARD_GITLAB_CLIENT_ID", "test-gitlab-override") };
+        assert_eq!(Provider::GitLab.default_client_id(), "test-gitlab-override");
+
+        unsafe { std::env::set_var("BALUARD_CODEBERG_CLIENT_ID", "test-codeberg-override") };
+        assert_eq!(
+            Provider::Codeberg.default_client_id(),
+            "test-codeberg-override"
+        );
+    }
+
+    #[test]
+    fn empty_env_var_is_treated_as_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _restore = snapshot_client_id_env();
+
+        // Empty string must not shadow the embedded default. A blank
+        // value in `.env` is a user typo we should not honor.
+        unsafe { std::env::set_var("BALUARD_GITHUB_CLIENT_ID", "") };
+        assert_eq!(
+            Provider::GitHub.default_client_id(),
+            crate::providers::github::GITHUB_CLIENT_ID
+        );
+    }
+
+    #[test]
+    fn unset_env_falls_back_to_embedded() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _restore = snapshot_client_id_env();
+
+        unsafe { std::env::remove_var("BALUARD_GITHUB_CLIENT_ID") };
+        assert_eq!(
+            Provider::GitHub.default_client_id(),
+            crate::providers::github::GITHUB_CLIENT_ID
+        );
+
+        unsafe { std::env::remove_var("BALUARD_GITLAB_CLIENT_ID") };
+        assert_eq!(
+            Provider::GitLab.default_client_id(),
+            "REPLACE_WITH_GITLAB_CLIENT_ID"
+        );
+
+        unsafe { std::env::remove_var("BALUARD_CODEBERG_CLIENT_ID") };
+        assert_eq!(
+            Provider::Codeberg.default_client_id(),
+            "REPLACE_WITH_CODEBERG_CLIENT_ID"
+        );
+    }
+
+    #[test]
+    fn effective_client_id_prefers_explicit_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _restore = snapshot_client_id_env();
+
+        unsafe { std::env::set_var("BALUARD_GITHUB_CLIENT_ID", "from-env") };
+        let config = ProviderConfig {
+            client_id: Some("from-config".into()),
+            instance_url: None,
+        };
+        // Explicit `ProviderConfig.client_id` wins over env var (Advanced
+        // Options override is the user's most deliberate choice).
+        assert_eq!(config.effective_client_id(Provider::GitHub), "from-config");
+
+        // No explicit override -> env var.
+        let config = ProviderConfig::defaults();
+        assert_eq!(config.effective_client_id(Provider::GitHub), "from-env");
     }
 }

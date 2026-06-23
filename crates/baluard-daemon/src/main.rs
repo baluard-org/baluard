@@ -103,6 +103,12 @@ impl<A: std::io::Write, B: std::io::Write> std::io::Write for MultiWriter<A, B> 
 }
 
 fn main() -> anyhow::Result<()> {
+    // Load `.env` from cwd (and parents) into process env. `dotenvy` returns
+    // `Err` if no `.env` is present — the expected case in CI / production
+    // installs. Real env vars take precedence over the file. The `.env`
+    // file is gitignored; `.env.example` documents the variables.
+    let _ = dotenvy::dotenv();
+
     init_debug_logging();
 
     let matches =
