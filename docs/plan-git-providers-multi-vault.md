@@ -120,7 +120,7 @@ Redesign desktop wizard first screen: three buttons (new vault, open local vault
 - [ ] Remote vault list filters by `.baluard` marker (search API on GitHub, fallback on others)
 - [ ] Clone shows progress (bytes/objects) streamed to desktop, percentage in CLI
 - [ ] Cloned vault registered in registry with provider info
-- [ ] `provider.disconnect` revokes token at provider (non-blocking on failure), clears keyring + providers.json
+- [x] `provider.disconnect` revokes token at provider (non-blocking on failure), clears keyring + providers.json
 - [ ] 2FA warning banner shown on provider selection, dismissible, shown once per provider
 - [ ] Full adversarial test: expired token, orphaned repo cleanup, keyring failure, device flow expiry
 
