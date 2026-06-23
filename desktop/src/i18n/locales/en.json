@@ -12,7 +12,7 @@
     "passwordPlaceholder": "Master password",
     "unlock": "Unlock",
     "unlocking": "Unlocking...",
-    "createNew": "Create new vault",
+    "useDifferent": "Use a different vault",
     "quickUnlock": "Quick Unlock"
   },
   "welcome": {
