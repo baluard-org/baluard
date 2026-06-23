@@ -6,12 +6,12 @@ import { startClone } from "../lib/cloneFlow.js";
 import { daemon } from "../lib/daemon.js";
 import { createProviderConnect } from "../lib/providerConnect.js";
 import { sanitizeError } from "../lib/utils.js";
-import { IconAlert, IconArrowLeft, IconDownload, IconLock } from "./Icon.jsx";
+import { IconAlert, IconArrowLeft, IconDownload, IconLock, IconGitHub, IconGitLab, IconCodeberg } from "./Icon.jsx";
 
 const PROVIDERS = [
-	{ key: "github", icon: "GitHub" },
-	{ key: "gitlab", icon: "GitLab" },
-	{ key: "codeberg", icon: "Codeberg" },
+	{ key: "github" },
+	{ key: "gitlab" },
+	{ key: "codeberg" },
 ];
 
 const WARNED_KEY = "baluard.clone2faDismissed";
@@ -213,9 +213,18 @@ export default function CloneFromProviderScreen(props) {
 									<button
 										type="button"
 										onClick={() => pickProvider(p.key)}
-										class="clone-screen__provider w-full px-4 py-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-primary)] text-left font-medium text-[var(--color-text)] transition-all cursor-pointer"
+										class="clone-screen__provider w-full px-4 py-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-primary)] text-left font-medium text-[var(--color-text)] transition-all cursor-pointer flex items-center gap-3"
 									>
-										{providerLabel(p.key)}
+										<Show when={p.key === "github"}>
+											<IconGitHub class="w-5 h-5 opacity-90 shrink-0" />
+										</Show>
+										<Show when={p.key === "gitlab"}>
+											<IconGitLab class="w-5 h-5 opacity-90 shrink-0" />
+										</Show>
+										<Show when={p.key === "codeberg"}>
+											<IconCodeberg class="w-5 h-5 opacity-90 shrink-0" />
+										</Show>
+										<span>{providerLabel(p.key)}</span>
 									</button>
 								)}
 							</For>
