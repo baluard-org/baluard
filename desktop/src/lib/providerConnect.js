@@ -67,7 +67,7 @@ export function createProviderConnect({ t, onUpdate }) {
 						JSON.stringify({ provider, ...overrides }),
 					);
 					session = JSON.parse(raw);
-					onUpdate?.({ phase: "device-flow", session });
+					onUpdate?.({ phase: "device-flow", method: "device-flow", session });
 					schedulePoll();
 				} catch (e) {
 					reject(new Error(sanitizeError(e, t)));
