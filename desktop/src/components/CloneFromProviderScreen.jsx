@@ -242,14 +242,24 @@ export default function CloneFromProviderScreen(props) {
 								<p class="text-sm text-[var(--color-text)] mb-2">
 									{t("sync.deviceFlowInstructions")}
 								</p>
-								<p class="text-2xl font-mono font-bold tracking-widest text-[var(--color-primary)] my-3">
-									{authInfo().session.user_code}
-								</p>
+								<div class="flex items-center justify-center gap-2 my-3">
+									<p class="text-2xl font-mono font-bold tracking-widest text-[var(--color-primary)]">
+										{authInfo().session.user_code}
+									</p>
+									<CopyButton
+										value={authInfo().session.user_code}
+										title={t("sync.copyCode")}
+									/>
+								</div>
 								<a
 									href={authInfo().session.verification_uri}
 									target="_blank"
 									class="text-sm text-[var(--color-primary)] underline"
 									rel="noopener"
+									onClick={(e) => {
+										e.preventDefault();
+										openUrl(authInfo().session.verification_uri);
+									}}
 								>
 									{authInfo().session.verification_uri}
 								</a>
