@@ -2,6 +2,13 @@
   "app": {
     "name": "Baluard"
   },
+  "welcome": {
+    "title": "Bienvenido a Baluard",
+    "subtitle": "Almacenamiento de contraseñas con Git. Sin servidor, totalmente sin conexión.",
+    "newVault": "Crear una nueva bóveda",
+    "openLocal": "Abrir una bóveda local existente",
+    "downloadFromProvider": "Obtener una bóveda de GitHub, GitLab o Codeberg"
+  },
   "login": {
     "title": "Baluard",
     "subtitle": "Ingresa la contraseña maestra",
