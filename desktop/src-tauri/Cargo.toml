@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Baluard desktop app"
 authors = ["EstebanForge"]
 license = "GPL-3.0"
-repository = "https://github.com/EstebanForge/Baluard"
+repository = "https://github.com/baluard-org/baluard"
 edition = "2024"
 
 [lib]

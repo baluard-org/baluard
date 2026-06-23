@@ -43,7 +43,7 @@ export LD_LIBRARY_PATH="/home/linuxbrew/.linuxbrew/Cellar/libgit2/1.9.3/lib:/hom
 ## Quick Start
 
 ```bash
-git clone https://github.com/EstebanForge/Baluard.git
+git clone https://github.com/baluard-org/baluard.git
 cd Baluard
 
 # Build everything

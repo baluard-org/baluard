@@ -6,7 +6,7 @@ Thank you for your interest in contributing!
 
 ```bash
 cargo install just      # Build runner
-git clone https://github.com/EstebanForge/Baluard.git
+git clone https://github.com/baluard-org/baluard.git
 cd Baluard
 just                    # List all targets
 just check              # Full CI parity (fmt + clippy + test + build)
