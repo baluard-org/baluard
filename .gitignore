@@ -55,6 +55,7 @@ node_modules/
 # ── Secrets / Local Configurations ──
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 *.p12

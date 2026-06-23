@@ -1016,6 +1016,13 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
 }
 
 fn main() {
+    // Load `.env` from cwd (and parents) into process env at startup.
+    // `dotenvy` returns `Err` if no `.env` is present — the expected case
+    // in CI / production installs. Real env vars take precedence over the
+    // file. The `.env` file is gitignored; `.env.example` documents the
+    // recognised variables.
+    let _ = dotenvy::dotenv();
+
     let cli = Cli::parse();
 
     // Resolve --vault flag.
