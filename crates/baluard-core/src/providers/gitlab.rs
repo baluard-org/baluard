@@ -452,6 +452,31 @@ impl ForgeProvider for GitLabProvider {
         Self::project_to_repo(&p).ok_or_else(|| ProviderError::Api("missing repo fields".into()))
     }
 
+    async fn delete_repo(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        name: &str,
+    ) -> Result<(), ProviderError> {
+        let path_or_id = format!("{owner}/{name}");
+        let url_encoded = urlencoding_encode(&path_or_id);
+        let url = format!("{}/projects/{}", self.api_base(), url_encoded);
+        let resp = self
+            .authed(reqwest::Method::DELETE, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ProviderError::Api(format!(
+                "delete repo HTTP {status}: {body}"
+            )));
+        }
+        Ok(())
+    }
+
     async fn revoke_token(&self, token: &ProviderToken) -> Result<(), ProviderError> {
         // Best-effort. OAuth public clients revoke via /oauth/revoke with
         // client_id + token. PATs cannot self-revoke; user deletes in settings.

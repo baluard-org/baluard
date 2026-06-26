@@ -2032,7 +2032,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
-        "sync.disconnect" => match sync_disconnect(&state.vault_path) {
+        "sync.disconnect" => match sync_disconnect(&state.vault_path, &req.payload).await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
@@ -3131,8 +3131,30 @@ fn sync_status_json(vault_path: &std::path::Path) -> Result<String, String> {
     serde_json::to_string(&resp).map_err(|e| format!("JSON error: {e}"))
 }
 
+pub(crate) fn parse_repo_owner_name(url: &str) -> Option<(String, String)> {
+    let cleaned = url.strip_suffix(".git").unwrap_or(url);
+    let segments: Vec<&str> = cleaned.split(['/', ':']).collect();
+    if segments.len() >= 2 {
+        let name = segments[segments.len() - 1].to_string();
+        let owner = segments[segments.len() - 2].to_string();
+        Some((owner, name))
+    } else {
+        None
+    }
+}
+
 #[cfg(feature = "git-sync")]
-fn sync_disconnect(vault_path: &std::path::Path) -> Result<String, String> {
+async fn sync_disconnect(
+    vault_path: &std::path::Path,
+    payload_str: &str,
+) -> Result<String, String> {
+    let payload: serde_json::Value = if payload_str.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_str(payload_str).map_err(|e| format!("invalid disconnect payload: {e}"))?
+    };
+    let delete_remote = payload["delete_remote"].as_bool().unwrap_or(false);
+
     let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
     let repo = engine
         .open_repo()
@@ -3142,6 +3164,51 @@ fn sync_disconnect(vault_path: &std::path::Path) -> Result<String, String> {
     let remote_url = engine
         .get_remote_url(&repo, "origin")
         .map_err(|e| format!("No 'origin' remote: {e}"))?;
+
+    // Destructive: delete the repository at the provider before we unhook the
+    // local remote. Any failure aborts the whole disconnect so the user is
+    // never left believing a secret-bearing repo was destroyed when it was not.
+    if delete_remote {
+        let slug = baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)
+            .ok()
+            .flatten()
+            .map(|m| m.slug)
+            .ok_or_else(|| "vault marker missing".to_string())?;
+        let reg = baluard_core::vault::registry::VaultRegistry::load_locked()
+            .map_err(|e| format!("cannot load registry: {e}"))?;
+        let entry = reg
+            .get(&slug)
+            .ok_or_else(|| format!("vault '{slug}' not in registry"))?;
+        let provider_name = entry
+            .provider
+            .as_ref()
+            .ok_or_else(|| "vault has no provider".to_string())?;
+        let reg_remote = entry
+            .remote_url
+            .as_ref()
+            .ok_or_else(|| "vault has no remote_url".to_string())?;
+        // Prefer the live origin URL; fall back to the registry value.
+        let url_source = if remote_url.is_empty() { reg_remote } else { &remote_url };
+        let (owner, name) = parse_repo_owner_name(url_source)
+            .ok_or_else(|| format!("cannot parse owner/name from '{url_source}'"))?;
+        let provider = baluard_core::providers::types::Provider::all()
+            .iter()
+            .find(|p| p.to_string() == *provider_name)
+            .ok_or_else(|| format!("unknown provider '{provider_name}'"))?;
+        let state_file = baluard_core::providers::token::ProvidersState::load()
+            .map_err(|e| format!("cannot load providers state: {e}"))?;
+        let info = state_file
+            .get(*provider)
+            .ok_or_else(|| format!("no token for provider '{provider}'"))?;
+        let token = ensure_valid_token(*provider, info)
+            .await
+            .map_err(|_e| format!("token refresh failed for provider '{provider}'"))?;
+        let prov = baluard_core::providers::provider_for(*provider, info.config())
+            .map_err(|e| format!("provider init failed: {e}"))?;
+        prov.delete_repo(&token, &owner, &name)
+            .await
+            .map_err(|e| format!("failed to delete remote repo: {e}"))?;
+    }
 
     // Remove the remote
     engine
@@ -3200,7 +3267,7 @@ fn sync_status_json(_p: &std::path::Path) -> Result<String, String> {
     Err("git-sync feature not enabled".into())
 }
 #[cfg(not(feature = "git-sync"))]
-fn sync_disconnect(_p: &std::path::Path) -> Result<String, String> {
+async fn sync_disconnect(_p: &std::path::Path, _payload: &str) -> Result<String, String> {
     Err("git-sync feature not enabled".into())
 }
 
@@ -3272,4 +3339,44 @@ fn verify_peer_uid(stream: &UnixStream) -> Result<()> {
 fn verify_peer_uid(_stream: &UnixStream) -> Result<()> {
     // Windows Named Pipes have their own ACL-based security
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_repo_owner_name;
+
+    /// Covers the URL forms `sync_disconnect` must extract owner/name from.
+    /// If this breaks, the destructive delete-remote path silently no-ops
+    /// (returns Err on the now-unparseable URL instead of deleting).
+    #[test]
+    fn parse_repo_owner_name_handles_common_forms() {
+        // SSH (git@)
+        assert_eq!(
+            parse_repo_owner_name("git@github.com:alice/vault.git"),
+            Some(("alice".into(), "vault".into()))
+        );
+        // HTTPS, no .git
+        assert_eq!(
+            parse_repo_owner_name("https://gitlab.com/bob/secrets"),
+            Some(("bob".into(), "secrets".into()))
+        );
+        // HTTPS with .git suffix stripped
+        assert_eq!(
+            parse_repo_owner_name("https://codeberg.org/carol/data.git"),
+            Some(("carol".into(), "data".into()))
+        );
+        // Self-hosted GitLab with a port
+        assert_eq!(
+            parse_repo_owner_name("https://git.example.com:8443/dan/proj.git"),
+            Some(("dan".into(), "proj".into()))
+        );
+    }
+
+    /// Garbage in -> None out. The caller turns this into an explicit error,
+    /// never a silent skip of the destructive op.
+    #[test]
+    fn parse_repo_owner_name_rejects_garbage() {
+        assert_eq!(parse_repo_owner_name("not-a-url"), None);
+        assert_eq!(parse_repo_owner_name(""), None);
+    }
 }

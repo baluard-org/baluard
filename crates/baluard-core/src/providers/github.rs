@@ -22,10 +22,9 @@ use super::types::{
 /// surfaces the actual server message and HTTP status.
 fn api_error(e: octocrab::Error) -> ProviderError {
     match e {
-        octocrab::Error::GitHub { source, .. } => ProviderError::Api(format!(
-            "{} (HTTP {})",
-            source.message, source.status_code
-        )),
+        octocrab::Error::GitHub { source, .. } => {
+            ProviderError::Api(format!("{} (HTTP {})", source.message, source.status_code))
+        }
         other => ProviderError::Api(other.to_string()),
     }
 }
@@ -301,11 +300,7 @@ impl ForgeProvider for GitHubProvider {
         token: &ProviderToken,
     ) -> Result<Vec<VaultRepo>, ProviderError> {
         let client = self.client_from_token(token)?;
-        let user = client
-            .current()
-            .user()
-            .await
-            .map_err(api_error)?;
+        let user = client.current().user().await.map_err(api_error)?;
 
         let query = format!("filename:.baluard user:{}", user.login);
         let results: octocrab::Page<octocrab::models::Code> = client
@@ -361,6 +356,20 @@ impl ForgeProvider for GitHubProvider {
 
         self.repo_to_vault(&repo)
             .ok_or_else(|| ProviderError::Api("missing repo fields".into()))
+    }
+
+    async fn delete_repo(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        name: &str,
+    ) -> Result<(), ProviderError> {
+        let client = self.client_from_token(token)?;
+        let route = format!("/repos/{owner}/{name}");
+        client
+            .delete::<(), _, ()>(route, None as Option<&()>)
+            .await
+            .map_err(api_error)
     }
 
     async fn revoke_token(&self, _token: &ProviderToken) -> Result<(), ProviderError> {

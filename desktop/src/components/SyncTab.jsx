@@ -7,6 +7,7 @@ import { toastSuccess } from "../context/toastSignal.js";
 import { IconUpload, IconDownload, IconRefresh, IconAlert, IconSpinner } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import ExternalLink from "./ExternalLink.jsx";
+import { Button } from "./Primitives.jsx";
 
 const PROVIDER_STYLES = {
   github: { bg: "bg-gray-800", border: "border-gray-600", text: "text-white" },
@@ -31,6 +32,8 @@ export default function SyncTab() {
   const [repoName, setRepoName] = createSignal("baluard-vault");
   const [showDisconnectModal, setShowDisconnectModal] = createSignal(false);
   const [revokeToken, setRevokeToken] = createSignal(false);
+  const [deleteRemote, setDeleteRemote] = createSignal(false);
+  const [confirmDeleteRemote, setConfirmDeleteRemote] = createSignal(false);
   // Advanced Options: power users override the OAuth client_id (independence
   // from Baluard's app) or point at a self-hosted instance. Blank = defaults.
   const [showAdvanced, setShowAdvanced] = createSignal(false);
@@ -289,7 +292,7 @@ export default function SyncTab() {
     setSubState("creating");
     setError(null);
     try {
-      await daemon("sync.disconnect");
+      await daemon("sync.disconnect", JSON.stringify({ delete_remote: deleteRemote() }));
       if (revokeToken()) {
         const provider = syncStatus()?.provider;
         if (provider) {
@@ -298,6 +301,8 @@ export default function SyncTab() {
       }
       setShowDisconnectModal(false);
       setRevokeToken(false);
+      setDeleteRemote(false);
+      setConfirmDeleteRemote(false);
       setSubState("idle");
       await loadState();
       toastSuccess(t("sync.disconnect"));
@@ -305,6 +310,8 @@ export default function SyncTab() {
       setError(sanitizeError(e, t));
       setSubState("error");
       setShowDisconnectModal(false);
+      setDeleteRemote(false);
+      setConfirmDeleteRemote(false);
     }
   }
 
@@ -653,37 +660,88 @@ export default function SyncTab() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="sync-disconnect-title"
-              class="fixed inset-0 bg-black/40 flex items-center justify-center z-[200]"
-              onClick={() => setShowDisconnectModal(false)}
+              aria-describedby="sync-disconnect-desc"
+              class="fixed inset-0 bg-black/50 flex items-center justify-center z-[200]"
+              onClick={() => { setShowDisconnectModal(false); setRevokeToken(false); setDeleteRemote(false); setConfirmDeleteRemote(false); }}
             >
-              <FocusTrap containerRef={disconnectDialogRef} onEscape={() => { setShowDisconnectModal(false); setRevokeToken(false); }} />
-              <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[380px] p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
-                <h4 id="sync-disconnect-title" class="text-sm font-bold text-[var(--color-text)]">{t("sync.disconnectConfirmTitle")}</h4>
-                <p class="text-xs text-[var(--color-muted)]">{t("sync.disconnectConfirm")}</p>
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={revokeToken()}
-                    onChange={(e) => setRevokeToken(e.target.checked)}
-                    class="accent-red-500"
-                  />
-                  <span class="text-[10px] text-red-300">{t("sync.disconnectRevokeToken")}</span>
-                </label>
-                <div class="flex items-center gap-3 pt-2">
-                  <button
-                    onClick={confirmDisconnect}
+              <FocusTrap containerRef={disconnectDialogRef} onEscape={() => { setShowDisconnectModal(false); setRevokeToken(false); setDeleteRemote(false); setConfirmDeleteRemote(false); }} />
+              <div
+                class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[380px] p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div>
+                  <h3 id="sync-disconnect-title" class="text-lg font-bold text-[var(--color-text)] mb-2">
+                    {t("sync.disconnectConfirmTitle")}
+                  </h3>
+                  <p id="sync-disconnect-desc" class="text-sm text-[var(--color-muted)] leading-relaxed">
+                    {t("sync.disconnectConfirm")}
+                  </p>
+                </div>
+
+                <div class="space-y-3">
+                  <label class="p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl flex items-center gap-3 cursor-pointer select-none hover:bg-black/10 transition-all">
+                    <input
+                      type="checkbox"
+                      checked={revokeToken()}
+                      onChange={(e) => setRevokeToken(e.target.checked)}
+                      class="w-4 h-4 rounded border-[var(--color-border)] text-[var(--color-danger)] focus:ring-[var(--color-danger)] cursor-pointer accent-[var(--color-danger)] shrink-0"
+                    />
+                    <span class="text-xs font-semibold text-[var(--color-text)] leading-tight">
+                      {t("sync.disconnectRevokeToken")}
+                    </span>
+                  </label>
+
+                  <label class="p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl flex items-center gap-3 cursor-pointer select-none hover:bg-black/10 transition-all">
+                    <input
+                      type="checkbox"
+                      checked={deleteRemote()}
+                      onChange={(e) => {
+                        setDeleteRemote(e.target.checked);
+                        if (!e.target.checked) setConfirmDeleteRemote(false);
+                      }}
+                      class="w-4 h-4 rounded border-[var(--color-border)] text-[var(--color-danger)] focus:ring-[var(--color-danger)] cursor-pointer accent-[var(--color-danger)] shrink-0"
+                    />
+                    <span class="text-xs font-semibold text-[var(--color-text)] leading-tight">
+                      {t("sync.disconnectDeleteRemote")}
+                    </span>
+                  </label>
+
+                  <Show when={deleteRemote()}>
+                    <label class="p-3 bg-red-950/10 border border-red-900/30 rounded-xl flex items-start gap-3 cursor-pointer select-none hover:bg-red-950/20 transition-all animate-in fade-in slide-in-from-top-2 duration-150">
+                      <input
+                        type="checkbox"
+                        checked={confirmDeleteRemote()}
+                        onChange={(e) => setConfirmDeleteRemote(e.target.checked)}
+                        class="w-4 h-4 rounded border-red-900/40 text-[var(--color-danger)] focus:ring-[var(--color-danger)] cursor-pointer accent-[var(--color-danger)] mt-0.5 shrink-0"
+                      />
+                      <div class="flex flex-col gap-0.5">
+                        <span class="text-xs font-semibold text-red-200 leading-tight">
+                          {t("sync.disconnectConfirmDeleteRemote")}
+                        </span>
+                        <span class="text-[10px] text-red-300 leading-tight">
+                          {t("sync.disconnectConfirmDeleteRemoteDesc")}
+                        </span>
+                      </div>
+                    </label>
+                  </Show>
+                </div>
+
+                <div class="flex items-center gap-3 pt-1">
+                  <Button
+                    onClick={() => { setShowDisconnectModal(false); setRevokeToken(false); setDeleteRemote(false); setConfirmDeleteRemote(false); }}
                     disabled={subState() === "creating"}
-                    class="flex-1 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
-                  >
-                    {subState() === "creating" ? t("sync.disconnecting") : t("sync.disconnect")}
-                  </button>
-                  <button
-                    onClick={() => { setShowDisconnectModal(false); setRevokeToken(false); }}
-                    disabled={subState() === "creating"}
-                    class="flex-1 py-2 rounded-xl border border-[var(--color-border)] text-xs font-bold text-[var(--color-muted)] cursor-pointer disabled:opacity-50"
+                    class="flex-1 py-2.5"
                   >
                     {t("entry.cancel")}
-                  </button>
+                  </Button>
+                  <Button
+                    onClick={confirmDisconnect}
+                    disabled={subState() === "creating" || (deleteRemote() && !confirmDeleteRemote())}
+                    variant="danger"
+                    class="flex-1 py-2.5"
+                  >
+                    {subState() === "creating" ? t("sync.disconnecting") : t("sync.disconnect")}
+                  </Button>
                 </div>
               </div>
             </div>

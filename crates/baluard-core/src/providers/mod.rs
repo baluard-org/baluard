@@ -106,7 +106,14 @@ mod tests {
     /// local `providers.json` entry is cleared. Uses an injected factory so
     /// the test does not depend on the OS keyring (headless CI).
     #[tokio::test]
+    #[serial_test::serial]
     async fn revoke_and_disconnect_invokes_revoke_token() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let orig = std::env::var("BALUARD_DATA_DIR").ok();
+        unsafe {
+            std::env::set_var("BALUARD_DATA_DIR", temp_dir.path());
+        }
+
         // Counter shared between the factory (constructed mock) and the
         // assertion site. Increments on every `revoke_token` call.
         let counter = Arc::new(AtomicUsize::new(0));
@@ -116,6 +123,7 @@ mod tests {
             Ok(Box::new(MockProvider {
                 provider_type: Provider::GitHub,
                 revoked_calls: c,
+                deleted_calls: Arc::new(AtomicUsize::new(0)),
             }) as Box<dyn ForgeProvider>)
         };
 
@@ -152,12 +160,29 @@ mod tests {
             post.get(Provider::GitHub).is_none(),
             "providers.json entry must be removed after disconnect"
         );
+
+        unsafe {
+            if let Some(v) = orig {
+                std::env::set_var("BALUARD_DATA_DIR", v);
+            } else {
+                std::env::remove_var("BALUARD_DATA_DIR");
+            }
+        }
     }
 
     /// No entry in providers.json => no-op, returns Ok, no factory call.
     /// Verifies the early-return path for the "already disconnected" case.
     #[tokio::test]
+    #[serial_test::serial]
     async fn revoke_and_disconnect_no_entry_is_noop() {
+        // Mutates BALUARD_DATA_DIR (read by ProvidersState); must not run
+        // concurrently with other env-mutating provider tests.
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let orig = std::env::var("BALUARD_DATA_DIR").ok();
+        unsafe {
+            std::env::set_var("BALUARD_DATA_DIR", temp_dir.path());
+        }
+
         let counter = Arc::new(AtomicUsize::new(0));
         let c = counter.clone();
         let factory = move |_p: Provider, _c: ProviderConfig| {
@@ -165,6 +190,7 @@ mod tests {
             Ok(Box::new(MockProvider {
                 provider_type: Provider::GitHub,
                 revoked_calls: c,
+                deleted_calls: Arc::new(AtomicUsize::new(0)),
             }) as Box<dyn ForgeProvider>)
         };
 
@@ -189,6 +215,43 @@ mod tests {
             counter.load(Ordering::SeqCst),
             1,
             "factory variant always invokes"
+        );
+
+        unsafe {
+            if let Some(v) = orig {
+                std::env::set_var("BALUARD_DATA_DIR", v);
+            } else {
+                std::env::remove_var("BALUARD_DATA_DIR");
+            }
+        }
+    }
+
+    /// `delete_repo` on the mock must return Ok and increment its counter
+    /// exactly once per call. Guards the contract the daemon's
+    /// `sync_disconnect(delete_remote: true)` path relies on: a wired mock
+    /// is observable, not a silent no-op.
+    #[tokio::test]
+    async fn mock_provider_delete_repo_is_observable() {
+        use crate::providers::types::mock::MockProvider;
+
+        let provider = MockProvider::github();
+        let token = ProviderToken::new("ghp_test", "repo");
+
+        // Sanity: counter starts at zero.
+        assert_eq!(
+            provider.deleted_calls.load(Ordering::SeqCst),
+            0,
+            "deleted_calls must start at zero"
+        );
+
+        ForgeProvider::delete_repo(&provider, &token, "owner", "repo")
+            .await
+            .expect("mock delete_repo must succeed");
+
+        assert_eq!(
+            provider.deleted_calls.load(Ordering::SeqCst),
+            1,
+            "delete_repo must increment deleted_calls exactly once"
         );
     }
 }

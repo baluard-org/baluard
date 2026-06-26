@@ -61,6 +61,7 @@ core-foundation-sys = "0.8"
 proptest.workspace = true
 tokio.workspace = true
 tempfile = "3"
+serial_test = "3"
 # Phase 0.3 spike — see docs/plan-passkey-rs-evaluation.md
 webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
 webauthn-rs-proto.workspace = true

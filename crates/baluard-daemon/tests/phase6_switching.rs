@@ -481,9 +481,9 @@ mod real_vault {
     #[tokio::test]
     #[serial_test::serial]
     async fn vault_unlock_error_rate_limiting_delay() {
+        use baluard_core::vault::registry::{VaultEntry, VaultRegistry};
         use baluard_daemon::handler::route_host_request;
         use baluard_daemon::proto::GatewayRequest;
-        use baluard_core::vault::registry::{VaultRegistry, VaultEntry};
         use uuid::Uuid;
 
         let temp_data_dir = tempfile::tempdir().expect("temp data dir");
@@ -504,7 +504,8 @@ mod real_vault {
             last_synced: None,
             last_opened: None,
             vault_id: Uuid::new_v4(),
-        }).unwrap();
+        })
+        .unwrap();
         reg.save_locked().unwrap();
 
         let host: SharedVaultHost = VaultHost::shared();
