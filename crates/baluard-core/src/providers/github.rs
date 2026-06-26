@@ -14,6 +14,22 @@ use super::types::{
     ProviderToken, VaultRepo,
 };
 
+/// Format an octocrab error with the real GitHub API message.
+///
+/// `octocrab::Error::GitHub`'s default `Display` renders only the variant
+/// name ("GitHub"), dropping `GitHubError.message` and `status_code`. That
+/// turns every API failure into a useless "API error: GitHub" string. This
+/// surfaces the actual server message and HTTP status.
+fn api_error(e: octocrab::Error) -> ProviderError {
+    match e {
+        octocrab::Error::GitHub { source, .. } => ProviderError::Api(format!(
+            "{} (HTTP {})",
+            source.message, source.status_code
+        )),
+        other => ProviderError::Api(other.to_string()),
+    }
+}
+
 /// GitHub OAuth app client ID (public, no secret needed for device flow).
 pub(crate) const GITHUB_CLIENT_ID: &str = "Ov23liTCidT2TQDLP4No";
 
@@ -50,7 +66,7 @@ impl GitHubProvider {
         Octocrab::builder()
             .personal_token(token.access_token().expose_secret().to_string())
             .build()
-            .map_err(|e| ProviderError::Api(e.to_string()))
+            .map_err(api_error)
     }
 
     /// Convert octocrab Repository to VaultRepo.
@@ -272,7 +288,7 @@ impl ForgeProvider for GitHubProvider {
             .page(page)
             .send()
             .await
-            .map_err(|e| ProviderError::Api(e.to_string()))?;
+            .map_err(api_error)?;
 
         Ok(page_result
             .into_iter()
@@ -289,7 +305,7 @@ impl ForgeProvider for GitHubProvider {
             .current()
             .user()
             .await
-            .map_err(|e| ProviderError::Api(e.to_string()))?;
+            .map_err(api_error)?;
 
         let query = format!("filename:.baluard user:{}", user.login);
         let results: octocrab::Page<octocrab::models::Code> = client
@@ -297,7 +313,7 @@ impl ForgeProvider for GitHubProvider {
             .code(&query)
             .send()
             .await
-            .map_err(|e| ProviderError::Api(e.to_string()))?;
+            .map_err(api_error)?;
 
         Ok(results
             .into_iter()
@@ -329,7 +345,7 @@ impl ForgeProvider for GitHubProvider {
                 }),
             )
             .await
-            .map_err(|e| ProviderError::Api(e.to_string()))?;
+            .map_err(api_error)?;
 
         // Safety: verify repo is private after creation
         if !repo.private.unwrap_or(false) {
