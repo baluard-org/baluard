@@ -1,9 +1,9 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, Show, For } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
-import { IconKey, IconCheck, IconCopy, IconRefresh } from "./Icon.jsx";
+import { IconKey, IconCheck, IconCopy, IconRefresh, IconSpinner } from "./Icon.jsx";
 import { copyToClipboard } from "../lib/clipboard.js";
 
 const COPY_BTN = "p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer shrink-0";
@@ -80,7 +80,7 @@ export default function SshKeyGenerator(props) {
         class="w-full py-2.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <Show when={generating()} fallback={<IconRefresh class="w-3.5 h-3.5" />}>
-          <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          <IconSpinner class="w-3.5 h-3.5" />
         </Show>
         {generating() ? t("entry.sshKeyGenerating") : t("entry.sshGenerateKey")}
       </button>

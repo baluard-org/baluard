@@ -1160,6 +1160,7 @@ async fn handle_vault_unlock(mut req: GatewayRequest, host: &SharedVaultHost) ->
         }
         Err(e) => {
             permit.commit_failure();
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             err_response(e)
         }
     }

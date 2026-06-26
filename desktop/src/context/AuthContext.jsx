@@ -61,7 +61,7 @@ function AuthProvider(props) {
 
   async function unlock(t) {
     const password = loginPasswordRef?.value;
-    if (!password) return;
+    if (!password) return false;
     const target = switchTarget();
     guardedSetStatus(setStatus, status(), "unlocking");
     try {
@@ -79,9 +79,11 @@ function AuthProvider(props) {
       setSwitchTarget(null);
       startVaultPrefetch();
       guardedSetStatus(setStatus, status(), "unlocked");
+      return true;
     } catch (e) {
       toastError(sanitizeError(e, t));
       guardedSetStatus(setStatus, status(), "locked");
+      return false;
     }
   }
 

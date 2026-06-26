@@ -42,4 +42,5 @@ default = ["git-sync"]
 git-sync = ["baluard-core/git-sync"]
 
 [dev-dependencies]
+serial_test = "3"
 tempfile = "3"

@@ -4,7 +4,7 @@ import { daemon } from "../lib/daemon.js";
 import { createProviderConnect } from "../lib/providerConnect.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess } from "../context/toastSignal.js";
-import { IconUpload, IconDownload, IconRefresh, IconAlert } from "./Icon.jsx";
+import { IconUpload, IconDownload, IconRefresh, IconAlert, IconSpinner } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import ExternalLink from "./ExternalLink.jsx";
 
@@ -341,7 +341,7 @@ export default function SyncTab() {
         {/* Loading */}
         <Show when={loading()}>
           <div class="flex items-center justify-center py-8">
-            <IconRefresh class="w-5 h-5 text-[var(--color-muted)] animate-spin" />
+            <IconSpinner class="w-5 h-5 text-[var(--color-muted)]" />
           </div>
         </Show>
 
@@ -449,7 +449,7 @@ export default function SyncTab() {
                     </ExternalLink>
                   </div>
                   <div class="flex items-center justify-center gap-2 text-[10px] text-[var(--color-muted)]">
-                    <IconRefresh class="w-3 h-3 animate-spin" />
+                    <IconSpinner class="w-3 h-3" />
                     {t("sync.deviceFlowPolling")}
                   </div>
                   <button onClick={cancelAuth} class="w-full text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">
@@ -477,7 +477,7 @@ export default function SyncTab() {
                     </ExternalLink>
                   </div>
                   <div class="flex items-center justify-center gap-2 text-[10px] text-[var(--color-muted)]">
-                    <IconRefresh class="w-3 h-3 animate-spin" />
+                    <IconSpinner class="w-3 h-3" />
                     {t("sync.webOAuthWaiting")}
                   </div>
                   <button onClick={cancelAuth} class="w-full text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer">
@@ -526,7 +526,7 @@ export default function SyncTab() {
 
               <Show when={subState() === "creating"}>
                 <div class="flex items-center justify-center gap-2 py-6">
-                  <IconRefresh class="w-4 h-4 text-[var(--color-primary)] animate-spin" />
+                  <IconSpinner class="w-4 h-4 text-[var(--color-primary)]" />
                   <span class="text-xs text-[var(--color-muted)]">{t("sync.settingUp")}</span>
                 </div>
               </Show>
@@ -587,7 +587,7 @@ export default function SyncTab() {
 
               <Show when={subState() === "syncing"}>
                 <div class="flex items-center justify-center gap-2 py-4">
-                  <IconRefresh class="w-4 h-4 text-[var(--color-primary)] animate-spin" />
+                  <IconSpinner class="w-4 h-4 text-[var(--color-primary)]" />
                   <span class="text-xs text-[var(--color-muted)]">{t("sync.syncInProgress")}</span>
                 </div>
               </Show>
