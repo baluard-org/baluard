@@ -1,4 +1,5 @@
 import { createSignal, createEffect, createRoot } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 
 const mql = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: light)") : null;
 
@@ -20,7 +21,11 @@ export const [theme, setTheme] = createSignal(
 );
 
 function applyTheme() {
-  document.body.classList.toggle("light-theme", resolveEffective(theme()) === "light");
+  const isLight = resolveEffective(theme()) === "light";
+  document.body.classList.toggle("light-theme", isLight);
+  try {
+    invoke("update_tray_icon", { isDark: !isLight }).catch(() => {});
+  } catch { /* noop */ }
 }
 
 // Wrap in createRoot so the effect has its own owner. Module-level
