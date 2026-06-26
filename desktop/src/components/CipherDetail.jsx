@@ -1,5 +1,5 @@
 import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { useAuth } from "../context/AuthContext.jsx";
 import { cipherToFlat } from "../lib/cipherSchema.js";
 import { useVault } from "../context/VaultContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
@@ -12,6 +12,7 @@ import { buildAttachDownloadPayload } from "../lib/payload.js";
 import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
 import FocusTrap from "./FocusTrap.jsx";
+import ExternalLink from "./ExternalLink.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
 import CipherAvatar from "./CipherAvatar.jsx";
 
@@ -393,33 +394,26 @@ export default function CipherDetail(props) {
               if (/^https?:\/\//i.test(u)) return u;
               return `https://${u}`;
             };
-            const launch = (e) => { e.preventDefault(); openUrl(launchHref()); };
             return (
               <div class="space-y-4 pt-2">
                 <h4 class={SECTION_LABEL}>{t("entry.uri")}</h4>
                 <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] flex items-center justify-between group hover:border-[var(--color-primary)] transition-all">
                   <div class="min-w-0 flex-1">
                     <label class="text-[10px] text-[var(--color-muted)] font-extrabold uppercase tracking-wider block">{t("entry.uri")}</label>
-                    <a
+                    <ExternalLink
                       href={launchHref()}
-                      onClick={launch}
-                      target="_blank"
-                      rel="noopener noreferrer"
                       class="text-sm text-[var(--color-accent)] hover:underline font-semibold mt-0.5 inline-block"
                     >
                       {uri()}
-                    </a>
+                    </ExternalLink>
                   </div>
-                  <a
+                  <ExternalLink
                     href={launchHref()}
-                    onClick={launch}
-                    target="_blank"
-                    rel="noopener noreferrer"
                     class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors"
                     title={t("entry.launchWebsite")}
                   >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-                  </a>
+                  </ExternalLink>
                 </div>
               </div>
             );

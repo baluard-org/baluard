@@ -1,5 +1,4 @@
 import { createSignal, For, onCleanup, Show } from "solid-js";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAuth } from "../context/AuthContext.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
@@ -8,6 +7,7 @@ import { daemon } from "../lib/daemon.js";
 import { createProviderConnect } from "../lib/providerConnect.js";
 import { sanitizeError } from "../lib/utils.js";
 import CopyButton from "./CopyButton.jsx";
+import ExternalLink from "./ExternalLink.jsx";
 import { IconAlert, IconArrowLeft, IconDownload, IconLock, IconGitHub, IconGitLab, IconCodeberg } from "./Icon.jsx";
 
 const PROVIDERS = [
@@ -253,18 +253,12 @@ export default function CloneFromProviderScreen(props) {
 										title={t("sync.copyCode")}
 									/>
 								</div>
-								<a
+								<ExternalLink
 									href={authInfo().session.verification_uri}
-									target="_blank"
 									class="text-sm text-[var(--color-primary)] underline"
-									rel="noopener"
-									onClick={(e) => {
-										e.preventDefault();
-										openUrl(authInfo().session.verification_uri);
-									}}
 								>
 									{authInfo().session.verification_uri}
-								</a>
+								</ExternalLink>
 								<p class="text-xs text-[var(--color-muted)] mt-3">
 									{t("sync.deviceFlowPolling")}
 								</p>
@@ -274,14 +268,12 @@ export default function CloneFromProviderScreen(props) {
 									{t("clone.webOAuthOpened")}
 								</p>
 								<Show when={authInfo()?.url}>
-									<a
+									<ExternalLink
 										href={authInfo().url}
-										target="_blank"
 										class="text-sm text-[var(--color-primary)] underline"
-										rel="noopener"
 									>
 										{t("clone.webOAuthRelink")}
-									</a>
+									</ExternalLink>
 								</Show>
 								<p class="text-xs text-[var(--color-muted)] mt-3">
 									{t("sync.deviceFlowPolling")}
