@@ -42,7 +42,7 @@ export default function WelcomeScreen() {
 					<div class="welcome-screen__card w-full max-w-md p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl animate-fade-in-up">
 						<div class="welcome-screen__header text-center mb-8">
 							<div class="w-24 h-24 mx-auto mb-4 flex items-center justify-center">
-								<img src={logoImg} alt="Baluard" class="w-24 h-24 object-contain" />
+								<img src={logoImg} alt="Baluard" class="w-24 h-24 object-contain logo-shadow" />
 							</div>
 							<h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)]">
 								{t("welcome.title").replace("Baluard", "")}<span class="font-logo">Baluard</span>
