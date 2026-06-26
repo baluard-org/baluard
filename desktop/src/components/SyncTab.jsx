@@ -596,7 +596,7 @@ export default function SyncTab() {
                       : syncStatus().dirty
                         ? "bg-yellow-950/20 text-yellow-400 border-yellow-900/30"
                         : "bg-green-950/20 text-green-400 border-green-900/30"
-                  }">
+                  }`}>
                     {subState() === "syncing"
                       ? t("sync.syncing")
                       : syncStatus().dirty
