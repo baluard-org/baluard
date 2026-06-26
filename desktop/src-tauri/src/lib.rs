@@ -351,6 +351,23 @@ fn show_window(window: tauri::WebviewWindow) {
     let _ = window.set_focus();
 }
 
+#[tauri::command]
+fn update_tray_icon(_app: AppHandle, _is_dark: bool) -> Result<(), String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(tray) = _app.tray_by_id("main") {
+            let icon_bytes = if _is_dark {
+                include_bytes!("../icons/tray_white.png").as_slice()
+            } else {
+                include_bytes!("../icons/tray_black.png").as_slice()
+            };
+            let icon = tauri::image::Image::from_bytes(icon_bytes).map_err(|e| e.to_string())?;
+            tray.set_icon(Some(icon)).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 /// Stored session tokens obtained from daemon at unlock/create, keyed by
 /// vault slug. Per Phase 6, each unlocked vault has its own token; a
 /// vault-A token is rejected for any vault-B operation. The frontend keeps
@@ -537,8 +554,13 @@ pub fn run() {
                 .item(&quit)
                 .build()?;
 
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+            let tray_icon = tauri::image::Image::from_bytes(
+                include_bytes!("../icons/tray_black.png")
+            )?;
+
+            let _tray = TrayIconBuilder::with_id("main")
+                .icon(tray_icon)
+                .icon_as_template(true)
                 .tooltip("Baluard")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -671,7 +693,8 @@ pub fn run() {
             daemon_request,
             daemon_status,
             lock_all_vaults,
-            show_window
+            show_window,
+            update_tray_icon
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
