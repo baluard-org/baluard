@@ -1,15 +1,12 @@
-# PROJECT KNOWLEDGE BASE
-
-**Updated:** 2026-06-20
-
-## OVERVIEW
+# OVERVIEW
 Project: **Baluard** (Git-native password manager)
 Stack: Rust (core crypto + CLI + daemon), SolidJS/Tailwind/Tauri v2 (desktop), Protobuf (IPC schema)
 License: GPL-3.0
 
 Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets.
+Absolute primary focuses: security, privacy, and easy to use for non-technical users.
 
-**Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell.
+**Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell. Mobile: Android, iOS.
 
 ## STATUS
 Baluard is pre-1.0 Work In Progress. **Breakage is expected and OK.** Move things forward; do not preserve backwards compatibility at the cost of progress. The vault format, IPC routes/JSON payloads, CLI flags, protobuf schema, and config shapes may all change without notice, deprecation period, shim, or migration path. No stable API/ABI contract exists yet.
@@ -241,6 +238,6 @@ Passkeys are stored **inside `LoginData::fido2_credentials: Option<Vec<PasskeyDa
 * **Codeberg endpoint**: use `/user/repos` (returns array directly). `/repos/list` does not exist; `/repos/search` wraps in `{ok, data}`.
 
 ## UX PRINCIPLES
-* **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden.
+* **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden. Optional visible "advanced" mode for tech-savvy users.
 * **No server backend**: Desktop and mobile apps work standalone/offline. Git sync is optional.
 * **i18n**: All user-facing strings in `desktop/src/i18n/locales/en.json` and `es.json`. Use `t("key")` in components. Both files must stay in sync.
