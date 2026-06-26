@@ -20,6 +20,7 @@
     "solid-transition-group": "^0.3.0"
   },
   "devDependencies": {
+    "@rollup/rollup-linux-arm64-gnu": "^4.62.2",
     "@tailwindcss/vite": "^4.0.0",
     "@tauri-apps/cli": "^2.0.0",
     "jsdom": "^29.1.1",

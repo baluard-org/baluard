@@ -31,6 +31,7 @@
 |----------|-------------|
 | [Brand Guidelines](brand-guidelines.md) | Color palette, design tokens, visual identity rules |
 | [Design Language Tokens](design-language-tokens.json) | Machine-readable design tokens (single source for the CSS pipeline) |
+| [App Icons](app-icons.md) | Generate platform icons (macOS/Win/Linux/Android/iOS) from one source image via `just app-icons` |
 
 ## Product Planning
 

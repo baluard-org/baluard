@@ -7,6 +7,7 @@ import { registerLocalVault } from "../lib/cloneFlow.js";
 import { sanitizeError } from "../lib/utils.js";
 import CloneFromProviderScreen from "./CloneFromProviderScreen.jsx";
 import { IconDownload, IconFolder, IconLock, IconPlus } from "./Icon.jsx";
+import logoImg from "../assets/logo.png";
 
 // Phase 4 wizard first screen: three entry points.
 //   New vault            -> existing create flow (status "init")
@@ -40,11 +41,11 @@ export default function WelcomeScreen() {
 				<div class="welcome-screen flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4">
 					<div class="welcome-screen__card w-full max-w-md p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl animate-fade-in-up">
 						<div class="welcome-screen__header text-center mb-8">
-							<div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-tr from-[var(--color-sidebar)] to-[var(--color-border)] border border-[var(--color-border)] flex items-center justify-center shadow-lg">
-								<IconLock class="w-8 h-8 text-[var(--color-primary)]" />
+							<div class="w-24 h-24 mx-auto mb-4 flex items-center justify-center">
+								<img src={logoImg} alt="Baluard" class="w-24 h-24 object-contain" />
 							</div>
 							<h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)]">
-								{t("welcome.title")}
+								{t("welcome.title").replace("Baluard", "")}<span class="font-logo">Baluard</span>
 							</h1>
 							<p class="text-sm text-[var(--color-muted)] mt-1">
 								{t("welcome.subtitle")}

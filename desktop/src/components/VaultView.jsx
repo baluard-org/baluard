@@ -10,7 +10,6 @@ import { selectSource, filterByCategory, filterByFolder, filterByTag, searchCiph
 import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
 import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox } from "./Icon.jsx";
-import AutoSyncIndicator from "./AutoSyncIndicator.jsx";
 import ConflictBanner from "./ConflictBanner.jsx";
 import CipherRow from "./CipherRow.jsx";
 import CipherDetail from "./CipherDetail.jsx";
@@ -19,6 +18,7 @@ import { invalidateFaviconCache } from "./CipherAvatar.jsx";
 import DeleteConfirmModal from "./DeleteConfirmModal.jsx";
 import ArchiveConfirmModal from "./ArchiveConfirmModal.jsx";
 import FocusTrap from "./FocusTrap.jsx";
+import logoImg from "../assets/logo.png";
 import GeneratorModal from "./GeneratorModal.jsx";
 import RepromptModal from "./RepromptModal.jsx";
 import SettingsModal from "./SettingsModal.jsx";
@@ -207,16 +207,15 @@ export default function VaultView() {
         <div class="p-5 border-b border-[var(--color-border)] space-y-4">
           {/* Brand Row & Quick Actions */}
           <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] flex items-center justify-center shadow">
-                <IconLock class="w-4.5 h-4.5 text-[var(--color-primary)]" />
+            <div class="flex items-center gap-2">
+              <div class="w-6 h-6 flex items-center justify-center">
+                <img src={logoImg} alt="Baluard" class="w-6 h-6 object-contain -mt-[6px]" />
               </div>
-              <span class="text-base font-extrabold tracking-tight text-[var(--color-text)]">{t("app.name")}</span>
+              <span class="text-3xl font-extrabold tracking-tight text-[var(--color-text)] font-logo">{t("app.name")}</span>
             </div>
             
-            {/* Quick Actions (Sync status, Settings & Lock) */}
+            {/* Quick Actions (Settings & Lock) */}
             <div class="flex items-center gap-1.5">
-              <AutoSyncIndicator />
               <button
                 onClick={() => vault.setShowSettingsModal(true)}
                 title={t("settings.openSettings")}

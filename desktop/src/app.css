@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'Morris Roman';
+  src: url('./assets/baluard-morris-roman.black.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+.font-logo {
+  font-family: 'Morris Roman', serif;
+}
+
 :root {
   /* Dark Mode: Deep Forest Teal / Soft Lavender / Lime Accent */
   --color-bg: #091315;
@@ -157,6 +168,21 @@ select option {
 .slide-exit-to {
   opacity: 0;
   transform: translateX(-8px);
+}
+
+/* Sync status label — slides in right-to-left with fade, sits in titlebar drag band */
+.sync-status-enter-active,
+.sync-status-exit-active {
+  will-change: transform, opacity;
+  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sync-status-enter {
+  opacity: 0;
+  transform: translateX(8px);
+}
+.sync-status-exit-to {
+  opacity: 0;
+  transform: translateX(8px);
 }
 
 /* Page entrance / Element animations */
