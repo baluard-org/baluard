@@ -323,6 +323,15 @@
     "clean": "Clean",
     "dirty": "Uncommitted changes",
     "syncInProgress": "Sync in progress...",
+    "syncNow": "Sync now",
+    "syncing": "Syncing...",
+    "statusUpToDate": "Up to date",
+    "statusChangesPending": "Changes pending",
+    "lastSynced": "Last synced {ago}",
+    "lastSyncedNever": "Not synced yet",
+    "advancedSection": "Advanced",
+    "advancedSectionHint": "Inspect git status and run directional sync operations.",
+    "advancedRemoteUrl": "Remote URL",
     "deviceFlowTitle": "Authenticate with {provider}",
     "deviceFlowInstructions": "Visit the link below and enter the code:",
     "deviceFlowOpenLink": "Open {provider}",
@@ -516,5 +525,11 @@
     "deleteWarningTitle": "No other authentication methods",
     "deleteOnlyAuth": "This entry has no password and this is the only passkey. Removing it means you may lose access to this account. Make sure you have another way to sign in before removing.",
     "deleteError": "Failed to remove passkey."
+  },
+  "relative": {
+    "justNow": "just now",
+    "minutes": "{n} min",
+    "hours": "{n} h",
+    "days": "{n} d"
   }
 }

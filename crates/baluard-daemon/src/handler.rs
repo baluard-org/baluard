@@ -3120,13 +3120,26 @@ fn sync_status_json(vault_path: &std::path::Path) -> Result<String, String> {
         })
     });
 
+    // last_synced (Unix seconds) from the vault registry, if available.
+    // Drives the user-facing "Last synced X ago" label. Best-effort: a
+    // missing marker/registry yields null, not an error.
+    let last_synced = baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)
+        .ok()
+        .flatten()
+        .and_then(|m| {
+            baluard_core::vault::registry::VaultRegistry::load_locked()
+                .ok()
+                .and_then(|reg| reg.get(&m.slug).and_then(|e| e.last_synced))
+        });
+
     let resp = serde_json::json!({
         "initialized": true,
         "has_remote": remote_url.is_some(),
         "remote_url": remote_url,
         "provider": provider,
         "dirty": status.is_dirty(),
-        "last_commit": last_commit
+        "last_commit": last_commit,
+        "last_synced": last_synced
     });
     serde_json::to_string(&resp).map_err(|e| format!("JSON error: {e}"))
 }
