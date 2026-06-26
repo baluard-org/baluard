@@ -304,6 +304,15 @@
     "clean": "Limpio",
     "dirty": "Cambios sin confirmar",
     "syncInProgress": "Sincronización en progreso...",
+    "syncNow": "Sincronizar ahora",
+    "syncing": "Sincronizando...",
+    "statusUpToDate": "Actualizado",
+    "statusChangesPending": "Cambios pendientes",
+    "lastSynced": "Sincronizado hace {ago}",
+    "lastSyncedNever": "Aún no sincronizado",
+    "advancedSection": "Avanzado",
+    "advancedSectionHint": "Inspecciona el estado de git y ejecuta operaciones direccionales.",
+    "advancedRemoteUrl": "URL remota",
     "deviceFlowTitle": "Autenticar con {provider}",
     "deviceFlowInstructions": "Visita el enlace de abajo e ingresa el código:",
     "deviceFlowOpenLink": "Abrir {provider}",
@@ -497,5 +506,11 @@
     "deleteWarningTitle": "Sin otros métodos de autenticación",
     "deleteOnlyAuth": "Esta entrada no tiene contraseña y esta es la única clave de acceso. Eliminarla significa que podrías perder el acceso a esta cuenta. Asegúrate de tener otra forma de iniciar sesión antes de eliminarla.",
     "deleteError": "Error al eliminar la clave de acceso."
+  },
+  "relative": {
+    "justNow": "justo ahora",
+    "minutes": "{n} min",
+    "hours": "{n} h",
+    "days": "{n} d"
   }
 }

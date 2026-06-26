@@ -43,6 +43,8 @@ export default function SyncTab() {
   const [advPat, setAdvPat] = createSignal("");
   // Web-OAuth (Codeberg PKCE): auth URL opened in browser, status polled.
   const [webOAuthUrl, setWebOAuthUrl] = createSignal(null);
+  // State C: collapsible git-power-user panel (status + directional push/pull).
+  const [showAdvancedPanel, setShowAdvancedPanel] = createSignal(false);
 
   let disconnectDialogRef;
 
@@ -248,6 +250,24 @@ export default function SyncTab() {
 
   // ── Push / Pull ──
 
+  // Primary one-click sync: pull remote changes in first, then push local
+  // changes up. Bidirectional, handles the common "edited on two devices"
+  // case. Conflicts surface as an error the user can resolve from Advanced.
+  async function doSync() {
+    setSubState("syncing");
+    setError(null);
+    try {
+      await daemon("sync.pull");
+      await daemon("sync.push");
+      toastSuccess(t("sync.statusActive"));
+      await loadState();
+      setSubState("idle");
+    } catch (e) {
+      setError(classifySyncError(e));
+      setSubState("error");
+    }
+  }
+
   async function doPush() {
     setSubState("syncing");
     setError(null);
@@ -332,6 +352,18 @@ export default function SyncTab() {
       codeberg: "providerCodeberg",
     };
     return t(`sync.${map[key] || key}`);
+  }
+
+  // Human "X ago" for a Unix-seconds timestamp. Returns a key the i18n
+  // lastSynced template interpolates. Uses relative units, never a raw hash
+  // or git jargon.
+  function timeAgo(unixSec) {
+    if (!unixSec) return null;
+    const diff = Math.max(0, Math.floor(Date.now() / 1000) - unixSec);
+    if (diff < 60) return t("relative.justNow");
+    if (diff < 3600) return t("relative.minutes", { n: Math.floor(diff / 60) });
+    if (diff < 86400) return t("relative.hours", { n: Math.floor(diff / 3600) });
+    return t("relative.days", { n: Math.floor(diff / 86400) });
   }
 
   // ── Render ──
@@ -545,61 +577,113 @@ export default function SyncTab() {
           {/* ── State C: Sync Active ── */}
           <Show when={topState() === "C"}>
             <div class="space-y-4">
+              {/* Friendly status header: connected account + simple pill */}
               <div class="flex items-center justify-between">
-                <div>
+                <div class="min-w-0">
                   <h4 class="text-xs font-bold text-[var(--color-text)]">{t("sync.title")}</h4>
-                  <p class="text-[10px] text-[var(--color-muted)] mt-0.5">
+                  <p class="text-[10px] text-[var(--color-muted)] mt-0.5 truncate">
                     <Show when={getConnectedProviderInfo()} fallback={syncStatus()?.provider || ""}>
                       {t("sync.connectedAs", { username: getConnectedProviderInfo().username || "" })}
                     </Show>
                   </p>
                 </div>
-                <div class="px-2.5 py-1 rounded-lg bg-green-950/20 text-green-400 text-[10px] font-bold border border-green-900/30">
-                  {t("sync.statusActive")}
-                </div>
+                <Show when={syncStatus()} fallback={
+                  <span class="px-2.5 py-1 rounded-lg bg-green-950/20 text-green-400 text-[10px] font-bold border border-green-900/30">{t("sync.statusUpToDate")}</span>
+                }>
+                  <span class={`px-2.5 py-1 rounded-lg text-[10px] font-bold border ${
+                    subState() === "syncing"
+                      ? "bg-blue-950/20 text-blue-400 border-blue-900/30"
+                      : syncStatus().dirty
+                        ? "bg-yellow-950/20 text-yellow-400 border-yellow-900/30"
+                        : "bg-green-950/20 text-green-400 border-green-900/30"
+                  }">
+                    {subState() === "syncing"
+                      ? t("sync.syncing")
+                      : syncStatus().dirty
+                        ? t("sync.statusChangesPending")
+                        : t("sync.statusUpToDate")}
+                  </span>
+                </Show>
               </div>
 
-              {/* Status card */}
+              {/* Friendly status line: last synced time, no git jargon */}
               <Show when={syncStatus()}>
-                <div class="p-3 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-2">
-                  <div class="flex items-center justify-between text-[10px]">
-                    <span class="text-[var(--color-muted)]">{t("sync.workingTree")}</span>
-                    <span class={syncStatus().dirty ? "text-yellow-400 font-bold" : "text-green-400"}>
-                      {syncStatus().dirty ? t("sync.dirty") : t("sync.clean")}
-                    </span>
-                  </div>
-                  <Show when={syncStatus().last_commit}>
-                    <div class="flex items-center justify-between text-[10px]">
-                      <span class="text-[var(--color-muted)]">{t("sync.lastCommit")}</span>
-                      <span class="text-[var(--color-text)] font-mono">{syncStatus().last_commit.id?.substring(0, 7)}</span>
-                    </div>
-                  </Show>
-                  <Show when={!syncStatus().last_commit}>
-                    <p class="text-[10px] text-[var(--color-muted)]">{t("sync.noCommits")}</p>
-                  </Show>
-                </div>
+                <p class="text-[10px] text-[var(--color-muted)] text-center">
+                  {syncStatus().last_synced
+                    ? t("sync.lastSynced", { ago: timeAgo(syncStatus().last_synced) })
+                    : t("sync.lastSyncedNever")}
+                </p>
               </Show>
 
-              {/* Push / Pull */}
+              {/* Primary action: one-click bidirectional sync */}
               <Show when={subState() !== "syncing"}>
-                <div class="grid grid-cols-2 gap-3">
-                  <button onClick={doPush} class="flex items-center justify-center gap-2 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer">
-                    <IconUpload class="w-4 h-4 text-[var(--color-muted)]" />
-                    {t("sync.push")}
-                  </button>
-                  <button onClick={doPull} class="flex items-center justify-center gap-2 p-3 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer">
-                    <IconDownload class="w-4 h-4 text-[var(--color-muted)]" />
-                    {t("sync.pull")}
-                  </button>
-                </div>
+                <button
+                  onClick={doSync}
+                  disabled={subState() === "syncing"}
+                  class="w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-sm font-bold transition-all cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <IconRefresh class="w-4 h-4" />
+                  {t("sync.syncNow")}
+                </button>
               </Show>
 
               <Show when={subState() === "syncing"}>
-                <div class="flex items-center justify-center gap-2 py-4">
+                <div class="flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[var(--color-primary)]/10">
                   <IconSpinner class="w-4 h-4 text-[var(--color-primary)]" />
-                  <span class="text-xs text-[var(--color-muted)]">{t("sync.syncInProgress")}</span>
+                  <span class="text-sm text-[var(--color-primary)] font-bold">{t("sync.syncInProgress")}</span>
                 </div>
               </Show>
+
+              {/* Advanced: git status + directional push/pull for power users */}
+              <div class="border-t border-[var(--color-border)] pt-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedPanel(!showAdvancedPanel())}
+                  class="flex items-center gap-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer w-full"
+                >
+                  <span class="text-[8px]">{showAdvancedPanel() ? "\u25BE" : "\u25B8"}</span>
+                  {t("sync.advancedSection")}
+                </button>
+                <Show when={showAdvancedPanel()}>
+                  <div class="space-y-3">
+                    <Show when={syncStatus()}>
+                      <div class="p-3 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-2">
+                        <div class="flex items-center justify-between text-[10px]">
+                          <span class="text-[var(--color-muted)]">{t("sync.workingTree")}</span>
+                          <span class={syncStatus().dirty ? "text-yellow-400 font-bold" : "text-green-400"}>
+                            {syncStatus().dirty ? t("sync.dirty") : t("sync.clean")}
+                          </span>
+                        </div>
+                        <Show when={syncStatus().last_commit}>
+                          <div class="flex items-center justify-between text-[10px]">
+                            <span class="text-[var(--color-muted)]">{t("sync.lastCommit")}</span>
+                            <span class="text-[var(--color-text)] font-mono">{syncStatus().last_commit.id?.substring(0, 7)}</span>
+                          </div>
+                        </Show>
+                        <Show when={syncStatus().remote_url}>
+                          <div class="text-[10px]">
+                            <span class="text-[var(--color-muted)]">{t("sync.advancedRemoteUrl")}</span>
+                            <p class="text-[var(--color-text)] font-mono break-all mt-0.5">{syncStatus().remote_url}</p>
+                          </div>
+                        </Show>
+                        <Show when={!syncStatus().last_commit}>
+                          <p class="text-[10px] text-[var(--color-muted)]">{t("sync.noCommits")}</p>
+                        </Show>
+                      </div>
+                    </Show>
+                    <div class="grid grid-cols-2 gap-3">
+                      <button onClick={doPush} disabled={subState() === "syncing"} class="flex items-center justify-center gap-2 p-2.5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[10px] font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50">
+                        <IconUpload class="w-3.5 h-3.5 text-[var(--color-muted)]" />
+                        {t("sync.push")}
+                      </button>
+                      <button onClick={doPull} disabled={subState() === "syncing"} class="flex items-center justify-center gap-2 p-2.5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] text-[10px] font-bold text-[var(--color-text)] transition-all cursor-pointer disabled:opacity-50">
+                        <IconDownload class="w-3.5 h-3.5 text-[var(--color-muted)]" />
+                        {t("sync.pull")}
+                      </button>
+                    </div>
+                  </div>
+                </Show>
+              </div>
 
               <button
                 onClick={() => setShowDisconnectModal(true)}
