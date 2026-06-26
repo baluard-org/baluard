@@ -1,6 +1,7 @@
 import { onMount, Show } from "solid-js";
 import { useI18n } from "./i18n/index.jsx";
 import { daemon, showWindow } from "./lib/daemon.js";
+import { disableAutofill } from "./lib/disableAutofill.js";
 import { useAuth } from "./context/AuthContext.jsx";
 import { VaultProvider } from "./context/VaultContext.jsx";
 import { VaultSwitcherProvider } from "./context/VaultSwitcherContext.jsx";
@@ -23,6 +24,9 @@ export default function App() {
       if (navigator.userAgent.includes("Mac")) {
         document.documentElement.classList.add("platform-mac");
       }
+
+      // Autofill is off app-wide by default; inputs opt in with data-autofill="on".
+      disableAutofill();
 
       // Try to open + probe the active vault. Best-effort: if the daemon is
       // reachable and a vault is already unlocked (e.g. resumed session),

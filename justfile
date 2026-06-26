@@ -146,6 +146,7 @@ _sidecar-force:
 	cp "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE" "desktop/src-tauri/target/debug/baluard-daemon"
 	cp "desktop/src-tauri/binaries/baluard-$TRIPLE" "desktop/src-tauri/target/debug/baluard"
 	echo "Sidecar rebuilt (forced): baluard-daemon-$TRIPLE"
+	just _sign-sidecar
 
 # Build daemon sidecar for current platform (Tauri needs target-triple suffix)
 _sidecar:
@@ -180,6 +181,36 @@ _sidecar:
 	mkdir -p desktop/src-tauri/target/debug
 	cp "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE" "desktop/src-tauri/target/debug/baluard-daemon"
 	cp "desktop/src-tauri/binaries/baluard-$TRIPLE" "desktop/src-tauri/target/debug/baluard"
+	just _sign-sidecar
+
+# Sign daemon sidecar with a stable Apple Development identity.
+# Without this, cargo ad-hoc-signs the binary with a random identifier and a
+# cdhash-based designated requirement. Every rebuild changes the cdhash, so the
+# macOS keychain ACL from "Always Allow" never matches and the daemon is
+# re-prompted for the login password on every unlock (device privkey) and every
+# sync-tab open (provider tokens). Signing with a real cert makes the DR bind to
+# the certificate (stable across rebuilds) — prompt once, then it sticks.
+# No-op on non-macOS or when no signing identity is present.
+_sign-sidecar:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	[ "{{ os }}" = "macos" ] || { echo "Sign skipped (non-macOS)"; exit 0; }
+	TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
+	SIDECAR="desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
+	TARGET_DEBUG="desktop/src-tauri/target/debug/baluard-daemon"
+	[ -f "$SIDECAR" ] || { echo "Not found: $SIDECAR"; exit 1; }
+	IDENTITY=$(security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db 2>/dev/null \
+		| grep "Apple Development" | head -1 | awk -F'"' '{print $2}' || true)
+	if [ -z "$IDENTITY" ]; then
+		echo "⚠ No 'Apple Development' signing identity — keychain will re-prompt each run."
+		echo "  Fix: Xcode → Settings → Accounts → add Apple ID, then rerun."
+		exit 0
+	fi
+	for BIN in "$SIDECAR" "$TARGET_DEBUG"; do
+		[ -f "$BIN" ] || continue
+		codesign --force --sign "$IDENTITY" --identifier xyz.actitud.baluard.daemon "$BIN"
+		echo "Signed: $BIN"
+	done
 
 # Install desktop npm dependencies
 desktop-deps:
