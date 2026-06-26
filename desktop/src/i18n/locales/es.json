@@ -288,6 +288,8 @@
     "disconnectConfirmDeleteRemote": "Confirmar eliminación permanente",
     "disconnectConfirmDeleteRemoteDesc": "Entiendo que esto eliminará permanentemente el repositorio remoto en el proveedor. Esta acción es irreversible.",
     "disconnecting": "Desconectando...",
+    "disconnectDeleteFailed": "Desconectado, pero no se pudo eliminar el repositorio remoto (puede que tu token no tenga permisos de eliminación). Elimínalo manualmente en el proveedor.",
+    "disconnectDeleteFailedWithUrl": "Desconectado, pero no se pudo eliminar el repositorio remoto (puede que tu token no tenga permisos de eliminación). Elimínalo manualmente: {url}",
     "reconnect": "Reconectar",
     "createRepo": "Crear repositorio",
     "selectRepo": "Seleccionar repositorio existente",

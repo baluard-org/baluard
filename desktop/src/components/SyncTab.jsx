@@ -3,7 +3,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { createProviderConnect } from "../lib/providerConnect.js";
 import { sanitizeError } from "../lib/utils.js";
-import { toastSuccess } from "../context/toastSignal.js";
+import { toastSuccess, toastWarning } from "../context/toastSignal.js";
 import { IconUpload, IconDownload, IconRefresh, IconAlert, IconSpinner } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import ExternalLink from "./ExternalLink.jsx";
@@ -313,7 +313,7 @@ export default function SyncTab() {
     setSubState("creating");
     setError(null);
     try {
-      await daemon("sync.disconnect", JSON.stringify({ delete_remote: deleteRemote() }));
+      const raw = await daemon("sync.disconnect", JSON.stringify({ delete_remote: deleteRemote() }));
       if (revokeToken()) {
         const provider = syncStatus()?.provider;
         if (provider) {
@@ -326,7 +326,21 @@ export default function SyncTab() {
       setConfirmDeleteRemote(false);
       setSubState("idle");
       await loadState();
-      toastSuccess(t("sync.disconnect"));
+      // Best-effort delete: the disconnect always succeeds, but the remote
+      // delete may have failed (403/no delete scope, network). Warn the user
+      // with a persistent toast + the manual-delete URL so they can finish.
+      let result = {};
+      try { result = JSON.parse(raw) || {}; } catch { /* legacy string response */ }
+      if (deleteRemote() && result.remote_deleted === false) {
+        toastWarning(
+          result.repo_web_url
+            ? t("sync.disconnectDeleteFailedWithUrl", { url: result.repo_web_url })
+            : t("sync.disconnectDeleteFailed"),
+          { duration: 0, manual: true }
+        );
+      } else {
+        toastSuccess(t("sync.disconnect"));
+      }
     } catch (e) {
       setError(sanitizeError(e, t));
       setSubState("error");
