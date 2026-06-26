@@ -1,4 +1,4 @@
-import { Show } from "solid-js";
+import { Show, createSignal } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
@@ -6,7 +6,7 @@ import { daemon } from "../lib/daemon.js";
 import { biometryPrompt } from "../lib/biometry.js";
 import { toastError } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
-import { IconLock, IconFingerprint } from "./Icon.jsx";
+import { IconLock, IconFingerprint, IconSpinner } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 import VaultSwitcher from "./VaultSwitcher.jsx";
 
@@ -16,8 +16,23 @@ export default function LoginScreen() {
   const { t } = useI18n();
   let passwordRef;
 
+  const [wrongPassword, setWrongPassword] = createSignal(false);
+  const [bruteLock, setBruteLock] = createSignal(false);
+
   async function handleUnlock() {
-    await auth.unlock(t);
+    if (bruteLock() || auth.status() === "unlocking") return;
+    const success = await auth.unlock(t);
+    if (!success) {
+      setWrongPassword(true);
+      setBruteLock(true);
+      setTimeout(() => {
+        setWrongPassword(false);
+      }, 500);
+      setTimeout(() => {
+        setBruteLock(false);
+        passwordRef?.focus();
+      }, 2000);
+    }
   }
 
   return (
@@ -64,16 +79,24 @@ export default function LoginScreen() {
               autocapitalize="off"
               spellcheck="false"
               placeholder={t("login.passwordPlaceholder")}
-              class="login-screen__input w-full px-4 py-3.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)] transition-all-fast"
+              class={`login-screen__input w-full px-4 py-3.5 rounded-xl bg-[var(--color-bg)] border text-[var(--color-text)] outline-none transition-all-fast ${
+                wrongPassword()
+                  ? "animate-shake border-red-500 ring-1 ring-red-500 text-red-500 focus:border-red-500 focus:ring-red-500"
+                  : "border-[var(--color-border)] focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
+              }`}
+              disabled={auth.status() === "unlocking" || bruteLock()}
               autofocus
             />
           </div>
 
           <button
             type="submit"
-            disabled={auth.status() === "unlocking"}
-            class="login-screen__submit-btn w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all shadow-lg shadow-black/10 active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+            disabled={auth.status() === "unlocking" || bruteLock()}
+            class="login-screen__submit-btn w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all shadow-lg shadow-black/10 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
           >
+            <Show when={auth.status() === "unlocking"}>
+              <IconSpinner class="w-4 h-4" />
+            </Show>
             {auth.status() === "unlocking" ? t("login.unlocking") : t("login.unlock")}
           </button>
 
@@ -82,6 +105,7 @@ export default function LoginScreen() {
             <button
               type="button"
               onClick={async () => {
+                if (bruteLock()) return;
                 try {
                   // Touch ID prompt (UX gate)
                   await biometryPrompt();
@@ -95,7 +119,8 @@ export default function LoginScreen() {
                   }
                 }
               }}
-              class="login-screen__quick-unlock-btn w-full mt-2 py-3 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
+              disabled={bruteLock()}
+              class="login-screen__quick-unlock-btn w-full mt-2 py-3 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <IconFingerprint class="w-4 h-4" />
               {t("login.quickUnlock")}

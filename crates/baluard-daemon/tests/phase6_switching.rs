@@ -475,4 +475,68 @@ mod real_vault {
             ok_resp.error_message
         );
     }
+
+    // Mutates a process-global env var (BALUARD_DATA_DIR); must not run
+    // concurrently with any other test that reads it via paths.rs.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn vault_unlock_error_rate_limiting_delay() {
+        use baluard_daemon::handler::route_host_request;
+        use baluard_daemon::proto::GatewayRequest;
+        use baluard_core::vault::registry::{VaultRegistry, VaultEntry};
+        use uuid::Uuid;
+
+        let temp_data_dir = tempfile::tempdir().expect("temp data dir");
+        let prev_data_dir = std::env::var_os("BALUARD_DATA_DIR");
+        unsafe {
+            std::env::set_var("BALUARD_DATA_DIR", temp_data_dir.path());
+        }
+
+        let (_dir_a, path_a) = make_real_vault("a");
+
+        let mut reg = VaultRegistry::default();
+        reg.add(VaultEntry {
+            slug: "alpha".into(),
+            display_name: "Personal".into(),
+            path: path_a.clone(),
+            provider: None,
+            remote_url: None,
+            last_synced: None,
+            last_opened: None,
+            vault_id: Uuid::new_v4(),
+        }).unwrap();
+        reg.save_locked().unwrap();
+
+        let host: SharedVaultHost = VaultHost::shared();
+        let state_a = Arc::new(VaultState::new(path_a));
+        host.insert("alpha".into(), state_a.clone()).await;
+
+        let req = GatewayRequest {
+            action: "vault.unlock".into(),
+            payload: "wrong-password-123".into(),
+            session_token: String::new(),
+            slug: "alpha".into(),
+        };
+
+        let start = std::time::Instant::now();
+        let resp = route_host_request(req, &host).await;
+        let duration = start.elapsed();
+
+        assert!(!resp.success, "Unlock must fail with wrong password");
+        assert!(
+            duration >= std::time::Duration::from_millis(1900),
+            "Unlock failure response must be delayed by at least 2s (took {}ms)",
+            duration.as_millis()
+        );
+
+        // Restore env so the mutation does not leak into sibling tests in the
+        // same binary. Still unsafe in 2024 edition, but we are single-threaded
+        // for this test (#[serial]).
+        unsafe {
+            match prev_data_dir {
+                Some(v) => std::env::set_var("BALUARD_DATA_DIR", v),
+                None => std::env::remove_var("BALUARD_DATA_DIR"),
+            }
+        }
+    }
 }
