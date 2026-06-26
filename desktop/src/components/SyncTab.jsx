@@ -8,6 +8,7 @@ import { IconUpload, IconDownload, IconRefresh, IconAlert, IconSpinner } from ".
 import FocusTrap from "./FocusTrap.jsx";
 import ExternalLink from "./ExternalLink.jsx";
 import { Button } from "./Primitives.jsx";
+import CopyButton from "./CopyButton.jsx";
 
 const PROVIDER_STYLES = {
   github: { bg: "bg-gray-800", border: "border-gray-600", text: "text-white" },
@@ -444,8 +445,9 @@ export default function SyncTab() {
                 <div class="p-4 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-3">
                   <h5 class="text-xs font-bold text-[var(--color-text)]">{t("sync.deviceFlowTitle", { provider: providerLabel(selectedProvider()) })}</h5>
                   <p class="text-[10px] text-[var(--color-muted)]">{t("sync.deviceFlowInstructions")}</p>
-                  <div class="text-center py-2">
+                  <div class="flex items-center justify-center gap-2 py-2">
                     <span class="text-lg font-mono font-bold text-[var(--color-primary)] tracking-widest">{authSession().user_code}</span>
+                    <CopyButton value={authSession().user_code} />
                   </div>
                   <div class="flex justify-center">
                     <ExternalLink
