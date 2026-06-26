@@ -5,6 +5,7 @@ import { disableAutofill } from "./lib/disableAutofill.js";
 import { useAuth } from "./context/AuthContext.jsx";
 import { VaultProvider } from "./context/VaultContext.jsx";
 import { VaultSwitcherProvider } from "./context/VaultSwitcherContext.jsx";
+import { AutoSyncProvider } from "./context/AutoSyncContext.jsx";
 
 import LoginScreen from "./components/LoginScreen.jsx";
 import RecoveryScreen from "./components/RecoveryScreen.jsx";
@@ -99,7 +100,9 @@ export default function App() {
         <Show when={auth.status() === "unlocked"}>
           <div class="app__vault absolute inset-0 vault-enter">
             <VaultProvider>
-              <VaultView />
+              <AutoSyncProvider>
+                <VaultView />
+              </AutoSyncProvider>
             </VaultProvider>
           </div>
         </Show>

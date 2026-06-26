@@ -370,6 +370,14 @@
     "webOAuthError": "Authentication failed. Please try again.",
     "errorRepoCreatePartial": "Repository may have been created on the provider but sync setup failed. If you give up, you may need to delete the empty repo on {provider} manually."
   },
+  "autosync": {
+    "upToDate": "All changes synced",
+    "syncing": "Syncing changes...",
+    "pending": "{count} change waiting to sync",
+    "pending_plural": "{count} changes waiting to sync",
+    "offline": "Offline. Changes will sync when back online",
+    "conflictResolved": "This item was also edited on another device. We kept the most recent version. Review it in Sync."
+  },
   "errors": {
     "daemonNotRunning": "Daemon is not running",
     "vaultNotUnlocked": "Vault is not unlocked",

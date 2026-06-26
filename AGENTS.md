@@ -45,13 +45,14 @@ baluard/
 │           ├── main.rs         # Socket listener, SIGINT/SIGTERM, 0600 perms
 │           ├── host.rs         # VaultHost (Phase 6 multi-vault map + active pointer)
 │           ├── handler.rs      # Protobuf routing, per-vault token-gated IPC
-│           └── state.rs        # VaultState (per-vault handle, session token, cover timer, auto-lock)
+│           ├── autosync.rs     # Auto-sync coordinator (debounced push, periodic pull, offline retry)
+│           └── state.rs        # VaultState (per-vault handle, session token, cover timer, auto-lock, autosync handle)
 ├── desktop/                    # Tauri v2 + SolidJS frontend
 │   └── src/
 │       ├── App.jsx             # Root component (thin provider wrapper)
 │       ├── components/         # UI components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, etc.)
-│       ├── context/            # AuthContext, VaultContext, themeSignal, toastSignal
-│       ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, eff-words.js, wordlist-{en,es}.js
+│       ├── context/            # AuthContext, VaultContext, VaultSwitcherContext, AutoSyncContext, themeSignal, toastSignal
+│       ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, eff-words.js, wordlist-{en,es}.js, disableAutofill.js
 │       ├── __tests__/          # vitest tests (payload, utils, filters, cipherSchema)
 │       └── i18n/locales/       # en.json, es.json (all user-facing strings)
 ├── proto/                      # Protobuf schemas (compiled via prost)
@@ -130,6 +131,7 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 * **CLI commands**: `crates/baluard-cli/src/commands/mod.rs`
 * **Daemon IPC**: `crates/baluard-daemon/src/handler.rs` (host-level dispatcher) + `host.rs` (`VaultHost` multi-vault map)
 * **Daemon vault state**: `crates/baluard-daemon/src/state.rs` (`VaultState`, one per open vault) + `host.rs` (`VaultHost` holds the map + active pointer)
+* **Auto-sync coordinator**: `crates/baluard-daemon/src/autosync.rs` (`AutoSyncHandle` — debounced push after CRUD, periodic pull, offline retry, conflict auto-resolve). Core workflow: `SyncEngine::run_sync_cycle` / `resolve_conflict_keep_local` in `sync/engine.rs`. Desktop: `AutoSyncContext`, `AutoSyncIndicator`, `ConflictBanner`.
 * **Desktop frontend**: `desktop/src/App.jsx`
 * **Device fleet**: `crates/baluard-core/src/device_manager.rs`
 * **Passkey ceremony (WebAuthn)**: `crates/baluard-core/src/crypto/webauthn/`
@@ -163,6 +165,9 @@ Unix domain sockets. 0600 via umask. Peer credential verification (SO_PEERCRED/g
 ### Padded Buckets
 5 tiers (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB). Auto-selected via `Tier::fit()`. Prevents metadata leakage.
 
+### Auto-Sync (Desktop)
+When a vault has a remote + connected provider, the daemon coordinator (`autosync.rs`) syncs automatically. **Debounced push** (5s coalesce) after every CRUD mutation via the `COVER_MUTATION_ACTIONS` hook in `handler.rs` — a burst of edits becomes one commit + one round-trip. **Periodic pull** every 3 min when idle+online (catches other-device edits; our substitute for Bitwarden's SignalR inbound). **Offline handling**: network failures (`SyncError::Network`, classified via `is_network_error` from `git2::Error::class()` Net/Http/Ssh/Ssl) → `Offline` state → 30s retry probe. **Canonical git workflow** (`SyncEngine::run_sync_cycle`): commit local → pull → resolve conflicts → push (committing first keeps the worktree clean so the pull's force-checkout can't discard uncommitted edits). **Conflict policy**: field-level 3-way merge exists (`conflict::merge_ciphers`, semantic atomic groups for username/password/TOTP) but is NOT yet wired into the cycle; Phase 1 keeps the local side via `resolve_conflict_keep_local` (produces a 2-parent merge commit so the next push fast-forwards) and surfaces a non-blocking banner. Desktop polls `sync.autosync_status` every 10s (`AutoSyncContext`); status pill in sidebar header (`AutoSyncIndicator`); conflict banner (`ConflictBanner`). Activated in `VaultState::unlock` (immediate, not lazy); deactivated on lock. **C3 mutex**: `cycle_lock` (tokio Mutex) guarantees only one sync cycle touches the on-disk repo at a time. **No daemon-side cache**: `get_cipher`/`list_folders` read from disk every call, so after a pull the handle serves fresh data without a reload (root_key/SGK stay valid).
+
 ### Device Lifecycle
 Epoch state machine: CREATED -> ACTIVE -> ROTATING -> RETIRED -> DESTROYED. `revoke_device_and_rekey()` performs full rotation: validates preconditions, writes crash marker, re-encrypts all ciphers + attachments, writes keywrap, updates in-memory state. `rotate_root_key()` for non-revocation rotation. Recovery via BIP-39 phrase.
 
@@ -185,7 +190,7 @@ Multi-step wizard for both CLI and desktop. CLI: `baluard init` with `--profile`
 Typed enum (`Light`/`Dark`/`System`) replacing `Option<String>` on `VaultSettings.theme`. Case-insensitive serde for backward compat. Default: `System`.
 
 ### Locale Persistence
-Language stored in two places: encrypted `VaultSettings.lang` (post-unlock) + plaintext `meta/locale` (pre-unlock, login screen). `locale.save` daemon route writes plaintext file.
+Language stored in plaintext `meta/settings-pub.json` (consolidated 2026-06-26; deprecated the standalone `meta/locale` sidecar). Single source: the pre-unlock login screen reads it via `load_locale()`, and post-unlock `VaultSettings.lang` reflects the same value. `locale.save` daemon route writes `settings-pub.json` (merging with the existing `theme` so it isn't clobbered).
 
 ### Modal Accessibility
 All modals use `<FocusTrap>` component: `role="dialog"`, `aria-modal`, `aria-labelledby`, Tab/Shift+Tab trap, Escape dismiss, auto-focus first interactive element, restore focus on close. Applied to: DeleteConfirm, ArchiveConfirm, Reprompt, Generator, Settings, EmptyTrash, SetupScreen.
@@ -218,13 +223,19 @@ Passkeys are stored **inside `LoginData::fido2_credentials: Option<Vec<PasskeyDa
 * **`RotationGuard`**: RAII guard cleans up `.tmp` files and crash marker on error. Disarmed after successful atomic commit.
 * **CodeGraph available**: `.codegraph/` index exists. Route codebase exploration through CodeGraph tools when available.
 * **Feature flags control sync**: `git-sync` feature gate; CLI enables it by default.
+* **Git `pull()` MUST force-checkout** (C1 fix, `sync/engine.rs`): the fast-forward and merge paths must call `checkout_head(Some(CheckoutBuilder::new().force()))`, NOT `checkout_head(None)`. `None` is `GIT_CHECKOUT_NONE`, a dry-run no-op: HEAD advances but the worktree keeps stale files. Auto-sync / manual sync then commits the stale tree and pushes, silently reverting the other device's changes. The test suite force-checkouts after pull; production must too.
+* **Sync cycle order = commit → pull → push** (H2 fix, `SyncEngine::run_sync_cycle`): never pull into a dirty worktree. Committing local changes first keeps the tree clean so the pull's force-checkout cannot discard uncommitted edits.
+* **Network errors need explicit classification** (H1 fix, `classify_remote_err` in `sync/engine.rs`): libgit2 transport failures come back as `SyncError::Network` ONLY because push/fetch map `git2::Error::class()` (Net/Http/Ssh/Ssl) to `SyncError::Network`. Without this, all failures are `SyncError::Git(string)` and the auto-sync Offline state never triggers. Use `is_network_error()` to check.
+* **Local-only engine files must stay gitignored** (`sync-head.json`, `sync-state.json`, `.baluard/`): rewritten outside the commit cycle (push saves sync-head, transitions save sync-state). Tracked-but-modified = worktree dirty forever = sync badge stuck on "Changes pending". `status()` filters them defensively; `open_repo` refreshes `.gitignore` for old vaults.
+* **macOS keychain ACLs bind to code signature**: ad-hoc-signed binaries re-prompt every rebuild because the cdhash changes. `just _sign-sidecar` signs the daemon with the Apple Development identity + stable identifier `xyz.actitud.baluard.daemon` so "Always Allow" persists across rebuilds.
+* **Tauri sync commands must be async + spawn_blocking** (`desktop/src-tauri/src/lib.rs` `daemon_request`): a sync `#[tauri::command] fn` runs on the main UI thread; blocking socket I/O freezes the webview. Async + `spawn_blocking` moves it to the Tokio pool so SolidJS can paint spinners.
 * **SSH key generation**: Private key material generated daemon-side via `ssh-key` crate. Only formatted OpenSSH strings cross IPC.
 * **Avatar storage**: Unencrypted `meta/avatar.{ext}` in vault directory. Vault encrypts at rest; avoids bloating settings.json diffs. Ext validated against whitelist (png/jpg/jpeg/gif/webp), 350KB base64 cap.
-* **Profile data**: Stored in `VaultSettings` (`meta/settings.json`). `display_name`, `subtitle`, `avatar_ext` fields.
+* **Settings split (privacy)**: `meta/settings.json` (plaintext, leaked slug/lang/theme/enrollment_policy to the git remote) is split into `meta/settings-pub.json` (plaintext: theme + lang only, pre-unlock) + `meta/settings.enc` (AES-256-GCM under root key: vault_timeout, default_uri_match, fetch_favicons, slug, enrollment_policy). Mirrors the `profile.enc`/`folders.enc` pattern (`derive_settings_key`). Legacy `settings.json` is migrated + removed on first `save_settings`. `slug` confirmed post-unlock-only (authoritative source = `.baluard` marker + registry, not settings). `settings.enc` is git-tracked (synced), NOT gitignored.
 * **Toast notifications**: `toastSignal.js` standalone signals. All user feedback via toasts, not inline text.
 * **i18n**: All user-facing strings use `t()` keys. Both `en.json` and `es.json` must stay in sync. No hardcoded strings.
 * **FocusTrap**: All modals use `<FocusTrap>` component for keyboard accessibility (Tab trap, Escape dismiss, auto-focus, restore focus).
-* **Locale file**: `meta/locale` is plaintext (not secret data). Needed before vault unlock for login screen i18n. Written by both CLI (`VaultCreator`) and desktop (`locale.save` IPC).
+* **Locale persistence**: Language lives in plaintext `meta/settings-pub.json` (consolidated 2026-06-26; the old standalone `meta/locale` sidecar is deprecated and migrated on read). Needed before vault unlock for login screen i18n. `locale.save` daemon route writes `settings-pub.json`.
 * **Auth `setup` state**: Recovery screen transitions to `setup` (not `unlocked`). SetupScreen unlocks vault + applies profile/prefs before transitioning to `unlocked`.
 * **Passkey embedded in Login**: No standalone `CipherKind::Passkey` variant. Passkeys live in `LoginData::fido2_credentials`. `passkey.delete` and `passkey.rename` take `credential_id` (base64url) as a required arg to identify which passkey in a multi-credential Login. `passkey.list` returns `login_name`, `has_password`, `pk_name` per passkey for context.
 * **Passkey private key storage**: Encrypted under the Login's item key, never crosses IPC. BW imports mark `private_key_missing: true` (re-register needed). Zeroized in vault handle's cipher zeroize match block.

@@ -902,9 +902,10 @@ mod tests {
             crate::vault::manifest::VaultTimeout::Minutes(30)
         );
 
-        // Verify locale file
+        // Verify locale pref (now in settings-pub.json, consolidating meta/locale).
         assert_eq!(handle.load_locale().as_deref(), Some("es"));
-        assert!(path.join("meta/locale").exists());
+        assert!(path.join("meta/settings-pub.json").exists());
+        assert!(!path.join("meta/locale").exists(), "legacy locale sidecar should be gone");
     }
 
     #[test]

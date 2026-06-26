@@ -5,6 +5,7 @@
 //! CLI parsing + the tokio runtime + signal handling; everything else
 //! lives here.
 
+pub mod autosync;
 pub mod crypto;
 pub mod handler;
 pub mod host;

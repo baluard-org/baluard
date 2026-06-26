@@ -1,0 +1,375 @@
+//! Auto-sync coordinator (one per connected vault).
+//!
+//! Activates only when the vault has a remote + a connected provider. Drives a
+//! debounced push after every CRUD mutation, a periodic background pull, and
+//! offline retry. This is the daemon-side engine; the desktop (and future
+//! mobile) are pure pollers of [`AutoSyncHandle::status`].
+//!
+//! Design notes (see auto-sync architecture decision, 2026-06-26):
+//! - Push is debounced (5s coalesce) so a burst of edits = one commit + one
+//!   round-trip, unlike Bitwarden's immediate-push-per-save which would spam a
+//!   git remote with N commits.
+//! - True conflicts (both devices changed the same field) are auto-resolved by
+//!   newest mtime; the merged cipher is committed and pushed, and a conflict
+//!   event is recorded for the desktop banner. We never discard local edits:
+//!   they remain in local git history.
+//! - The coordinator is gated behind `git-sync` everywhere sync work happens.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use serde::Serialize;
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+
+/// Debounce window after a mutation before we commit + push.
+const PUSH_DEBOUNCE_SECS: u64 = 5;
+/// Background pull cadence when idle + online (catches other-device edits).
+const PULL_INTERVAL_SECS: u64 = 180;
+/// Connectivity probe cadence while offline.
+const OFFLINE_POLL_SECS: u64 = 30;
+
+/// Coordinator state, surfaced to clients via [`AutoSyncHandle::status`].
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoSyncState {
+    /// Active remote, nothing pending.
+    Idle,
+    /// Local change waiting out the debounce window.
+    Dirty,
+    /// Pull/merge/push in flight.
+    Syncing,
+    /// Remote unreachable; retrying on a timer.
+    Offline,
+}
+
+/// Snapshot of coordinator status, returned by the `sync.autosync_status` route.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutoSyncStatus {
+    /// Whether auto-sync is active for this vault (remote + provider connected).
+    pub active: bool,
+    pub state: AutoSyncState,
+    /// Unix seconds of the last successful sync, if any.
+    pub last_sync: Option<u64>,
+    /// Number of mutations pending in the current debounce window.
+    pub pending: u32,
+    /// Count of conflicts auto-resolved (newest kept) since unlock.
+    pub conflicts_resolved: u32,
+}
+
+/// Internal mutable state behind the handle lock.
+struct Inner {
+    active: bool,
+    state: AutoSyncState,
+    last_sync: Option<u64>,
+    pending: u32,
+    conflicts_resolved: u32,
+    /// Live debounce task. Replaced on each mutation (timer reset).
+    debounce: Option<JoinHandle<()>>,
+    /// Live background loop (pull + offline retry). One per coordinator.
+    loop_handle: Option<JoinHandle<()>>,
+    /// Bumped on shutdown so spawned tasks bail out.
+    generation: u64,
+}
+
+/// Handle held by [`VaultState`](crate::state::VaultState). Cheap to clone
+/// (wraps an `Arc<Mutex<Inner>>`); all mutation goes through the lock.
+#[derive(Clone)]
+pub struct AutoSyncHandle {
+    vault_path: PathBuf,
+    inner: Arc<Mutex<Inner>>,
+    /// C3 fix: guards the on-disk repo so only ONE sync cycle runs at a time.
+    /// Without this, a slow fetch (>5s debounce) overlapping a second debounce
+    /// fire would run two cycles against the same .git index + worktree,
+    /// racing index.lock / ref updates / checkout → corruption. try_lock'd in
+    /// fire_sync and background_loop; the loser bails out cleanly.
+    cycle_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl AutoSyncHandle {
+    pub fn new(vault_path: &Path) -> Self {
+        Self {
+            vault_path: vault_path.to_path_buf(),
+            inner: Arc::new(Mutex::new(Inner {
+                active: false,
+                state: AutoSyncState::Idle,
+                last_sync: None,
+                pending: 0,
+                conflicts_resolved: 0,
+                debounce: None,
+                loop_handle: None,
+                generation: 0,
+            })),
+            cycle_lock: Arc::new(tokio::sync::Mutex::new(())),
+        }
+    }
+
+    /// Read-only status snapshot.
+    pub async fn status(&self) -> AutoSyncStatus {
+        let g = self.inner.lock().await;
+        AutoSyncStatus {
+            active: g.active,
+            state: g.state,
+            last_sync: g.last_sync,
+            pending: g.pending,
+            conflicts_resolved: g.conflicts_resolved,
+        }
+    }
+
+    /// Whether the coordinator is active. Used by the status route to skip the
+    /// blocking has_remote probe once activation has happened.
+    pub async fn is_active(&self) -> bool {
+        self.inner.lock().await.active
+    }
+
+    /// Activate the coordinator (remote configured + provider connected).
+    /// Starts the background pull/offline loop. Idempotent.
+    pub async fn activate(&self, device_name: String) {
+        let mut g = self.inner.lock().await;
+        if g.active {
+            return;
+        }
+        g.active = true;
+        g.state = AutoSyncState::Idle;
+        let me = self.clone();
+        let gen_id = g.generation;
+        g.loop_handle = Some(tokio::spawn(async move {
+            me.background_loop(device_name, gen_id).await;
+        }));
+    }
+
+    /// Deactivate (provider disconnected or vault locked). Cancels all timers.
+    pub async fn deactivate(&self) {
+        let mut g = self.inner.lock().await;
+        g.generation = g.generation.wrapping_add(1);
+        g.active = false;
+        g.state = AutoSyncState::Idle;
+        g.pending = 0;
+        if let Some(h) = g.debounce.take() {
+            h.abort();
+        }
+        if let Some(h) = g.loop_handle.take() {
+            h.abort();
+        }
+    }
+
+    /// Arm (or re-arm) the push debounce. Called after every successful vault
+    /// mutation. The pending counter accumulates so the UI can show "3 changes
+    /// syncing".
+    pub async fn nudge(&self, device_name: String) {
+        let mut g = self.inner.lock().await;
+        if !g.active {
+            return;
+        }
+        g.pending = g.pending.saturating_add(1);
+        g.state = AutoSyncState::Dirty;
+        // Reset any in-flight debounce timer.
+        if let Some(h) = g.debounce.take() {
+            h.abort();
+        }
+        let me = self.clone();
+        let gen_id = g.generation;
+        g.debounce = Some(tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(PUSH_DEBOUNCE_SECS)).await;
+            me.fire_sync(device_name, gen_id).await;
+        }));
+    }
+
+    /// Run one pull → merge → push cycle. Called from the debounce timer and
+    /// from the background loop on its pull cadence.
+    async fn fire_sync(&self, device_name: String, generation: u64) {
+        {
+            let mut g = self.inner.lock().await;
+            if !g.active || g.generation != generation {
+                return;
+            }
+            g.state = AutoSyncState::Syncing;
+            g.pending = 0;
+        }
+
+        // C3 fix: hold the cycle lock across the blocking work so two cycles
+        // never touch the same on-disk repo concurrently. try_lock: if a
+        // background-loop pull is already running, bail (the next mutation's
+        // debounce will retry).
+        let lock_guard = match self.cycle_lock.try_lock() {
+            Ok(g) => g,
+            Err(_) => {
+                let mut g = self.inner.lock().await;
+                if g.active && g.generation == generation {
+                    g.state = AutoSyncState::Idle;
+                }
+                return;
+            }
+        };
+
+        let outcome = tokio::task::spawn_blocking({
+            let vault_path = self.vault_path.clone();
+            move || run_sync_cycle(&vault_path, &device_name)
+        })
+        .await;
+        drop(lock_guard);
+
+        let mut g = self.inner.lock().await;
+        if !g.active || g.generation != generation {
+            return;
+        }
+        match outcome {
+            Ok(Ok(SyncOutcome::Synced { conflicts })) => {
+                g.conflicts_resolved = g.conflicts_resolved.saturating_add(conflicts);
+                g.last_sync = Some(now_secs());
+                g.state = AutoSyncState::Idle;
+            }
+            Ok(Ok(SyncOutcome::Offline)) => {
+                g.state = AutoSyncState::Offline;
+            }
+            Ok(Err(_e)) => {
+                // Sync error: do not go offline unless it was a network failure,
+                // which run_sync_cycle already mapped to Offline. Stay Idle so
+                // the next mutation retries. L1 fix: do NOT advance last_sync
+                // on error, or the UI would falsely show "All synced".
+                g.state = AutoSyncState::Idle;
+            }
+            Err(_join) => {
+                g.state = AutoSyncState::Idle;
+            }
+        }
+    }
+
+    /// Long-running background loop: periodic pull + offline retry.
+    async fn background_loop(self, device_name: String, generation: u64) {
+        loop {
+            // Bail if deactivated.
+            {
+                let g = self.inner.lock().await;
+                if !g.active || g.generation != generation {
+                    return;
+                }
+            }
+
+            let sleep_secs = {
+                let g = self.inner.lock().await;
+                match g.state {
+                    AutoSyncState::Offline => OFFLINE_POLL_SECS,
+                    // Idle/Dirty/Syncing: pull on the interval. If a debounce
+                    // push is pending it will fire first; this pull then runs
+                    // after, harmlessly.
+                    _ => PULL_INTERVAL_SECS,
+                }
+            };
+            tokio::time::sleep(tokio::time::Duration::from_secs(sleep_secs)).await;
+
+            {
+                let g = self.inner.lock().await;
+                if !g.active || g.generation != generation {
+                    return;
+                }
+                // Only pull when idle; don't race a debounce push.
+                if g.state != AutoSyncState::Idle && g.state != AutoSyncState::Offline {
+                    continue;
+                }
+            }
+
+            // C3 fix: acquire the cycle lock so the background pull can't run
+            // concurrently with a debounce-triggered cycle on the same repo.
+            let lock_guard = match self.cycle_lock.try_lock() {
+                Ok(g) => g,
+                Err(_) => continue, // a sync cycle is in flight; try again next tick
+            };
+
+            // Pull-only cycle (no commit/push): just reconcile remote changes.
+            let vault_path = self.vault_path.clone();
+            let dn = device_name.clone();
+            let outcome = tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &dn))
+                .await;
+            drop(lock_guard);
+            let mut g = self.inner.lock().await;
+            if !g.active || g.generation != generation {
+                return;
+            }
+            match outcome {
+                Ok(Ok(true)) => {
+                    g.last_sync = Some(now_secs());
+                    g.state = AutoSyncState::Idle;
+                }
+                Ok(Ok(false)) => {
+                    g.state = AutoSyncState::Offline;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+enum SyncOutcome {
+    Synced { conflicts: u32 },
+    Offline,
+}
+
+/// Blocking pull → merge → push. Returns the outcome + conflict count.
+///
+/// Network failures map to [`SyncOutcome::Offline`]; everything else is a
+/// regular error.
+#[cfg(feature = "git-sync")]
+fn run_sync_cycle(vault_path: &Path, device_name: &str) -> Result<SyncOutcome, String> {
+    use baluard_core::sync::engine::{SyncCycleOutcome, SyncEngine};
+
+    let engine = SyncEngine::new(vault_path, device_name);
+    let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
+    // Delegates to the canonical commit → pull → resolve → push workflow in
+    // core (H2 ordering + C2 conflict resolution + C1 force-checkout). The
+    // daemon stays free of direct git2 type references.
+    match engine.run_sync_cycle(&repo) {
+        Ok(SyncCycleOutcome::Synced { conflicts }) => Ok(SyncOutcome::Synced { conflicts }),
+        Ok(SyncCycleOutcome::Offline) => Ok(SyncOutcome::Offline),
+        Err(e) => Err(format!("{e}")),
+    }
+}
+
+#[cfg(not(feature = "git-sync"))]
+fn run_sync_cycle(_vault_path: &Path, _device_name: &str) -> Result<SyncOutcome, String> {
+    Err("git-sync feature disabled".into())
+}
+
+/// Pull-only (no commit/push). Used by the background loop to catch remote
+/// edits. Returns Ok(true) on success, Ok(false) on network failure (offline).
+#[cfg(feature = "git-sync")]
+fn run_pull_only(vault_path: &Path, device_name: &str) -> Result<bool, String> {
+    use baluard_core::sync::engine::{PullResult, SyncEngine};
+    use baluard_core::sync::engine::is_network_error;
+
+    let engine = SyncEngine::new(vault_path, device_name);
+    let repo = match engine.open_repo() {
+        Ok(r) => r,
+        Err(ref e) if is_network_error(e) => return Ok(false),
+        Err(e) => return Err(format!("{e}")),
+    };
+    match engine.pull(&repo, "origin") {
+        // A background pull that hits a conflict: keep local via the same
+        // keep-local path the full cycle uses. No push here (the next
+        // mutation-triggered cycle, or manual sync, will push the merge).
+        Ok(PullResult::Conflict {
+            files,
+            local_oid,
+            remote_oid,
+        }) => {
+            let _ = engine.resolve_conflict_keep_local(&repo, local_oid, remote_oid, &files);
+            Ok(true)
+        }
+        Ok(_) => Ok(true),
+        Err(ref e) if is_network_error(e) => Ok(false),
+        Err(e) => Err(format!("{e}")),
+    }
+}
+
+#[cfg(not(feature = "git-sync"))]
+fn run_pull_only(_vault_path: &Path, _device_name: &str) -> Result<bool, String> {
+    Ok(true)
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}

@@ -570,37 +570,182 @@ impl VaultHandle {
 
     /// Get vault settings (reads from disk).
     pub fn get_settings(&self) -> Result<crate::vault::manifest::VaultSettings, BaluardError> {
-        let settings_path = self.path.join("meta/settings.json");
-        if !settings_path.exists() {
-            return Ok(crate::vault::manifest::VaultSettings {
-                vault_timeout: crate::vault::manifest::VaultTimeout::default_for_new(),
-                theme: None,
-                lang: None,
-                default_uri_match: None,
-                fetch_favicons: None,
-                slug: None,
-                display_name: None,
-                subtitle: None,
-                avatar_ext: None,
-                enrollment_policy: crate::vault::manifest::EnrollmentPolicy::Strict,
+        // Split storage (2026-06-26): display prefs in plaintext settings-pub.json,
+        // the rest encrypted under the root key in settings.enc. Legacy
+        // settings.json is migrated on first unlock.
+        //
+        // Public (pre-unlock) fields: theme + lang.
+        // Encrypted (post-unlock) fields: vault_timeout, default_uri_match,
+        // fetch_favicons, slug, enrollment_policy. slug confirmed to have no
+        // pre-unlock consumer (authoritative source is the .baluard marker +
+        // registry); the rest are post-unlock only.
+        let pub_path = self.path.join("meta/settings-pub.json");
+        let enc_path = self.path.join("meta/settings.enc");
+        let legacy_path = self.path.join("meta/settings.json");
+
+        // 1. Plaintext public prefs (theme + lang). Fall back to legacy
+        //    meta/locale for lang during migration.
+        let (theme, lang) = if pub_path.exists() {
+            let data = std::fs::read_to_string(&pub_path)?;
+            let v: serde_json::Value = serde_json::from_str(&data)
+                .map_err(|e| VaultError::Metadata(format!("settings-pub parse: {e}")))?;
+            (
+                v.get("theme")
+                    .and_then(|t| serde_json::from_value(t.clone()).ok()),
+                v.get("lang").and_then(|l| l.as_str()).map(String::from),
+            )
+        } else {
+            // Legacy: no settings-pub.json yet. lang lived in meta/locale or
+            // settings.json; theme only in settings.json. The migration below
+            // (or the legacy fallback path) fills these in.
+            let lang = self.load_locale().or_else(|| {
+                std::fs::read_to_string(&legacy_path).ok().and_then(|d| {
+                    serde_json::from_str::<serde_json::Value>(&d)
+                        .ok()
+                        .and_then(|v| v["lang"].as_str().map(String::from))
+                })
             });
-        }
-        let data = std::fs::read_to_string(&settings_path)?;
-        let settings: crate::vault::manifest::VaultSettings = serde_json::from_str(&data)
-            .map_err(|e| crate::error::VaultError::Metadata(format!("settings parse: {e}")))?;
-        Ok(settings)
+            let theme = std::fs::read_to_string(&legacy_path)
+                .ok()
+                .and_then(|d| {
+                    serde_json::from_str::<serde_json::Value>(&d)
+                        .ok()
+                        .and_then(|v| serde_json::from_value(v["theme"].clone()).ok())
+                });
+            (theme, lang)
+        };
+
+        // 2. Encrypted settings. Requires unlocked vault.
+        let encrypted = match &self.state {
+            VaultState::Unlocked(unlocked) => {
+                if enc_path.exists() {
+                    let key = hkdf_derive::derive_settings_key(unlocked.root_key.as_bytes())
+                        .map_err(|e| VaultError::Metadata(format!("settings key derivation: {e}")))?;
+                    let data = std::fs::read(&enc_path)?;
+                    let envelope = crate::vault::envelope::deserialize(&data)?;
+                    let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
+                    Some(
+                        serde_json::from_slice::<crate::vault::manifest::EncryptedSettings>(
+                            &decrypted,
+                        )
+                        .map_err(|e| VaultError::Metadata(format!("settings.enc parse: {e}")))?,
+                    )
+                } else {
+                    None
+                }
+            }
+            VaultState::Locked => None,
+        };
+
+        // 3. Legacy migration: if settings.enc is absent but settings.json
+        //    exists, read the encrypted fields from it. The next save_settings
+        //    (or an explicit migrate) writes settings.enc and settings-pub.json,
+        //    deprecating settings.json.
+        let (enc_fields, migrated_lang) = match encrypted {
+            Some(e) => (Some(e), None),
+            None => {
+                if legacy_path.exists() {
+                    let data = std::fs::read_to_string(&legacy_path)?;
+                    let v: serde_json::Value = serde_json::from_str(&data)
+                        .map_err(|e| VaultError::Metadata(format!("settings parse: {e}")))?;
+                    let enc = crate::vault::manifest::EncryptedSettings {
+                        vault_timeout: serde_json::from_value(
+                            v["vault_timeout"].clone(),
+                        )
+                        .unwrap_or_else(|_| {
+                            crate::vault::manifest::VaultTimeout::default_for_new()
+                        }),
+                        default_uri_match: serde_json::from_value(
+                            v["default_uri_match"].clone(),
+                        )
+                        .ok(),
+                        fetch_favicons: v["fetch_favicons"].as_bool(),
+                        slug: v["slug"].as_str().map(String::from),
+                        enrollment_policy: serde_json::from_value(
+                            v["enrollment_policy"].clone(),
+                        )
+                        .unwrap_or(crate::vault::manifest::EnrollmentPolicy::Strict),
+                    };
+                    let legacy_lang = v["lang"].as_str().map(String::from);
+                    (Some(enc), legacy_lang)
+                } else {
+                    (None, None)
+                }
+            }
+        };
+
+        // 4. Assemble. Effective lang prefers the explicit pub value, then the
+        //    legacy-file value discovered during migration.
+        let lang = lang.or(migrated_lang);
+        Ok(crate::vault::manifest::VaultSettings {
+            vault_timeout: enc_fields
+                .as_ref()
+                .map(|e| e.vault_timeout)
+                .unwrap_or_else(crate::vault::manifest::VaultTimeout::default_for_new),
+            theme,
+            lang,
+            default_uri_match: enc_fields.as_ref().and_then(|e| e.default_uri_match),
+            fetch_favicons: enc_fields.as_ref().and_then(|e| e.fetch_favicons),
+            slug: enc_fields.as_ref().and_then(|e| e.slug.clone()),
+            // Identity fields live in profile.enc now; kept for struct compat.
+            display_name: None,
+            subtitle: None,
+            avatar_ext: None,
+            enrollment_policy: enc_fields
+                .as_ref()
+                .map(|e| e.enrollment_policy)
+                .unwrap_or(crate::vault::manifest::EnrollmentPolicy::Strict),
+        })
     }
 
-    /// Save vault settings to disk (atomic write).
+    /// Save vault settings using the split layout: theme+lang to plaintext
+    /// settings-pub.json, everything else to encrypted settings.enc. Performs
+    /// a one-time migration from legacy settings.json if it still exists.
     pub fn save_settings(
         &self,
         settings: &crate::vault::manifest::VaultSettings,
     ) -> Result<(), BaluardError> {
-        let settings_path = self.path.join("meta/settings.json");
-        let json = serde_json::to_string_pretty(settings).map_err(|e| {
-            crate::error::VaultError::Metadata(format!("settings serialization: {e}"))
-        })?;
-        super::write_vault_file(&settings_path, json.as_bytes())?;
+        let pub_path = self.path.join("meta/settings-pub.json");
+        let enc_path = self.path.join("meta/settings.enc");
+
+        // Public prefs (plaintext, pre-unlock).
+        let pub_json = serde_json::json!({
+            "theme": settings.theme,
+            "lang": settings.lang,
+        });
+        let pub_str = serde_json::to_string_pretty(&pub_json)
+            .map_err(|e| VaultError::Metadata(format!("settings-pub serialization: {e}")))?;
+        super::write_vault_file(&pub_path, pub_str.as_bytes())?;
+
+        // Encrypted settings (post-unlock only).
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => {
+                // Locked save: only the public prefs can be persisted. This is
+                // rare (settings.set is token-gated), but be safe.
+                return Ok(());
+            }
+        };
+        let enc_settings = crate::vault::manifest::EncryptedSettings {
+            vault_timeout: settings.vault_timeout,
+            default_uri_match: settings.default_uri_match,
+            fetch_favicons: settings.fetch_favicons,
+            slug: settings.slug.clone(),
+            enrollment_policy: settings.enrollment_policy,
+        };
+        let key = hkdf_derive::derive_settings_key(unlocked.root_key.as_bytes())
+            .map_err(|e| VaultError::Metadata(format!("settings key derivation: {e}")))?;
+        let json = serde_json::to_vec(&enc_settings)
+            .map_err(|e| VaultError::Metadata(format!("settings.enc serialization: {e}")))?;
+        self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
+
+        // One-time migration: drop the legacy plaintext settings.json now that
+        // the split files are written. Identity fields already live in
+        // profile.enc; nothing else remains here.
+        let legacy = self.path.join("meta/settings.json");
+        if legacy.exists() {
+            let _ = std::fs::remove_file(&legacy);
+        }
         Ok(())
     }
 
@@ -693,23 +838,41 @@ impl VaultHandle {
 
     /// Save plaintext locale to meta/locale.
     /// This file is readable before vault unlock (login screen needs language).
+    /// Save the language pref to the plaintext settings-pub.json (the pre-unlock
+    /// display-prefs file). Merges with any existing theme value so we don't
+    /// clobber it. Replaces the old meta/locale sidecar (2026-06-26).
     pub fn save_locale(&self, lang: &str) -> Result<(), BaluardError> {
-        let path = self.path.join("meta/locale");
-        std::fs::write(&path, lang)
-            .map_err(|e| VaultError::Metadata(format!("writing meta/locale: {e}")))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
+        let path = self.path.join("meta/settings-pub.json");
+        // Read existing pub prefs to preserve theme.
+        let existing = std::fs::read_to_string(&path).ok().and_then(|d| {
+            serde_json::from_str::<serde_json::Value>(&d)
+                .ok()
+                .and_then(|v| serde_json::from_value::<crate::types::ThemeMode>(v["theme"].clone()).ok())
+        });
+        let json = serde_json::json!({
+            "theme": existing,
+            "lang": lang,
+        });
+        let body = serde_json::to_string_pretty(&json)
+            .map_err(|e| VaultError::Metadata(format!("settings-pub serialization: {e}")))?;
+        super::write_vault_file(&path, body.as_bytes())?;
         Ok(())
     }
 
-    /// Load plaintext locale from meta/locale.
-    /// Returns None if file does not exist.
+    /// Load the language pref. Reads from settings-pub.json; falls back to the
+    /// legacy meta/locale sidecar during migration.
     pub fn load_locale(&self) -> Option<String> {
-        let path = self.path.join("meta/locale");
-        std::fs::read_to_string(path)
+        let pub_path = self.path.join("meta/settings-pub.json");
+        if let Ok(data) = std::fs::read_to_string(&pub_path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
+                if let Some(s) = v.get("lang").and_then(|l| l.as_str()) {
+                    return Some(s.trim().to_string());
+                }
+            }
+        }
+        // Legacy fallback.
+        let legacy = self.path.join("meta/locale");
+        std::fs::read_to_string(legacy)
             .ok()
             .map(|s| s.trim().to_string())
     }
@@ -4459,5 +4622,100 @@ mod tests {
         let tags = handle.list_tags().unwrap();
         assert!(!tags.contains(&"delete-me".to_string()));
         assert!(tags.contains(&"keep".to_string()));
+    }
+
+    /// Regression for the settings split (2026-06-26): display prefs (theme,
+    /// lang) must live in plaintext settings-pub.json; the rest must be
+    /// encrypted under the root key in settings.enc. slug confirmed to have no
+    /// pre-unlock consumer, so it lives in the encrypted half.
+    #[test]
+    fn settings_split_roundtrip_and_encryption() {
+        let (dir, password) = create_test_vault();
+
+        // Open + unlock, save settings across both halves.
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let settings = crate::vault::manifest::VaultSettings {
+            vault_timeout: crate::vault::manifest::VaultTimeout::Minutes(15),
+            theme: Some(crate::types::ThemeMode::Dark),
+            lang: Some("es".into()),
+            default_uri_match: Some(crate::types::UriMatchStrategy::Exact),
+            fetch_favicons: Some(false),
+            slug: Some("leaky-slug".into()),
+            display_name: None,
+            subtitle: None,
+            avatar_ext: None,
+            enrollment_policy: crate::vault::manifest::EnrollmentPolicy::Personal,
+        };
+        handle.save_settings(&settings).unwrap();
+
+        // Public file is plaintext and contains only theme + lang.
+        let pub_str =
+            std::fs::read_to_string(dir.path().join("meta/settings-pub.json")).unwrap();
+        assert!(pub_str.contains("\"theme\""), "public file must contain theme");
+        assert!(pub_str.contains("\"lang\""), "public file must contain lang");
+        assert!(!pub_str.contains("slug"), "slug must NOT be in plaintext public file");
+        assert!(!pub_str.contains("enrollment_policy"));
+        assert!(!pub_str.contains("fetch_favicons"));
+
+        // Encrypted file is NOT plaintext JSON of those fields.
+        let enc_bytes = std::fs::read(dir.path().join("meta/settings.enc")).unwrap();
+        let enc_str = String::from_utf8_lossy(&enc_bytes);
+        assert!(!enc_str.contains("leaky-slug"), "slug must be encrypted, not plaintext");
+        assert!(!enc_str.contains("enrollment_policy"));
+
+        // Legacy settings.json must be removed after migration.
+        assert!(!dir.path().join("meta/settings.json").exists());
+
+        // Re-open and read back: all fields round-trip.
+        let read_back = handle.get_settings().unwrap();
+        assert_eq!(read_back.theme, Some(crate::types::ThemeMode::Dark));
+        assert_eq!(read_back.lang.as_deref(), Some("es"));
+        assert_eq!(read_back.slug.as_deref(), Some("leaky-slug"));
+        assert_eq!(read_back.fetch_favicons, Some(false));
+        assert_eq!(
+            read_back.enrollment_policy,
+            crate::vault::manifest::EnrollmentPolicy::Personal
+        );
+    }
+
+    /// Regression: a vault with a legacy plaintext settings.json must migrate
+    /// transparently on first get_settings (post-unlock). Nothing lost.
+    #[test]
+    fn settings_legacy_json_migrates_on_read() {
+        let (dir, password) = create_test_vault();
+
+        // Write a legacy plaintext settings.json with mixed fields.
+        let legacy = serde_json::json!({
+            "vault_timeout": "OnRestart",
+            "theme": "dark",
+            "lang": "es",
+            "default_uri_match": "exact",
+            "fetch_favicons": false,
+            "slug": "legacy-vault",
+            "enrollment_policy": "Strict",
+        });
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(
+            dir.path().join("meta/settings.json"),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Read picks up the legacy values via the fallback path.
+        let s = handle.get_settings().unwrap();
+        assert_eq!(s.slug.as_deref(), Some("legacy-vault"));
+        assert_eq!(s.lang.as_deref(), Some("es"));
+        assert_eq!(s.fetch_favicons, Some(false));
+
+        // A save migrates: writes the split files and drops settings.json.
+        handle.save_settings(&s).unwrap();
+        assert!(dir.path().join("meta/settings-pub.json").exists());
+        assert!(dir.path().join("meta/settings.enc").exists());
+        assert!(!dir.path().join("meta/settings.json").exists());
     }
 }
