@@ -74,7 +74,7 @@ secrecy = { version = "0.10", features = ["serde"] }
 async-trait = "0.1"
 
 # OS keychain (biometric unlock)
-keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust", "windows-native"] }
+keyring = { version = "3", features = ["apple-native", "linux-native-sync-persistent", "crypto-rust", "windows-native"] }
 
 # File timestamp manipulation
 filetime = "0.2"
