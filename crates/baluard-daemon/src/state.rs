@@ -39,11 +39,15 @@ pub struct VaultState {
     pub rate_limiter: crate::rate_limit::RateLimiter,
     /// Phase 1: WebAuthn ceremony state cache (300s TTL).
     pub ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache,
+    /// Auto-sync coordinator. Activated on unlock when the vault has a remote
+    /// + connected provider. Cheap clone (Arc inside).
+    pub autosync: crate::autosync::AutoSyncHandle,
 }
 
 impl VaultState {
     /// Create a new empty state pointing at a vault directory.
     pub fn new(vault_path: PathBuf) -> Self {
+        let autosync = crate::autosync::AutoSyncHandle::new(&vault_path);
         Self {
             vault_path,
             inner: RwLock::new(None),
@@ -55,6 +59,7 @@ impl VaultState {
             cover_session: AtomicU64::new(0),
             rate_limiter: crate::rate_limit::RateLimiter::new(),
             ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache::new(),
+            autosync,
         }
     }
 
@@ -300,14 +305,50 @@ impl VaultState {
                 .as_secs(),
             Ordering::Relaxed,
         );
+        drop(token_guard);
+
+        // M2 fix: activate the auto-sync coordinator immediately on unlock if
+        // the vault has a remote. Previously activation was lazy (only on the
+        // first sync.autosync_status poll, ~10s after unlock), so edits in that
+        // window weren't queued. device_name comes from the registry via the
+        // handle; guard the whole thing behind git-sync since the sync check
+        // needs the engine.
+        #[cfg(feature = "git-sync")]
+        {
+            let device_name = guard
+                .as_ref()
+                .and_then(|h| {
+                    h.device_manager
+                        .registry()
+                        .devices
+                        .get(&h.device_id)
+                        .map(|d| d.name.clone())
+                })
+                .unwrap_or_default();
+            if !device_name.is_empty() {
+                let has_remote = baluard_core::sync::engine::SyncEngine::new(
+                    &self.vault_path,
+                    &device_name,
+                )
+                .open_repo()
+                .and_then(|repo| {
+                    baluard_core::sync::engine::SyncEngine::has_remote(&repo)
+                })
+                .unwrap_or(false);
+                if has_remote {
+                    self.autosync.activate(device_name).await;
+                }
+            }
+        }
 
         Ok(())
     }
 
     /// Lock the vault, zeroizing keys in memory. Clears the session token.
     pub async fn lock(&self) -> Result<(), String> {
-        // Stop cover timer first
+        // Stop cover timer + auto-sync first
         self.stop_cover_timer().await;
+        self.autosync.deactivate().await;
         self.cover_pending.store(false, Ordering::Relaxed);
         self.cover_session.fetch_add(1, Ordering::Relaxed);
 

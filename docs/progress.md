@@ -38,7 +38,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | `vault/handle` | Done | Vault CRUD operations |
 | `vault/creation` | Done | Vault creation ceremony with BIP-39 recovery phrase |
 | `sync/engine` | Done | git2-rs sync: init_repo, commit, push, pull, fetch, Ed25519 signed commits |
-| `sync/conflict` | Done | Conflict auto-healing (index rebuild, entry rename) |
+| `sync/conflict` | Done | Field-level 3-way merge (`merge_ciphers`, semantic atomic groups); `resolve_conflict_keep_local` for keep-local conflict resolution |
 | `sync/state_machine` | Done | Sync state machine for tracking sync progress |
 | `daemon/socket` | Done | Unix socket listener. 0600 via umask. SIGINT/SIGTERM graceful shutdown |
 | `daemon/handler` | Done | Protobuf gateway. Length-delimited wire. Token-gated IPC. Password zeroized |
@@ -149,6 +149,10 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 | Item | Description | Status |
 |------|-------------|--------|
+| Auto-sync | Debounced push after CRUD (5s), periodic pull (3min), offline retry, conflict auto-resolve (keep-local Phase 1). Daemon coordinator `autosync.rs`, desktop `AutoSyncContext` + status pill + conflict banner. See D5-bis in `architecture-decisions.md` | **Done** |
+| Browser autofill suppression | Global `autocomplete=off` via MutationObserver; opt-in `data-autofill="on"`. `desktop/src/lib/disableAutofill.js` | **Done** |
+| UI freeze fix | `daemon_request` async + `spawn_blocking` (sync command was blocking the webview event loop) | **Done** |
+| macOS keychain stable signing | `_sign-sidecar` just recipe signs daemon with Apple Development identity so "Always Allow" persists across rebuilds | **Done** |
 | Additional import formats | Dashlane, Enpass, NordPass, Avast, Avira, Keeper, RoboForm, Myki, mSecure, Blur | Not started |
 
 ### Vault Creation Wizard

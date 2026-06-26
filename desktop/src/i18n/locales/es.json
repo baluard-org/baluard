@@ -351,6 +351,14 @@
     "webOAuthError": "Autenticación fallida. Intenta de nuevo.",
     "errorRepoCreatePartial": "Es posible que el repositorio se haya creado en el proveedor pero la configuración de sincronización falló. Si abandonas, puede que necesites eliminar el repositorio vacío en {provider} manualmente."
   },
+  "autosync": {
+    "upToDate": "Todos los cambios sincronizados",
+    "syncing": "Sincronizando cambios...",
+    "pending": "{count} cambio esperando para sincronizar",
+    "pending_plural": "{count} cambios esperando para sincronizar",
+    "offline": "Sin conexión. Los cambios se sincronizarán al volver",
+    "conflictResolved": "Este elemento también fue editado en otro dispositivo. Guardamos la versión más reciente. Revísalo en Sincronización."
+  },
   "errors": {
     "daemonNotRunning": "El demonio no se está ejecutando",
     "vaultNotUnlocked": "La bóveda no está desbloqueada",

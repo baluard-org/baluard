@@ -60,12 +60,16 @@ Decrypts Entries (entries/*.enc)
 
 ## DOMAIN 2: CONFLICT RESOLUTION & SYNCHRONIZATION
 
-### D4. Index & Conflict Auto-Healing
+### D4. Conflict Auto-Resolution & Index Healing
 
-**Decision: Automatic Index Rebuild & File Conflict Resolution**
+**Decision: Field-level 3-way merge with keep-local fallback**
 
-- **Index Auto-Heal**: If `meta/index.enc` experiences a Git conflict due to concurrent multi-device updates, baluard-core resolves the conflict programmatically. It decrypts the entire local `entries/` folder, reconstructs the index table from scratch, and silently force-pushes the clean resolution.
-- **Entry Conflict Healing**: If a single padded file (`entries/3a7f82...enc`) experiences a conflict, baluard-core renames the local version, accepts the remote commit, and flags a notification to the UI layer: *"Two updates happened at once. Which do you keep?"*
+- **Field-level merge** (`sync/conflict.rs::merge_ciphers`): on a pull conflict, decrypt base/local/remote cipher versions and merge non-overlapping field changes automatically. Security-sensitive field groups (username + password + TOTP) are atomic: if any field in the group conflicts, the whole group flags for user resolution. URIs and custom fields union.
+- **Keep-local fallback** (`SyncEngine::resolve_conflict_keep_local`): when field-level merge is not yet wired into the cycle (Phase 1), the local version of each conflicting file is taken, and a proper 2-parent merge commit is created on top of both local and remote so the next push fast-forwards. Local edits are never lost; remote edits that conflicted remain in git history for review.
+- **Auto-sync integration**: the coordinator (`autosync.rs`) calls `SyncEngine::run_sync_cycle` which runs commit → pull → resolve → push. Conflicts are resolved automatically and a non-blocking banner surfaces to the user. Phase 2 will decrypt + run `merge_ciphers` for silent non-destructive merge before falling back to keep-local on true same-field conflicts.
+- **Index healing**: if `meta/index.enc` conflicts, baluard-core rebuilds the index from the `entries/` folder.
+
+> NOTE: earlier versions of this ADR described "silently force-pushes" and "renames the local version, accepts the remote commit." That was inaccurate and unsafe. The current policy preserves local edits and creates merge commits; never force-pushes.
 
 ---
 
@@ -77,6 +81,27 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 1. **JIT Hook**: Triggered immediately when the mobile browser or credential provider requests autofill.
 2. **Micro-Fetch**: baluard-core (via UniFFI binding) initiates a rapid `git fetch` to evaluate the remote branch SHA delta.
 3. **Pulls Delta**: If a delta is present, baluard-core pulls changes, decrypts entries, and updates the local cache *before* prompting the user for biometrics (FaceID/Fingerprint).
+
+---
+
+### D5-bis. Desktop Auto-Sync (2026-06-26)
+
+**Decision: Daemon-side debounced push + periodic pull + offline retry, diverging from Bitwarden's model**
+
+**Context**: Bitwarden does immediate-push-per-save + server-side HTTP 409 last-write-wins + read-only mobile offline + 5-min full sync. That model is server-mediated; copying it onto a shared git remote would (a) spam N commits per burst + slow round-trips, and (b) lose data on conflicts because Bitwarden's server can't field-level merge.
+
+**Decision**:
+- **Debounced push** (5s coalesce) after every CRUD mutation via the `COVER_MUTATION_ACTIONS` hook in `handler.rs`. A burst of edits = one commit + one round-trip.
+- **Periodic pull** every 3 min when idle + online (catches other-device edits; our substitute for Bitwarden's SignalR inbound push notifications).
+- **Offline handling**: network failures (classified from `git2::Error::class()` Net/Http/Ssh/Ssl → `SyncError::Network`) → `Offline` state → 30s retry probe. Offline edits queue locally until reconnect.
+- **Canonical git workflow** (`SyncEngine::run_sync_cycle`): commit local → pull → resolve conflicts → push. Committing first keeps the worktree clean so the pull's force-checkout (C1 fix) cannot discard uncommitted edits (H2 fix).
+- **Conflict policy (Phase 1)**: keep local via `resolve_conflict_keep_local` (2-parent merge commit → next push fast-forwards), surface a non-blocking banner. Field-level 3-way merge (`conflict::merge_ciphers`) is NOT yet wired into the cycle; Phase 2 will run it for silent non-destructive merge and only force-resolve true same-field conflicts.
+- **Mutual exclusion** (C3 fix): `cycle_lock` tokio Mutex guarantees only one sync cycle touches the on-disk repo at a time; losers bail cleanly.
+- **Activation**: in `VaultState::unlock` (immediate, not lazy); deactivated on lock. No daemon-side decrypted cache, so a pull does not require reloading the vault handle.
+
+**Frontend**: desktop polls `sync.autosync_status` every 10s (`AutoSyncContext`); status pill in sidebar header (`AutoSyncIndicator`); non-blocking conflict banner (`ConflictBanner`). No Tauri event channel (request/response only).
+
+**Mobile (future)**: the daemon is the single source of truth for sync; the mobile client will reuse the same IPC contract, so the coordinator serves both platforms. No duplicate logic.
 
 ---
 
@@ -577,6 +602,14 @@ meta/
   seen-nonces.json         # Anti-replay enrollment nonces
   keywrap/
     {device_id}.json       # HPKE-wrapped Root Key per device
+  settings-pub.json        # Plaintext display prefs (theme, lang) — pre-unlock readable
+  settings.enc             # AES-256-GCM under root key: vault_timeout, default_uri_match,
+                          #   fetch_favicons, slug, enrollment_policy (privacy: slug/policy
+                          #   must not leak to the git remote in plaintext)
+  profile.enc              # AES-256-GCM under root key: display_name, subtitle, avatar_ext
+  folders.enc / tags.enc   # AES-256-GCM under root key: folder + tag manifests
+  activity.enc             # AES-256-GCM under root key: device activity index
+  avatar.{ext}             # Unencrypted avatar file (vault is encrypted at rest)
 ```
 
 ### Sequence Diagram: Full Rotation (Multi-Device, Git Remote)
@@ -729,9 +762,11 @@ All modals use `<FocusTrap containerRef={ref} onEscape={fn} />` providing:
 
 ### D14. User Profile (Completed 2026-06-09)
 
-**Decision: Profile data in VaultSettings, avatar as separate file**
+**Decision: Profile data in encrypted `profile.enc`, avatar as separate file**
 
-`VaultSettings` (`meta/settings.json`) gains `display_name`, `subtitle`, `avatar_ext` fields. Avatar stored as `meta/avatar.{ext}` in vault directory (unencrypted, synced via git). Rationale: vault is already encrypted at rest; storing base64 avatar data in settings.json bloats diffs.
+Profile fields (`display_name`, `subtitle`, `avatar_ext`) live in `meta/profile.enc` (AES-256-GCM under the root key via `derive_profile_key`), migrated out of the plaintext `settings.json`. Avatar stored as `meta/avatar.{ext}` in vault directory (unencrypted, synced via git). Rationale: vault is already encrypted at rest; storing base64 avatar data inline bloats diffs.
+
+> **2026-06-26 update:** the rest of `settings.json` was also split for privacy — see D16. Display prefs (`theme`, `lang`) → plaintext `meta/settings-pub.json`; vault identity/policy (`slug`, `enrollment_policy`, `vault_timeout`, `fetch_favicons`, `default_uri_match`) → encrypted `meta/settings.enc`.
 
 **Constraints:** Ext validated against whitelist (`png/jpg/jpeg/gif/webp`), size capped at 350KB base64. Path traversal validated. Old avatar file cleaned up on ext change.
 
@@ -764,8 +799,8 @@ CLI chains profile + preferences into `VaultCreator` builder before `execute()`.
 **Schema changes:**
 - `ThemeMode` enum (`Light`/`Dark`/`System`) with case-insensitive serde, replacing `Option<String>` on `VaultSettings.theme`
 - `VaultSettings.lang` field for language preference
-- `save_locale()`/`load_locale()` on VaultHandle for plaintext `meta/locale` file
-- `locale.save` daemon route (plaintext write for pre-unlock access)
+- `save_locale()`/`load_locale()` on VaultHandle for the language pref (2026-06-26: consolidated into `meta/settings-pub.json` with `theme`; the standalone `meta/locale` sidecar is deprecated and migrated on read)
+- `locale.save` daemon route (plaintext write of `settings-pub.json` for pre-unlock access)
 
 **CLI (`baluard init`):** `--profile`, `--name`, `--slug`, `--theme`, `--lang`, `--auto-lock` flags (no `--subtitle`: removed 2026-06-11). OS locale auto-detection (`$LANGUAGE > $LC_ALL > $LC_MESSAGES > $LANG`). Interactive prompts when TTY, hard errors when piped. 8-char minimum enforced as hard error.
 
@@ -780,7 +815,25 @@ CLI chains profile + preferences into `VaultCreator` builder before `execute()`.
 - Avatar deferred to Settings (rarely urgent on first run)
 - Crash between creation and profile write accepted (profile is cosmetic, missing = defaults)
 - Recovery phrase printed to stdout in CLI (no confirmation prompt -- breaks piped/CI)
-- Language persisted in both encrypted settings AND plaintext `meta/locale` (login screen needs it before unlock)
+- Language persisted in plaintext `meta/settings-pub.json` (single source; login screen needs it before unlock). Pre-2026-06-26 this was duplicated across encrypted settings + `meta/locale`; both are consolidated into `settings-pub.json` now.
+
+### D19. Settings Split: Encrypted Identity + Public Display Prefs (2026-06-26)
+
+**Decision: Split `meta/settings.json` into a plaintext display-prefs file and an encrypted identity/policy file, to stop leaking vault metadata to the git remote.**
+
+**Problem:** the legacy `meta/settings.json` was fully plaintext and synced via git. It exposed `slug` (vault + often user identity), `lang`, `theme`, `enrollment_policy`, `fetch_favicons`, `default_uri_match` to anyone with read access to the remote. For a privacy-focused password manager this is a real smell even though none of the fields are secrets.
+
+**Decision:**
+- `meta/settings-pub.json` (plaintext, pre-unlock readable): `theme` + `lang` only. The login screen needs these before the master password is entered.
+- `meta/settings.enc` (AES-256-GCM under the root key via `derive_settings_key`, mirrors the `profile.enc`/`folders.enc`/`tags.enc` pattern): `vault_timeout`, `default_uri_match`, `fetch_favicons`, `slug`, `enrollment_policy`. None have a pre-unlock consumer.
+
+**Why `slug` can be encrypted:** confirmed the runtime authoritative source is the `.baluard` marker + the vault registry, never `settings.json`. The settings copy is write-mostly (populated at creation, never read for routing/display).
+
+**`lang` consolidation:** the pre-unlock language pref previously lived in two plaintext places (`settings.json` + `meta/locale`). Both are consolidated into `settings-pub.json`; `meta/locale` is deprecated and migrated on read.
+
+**Migration:** on first `save_settings` post-split, the legacy `settings.json` is read via a fallback path, split into the two new files, and deleted. `get_settings` reassembles the full `VaultSettings` struct from both halves (plus legacy fallback) so callers are unchanged.
+
+**Files NOT touched (already safe):** `kdf-params.json` (salt + cost are public by design; encrypting them is circular), `recovery.json` (already an HPKE-wrapped blob; the public keys it contains are public by definition), `keywrap/*.json` (same — wrapped material).
 
 ---
 

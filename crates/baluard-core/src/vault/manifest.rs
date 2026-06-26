@@ -256,6 +256,28 @@ pub struct VaultSettings {
     pub enrollment_policy: EnrollmentPolicy,
 }
 
+/// Post-unlock settings stored encrypted under the root key in settings.enc.
+/// These fields leak vault identity or policy if plaintext on the remote.
+/// Display prefs (theme, lang) live separately in plaintext settings-pub.json
+/// because the login screen needs them before unlock.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EncryptedSettings {
+    /// Auto-lock policy token.
+    pub vault_timeout: VaultTimeout,
+    /// URI match strategy global default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_uri_match: Option<crate::types::UriMatchStrategy>,
+    /// Whether to fetch favicons from third-party sites.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fetch_favicons: Option<bool>,
+    /// Vault slug (machine-friendly identifier). Post-unlock only; the
+    /// authoritative runtime source is the .baluard marker + registry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    /// Enrollment policy controls how a new device joins this vault.
+    pub enrollment_policy: EnrollmentPolicy,
+}
+
 /// Vault enrollment policy for new device joins.
 ///
 /// See `VaultSettings::enrollment_policy` for the full description.

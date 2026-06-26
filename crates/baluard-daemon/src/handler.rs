@@ -217,6 +217,7 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "provider.oauth_status_web",
     "vault.setup_sync",
     "sync.status_json",
+    "sync.autosync_status",
     "sync.disconnect",
     // C4 fix: device.revoke triggers destructive rekey, must be token-gated
     "device.revoke",
@@ -2032,6 +2033,35 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
+        "sync.autosync_status" => {
+            // M2 handles activation in VaultState::unlock; this route is just a
+            // status reader. But as a backstop (e.g. provider connected AFTER
+            // unlock via sync.setup_sync), lazily activate here too if a remote
+            // is present and the coordinator is still inactive. The has_remote
+            // check is blocking git I/O, so run it on the blocking pool (M1):
+            // this route is polled every ~10s by every desktop client.
+            #[cfg(feature = "git-sync")]
+            if !state.autosync.is_active().await {
+                let vault_path = state.vault_path.clone();
+                let has_remote = tokio::task::spawn_blocking(move || {
+                    baluard_core::sync::engine::SyncEngine::new(&vault_path, "probe")
+                        .open_repo()
+                        .and_then(|repo| baluard_core::sync::engine::SyncEngine::has_remote(&repo))
+                        .unwrap_or(false)
+                })
+                .await
+                .unwrap_or(false);
+                if has_remote {
+                    let dn = device_name(&state.vault_path);
+                    state.autosync.activate(dn).await;
+                }
+            }
+            let status = state.autosync.status().await;
+            match serde_json::to_string(&status) {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(format!("JSON error: {e}")),
+            }
+        }
         "sync.disconnect" => match sync_disconnect(&state.vault_path, &req.payload).await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
@@ -2899,9 +2929,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         _ => err_response(format!("Unknown action: {}", req.action)),
     };
 
-    // Schedule cover commit after successful vault mutations
+    // Schedule cover commit + arm auto-sync after successful vault mutations
     if resp.success && COVER_MUTATION_ACTIONS.contains(&req.action.as_str()) {
         state.schedule_cover_after_commit();
+        let dn = device_name(&state.vault_path);
+        state.autosync.nudge(dn).await;
     }
 
     // Zeroize any remaining sensitive data in the request

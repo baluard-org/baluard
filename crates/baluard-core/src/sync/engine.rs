@@ -620,6 +620,16 @@ impl SyncEngine {
         Ok(url.to_string())
     }
 
+    /// True if the repo has a configured `origin` remote (i.e. sync is set up).
+    /// Cheap existence check used by the auto-sync coordinator to decide
+    /// whether to activate on unlock without running a full status.
+    pub fn has_remote(repo: &Repository) -> Result<bool, BaluardError> {
+        Ok(repo
+            .find_remote("origin")
+            .map(|r| r.url().is_some())
+            .unwrap_or(false))
+    }
+
     /// Remove a remote by name.
     pub fn remove_remote(&self, repo: &Repository, name: &str) -> Result<(), BaluardError> {
         repo.remote_delete(name)
@@ -646,11 +656,7 @@ impl SyncEngine {
 
         remote
             .push(&[&push_refspec], Some(&mut push_options))
-            .map_err(|e| {
-                SyncError::Git(crate::sync::credentials::scrub_git_error(&format!(
-                    "push: {e}"
-                )))
-            })?;
+            .map_err(|e| classify_remote_err("push", &e))?;
 
         // Track local HEAD OID for rollback detection
         let pushed_oid = repo
@@ -699,11 +705,7 @@ impl SyncEngine {
             let refspec = format!("refs/heads/*:refs/remotes/{remote_name}/*");
             remote
                 .fetch(&[&refspec], Some(&mut fetch_opts), None)
-                .map_err(|e| {
-                    SyncError::Git(crate::sync::credentials::scrub_git_error(&format!(
-                        "fetch: {e}"
-                    )))
-                })?;
+                .map_err(|e| classify_remote_err("fetch", &e))?;
 
             // Resolve remote branch dynamically
             let remote_branch = Self::resolve_remote_branch(repo, remote_name);
@@ -766,7 +768,12 @@ impl SyncEngine {
             repo.set_head(&format!("refs/heads/{branch}"))
                 .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
 
-            repo.checkout_head(None)
+            // C1 fix: checkout_head(None) is GIT_CHECKOUT_NONE — a dry-run no-op
+            // that advances HEAD but leaves the OLD working-tree files in place.
+            // Callers (auto-sync, manual sync) that commit+push after this would
+            // re-commit the stale tree and silently revert the just-pulled remote
+            // changes. Force-checkout so the worktree matches the new HEAD.
+            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
                 .map_err(|e| SyncError::Git(format!("checkout head: {e}")))?;
 
             self.save_last_head(&remote_oid.to_string())?;
@@ -857,6 +864,12 @@ impl SyncEngine {
             .map_err(|e| SyncError::Git(format!("update ref: {e}")))?;
         repo.set_head(&format!("refs/heads/{branch}"))
             .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
+
+        // C1 fix: ensure the working tree matches the merge commit we just
+        // created. Without this the on-disk files can lag HEAD (repo.merge()
+        // updates the index but does not guarantee a worktree checkout).
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .map_err(|e| SyncError::Git(format!("checkout after merge: {e}")))?;
 
         // Track merge commit OID (not remote HEAD) for rollback detection
         self.save_last_head(&merge_oid.to_string())?;
@@ -999,6 +1012,78 @@ impl SyncEngine {
             .map_err(|e| SyncError::Git(format!("cleanup after merge: {e}")))?;
         self.transition_state(SyncState::Idle)?;
         Ok(merge_oid)
+    }
+
+    /// Resolve a pull conflict by keeping the LOCAL version of every
+    /// conflicting file, producing a proper 2-parent merge commit on top of
+    /// both local and remote. The next push is then fast-forwardable.
+    ///
+    /// This is the Phase 1 resolution policy ("keep local, surface to user").
+    /// Phase 2 will decrypt + run [`crate::sync::conflict::merge_ciphers`] for
+    /// field-level non-destructive merge before falling back to keep-local on
+    /// true same-field conflicts. Local edits are never lost; remote edits that
+    /// conflicted are in git history and can be reviewed.
+    ///
+    /// `files` is the conflicting file list from [`PullResult::Conflict`].
+    pub fn resolve_conflict_keep_local(
+        &self,
+        repo: &Repository,
+        local_oid: Oid,
+        remote_oid: Oid,
+        files: &[String],
+    ) -> Result<Oid, BaluardError> {
+        // For each conflicting file, take the local version's bytes.
+        let mut resolved: Vec<(String, Vec<u8>)> = Vec::with_capacity(files.len());
+        for f in files {
+            let bytes = Self::read_blob_from_commit(repo, local_oid, f)?;
+            resolved.push((f.clone(), bytes));
+        }
+        self.resolve_conflicts(repo, local_oid, remote_oid, &resolved)
+    }
+
+    /// Run one full sync cycle: commit local → pull → resolve conflicts → push.
+    ///
+    /// This is the canonical git workflow order (H2): committing local changes
+    /// first keeps the worktree clean so the pull's checkout (forced, per the
+    /// C1 fix) cannot discard uncommitted edits. On a [`PullResult::Conflict`],
+    /// the local side is kept via [`resolve_conflict_keep_local`] (Phase 1
+    /// policy); Phase 2 will field-level merge first. Returns
+    /// [`SyncCycleOutcome::Offline`] on network/transport failure so the caller
+    /// can enter a retry loop.
+    pub fn run_sync_cycle(&self, repo: &Repository) -> Result<SyncCycleOutcome, BaluardError> {
+        // 1. Commit pending local changes (clean worktree before pull).
+        let status = self.status(repo)?;
+        if status.is_dirty() {
+            self.commit_all(repo, "")?;
+        }
+
+        // 2. Pull (fast-forward / merge / conflict). Track whether a conflict
+        // was resolved so the caller can surface it to the user.
+        let mut conflicts = 0u32;
+        match self.pull(repo, "origin") {
+            Ok(PullResult::Conflict {
+                files,
+                local_oid,
+                remote_oid,
+            }) => {
+                // Keep local side; produces a 2-parent merge commit so the next
+                // push fast-forwards. Local edits are preserved.
+                self.resolve_conflict_keep_local(repo, local_oid, remote_oid, &files)?;
+                conflicts = 1;
+            }
+            Ok(_) => {}
+            Err(ref e) if is_network_error(e) => return Ok(SyncCycleOutcome::Offline),
+            Err(e) => return Err(e),
+        }
+
+        // 3. Push (local is committed + reconciled with remote → fast-forward).
+        match self.push(repo, "origin") {
+            Ok(_) => {}
+            Err(ref e) if is_network_error(e) => return Ok(SyncCycleOutcome::Offline),
+            Err(e) => return Err(e),
+        }
+
+        Ok(SyncCycleOutcome::Synced { conflicts })
     }
 
     /// Clone a remote vault repo to a local directory.
@@ -1430,6 +1515,19 @@ pub enum PullResult {
     },
 }
 
+/// Outcome of one full commit → pull → resolve → push cycle.
+///
+/// Git2-free so callers (the daemon auto-sync coordinator) can consume it
+/// without a direct git2 dependency. `conflicts` counts conflict resolutions
+/// performed this cycle (0 = clean sync).
+#[derive(Debug, PartialEq)]
+pub enum SyncCycleOutcome {
+    /// Local changes committed + pushed (and any remote changes pulled).
+    Synced { conflicts: u32 },
+    /// Remote unreachable (network/transport failure). Caller should retry.
+    Offline,
+}
+
 /// .gitignore content for vault repos.
 const GITIGNORE_CONTENT: &str = "\
 # Secrets and private keys (CLI mode)
@@ -1462,6 +1560,36 @@ Thumbs.db
 # Pi agent
 .pi/
 ";
+
+/// Classify a remote (push/fetch) git2 error by its error class. Transport
+/// failures (network, HTTP, SSH, auth, proxy, SSL) map to
+/// [`SyncError::Network`] so callers can distinguish "offline / retry" from a
+/// real data error. Everything else stays a [`SyncError::Git`]. Credentials
+/// are scrubbed before the message is stored.
+///
+/// H1 fix: previously all push/fetch failures (including connection refused,
+/// DNS failure, timeouts) were wrapped as `SyncError::Git`, so the daemon's
+/// offline detector (`SyncError::Network` match) never fired and offline edits
+/// never retried.
+fn classify_remote_err(context: &str, e: &git2::Error) -> BaluardError {
+    use git2::ErrorClass;
+    let scrubbed = crate::sync::credentials::scrub_git_error(&format!("{context}: {e}"));
+    let is_transport = matches!(
+        e.class(),
+        ErrorClass::Net | ErrorClass::Http | ErrorClass::Ssh | ErrorClass::Ssl
+    );
+    if is_transport {
+        BaluardError::Sync(SyncError::Network(scrubbed))
+    } else {
+        BaluardError::Sync(SyncError::Git(scrubbed))
+    }
+}
+
+/// True for errors that look like network/transport failures. Used by callers
+/// (auto-sync) to decide whether to enter a retry loop.
+pub fn is_network_error(e: &BaluardError) -> bool {
+    matches!(e, BaluardError::Sync(SyncError::Network(_)))
+}
 
 #[cfg(test)]
 #[cfg(feature = "git-sync")]
