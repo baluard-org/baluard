@@ -51,6 +51,16 @@ export default function AutoSyncIndicator() {
 
   createEffect(() => {
     const state = autosync.state();
+
+    // Reset the gate when the vault locks (active drops) so a re-unlock's
+    // background pull doesn't inherit a prior session's sawUserChange flag.
+    if (!autosync.active()) {
+      sawUserChange = false;
+      clearHide();
+      setShowLabel(false);
+      return;
+    }
+
     if (state === "offline") {
       clearHide();
       setShowLabel(true);
@@ -90,10 +100,16 @@ export default function AutoSyncIndicator() {
           title={c().label}
           class="absolute top-2 right-3 z-[60] pointer-events-none select-none flex items-center justify-end gap-1.5 h-5"
         >
-          <Transition name="sync-status" when={showLabel()}>
-            <span class="text-[11px] font-medium text-[var(--color-muted)] whitespace-nowrap">
-              {c().label}
-            </span>
+          {/* solid-transition-group's <Transition> has no `when` prop — it animates
+              the enter/leave of control-flow children (here, the inner <Show>).
+              Do NOT put `when` on <Transition>; it is silently ignored and the
+              label would always render. */}
+          <Transition name="sync-status">
+            <Show when={showLabel()}>
+              <span class="text-[11px] font-medium text-[var(--color-muted)] whitespace-nowrap">
+                {c().label}
+              </span>
+            </Show>
           </Transition>
           <span class="relative flex h-2 w-2">
             {/* soft expanding halo (visible only while syncing) */}
