@@ -633,14 +633,14 @@ export default function SyncTab() {
                   </Show>
                 </div>
                 <Show when={syncStatus()} fallback={
-                  <span class="px-2.5 py-1 rounded-lg bg-green-950/20 text-green-400 text-[10px] font-bold border border-green-900/30">{t("sync.statusUpToDate")}</span>
+                  <span class="px-2.5 py-1 rounded-lg text-[10px] font-bold border badge-green">{t("sync.statusUpToDate")}</span>
                 }>
                   <span class={`px-2.5 py-1 rounded-lg text-[10px] font-bold border ${
                     subState() === "syncing"
-                      ? "bg-blue-950/20 text-blue-400 border-blue-900/30"
+                      ? "badge-blue"
                       : syncStatus().dirty
-                        ? "bg-yellow-950/20 text-yellow-400 border-yellow-900/30"
-                        : "bg-green-950/20 text-green-400 border-green-900/30"
+                        ? "badge-yellow"
+                        : "badge-green"
                   }`}>
                     {subState() === "syncing"
                       ? t("sync.syncing")
@@ -695,7 +695,7 @@ export default function SyncTab() {
                       <div class="p-3 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-2">
                         <div class="flex items-center justify-between text-[10px]">
                           <span class="text-[var(--color-muted)]">{t("sync.workingTree")}</span>
-                          <span class={syncStatus().dirty ? "text-yellow-400 font-bold" : "text-green-400"}>
+                          <span class={syncStatus().dirty ? "text-status-yellow font-bold" : "text-status-green"}>
                             {syncStatus().dirty ? t("sync.dirty") : t("sync.clean")}
                           </span>
                         </div>
@@ -838,18 +838,18 @@ export default function SyncTab() {
                   </label>
 
                   <Show when={deleteRemote()}>
-                    <label class="p-3 bg-red-950/10 border border-red-900/30 rounded-xl flex items-start gap-3 cursor-pointer select-none hover:bg-red-950/20 transition-all animate-in fade-in slide-in-from-top-2 duration-150">
+                    <label class="p-3 border rounded-xl flex items-start gap-3 cursor-pointer select-none transition-all animate-in fade-in slide-in-from-top-2 duration-150 box-danger-warning">
                       <input
                         type="checkbox"
                         checked={confirmDeleteRemote()}
                         onChange={(e) => setConfirmDeleteRemote(e.target.checked)}
-                        class="w-4 h-4 rounded border-red-900/40 text-[var(--color-danger)] focus:ring-[var(--color-danger)] cursor-pointer accent-[var(--color-danger)] mt-0.5 shrink-0"
+                        class="w-4 h-4 rounded text-[var(--color-danger)] focus:ring-[var(--color-danger)] cursor-pointer accent-[var(--color-danger)] mt-0.5 shrink-0"
                       />
                       <div class="flex flex-col gap-0.5">
-                        <span class="text-xs font-semibold text-red-200 leading-tight">
+                        <span class="text-xs font-semibold leading-tight text-warning-title">
                           {t("sync.disconnectConfirmDeleteRemote")}
                         </span>
-                        <span class="text-[10px] text-red-300 leading-tight">
+                        <span class="text-[10px] leading-tight text-warning-desc">
                           {t("sync.disconnectConfirmDeleteRemoteDesc")}
                         </span>
                       </div>

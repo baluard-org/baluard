@@ -537,7 +537,7 @@ export default function CipherDetail(props) {
               </button>
               <button
                 onClick={() => props.onDelete?.(cipher().id)}
-                class="py-3 px-4 rounded-xl bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+                class="py-3 px-4 rounded-xl border font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-red"
               >
                 <IconTrash class="w-4 h-4" />
                 {t("entry.delete")}
@@ -546,14 +546,14 @@ export default function CipherDetail(props) {
           }>
             <button
               onClick={() => vault.unarchiveCipher(cipher().id, t).then(() => { props.setViewCipher(null); props.setActivePane("welcome"); })}
-              class="flex-1 py-3 px-4 rounded-xl bg-emerald-950/20 text-emerald-400 border border-emerald-900/30 hover:bg-emerald-950/40 font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+              class="flex-1 py-3 px-4 rounded-xl border font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-green"
             >
               <IconRefresh class="w-4 h-4" />
               {t("entry.unarchive")}
             </button>
             <button
               onClick={() => props.onDelete?.(cipher().id)}
-              class="py-3 px-4 rounded-xl bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+              class="py-3 px-4 rounded-xl border font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-red"
             >
               <IconTrash class="w-4 h-4" />
               {t("entry.delete")}
@@ -562,14 +562,14 @@ export default function CipherDetail(props) {
         }>
           <button
             onClick={() => vault.restoreCipher(cipher().id, t).then(() => { props.setViewCipher(null); props.setActivePane("welcome"); })}
-            class="flex-1 py-3 px-4 rounded-xl bg-emerald-950/20 text-emerald-400 border border-emerald-900/30 hover:bg-emerald-950/40 font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+            class="flex-1 py-3 px-4 rounded-xl border font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-green"
           >
             <IconRefresh class="w-4 h-4" />
             {t("entry.restore")}
           </button>
           <button
             onClick={() => props.onDelete?.(cipher().id)}
-            class="py-3 px-4 rounded-xl bg-red-950/20 text-red-400 border border-red-900/30 hover:bg-red-950/40 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+            class="py-3 px-4 rounded-xl border font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-red"
           >
             <IconTrash class="w-4 h-4" />
             {t("entry.deletePermanently")}

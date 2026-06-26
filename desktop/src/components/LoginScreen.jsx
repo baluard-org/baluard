@@ -47,7 +47,7 @@ export default function LoginScreen() {
 
         <div class="login-screen__header text-center mb-8">
           <div class="login-screen__logo-container w-24 h-24 mx-auto mb-4 flex items-center justify-center">
-            <img src={logoImg} alt="Baluard" class="w-24 h-24 object-contain" />
+            <img src={logoImg} alt="Baluard" class="w-24 h-24 object-contain logo-shadow" />
           </div>
           <h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)] font-logo">{t("login.title")}</h1>
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("login.subtitle")}</p>

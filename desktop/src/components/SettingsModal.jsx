@@ -478,7 +478,7 @@ export default function SettingsModal() {
                       }>
                         <button
                           onClick={toggleBiometric}
-                          class="px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer bg-green-950/20 text-green-400 border-green-900/50 hover:bg-green-950/30"
+                          class="px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer btn-active-green"
                         >
                           {t("settings.enabled")}
                         </button>
@@ -494,18 +494,17 @@ export default function SettingsModal() {
                       <div class="flex items-center gap-2">
                         <input
                           type="password"
-                          placeholder={t("login.passwordPlaceholder")}
-                          class="flex-1 px-3 py-1.5 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                          placeholder={t("entry.password")}
+                          class="flex-1 px-3 py-1.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
                           value={biometricPassword()}
                           onInput={e => setBiometricPassword(e.target.value)}
-                          onKeyDown={e => { if (e.key === "Enter") confirmBiometricEnable(); if (e.key === "Escape") { setShowBiometricInput(false); setBiometricPassword(""); } }}
-                          autofocus
+                          onKeyDown={e => e.key === "Enter" && confirmBiometricEnable()}
                         />
                         <button
                           onClick={confirmBiometricEnable}
-                          class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer"
+                          class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-text)] font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer text-xs"
                         >
-                          {t("entry.confirm")}
+                          {t("settings.enable")}
                         </button>
                         <button
                           onClick={() => { setShowBiometricInput(false); setBiometricPassword(""); }}
@@ -527,7 +526,7 @@ export default function SettingsModal() {
                     </div>
                     <button
                       onClick={toggleFetchFavicons}
-                      class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${fetchFavicons() ? "bg-green-950/20 text-green-400 border-green-900/50 hover:bg-green-950/30" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                      class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${fetchFavicons() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
                     >
                       {fetchFavicons() ? t("settings.enabled") : t("settings.disabled")}
                     </button>

@@ -209,7 +209,7 @@ export default function VaultView() {
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
               <div class="w-6 h-6 flex items-center justify-center">
-                <img src={logoImg} alt="Baluard" class="w-6 h-6 object-contain -mt-[6px]" />
+                <img src={logoImg} alt="Baluard" class="w-6 h-6 object-contain -mt-[6px] logo-shadow" />
               </div>
               <span class="text-3xl font-extrabold tracking-tight text-[var(--color-text)] font-logo">{t("app.name")}</span>
             </div>
