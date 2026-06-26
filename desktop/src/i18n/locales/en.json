@@ -307,6 +307,8 @@
     "disconnectConfirmDeleteRemote": "Confirm permanent deletion",
     "disconnectConfirmDeleteRemoteDesc": "I understand this will permanently delete the remote repository on the provider. This action is irreversible.",
     "disconnecting": "Disconnecting...",
+    "disconnectDeleteFailed": "Disconnected, but the remote repository could not be deleted (your token may lack delete permissions). Delete it manually on the provider.",
+    "disconnectDeleteFailedWithUrl": "Disconnected, but the remote repository could not be deleted (your token may lack delete permissions). Delete it manually: {url}",
     "reconnect": "Reconnect",
     "createRepo": "Create Repository",
     "selectRepo": "Select existing repository",
