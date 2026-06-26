@@ -109,7 +109,7 @@ export function IconDownload(props) {
 }
 
 export function IconRefresh(props) {
-  return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.706 9H17" /></SVG>;
+  return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" /></SVG>;
 }
 
 export function IconCog(props) {
