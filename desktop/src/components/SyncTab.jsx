@@ -6,6 +6,7 @@ import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess } from "../context/toastSignal.js";
 import { IconUpload, IconDownload, IconRefresh, IconAlert } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
+import ExternalLink from "./ExternalLink.jsx";
 
 const PROVIDER_STYLES = {
   github: { bg: "bg-gray-800", border: "border-gray-600", text: "text-white" },
@@ -433,14 +434,12 @@ export default function SyncTab() {
                     <span class="text-lg font-mono font-bold text-[var(--color-primary)] tracking-widest">{authSession().user_code}</span>
                   </div>
                   <div class="flex justify-center">
-                    <a
+                    <ExternalLink
                       href={authSession().verification_uri}
-                      target="_blank"
-                      rel="noopener noreferrer"
                       class="px-4 py-2 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold hover:bg-[var(--color-primary-hover)] transition-all"
                     >
                       {t("sync.deviceFlowOpenLink", { provider: providerLabel(selectedProvider()) })}
-                    </a>
+                    </ExternalLink>
                   </div>
                   <div class="flex items-center justify-center gap-2 text-[10px] text-[var(--color-muted)]">
                     <IconRefresh class="w-3 h-3 animate-spin" />
@@ -463,14 +462,12 @@ export default function SyncTab() {
                     </div>
                   </Show>
                   <div class="flex justify-center">
-                    <a
+                    <ExternalLink
                       href={webOAuthUrl()}
-                      target="_blank"
-                      rel="noopener noreferrer"
                       class="px-4 py-2 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold hover:bg-[var(--color-primary-hover)] transition-all"
                     >
                       {t("sync.webOAuthOpenLink", { provider: providerLabel(selectedProvider()) })}
-                    </a>
+                    </ExternalLink>
                   </div>
                   <div class="flex items-center justify-center gap-2 text-[10px] text-[var(--color-muted)]">
                     <IconRefresh class="w-3 h-3 animate-spin" />
