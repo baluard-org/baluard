@@ -14,8 +14,8 @@
 //! Run with: `cargo test -p baluard-core --test github_device_flow_live -- --ignored`
 //! (marked `#[ignore]` so it does not run by default in CI / unit-test runs).
 
-use baluard_core::providers::github::GitHubProvider;
 use baluard_core::providers::ForgeProvider;
+use baluard_core::providers::github::GitHubProvider;
 
 #[tokio::test]
 #[ignore = "network-dependent; run manually with --ignored"]

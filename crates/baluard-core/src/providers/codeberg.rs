@@ -425,6 +425,29 @@ impl ForgeProvider for CodebergProvider {
         Self::repo_to_vault(&r).ok_or_else(|| ProviderError::Api("missing repo fields".into()))
     }
 
+    async fn delete_repo(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        name: &str,
+    ) -> Result<(), ProviderError> {
+        let url = format!("{}/repos/{owner}/{name}", self.api_base());
+        let resp = self
+            .authed(reqwest::Method::DELETE, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ProviderError::Api(format!(
+                "delete repo HTTP {status}: {body}"
+            )));
+        }
+        Ok(())
+    }
+
     async fn revoke_token(&self, _token: &ProviderToken) -> Result<(), ProviderError> {
         // Forgejo OAuth tokens can be revoked by the user deleting the app
         // authorization in settings. No API self-revoke for OAuth.

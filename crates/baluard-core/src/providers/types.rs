@@ -549,6 +549,14 @@ pub trait ForgeProvider: Send + Sync {
         name: &str,
     ) -> Result<VaultRepo, ProviderError>;
 
+    /// Delete a repository by owner and name.
+    async fn delete_repo(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        name: &str,
+    ) -> Result<(), ProviderError>;
+
     /// Attempt to revoke a token at the provider. Non-blocking on failure.
     async fn revoke_token(&self, token: &ProviderToken) -> Result<(), ProviderError>;
 
@@ -589,12 +597,14 @@ pub mod mock {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Mock provider for unit tests. All operations succeed with dummy data.
-    /// `revoked_calls` counts how many times `revoke_token` was invoked —
-    /// tests can share an `Arc<AtomicUsize>` between the factory and the
-    /// assertion site to verify the trait method is called by the wiring.
+    /// `revoked_calls` counts how many times `revoke_token` was invoked and
+    /// `deleted_calls` counts how many times `delete_repo` was invoked, tests
+    /// can share an `Arc<AtomicUsize>` between the factory and the assertion
+    /// site to verify the trait method is called by the wiring.
     pub struct MockProvider {
         pub provider_type: Provider,
         pub revoked_calls: Arc<AtomicUsize>,
+        pub deleted_calls: Arc<AtomicUsize>,
     }
 
     impl MockProvider {
@@ -602,6 +612,7 @@ pub mod mock {
             Self {
                 provider_type: Provider::GitHub,
                 revoked_calls: Arc::new(AtomicUsize::new(0)),
+                deleted_calls: Arc::new(AtomicUsize::new(0)),
             }
         }
     }
@@ -704,6 +715,16 @@ pub mod mock {
                 vault_slug: None,
                 vault_id: None,
             })
+        }
+
+        async fn delete_repo(
+            &self,
+            _token: &ProviderToken,
+            _owner: &str,
+            _name: &str,
+        ) -> Result<(), ProviderError> {
+            self.deleted_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         }
 
         async fn revoke_token(&self, _token: &ProviderToken) -> Result<(), ProviderError> {
