@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, State, WindowEvent};
+use tauri::{AppHandle, Manager, State, WindowEvent};
 use tauri_plugin_shell::ShellExt;
 
 /// Maximum response size (5MB — daemon caps at 4MB, plus headroom)
@@ -184,12 +184,13 @@ struct DaemonResponse {
 }
 
 #[tauri::command]
-fn daemon_request(
+async fn daemon_request(
     action: String,
     payload: String,
     slug: Option<String>,
-    store: State<Mutex<SessionStore>>,
+    app: AppHandle,
 ) -> DaemonResponse {
+    let store = app.state::<Mutex<SessionStore>>();
     log::debug!("[desktop] -> action={action} slug={slug:?} payload_len={}", payload.len());
 
     // Resolve the effective slug for THIS request. When the caller omits it,
@@ -204,7 +205,27 @@ fn daemon_request(
         .and_then(|s| store.lock().unwrap().tokens.get(s).map(|z| z.as_str().to_owned()))
         .unwrap_or_default();
 
-    match send_request_with_token(&action, &payload, &stored_token, slug.as_deref().unwrap_or("")) {
+    // The socket read/write is blocking (up to the 30s read timeout). Running
+    // it inline stalls the webview event loop — the spinner SolidJS renders
+    // never paints. spawn_blocking moves it to the Tokio blocking pool so the
+    // main thread keeps servicing paint/input events. This is the single most
+    // impactful fix for UI freezes during long ops (sync.pull/push,
+    // vault.unlock, git operations).
+    let slug_for_call = slug.clone().unwrap_or_default();
+    let action_for_call = action.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        send_request_with_token(&action_for_call, &payload, &stored_token, &slug_for_call)
+    })
+    .await;
+
+    // spawn_blocking returns Result<inner, JoinError>; flatten so the inner
+    // socket result drives the same token bookkeeping below.
+    let socket_result: Result<(String, Option<String>), String> = match result {
+        Ok(inner) => inner,
+        Err(join_err) => Err(format!("IPC task failed: {join_err}")),
+    };
+
+    match socket_result {
         Ok((data, new_token)) => {
             log::debug!("[desktop] <- action={action} success=true payload_len={}", data.len());
             let mut st = store.lock().unwrap();
@@ -240,13 +261,12 @@ fn daemon_request(
                 // No new token issued (e.g. vaults.switch flips an already-
                 // unlocked vault). Still track the active focus from the
                 // response so subsequent slug-less requests resolve right.
-                if action == "vaults.switch" || action == "vaults.set_active" {
-                    if let Some(a) = serde_json::from_str::<serde_json::Value>(&data)
+                if (action == "vaults.switch" || action == "vaults.set_active")
+                    && let Some(a) = serde_json::from_str::<serde_json::Value>(&data)
                         .ok()
                         .and_then(|v| v["active"].as_str().map(String::from))
-                    {
-                        st.active_slug = Some(a);
-                    }
+                {
+                    st.active_slug = Some(a);
                 }
             }
             DaemonResponse {
@@ -255,7 +275,7 @@ fn daemon_request(
                 error: String::new(),
             }
         }
-        Err(ref e) => {
+        Err(e) => {
             log::warn!("[desktop] <- action={action} error={e}");
             // M1: only drop the TARGETED slug's token on a token/lock error.
             // Clearing the whole map on a slug-less error caused a re-unlock
@@ -279,7 +299,7 @@ fn daemon_request(
             DaemonResponse {
                 success: false,
                 payload: String::new(),
-                error: e.clone(),
+                error: e,
             }
         },
     }

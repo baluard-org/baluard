@@ -152,7 +152,30 @@ impl SyncEngine {
 
     /// Open an existing repo at the vault path.
     pub fn open_repo(&self) -> Result<Repository, BaluardError> {
-        Repository::open(&self.vault_path).map_err(|e| SyncError::Git(format!("open: {e}")).into())
+        let repo = Repository::open(&self.vault_path)
+            .map_err(|e| BaluardError::Sync(SyncError::Git(format!("open: {e}"))))?;
+        // Refresh .gitignore if it predates the sync-head/sync-state/.baluard
+        // entries. status() filters these paths regardless, so this is cosmetic
+        // (keeps `git status` on the CLI honest too) rather than load-bearing.
+        self.refresh_gitignore();
+        Ok(repo)
+    }
+
+    /// Rewrite .gitignore from the current const if any new entry is missing.
+    /// Best-effort: logs a warning on failure.
+    fn refresh_gitignore(&self) {
+        let gitignore = self.vault_path.join(".gitignore");
+        const NEW_ENTRIES: &[&str] =
+            &["meta/sync-head.json", "meta/sync-state.json", ".baluard/"];
+        let needs_update = match std::fs::read_to_string(&gitignore) {
+            Ok(existing) => NEW_ENTRIES.iter().any(|e| !existing.contains(e)),
+            Err(_) => true,
+        };
+        if needs_update {
+            if let Err(e) = std::fs::write(&gitignore, GITIGNORE_CONTENT) {
+                eprintln!("warning: failed to refresh .gitignore: {e}");
+            }
+        }
     }
 
     /// Stage all changes and commit with static message (D9).
@@ -162,6 +185,13 @@ impl SyncEngine {
         repo: &Repository,
         _message_override: &str,
     ) -> Result<Oid, BaluardError> {
+        // Bump this device's last_seen_epoch on `meta/devices.json` BEFORE
+        // staging. devices.json is git-tracked, so rewriting it after the tree
+        // is captured would leave the worktree dirty and the sync badge stuck
+        // on "Changes pending" after every commit. Pre-stage lands it in the
+        // commit and keeps the tree clean.
+        self.bump_device_epoch();
+
         let mut index = repo
             .index()
             .map_err(|e| SyncError::Git(format!("index: {e}")))?;
@@ -197,8 +227,8 @@ impl SyncEngine {
 
         let parents: Vec<_> = parent_commits.iter().collect();
         let commit_id = self.create_signed_commit(repo, &sig, COMMIT_MESSAGE, &tree, &parents)?;
-        // Update device activity index
-        self.update_activity_index(&commit_id.to_string());
+        // Record device activity (gitignored file) with the new commit sha.
+        self.record_device_activity(&commit_id.to_string());
         // Update HEAD to point to the new commit
         let branch = Self::resolve_default_branch(repo);
         repo.reference(
@@ -267,8 +297,22 @@ impl SyncEngine {
             .statuses(None)
             .map_err(|e| SyncError::Git(format!("statuses: {e}")))?;
 
+        // Local-only engine bookkeeping that must never count as "dirty".
+        // These are rewritten outside the commit cycle (push saves sync-head,
+        // the state machine saves sync-state on every transition); even with
+        // .gitignore + the open_repo untrack migration, an older vault may
+        // still have them tracked in HEAD until the next commit lands the
+        // removal. Filtering them here keeps the sync badge honest in the
+        // window between migration and next sync.
+        const LOCAL_ONLY: &[&str] =
+            &["meta/sync-head.json", "meta/sync-state.json"];
+
         let mut result = WorkTreeStatus::default();
         for entry in statuses.iter() {
+            let path = std::str::from_utf8(entry.path_bytes()).unwrap_or("");
+            if LOCAL_ONLY.contains(&path) {
+                continue;
+            }
             let s = entry.status();
             if s.is_index_new() || s.is_index_modified() || s.is_index_deleted() {
                 result.staged += 1;
@@ -474,62 +518,73 @@ impl SyncEngine {
         "main".to_string()
     }
 
-    /// Update device activity index after a commit.
-    /// Reads device_id from the registry (matched by device_name) and epoch from epoch.json.
-    /// Best-effort: logs warning on failure, does not fail the commit.
-    fn update_activity_index(&self, commit_sha: &str) {
-        use crate::device_manager::DeviceActivityIndex;
-
-        // Read device_id from registry (match by device_name)
+    /// Resolve this device's id + current epoch from the registry/epoch.json.
+    /// Best-effort: returns None if the registry or epoch is unavailable.
+    fn device_id_and_epoch(&self) -> Option<(uuid::Uuid, u64)> {
         let reg_path = self.vault_path.join("meta/devices.json");
-        let device_id = match std::fs::read_to_string(&reg_path) {
-            Ok(data) => match serde_json::from_str::<crate::devices::DeviceRegistry>(&data) {
-                Ok(reg) => reg
-                    .devices
+        let device_id = std::fs::read_to_string(&reg_path)
+            .ok()
+            .and_then(|data| serde_json::from_str::<crate::devices::DeviceRegistry>(&data).ok())
+            .and_then(|reg| {
+                reg.devices
                     .iter()
                     .find(|(_, e)| e.name == self.device_name)
-                    .map(|(id, _)| *id),
-                Err(_) => None,
-            },
-            Err(_) => None,
-        };
-        let device_id = match device_id {
-            Some(id) => id,
-            None => return, // No registry, skip activity update
-        };
-
-        // Read epoch from epoch.json
+                    .map(|(id, _)| *id)
+            })?;
         let epoch_path = self.vault_path.join("meta/epoch.json");
-        let epoch = match std::fs::read_to_string(&epoch_path) {
-            Ok(data) => serde_json::from_str::<serde_json::Value>(&data)
-                .ok()
-                .and_then(|v| v["epoch"].as_u64())
-                .unwrap_or(0),
-            Err(_) => 0,
-        };
+        let epoch = std::fs::read_to_string(&epoch_path)
+            .ok()
+            .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
+            .and_then(|v| v["epoch"].as_u64())
+            .unwrap_or(0);
+        Some((device_id, epoch))
+    }
 
+    /// Bump `last_seen_epoch` on this device's registry entry.
+    ///
+    /// MUST run BEFORE staging (`add_all`) in `commit_all`: `meta/devices.json`
+    /// is git-tracked, so rewriting it after the commit tree is snapshotted
+    /// leaves the worktree dirty and the sync badge stuck on "Changes pending"
+    /// immediately after every sync. Running it pre-stage lands the update in
+    /// the same commit and leaves the tree clean. Best-effort: logs a warning
+    /// on failure, does not fail the commit.
+    fn bump_device_epoch(&self) {
+        let Some((device_id, epoch)) = self.device_id_and_epoch() else {
+            return;
+        };
+        let reg_path = self.vault_path.join("meta/devices.json");
+        let Ok(data) = std::fs::read_to_string(&reg_path) else {
+            return;
+        };
+        let Ok(mut reg) = serde_json::from_str::<crate::devices::DeviceRegistry>(&data) else {
+            return;
+        };
+        if let Some(entry) = reg.devices.get_mut(&device_id) {
+            entry.last_seen_epoch = epoch;
+        }
+        let Ok(json) = serde_json::to_string_pretty(&reg) else {
+            return;
+        };
+        let tmp_path = reg_path.with_file_name(format!(
+            "{}.tmp",
+            reg_path.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        if std::fs::write(&tmp_path, &json).is_ok() {
+            let _ = std::fs::rename(&tmp_path, &reg_path);
+        }
+    }
+
+    /// Record this device's activity (last push timestamp + commit sha) in the
+    /// activity index. `meta/device_activity.json` is gitignored, so writing it
+    /// post-commit does NOT dirty the worktree. Best-effort.
+    fn record_device_activity(&self, commit_sha: &str) {
+        use crate::device_manager::DeviceActivityIndex;
+        let Some((device_id, epoch)) = self.device_id_and_epoch() else {
+            return;
+        };
         if let Err(e) = DeviceActivityIndex::update(&self.vault_path, &device_id, commit_sha, epoch)
         {
             eprintln!("warning: failed to update activity index: {e}");
-        }
-
-        // Update last_seen_epoch on the DeviceEntry (atomic write)
-        let reg_path = self.vault_path.join("meta/devices.json");
-        if let Ok(data) = std::fs::read_to_string(&reg_path) {
-            if let Ok(mut reg) = serde_json::from_str::<crate::devices::DeviceRegistry>(&data) {
-                if let Some(entry) = reg.devices.get_mut(&device_id) {
-                    entry.last_seen_epoch = epoch;
-                }
-                if let Ok(json) = serde_json::to_string_pretty(&reg) {
-                    let tmp_path = reg_path.with_file_name(format!(
-                        "{}.tmp",
-                        reg_path.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                    if std::fs::write(&tmp_path, &json).is_ok() {
-                        let _ = std::fs::rename(&tmp_path, &reg_path);
-                    }
-                }
-            }
         }
     }
 
@@ -1387,6 +1442,10 @@ meta/folders.json
 meta/tag_index.json
 meta/device_activity.json
 
+# Sync engine internals — local-only bookkeeping, never synced
+meta/sync-head.json
+meta/sync-state.json
+
 # Build artifacts
 target/
 *.swp
@@ -1396,6 +1455,9 @@ target/
 # OS artifacts
 .DS_Store
 Thumbs.db
+
+# Baluard internal state (rekey abort markers, etc.)
+.baluard/
 
 # Pi agent
 .pi/
@@ -1511,6 +1573,95 @@ mod tests {
         std::fs::write(dir.path().join("new.enc"), b"encrypted").unwrap();
         let status = engine.status(&repo).unwrap();
         assert!(status.is_dirty());
+    }
+
+    /// Regression: status() must never report local-only engine internals
+    /// (sync-head.json, sync-state.json) as dirty. These are rewritten
+    /// outside the commit cycle (push saves sync-head, transitions save
+    /// sync-state), so without filtering the worktree stays dirty after every
+    /// sync and the badge never clears. Covers both the untracked case (new
+    /// vaults with gitignore) and the tracked case (older vaults that
+    /// committed them before the gitignore entry existed).
+    #[test]
+    fn status_ignores_local_engine_internals() {
+        let (dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+
+        // Case 1: untracked + gitignored rewrite (new vault path).
+        std::fs::write(
+            dir.path().join("meta/sync-head.json"),
+            b"{\"oid\":\"abc\"}",
+        )
+        .unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert!(!status.is_dirty(), "untracked sync-head should not dirty tree");
+
+        // Case 2: force-add + commit so it's tracked in HEAD (old vault path),
+        // then rewrite. commit_all's add_all respects gitignore, so commit
+        // directly to bypass it.
+        {
+            use git2::Signature;
+            let mut index = repo.index().unwrap();
+            index.add_path(std::path::Path::new("meta/sync-head.json")).unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "force-add internal",
+                &tree,
+                &[&head],
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            dir.path().join("meta/sync-head.json"),
+            b"{\"oid\":\"def\"}",
+        )
+        .unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert!(!status.is_dirty(),
+            "tracked-then-rewritten sync-head should not dirty tree (the bug)");
+
+        // Sanity: a normal tracked file rewrite IS still detected.
+        std::fs::write(dir.path().join(".gitignore"), b"overwritten\n").unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert!(status.is_dirty(), "normal rewrite should still dirty tree");
+    }
+
+    /// Regression: commit_all must leave the worktree clean. Previously it
+    /// rewrote the git-tracked `meta/devices.json` (last_seen_epoch bump)
+    /// AFTER snapshotting the commit tree, so every commit immediately
+    /// re-dirtied the tree and the sync badge stayed on "Changes pending".
+    #[test]
+    fn commit_all_leaves_tree_clean() {
+        let (dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+
+        // Seed a tracked file + a devices registry so bump_device_epoch has a
+        // target to rewrite (the original bug source).
+        std::fs::write(dir.path().join("data.enc"), b"\x00\x01\x02").unwrap();
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(
+            dir.path().join("meta/devices.json"),
+            b"{\"devices\":{}}",
+        )
+        .unwrap();
+
+        engine.commit_all(&repo, "").unwrap();
+
+        // The tree MUST be clean immediately after commit_all returns.
+        let status = engine.status(&repo).unwrap();
+        assert!(!status.is_dirty(),
+            "commit_all left the worktree dirty (staged={}, unstaged={}) — \
+             post-commit metadata write must not escape the commit",
+            status.staged, status.unstaged);
     }
 
     #[test]
