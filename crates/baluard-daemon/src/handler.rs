@@ -2737,6 +2737,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 None => return err_response("Missing provider"),
             };
             let repo_name = payload["repo_name"].as_str().unwrap_or("").to_string();
+            // Optional: clone_url passed when the repo was already created via
+            // `provider.create_repo`. If present, skip redundant creation (which
+            // would 422 on the already-existing name) and use this URL directly.
+            let existing_clone_url = payload["clone_url"].as_str().map(|s| s.to_string());
 
             // Resolve provider
             let prov_type = match baluard_core::providers::types::Provider::all()
@@ -2778,15 +2782,23 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 repo_name
             };
 
-            // Create private repo on provider
-            let prov = match baluard_core::providers::provider_for(prov_type, info.config()) {
-                Ok(p) => p,
-                Err(e) => return err_response(e.to_string()),
+            // Resolve the remote URL: either reuse an already-created repo
+            // (passed in the payload) or create a new private repo now.
+            #[cfg(feature = "git-sync")]
+            let remote_url: String = if let Some(url) = existing_clone_url {
+                url
+            } else {
+                let prov = match baluard_core::providers::provider_for(prov_type, info.config()) {
+                    Ok(p) => p,
+                    Err(e) => return err_response(e.to_string()),
+                };
+                match prov.create_private_repo(&token, &effective_name).await {
+                    Ok(r) => r.clone_url,
+                    Err(e) => return err_response(format!("Failed to create repo: {e}")),
+                }
             };
-            let repo = match prov.create_private_repo(&token, &effective_name).await {
-                Ok(r) => r,
-                Err(e) => return err_response(format!("Failed to create repo: {e}")),
-            };
+            #[cfg(not(feature = "git-sync"))]
+            let _ = (existing_clone_url, effective_name.as_str(), info, token);
 
             // Init git repo + add remote + push (blocking git ops)
             #[cfg(feature = "git-sync")]
@@ -2802,7 +2814,6 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                             .to_string(),
                     };
                 let provider_for_reg = provider.clone();
-                let remote_url = repo.clone_url.clone();
                 let provider_clone = provider.clone();
                 let handle = tokio::task::spawn_blocking(move || -> Result<String, String> {
                     use baluard_core::sync::engine::SyncEngine;

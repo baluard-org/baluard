@@ -202,20 +202,27 @@ export default function SyncTab() {
       // Try creating the repo. If it already exists (partial failure), skip to setup.
       let repoNameUsed = repoName() || "baluard-vault";
       let repoCreated = false;
+      let cloneUrl = null;
       try {
-        await daemon("provider.create_repo", JSON.stringify({ provider, name: repoNameUsed }));
+        const createRaw = await daemon("provider.create_repo", JSON.stringify({ provider, name: repoNameUsed }));
         repoCreated = true;
+        // Pass the clone_url to setup_sync so it skips the redundant
+        // (and now-conflicting) repo creation step.
+        try { cloneUrl = JSON.parse(createRaw)?.clone_url ?? null; } catch { /* keep null */ }
       } catch (createErr) {
         const msg = sanitizeError(createErr, t).toLowerCase();
         if (msg.includes("already exists") || msg.includes("already") || msg.includes("422")) {
           // Repo exists from a prior partial attempt — proceed to setup_sync
+          // (setup_sync will create-or-reuse by name)
         } else {
           throw createErr;
         }
       }
 
       try {
-        await daemon("vault.setup_sync", JSON.stringify({ provider, repo_name: repoNameUsed }));
+        const setupPayload = { provider, repo_name: repoNameUsed };
+        if (cloneUrl) setupPayload.clone_url = cloneUrl;
+        await daemon("vault.setup_sync", JSON.stringify(setupPayload));
         setSubState("idle");
         await loadState();
         toastSuccess(t("sync.statusActive"));
