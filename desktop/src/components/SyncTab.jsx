@@ -366,6 +366,29 @@ export default function SyncTab() {
     return t("relative.days", { n: Math.floor(diff / 86400) });
   }
 
+  // Convert a git remote URL (SSH or HTTPS) to a browser URL.
+  // SSH:  git@github.com:owner/name.git -> https://github.com/owner/name
+  // HTTPS: https://gitlab.com/owner/name.git -> https://gitlab.com/owner/name
+  // Returns null for unparseable forms.
+  function repoWebUrl(remoteUrl) {
+    if (!remoteUrl) return null;
+    const cleaned = remoteUrl.replace(/\.git$/, "");
+    // SSH form: git@host:path
+    const ssh = cleaned.match(/^git@([^:]+):(.+)$/);
+    if (ssh) return `https://${ssh[1]}/${ssh[2]}`;
+    // HTTPS form (already a URL, drop credentials if present)
+    if (/^https?:\/\//.test(cleaned)) return cleaned.replace(/^[^@]+@/, "");
+    return null;
+  }
+
+  // owner/name from a git remote URL, for display.
+  function repoOwnerName(remoteUrl) {
+    const web = repoWebUrl(remoteUrl);
+    if (!web) return null;
+    const m = web.match(/^https?:\/\/[^/]+\/(.+)$/);
+    return m ? m[1].replace(/^\/+|\/+$/g, "") : null;
+  }
+
   // ── Render ──
 
   return (
@@ -583,9 +606,17 @@ export default function SyncTab() {
                   <h4 class="text-xs font-bold text-[var(--color-text)]">{t("sync.title")}</h4>
                   <p class="text-[10px] text-[var(--color-muted)] mt-0.5 truncate">
                     <Show when={getConnectedProviderInfo()} fallback={syncStatus()?.provider || ""}>
-                      {t("sync.connectedAs", { username: getConnectedProviderInfo().username || "" })}
+                      {t("sync.connectedAs", { username: getConnectedProviderInfo().username || "" })}{syncStatus()?.provider ? ` \u00B7 ${providerLabel(syncStatus().provider)}` : ""}
                     </Show>
                   </p>
+                  <Show when={repoWebUrl(syncStatus()?.remote_url)}>
+                    <ExternalLink
+                      href={repoWebUrl(syncStatus().remote_url)}
+                      class="inline-flex items-center gap-1 text-[10px] text-[var(--color-primary)] hover:underline mt-0.5"
+                    >
+                      {repoOwnerName(syncStatus().remote_url)}
+                    </ExternalLink>
+                  </Show>
                 </div>
                 <Show when={syncStatus()} fallback={
                   <span class="px-2.5 py-1 rounded-lg bg-green-950/20 text-green-400 text-[10px] font-bold border border-green-900/30">{t("sync.statusUpToDate")}</span>
