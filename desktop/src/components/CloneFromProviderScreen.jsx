@@ -1,4 +1,5 @@
 import { createSignal, For, onCleanup, Show } from "solid-js";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAuth } from "../context/AuthContext.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
@@ -6,6 +7,7 @@ import { startClone } from "../lib/cloneFlow.js";
 import { daemon } from "../lib/daemon.js";
 import { createProviderConnect } from "../lib/providerConnect.js";
 import { sanitizeError } from "../lib/utils.js";
+import CopyButton from "./CopyButton.jsx";
 import { IconAlert, IconArrowLeft, IconDownload, IconLock, IconGitHub, IconGitLab, IconCodeberg } from "./Icon.jsx";
 
 const PROVIDERS = [
