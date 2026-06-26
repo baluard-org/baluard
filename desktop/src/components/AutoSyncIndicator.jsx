@@ -11,13 +11,14 @@ import { useI18n } from "../i18n/index.jsx";
 //   • dot — always present while auto-sync is active. Glanceable health.
 //   • label — transient text to the LEFT of the dot, sliding in right-to-left.
 //
-// Label visibility:
+// Label visibility (gated on observed user activity, not background sync):
 //   • dirty  (post-CRUD, debounced)  -> "Waiting..." shown
-//   • syncing                        -> "Syncing..." shown
-//   • idle   (after real sync only)  -> "Synced" shown for 10s, then fades
-//   • offline                        -> shown persistently
-// "Synced" only appears when arriving from dirty/syncing, not on every unlock,
-// so the top-right stays empty at rest. Detailed controls live in the Sync tab.
+//   • syncing (user-armed only)       -> "Syncing..." shown
+//   • idle   (after armed sync)       -> "Synced" shown for 10s, then fades
+//   • offline                         -> shown persistently
+// Background sync the daemon does on its own (initial pull at unlock, periodic
+// pull) stays silent, so the top-right is empty at rest. Detailed controls in
+// the Sync tab.
 export default function AutoSyncIndicator() {
   const autosync = useAutoSync();
   const { t } = useI18n();
@@ -39,26 +40,48 @@ export default function AutoSyncIndicator() {
   });
 
   // Drive label visibility from state transitions.
-  let idleTimer = null;
-  let prev = null;
+  //
+  // The label is GATED on observed user activity: only a CRUD (-> dirty)
+  // arms it. Background sync the daemon does on its own (initial pull at
+  // unlock, periodic pull every 3 min) stays silent, so the top-right is empty
+  // until you actually edit something. Offline is always shown.
+  let hideTimer = null;
+  let sawUserChange = false;
+  const clearHide = () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } };
+
   createEffect(() => {
     const state = autosync.state();
-    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-    if (state === "idle") {
-      // Only announce "synced" after real sync activity (dirty/syncing -> idle).
-      if (prev === "dirty" || prev === "syncing") {
-        setShowLabel(true);
-        idleTimer = setTimeout(() => setShowLabel(false), 10000);
-      } else {
-        setShowLabel(false);
-      }
-    } else if (state === "dirty" || state === "syncing" || state === "offline") {
+    if (state === "offline") {
+      clearHide();
       setShowLabel(true);
+      return;
     }
-    prev = state;
+    if (state === "dirty") {
+      // User made a change (CRUD entered the debounce window). Arm + show.
+      sawUserChange = true;
+      clearHide();
+      setShowLabel(true);
+      return;
+    }
+    if (state === "syncing") {
+      // Only noisy if the user actually changed something. A background
+      // periodic pull (sawUserChange false) stays silent.
+      if (sawUserChange) setShowLabel(true);
+      return;
+    }
+    if (state === "idle") {
+      if (sawUserChange) {
+        // Real sync just finished -> announce "Synced", then auto-hide.
+        sawUserChange = false;
+        setShowLabel(true);
+        clearHide();
+        hideTimer = setTimeout(() => setShowLabel(false), 10_000);
+      }
+      // else: background idle, leave state as-is.
+    }
   });
 
-  onCleanup(() => { if (idleTimer) clearTimeout(idleTimer); });
+  onCleanup(clearHide);
 
   return (
     <Show when={autosync.active() && cfg()}>
