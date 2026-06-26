@@ -1,8 +1,8 @@
 import { onMount } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
-import { IconLock } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
+import logoImg from "../assets/logo.png";
 
 const AVAILABLE_LOCALES = [
   { code: "en", label: "English" },
@@ -41,8 +41,8 @@ export default function CreateVaultScreen() {
       <div class="create-vault-screen__card w-full max-w-md p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative overflow-hidden transition-all-fast">
 
         <div class="create-vault-screen__header text-center mb-8">
-          <div class="create-vault-screen__logo-container w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-tr from-[var(--color-sidebar)] to-[var(--color-border)] border border-[var(--color-border)] flex items-center justify-center shadow-lg">
-            <IconLock class="w-8 h-8 text-[var(--color-primary)]" />
+          <div class="create-vault-screen__logo-container w-24 h-24 mx-auto mb-4 flex items-center justify-center">
+            <img src={logoImg} alt="Baluard" class="w-24 h-24 object-contain" />
           </div>
           <h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)]">{t("create.title")}</h1>
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("create.subtitle")}</p>

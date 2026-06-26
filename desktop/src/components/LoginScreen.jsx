@@ -9,6 +9,7 @@ import { sanitizeError } from "../lib/utils.js";
 import { IconLock, IconFingerprint, IconSpinner } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 import VaultSwitcher from "./VaultSwitcher.jsx";
+import logoImg from "../assets/logo.png";
 
 export default function LoginScreen() {
   const auth = useAuth();
@@ -45,10 +46,10 @@ export default function LoginScreen() {
         <div class="login-screen__glow-bottom absolute -bottom-10 -right-10 w-40 h-40 rounded-full opacity-10 pointer-events-none" style={{"background": "radial-gradient(circle, var(--color-accent) 0%, transparent 70%)"}}></div>
 
         <div class="login-screen__header text-center mb-8">
-          <div class="login-screen__logo-container w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-tr from-[var(--color-sidebar)] to-[var(--color-border)] border border-[var(--color-border)] flex items-center justify-center shadow-lg">
-            <IconLock class="w-8 h-8 text-[var(--color-primary)]" />
+          <div class="login-screen__logo-container w-24 h-24 mx-auto mb-4 flex items-center justify-center">
+            <img src={logoImg} alt="Baluard" class="w-24 h-24 object-contain" />
           </div>
-          <h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)]">{t("login.title")}</h1>
+          <h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)] font-logo">{t("login.title")}</h1>
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("login.subtitle")}</p>
           <Show when={switcher.vaults().length > 1} fallback={
             <Show when={auth.activeVault()}>

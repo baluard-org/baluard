@@ -13,6 +13,7 @@ import CreateVaultScreen from "./components/CreateVaultScreen.jsx";
 import SetupScreen from "./components/SetupScreen.jsx";
 import WelcomeScreen from "./components/WelcomeScreen.jsx";
 import VaultView from "./components/VaultView.jsx";
+import AutoSyncIndicator from "./components/AutoSyncIndicator.jsx";
 import ToastContainer from "./components/ToastContainer.jsx";
 
 export default function App() {
@@ -101,6 +102,7 @@ export default function App() {
           <div class="app__vault absolute inset-0 vault-enter">
             <VaultProvider>
               <AutoSyncProvider>
+                <AutoSyncIndicator />
                 <VaultView />
               </AutoSyncProvider>
             </VaultProvider>
