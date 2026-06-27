@@ -540,4 +540,131 @@ mod real_vault {
             }
         }
     }
+
+    // Mutates the process-global OS keychain entry (com.baluard.desktop /
+    // quick-unlock). Serial so concurrent tests do not clobber each other's
+    // enable/disable. Best-effort cleanup restores prior state on exit.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn vault_open_response_contains_slug() {
+        use baluard_daemon::handler::route_host_request;
+        use baluard_daemon::proto::GatewayRequest;
+
+        let (_dir_a, path_a) = make_real_vault("a");
+
+        let host: SharedVaultHost = VaultHost::shared();
+        let state_a = Arc::new(VaultState::new(path_a));
+        // Pre-open: handle_vault_open's "already in map" branch returns
+        // state.info() directly without opening, mirroring how the frontend's
+        // vault.open is preceded by a real open in practice (the desktop
+        // always opens before biometric_unlock). This isolates the test to
+        // the slug-injection contract, not the open lifecycle.
+        state_a.open().await.expect("vault open");
+        host.insert("alpha".into(), state_a.clone()).await;
+
+        // vault.open with no token + explicit slug. Pre-fix the response
+        // payload had no `slug` field, so the desktop SessionStore never
+        // set active_slug after open.
+        let req = GatewayRequest {
+            action: "vault.open".into(),
+            payload: String::new(),
+            session_token: String::new(),
+            slug: "alpha".into(),
+        };
+        let resp = route_host_request(req, &host).await;
+        assert!(
+            resp.success,
+            "vault.open must succeed: {}",
+            resp.error_message
+        );
+
+        let body: serde_json::Value =
+            serde_json::from_str(&resp.payload).expect("open payload is JSON");
+        assert_eq!(
+            body["slug"].as_str(),
+            Some("alpha"),
+            "vault.open response must embed the resolved slug so the desktop \
+             can file the active pointer"
+        );
+    }
+
+    /// Regression for the Quick Unlock token-drop bug.
+    ///
+    /// Pre-fix, `vault.biometric_unlock` returned `{success: true}` with no
+    /// `slug`. The desktop's SessionStore files a returned session token under
+    /// the slug parsed from the payload; with no slug, the token was silently
+    /// dropped and every subsequent gated RPC failed with "Invalid session
+    /// token". The vault appeared unlocked but no entries rendered.
+    ///
+    /// This test drives the real host-level dispatch path
+    /// (`route_host_request → handle_vault_biometric_unlock`) and asserts the
+    /// response carries BOTH the embedded slug and a non-empty session token.
+    ///
+    /// Requires a writable OS keychain (macOS Security framework / Linux
+    /// Secret Service via libsecret). Marked `#[ignore]` because the
+    /// keychain is unavailable in headless CI; run explicitly on macOS or a
+    /// libsecret-equipped host via `cargo test -- --ignored`.
+    #[tokio::test]
+    #[serial_test::serial]
+    #[ignore = "requires writable OS keychain (macOS Security framework / libsecret)"]
+    async fn biometric_unlock_response_contains_slug() {
+        use baluard_daemon::handler::route_host_request;
+        use baluard_daemon::proto::GatewayRequest;
+
+        // The OS keychain is a process-global resource. Seed it with the
+        // master password via the public enable() API.
+        let password = "test-master-password-123";
+        baluard_core::biometric::enable(password).expect(
+            "this test requires a writable OS keychain (macOS Security \
+             framework or Linux Secret Service via libsecret). Run on a \
+             keychain-equipped host, or filter with --skip biometric_unlock"
+        );
+
+        // Best-effort cleanup: restore the keychain to its prior (absent)
+        // state regardless of test outcome.
+        struct KeychainGuard;
+        impl Drop for KeychainGuard {
+            fn drop(&mut self) {
+                let _ = baluard_core::biometric::disable();
+            }
+        }
+        let _guard = KeychainGuard;
+
+        let (_dir_a, path_a) = make_real_vault("a");
+        let host: SharedVaultHost = VaultHost::shared();
+        let state_a = Arc::new(VaultState::new(path_a));
+        host.insert("alpha".into(), state_a.clone()).await;
+        // vault.open first — the frontend always does this before
+        // biometric_unlock, and handle_vault_biometric_unlock requires the
+        // vault to already be in the host map.
+        state_a.open().await.expect("vault open");
+        let _ = host.switch("alpha").await;
+
+        let req = GatewayRequest {
+            action: "vault.biometric_unlock".into(),
+            payload: String::new(),
+            session_token: String::new(),
+            slug: "alpha".into(),
+        };
+        let resp = route_host_request(req, &host).await;
+        assert!(
+            resp.success,
+            "biometric_unlock must succeed: {}",
+            resp.error_message
+        );
+
+        let body: serde_json::Value =
+            serde_json::from_str(&resp.payload).expect("biometric payload is JSON");
+        assert_eq!(
+            body["slug"].as_str(),
+            Some("alpha"),
+            "biometric_unlock response must embed the resolved slug so the \
+             desktop can file the session token"
+        );
+        assert!(
+            !resp.session_token.is_empty(),
+            "biometric_unlock must return the freshly-minted session token, \
+             not an empty string"
+        );
+    }
 }
