@@ -23,7 +23,7 @@ import { useI18n } from "../i18n/index.jsx";
 //   syncing  — polled state catches the push in flight
 //   synced   — polled state returns to idle; shown for 10s, then fades out
 //   offline  — polled state offline; shown persistently
-// Background sync (initial unlock pull, periodic 3-min pulls) never arms the
+// Background sync (initial unlock pull, periodic 30-min idle pulls) never arms the
 // local phase, so the top-right stays empty at rest.
 export default function AutoSyncIndicator() {
   const autosync = useAutoSync();

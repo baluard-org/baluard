@@ -336,7 +336,15 @@ impl VaultState {
                 })
                 .unwrap_or(false);
                 if has_remote {
-                    self.autosync.activate(device_name).await;
+                    self.autosync.activate(device_name.clone()).await;
+                    // Pull remote changes the moment the vault opens so the UI
+                    // reflects other-device edits immediately (event-driven,
+                    // not waiting on the 30-min idle cadence). Spawned off the
+                    // unlock IPC path so unlock returns without waiting on a
+                    // network fetch; pull_only's generation check no-ops if the
+                    // vault is locked before the fetch completes.
+                    let handle = self.autosync.clone();
+                    tokio::spawn(async move { handle.pull_only(device_name).await; });
                 }
             }
         }
