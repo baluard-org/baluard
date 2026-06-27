@@ -1,6 +1,7 @@
 import { createSignal, createEffect, Show, For } from "solid-js";
 import { Transition } from "solid-transition-group";
 import { useVault } from "../context/VaultContext.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
 import { theme, setTheme } from "../context/themeSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
@@ -16,6 +17,7 @@ import SyncTab from "./SyncTab.jsx";
 
 export default function SettingsModal() {
   const vault = useVault();
+  const auth = useAuth();
   const { t } = useI18n();
   let dialogRef;
 
@@ -204,6 +206,7 @@ export default function SettingsModal() {
       if (biometricEnabled()) {
         await daemon("vault.biometric_disable");
         setBiometricEnabled(false);
+        auth.refreshBiometric();
         toastSuccess(t("settings.quickUnlockDisabled"));
       } else {
         setShowBiometricInput(true);
@@ -221,6 +224,7 @@ export default function SettingsModal() {
       // Then store in file-based keychain (biometric read enforced at daemon level)
       await daemon("vault.biometric_enable", JSON.stringify({ password }));
       setBiometricEnabled(true);
+      auth.refreshBiometric();
       setShowBiometricInput(false);
       setBiometricPassword("");
       toastSuccess(t("settings.quickUnlockEnabled"));
@@ -494,7 +498,7 @@ export default function SettingsModal() {
                       <div class="flex items-center gap-2">
                         <input
                           type="password"
-                          placeholder={t("entry.password")}
+                          placeholder={t("entry.passwordPlaceholder")}
                           class="flex-1 px-3 py-1.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
                           value={biometricPassword()}
                           onInput={e => setBiometricPassword(e.target.value)}

@@ -51,11 +51,15 @@ function AuthProvider(props) {
     // Fetch active vault name from plaintext registry (pre-unlock)
     refreshActiveVault();
     // Check if quick unlock is enabled (daemon keychain + biometry available)
-    daemon("vault.biometric_status").then(r => {
-      const s = JSON.parse(r);
-      setBiometricAvailable(s.available && s.enabled);
-    }).catch(() => {});
+    refreshBiometric();
   });
+
+  async function refreshBiometric() {
+    try {
+      const s = JSON.parse(await daemon("vault.biometric_status"));
+      setBiometricAvailable(s.available && s.enabled);
+    } catch {}
+  }
 
   let loginPasswordRef;
 
@@ -119,7 +123,7 @@ function AuthProvider(props) {
     status, setStatus,
     vaultInfo, setVaultInfo,
     activeVault,
-    biometricAvailable,
+    biometricAvailable, refreshBiometric,
     recoveryPhrase, setRecoveryPhrase,
     createPassword, setCreatePassword,
     switchTarget, setSwitchTarget,
