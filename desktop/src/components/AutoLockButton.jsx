@@ -2,11 +2,13 @@ import { IconClock, IconFingerprint } from "./Icon.jsx";
 import { createSignal, Show, For } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
+import { useAuth } from "../context/AuthContext.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 
 export default function AutoLockButton() {
   const { t } = useI18n();
+  const auth = useAuth();
   const [showSettings, setShowSettings] = createSignal(false);
   const [timeoutToken, setTimeoutToken] = createSignal("15m");
   const [saved, setSaved] = createSignal(false);
@@ -68,11 +70,13 @@ export default function AutoLockButton() {
                     const status = JSON.parse(await daemon("vault.biometric_status"));
                     if (status.enabled) {
                       await daemon("vault.biometric_disable");
+                      auth.refreshBiometric();
                       toastSuccess(t("settings.quickUnlockDisabled"));
                     } else {
                       const password = prompt(t("settings.promptQuickUnlock"));
                       if (password) {
                         await daemon("vault.biometric_enable", JSON.stringify({ password }));
+                        auth.refreshBiometric();
                         toastSuccess(t("settings.quickUnlockEnabled"));
                       }
                     }
