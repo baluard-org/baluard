@@ -992,6 +992,15 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     if req.action.as_str() == "vault.open" {
         return handle_vault_open(req, host).await;
     }
+    // Biometric unlock is a host-level lifecycle op: it mints a session
+    // token (via state.unlock internally) and the desktop files that token
+    // under the vault slug. It therefore must mirror vault.unlock's
+    // contract of returning {slug} in the payload, or the desktop's
+    // SessionStore drops the token (handler-level routing has no slug in
+    // scope). Resolved here so we know which vault to unlock.
+    if req.action.as_str() == "vault.biometric_unlock" {
+        return handle_vault_biometric_unlock(req, host).await;
+    }
     // Phase 4 remote vault clone: host-level, pre-unlock (NOT token-gated).
     if req.action.as_str() == "vault.clone_start" {
         return handle_vault_clone_start(req, host).await;
@@ -1225,7 +1234,7 @@ async fn handle_vault_open(req: GatewayRequest, host: &SharedVaultHost) -> Gatew
             let _ = host.switch(&slug).await;
         }
         return match state.info().await {
-            Ok(info) => ok_resp(info, None),
+            Ok(info) => ok_resp(inject_slug(info, &slug), None),
             Err(e) => err_response(e),
         };
     }
@@ -1257,8 +1266,96 @@ async fn handle_vault_open(req: GatewayRequest, host: &SharedVaultHost) -> Gatew
         let _ = host.switch(&slug).await;
     }
     match state.info().await {
-        Ok(info) => ok_resp(info, None),
+        Ok(info) => ok_resp(inject_slug(info, &slug), None),
         Err(e) => err_response(e),
+    }
+}
+
+/// `vault.biometric_unlock` (host-level): resolves the slug from req.slug /
+/// payload / active, looks up the already-open `VaultState` (the frontend
+/// always calls `vault.open` first), then runs biometric unlock. Returns
+/// `{slug, success}` plus the session token so the desktop can file the
+/// token under the slug. Mirrors `vault.unlock`'s contract: callers rely
+/// on `slug` in the payload to file the per-vault session token.
+///
+/// Uses `host.get` (NOT `get_or_insert_with`): by the time biometric
+/// unlock runs, the vault MUST already be open. Silent fabrication would
+/// mask a real bug (frontend skipping `vault.open`).
+async fn handle_vault_biometric_unlock(
+    req: GatewayRequest,
+    host: &SharedVaultHost,
+) -> GatewayResponse {
+    // Resolve slug: req.slug (proto field, M2) > payload `slug` > active.
+    let slug = if !req.slug.is_empty() {
+        req.slug.clone()
+    } else {
+        match extract_slug(&req.payload) {
+            Some(s) => s,
+            None => match host.active_slug().await {
+                Some(s) => s,
+                None => {
+                    return err_response(
+                        "No active vault and no 'slug' given. Run `baluard unlock --vault <slug>`."
+                            .to_string(),
+                    );
+                }
+            },
+        }
+    };
+
+    let Some(state) = host.get(&slug).await else {
+        return err_response(format!(
+            "Vault '{slug}' is not open in the daemon. Run `baluard unlock --vault {slug}` first."
+        ));
+    };
+
+    // M4 fix: atomically claim a rate-limit slot before running unlock.
+    let vault_key = state.vault_path.to_string_lossy().into_owned();
+    let permit = match state.rate_limiter.claim_attempt(&vault_key) {
+        crate::rate_limit::ClaimResult::Allowed(p) => p,
+        crate::rate_limit::ClaimResult::Backoff(d) => {
+            return err_response(format!(
+                "Too many failed attempts. Wait {}s before retrying.",
+                d.as_secs()
+            ));
+        }
+        crate::rate_limit::ClaimResult::LockedOut(d) => {
+            return err_response(format!(
+                "Vault locked due to too many failed attempts. Wait {}s.",
+                d.as_secs()
+            ));
+        }
+    };
+
+    match state.biometric_unlock().await {
+        Ok(json) => {
+            permit.commit_success();
+            // biometric_unlock() calls self.unlock() internally, which
+            // generates a new session token. Fetch it.
+            state.start_cover_timer().await;
+            let token = state.get_session_token().await;
+            ok_resp(inject_slug(json, &slug), token.as_deref())
+        }
+        Err(e) => {
+            permit.commit_failure();
+            err_response(e)
+        }
+    }
+}
+
+/// Inject the resolved slug into a JSON response payload. The desktop's
+/// `SessionStore` files a returned session token under the slug parsed
+/// from the payload (`payload["slug"]`); without it the token is dropped.
+/// Used by `vault.open` and `vault.biometric_unlock` to match the
+/// `vault.unlock` / `vault.create` contract. Falls back to the original
+/// body if it isn't valid JSON.
+fn inject_slug(body: String, slug: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(&body) {
+        Ok(mut v) => {
+            v["slug"] = serde_json::json!(slug);
+            serde_json::to_string(&v).unwrap_or(body)
+        }
+        Err(_) => body,
     }
 }
 
@@ -2352,39 +2449,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
-        "vault.biometric_unlock" => {
-            // M4 fix: atomically claim a rate-limit slot before running unlock.
-            let vault_key = state.vault_path.to_string_lossy().into_owned();
-            let permit = match state.rate_limiter.claim_attempt(&vault_key) {
-                crate::rate_limit::ClaimResult::Allowed(p) => p,
-                crate::rate_limit::ClaimResult::Backoff(d) => {
-                    return err_response(format!(
-                        "Too many failed attempts. Wait {}s before retrying.",
-                        d.as_secs()
-                    ));
-                }
-                crate::rate_limit::ClaimResult::LockedOut(d) => {
-                    return err_response(format!(
-                        "Vault locked due to too many failed attempts. Wait {}s.",
-                        d.as_secs()
-                    ));
-                }
-            };
-            match state.biometric_unlock().await {
-                Ok(json) => {
-                    permit.commit_success();
-                    // biometric_unlock() calls self.unlock() internally,
-                    // which generates a new session token. Fetch it.
-                    state.start_cover_timer().await;
-                    let token = state.get_session_token().await;
-                    ok_resp(json, token.as_deref())
-                }
-                Err(e) => {
-                    permit.commit_failure();
-                    err_response(e)
-                }
-            }
-        }
+        // vault.biometric_unlock is intercepted at host level
+        // (handle_vault_biometric_unlock) because it needs the resolved
+        // slug to satisfy the desktop's {slug} token-filing contract.
 
         // Validate master password without storing to keychain.
         // Used by the Tauri biometry plugin flow: validate here, store there.
