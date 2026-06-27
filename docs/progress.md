@@ -149,7 +149,7 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| Auto-sync | Debounced push after CRUD (5s), periodic pull (3min), offline retry, conflict auto-resolve (keep-local Phase 1). Daemon coordinator `autosync.rs`, desktop `AutoSyncContext` + status pill + conflict banner. See D5-bis in `architecture-decisions.md` | **Done** |
+| Auto-sync | Debounced push after CRUD (5s), event-driven pull (unlock + window focus with 10-min guard) + 30-min idle fallback, offline retry, conflict auto-resolve (keep-local Phase 1). Daemon coordinator `autosync.rs`, desktop `AutoSyncContext` + status dot + transient label + conflict banner. See D5-bis in `architecture-decisions.md` | **Done** |
 | Browser autofill suppression | Global `autocomplete=off` via MutationObserver; opt-in `data-autofill="on"`. `desktop/src/lib/disableAutofill.js` | **Done** |
 | UI freeze fix | `daemon_request` async + `spawn_blocking` (sync command was blocking the webview event loop) | **Done** |
 | macOS keychain stable signing | `_sign-sidecar` just recipe signs daemon with Apple Development identity so "Always Allow" persists across rebuilds | **Done** |

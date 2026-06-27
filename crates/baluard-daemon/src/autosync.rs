@@ -24,8 +24,15 @@ use tokio::task::JoinHandle;
 
 /// Debounce window after a mutation before we commit + push.
 const PUSH_DEBOUNCE_SECS: u64 = 5;
-/// Background pull cadence when idle + online (catches other-device edits).
-const PULL_INTERVAL_SECS: u64 = 180;
+/// Background pull cadence when idle + online. Serverless architecture (git
+/// remote IS the server, no push channel), so this sweeps up other-device
+/// edits. 30 min: aggressive enough for multi-device, quiet enough to avoid a
+/// predictable periodic heartbeat (T14 timing-fingerprint). Focus-regain and
+/// unlock do event-driven pulls for snappiness; this is the idle fallback.
+const PULL_INTERVAL_SECS: u64 = 30 * 60;
+/// Minimum gap between a focus-triggered pull and the last sync. Prevents a
+/// pull on every window focus flicker when we synced moments ago.
+const FOCUS_PULL_MIN_GAP_SECS: u64 = 10 * 60;
 /// Connectivity probe cadence while offline.
 const OFFLINE_POLL_SECS: u64 = 30;
 
@@ -151,6 +158,71 @@ impl AutoSyncHandle {
         if let Some(h) = g.loop_handle.take() {
             h.abort();
         }
+    }
+
+    /// Immediate pull-only sync (fetch + merge, no commit/push). Used by the
+    /// unlock path to reconcile remote changes the moment the vault opens, and
+    /// as the shared body of the focus trigger. Respects the cycle_lock so it
+    /// can't race a debounce push. No-op if inactive or a cycle is in flight.
+    pub async fn pull_only(&self, device_name: String) {
+        let generation = {
+            let g = self.inner.lock().await;
+            if !g.active {
+                return;
+            }
+            g.generation
+        };
+        // Don't race a debounce push or another cycle.
+        let lock_guard = match self.cycle_lock.try_lock() {
+            Ok(g) => g,
+            Err(_) => {
+                // Safe to skip: an in-flight push cycle includes a pull
+                // (commit->pull->push), so we are not losing the update.
+                log::debug!("[autosync] pull_only skipped: cycle in flight");
+                return;
+            }
+        };
+        let vault_path = self.vault_path.clone();
+        let outcome = tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &device_name))
+            .await;
+        drop(lock_guard);
+        let mut g = self.inner.lock().await;
+        if !g.active || g.generation != generation {
+            return;
+        }
+        match outcome {
+            Ok(Ok(true)) => {
+                g.last_sync = Some(now_secs());
+                // Don't clobber Dirty/Syncing; only settle to Idle from Offline.
+                if g.state == AutoSyncState::Offline {
+                    g.state = AutoSyncState::Idle;
+                }
+            }
+            Ok(Ok(false)) => g.state = AutoSyncState::Offline,
+            _ => {}
+        }
+    }
+
+    /// Focus-triggered pull. Silently skips if the last sync was within
+    /// [`FOCUS_PULL_MIN_GAP_SECS`], so rapid focus flicker doesn't spam the
+    /// remote. Otherwise delegates to [`pull_only`]. Called from the desktop's
+    /// window-focus / visibilitychange hooks via the `sync.autosync_nudge_pull`
+    /// IPC route.
+    pub async fn nudge_focus_pull(&self, device_name: String) {
+        let skip = {
+            let g = self.inner.lock().await;
+            if !g.active {
+                return;
+            }
+            match g.last_sync {
+                Some(t) => now_secs().saturating_sub(t) < FOCUS_PULL_MIN_GAP_SECS,
+                None => false,
+            }
+        };
+        if skip {
+            return;
+        }
+        self.pull_only(device_name).await;
     }
 
     /// Arm (or re-arm) the push debounce. Called after every successful vault
@@ -353,8 +425,14 @@ fn run_pull_only(vault_path: &Path, device_name: &str) -> Result<bool, String> {
             local_oid,
             remote_oid,
         }) => {
-            let _ = engine.resolve_conflict_keep_local(&repo, local_oid, remote_oid, &files);
-            Ok(true)
+            // B3 fix: a failed conflict resolution leaves the repo in a
+            // half-merged state (HEAD advanced, no resolution commit). Map to
+            // Err so the caller does NOT advance last_sync / mark Idle, and the
+            // next cycle retries instead of pushing a corrupt tree.
+            engine
+                .resolve_conflict_keep_local(&repo, local_oid, remote_oid, &files)
+                .map(|_| true)
+                .map_err(|e| format!("conflict resolution failed: {e}"))
         }
         Ok(_) => Ok(true),
         Err(ref e) if is_network_error(e) => Ok(false),

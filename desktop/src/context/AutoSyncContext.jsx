@@ -73,16 +73,28 @@ export function AutoSyncProvider(props) {
     setBannerDismissed(true);
   }
 
+  // Fire a focus-triggered pull on window focus / tab becoming visible. The
+  // daemon applies a 10-min server-side guard so rapid focus flicker collapses
+  // to at most one pull per 10 min; safe to call on every focus event.
+  // B2 fix: visibilitychange fires in BOTH directions (hide + show); ignore
+  // the hide transition so we pull on arrival, not on leaving the app.
+  // Best-effort: errors (daemon down, no remote) are swallowed.
+  async function nudgePull() {
+    if (document.hidden) return;
+    try { await daemon("sync.autosync_nudge_pull"); } catch { /* best-effort */ }
+    refresh();
+  }
+
   onMount(() => {
     refresh();
     poll = setInterval(refresh, POLL_MS);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", nudgePull);
+    document.addEventListener("visibilitychange", nudgePull);
   });
   onCleanup(() => {
     clearInterval(poll);
-    window.removeEventListener("focus", refresh);
-    document.removeEventListener("visibilitychange", refresh);
+    window.removeEventListener("focus", nudgePull);
+    document.removeEventListener("visibilitychange", nudgePull);
   });
 
   const value = {

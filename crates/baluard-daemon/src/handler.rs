@@ -219,6 +219,8 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "sync.status_json",
     "sync.autosync_status",
     "sync.disconnect",
+    // Focus-triggered pull: touches the on-disk repo, must be token-gated.
+    "sync.autosync_nudge_pull",
     // C4 fix: device.revoke triggers destructive rekey, must be token-gated
     "device.revoke",
     // M4/PR-2: recovery-phrase enrollment mutates the device registry and
@@ -2066,6 +2068,14 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
+        // Focus-triggered pull. The desktop fires this on window focus /
+        // visibilitychange. Server-side 10-min guard (FOCUS_PULL_MIN_GAP_SECS)
+        // collapses rapid focus flicker into at most one pull per 10 min.
+        "sync.autosync_nudge_pull" => {
+            let dn = device_name(&state.vault_path);
+            state.autosync.nudge_focus_pull(dn).await;
+            ok_resp("ok".to_string(), token_str)
+        }
 
         // ── Settings (token required) ──
         "settings.get" => match state.settings_get().await {
