@@ -605,13 +605,11 @@ impl VaultHandle {
                         .and_then(|v| v["lang"].as_str().map(String::from))
                 })
             });
-            let theme = std::fs::read_to_string(&legacy_path)
-                .ok()
-                .and_then(|d| {
-                    serde_json::from_str::<serde_json::Value>(&d)
-                        .ok()
-                        .and_then(|v| serde_json::from_value(v["theme"].clone()).ok())
-                });
+            let theme = std::fs::read_to_string(&legacy_path).ok().and_then(|d| {
+                serde_json::from_str::<serde_json::Value>(&d)
+                    .ok()
+                    .and_then(|v| serde_json::from_value(v["theme"].clone()).ok())
+            });
             (theme, lang)
         };
 
@@ -620,7 +618,9 @@ impl VaultHandle {
             VaultState::Unlocked(unlocked) => {
                 if enc_path.exists() {
                     let key = hkdf_derive::derive_settings_key(unlocked.root_key.as_bytes())
-                        .map_err(|e| VaultError::Metadata(format!("settings key derivation: {e}")))?;
+                        .map_err(|e| {
+                            VaultError::Metadata(format!("settings key derivation: {e}"))
+                        })?;
                     let data = std::fs::read(&enc_path)?;
                     let envelope = crate::vault::envelope::deserialize(&data)?;
                     let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
@@ -649,22 +649,16 @@ impl VaultHandle {
                     let v: serde_json::Value = serde_json::from_str(&data)
                         .map_err(|e| VaultError::Metadata(format!("settings parse: {e}")))?;
                     let enc = crate::vault::manifest::EncryptedSettings {
-                        vault_timeout: serde_json::from_value(
-                            v["vault_timeout"].clone(),
-                        )
-                        .unwrap_or_else(|_| {
-                            crate::vault::manifest::VaultTimeout::default_for_new()
-                        }),
-                        default_uri_match: serde_json::from_value(
-                            v["default_uri_match"].clone(),
-                        )
-                        .ok(),
+                        vault_timeout: serde_json::from_value(v["vault_timeout"].clone())
+                            .unwrap_or_else(|_| {
+                                crate::vault::manifest::VaultTimeout::default_for_new()
+                            }),
+                        default_uri_match: serde_json::from_value(v["default_uri_match"].clone())
+                            .ok(),
                         fetch_favicons: v["fetch_favicons"].as_bool(),
                         slug: v["slug"].as_str().map(String::from),
-                        enrollment_policy: serde_json::from_value(
-                            v["enrollment_policy"].clone(),
-                        )
-                        .unwrap_or(crate::vault::manifest::EnrollmentPolicy::Strict),
+                        enrollment_policy: serde_json::from_value(v["enrollment_policy"].clone())
+                            .unwrap_or(crate::vault::manifest::EnrollmentPolicy::Strict),
                     };
                     let legacy_lang = v["lang"].as_str().map(String::from);
                     (Some(enc), legacy_lang)
@@ -847,7 +841,9 @@ impl VaultHandle {
         let existing = std::fs::read_to_string(&path).ok().and_then(|d| {
             serde_json::from_str::<serde_json::Value>(&d)
                 .ok()
-                .and_then(|v| serde_json::from_value::<crate::types::ThemeMode>(v["theme"].clone()).ok())
+                .and_then(|v| {
+                    serde_json::from_value::<crate::types::ThemeMode>(v["theme"].clone()).ok()
+                })
         });
         let json = serde_json::json!({
             "theme": existing,
@@ -4651,18 +4647,29 @@ mod tests {
         handle.save_settings(&settings).unwrap();
 
         // Public file is plaintext and contains only theme + lang.
-        let pub_str =
-            std::fs::read_to_string(dir.path().join("meta/settings-pub.json")).unwrap();
-        assert!(pub_str.contains("\"theme\""), "public file must contain theme");
-        assert!(pub_str.contains("\"lang\""), "public file must contain lang");
-        assert!(!pub_str.contains("slug"), "slug must NOT be in plaintext public file");
+        let pub_str = std::fs::read_to_string(dir.path().join("meta/settings-pub.json")).unwrap();
+        assert!(
+            pub_str.contains("\"theme\""),
+            "public file must contain theme"
+        );
+        assert!(
+            pub_str.contains("\"lang\""),
+            "public file must contain lang"
+        );
+        assert!(
+            !pub_str.contains("slug"),
+            "slug must NOT be in plaintext public file"
+        );
         assert!(!pub_str.contains("enrollment_policy"));
         assert!(!pub_str.contains("fetch_favicons"));
 
         // Encrypted file is NOT plaintext JSON of those fields.
         let enc_bytes = std::fs::read(dir.path().join("meta/settings.enc")).unwrap();
         let enc_str = String::from_utf8_lossy(&enc_bytes);
-        assert!(!enc_str.contains("leaky-slug"), "slug must be encrypted, not plaintext");
+        assert!(
+            !enc_str.contains("leaky-slug"),
+            "slug must be encrypted, not plaintext"
+        );
         assert!(!enc_str.contains("enrollment_policy"));
 
         // Legacy settings.json must be removed after migration.
