@@ -165,8 +165,7 @@ impl SyncEngine {
     /// Best-effort: logs a warning on failure.
     fn refresh_gitignore(&self) {
         let gitignore = self.vault_path.join(".gitignore");
-        const NEW_ENTRIES: &[&str] =
-            &["meta/sync-head.json", "meta/sync-state.json", ".baluard/"];
+        const NEW_ENTRIES: &[&str] = &["meta/sync-head.json", "meta/sync-state.json", ".baluard/"];
         let needs_update = match std::fs::read_to_string(&gitignore) {
             Ok(existing) => NEW_ENTRIES.iter().any(|e| !existing.contains(e)),
             Err(_) => true,
@@ -304,8 +303,7 @@ impl SyncEngine {
         // still have them tracked in HEAD until the next commit lands the
         // removal. Filtering them here keeps the sync badge honest in the
         // window between migration and next sync.
-        const LOCAL_ONLY: &[&str] =
-            &["meta/sync-head.json", "meta/sync-state.json"];
+        const LOCAL_ONLY: &[&str] = &["meta/sync-head.json", "meta/sync-state.json"];
 
         let mut result = WorkTreeStatus::default();
         for entry in statuses.iter() {
@@ -1718,13 +1716,12 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("meta")).unwrap();
 
         // Case 1: untracked + gitignored rewrite (new vault path).
-        std::fs::write(
-            dir.path().join("meta/sync-head.json"),
-            b"{\"oid\":\"abc\"}",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("meta/sync-head.json"), b"{\"oid\":\"abc\"}").unwrap();
         let status = engine.status(&repo).unwrap();
-        assert!(!status.is_dirty(), "untracked sync-head should not dirty tree");
+        assert!(
+            !status.is_dirty(),
+            "untracked sync-head should not dirty tree"
+        );
 
         // Case 2: force-add + commit so it's tracked in HEAD (old vault path),
         // then rewrite. commit_all's add_all respects gitignore, so commit
@@ -1732,7 +1729,9 @@ mod tests {
         {
             use git2::Signature;
             let mut index = repo.index().unwrap();
-            index.add_path(std::path::Path::new("meta/sync-head.json")).unwrap();
+            index
+                .add_path(std::path::Path::new("meta/sync-head.json"))
+                .unwrap();
             index.write().unwrap();
             let tree_id = repo.index().unwrap().write_tree().unwrap();
             let tree = repo.find_tree(tree_id).unwrap();
@@ -1748,14 +1747,12 @@ mod tests {
             )
             .unwrap();
         }
-        std::fs::write(
-            dir.path().join("meta/sync-head.json"),
-            b"{\"oid\":\"def\"}",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("meta/sync-head.json"), b"{\"oid\":\"def\"}").unwrap();
         let status = engine.status(&repo).unwrap();
-        assert!(!status.is_dirty(),
-            "tracked-then-rewritten sync-head should not dirty tree (the bug)");
+        assert!(
+            !status.is_dirty(),
+            "tracked-then-rewritten sync-head should not dirty tree (the bug)"
+        );
 
         // Sanity: a normal tracked file rewrite IS still detected.
         std::fs::write(dir.path().join(".gitignore"), b"overwritten\n").unwrap();
@@ -1776,20 +1773,19 @@ mod tests {
         // target to rewrite (the original bug source).
         std::fs::write(dir.path().join("data.enc"), b"\x00\x01\x02").unwrap();
         std::fs::create_dir_all(dir.path().join("meta")).unwrap();
-        std::fs::write(
-            dir.path().join("meta/devices.json"),
-            b"{\"devices\":{}}",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("meta/devices.json"), b"{\"devices\":{}}").unwrap();
 
         engine.commit_all(&repo, "").unwrap();
 
         // The tree MUST be clean immediately after commit_all returns.
         let status = engine.status(&repo).unwrap();
-        assert!(!status.is_dirty(),
+        assert!(
+            !status.is_dirty(),
             "commit_all left the worktree dirty (staged={}, unstaged={}) — \
              post-commit metadata write must not escape the commit",
-            status.staged, status.unstaged);
+            status.staged,
+            status.unstaged
+        );
     }
 
     #[test]

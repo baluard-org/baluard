@@ -183,8 +183,8 @@ impl AutoSyncHandle {
             }
         };
         let vault_path = self.vault_path.clone();
-        let outcome = tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &device_name))
-            .await;
+        let outcome =
+            tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &device_name)).await;
         drop(lock_guard);
         let mut g = self.inner.lock().await;
         if !g.active || g.generation != generation {
@@ -351,8 +351,8 @@ impl AutoSyncHandle {
             // Pull-only cycle (no commit/push): just reconcile remote changes.
             let vault_path = self.vault_path.clone();
             let dn = device_name.clone();
-            let outcome = tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &dn))
-                .await;
+            let outcome =
+                tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &dn)).await;
             drop(lock_guard);
             let mut g = self.inner.lock().await;
             if !g.active || g.generation != generation {
@@ -407,8 +407,8 @@ fn run_sync_cycle(_vault_path: &Path, _device_name: &str) -> Result<SyncOutcome,
 /// edits. Returns Ok(true) on success, Ok(false) on network failure (offline).
 #[cfg(feature = "git-sync")]
 fn run_pull_only(vault_path: &Path, device_name: &str) -> Result<bool, String> {
-    use baluard_core::sync::engine::{PullResult, SyncEngine};
     use baluard_core::sync::engine::is_network_error;
+    use baluard_core::sync::engine::{PullResult, SyncEngine};
 
     let engine = SyncEngine::new(vault_path, device_name);
     let repo = match engine.open_repo() {

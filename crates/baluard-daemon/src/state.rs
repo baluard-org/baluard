@@ -326,15 +326,11 @@ impl VaultState {
                 })
                 .unwrap_or_default();
             if !device_name.is_empty() {
-                let has_remote = baluard_core::sync::engine::SyncEngine::new(
-                    &self.vault_path,
-                    &device_name,
-                )
-                .open_repo()
-                .and_then(|repo| {
-                    baluard_core::sync::engine::SyncEngine::has_remote(&repo)
-                })
-                .unwrap_or(false);
+                let has_remote =
+                    baluard_core::sync::engine::SyncEngine::new(&self.vault_path, &device_name)
+                        .open_repo()
+                        .and_then(|repo| baluard_core::sync::engine::SyncEngine::has_remote(&repo))
+                        .unwrap_or(false);
                 if has_remote {
                     self.autosync.activate(device_name.clone()).await;
                     // Pull remote changes the moment the vault opens so the UI
@@ -344,7 +340,9 @@ impl VaultState {
                     // network fetch; pull_only's generation check no-ops if the
                     // vault is locked before the fetch completes.
                     let handle = self.autosync.clone();
-                    tokio::spawn(async move { handle.pull_only(device_name).await; });
+                    tokio::spawn(async move {
+                        handle.pull_only(device_name).await;
+                    });
                 }
             }
         }

@@ -617,7 +617,7 @@ mod real_vault {
         baluard_core::biometric::enable(password).expect(
             "this test requires a writable OS keychain (macOS Security \
              framework or Linux Secret Service via libsecret). Run on a \
-             keychain-equipped host, or filter with --skip biometric_unlock"
+             keychain-equipped host, or filter with --skip biometric_unlock",
         );
 
         // Best-effort cleanup: restore the keychain to its prior (absent)

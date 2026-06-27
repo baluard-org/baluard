@@ -3326,7 +3326,11 @@ async fn sync_disconnect(
             let entry = reg.get(&slug)?;
             let provider_name = entry.provider.as_ref()?;
             let reg_remote = entry.remote_url.as_ref()?;
-            let url_source = if remote_url.is_empty() { reg_remote } else { &remote_url };
+            let url_source = if remote_url.is_empty() {
+                reg_remote
+            } else {
+                &remote_url
+            };
             let (owner, name) = parse_repo_owner_name(url_source)?;
             let provider = baluard_core::providers::types::Provider::all()
                 .iter()
