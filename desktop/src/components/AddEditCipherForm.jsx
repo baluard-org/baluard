@@ -1,8 +1,9 @@
-import { createSignal, Show, For } from "solid-js";
+import { createSignal, Show, For, onMount } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword, formatCardNumber } from "../lib/utils.js";
 import { FIELD_LABEL, handleCardInput } from "../lib/helpers.js";
 import { getSchema } from "../lib/cipherSchema.js";
+import { daemon } from "../lib/daemon.js";
 import { IconX, IconStar, IconEye, IconEyeOff, IconPlus } from "./Icon.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
 import SshKeyGenerator from "./SshKeyGenerator.jsx";
@@ -46,6 +47,19 @@ export default function AddEditCipherForm(props) {
 
   const cipherType = () => newCipher().cipherType || "login";
   const schema = () => getSchema(cipherType());
+
+  // Favicon fetch is opt-in (settings.fetch_favicons, default off). Read
+  // once on mount; the daemon double-checks the flag on every favicon.get.
+  // Favicon is fetched for the FIRST URI only, at save time (add/edit),
+  // then persisted on the Login cipher so list/detail render from storage
+  // instead of making network calls while browsing.
+  let faviconsEnabled = false;
+  onMount(async () => {
+    try {
+      const data = JSON.parse(await daemon("settings.get"));
+      faviconsEnabled = data.fetch_favicons === true;
+    } catch { /* default off */ }
+  });
 
   // Generator states
   const [genLen, setGenLen] = createSignal(16);
@@ -135,9 +149,49 @@ export default function AddEditCipherForm(props) {
     Object.assign(urisRef[index], { [field]: value });
   }
 
-  function handleSave() {
+  async function handleSave() {
     setNewCipher({ ...newCipher(), uris: urisRef, custom_fields: fieldsRef, tags: tagsRef });
+    // Favicon: only for Login with a first URI, only when opt-in is enabled.
+    // Fetch happens here (add/edit save) — never while browsing the list.
+    await maybeFetchFavicon();
     props.onSave?.();
+  }
+
+  async function maybeFetchFavicon() {
+    if (!faviconsEnabled || cipherType() !== "login") {
+      return;
+    }
+    const first = urisRef.find(u => u && u.uri && u.uri.trim());
+    const domain = extractDomain(first?.uri);
+    if (!domain) {
+      // No usable URI: clear any previously-stored favicon.
+      if (newCipher().favicon) setNewCipher({ ...newCipher(), favicon: null });
+      return;
+    }
+    try {
+      const resp = await daemon("favicon.get", domain);
+      // Daemon returns "" when disabled/failed (not valid JSON). Guard the
+      // parse; treat empty/invalid as no-favicon and clear any stale value.
+      const data = resp ? JSON.parse(resp) : null;
+      if (data && data.data && data.mime) {
+        setNewCipher({ ...newCipher(), favicon: { data: data.data, mime: data.mime } });
+      } else if (newCipher().favicon) {
+        setNewCipher({ ...newCipher(), favicon: null });
+      }
+    } catch {
+      // Network/parse failure: leave any existing favicon as-is.
+    }
+  }
+
+  function extractDomain(uri) {
+    if (!uri) return "";
+    let s = String(uri).trim();
+    s = s.replace(/^https?:\/\//, "");
+    s = s.replace(/^www\./, "");
+    s = s.split("/")[0];
+    s = s.split(":")[0];
+    s = s.split("?")[0];
+    return s.toLowerCase();
   }
 
   // ── Schema-driven field renderer ──

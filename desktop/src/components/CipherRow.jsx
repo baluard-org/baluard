@@ -20,7 +20,7 @@ export default function CipherRow(props) {
           : "hover:bg-[var(--color-sidebar)]"
       }`}
     >
-      <CipherAvatar name={props.cipher.name} uri={firstUri()} />
+      <CipherAvatar name={props.cipher.name} uri={firstUri()} favicon={props.cipher.favicon} />
       <div class="min-w-0 flex-1">
         <div class="text-sm font-semibold text-[var(--color-text)] truncate">{props.cipher.name || t("entry.untitled")}</div>
         <div class="text-xs text-[var(--color-muted)] truncate">{props.cipher.username || props.cipher._meta?.username || ""}</div>

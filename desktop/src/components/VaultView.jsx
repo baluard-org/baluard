@@ -14,7 +14,6 @@ import ConflictBanner from "./ConflictBanner.jsx";
 import CipherRow from "./CipherRow.jsx";
 import CipherDetail from "./CipherDetail.jsx";
 import AddEditCipherForm from "./AddEditCipherForm.jsx";
-import { invalidateFaviconCache } from "./CipherAvatar.jsx";
 import DeleteConfirmModal from "./DeleteConfirmModal.jsx";
 import ArchiveConfirmModal from "./ArchiveConfirmModal.jsx";
 import FocusTrap from "./FocusTrap.jsx";
@@ -538,9 +537,6 @@ export default function VaultView() {
                   if (id) {
                     const added = await vault.getCipher(id, t);
                     if (added) {
-                      const u = added.uris?.[0];
-                      const domain = u ? (typeof u === "string" ? u : u.uri) : null;
-                      if (domain) invalidateFaviconCache(domain);
                       setViewCipher(added); vault.setActivePane("detail");
                     }
                     setNewCipher({ ...EMPTY_CIPHER });
@@ -559,10 +555,6 @@ export default function VaultView() {
                 onSave={async () => {
                   const updated = await vault.updateCipher(viewCipher().id, newCipher(), t);
                   if (updated) {
-                    // Invalidate favicon cache so new URI triggers fresh fetch
-                    const u = updated.uris?.[0];
-                    const domain = u ? (typeof u === "string" ? u : u.uri) : null;
-                    if (domain) invalidateFaviconCache(domain);
                     setViewCipher(updated); vault.setActivePane("detail");
                   }
                 }}

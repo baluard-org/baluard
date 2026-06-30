@@ -252,6 +252,7 @@ fn parse_login(fields: &[&OnePuxField]) -> Option<CipherKind> {
         autofill_on_page_load: false,
         password_revision_date: None,
         fido2_credentials: None,
+        favicon: None,
     }))
 }
 

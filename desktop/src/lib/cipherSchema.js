@@ -25,18 +25,19 @@ export const CIPHER_SCHEMAS = {
         password: d.password || "",
         uris: (d.uris || []).map(u => typeof u === "string" ? { uri: u, match_strategy: null } : u),
         totp_uri: d.totp_uri || "",
+        favicon: d.favicon || null,
       };
     },
     toKind(flat) {
-      return {
-        type: "login",
-        data: {
-          username: flat.username || null,
-          password: flat.password || null,
-          uris: flat.uris?.length ? flat.uris : [],
-          totp_uri: flat.totp_uri || null,
-        },
+      const data = {
+        username: flat.username || null,
+        password: flat.password || null,
+        uris: flat.uris?.length ? flat.uris : [],
+        totp_uri: flat.totp_uri || null,
       };
+      // Persist favicon only when present (opt-in fetch at add/edit time).
+      if (flat.favicon) data.favicon = flat.favicon;
+      return { type: "login", data };
     },
   },
 

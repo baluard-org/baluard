@@ -213,7 +213,7 @@
   },
   "settings": {
     "faviconLabel": "Show website icons",
-    "faviconDesc": "Fetch favicons from third-party services for entries with website URIs.",
+    "faviconDesc": "Fetch and store website icons when you add or edit an entry. Off by default. Queries only the first URL.",
     "autolockSettings": "Auto-lock settings",
     "autolockTimeout": "Auto-lock Timeout",
     "saved": "Saved",
