@@ -1,5 +1,6 @@
-import { createSignal, Show, For, onMount, onCleanup } from "solid-js";
+import { createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
+import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { daemon } from "../lib/daemon.js";
 import { createProviderConnect } from "../lib/providerConnect.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -20,6 +21,7 @@ const PROVIDER_KEYS = ["github", "gitlab", "codeberg"];
 
 export default function SyncTab() {
   const { t } = useI18n();
+  const switcher = useVaultSwitcher();
 
   const [topState, setTopState] = createSignal("A");
   const [subState, setSubState] = createSignal("idle");
@@ -27,6 +29,16 @@ export default function SyncTab() {
   const [loading, setLoading] = createSignal(true);
   const [syncStatus, setSyncStatus] = createSignal(null);
   const [providerList, setProviderList] = createSignal(null);
+  // Session-scoped provider state. The global providers.json / keyring is
+  // shared across all vaults by design (Phase 3), so "is anything connected?"
+  // can leak another vault's identity into this vault's SyncTab. These two
+  // signals track only what happened in THIS mount for THIS active vault:
+  //   authedThisSession      -> gate state B (avoid the leak)
+  //   justConnectedProvider  -> which provider was picked, so create-repo and
+  //                             the "Connected as" line use THAT provider, not
+  //                             whichever happens to be first in PROVIDER_KEYS.
+  const [authedThisSession, setAuthedThisSession] = createSignal(false);
+  const [justConnectedProvider, setJustConnectedProvider] = createSignal(null);
 
   const [authSession, setAuthSession] = createSignal(null);
   const [selectedProvider, setSelectedProvider] = createSignal(null);
@@ -60,6 +72,43 @@ export default function SyncTab() {
     },
   });
   onCleanup(() => conn.dispose());
+
+  // SyncTab mounts once and is NOT remounted on a vault switch (pointer-flip
+  // model). Reset every session-scoped bit when the active slug changes so
+  // vault B does not inherit vault A's in-flight auth flow, open disconnect
+  // modal, or "just connected" state — all of which would act on the wrong
+  // vault (e.g. a device-flow timer resolving against vault C, or
+  // sync.disconnect firing on the wrong remote). Mirrors VaultView's pattern.
+  // Lives after `conn` + all signals so every referenced binding is in scope.
+  let lastSlug = switcher.activeSlug();
+  createEffect(() => {
+    const slug = switcher.activeSlug();
+    if (slug === lastSlug) return;
+    lastSlug = slug;
+    // Abort any in-flight auth flow so its poll can't resolve into the new vault.
+    conn.dispose();
+    setSubState("idle");
+    setSelectedProvider(null);
+    setAuthSession(null);
+    setWebOAuthUrl(null);
+    setError(null);
+    setShowDisconnectModal(false);
+    setRevokeToken(false);
+    setDeleteRemote(false);
+    setConfirmDeleteRemote(false);
+    // Clear user-typed advanced/repo fields so vault A's inputs don't prefill vault B.
+    setRepoName("baluard-vault");
+    setShowAdvanced(false);
+    setAdvClientId("");
+    setAdvInstanceUrl("");
+    setAdvPat("");
+    setShowAdvancedPanel(false);
+    setAuthedThisSession(false);
+    setJustConnectedProvider(null);
+    // Refresh from the now-active vault so the tab doesn't show stale remote
+    // URL / status / sync badge from the previous vault.
+    loadState();
+  });
 
   onMount(loadState);
 
@@ -99,8 +148,12 @@ export default function SyncTab() {
           }
         }
       } else {
-        const any = Object.values(providers).some((p) => p.connected);
-        setTopState(any ? "B" : "A");
+        // State B (create-repo) only after a connect done IN THIS session.
+        // A cold-mounted vault with no remote must show the picker (A) even
+        // if another vault left a global provider token, otherwise switching
+        // vaults leaks the prior vault's identity as "Connected as @user"
+        // and hides the provider picker (locking the vault to that provider).
+        setTopState(authedThisSession() ? "B" : "A");
       }
     } catch (e) {
       const msg = sanitizeError(e, t);
@@ -142,6 +195,8 @@ export default function SyncTab() {
       setAdvInstanceUrl("");
       setAdvPat("");
       setShowAdvanced(false);
+      setAuthedThisSession(true);
+      setJustConnectedProvider(provider);
       await loadState();
       toastSuccess(t("sync.connectedAs", { username: result.username || "" }));
     } catch (e) {
@@ -169,6 +224,11 @@ export default function SyncTab() {
   // ── Repo Setup ──
 
   function detectConnectedProvider() {
+    // In state B (no remote) the only source of truth for WHICH provider to
+    // create the repo under is the one the user just picked here; the global
+    // "first connected" would be wrong if two providers are authed.
+    const just = justConnectedProvider();
+    if (just) return just;
     const providers = providerList();
     if (!providers) return null;
     for (const key of PROVIDER_KEYS) {
@@ -325,6 +385,11 @@ export default function SyncTab() {
       setDeleteRemote(false);
       setConfirmDeleteRemote(false);
       setSubState("idle");
+      // Reset session flags so the post-disconnect view lands on the picker
+      // (state A), not a stale "Connected as @user" (state B), and never
+      // references a provider whose token was just revoked.
+      setAuthedThisSession(false);
+      setJustConnectedProvider(null);
       await loadState();
       // Best-effort delete: the disconnect always succeeds, but the remote
       // delete may have failed (403/no delete scope, network). Warn the user
@@ -353,10 +418,19 @@ export default function SyncTab() {
   function getConnectedProviderInfo() {
     const providers = providerList();
     if (!providers) return null;
-    for (const key of PROVIDER_KEYS) {
-      if (providers[key]?.connected) return { key, ...providers[key] };
-    }
-    return null;
+    // Provider priority for display:
+    //   1. justConnectedProvider — what the user picked THIS session (state B)
+    //   2. syncStatus().provider — the per-vault remote's provider (states C/D;
+    //      the authoritative source when the vault already has a remote)
+    //   3. first globally connected — last resort; only correct when exactly
+    //      one provider is authed. Without #2, a vault with a GitLab remote
+    //      plus a stored GitHub token would show the GitHub username.
+    const key =
+      justConnectedProvider() ??
+      syncStatus()?.provider ??
+      PROVIDER_KEYS.find((k) => providers[k]?.connected);
+    if (!key || !providers[key]) return null;
+    return { key, ...providers[key] };
   }
 
   function providerLabel(key) {
@@ -577,7 +651,9 @@ export default function SyncTab() {
 
               <Show when={getConnectedProviderInfo()}>
                 <div class="p-3 rounded-xl bg-green-950/20 border border-green-900/30">
-                  <p class="text-xs text-green-400 font-bold">{t("sync.connectedAs", { username: getConnectedProviderInfo().username || "" })}</p>
+                  <p class="text-xs text-green-400 font-bold">
+                    {t("sync.connectedAs", { username: getConnectedProviderInfo().username || "" })}{getConnectedProviderInfo().key ? ` \u00B7 ${providerLabel(getConnectedProviderInfo().key)}` : ""}
+                  </p>
                 </div>
               </Show>
 
@@ -755,7 +831,7 @@ export default function SyncTab() {
 
               <div class="grid grid-cols-2 gap-3">
                 <button
-                  onClick={() => { setTopState("A"); setSubState("idle"); setError(null); }}
+                  onClick={() => { setTopState("A"); setSubState("idle"); setError(null); setJustConnectedProvider(null); }}
                   class="py-2.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] text-xs font-bold cursor-pointer"
                 >
                   {t("sync.reconnect")}
