@@ -403,7 +403,7 @@ export default function VaultView() {
         <div class="flex-1 flex flex-col min-h-0">
 
           {/* Header Action Bar */}
-          <div class="p-6 pb-4 flex items-center justify-between gap-4 shrink-0">
+          <div class="px-6 py-4 flex items-center justify-between gap-4 shrink-0">
             <div>
               <h2 class="text-xl font-bold tracking-tight text-[var(--color-text)]">
                 {t("categories." + (categories.find(c => c.name === vault.selectedCategory())?.id || "allItems"))}

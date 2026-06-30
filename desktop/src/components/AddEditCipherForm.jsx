@@ -336,7 +336,7 @@ export default function AddEditCipherForm(props) {
 
   return (
     <div class="h-full flex flex-col justify-between">
-      <div class="flex-1 overflow-y-auto p-8 space-y-6">
+      <div class="flex-1 overflow-y-auto px-8 py-4 space-y-6">
         <div class="flex items-center justify-between pb-6 border-b border-[var(--color-border)]">
           <h3 class="text-xl font-bold text-[var(--color-text)] flex items-center gap-2">
             <span class="w-3 h-3 rounded-full bg-[var(--color-primary)]"></span>
