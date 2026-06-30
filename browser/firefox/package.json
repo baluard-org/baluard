@@ -1,0 +1,15 @@
+{
+  "name": "baluard-extension",
+  "version": "1.0.0",
+  "description": "Browser extension popup (SolidJS) thin client",
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "solid-js": "^1.8.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}
