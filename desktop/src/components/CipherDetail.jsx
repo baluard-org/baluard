@@ -106,7 +106,7 @@ export default function CipherDetail(props) {
 
   return (
     <div class="h-full flex flex-col justify-between">
-      <div class="flex-1 overflow-y-auto p-8 space-y-6">
+      <div class="flex-1 overflow-y-auto px-8 py-4 space-y-6">
         {/* Title Header */}
         <div class="flex items-start gap-5 pb-6 border-b border-[var(--color-border)]">
           <CipherAvatar name={cipher()?.name} size="lg" uri={cipher()?.uris?.length ? uriStr(cipher()?.uris?.[0]) : null} />
