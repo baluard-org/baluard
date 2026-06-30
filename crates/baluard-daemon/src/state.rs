@@ -1459,9 +1459,11 @@ impl VaultState {
             return Ok(String::new());
         }
 
-        // Validate it looks like image data (PNG magic bytes or reasonable size)
+        // Validate it looks like image data (PNG/JPEG/ICO/WEBP magic bytes)
+        // and cap the size so a misbehaving endpoint can't push a huge blob
+        // into the cipher (which would inflate the envelope toward the XL tier).
         let data = &output.stdout;
-        if data.len() < 4 {
+        if data.len() < 4 || data.len() > 16_384 {
             return Ok(String::new());
         }
 
@@ -2672,6 +2674,9 @@ fn cipher_to_json(c: &baluard_core::types::Cipher) -> serde_json::Value {
             json["password"] = serde_json::json!(data.password);
             json["uris"] = serde_json::json!(data.uris);
             json["totp"] = serde_json::json!(data.totp_uri);
+            if let Some(ref fav) = data.favicon {
+                json["favicon"] = serde_json::to_value(fav).unwrap_or(serde_json::Value::Null);
+            }
             if let Some(ref fido2_list) = data.fido2_credentials {
                 if !fido2_list.is_empty() {
                     json["fido2_credentials"] = serde_json::json!(

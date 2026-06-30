@@ -748,6 +748,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
                     autofill_on_page_load: false,
                     password_revision_date: None,
                     fido2_credentials: None,
+                    favicon: None,
                 }),
                 favorite,
                 notes,

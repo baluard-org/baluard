@@ -67,6 +67,7 @@ pub fn parse(data: &str) -> ImportResult {
                 autofill_on_page_load: false,
                 password_revision_date: None,
                 fido2_credentials: None,
+                favicon: None,
             }),
             favorite,
             notes: get(&record, col_extra),

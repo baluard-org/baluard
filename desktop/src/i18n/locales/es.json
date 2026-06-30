@@ -194,7 +194,7 @@
   },
   "settings": {
     "faviconLabel": "Mostrar iconos de sitios web",
-    "faviconDesc": "Obtener favicons de servicios de terceros para las entradas con direcciones de sitios web.",
+    "faviconDesc": "Obtiene y guarda iconos de sitios web al añadir o editar una entrada. Desactivado por defecto. Consulta solo la primera URL.",
     "autolockSettings": "Ajustes de bloqueo automático",
     "autolockTimeout": "Tiempo de espera de bloqueo automático",
     "saved": "Guardado",

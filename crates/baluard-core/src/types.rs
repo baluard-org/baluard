@@ -315,6 +315,18 @@ pub enum CipherType {
     Passport,
 }
 
+/// Favicon image persisted on a Login cipher, fetched at add/edit time when
+/// the `fetch_favicons` setting is enabled. Encrypted under the item key as
+/// part of `LoginData`. Public web data (not secret), but rides the existing
+/// envelope so it syncs and rotates with the cipher.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FaviconData {
+    /// Base64-encoded image bytes (PNG/JPEG/ICO/WEBP).
+    pub data: String,
+    /// MIME type, e.g. "image/png".
+    pub mime: String,
+}
+
 /// Login-specific cipher data.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LoginData {
@@ -330,6 +342,11 @@ pub struct LoginData {
     pub autofill_on_page_load: bool,
     #[serde(default)]
     pub password_revision_date: Option<u64>,
+    /// Favicon for the first URI, fetched at add/edit time when enabled.
+    /// `None` = not fetched / not a Login with URIs. Backward-compat: old
+    /// envelopes without this field deserialize fine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub favicon: Option<FaviconData>,
     /// FIDO2/WebAuthn passkeys embedded in this login cipher.
     /// Mirrors Bitwarden's `fido2Credentials[]` sub-array on Login items.
     /// A single Login can hold multiple passkeys (e.g., multiple devices
@@ -876,6 +893,7 @@ impl CipherEnvelopeData {
                     autofill_on_page_load: false,
                     password_revision_date: None,
                     fido2_credentials: None,
+                    favicon: None,
                 });
             }
             _ => {
@@ -1141,6 +1159,7 @@ mod tests {
             autofill_on_page_load: true,
             password_revision_date: Some(1234567890),
             fido2_credentials: None,
+            favicon: None,
         });
         let json = serde_json::to_string(&login).unwrap();
         let back: CipherKind = serde_json::from_str(&json).unwrap();
@@ -1321,6 +1340,7 @@ mod tests {
             autofill_on_page_load: false,
             password_revision_date: None,
             fido2_credentials: Some(vec![pk]),
+            favicon: None,
         });
         let json = serde_json::to_string(&login).unwrap();
         let back: CipherKind = serde_json::from_str(&json).unwrap();
@@ -1495,6 +1515,39 @@ mod tests {
             CipherKind::Login(data) => {
                 assert_eq!(data.uris[0].match_strategy, UriMatchStrategy::Exact);
             }
+            _ => panic!("expected Login"),
+        }
+    }
+
+    #[test]
+    fn favicon_round_trip_and_backward_compat() {
+        // A Login with a persisted favicon survives serialization.
+        let with_fav = CipherKind::Login(LoginData {
+            favicon: Some(FaviconData {
+                data: "base64-bytes".into(),
+                mime: "image/png".into(),
+            }),
+            ..Default::default()
+        });
+        let json = serde_json::to_string(&with_fav).unwrap();
+        // skip_serializing_if ensures favicon is omitted when absent.
+        assert!(json.contains("favicon"));
+        match serde_json::from_str::<CipherKind>(&json).unwrap() {
+            CipherKind::Login(d) => {
+                let fav = d.favicon.expect("favicon should be present");
+                assert_eq!(fav.data, "base64-bytes");
+                assert_eq!(fav.mime, "image/png");
+            }
+            _ => panic!("expected Login"),
+        }
+
+        // Backward compat: an old envelope WITHOUT the favicon field still
+        // deserializes (None), and a Default LoginData omits the key entirely.
+        let without = CipherKind::Login(LoginData::default());
+        let j2 = serde_json::to_string(&without).unwrap();
+        assert!(!j2.contains("favicon"), "absent favicon must not serialize");
+        match serde_json::from_str::<CipherKind>(&j2).unwrap() {
+            CipherKind::Login(d) => assert!(d.favicon.is_none()),
             _ => panic!("expected Login"),
         }
     }

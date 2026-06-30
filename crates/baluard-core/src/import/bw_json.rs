@@ -408,6 +408,7 @@ pub fn parse(data: &str) -> ImportResult {
                         .as_ref()
                         .and_then(|l| l.fido2_credentials.as_ref())
                         .map(|list| list.iter().map(bw_fido2_to_passkey).collect::<Vec<_>>()),
+                    favicon: None,
                 })
             }
             Some(2) => {

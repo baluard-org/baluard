@@ -34,7 +34,7 @@ export default function SettingsModal() {
   const [showBiometricInput, setShowBiometricInput] = createSignal(false);
 
   // Favicon state
-  const [fetchFavicons, setFetchFavicons] = createSignal(true);
+  const [fetchFavicons, setFetchFavicons] = createSignal(false);
 
   // Import/Export state
   const [importing, setImporting] = createSignal(false);
@@ -81,8 +81,8 @@ export default function SettingsModal() {
       // Load auto lock
       const data = JSON.parse(await daemon("settings.get"));
       setTimeoutToken(normalizeVaultTimeout(data.vault_timeout));
-      // Favicon setting (default: enabled)
-      setFetchFavicons(data.fetch_favicons !== false);
+      // Favicon setting (default: disabled — opt-in for privacy)
+      setFetchFavicons(data.fetch_favicons === true);
 
       // Load biometric status
       const available = await biometryAvailable();

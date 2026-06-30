@@ -230,6 +230,7 @@ mod tests {
                 autofill_on_page_load: false,
                 password_revision_date: None,
                 fido2_credentials: None,
+                favicon: None,
             }),
             favorite: false,
             reprompt: false,
