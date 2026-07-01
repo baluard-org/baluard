@@ -39,6 +39,13 @@ pub struct VaultState {
     pub rate_limiter: crate::rate_limit::RateLimiter,
     /// Phase 1: WebAuthn ceremony state cache (300s TTL).
     pub ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache,
+    /// Session-bound PIN Quick Unlock escrow. None = PIN not enabled this
+    /// session. Survives soft-lock (separate from `inner`); dies on close /
+    /// daemon restart. See `pin::PinEscrow` for the security model.
+    pin: tokio::sync::Mutex<Option<crate::pin::PinEscrow>>,
+    /// Wrong-PIN attempt counter. On reaching `pin::MAX_PIN_FAILURES` the
+    /// escrow is destroyed (master password becomes mandatory again).
+    pin_failures: std::sync::atomic::AtomicU32,
     /// Auto-sync coordinator. Activated on unlock when the vault has a remote
     /// + connected provider. Cheap clone (Arc inside).
     pub autosync: crate::autosync::AutoSyncHandle,
@@ -59,6 +66,8 @@ impl VaultState {
             cover_session: AtomicU64::new(0),
             rate_limiter: crate::rate_limit::RateLimiter::new(),
             ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache::new(),
+            pin: tokio::sync::Mutex::new(None),
+            pin_failures: std::sync::atomic::AtomicU32::new(0),
             autosync,
         }
     }
@@ -1978,11 +1987,25 @@ impl VaultState {
         handle.list_archived_meta().map_err(|e| format!("{e}"))
     }
 
-    /// Get biometric unlock status.
+    /// Resolve this vault's deterministic `vault_id` as a string, for
+    /// namespacing per-vault keychain entries. Prefers the loaded handle's
+    /// id (available even while locked); falls back to deriving it from
+    /// on-disk KDF params when the handle is not yet open.
+    async fn vault_id_str(&self) -> Result<String, String> {
+        if let Some(handle) = self.inner.read().await.as_ref() {
+            return Ok(handle.vault_id.to_string());
+        }
+        baluard_core::vault::handle::VaultHandle::vault_id_for_path(&self.vault_path)
+            .map(|u| u.to_string())
+            .map_err(|e| format!("{e}"))
+    }
+
+    /// Get biometric unlock status for THIS vault only.
     pub async fn biometric_status(&self) -> Result<String, String> {
         let available = baluard_core::biometric::is_available();
         let enabled = if available {
-            baluard_core::biometric::is_enabled()
+            let vault_id = self.vault_id_str().await?;
+            baluard_core::biometric::is_enabled(&vault_id)
         } else {
             false
         };
@@ -1993,8 +2016,8 @@ impl VaultState {
         .to_string())
     }
 
-    /// Enable biometric unlock. Validates password against vault first,
-    /// then stores in OS keychain.
+    /// Enable biometric unlock for THIS vault. Validates password against
+    /// the vault first, then stores in OS keychain under this vault's id.
     pub async fn biometric_enable(&self, payload: &str) -> Result<String, String> {
         let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
         let password = req["password"].as_str().ok_or("missing password")?;
@@ -2004,6 +2027,7 @@ impl VaultState {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
         let vault_path = handle.path.clone();
+        let vault_id = handle.vault_id.to_string();
         drop(guard);
 
         let mut temp = baluard_core::vault::handle::VaultHandle::open(&vault_path)
@@ -2012,23 +2036,161 @@ impl VaultState {
             .map_err(|_| "Incorrect master password".to_string())?;
         temp.lock();
 
-        baluard_core::biometric::enable(password)?;
+        baluard_core::biometric::enable(&vault_id, password)?;
 
         Ok(serde_json::json!({"enabled": true}).to_string())
     }
 
-    /// Disable biometric unlock.
+    /// Disable biometric unlock for THIS vault only.
     pub async fn biometric_disable(&self) -> Result<String, String> {
-        baluard_core::biometric::disable()?;
+        let vault_id = self.vault_id_str().await?;
+        baluard_core::biometric::disable(&vault_id)?;
         Ok(serde_json::json!({"disabled": true}).to_string())
     }
 
-    /// Biometric unlock. Retrieves stored master password from OS keychain
-    /// and performs vault unlock. The secret NEVER leaves this process.
+    /// Biometric unlock for THIS vault. Retrieves this vault's stored master
+    /// password from the OS keychain and performs vault unlock. The secret
+    /// NEVER leaves this process.
     pub async fn biometric_unlock(&self) -> Result<String, String> {
-        let master_password = baluard_core::biometric::unlock()?;
+        let vault_id = self.vault_id_str().await?;
+        let master_password = baluard_core::biometric::unlock(&vault_id)?;
         self.unlock(&master_password).await?;
         Ok(serde_json::json!({"success": true}).to_string())
+    }
+
+    // ── Session-bound PIN Quick Unlock ───────────────────────────────────
+    //
+    // In-memory KEK escrow: after the first master-password unlock the user
+    // can enable a 6-digit PIN that re-unlocks for the rest of the daemon
+    // session without re-running Argon2id. Nothing PIN-derivable touches
+    // disk. See `pin::PinEscrow` for the full security model.
+
+    /// Is PIN Quick Unlock enabled for this vault THIS session?
+    /// Pre-unlock safe: it is an in-memory check, independent of the handle.
+    pub async fn pin_status(&self) -> Result<String, String> {
+        let enabled = self.pin.lock().await.is_some();
+        Ok(serde_json::json!({"enabled": enabled}).to_string())
+    }
+
+    /// Enable PIN Quick Unlock. Validates the master password against the
+    /// vault, derives the KEK, and stores the escrow in memory. The master
+    /// password and raw PIN are never retained — only the KEK + an
+    /// Argon2id verifier over the PIN.
+    /// Payload: { "password": "...", "pin": "123456" }
+    pub async fn pin_enable(&self, payload: &str) -> Result<String, String> {
+        let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
+        let password = req["password"].as_str().ok_or("missing password")?;
+        let pin = req["pin"].as_str().ok_or("missing pin")?;
+        crate::pin::validate_pin(pin)?;
+
+        // Verify the master password by opening a temp handle and unlocking.
+        // The KEK we derive here is the same value the daemon's VaultState
+        // would use internally; we need it to seed the escrow.
+        let mut temp = baluard_core::vault::handle::VaultHandle::open(&self.vault_path)
+            .map_err(|e| format!("Open failed: {e}"))?;
+        // Confirm the password is correct (raises clear error + advances
+        // nothing persistent — temp handle is discarded).
+        temp.unlock(password)
+            .map_err(|_| "Incorrect master password".to_string())?;
+        let kek = baluard_core::crypto::kdf::derive_kek(password, &temp.kdf_params)
+            .map_err(|e| format!("derive kek: {e}"))?;
+
+        let escrow = crate::pin::PinEscrow::new(kek, pin)?;
+        *self.pin.lock().await = Some(escrow);
+        self.pin_failures
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        Ok(serde_json::json!({"enabled": true}).to_string())
+    }
+
+    /// Disable PIN Quick Unlock (clears the escrow + resets the counter).
+    pub async fn pin_disable(&self) -> Result<String, String> {
+        // Drop the Option, which zeroizes the KEK + PIN verifier on drop.
+        *self.pin.lock().await = None;
+        self.pin_failures
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        Ok(serde_json::json!({"disabled": true}).to_string())
+    }
+
+    /// Re-unlock the vault using the PIN. Verifies the PIN against the
+    /// in-memory escrow in constant time, then runs `unlock_with_kek`
+    /// (skips Argon2id; still re-verifies keywrap + canaries). On the
+    /// `MAX_PIN_FAILURES`-th wrong PIN the escrow is destroyed: the master
+    /// password becomes mandatory and the user must re-enable the PIN.
+    ///
+    /// Concurrency: verify + counter-increment + nuke run under ONE hold of
+    /// the escrow mutex, so no concurrent `pin_unlock` can slip a verified
+    /// guess in between the verify and the cap check. The slow
+    /// `unlock_with_kek` runs AFTER the lock is released, which is safe
+    /// because a correct PIN returns the KEK out (the escrow stays put) and
+    /// a wrong PIN never reaches it.
+    pub async fn pin_unlock(&self, payload: &str) -> Result<String, String> {
+        let req: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
+        let pin = req["pin"].as_str().ok_or("missing pin")?;
+
+        // Atomic verify-and-record under a single escrow lock hold. This is
+        // the fix for the TOCTOU where a concurrent wrong-PIN attempt could
+        // verify against the still-live escrow before the counter advanced /
+        // the escrow was nuked. We must NOT run unlock_with_kek in here
+        // (slow) — so on a correct PIN we copy the KEK out and release.
+        let kek = {
+            let mut guard = self.pin.lock().await;
+            let Some(escrow) = guard.as_ref() else {
+                return Err("PIN Quick Unlock is not enabled for this vault. \
+                     Unlock with the master password and re-enable it."
+                    .to_string());
+            };
+            match escrow.verify_or_record_failure(pin, &self.pin_failures) {
+                Ok(kek) => kek,
+                Err(msg) if msg == crate::pin::PIN_NUKED_SENTINEL => {
+                    // Cap reached: destroy the escrow NOW, under this lock,
+                    // so the next attempt sees None.
+                    *guard = None;
+                    return Err("Too many wrong PINs. PIN Quick Unlock has been disabled — \
+                         use the master password and re-enable PIN to continue."
+                        .to_string());
+                }
+                Err(msg) => return Err(msg),
+            }
+        };
+
+        // unlock_with_kek runs the shared tail (keywrap HPKE unwrap +
+        // canaries) so a corrupted/stale keywrap still fails closed.
+        let mut new_handle = baluard_core::vault::handle::VaultHandle::open(&self.vault_path)
+            .map_err(|e| format!("Failed to open vault for unlock: {e}"))?;
+        match new_handle.unlock_with_kek(&kek) {
+            Ok(()) => {
+                // Success: clear the PIN failure counter, swap in the handle,
+                // mint a session token — same contract as `unlock()`.
+                self.pin_failures
+                    .store(0, std::sync::atomic::Ordering::Relaxed);
+                let mut guard = self.inner.write().await;
+                *guard = Some(new_handle);
+                drop(guard);
+                let mut token_guard = self.session_token.write().await;
+                *token_guard = Some(generate_session_token());
+                self.session_token_created.store(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    Ordering::Relaxed,
+                );
+                Ok(serde_json::json!({ "success": true }).to_string())
+            }
+            Err(e) => {
+                // Correct PIN but unlock failed: the retained KEK is stale
+                // (e.g. password changed on another device + synced). The
+                // escrow is now useless — every future correct-PIN attempt
+                // would fail the same way. Nuke it immediately so the user
+                // gets a clear “re-enable PIN” signal instead of burning the
+                // 5-strike budget on a PIN they remember correctly.
+                *self.pin.lock().await = None;
+                Err(format!(
+                    "PIN unlock failed (the saved key is stale, usually because \
+                     the master password changed). Re-enable PIN unlock. Underlying error: {e}"
+                ))
+            }
+        }
     }
 
     /// Upload attachment to a cipher.

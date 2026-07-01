@@ -9,7 +9,7 @@
 // target first, then it becomes active. Cancelling leaves the user on the
 // currently-displayed vault with its active pointer untouched.
 
-import { createSignal, Show } from "solid-js";
+import { createSignal, Show, onMount } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { daemon } from "../lib/daemon.js";
@@ -33,6 +33,30 @@ export default function SwitchUnlockModal(props) {
   const [password, setPassword] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
+  // Per-target Quick Unlock status. Post-QU fix the keychain entry is
+  // namespaced by vault_id, so this modal must check the TARGET vault,
+  // not the global/active flag the login screen last computed.
+  const [quAvailable, setQuAvailable] = createSignal(false);
+  // Per-target session-PIN status (in-memory escrow, independent of biometric).
+  const [pinAvailable, setPinAvailable] = createSignal(false);
+  const [pinValue, setPinValue] = createSignal("");
+  const [pinBusy, setPinBusy] = createSignal(false);
+
+  // Query the target vault's Quick Unlock status on open. The target is
+  // open-but-locked by the time this modal appears (the switcher opens it).
+  onMount(() => {
+    const slug = props.target?.slug;
+    if (!slug) return;
+    daemon("vault.biometric_status", "", slug)
+      .then((r) => {
+        const s = JSON.parse(r);
+        setQuAvailable(s.available && s.enabled);
+      })
+      .catch(() => setQuAvailable(false));
+    daemon("vault.pin_status", "", slug)
+      .then((r) => setPinAvailable(!!JSON.parse(r).enabled))
+      .catch(() => setPinAvailable(false));
+  });
 
   const name = () => props.target?.display_name || props.target?.slug || "";
 
@@ -162,7 +186,7 @@ export default function SwitchUnlockModal(props) {
             </Button>
           </form>
 
-          <Show when={auth.biometricAvailable()}>
+          <Show when={quAvailable()}>
             <button
               type="button"
               onClick={handleBiometric}
@@ -172,6 +196,56 @@ export default function SwitchUnlockModal(props) {
               <IconFingerprint class="w-4 h-4" />
               {t("login.quickUnlock")}
             </button>
+          </Show>
+
+          <Show when={pinAvailable()}>
+            <div class="w-full mt-2">
+              <input
+                type="password"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                autocomplete="off"
+                maxlength="6"
+                placeholder={t("login.pinPlaceholder")}
+                value={pinValue()}
+                onInput={(e) => setPinValue(e.currentTarget.value.replace(/\D/g, "").slice(0, 6))}
+                aria-label={t("login.pinPlaceholder")}
+                disabled={pinBusy() || busy()}
+                class="w-full py-2.5 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text)] text-center tracking-[0.5em] font-semibold outline-none focus:border-[var(--color-primary)] disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  const pin = pinValue();
+                  if (pin.length !== 6 || pinBusy()) return;
+                  setPinBusy(true);
+                  try {
+                    await daemon("vault.pin_unlock", JSON.stringify({ pin }), props.target.slug);
+                    // Active focus already on target via handleSubmit's switch;
+                    // pin_unlock mints the token, so just refresh + close.
+                    await daemon("vaults.switch", JSON.stringify({ slug: props.target.slug }), props.target.slug);
+                    setPinValue("");
+                    auth.setStatus("unlocked");
+                    reset();
+                    props.onUnlocked?.();
+                    props.onClose?.();
+                  } catch (e) {
+                    toastError(sanitizeError(e, t));
+                    setPinValue("");
+                    // Escrow may have been nuked: re-query.
+                    daemon("vault.pin_status", "", props.target.slug)
+                      .then((r) => setPinAvailable(!!JSON.parse(r).enabled))
+                      .catch(() => setPinAvailable(false));
+                  } finally {
+                    setPinBusy(false);
+                  }
+                }}
+                disabled={pinValue().length !== 6 || pinBusy() || busy()}
+                class="w-full mt-2 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {pinBusy() ? t("login.unlocking") : t("login.pinUnlock")}
+              </button>
+            </div>
           </Show>
 
           <button

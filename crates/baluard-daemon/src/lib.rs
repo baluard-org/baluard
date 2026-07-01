@@ -9,6 +9,7 @@ pub mod autosync;
 pub mod crypto;
 pub mod handler;
 pub mod host;
+pub mod pin;
 pub mod rate_limit;
 pub mod socket_path;
 pub mod state;

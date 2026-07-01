@@ -1,6 +1,9 @@
 //! OS keychain biometric unlock.
 //!
-//! Stores the master password in the OS keychain with biometric access control.
+//! Stores the master password in the OS keychain with biometric access control,
+//! **namespaced per vault** by `vault_id`. Each vault gets its own keychain
+//! entry, so enabling Quick Unlock on one vault never exposes it on another.
+//!
 //! On macOS: Uses Security framework with SecAccessControl (BIOMETRY_ANY).
 //!   Reading triggers Touch ID. Writing does not (enrollment flow).
 //! On other platforms: Uses the `keyring` crate with native backends.
@@ -19,15 +22,34 @@
 //! - The `is_available()` function returns `true` on macOS without verifying
 //!   hardware. This is a known limitation; the UI should also check
 //!   platform-specific signals before offering the toggle.
+//!
+//! Per-vault scoping (QU fix):
+//! - The keychain account name is `quick-unlock:<vault_id>`, where `vault_id`
+//!   is the deterministic UUID derived from the vault's KDF salt (see
+//!   `VaultHandle::derive_vault_id`). It is stable, unique per vault, and
+//!   computable without unlocking. Enabling Quick Unlock on vault A therefore
+//!   has no effect on the status or unlock path of vault B.
+//!
+//! Scope note: this is the macOS/Touch-ID path only. On Linux and on Windows
+//! machines without Windows Hello, Quick Unlock uses the session-PIN escrow
+//! (`baluard-daemon::pin`) instead — see AGENTS.md "Quick Unlock". The two
+//! are independent; both buttons can appear for a vault that has both.
 
 const SERVICE_NAME: &str = "com.baluard.desktop";
-const ACCOUNT_NAME: &str = "quick-unlock";
+/// Legacy pre-QU account name: a single global entry shared across all
+/// vaults. Kept only so `disable_legacy_global()` can wipe orphaned
+/// secrets written by older daemon versions.
+const LEGACY_ACCOUNT_NAME: &str = "quick-unlock";
+
+/// Build the per-vault keychain account name.
+fn account_for(vault_id: &str) -> String {
+    format!("quick-unlock:{vault_id}")
+}
 
 // ── macOS: Security framework with biometric access control ──────────────
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use super::ACCOUNT_NAME;
     use super::SERVICE_NAME;
     use core_foundation::base::TCFType;
     use core_foundation::boolean::CFBoolean;
@@ -57,10 +79,10 @@ mod platform {
     /// (restricted by provisioning profile), which sidecar binaries lack.
     /// The file-based keychain still supports SecAccessControl with biometric
     /// constraints (Touch ID / passcode prompt on read).
-    pub fn enable(master_password: &str) -> Result<(), String> {
+    pub fn enable(account: &str, master_password: &str) -> Result<(), String> {
         // Delete existing entry first (SecAccessControl is immutable on update;
         // we must delete + recreate to change access control flags).
-        let _ = delete();
+        let _ = delete(account);
 
         let access_control = SecAccessControl::create_with_flags(AC_FLAGS.bits())
             .map_err(|e| format!("access control create: {e}"))?;
@@ -79,7 +101,7 @@ mod platform {
                 ),
                 unsafe_pair(
                     security_framework_sys::item::kSecAttrAccount,
-                    CFString::from(ACCOUNT_NAME),
+                    CFString::from(account),
                 ),
                 unsafe_pair(
                     security_framework_sys::item::kSecAttrAccessControl,
@@ -121,12 +143,12 @@ mod platform {
     }
 
     /// Delete stored master password. Ok if already deleted.
-    pub fn disable() -> Result<(), String> {
-        delete()
+    pub fn disable(account: &str) -> Result<(), String> {
+        delete(account)
     }
 
     /// Check if a stored secret exists. Does NOT trigger biometric prompt.
-    pub fn is_enabled() -> bool {
+    pub fn is_enabled(account: &str) -> bool {
         // Build query dictionary manually using raw FFI.
         //
         // Strategy: kSecReturnAttributes=true + kSecUseAuthenticationUI=kSecUseAuthenticationUISkip
@@ -148,7 +170,7 @@ mod platform {
                 ),
                 unsafe_pair(
                     security_framework_sys::item::kSecAttrAccount,
-                    CFString::from(ACCOUNT_NAME),
+                    CFString::from(account),
                 ),
                 unsafe_pair(
                     security_framework_sys::item::kSecReturnAttributes,
@@ -187,7 +209,7 @@ mod platform {
 
     /// Retrieve stored master password. Triggers Touch ID / biometric prompt.
     /// The returned bytes are zeroized after conversion.
-    pub fn unlock() -> Result<String, String> {
+    pub fn unlock(account: &str) -> Result<String, String> {
         let query: Vec<(CFString, core_foundation::base::CFType)> = unsafe {
             vec![
                 unsafe_pair(
@@ -202,7 +224,7 @@ mod platform {
                 ),
                 unsafe_pair(
                     security_framework_sys::item::kSecAttrAccount,
-                    CFString::from(ACCOUNT_NAME),
+                    CFString::from(account),
                 ),
                 unsafe_pair(
                     security_framework_sys::item::kSecReturnData,
@@ -246,7 +268,7 @@ mod platform {
         String::from_utf8(cf_data.to_vec()).map_err(|e| format!("keychain data not utf8: {e}"))
     }
 
-    fn delete() -> Result<(), String> {
+    fn delete(account: &str) -> Result<(), String> {
         let query: Vec<(CFString, core_foundation::base::CFType)> = unsafe {
             vec![
                 unsafe_pair(
@@ -261,7 +283,7 @@ mod platform {
                 ),
                 unsafe_pair(
                     security_framework_sys::item::kSecAttrAccount,
-                    CFString::from(ACCOUNT_NAME),
+                    CFString::from(account),
                 ),
                 // Match the same keychain used by enable.
                 unsafe_pair(
@@ -304,19 +326,17 @@ mod platform {
 
 #[cfg(not(target_os = "macos"))]
 mod platform {
-    use super::ACCOUNT_NAME;
     use super::SERVICE_NAME;
     use keyring::Entry;
 
     /// Check if the OS keyring is accessible.
     pub fn is_available() -> bool {
-        Entry::new(SERVICE_NAME, ACCOUNT_NAME).is_ok()
+        Entry::new(SERVICE_NAME, "quick-unlock:probe").is_ok()
     }
 
-    /// Store master password in OS keyring.
-    pub fn enable(master_password: &str) -> Result<(), String> {
-        let entry =
-            Entry::new(SERVICE_NAME, ACCOUNT_NAME).map_err(|e| format!("keyring entry: {e}"))?;
+    /// Store master password in OS keyring under the per-vault account.
+    pub fn enable(account: &str, master_password: &str) -> Result<(), String> {
+        let entry = Entry::new(SERVICE_NAME, account).map_err(|e| format!("keyring entry: {e}"))?;
         entry
             .set_password(master_password)
             .map_err(|e| format!("keyring store: {e}"))?;
@@ -324,9 +344,8 @@ mod platform {
     }
 
     /// Delete stored master password. Ok if already deleted.
-    pub fn disable() -> Result<(), String> {
-        let entry =
-            Entry::new(SERVICE_NAME, ACCOUNT_NAME).map_err(|e| format!("keyring entry: {e}"))?;
+    pub fn disable(account: &str) -> Result<(), String> {
+        let entry = Entry::new(SERVICE_NAME, account).map_err(|e| format!("keyring entry: {e}"))?;
         match entry.delete_credential() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
@@ -334,54 +353,64 @@ mod platform {
         }
     }
 
-    /// Check if a stored secret exists.
-    pub fn is_enabled() -> bool {
-        let Ok(entry) = Entry::new(SERVICE_NAME, ACCOUNT_NAME) else {
+    /// Check if a stored secret exists for this vault.
+    pub fn is_enabled(account: &str) -> bool {
+        let Ok(entry) = Entry::new(SERVICE_NAME, account) else {
             return false;
         };
         entry.get_password().is_ok()
     }
 
     /// Retrieve stored master password. May trigger OS credential prompt.
-    pub fn unlock() -> Result<String, String> {
-        let entry =
-            Entry::new(SERVICE_NAME, ACCOUNT_NAME).map_err(|e| format!("keyring entry: {e}"))?;
+    pub fn unlock(account: &str) -> Result<String, String> {
+        let entry = Entry::new(SERVICE_NAME, account).map_err(|e| format!("keyring entry: {e}"))?;
         entry
             .get_password()
             .map_err(|e| format!("biometric unlock failed: {e}"))
     }
 }
 
-// ── Public API (platform-delegated) ──────────────────────────────────────
+// ── Public API (platform-delegated, scoped per vault) ────────────────────
 
 /// Check if biometric unlock is available on this platform.
 pub fn is_available() -> bool {
     platform::is_available()
 }
 
-/// Enable biometric unlock by storing the master password in OS keychain.
-pub fn enable(master_password: &str) -> Result<(), String> {
-    platform::enable(master_password)
+/// Enable biometric unlock by storing the master password in OS keychain,
+/// scoped to `vault_id`. The `vault_id` MUST be the vault's deterministic
+/// UUID (`VaultHandle::derive_vault_id`) so the entry is stable across
+/// restarts and unique per vault.
+pub fn enable(vault_id: &str, master_password: &str) -> Result<(), String> {
+    platform::enable(&account_for(vault_id), master_password)
 }
 
-/// Disable biometric unlock by deleting the stored master password.
-/// IMPORTANT: Must be called on master password change to invalidate stale secrets.
-pub fn disable() -> Result<(), String> {
-    platform::disable()
+/// Disable biometric unlock for `vault_id`. Must be called on master password
+/// change to invalidate the stale secret for that vault only.
+pub fn disable(vault_id: &str) -> Result<(), String> {
+    platform::disable(&account_for(vault_id))
 }
 
-/// Check if biometric unlock is enabled (secret exists in keychain).
+/// Check if biometric unlock is enabled for `vault_id` (secret exists).
 /// Does NOT trigger biometric prompt on macOS.
-pub fn is_enabled() -> bool {
-    platform::is_enabled()
+pub fn is_enabled(vault_id: &str) -> bool {
+    platform::is_enabled(&account_for(vault_id))
 }
 
-/// Retrieve the stored master password from OS keychain.
+/// Retrieve the stored master password for `vault_id` from OS keychain.
 /// On macOS: triggers Touch ID / Face ID biometric prompt.
 /// On other platforms: may trigger OS credential prompt.
 /// Returns the raw master password for vault unlock (daemon-internal only).
-pub fn unlock() -> Result<String, String> {
-    platform::unlock()
+pub fn unlock(vault_id: &str) -> Result<String, String> {
+    platform::unlock(&account_for(vault_id))
+}
+
+/// Best-effort wipe of the legacy global `quick-unlock` keychain entry
+/// written by pre-QU daemon versions (which stored one shared secret for
+/// all vaults). Safe to call repeatedly; returns Ok when no entry remains.
+/// Call once at daemon startup so old per-app secrets do not linger.
+pub fn disable_legacy_global() -> Result<(), String> {
+    platform::disable(LEGACY_ACCOUNT_NAME)
 }
 
 #[cfg(test)]
@@ -395,6 +424,18 @@ mod tests {
 
     #[test]
     fn is_enabled_does_not_panic() {
-        let _ = is_enabled();
+        let _ = is_enabled("00000000-0000-0000-0000-000000000000");
+    }
+
+    #[test]
+    fn account_for_namespaces_per_vault() {
+        assert_eq!(
+            account_for("11111111-1111-1111-1111-111111111111"),
+            "quick-unlock:11111111-1111-1111-1111-111111111111"
+        );
+        assert_ne!(
+            account_for("11111111-1111-1111-1111-111111111111"),
+            account_for("22222222-2222-2222-2222-222222222222")
+        );
     }
 }

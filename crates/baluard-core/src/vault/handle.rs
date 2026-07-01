@@ -208,12 +208,40 @@ impl VaultHandle {
         // Step 0: Rate limit check
         self.check_attempt_rate_limit()?;
 
-        // Step 1: Derive KEK
+        // Step 1: Derive KEK (expensive Argon2id)
         let kek = kdf::derive_kek(master_password, &self.kdf_params)?;
 
+        // Steps 2-8: shared unlock tail. For the master-password path a
+        // failed canary/keywrap verification MUST record a failed attempt so
+        // the on-disk attempt counter advances (brute-force protection).
+        match self.unlock_with_kek(&kek) {
+            Ok(()) => {
+                self.clear_failed_attempts()?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.record_failed_attempt();
+                Err(e)
+            }
+        }
+    }
+
+    /// Unlock the vault using a pre-derived KEK, skipping the expensive
+    /// Argon2id derivation. Runs the shared unlock tail: derive session/sync
+    /// keys, HPKE-unwrap the Root Key, verify both canaries, swap state.
+    ///
+    /// Used by session PIN Quick Unlock: the daemon retains the KEK in
+    /// memory (mlocked, zeroized on drop) after the first master-password
+    /// unlock, and a PIN gate re-unlocks without re-running Argon2id. The
+    /// PIN path does NOT record on-disk failed attempts; the daemon's
+    /// per-vault PIN counter owns attempt accounting and nukes the escrow
+    /// after `MAX_PIN_FAILURES` tries (Bitwarden-equivalent policy).
+    ///
+    /// No key material crosses IPC. `kek` is zeroized by the caller when done.
+    pub fn unlock_with_kek(&mut self, kek: &[u8; 32]) -> Result<(), BaluardError> {
         // Step 2: Derive session + sync keys
-        let session_key = hkdf_derive::derive_session_key(&kek)?;
-        let sync_key = hkdf_derive::derive_sync_key(&kek)?;
+        let session_key = hkdf_derive::derive_session_key(kek)?;
+        let sync_key = hkdf_derive::derive_sync_key(kek)?;
 
         // Step 3: Read keywrap file
         let keywrap_path = self
@@ -237,10 +265,7 @@ impl VaultHandle {
         if self.path.join("meta/kek-canary.enc").exists() {
             let canary_data = std::fs::read(self.path.join("meta/kek-canary.enc"))
                 .map_err(|e| VaultError::Metadata(format!("reading kek canary: {e}")))?;
-            if let Err(e) = super::canary::verify_kek_canary(&session_key, &canary_data) {
-                let _ = self.record_failed_attempt();
-                return Err(e);
-            }
+            super::canary::verify_kek_canary(&session_key, &canary_data)?;
         }
 
         // Step 5: HPKE-decapsulate Root Key using device private key (keyring or file)
@@ -257,15 +282,9 @@ impl VaultHandle {
         let root_key = RootKey::from_bytes(rk_bytes);
 
         // Step 6: Verify root key with RK canary
-        if let Err(e) = self.verify_root_key(&root_key) {
-            self.record_failed_attempt()?;
-            return Err(e);
-        }
+        self.verify_root_key(&root_key)?;
 
-        // Step 7: Clear attempt counter on success
-        self.clear_failed_attempts()?;
-
-        // Step 8: Determine current epoch from any existing cipher or RK canary
+        // Step 7: Determine current epoch from any existing cipher or RK canary
         let current_epoch = self.determine_current_epoch();
 
         self.state = VaultState::Unlocked(UnlockedState {
@@ -362,9 +381,11 @@ impl VaultHandle {
 
         // Step 8: Disable old biometric secret (it stores the old password)
         // Caller should re-enable biometric with the new password after this.
-        // Log on failure: stale secret will cause canary mismatch on next biometric unlock,
-        // which is self-correcting (user falls back to manual password entry).
-        if let Err(e) = crate::biometric::disable() {
+        // Scoped to this vault's vault_id so other vaults' Quick Unlock is
+        // untouched. Log on failure: stale secret will cause canary mismatch
+        // on next biometric unlock, which is self-correcting (user falls
+        // back to manual password entry).
+        if let Err(e) = crate::biometric::disable(&self.vault_id.to_string()) {
             eprintln!("warning: failed to disable biometric after password change: {e}");
         }
 
@@ -2163,6 +2184,19 @@ impl VaultHandle {
         Uuid::from_bytes(hash[..16].try_into().unwrap())
     }
 
+    /// Derive the vault_id from on-disk KDF params without fully opening
+    /// the vault. Used by callers (e.g. daemon biometric status, which runs
+    /// while the vault is locked) that need a stable per-vault identity to
+    /// namespace per-vault keychain entries.
+    pub fn vault_id_for_path(path: &Path) -> Result<Uuid, BaluardError> {
+        let kdf_path = path.join("meta/kdf-params.json");
+        let kdf_json = std::fs::read_to_string(&kdf_path)
+            .map_err(|e| VaultError::Metadata(format!("reading kdf params: {e}")))?;
+        let kdf_params: KdfParams = serde_json::from_str(&kdf_json)
+            .map_err(|e| VaultError::Corrupt(format!("kdf params: {e}")))?;
+        Ok(Self::derive_vault_id(&kdf_params))
+    }
+
     // ── Rate limiting ──
 
     /// Check if too many failed unlock attempts have occurred.
@@ -3235,6 +3269,34 @@ mod tests {
         let (dir, _password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
         assert!(handle.unlock("wrong-password").is_err());
+    }
+
+    #[test]
+    fn unlock_with_kek_roundtrip() {
+        // unlock_with_kek must produce the same unlocked state as the
+        // full master-password unlock (same KEK -> same root/session keys).
+        // This is the contract the session-PIN path relies on.
+        let (dir, password) = create_test_vault();
+
+        // Derive the KEK the same way the daemon does for PIN escrow.
+        let probe = VaultHandle::open(dir.path()).unwrap();
+        let kek = crate::crypto::kdf::derive_kek(&password, &probe.kdf_params).unwrap();
+
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        assert!(!handle.is_unlocked());
+        handle.unlock_with_kek(&kek).expect("correct KEK unlocks");
+        assert!(handle.is_unlocked(), "unlock_with_kek sets Unlocked state");
+    }
+
+    #[test]
+    fn unlock_with_kek_wrong_kek_fails() {
+        // A wrong KEK must fail closed (canary mismatch) without panicking.
+        // The PIN path's rate limiter handles attempt accounting.
+        let (dir, _password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        let wrong_kek = [0u8; 32];
+        assert!(handle.unlock_with_kek(&wrong_kek).is_err());
+        assert!(!handle.is_unlocked());
     }
 
     #[test]

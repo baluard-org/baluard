@@ -196,6 +196,13 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "vault.attach_delete",
     "vault.biometric_enable",
     "vault.biometric_disable",
+    // Session PIN: enable/disable require an existing unlocked session
+    // (they take the master password to seed the KEK escrow). pin_unlock
+    // is an unlock primitive, NOT token-gated (see TOKEN_REQUIRED_ACTIONS
+    // note on biometric_unlock). pin_status is pre-unlock-safe (in-memory
+    // check) so it is also not token-gated.
+    "vault.pin_enable",
+    "vault.pin_disable",
     "vault.avatar.get",
     "vault.avatar.set",
     "ssh.generate_key",
@@ -229,6 +236,9 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     // Note: vault.biometric_unlock is intentionally NOT token-gated because
     // it's an unlock primitive (used when vault is locked, no token exists).
     // Defense against same-UID abuse relies on OS keyring/biometric prompt.
+    // Session PIN: vault.pin_unlock is likewise an unlock primitive, NOT
+    // token-gated. Its only in-process defense is the attempt cap that nukes
+    // the KEK escrow after MAX_PIN_FAILURES wrong PINs.
     // H1: password change requires existing session
     "vault.change_password",
 ];
@@ -702,6 +712,32 @@ fn extract_slug(payload: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Outcome of checking the on-disk `.baluard` marker against the
+/// registry's vault_id during `vaults.detach`. The caller decides whether
+/// a non-`Match` outcome is fatal or just advisory based on the `force`
+/// flag — see the route's comments.
+enum MarkerCheck {
+    Match,
+    /// Marker file does not exist (or is empty / could not be opened as
+    /// a regular file). Distinct from `Unreadable` because the daemon
+    /// can confidently say "no marker here" — `force` may proceed.
+    Missing,
+    /// Marker file exists but the daemon could not parse or read it
+    /// (I/O error, partial write, garbage JSON). Distinct from `Missing`
+    /// because the daemon has NOT positively verified that the file is
+    /// absent — `force` still proceeds, but the audit log records the
+    /// original error so forensics are not lost.
+    Unreadable {
+        error: String,
+    },
+    /// Marker file parsed cleanly but its `vault_id` does not match the
+    /// registry entry. Almost always a stale registry pointing at a
+    /// reused directory.
+    Mismatch {
+        on_disk: uuid::Uuid,
+    },
+}
+
 /// Top-level Phase 6 dispatcher. Host-level routes (no target vault needed)
 /// are served here; everything else resolves a target `Arc<VaultState>` and
 /// delegates to `route_request`. The snapshot is taken ONCE per request so a
@@ -829,6 +865,210 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
                     "Vault '{slug}' was not open in the daemon (already closed)"
                 ))
             };
+        }
+
+        // vaults.detach: remove a vault from the registry so it no longer
+        // appears in the app. Works pre-unlock on locked/closed/unlocked
+        // vaults. Optionally deletes the on-disk vault directory when the
+        // caller explicitly opts in (delete_from_disk: true) — used by the
+        // desktop modal's "Also delete from disk (permanent)" arm and the
+        // CLI's `--delete-from-disk` flag.
+        //
+        // Safety on the destructive arm (defense-in-depth, three layers):
+        //   1. **Registry mutation happens first, then `host.close()`** —
+        //      if `save_locked()` fails, the in-memory state is unchanged
+        //      and the operation is a clean no-op. The previous order
+        //      (close first, save second) leaked a locked-but-still-
+        //      registered vault on save failure.
+        //   2. **The .baluard marker gate is enforced on disk delete**.
+        //      Three states:
+        //        - `Match`: registry and disk agree, proceed.
+        //        - `Missing` / `Unreadable`: daemon cannot verify. Refused
+        //          by default, bypassed by `force=true` (typed-name modal
+        //          or CLI slug retyping already established intent).
+        //        - `Mismatch`: POSITIVE evidence the directory is a
+        //          different vault. Refused UNCONDITIONALLY — `force` does
+        //          not override this, because the typed-name gate echoes
+        //          the registry's own `display_name` and proves nothing
+        //          about the directory contents. The user must fix the
+        //          marker, rename the directory, or `rm -rf` manually.
+        //   3. **A missing directory is treated as already-deleted**
+        //      (idempotent stale-registry cleanup), not an error.
+        //
+        // Returns { slug, deleted_from_disk, path }.
+        "vaults.detach" => {
+            let payload: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(e) => return err_response(format!("Invalid payload: {e}")),
+            };
+            let Some(slug) = payload["slug"].as_str() else {
+                return err_response("Missing 'slug' for vaults.detach");
+            };
+            let delete_from_disk = payload["delete_from_disk"].as_bool().unwrap_or(false);
+            // `force` opts in to overriding the `Missing` / `Unreadable`
+            // marker states. It does NOT bypass `Mismatch` — see safety
+            // layer 2 above. The desktop modal (typed-name match) and the
+            // CLI (`--delete-from-disk` with slug retyping) always set
+            // `force=true` on the destructive arm.
+            let force = payload["force"].as_bool().unwrap_or(false);
+
+            // Single load: remove + save in one lock cycle. `VaultRegistry::remove`
+            // returns the removed entry, giving us the path + vault_id
+            // without a second load (which would have been a TOCTOU
+            // window — `save_locked`'s file lock is per-call, not per-
+            // handler, so a concurrent process could mutate the registry
+            // between two loads).
+            let mut reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
+                Ok(reg) => reg,
+                Err(e) => return err_response(format!("Registry load failed: {e}")),
+            };
+            let entry = match reg.remove(slug) {
+                Some(e) => e,
+                None => {
+                    return err_response(format!(
+                        "Vault '{slug}' is not registered in Baluard"
+                    ));
+                }
+            };
+            // Persist BEFORE `host.close`. If `save_locked` fails, the
+            // in-memory state is unchanged — the user gets an error and
+            // the vault is intact. `host.close` cannot fail (in-memory
+            // only), so persisting first makes the whole operation
+            // fail-closed.
+            if let Err(e) = reg.save_locked() {
+                return err_response(format!("Registry save failed: {e}"));
+            }
+
+            let entry_path = entry.path.clone();
+            let entry_vault_id = entry.vault_id;
+
+            // Now safe to drop the vault from the in-memory map. Idempotent:
+            // no-op if the slug is not in the map (closed vault). Any
+            // in-flight handlers zeroize on their last Arc drop. Clearing
+            // active matters because the registry removal that just
+            // happened would otherwise leave the in-memory pointer
+            // dangling until the next switch.
+            let _ = host.close(slug).await;
+
+            let mut deleted_from_disk = false;
+            if delete_from_disk {
+                let path = &entry_path;
+                if path.exists() {
+                    let marker_state = match baluard_core::vault::registry::BaluardMarker::read_from_vault(path) {
+                        Ok(Some(m)) if m.vault_id == entry_vault_id => MarkerCheck::Match,
+                        Ok(Some(m)) => MarkerCheck::Mismatch {
+                            on_disk: m.vault_id,
+                        },
+                        Ok(None) => MarkerCheck::Missing,
+                        Err(e) => MarkerCheck::Unreadable { error: e.to_string() },
+                    };
+                    match marker_state {
+                        MarkerCheck::Match => {}
+                        MarkerCheck::Mismatch { on_disk } => {
+                            // UNCONDITIONAL refusal. The on-disk marker
+                            // belongs to a different vault; the typed-name
+                            // gate the desktop/CLI uses echoes the
+                            // registry's own `display_name` and proves
+                            // nothing about the directory's actual
+                            // contents. Bypassing here would mean
+                            // `remove_dir_all` on a directory the daemon
+                            // has positive evidence is not the named
+                            // vault. Manual cleanup is the only safe path.
+                            log::warn!(
+                                "[daemon] vaults.detach: REFUSING to delete {} — .baluard \
+                                 marker vault_id mismatch (on disk: {on_disk}, registry: \
+                                 {entry_vault_id}, slug={slug}). This is the one state \
+                                 `force` does not override; user must fix the marker, \
+                                 rename the directory, or rm -rf manually.",
+                                path.display()
+                            );
+                            return err_response(format!(
+                                "Refusing to delete {}: .baluard marker vault_id does not \
+                                 match the registry (on disk: {on_disk}, registry: \
+                                 {entry_vault_id}). This is the one marker state the \
+                                 `force` flag does not override — the typed-name gate \
+                                 proves nothing about the directory's actual contents \
+                                 when the marker positively disagrees with the \
+                                 registry. To clean up: rename the directory, fix the \
+                                 .baluard marker inside it, or remove it manually \
+                                 (e.g. `rm -rf`).",
+                                path.display()
+                            ));
+                        }
+                        MarkerCheck::Missing => {
+                            if !force {
+                                return err_response(format!(
+                                    "Refusing to delete {}: .baluard marker is missing. \
+                                     Pass force=true if the caller has already established \
+                                     user intent through another gate (typed-name modal, CLI \
+                                     slug retyping).",
+                                    path.display()
+                                ));
+                            }
+                            log::warn!(
+                                "[daemon] vaults.detach: FORCE-deleting {} despite missing \
+                                 .baluard marker (slug={slug}). Caller confirmed intent via \
+                                 user-visible gate.",
+                                path.display()
+                            );
+                        }
+                        MarkerCheck::Unreadable { error } => {
+                            // The marker file was not positively absent — the
+                            // daemon could not read or parse it. The user has
+                            // typed the vault name in the desktop modal or
+                            // retyped the slug in the CLI, so we treat the
+                            // intent signal as strong enough to proceed on
+                            // `force`, but the original error is preserved
+                            // in both the refusal message and the audit log
+                            // so the deletion is traceable to a real I/O
+                            // failure rather than a "missing marker" claim.
+                            if !force {
+                                return err_response(format!(
+                                    "Refusing to delete {}: .baluard marker could not be \
+                                     read ({error}). Pass force=true if the caller has \
+                                     already established user intent through another gate \
+                                     (typed-name modal, CLI slug retyping).",
+                                    path.display()
+                                ));
+                            }
+                            log::warn!(
+                                "[daemon] vaults.detach: FORCE-deleting {} despite \
+                                 unreadable .baluard marker (error: {error}, slug={slug}). \
+                                 Caller confirmed intent via user-visible gate.",
+                                path.display()
+                            );
+                        }
+                    }
+                    if let Err(e) = std::fs::remove_dir_all(path) {
+                        return err_response(format!(
+                            "Detached '{slug}' from Baluard, but disk delete failed: {e}"
+                        ));
+                    }
+                    deleted_from_disk = true;
+                    log::warn!(
+                        "[daemon] vaults.detach: deleted vault directory {} (slug={slug})",
+                        path.display()
+                    );
+                } else {
+                    // Already gone: treat as success so stale-entry cleanup
+                    // stays idempotent.
+                    deleted_from_disk = true;
+                    log::info!(
+                        "[daemon] vaults.detach: directory {} already absent (slug={slug})",
+                        path.display()
+                    );
+                }
+            }
+
+            return ok_resp(
+                serde_json::json!({
+                    "slug": slug,
+                    "deleted_from_disk": deleted_from_disk,
+                    "path": entry_path.to_string_lossy(),
+                })
+                .to_string(),
+                None,
+            );
         }
 
         // vaults.register_local (Phase 4): register an existing local vault
@@ -1000,6 +1240,12 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     // scope). Resolved here so we know which vault to unlock.
     if req.action.as_str() == "vault.biometric_unlock" {
         return handle_vault_biometric_unlock(req, host).await;
+    }
+    // Session PIN unlock is a host-level lifecycle op for the same reason as
+    // biometric_unlock: it mints a session token and must return {slug} so
+    // the desktop can file the token under the right vault.
+    if req.action.as_str() == "vault.pin_unlock" {
+        return handle_vault_pin_unlock(req, host).await;
     }
     // Phase 4 remote vault clone: host-level, pre-unlock (NOT token-gated).
     if req.action.as_str() == "vault.clone_start" {
@@ -1332,6 +1578,71 @@ async fn handle_vault_biometric_unlock(
             permit.commit_success();
             // biometric_unlock() calls self.unlock() internally, which
             // generates a new session token. Fetch it.
+            state.start_cover_timer().await;
+            let token = state.get_session_token().await;
+            ok_resp(inject_slug(json, &slug), token.as_deref())
+        }
+        Err(e) => {
+            permit.commit_failure();
+            err_response(e)
+        }
+    }
+}
+
+/// `vault.pin_unlock` (host-level): mirrors `vault.biometric_unlock`. Resolves
+/// the slug, snapshots the already-open `VaultState`, claims a rate-limit slot,
+/// then runs session-PIN unlock. On a wrong PIN the daemon's per-vault PIN
+/// counter advances and (at the cap) nukes the KEK escrow, forcing the master
+/// password. Returns `{slug, success}` + the freshly-minted session token.
+async fn handle_vault_pin_unlock(req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
+    // Resolve slug: req.slug (proto field, M2) > payload `slug` > active.
+    let slug = if !req.slug.is_empty() {
+        req.slug.clone()
+    } else {
+        match extract_slug(&req.payload) {
+            Some(s) => s,
+            None => match host.active_slug().await {
+                Some(s) => s,
+                None => {
+                    return err_response(
+                        "No active vault and no 'slug' given. Run `baluard unlock --vault <slug>`."
+                            .to_string(),
+                    );
+                }
+            },
+        }
+    };
+
+    let Some(state) = host.get(&slug).await else {
+        return err_response(format!(
+            "Vault '{slug}' is not open in the daemon. Run `baluard unlock --vault {slug}` first."
+        ));
+    };
+
+    // Rate-limit slot: a burst of wrong PINs is throttled by the same
+    // per-vault limiter as password attempts. The PIN escrow's own counter
+    // provides the terminal nuke-at-5 policy on top.
+    let vault_key = state.vault_path.to_string_lossy().into_owned();
+    let permit = match state.rate_limiter.claim_attempt(&vault_key) {
+        crate::rate_limit::ClaimResult::Allowed(p) => p,
+        crate::rate_limit::ClaimResult::Backoff(d) => {
+            return err_response(format!(
+                "Too many failed attempts. Wait {}s before retrying.",
+                d.as_secs()
+            ));
+        }
+        crate::rate_limit::ClaimResult::LockedOut(d) => {
+            return err_response(format!(
+                "Vault locked due to too many failed attempts. Wait {}s.",
+                d.as_secs()
+            ));
+        }
+    };
+
+    match state.pin_unlock(&req.payload).await {
+        Ok(json) => {
+            permit.commit_success();
+            // pin_unlock() mints a session token internally. Fetch it.
             state.start_cover_timer().await;
             let token = state.get_session_token().await;
             ok_resp(inject_slug(json, &slug), token.as_deref())
@@ -2385,6 +2696,25 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         },
 
         "vault.biometric_disable" => match state.biometric_disable().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        // ── Session PIN Quick Unlock ──
+        // pin_status: pre-unlock-safe (in-memory escrow check), NOT token-gated.
+        // pin_enable / pin_disable: token-gated (require an unlocked session).
+        // pin_unlock: host-level (intercepted above), NOT token-gated.
+        "vault.pin_status" => match state.pin_status().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.pin_enable" => match state.pin_enable(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.pin_disable" => match state.pin_disable().await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
