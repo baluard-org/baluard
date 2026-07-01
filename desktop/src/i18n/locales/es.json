@@ -7,7 +7,8 @@
     "subtitle": "Almacenamiento de contraseñas con Git. Sin servidor, totalmente sin conexión.",
     "newVault": "Crear una nueva bóveda",
     "openLocal": "Abrir una bóveda local existente",
-    "downloadFromProvider": "Abrir una bóveda guardada en línea"
+    "downloadFromProvider": "Abrir una bóveda guardada en línea",
+    "backToLogin": "Volver al inicio de sesión"
   },
   "login": {
     "title": "Baluard",
@@ -15,12 +16,16 @@
     "passwordPlaceholder": "Contraseña maestra",
     "unlock": "Desbloquear",
     "unlocking": "Desbloqueando...",
-    "useDifferent": "Usar otra bóveda",
+    "useDifferent": "Crear nueva o usar otra bóveda",
     "quickUnlock": "Desbloqueo rápido"
   },
   "create": {
     "title": "Crear bóveda",
     "subtitle": "Establece una contraseña maestra para tu nueva bóveda",
+    "namePlaceholder": "Nombre de la bóveda",
+    "slugLabel": "Slug",
+    "slugEdit": "Editar",
+    "slugDone": "Listo",
     "passwordPlaceholder": "Contraseña maestra (8+ caracteres)",
     "confirmPlaceholder": "Confirmar contraseña",
     "submit": "Crear bóveda",
@@ -36,6 +41,8 @@
     "confirm": "He guardado mi frase de recuperación",
     "confirmDisabled": "Verifica todas las palabras para continuar",
     "copyToClipboard": "Copiar al portapapeles",
+    "downloadTxt": "Descargar como archivo de texto",
+    "downloadSuccess": "Frase de recuperación guardada.",
     "whyTitle": "Por qué esto importa",
     "whyBody": "Esta frase de 24 palabras es la ÚNICA forma de recuperar tu bóveda si todos los dispositivos fallan. No hay servidor, no hay restablecimiento por correo, no hay número de teléfono al que llamar. Si pierdes la frase y todos tus dispositivos, tu bóveda desaparece para siempre.",
     "showExamples": "¿Cuándo necesitaría esto?",
@@ -50,30 +57,19 @@
     "verified": "Todas las palabras coinciden. Tu frase de recuperación está guardada."
   },
   "setup": {
-    "title": "Configura tu bóveda",
-    "subtitle": "Opcional: personaliza tu experiencia",
-    "profileSection": "Perfil",
-    "displayNamePlaceholder": "Tu nombre (opcional)",
-    "subtitlePlaceholder": "Rol o lema (opcional)",
-    "prefsSection": "Preferencias",
-    "themeLabel": "Tema",
-    "themeLight": "Claro",
-    "themeDark": "Oscuro",
-    "themeSystem": "Sistema",
-    "autoLockLabel": "Tiempo de bloqueo automático",
-    "timeoutPreset": {
-      "immediately": "Inmediatamente",
-      "1m": "1 minuto",
-      "5m": "5 minutos",
-      "10m": "10 minutos",
-      "15m": "15 minutos",
-      "30m": "30 minutos",
-      "1h": "1 hora",
-      "4h": "4 horas",
-      "on_app_exit": "Al salir de la app"
-    },
-    "submit": "Empezar a usar Baluard",
-    "submitting": "Configurando..."
+    "title": "Sincroniza tu bóveda",
+    "subtitle": "Opcional: haz copia de seguridad y sincroniza entre dispositivos",
+    "whatIsSync": "La sincronización guarda una copia cifrada de tu bóveda en tu propio repositorio Git. Tus datos siguen cifrados de extremo a extremo: solo tú puedes leerlos.",
+    "benefits": "Conecta un proveedor para hacer copia de seguridad automática y sincronizar entre tus dispositivos. Puedes hacerlo más adelante en Ajustes.",
+    "connectProvider": "Conecta un proveedor Git",
+    "skip": "Omitir por ahora",
+    "skipHint": "Puedes configurar la sincronización cuando quieras en Ajustes.",
+    "finish": "Empezar a usar Baluard",
+    "submitting": "Configurando...",
+    "repoNameLabel": "Nombre del repositorio",
+    "enableSync": "Activar sincronización",
+    "synced": "Sincronización activada. Tu bóveda hará copia de seguridad automáticamente.",
+    "syncFailed": "Error al configurar la sincronización: {error}"
   },
   "vault": {
     "statusUnlocked": "Desbloqueada",

@@ -88,7 +88,7 @@ export default function WelcomeScreen() {
 									onClick={() => auth.setStatus("locked")}
 									class="text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
 								>
-									{t("login.title")}
+									{t("welcome.backToLogin")}
 								</button>
 							</div>
 						</Show>

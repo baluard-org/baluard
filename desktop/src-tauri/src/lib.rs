@@ -351,6 +351,16 @@ fn show_window(window: tauri::WebviewWindow) {
     let _ = window.set_focus();
 }
 
+/// Write text to a user-chosen path (from a `save()` dialog).
+///
+/// Scoped write primitive: the path always comes from the native save
+/// dialog, so the user explicitly consents to the destination. No arbitrary
+/// fs capability is exposed. Used by the recovery-phrase download flow.
+#[tauri::command]
+fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    std::fs::write(&path, contents).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn update_tray_icon(_app: AppHandle, _is_dark: bool) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
@@ -694,7 +704,8 @@ pub fn run() {
             daemon_status,
             lock_all_vaults,
             show_window,
-            update_tray_icon
+            update_tray_icon,
+            write_text_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -85,9 +85,17 @@ export function buildSettingsPayload(key, value) {
 
 /**
  * Build vault.create payload.
+ * @param {string} password
+ * @param {object} [options]
+ * @param {string} [options.profile="desktop_std"]
+ * @param {string} [options.slug] - filesystem-safe vault identifier
+ * @param {string} [options.name] - user-facing vault display name
  */
-export function buildCreatePayload(password, profile = "desktop_std") {
-  return { password, profile };
+export function buildCreatePayload(password, { profile = "desktop_std", slug, name } = {}) {
+  const payload = { password, profile };
+  if (slug) payload.slug = slug;
+  if (name) payload.name = name;
+  return payload;
 }
 
 /**

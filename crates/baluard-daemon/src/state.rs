@@ -2556,6 +2556,8 @@ impl VaultState {
         let mut password = zeroize::Zeroizing::new(password);
 
         let profile_str = v["profile"].as_str().unwrap_or("desktop_std");
+        // Optional user-facing vault name (displayed in the switcher / login).\n        // Falls back to the slug downstream when absent.
+        let vault_name = v["name"].as_str().map(|s| s.to_string());
         let profile = match profile_str {
             "mobile_low" => baluard_core::types::KdfProfile::MobileLow,
             "desktop_std" => baluard_core::types::KdfProfile::DesktopStd,
@@ -2574,6 +2576,7 @@ impl VaultState {
             "this-device",
         )
         .kdf_profile(profile)
+        .profile(vault_name.clone(), None)
         .execute()
         .map_err(|e| format!("Vault creation failed: {e}"))?;
 
@@ -2600,6 +2603,7 @@ impl VaultState {
             "recovery_phrase": secrets.recovery_phrase.phrase(),
             "trust_fingerprint": hex::encode(secrets.trust_fingerprint),
             "session_token": token,
+            "vault_name": vault_name,
         });
         Ok(response.to_string())
     }

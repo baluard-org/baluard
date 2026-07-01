@@ -12,7 +12,7 @@
     "passwordPlaceholder": "Master password",
     "unlock": "Unlock",
     "unlocking": "Unlocking...",
-    "useDifferent": "Use a different vault",
+    "useDifferent": "Create new or use a different vault",
     "quickUnlock": "Quick Unlock"
   },
   "welcome": {
@@ -20,7 +20,8 @@
     "subtitle": "Git-backed password storage. No server, fully offline.",
     "newVault": "Create a new vault",
     "openLocal": "Open an existing local vault",
-    "downloadFromProvider": "Open a vault saved online"
+    "downloadFromProvider": "Open a vault saved online",
+    "backToLogin": "Back to login"
   },
   "clone": {
     "title": "Download Vault",
@@ -40,6 +41,10 @@
   "create": {
     "title": "Create Vault",
     "subtitle": "Set a master password for your new vault",
+    "namePlaceholder": "Vault name",
+    "slugLabel": "Slug",
+    "slugEdit": "Edit",
+    "slugDone": "Done",
     "passwordPlaceholder": "Master password (8+ chars)",
     "confirmPlaceholder": "Confirm password",
     "submit": "Create Vault",
@@ -55,6 +60,8 @@
     "confirm": "I've saved my recovery phrase",
     "confirmDisabled": "Verify all words above to continue",
     "copyToClipboard": "Copy to clipboard",
+    "downloadTxt": "Download as text file",
+    "downloadSuccess": "Recovery phrase saved.",
     "whyTitle": "Why this matters",
     "whyBody": "This 24-word phrase is the ONLY way to recover your vault if every device fails. There is no server, no email reset, no phone number to call. If you lose the phrase and all your devices, your vault is gone forever.",
     "showExamples": "When would I need this?",
@@ -69,30 +76,19 @@
     "verified": "All words match. Your recovery phrase is saved."
   },
   "setup": {
-    "title": "Set Up Your Vault",
-    "subtitle": "Optional: personalize your experience",
-    "profileSection": "Profile",
-    "displayNamePlaceholder": "Your name (optional)",
-    "subtitlePlaceholder": "Role or tagline (optional)",
-    "prefsSection": "Preferences",
-    "themeLabel": "Theme",
-    "themeLight": "Light",
-    "themeDark": "Dark",
-    "themeSystem": "System",
-    "autoLockLabel": "Auto-lock timeout",
-    "timeoutPreset": {
-      "immediately": "Immediately",
-      "1m": "1 minute",
-      "5m": "5 minutes",
-      "10m": "10 minutes",
-      "15m": "15 minutes",
-      "30m": "30 minutes",
-      "1h": "1 hour",
-      "4h": "4 hours",
-      "on_app_exit": "On app exit"
-    },
-    "submit": "Start using Baluard",
-    "submitting": "Setting up..."
+    "title": "Sync your vault",
+    "subtitle": "Optional: back up your vault and sync across devices",
+    "whatIsSync": "Sync stores an encrypted copy of your vault in your own Git repository. Your data stays encrypted end-to-end — only you can read it.",
+    "benefits": "Connect a provider to back up automatically and sync between your devices. You can always do this later in Settings.",
+    "connectProvider": "Connect a Git provider",
+    "skip": "Skip for now",
+    "skipHint": "You can set up sync anytime in Settings.",
+    "finish": "Start using Baluard",
+    "submitting": "Setting up...",
+    "repoNameLabel": "Repository name",
+    "enableSync": "Enable sync",
+    "synced": "Sync enabled. Your vault will back up automatically.",
+    "syncFailed": "Sync setup failed: {error}"
   },
   "vault": {
     "statusUnlocked": "Unlocked",
