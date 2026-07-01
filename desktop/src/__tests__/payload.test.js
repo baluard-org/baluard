@@ -254,9 +254,20 @@ describe("buildCreatePayload", () => {
   });
 
   test("custom profile", () => {
-    expect(buildCreatePayload("pw", "custom")).toEqual({
+    expect(buildCreatePayload("pw", { profile: "custom" })).toEqual({
       password: "pw",
       profile: "custom",
+    });
+  });
+
+  test("includes slug and name when provided", () => {
+    expect(
+      buildCreatePayload("pw", { slug: "baluard-esteban", name: "Esteban" })
+    ).toEqual({
+      password: "pw",
+      profile: "desktop_std",
+      slug: "baluard-esteban",
+      name: "Esteban",
     });
   });
 });

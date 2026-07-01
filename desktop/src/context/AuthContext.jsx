@@ -102,7 +102,7 @@ function AuthProvider(props) {
     }
   }
 
-  async function createVault(t) {
+  async function createVault(t, { slug, name } = {}) {
     const pw = createPassword();
     const confirm = document.getElementById("create-confirm")?.value;
     if (!pw || pw.length < 8) { toastWarning(t("create.errorMinLength")); return; }
@@ -110,7 +110,7 @@ function AuthProvider(props) {
     setCreatePassword(pw);
     guardedSetStatus(setStatus, status(), "creating");
     try {
-      const result = JSON.parse(await daemon("vault.create", JSON.stringify(buildCreatePayload(pw))));
+      const result = JSON.parse(await daemon("vault.create", JSON.stringify(buildCreatePayload(pw, { slug, name }))));
       setRecoveryPhrase(result.recovery_phrase);
       guardedSetStatus(setStatus, status(), "recovery");
     } catch (e) {

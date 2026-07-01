@@ -1,9 +1,13 @@
 import { createSignal, createMemo, For, Show } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
-import { IconNote, IconCopy, IconCheck } from "./Icon.jsx";
+import { IconNote, IconCopy, IconCheck, IconDownload } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 import { copyToClipboard } from "../lib/clipboard.js";
+import { save } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
+import { toastSuccess, toastError } from "../context/toastSignal.js";
+import { sanitizeError } from "../lib/utils.js";
 
 /**
  * Recovery phrase presentation + mandatory verification.
@@ -70,6 +74,20 @@ export default function RecoveryScreen() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleDownload = async () => {
+    try {
+      const path = await save({
+        defaultPath: "baluard-recovery-phrase.txt",
+        filters: [{ name: "Text", extensions: ["txt"] }],
+      });
+      if (!path) return; // user cancelled
+      await invoke("write_text_file", { path, contents: phrase() });
+      toastSuccess(t("recovery.downloadSuccess"));
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    }
+  };
+
   const handleConfirm = (e) => {
     e.preventDefault();
     if (!allVerified()) return;
@@ -85,8 +103,9 @@ export default function RecoveryScreen() {
   };
 
   return (
-    <div class="flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 relative overflow-y-auto py-8">
+    <div class="h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] relative overflow-y-auto py-8">
       <ThemeToggleFloating />
+      <div class="flex items-center justify-center min-h-full px-4">
       <div class="w-full max-w-lg p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl relative overflow-hidden transition-all-fast">
 
         <div class="text-center mb-6">
@@ -98,20 +117,20 @@ export default function RecoveryScreen() {
         </div>
 
         {/* WHY: explain why this matters with concrete examples */}
-        <div class="mb-5 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
-          <p class="text-sm font-semibold text-amber-300 mb-2">{t("recovery.whyTitle")}</p>
-          <p class="text-xs text-[var(--color-text-muted)] leading-relaxed mb-2">
+        <div class="mb-5 p-4 rounded-xl box-warning border">
+          <p class="text-sm font-semibold text-warning-title mb-2">{t("recovery.whyTitle")}</p>
+          <p class="text-xs text-[var(--color-muted)] leading-relaxed mb-2">
             {t("recovery.whyBody")}
           </p>
           <button
             type="button"
             onClick={() => setShowExamples(!showExamples())}
-            class="text-xs font-semibold text-amber-300 hover:text-amber-200 underline cursor-pointer"
+            class="text-xs font-semibold btn-warning-link underline cursor-pointer"
           >
             {showExamples() ? t("recovery.hideExamples") : t("recovery.showExamples")}
           </button>
           <Show when={showExamples()}>
-            <ul class="text-xs text-[var(--color-text-muted)] mt-2 space-y-1 list-disc list-inside">
+            <ul class="text-xs text-[var(--color-muted)] mt-2 space-y-1 list-disc list-inside">
               <li>{t("recovery.example1")}</li>
               <li>{t("recovery.example2")}</li>
               <li>{t("recovery.example3")}</li>
@@ -121,11 +140,11 @@ export default function RecoveryScreen() {
         </div>
 
         {/* The phrase itself */}
-        <div class="relative group p-5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm leading-relaxed text-[var(--color-text)] break-words select-all mb-4 text-center shadow-inner">
+        <div class="relative group px-10 py-5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-sm leading-relaxed text-[var(--color-text)] break-words select-all mb-4 text-center shadow-inner">
           {phrase()}
           <button
             onClick={handleCopy}
-            class="absolute top-2 right-2 p-1.5 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-detail)] transition-all cursor-pointer shadow-sm flex items-center gap-1 text-xs"
+            class="absolute top-2 right-2 p-1.5 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-detail)] transition-all cursor-pointer shadow-sm flex items-center gap-1 text-xs"
             title={t("recovery.copyToClipboard")}
           >
             <Show when={copied()} fallback={
@@ -139,6 +158,15 @@ export default function RecoveryScreen() {
         <p class="text-xs text-[var(--color-muted)] text-center mb-5">
           {t("recovery.writeItDown")}
         </p>
+
+        <button
+          type="button"
+          onClick={handleDownload}
+          class="w-full mb-5 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-sm font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all cursor-pointer"
+        >
+          <IconDownload class="w-4 h-4" />
+          {t("recovery.downloadTxt")}
+        </button>
 
         {/* Verification: re-enter 4 random words */}
         <form onSubmit={handleConfirm} class="space-y-4">
@@ -189,6 +217,7 @@ export default function RecoveryScreen() {
             {allVerified() ? t("recovery.confirm") : t("recovery.confirmDisabled")}
           </button>
         </form>
+      </div>
       </div>
     </div>
   );

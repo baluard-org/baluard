@@ -136,6 +136,35 @@
   border-color: rgba(239, 68, 68, 0.45);
 }
 
+.box-warning {
+  background-color: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+.box-warning .text-warning-title {
+  color: #fcd34d;
+}
+.box-warning .btn-warning-link {
+  color: #fcd34d;
+}
+.box-warning .btn-warning-link:hover {
+  color: #fde68a;
+}
+
+.light-theme .box-warning {
+  background-color: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.light-theme .box-warning .text-warning-title {
+  color: #854d0e;
+}
+.light-theme .box-warning .btn-warning-link {
+  color: #854d0e;
+}
+.light-theme .box-warning .btn-warning-link:hover {
+  color: #a16207;
+}
+
+
 
 
 
