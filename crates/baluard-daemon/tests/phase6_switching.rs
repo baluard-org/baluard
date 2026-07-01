@@ -612,9 +612,15 @@ mod real_vault {
         use baluard_daemon::proto::GatewayRequest;
 
         // The OS keychain is a process-global resource. Seed it with the
-        // master password via the public enable() API.
+        // master password via the public enable() API, under the SAME
+        // per-vault account (`quick-unlock:<vault_id>`) the daemon will
+        // query. vault_id is derived from the vault's KDF params.
         let password = "test-master-password-123";
-        baluard_core::biometric::enable(password).expect(
+        let (_dir_a, path_a) = make_real_vault("a");
+        let vault_id = baluard_core::vault::handle::VaultHandle::vault_id_for_path(&path_a)
+            .expect("derive vault_id")
+            .to_string();
+        baluard_core::biometric::enable(&vault_id, password).expect(
             "this test requires a writable OS keychain (macOS Security \
              framework or Linux Secret Service via libsecret). Run on a \
              keychain-equipped host, or filter with --skip biometric_unlock",
@@ -622,15 +628,14 @@ mod real_vault {
 
         // Best-effort cleanup: restore the keychain to its prior (absent)
         // state regardless of test outcome.
-        struct KeychainGuard;
+        struct KeychainGuard(String);
         impl Drop for KeychainGuard {
             fn drop(&mut self) {
-                let _ = baluard_core::biometric::disable();
+                let _ = baluard_core::biometric::disable(&self.0);
             }
         }
-        let _guard = KeychainGuard;
+        let _guard = KeychainGuard(vault_id);
 
-        let (_dir_a, path_a) = make_real_vault("a");
         let host: SharedVaultHost = VaultHost::shared();
         let state_a = Arc::new(VaultState::new(path_a));
         host.insert("alpha".into(), state_a.clone()).await;

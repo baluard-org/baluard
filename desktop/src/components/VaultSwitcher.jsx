@@ -15,7 +15,8 @@ import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { VaultContext } from "../context/VaultContext.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
-import { IconChevronDown, IconLock, IconCheck, IconX } from "./Icon.jsx";
+import { IconChevronDown, IconLock, IconCheck, IconX, IconTrash } from "./Icon.jsx";
+import DetachVaultModal from "./DetachVaultModal.jsx";
 
 const STATE_LABEL_KEY = {
   unlocked: "vault.vaultSwitcher.stateUnlocked",
@@ -34,6 +35,7 @@ export default function VaultSwitcher(props) {
   const switcher = useVaultSwitcher();
   const vault = useContext(VaultContext);
   const [open, setOpen] = createSignal(false);
+  const [detachTarget, setDetachTarget] = createSignal(null);
   let optionRefs = [];
 
   // props.onLockedTarget(slug): called when the user picks a vault that
@@ -71,6 +73,34 @@ export default function VaultSwitcher(props) {
       toastSuccess(t("vault.vaultSwitcher.closed", { name: slug }));
     } catch (e2) {
       toastError(sanitizeError(e2, t));
+    }
+  }
+
+  // Open the detach confirmation modal for a vault row. The row payload
+  // carries slug + display_name; we look up the path via the latest
+  // switcher snapshot so the modal can show it.
+  function openDetach(row, e) {
+    e.stopPropagation();
+    setDetachTarget({
+      slug: row.slug,
+      display_name: row.display_name,
+      path: row.path || "",
+    });
+  }
+
+  // Apply the detach once the modal confirms. Safe arm only — the
+  // vault directory is preserved on disk and can be re-attached via
+  // Open Vault.
+  async function confirmDetach() {
+    const target = detachTarget();
+    if (!target) return;
+    try {
+      await switcher.detach(target.slug);
+      toastSuccess(
+        t("vault.vaultSwitcher.detached", { name: target.display_name })
+      );
+    } catch (err) {
+      toastError(sanitizeError(err, t));
     }
   }
 
@@ -165,10 +195,17 @@ export default function VaultSwitcher(props) {
         >
           <For each={switcher.vaults()}>
             {(row, index) => (
-              <button
+              // Row is a <div role="option"> instead of a <button> so the
+              // close + detach action buttons can live as valid siblings
+              // instead of nested buttons. Nested <button> inside <button>
+              // is invalid HTML; the browser silently restructures it by
+              // closing the outer button at the first inner <button>, which
+              // breaks the row's pick handler for any sibling after the
+              // nested action.
+              <div
                 ref={(el) => optionRefs[index()] = el}
-                type="button"
                 role="option"
+                tabIndex={0}
                 aria-selected={row.active}
                 onClick={() => pick(row)}
                 onKeyDown={(e) => {
@@ -215,7 +252,20 @@ export default function VaultSwitcher(props) {
                     <IconX class="w-3 h-3" />
                   </button>
                 </Show>
-              </button>
+                {/* Detach button: always visible (detach works on closed/locked/
+                    unlocked vaults alike — that's the whole point). Distinct
+                    from close above: detach removes the registry entry, close
+                    only evicts from the in-memory map. */}
+                <button
+                  type="button"
+                  onClick={(e) => openDetach(row, e)}
+                  class="p-0.5 rounded text-[var(--color-muted)] hover:text-red-500 transition-colors shrink-0 cursor-pointer focus:ring-1 focus:ring-red-500"
+                  title={t("vault.vaultSwitcher.detachVault", { name: row.display_name })}
+                  aria-label={t("vault.vaultSwitcher.detachVault", { name: row.display_name })}
+                >
+                  <IconTrash class="w-3 h-3" />
+                </button>
+              </div>
             )}
           </For>
           <Show when={switcher.vaults().length === 0}>
@@ -225,6 +275,13 @@ export default function VaultSwitcher(props) {
           </Show>
         </div>
       </Show>
+
+      <DetachVaultModal
+        show={detachTarget() !== null}
+        setShow={(v) => { if (!v) setDetachTarget(null); }}
+        vault={detachTarget()}
+        onConfirm={confirmDetach}
+      />
     </div>
   );
 }

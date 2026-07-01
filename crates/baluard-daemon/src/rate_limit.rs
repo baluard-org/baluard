@@ -1,7 +1,8 @@
 //! M4 fix: Per-vault rate limiting for sensitive operations.
 //!
 //! Tracks failed attempts with exponential backoff and lockout. Applied to
-//! unlock, recovery, emergency access approval, and biometric unlock paths.
+//! unlock, recovery, emergency access approval, biometric unlock, and PIN
+//! unlock paths.
 //!
 //! Design:
 //! - In-memory only (resets on daemon restart). Acceptable: Argon2id KDF
@@ -12,10 +13,15 @@
 //! - Lockout after 10 failed attempts: refuses further attempts for 1 hour.
 //! - Counter resets on successful authentication.
 //!
-//! Peer review fix: the permit-based API (`claim_attempt`) atomically
-//! reserves a slot before the KDF runs, closing the check/use race where
-//! parallel requests could all pass `check()` before any `record_failure()`
-//! landed. A dropped permit (early return, panic) releases the slot.
+//! Permit API: `claim_attempt` checks backoff/lockout and returns an
+//! `AttemptPermit` whose `commit_success`/`commit_failure` record the
+//! outcome (and `Drop` without commit records nothing). This gives handlers
+//! a structured way to record outcomes; it is NOT a concurrency gate —
+//! concurrent attempts are each allowed and serialized by the caller (e.g.
+//! the PIN escrow mutex holds verify+record as one critical section).
+//! The authoritative brute-force counters are: Argon2id (cost), the on-disk
+//! attempt file for master-password unlock, and the PIN escrow's own
+//! 5-strike counter for PIN unlock.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -37,10 +43,6 @@ struct VaultRateLimit {
     last_attempt: Instant,
     /// When lockout expires, if currently locked.
     locked_until: Option<Instant>,
-    /// In-progress attempts (Argon2id is running). Reserved by the permit
-    /// pattern; new attempts are refused while any permit is outstanding.
-    #[allow(dead_code)]
-    in_flight: u32,
 }
 
 impl Default for VaultRateLimit {
@@ -49,7 +51,6 @@ impl Default for VaultRateLimit {
             failed_attempts: 0,
             last_attempt: Instant::now(),
             locked_until: None,
-            in_flight: 0,
         }
     }
 }
@@ -90,10 +91,11 @@ impl<'a> AttemptPermit<'a> {
 
 impl Drop for AttemptPermit<'_> {
     fn drop(&mut self) {
-        if !self.committed {
-            // Release the in-flight slot without recording outcome.
-            self.limiter.release(&self.vault_key);
-        }
+        // Nothing to release: the permit API records outcome only via the
+        // explicit commit_* calls. An uncommitted drop (early return) leaves
+        // the counters untouched on purpose — the caller already decided
+        // the attempt did not warrant a success/failure record.
+        let _ = self.committed;
     }
 }
 
@@ -111,14 +113,12 @@ impl RateLimiter {
         }
     }
 
-    /// Peer review fix: atomically check AND reserve a slot before the KDF
-    /// runs. Returns an `Allowed(permit)` if the attempt is allowed, or a
-    /// `Backoff`/`LockedOut` variant with the remaining wait time.
-    ///
-    /// This closes the check/use race where parallel requests could all pass
-    /// a simple check() before any record_failure() landed. The permit
-    /// pattern increments `in_flight` atomically; new attempts are refused
-    /// while any permit is outstanding.
+    /// Check backoff/lockout and return a permit the caller commits with
+    /// `commit_success` / `commit_failure`. This is NOT a concurrency gate:
+    /// concurrent attempts are each allowed (the authoritative brute-force
+    /// defense is Argon2id + the per-path counters, not mutual exclusion
+    /// here). Handlers that need strict serialization (e.g. PIN verify+
+    /// record) hold their own mutex across the critical section.
     pub fn claim_attempt(&self, vault_key: &str) -> ClaimResult<'_> {
         let mut state = self.state.lock().expect("rate limiter poisoned");
         let entry = state.entry(vault_key.to_string()).or_default();
@@ -139,8 +139,6 @@ impl RateLimiter {
             }
         }
 
-        // Reserve the slot
-        entry.in_flight = entry.in_flight.saturating_add(1);
         ClaimResult::Allowed(AttemptPermit {
             limiter: self,
             vault_key: vault_key.to_string(),
@@ -165,14 +163,6 @@ impl RateLimiter {
         if let Some(entry) = state.get_mut(vault_key) {
             entry.failed_attempts = 0;
             entry.locked_until = None;
-        }
-    }
-
-    /// Release an in-flight slot without recording an outcome (called by Drop).
-    fn release(&self, vault_key: &str) {
-        let mut state = self.state.lock().expect("rate limiter poisoned");
-        if let Some(entry) = state.get_mut(vault_key) {
-            entry.in_flight = entry.in_flight.saturating_sub(1);
         }
     }
 }
@@ -291,26 +281,6 @@ mod tests {
         let _p = match rl.claim_attempt("vault1") {
             ClaimResult::Allowed(p) => p,
             other => panic!("expected allowed, got {other:?}"),
-        };
-    }
-
-    #[test]
-    fn dropped_permit_releases_slot() {
-        // Peer review fix: if a permit is dropped without commit (e.g. early
-        // return or panic), the in-flight slot must be released so the next
-        // attempt isn't blocked.
-        let rl = RateLimiter::new();
-        {
-            let _p = match rl.claim_attempt("vault1") {
-                ClaimResult::Allowed(p) => p,
-                _ => panic!("expected allowed"),
-            };
-            // _p dropped here without commit
-        }
-        // Next attempt should be allowed (slot released)
-        let _p = match rl.claim_attempt("vault1") {
-            ClaimResult::Allowed(p) => p,
-            other => panic!("expected allowed after drop, got {other:?}"),
         };
     }
 }

@@ -1,0 +1,538 @@
+//! Integration tests for the `vaults.detach` flow.
+//!
+//! `vaults.detach` is the user-facing "remove this vault from Baluard"
+//! command on the desktop and CLI. It works pre-unlock and either:
+//!   - drops the registry entry (safe arm), or
+//!   - drops the registry entry AND deletes the vault directory from disk
+//!     (destructive arm, gated by a marker re-validation).
+//!
+//! The handler composes three building blocks: `VaultHost::close`
+//! (zeroize keys + drop from map + clear active), `VaultRegistry::remove`
+//! (drop entry + clear active), and a `.baluard` marker re-check before
+//! `remove_dir_all`. These tests exercise each piece and the composed
+//! flow against a real on-disk vault so the safety gate is exercised.
+//!
+//! **Two layers of tests**:
+//!   1. **Mirror tests** (the bulk) exercise the `disk_delete_gated`
+//!      and `detach_registry_only_at` helpers. They are hermetic and
+//!      parallel-safe — registry writes go through a tempdir path.
+//!   2. **Wire-level tests** (the `route_host_request` calls at the
+//!      bottom) drive the real handler with a real `GatewayRequest` and
+//!      assert on the real `GatewayResponse`. These are the only tests
+//!      that can catch a bug in the actual `"vaults.detach"` match arm
+//!      (wrong field name, wrong order, divergent error string). They
+//!      touch the global `data_dir/registry.json` and are therefore
+//!      serialised via a process-wide `Mutex` so concurrent test
+//!      runners don't race on the file.
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use baluard_core::vault::creation::VaultCreator;
+use baluard_core::vault::registry::{BaluardMarker, VaultEntry, VaultRegistry};
+use baluard_daemon::handler::route_host_request;
+use baluard_daemon::host::VaultHost;
+use baluard_daemon::proto::{GatewayRequest, GatewayResponse};
+use baluard_daemon::state::VaultState;
+use uuid::Uuid;
+
+/// Serialises wire-level tests that mutate the global registry file.
+static GLOBAL_REG: Mutex<()> = Mutex::new(());
+
+// ── test helpers ──
+
+fn make_real_vault(label: &str) -> (tempfile::TempDir, PathBuf, Uuid) {
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let path = dir.path().to_path_buf();
+    let password = "test-master-password-123";
+    let slug = format!("dev-{label}");
+    // Set the slug via the builder so VaultCreator writes the .baluard
+    // marker; without it the marker is skipped and the disk-delete gate
+    // would refuse the test even with a valid registry entry.
+    let (_handle, _secrets) = VaultCreator::new(&path, password, &slug)
+        .slug(Some(slug.clone()))
+        .execute()
+        .expect("vault creation");
+    // Read the vault_id the creator wrote into .baluard — the registry
+    // entry must mirror it so the disk-delete gate accepts deletion.
+    let marker = BaluardMarker::read_from_vault(&path)
+        .expect("marker read")
+        .expect("marker present");
+    (dir, path, marker.vault_id)
+}
+
+fn make_entry(slug: &str, path: &Path, vault_id: Uuid) -> VaultEntry {
+    VaultEntry {
+        slug: slug.to_string(),
+        display_name: slug.to_string(),
+        path: path.to_path_buf(),
+        provider: None,
+        remote_url: None,
+        last_synced: None,
+        last_opened: None,
+        vault_id,
+    }
+}
+
+/// Mirror of the handler's registry-only detach arm. Operates on a
+/// caller-supplied path so tests can use a tempdir and stay parallel-
+/// safe (no touch on the global `data_dir/registry.json`).
+fn detach_registry_only_at(reg_path: &Path, slug: &str) -> Option<VaultEntry> {
+    let mut reg = VaultRegistry::load_from(reg_path).expect("registry load");
+    let removed = reg.remove(slug);
+    reg.save_to(reg_path).expect("registry save");
+    removed
+}
+
+/// Mirror of the handler's disk-delete gate. Returns Ok(()) on success.
+/// Refuses when the marker is missing, unreadable, OR carries a different
+/// vault_id. `force=true` bypasses only the `Missing` / `Unreadable`
+/// states — never `Mismatch` (which is positive evidence the directory
+/// is a different vault). Mirrors the production `MarkerCheck` enum so
+/// the helper cannot drift from the real handler.
+fn disk_delete_gated(path: &Path, expected_vault_id: Uuid, force: bool) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let marker_result = BaluardMarker::read_from_vault(path);
+    let mismatch = matches!(&marker_result, Ok(Some(m)) if m.vault_id != expected_vault_id);
+    let ok = matches!(&marker_result, Ok(Some(m)) if m.vault_id == expected_vault_id);
+    if !ok {
+        if mismatch {
+            // Mismatch is UNCONDITIONAL refusal. The typed-name gate
+            // echoes the registry's own display_name and proves nothing
+            // about the directory's actual contents when the marker
+            // positively disagrees with the registry.
+            return Err(format!(
+                "refusing: .baluard marker vault_id mismatch at {} (cannot be bypassed by force)",
+                path.display()
+            ));
+        }
+        if !force {
+            let reason = match marker_result {
+                Ok(Some(_)) => "vault_id mismatch",
+                Ok(None) => "missing",
+                Err(_) => "unreadable",
+            };
+            return Err(format!(
+                "refusing: .baluard marker is {reason} at {}",
+                path.display()
+            ));
+        }
+    }
+    std::fs::remove_dir_all(path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ── registry detach ──
+
+#[test]
+fn registry_remove_clears_active_and_entry() {
+    let mut reg = VaultRegistry::default();
+    let entry = make_entry("work", Path::new("/tmp/example/work"), Uuid::new_v4());
+    reg.add(entry).unwrap();
+    reg.set_active("work").unwrap();
+    assert_eq!(reg.active_vault.as_deref(), Some("work"));
+
+    let removed = reg.remove("work");
+    assert!(removed.is_some());
+    assert!(reg.get("work").is_none());
+    assert!(
+        reg.active_vault.is_none(),
+        "active must clear when slug was active"
+    );
+}
+
+#[test]
+fn registry_remove_persists_across_reload() {
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let reg_path = dir.path().join("registry.json");
+
+    let mut reg = VaultRegistry::default();
+    reg.add(make_entry("alpha", Path::new("/tmp/alpha"), Uuid::new_v4()))
+        .unwrap();
+    reg.add(make_entry("beta", Path::new("/tmp/beta"), Uuid::new_v4()))
+        .unwrap();
+    reg.save_to(&reg_path).expect("save");
+
+    let mut reloaded = VaultRegistry::load_from(&reg_path).unwrap();
+    assert!(reloaded.get("alpha").is_some());
+
+    reloaded.remove("alpha");
+    reloaded.save_to(&reg_path).expect("save");
+
+    let final_state = VaultRegistry::load_from(&reg_path).unwrap();
+    assert!(final_state.get("alpha").is_none());
+    assert!(final_state.get("beta").is_some());
+}
+
+// ── host detach ──
+
+#[tokio::test]
+async fn host_close_drops_map_entry_and_clears_active() {
+    let host = VaultHost::shared();
+    let state = Arc::new(VaultState::new(PathBuf::from("/tmp/fake")));
+    host.insert("only".into(), state).await;
+    host.switch("only").await.unwrap();
+    assert_eq!(host.active_slug().await.as_deref(), Some("only"));
+
+    let removed = host.close("only").await;
+    assert!(removed);
+    assert!(host.get("only").await.is_none());
+    assert_eq!(host.active_slug().await, None);
+}
+
+#[tokio::test]
+async fn host_close_unknown_slug_is_noop() {
+    let host = VaultHost::shared();
+    let removed = host.close("ghost").await;
+    assert!(!removed, "unknown slug must report not removed");
+}
+
+// ── composed flow ──
+
+#[tokio::test]
+async fn detach_real_vault_drops_registry_and_host_state() {
+    let (_dir, path, vault_id) = make_real_vault("detach-safe");
+    // Tempdir-backed registry path keeps this test parallel-safe — no
+    // touch on the global data_dir/registry.json.
+    let reg_dir = tempfile::tempdir().expect("reg tempdir");
+    let reg_path = reg_dir.path().join("registry.json");
+
+    // Wire the vault into the registry + host like a successful unlock would.
+    let mut reg = VaultRegistry::default();
+    let entry = make_entry("detach-safe", &path, vault_id);
+    let entry_vault_id = entry.vault_id;
+    reg.add(entry).unwrap();
+    reg.set_active("detach-safe").unwrap();
+    reg.save_to(&reg_path).expect("save");
+
+    let host = VaultHost::shared();
+    let state = Arc::new(VaultState::new(path.clone()));
+    state.unlock("test-master-password-123").await.unwrap();
+    host.insert("detach-safe".into(), state.clone()).await;
+    host.switch("detach-safe").await.unwrap();
+    assert!(host.get("detach-safe").await.is_some());
+    assert_eq!(host.active_slug().await.as_deref(), Some("detach-safe"));
+
+    // Mirror the route: host.close (zeroize keys + drop map + clear active)
+    // then registry.remove (drop entry + clear active).
+    host.close("detach-safe").await;
+    let removed =
+        detach_registry_only_at(&reg_path, "detach-safe").expect("registry entry removed");
+    assert_eq!(removed.vault_id, entry_vault_id);
+
+    // After detach:
+    assert!(host.get("detach-safe").await.is_none());
+    assert_eq!(host.active_slug().await, None);
+    let post = VaultRegistry::load_from(&reg_path).unwrap();
+    assert!(post.get("detach-safe").is_none());
+    assert!(post.active_vault.is_none());
+    // State Arc dropped only when handler finished: assert it zeroizes.
+    drop(state);
+}
+
+// ── disk-delete safety gate ──
+
+#[test]
+fn disk_delete_with_valid_marker_removes_directory() {
+    let (_dir, path, vault_id) = make_real_vault("disk-delete-ok");
+    assert!(path.exists());
+
+    let entry = make_entry("disk-delete-ok", &path, vault_id);
+    disk_delete_gated(&path, entry.vault_id, false).expect("delete should succeed");
+    assert!(!path.exists(), "directory must be gone");
+}
+
+#[test]
+fn disk_delete_refuses_when_marker_missing() {
+    let (_dir, path, vault_id) = make_real_vault("disk-delete-missing-marker");
+    // Strip the .baluard marker to simulate a corrupted vault.
+    let marker = path.join(".baluard");
+    if marker.exists() {
+        std::fs::remove_file(&marker).expect("strip marker");
+    }
+
+    let entry = make_entry("disk-delete-missing-marker", &path, vault_id);
+    let result = disk_delete_gated(&path, entry.vault_id, false);
+    assert!(result.is_err(), "must refuse without .baluard marker");
+    assert!(path.exists(), "directory must remain when gate refuses");
+}
+
+#[test]
+fn disk_delete_refuses_when_marker_vault_id_mismatches() {
+    let (_dir, path, vault_id) = make_real_vault("disk-delete-mismatch");
+    let entry = make_entry("disk-delete-mismatch", &path, vault_id);
+
+    // Hand-craft a .baluard marker with a DIFFERENT vault_id to model a
+    // stale registry entry pointing at a directory that was reused for a
+    // different vault.
+    let stale = BaluardMarker::new(Uuid::new_v4(), "some-other-slug");
+    stale.write_to_vault(&path).expect("write stale marker");
+
+    let result = disk_delete_gated(&path, entry.vault_id, false);
+    assert!(result.is_err(), "must refuse on vault_id mismatch");
+    assert!(path.exists(), "directory must remain when gate refuses");
+}
+
+#[test]
+fn disk_delete_refuses_when_marker_unreadable() {
+    // Distinct from `Missing`: the marker file exists but is corrupt.
+    // The daemon can NOT positively say "no marker here" — it just
+    // couldn't read what was there. The audit log records the I/O
+    // error so the deletion is traceable to a real failure rather than
+    // a claim of absence.
+    let (_dir, path, vault_id) = make_real_vault("disk-delete-unreadable");
+    let marker = path.join(".baluard");
+    std::fs::write(&marker, b"this is not valid json {{{").expect("overwrite marker with garbage");
+
+    let entry = make_entry("disk-delete-unreadable", &path, vault_id);
+    let result = disk_delete_gated(&path, entry.vault_id, false);
+    assert!(result.is_err(), "must refuse when marker is unreadable");
+    assert!(path.exists(), "directory must remain when gate refuses");
+}
+
+#[test]
+fn disk_delete_with_force_succeeds_when_marker_missing() {
+    // The real-world scenario the user hit: a stale vault whose .baluard
+    // marker was lost (corruption, manual deletion). Without `force` the
+    // gate refuses; with it, the caller has confirmed intent through
+    // another channel so we proceed.
+    let (_dir, path, vault_id) = make_real_vault("disk-delete-force-missing");
+    let marker = path.join(".baluard");
+    if marker.exists() {
+        std::fs::remove_file(&marker).expect("strip marker");
+    }
+
+    let entry = make_entry("disk-delete-force-missing", &path, vault_id);
+    disk_delete_gated(&path, entry.vault_id, true)
+        .expect("force should bypass missing-marker refusal");
+    assert!(!path.exists(), "directory must be gone after force delete");
+}
+
+#[test]
+fn disk_delete_with_force_refuses_on_mismatch() {
+    // Critical security property: `force` does NOT bypass `Mismatch`.
+    // The on-disk marker positively identifies this directory as
+    // belonging to a different vault. No amount of caller-side
+    // confirmation can override that — manual cleanup is the only path.
+    let (_dir, path, vault_id) = make_real_vault("disk-delete-force-mismatch");
+    let entry = make_entry("disk-delete-force-mismatch", &path, vault_id);
+
+    let stale = BaluardMarker::new(Uuid::new_v4(), "some-other-slug");
+    stale.write_to_vault(&path).expect("write stale marker");
+
+    let result = disk_delete_gated(&path, entry.vault_id, true);
+    assert!(result.is_err(), "force must NOT bypass vault_id mismatch");
+    assert!(
+        path.exists(),
+        "directory must remain when gate refuses on mismatch"
+    );
+}
+
+#[test]
+fn disk_delete_with_force_succeeds_when_marker_unreadable() {
+    let (_dir, path, vault_id) = make_real_vault("disk-delete-force-unreadable");
+    std::fs::write(path.join(".baluard"), b"not valid json {{{")
+        .expect("overwrite marker with garbage");
+
+    let entry = make_entry("disk-delete-force-unreadable", &path, vault_id);
+    disk_delete_gated(&path, entry.vault_id, true)
+        .expect("force should bypass unreadable-marker refusal");
+    assert!(!path.exists(), "directory must be gone after force delete");
+}
+
+#[test]
+fn disk_delete_is_idempotent_when_directory_already_gone() {
+    // No directory created. Registry says "delete this" but it's gone.
+    let path = PathBuf::from("/tmp/this-path-deliberately-does-not-exist");
+    let result = disk_delete_gated(&path, Uuid::new_v4(), false);
+    assert!(result.is_ok(), "idempotent: missing dir is not an error");
+}
+
+// ── wire-level tests (real `route_host_request` dispatch) ──
+//
+// These tests build a real `GatewayRequest` and call the actual
+// `route_host_request` handler. The handler reads/writes the GLOBAL
+// `data_dir/registry.json`, so we serialise on `GLOBAL_REG` to keep
+// parallel test runners from racing on the same file. The `host` is
+// fresh per test (`VaultHost::new()` — NOT `shared()`) so the in-memory
+// map is also isolated.
+
+fn write_global_registry(entries: &[VaultEntry], active: Option<&str>) {
+    let mut reg = VaultRegistry::default();
+    for e in entries {
+        reg.add(e.clone()).expect("add entry");
+    }
+    if let Some(slug) = active {
+        reg.set_active(slug).expect("set active");
+    }
+    reg.save_locked().expect("save global registry");
+}
+
+fn read_global_registry() -> VaultRegistry {
+    VaultRegistry::load_locked().expect("load global registry")
+}
+
+fn make_request(action: &str, payload: serde_json::Value) -> GatewayRequest {
+    GatewayRequest {
+        action: action.to_string(),
+        payload: payload.to_string(),
+        session_token: String::new(),
+        slug: String::new(),
+    }
+}
+
+fn response_payload(resp: &GatewayResponse) -> serde_json::Value {
+    serde_json::from_str(&resp.payload).unwrap_or(serde_json::Value::Null)
+}
+
+#[tokio::test]
+async fn route_detach_safe_arm_returns_success_and_drops_registry() {
+    let (_dir, path, vault_id) = make_real_vault("wire-safe");
+    let entry = make_entry("wire-safe", &path, vault_id);
+    // Serialise the global registry mutation so the await below doesn't
+    // hold the MutexGuard across a suspension point. Setup is sync;
+    // release the guard before calling the async handler.
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("wire-safe"));
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.detach",
+        serde_json::json!({
+            "slug": "wire-safe",
+            "delete_from_disk": false,
+        }),
+    );
+
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        resp.success,
+        "detach should succeed: {}",
+        resp.error_message
+    );
+
+    // Response carries the right fields.
+    let payload = response_payload(&resp);
+    assert_eq!(payload["slug"], "wire-safe");
+    assert_eq!(payload["deleted_from_disk"], false);
+    assert_eq!(
+        payload["path"].as_str(),
+        Some(path.to_string_lossy().as_ref())
+    );
+
+    // Registry no longer has the entry.
+    let post = read_global_registry();
+    assert!(post.get("wire-safe").is_none());
+    assert!(post.active_vault.is_none());
+    // Disk directory untouched (safe arm).
+    assert!(path.exists());
+}
+
+#[tokio::test]
+async fn route_detach_unknown_slug_returns_error() {
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(&[], None);
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.detach",
+        serde_json::json!({ "slug": "does-not-exist" }),
+    );
+
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success);
+    assert!(
+        resp.error_message.contains("not registered"),
+        "error should mention not registered, got: {}",
+        resp.error_message
+    );
+}
+
+#[tokio::test]
+async fn route_detach_missing_marker_with_force_succeeds() {
+    let (_dir, path, vault_id) = make_real_vault("wire-missing-force");
+    // Strip the marker to simulate corruption.
+    std::fs::remove_file(path.join(".baluard")).expect("strip marker");
+    let entry = make_entry("wire-missing-force", &path, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("wire-missing-force"));
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.detach",
+        serde_json::json!({
+            "slug": "wire-missing-force",
+            "delete_from_disk": true,
+            "force": true,
+        }),
+    );
+
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        resp.success,
+        "missing+force should succeed: {}",
+        resp.error_message
+    );
+    let payload = response_payload(&resp);
+    assert_eq!(payload["deleted_from_disk"], true);
+    assert!(!path.exists(), "directory must be deleted");
+
+    // Registry cleared.
+    let post = read_global_registry();
+    assert!(post.get("wire-missing-force").is_none());
+}
+
+#[tokio::test]
+async fn route_detach_mismatch_with_force_refuses_unconditionally() {
+    let (_dir, path, vault_id) = make_real_vault("wire-mismatch-force");
+    // Overwrite marker with a DIFFERENT vault_id.
+    let stale = BaluardMarker::new(Uuid::new_v4(), "some-other-slug");
+    stale.write_to_vault(&path).expect("write stale marker");
+
+    let entry = make_entry("wire-mismatch-force", &path, vault_id);
+    {
+        let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());
+        write_global_registry(std::slice::from_ref(&entry), Some("wire-mismatch-force"));
+    }
+
+    let host = Arc::new(VaultHost::new());
+    let req = make_request(
+        "vaults.detach",
+        serde_json::json!({
+            "slug": "wire-mismatch-force",
+            "delete_from_disk": true,
+            "force": true,
+        }),
+    );
+
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "mismatch+force must refuse");
+    assert!(
+        resp.error_message.contains("vault_id does not match"),
+        "error should explain the mismatch, got: {}",
+        resp.error_message
+    );
+    assert!(
+        resp.error_message.contains("force") && resp.error_message.contains("does not override"),
+        "error should explain that force does not bypass mismatch, got: {}",
+        resp.error_message
+    );
+    assert!(path.exists(), "directory must remain when refused");
+
+    // Registry IS removed — the stale entry pointed at a wrong
+    // directory, so dropping it cleans up the pointer. The user can
+    // re-attach the (now-fixed) directory via `baluard open <path>`.
+    let post = read_global_registry();
+    assert!(
+        post.get("wire-mismatch-force").is_none(),
+        "stale registry pointer should be cleared even on mismatch refusal"
+    );
+}

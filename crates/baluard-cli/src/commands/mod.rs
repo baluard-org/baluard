@@ -2767,6 +2767,10 @@ pub fn handle_vaults(action: &VaultAction, cli: &Cli) -> Result<(), Box<dyn std:
         VaultAction::Close { slug } => vaults_close(slug, cli),
         VaultAction::SetDefault { slug } => vaults_set_default(slug, cli),
         VaultAction::Prune { dry_run } => vaults_prune(*dry_run),
+        VaultAction::Detach {
+            slug,
+            delete_from_disk,
+        } => vaults_detach(slug, *delete_from_disk, cli),
     }
 }
 
@@ -2992,5 +2996,59 @@ fn vaults_prune(dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     let kept = reg.vaults.len();
     reg.save_locked()?;
     println!("\nDone. {kept} vault(s) remain in the registry.");
+    Ok(())
+}
+
+/// Detach a vault from Baluard (drop the registry entry). Without
+/// `--delete-from-disk` the directory is left untouched; with it the
+/// directory is removed after the user types the slug a second time as
+/// confirmation. The two-step gate mirrors the desktop modal's "type the
+/// vault name" arm so the CLI cannot silently nuke a vault with one
+/// command.
+fn vaults_detach(
+    slug: &str,
+    delete_from_disk: bool,
+    cli: &Cli,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if delete_from_disk {
+        eprintln!("About to detach AND delete vault '{slug}' from disk. This is permanent.");
+        eprintln!("Type the slug '{slug}' to confirm:");
+        let mut confirm = String::new();
+        std::io::stdin().read_line(&mut confirm)?;
+        let confirm = confirm.trim();
+        if confirm != slug {
+            return Err(format!(
+                "Confirmation does not match (got '{confirm}', expected '{slug}'). Aborted."
+            )
+            .into());
+        }
+    }
+
+    // `destructive` carries the same bool as `delete_from_disk`. The CLI
+    // has already required the user to retype the slug above, so the
+    // .baluard marker gate would just be a second, redundant check
+    // that traps users when their marker is stale/corrupted (which is
+    // exactly the case this command exists to clean up). Binding once
+    // makes the "they are always the same" invariant explicit at the
+    // call site.
+    let destructive = delete_from_disk;
+    let payload = serde_json::json!({
+        "slug": slug,
+        "delete_from_disk": destructive,
+        "force": destructive,
+    })
+    .to_string();
+    let resp = client::request_to("vaults.detach", &payload, cli.socket.as_deref())?;
+    if !resp.success {
+        return Err(resp.error_message.into());
+    }
+
+    if delete_from_disk {
+        println!("Detached '{slug}' from Baluard and deleted its directory from disk.");
+    } else {
+        println!(
+            "Detached '{slug}' from Baluard. Directory left on disk (re-attach with `baluard open <path>`)."
+        );
+    }
     Ok(())
 }

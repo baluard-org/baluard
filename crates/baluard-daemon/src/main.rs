@@ -209,6 +209,14 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) -> Result<()> {
+    // Best-effort wipe of the legacy global `quick-unlock` keychain entry
+    // written by pre-QU daemon versions (one shared secret for ALL vaults).
+    // Per-vault scoping is now keyed by vault_id; this prevents an old
+    // per-app secret from lingering in the keychain. Non-fatal.
+    if let Err(e) = baluard_core::biometric::disable_legacy_global() {
+        eprintln!("warning: failed to wipe legacy biometric secret: {e}");
+    }
+
     let host: SharedVaultHost = VaultHost::shared();
 
     // Lazy-load the resolved active vault into the host map (opened but

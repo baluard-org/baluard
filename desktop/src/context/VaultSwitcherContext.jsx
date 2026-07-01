@@ -72,6 +72,27 @@ function VaultSwitcherProvider(props) {
     await refresh();
   }
 
+  // Detach a vault: drop the registry entry so it stops appearing in the
+  // app. Works pre-unlock (the vault does not need to be open in the
+  // daemon). The safe, reversible arm only — the vault directory is left
+  // untouched on disk and can be re-attached later via Open Vault.
+  //
+  // The destructive arm (delete-from-disk) is intentionally not exposed
+  // here; it lives in the CLI (`baluard vaults detach --delete-from-disk`)
+  // as a power-user escape hatch. See DetachVaultModal.jsx for the
+  // rationale.
+  //
+  // `refresh()` lives in `finally` so the dropdown re-syncs even if the
+  // daemon reports an error.
+  async function detach(slug) {
+    const payload = JSON.stringify({ slug });
+    try {
+      await daemon("vaults.detach", payload);
+    } finally {
+      await refresh();
+    }
+  }
+
   const store = {
     vaults,
     activeSlug,
@@ -79,6 +100,7 @@ function VaultSwitcherProvider(props) {
     refresh,
     switchTo,
     close,
+    detach,
   };
 
   return (

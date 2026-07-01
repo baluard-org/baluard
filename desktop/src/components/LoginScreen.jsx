@@ -1,4 +1,4 @@
-import { Show, createSignal } from "solid-js";
+import { Show, createSignal, createEffect } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
@@ -18,7 +18,21 @@ export default function LoginScreen() {
   let passwordRef;
 
   const [wrongPassword, setWrongPassword] = createSignal(false);
+
+  // Re-query Quick Unlock status whenever the selected vault changes.
+  // Post-QU fix the keychain entry is per-vault, so the button must reflect
+  // the currently-targeted vault, not a global flag.
+  createEffect(() => {
+    const target = auth.switchTarget();
+    // switchTarget() is read here to track it; refreshBiometric queries the
+    // daemon for that slug (or the active vault when target is null).
+    auth.refreshBiometric(target);
+    // Session PIN escrow is also per-vault (in-memory). Re-query alongside.
+    auth.refreshPin(target);
+  });
   const [bruteLock, setBruteLock] = createSignal(false);
+  const [pinValue, setPinValue] = createSignal("");
+  const [pinBusy, setPinBusy] = createSignal(false);
 
   async function handleUnlock() {
     if (bruteLock() || auth.status() === "unlocking") return;
@@ -126,6 +140,55 @@ export default function LoginScreen() {
               <IconFingerprint class="w-4 h-4" />
               {t("login.quickUnlock")}
             </button>
+          </Show>
+
+          {/* Quick Unlock (Session PIN) */}
+          <Show when={auth.pinAvailable()}>
+            <div class="login-screen__pin-wrap w-full mt-2">
+              <input
+                type="password"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                autocomplete="off"
+                maxlength="6"
+                placeholder={t("login.pinPlaceholder")}
+                value={pinValue()}
+                onInput={(e) => setPinValue(e.currentTarget.value.replace(/\D/g, "").slice(0, 6))}
+                aria-label={t("login.pinPlaceholder")}
+                disabled={pinBusy() || bruteLock()}
+                class="login-screen__pin-input w-full py-3 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text)] text-center tracking-[0.5em] font-semibold outline-none focus:border-[var(--color-primary)] disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  const pin = pinValue();
+                  if (pin.length !== 6 || pinBusy() || bruteLock()) return;
+                  setPinBusy(true);
+                  try {
+                    const target = auth.switchTarget();
+                    await daemon("vault.open", "", target);
+                    await daemon(
+                      "vault.pin_unlock",
+                      JSON.stringify({ pin }),
+                      target,
+                    );
+                    setPinValue("");
+                    auth.setStatus("unlocked");
+                  } catch (e) {
+                    toastError(sanitizeError(e, t));
+                    setPinValue("");
+                    // Escrow may have been nuked (5 wrong PINs): re-query.
+                    auth.refreshPin(auth.switchTarget());
+                  } finally {
+                    setPinBusy(false);
+                  }
+                }}
+                disabled={pinValue().length !== 6 || pinBusy() || bruteLock()}
+                class="login-screen__pin-btn w-full mt-2 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {pinBusy() ? t("login.unlocking") : t("login.pinUnlock")}
+              </button>
+            </div>
           </Show>
         </form>
 

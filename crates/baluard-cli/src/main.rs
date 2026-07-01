@@ -286,6 +286,19 @@ enum VaultAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Detach a vault from Baluard: drop the registry entry so the vault
+    /// no longer appears in the app. Without `--delete-from-disk` the
+    /// vault directory is left on disk and can be re-attached via
+    /// `baluard open <path>`. Works pre-unlock (the vault does not need to
+    /// be unlocked or even open in the daemon).
+    Detach {
+        /// Vault slug.
+        slug: String,
+        /// Also remove the vault directory from disk. Requires typing the
+        /// slug a second time as confirmation. Permanent — no recovery.
+        #[arg(long)]
+        delete_from_disk: bool,
+    },
 }
 
 #[derive(Subcommand)]

@@ -33,6 +33,20 @@ export default function SettingsModal() {
   const [biometricPassword, setBiometricPassword] = createSignal("");
   const [showBiometricInput, setShowBiometricInput] = createSignal(false);
 
+  // Session PIN state (in-memory KEK escrow; Linux / no-Windows-Hello path)
+  const [pinEnabled, setPinEnabled] = createSignal(false);
+  const [showPinSetup, setShowPinSetup] = createSignal(false);
+  const [pinPassword, setPinPassword] = createSignal("");
+  const [pinValue, setPinValue] = createSignal("");
+  const [pinConfirm, setPinConfirm] = createSignal("");
+
+  async function loadPinStatus() {
+    try {
+      const s = JSON.parse(await daemon("vault.pin_status"));
+      setPinEnabled(!!s.enabled);
+    } catch { setPinEnabled(false); }
+  }
+
   // Favicon state
   const [fetchFavicons, setFetchFavicons] = createSignal(false);
 
@@ -95,6 +109,7 @@ export default function SettingsModal() {
       }
       setBiometricAvailable(available);
       setBiometricEnabled(enabled);
+      await loadPinStatus();
 
       // Load profile
       setDisplayName(data.display_name || "");
@@ -228,6 +243,45 @@ export default function SettingsModal() {
       setShowBiometricInput(false);
       setBiometricPassword("");
       toastSuccess(t("settings.quickUnlockEnabled"));
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    }
+  }
+
+  // ── Session PIN handlers ──
+  function togglePin() {
+    if (pinEnabled()) {
+      disablePin();
+    } else {
+      setShowPinSetup(true);
+    }
+  }
+
+  async function disablePin() {
+    try {
+      await daemon("vault.pin_disable");
+      setPinEnabled(false);
+      auth.refreshPin();
+      toastSuccess(t("settings.pinDisabled"));
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    }
+  }
+
+  async function confirmPinEnable() {
+    const password = pinPassword();
+    const pin = pinValue();
+    const confirm = pinConfirm();
+    if (!password) { toastError(t("settings.pinNeedPassword")); return; }
+    if (!/^\d{6}$/.test(pin)) { toastError(t("settings.pinMustBe6Digits")); return; }
+    if (pin !== confirm) { toastError(t("settings.pinMismatch")); return; }
+    try {
+      await daemon("vault.pin_enable", JSON.stringify({ password, pin }));
+      setPinEnabled(true);
+      auth.refreshPin();
+      setShowPinSetup(false);
+      setPinPassword(""); setPinValue(""); setPinConfirm("");
+      toastSuccess(t("settings.pinEnabled"));
     } catch (e) {
       toastError(sanitizeError(e, t));
     }
@@ -512,6 +566,84 @@ export default function SettingsModal() {
                         </button>
                         <button
                           onClick={() => { setShowBiometricInput(false); setBiometricPassword(""); }}
+                          class="px-2 py-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer text-xs"
+                        >
+                          {t("entry.cancel")}
+                        </button>
+                      </div>
+                    </div>
+                  </Show>
+                </div>
+
+                {/* Quick Unlock (Session PIN) Settings */}
+                <div class="pt-4 border-t border-[var(--color-border)]">
+                  <div class="flex items-center justify-between">
+                    <div class="flex flex-col flex-1 pr-4">
+                      <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.pinUnlock")}</span>
+                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.pinLongDesc")}</span>
+                    </div>
+                    <Show when={pinEnabled()} fallback={
+                      <button
+                        onClick={togglePin}
+                        disabled={showPinSetup()}
+                        class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${showPinSetup() ? "opacity-50 cursor-not-allowed bg-transparent text-[var(--color-muted)] border-[var(--color-border)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                      >
+                        {t("settings.enable")}
+                      </button>
+                    }>
+                      <button
+                        onClick={togglePin}
+                        class="px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer btn-active-green"
+                      >
+                        {t("settings.enabled")}
+                      </button>
+                    </Show>
+                  </div>
+
+                  <Show when={showPinSetup()}>
+                    <div class="mt-3 p-3 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-xl space-y-3">
+                      <div class="text-[10px] text-[var(--color-warning)] font-bold">
+                        {t("settings.pinWarning")}
+                      </div>
+                      <div class="space-y-2">
+                        <input
+                          type="password"
+                          placeholder={t("entry.passwordPlaceholder")}
+                          class="w-full px-3 py-1.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
+                          value={pinPassword()}
+                          onInput={e => setPinPassword(e.target.value)}
+                        />
+                        <input
+                          type="password"
+                          inputmode="numeric"
+                          pattern="[0-9]*"
+                          maxlength="6"
+                          placeholder={t("settings.pinPlaceholder")}
+                          class="w-full px-3 py-1.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text)] text-center tracking-[0.4em] outline-none focus:border-[var(--color-primary)] transition-all"
+                          value={pinValue()}
+                          onInput={e => setPinValue(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        />
+                        <input
+                          type="password"
+                          inputmode="numeric"
+                          pattern="[0-9]*"
+                          maxlength="6"
+                          placeholder={t("settings.pinConfirmPlaceholder")}
+                          class="w-full px-3 py-1.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text)] text-center tracking-[0.4em] outline-none focus:border-[var(--color-primary)] transition-all"
+                          value={pinConfirm()}
+                          onInput={e => setPinConfirm(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                          onKeyDown={e => e.key === "Enter" && confirmPinEnable()}
+                        />
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <button
+                          onClick={confirmPinEnable}
+                          class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-text)] font-bold hover:bg-[var(--color-primary-hover)] transition-all cursor-pointer text-xs"
+                        >
+                          {t("settings.enable")}
+                        </button>
+                        <button
+                          onClick={() => { setShowPinSetup(false); setPinPassword(""); setPinValue(""); setPinConfirm(""); }}
                           class="px-2 py-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] cursor-pointer text-xs"
                         >
                           {t("entry.cancel")}

@@ -1,4 +1,7 @@
 import { createSignal, createContext, useContext, onMount } from "solid-js";
+// Note: per-vault Quick Unlock status is reactive. The login/switcher UIs
+// call refreshBiometric(slug) when the selected vault changes so the button
+// reflects THAT vault's keychain entry, not a stale global value.
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { buildCreatePayload } from "../lib/payload.js";
@@ -31,6 +34,9 @@ function AuthProvider(props) {
   const [vaultInfo, setVaultInfo] = createSignal(null);
   const [activeVault, setActiveVault] = createSignal(null);
   const [biometricAvailable, setBiometricAvailable] = createSignal(false);
+  // Session PIN Quick Unlock: available THIS session only (in-memory escrow).
+  // Independent of biometric; both can be enabled at once (both buttons shown).
+  const [pinAvailable, setPinAvailable] = createSignal(false);
   const [recoveryPhrase, setRecoveryPhrase] = createSignal("");
   const [createPassword, setCreatePassword] = createSignal("");
   // Phase 6: when the user picks a locked/closed vault from the switcher,
@@ -50,15 +56,38 @@ function AuthProvider(props) {
   onMount(() => {
     // Fetch active vault name from plaintext registry (pre-unlock)
     refreshActiveVault();
-    // Check if quick unlock is enabled (daemon keychain + biometry available)
+    // Quick Unlock status is query per-vault (post-QU fix: keychain entry is
+    // namespaced by vault_id). Initial refresh covers the active vault;
+    // UIs that change the selected vault call refreshBiometric(slug).
     refreshBiometric();
+    refreshPin();
   });
 
-  async function refreshBiometric() {
+  // Query Quick Unlock availability for a specific vault (slug). When slug
+  // is omitted, the daemon resolves the active vault. The keychain check is
+  // pre-unlock: vault_id is derivable from on-disk kdf-params without
+  // decryption, so this works for a locked-but-open vault.
+  async function refreshBiometric(slug = null) {
     try {
-      const s = JSON.parse(await daemon("vault.biometric_status"));
+      const s = JSON.parse(await daemon("vault.biometric_status", "", slug));
       setBiometricAvailable(s.available && s.enabled);
-    } catch {}
+    } catch {
+      // Slug not open in the daemon, or keychain unavailable: hide button.
+      setBiometricAvailable(false);
+    }
+  }
+
+  // Query session-PIN Quick Unlock availability for a specific vault. The
+  // daemon holds the KEK escrow in memory; pin_status is an in-memory check,
+  // so it works for a locked-but-open vault. Survives soft-lock within the
+  // session; dies on daemon restart (then this returns false).
+  async function refreshPin(slug = null) {
+    try {
+      const s = JSON.parse(await daemon("vault.pin_status", "", slug));
+      setPinAvailable(!!s.enabled);
+    } catch {
+      setPinAvailable(false);
+    }
   }
 
   let loginPasswordRef;
@@ -124,6 +153,7 @@ function AuthProvider(props) {
     vaultInfo, setVaultInfo,
     activeVault,
     biometricAvailable, refreshBiometric,
+    pinAvailable, refreshPin,
     recoveryPhrase, setRecoveryPhrase,
     createPassword, setCreatePassword,
     switchTarget, setSwitchTarget,

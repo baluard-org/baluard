@@ -162,6 +162,12 @@ Daemon shares `Arc<VaultHost>` across handlers (replaces pre-Phase 6 single `Arc
 ### IPC
 Unix domain sockets. 0600 via umask. Peer credential verification (SO_PEERCRED/getpeereid). `--socket` overrides default. Token-gated: 256-bit session token on unlock, constant-time comparison. All platform paths centralized in `baluard_core::paths` (`crates/baluard-core/src/paths.rs`).
 
+### Quick Unlock (per-vault, multi-platform)
+Three unlock-shortcut mechanisms, all **per-vault** (never per-app). The frontend queries both `vault.biometric_status` and `vault.pin_status` (slug-routed, pre-unlock safe) and shows whichever buttons are enabled for the selected vault.
+- **Biometric keychain (macOS Touch ID):** master password stored in the OS keychain under account `quick-unlock:<vault_id>`, gated by `SecAccessControl(BIOMETRY_ANY)` (Touch ID/passcode on read). `vault_id` = deterministic UUID from KDF salt (`VaultHandle::derive_vault_id` / `vault_id_for_path`), stable across renames + git-sync. `biometric.rs` platform modules. A legacy global `quick-unlock` entry (pre-QU, shared across vaults) is wiped once at daemon startup via `disable_legacy_global()`.
+- **Session PIN (Linux + Windows-without-Hello):** in-memory KEK escrow (`daemon/src/pin.rs` `PinEscrow`). After the first master-password unlock the user enables a 6-digit PIN; the daemon retains the Argon2id-derived KEK + an Argon2id verifier over the PIN (both zeroized on drop, never on disk). PIN unlock calls `VaultHandle::unlock_with_kek` (skips the master KDF, still verifies keywrap + canaries). **Session-bound:** dies on daemon restart / vault close; **survives soft-lock** (escrow is a separate `VaultState` field from the handle). **5-strike nuke:** after `pin::MAX_PIN_FAILURES` (=5) wrong PINs the escrow is destroyed and the master password becomes mandatory (Bitwarden-equivalent policy; the 10^6 keyspace cannot be brute-forced through this in-process cap). Routes: `vault.pin_status` (not token-gated), `vault.pin_enable`/`vault.pin_disable` (token-gated), `vault.pin_unlock` (host-level, not token-gated, mirrors `handle_vault_biometric_unlock`).
+- **Windows Hello (future, not yet implemented):** TPM-backed `KeyCredential` API. The current `keyring` `windows-native` backend is NOT biometric-gated per-read (Credential Manager / DPAPI), hence the session-PIN fallback above.
+
 ### Padded Buckets
 5 tiers (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB). Auto-selected via `Tier::fit()`. Prevents metadata leakage.
 
@@ -198,6 +204,9 @@ All modals use `<FocusTrap>` component: `role="dialog"`, `aria-modal`, `aria-lab
 ### Auth State Machine
 7 states: `locked`, `unlocking`, `unlocked`, `init`, `creating`, `recovery`, `setup`. Wizard flow: `init` -> `creating` -> `recovery` -> `setup` -> `unlocked`. `setup` state added for post-creation profile/preferences step.
 
+### Vault Detach (UI vs CLI)
+Detaching a vault (drop registry entry so it stops appearing in the app) is exposed in the VaultSwitcher dropdown on the login screen. The **destructive arm (delete-from-disk) is deliberately NOT exposed in the UI** — only the safe, reversible detach. Rationale: irrecoverable deletion of an unsynced vault is a real harm surface (accidental click, casual adversary at an unattended machine), and a typed-name confirmation echoes a name the UI itself displays (weak proof). The power-user escape hatch is the CLI: `baluard vaults detach <slug> --delete-from-disk` (gated by slug retyping + the daemon-side `.baluard` marker check). A future revision may add a master-password-reprompt gated destructive arm back to the UI (Bitwarden-style); until then the UI is destructive-action-free. The daemon route `vaults.detach` still supports `delete_from_disk` + `force` for the CLI caller.
+
 ### Tag Deletion
 Hover X on sidebar tag pills triggers confirmation modal. Calls `tag.delete` daemon command. Removes tag from all ciphers + rebuilds index.
 
@@ -220,6 +229,7 @@ Passkeys are stored **inside `LoginData::fido2_credentials: Option<Vec<PasskeyDa
 * **Password history**: Auto-appended on password change. Cap 10 entries (FIFO).
 * **Folder depth**: Max 16 levels. `delete_folder` cascades via BFS descendant collection.
 * **TOTP**: Seed NEVER crosses IPC. Only derived numeric code sent to frontend.
+* **Session PIN escrow**: in-memory ONLY (never disk). The KEK + Argon2id PIN verifier live on `VaultState::pin`. After `pin::MAX_PIN_FAILURES` (=5) wrong PINs the escrow is nuked and the master password becomes mandatory — there is NO soft recovery, the user must re-enable PIN after a master-password unlock. PIN survives soft-lock but dies on daemon restart / vault close. `VaultHandle::unlock_with_kek` (shared unlock tail) is what PIN unlock calls; it skips Argon2id but still verifies keywrap + canaries, so a stale KEK (password changed on another device) fails closed.
 * **`RotationGuard`**: RAII guard cleans up `.tmp` files and crash marker on error. Disarmed after successful atomic commit.
 * **CodeGraph available**: `.codegraph/` index exists. Route codebase exploration through CodeGraph tools when available.
 * **Feature flags control sync**: `git-sync` feature gate; CLI enables it by default.
