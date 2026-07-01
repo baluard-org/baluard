@@ -23,8 +23,10 @@ export default function CipherAvatar(props) {
     const base = size === "lg"
       ? "w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center shadow-lg"
       : "w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center shrink-0";
+    // Same chip treatment (sidebar bg + border) at both sizes so the list
+    // row matches the detail header instead of showing a bare floating icon.
     return faviconSrc()
-      ? (size === "lg" ? `${base} bg-[var(--color-sidebar)] border border-[var(--color-border)]` : base)
+      ? `${base} bg-[var(--color-sidebar)] border border-[var(--color-border)]`
       : `${base} ${getCuratedColor(props.name)}`;
   };
 
