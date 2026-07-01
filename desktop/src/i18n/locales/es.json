@@ -373,6 +373,29 @@
     "offline": "Sin conexión. Los cambios se sincronizarán al volver",
     "conflictResolved": "Este elemento también fue editado en otro dispositivo. Guardamos la versión más reciente. Revísalo en Sincronización."
   },
+  "conflict": {
+    "title": "Este elemento fue editado en dos dispositivos",
+    "step": "{current} de {total}",
+    "intro": "\u201c{name}\u201d cambió en dos dispositivos y no pudimos combinar los cambios automáticamente. Elige qué versión conservar.",
+    "thisDevice": "este dispositivo",
+    "otherDevice": "el otro dispositivo",
+    "changedFields": "Lo que cambió",
+    "typeChanged": "El elemento se cambió a un tipo distinto en el otro dispositivo (por ejemplo, de inicio de sesión a nota).",
+    "whatDoesThisMean": "¿Qué significa esto?",
+    "explanation": "Editaste este elemento en {local} y también en {remote}. Ambas copias llegaron a la bóveda y no podemos saber cuál es la correcta. Elige la versión que quieras conservar, o guarda ambas para estar seguro.",
+    "keepLocal": {
+      "title": "Conservar la versión de este dispositivo",
+      "desc": "La versión de {local}. Se descartan los cambios del otro dispositivo."
+    },
+    "keepRemote": {
+      "title": "Conservar la versión del otro dispositivo",
+      "desc": "La versión de {remote}. Se descartan los cambios de este dispositivo."
+    },
+    "keepBoth": {
+      "title": "Conservar ambas como elementos separados",
+      "desc": "No se pierde nada. Tendrás dos copias para revisar luego."
+    }
+  },
   "errors": {
     "daemonNotRunning": "El demonio no se está ejecutando",
     "vaultNotUnlocked": "La bóveda no está desbloqueada",
