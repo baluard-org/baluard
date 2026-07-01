@@ -392,6 +392,29 @@
     "offline": "Offline. Changes will sync when back online",
     "conflictResolved": "This item was also edited on another device. We kept the most recent version. Review it in Sync."
   },
+  "conflict": {
+    "title": "This item was edited on two devices",
+    "step": "{current} of {total}",
+    "intro": "\u201c{name}\u201d changed on two devices and we couldn't merge the changes automatically. Choose which version to keep.",
+    "thisDevice": "this device",
+    "otherDevice": "the other device",
+    "changedFields": "What changed",
+    "typeChanged": "The item was changed to a different type on the other device (for example, from a login to a note).",
+    "whatDoesThisMean": "What does this mean?",
+    "explanation": "You edited this item on {local} and also on {remote}. Both copies reached the vault and we can't tell which one is right. Pick the version you want to keep, or keep both to be safe.",
+    "keepLocal": {
+      "title": "Keep this device's version",
+      "desc": "The version on {local}. The other device's changes are discarded."
+    },
+    "keepRemote": {
+      "title": "Keep the other device's version",
+      "desc": "The version from {remote}. This device's changes are discarded."
+    },
+    "keepBoth": {
+      "title": "Keep both as separate items",
+      "desc": "Nothing is lost. You'll get two copies to review later."
+    }
+  },
   "errors": {
     "daemonNotRunning": "Daemon is not running",
     "vaultNotUnlocked": "Vault is not unlocked",

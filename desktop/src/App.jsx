@@ -6,6 +6,7 @@ import { useAuth } from "./context/AuthContext.jsx";
 import { VaultProvider } from "./context/VaultContext.jsx";
 import { VaultSwitcherProvider } from "./context/VaultSwitcherContext.jsx";
 import { AutoSyncProvider } from "./context/AutoSyncContext.jsx";
+import { ConflictResolutionProvider } from "./context/ConflictResolutionContext.jsx";
 
 import LoginScreen from "./components/LoginScreen.jsx";
 import RecoveryScreen from "./components/RecoveryScreen.jsx";
@@ -14,6 +15,7 @@ import SetupScreen from "./components/SetupScreen.jsx";
 import WelcomeScreen from "./components/WelcomeScreen.jsx";
 import VaultView from "./components/VaultView.jsx";
 import AutoSyncIndicator from "./components/AutoSyncIndicator.jsx";
+import ConflictResolutionPanel from "./components/ConflictResolutionPanel.jsx";
 import ToastContainer from "./components/ToastContainer.jsx";
 
 export default function App() {
@@ -101,10 +103,13 @@ export default function App() {
         <Show when={auth.status() === "unlocked"}>
           <div class="app__vault absolute inset-0 vault-enter">
             <VaultProvider>
-              <AutoSyncProvider>
-                <AutoSyncIndicator />
-                <VaultView />
-              </AutoSyncProvider>
+              <ConflictResolutionProvider>
+                <AutoSyncProvider>
+                  <AutoSyncIndicator />
+                  <VaultView />
+                  <ConflictResolutionPanel />
+                </AutoSyncProvider>
+              </ConflictResolutionProvider>
             </VaultProvider>
           </div>
         </Show>
