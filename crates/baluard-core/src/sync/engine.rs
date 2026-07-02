@@ -1686,7 +1686,7 @@ pub enum SyncCycleOutcome {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingConflictState {
     /// Conflicting cipher file paths (relative to vault root), e.g.
-    /// `entries/<cipher_id>/cipher.enc`.
+    /// `ciphers/<cipher_id>.enc`.
     pub files: Vec<String>,
     /// Local tip OID at the moment of conflict (the side we committed).
     pub local_oid: Oid,
