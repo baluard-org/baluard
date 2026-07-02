@@ -11,12 +11,25 @@ import {
 // dogfood the panel UX without standing up a real git conflict or wiring
 // the deferred `sync.conflict` backend route.
 //
+// Opt-in even in dev: hidden by default. To re-enable, run in the devtools
+// console:  localStorage.setItem("baluard.dev.conflictTrigger", "1")
+// then reload.
+//
 // See docs/plan-conflict-resolution-panel.md for the panel contract.
 
 export default function ConflictDevTrigger() {
   // Vite replaces this at build time. `false` in `vite build` -> DCE-friendly
   // early return; the rest of the component (signals, JSX) never runs.
   if (!import.meta.env.DEV) return null;
+
+  // Opt-in even in dev: hidden by default to keep the dev UI clean.
+  // Re-enable from the devtools console:
+  //   localStorage.setItem("baluard.dev.conflictTrigger", "1")
+  // then reload. Turn off:
+  //   localStorage.removeItem("baluard.dev.conflictTrigger")
+  if (localStorage.getItem("baluard.dev.conflictTrigger") !== "1") {
+    return null;
+  }
 
   const conflicts = useConflictResolution();
   const [open, setOpen] = createSignal(false);
