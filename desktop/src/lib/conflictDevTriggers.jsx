@@ -42,6 +42,21 @@ export default function ConflictDevTrigger() {
           >
             Force type-change conflict
           </button>
+          <button
+            type="button"
+            onClick={() =>
+              conflicts.enqueue(
+                mockSampleConflict({
+                  cipherId: "mock-generic-" + Math.random().toString(36).slice(2, 8),
+                  localDevice: null,
+                  remoteDevice: null,
+                }),
+              )
+            }
+            class="px-3 py-2 rounded-lg text-left text-xs hover:bg-[var(--color-bg)] cursor-pointer"
+          >
+            Force conflict (generic names)
+          </button>
           <Show when={conflicts.hasPending()}>
             <button
               type="button"
