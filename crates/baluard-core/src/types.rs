@@ -678,6 +678,29 @@ pub struct CipherInput {
     pub tags: Vec<String>,
 }
 
+impl CipherInput {
+    /// Build a `CipherInput` from a decrypted `Cipher`, dropping the
+    /// id/epoch/seq/tier/timestamps (those are assigned on write). Used by
+    /// Phase 2b field-level conflict merge to feed `merge_ciphers` and by
+    /// keep_both's clone-and-re-encrypt path.
+    pub fn from_cipher(c: &Cipher) -> Self {
+        Self {
+            name: c.name.clone(),
+            folder_id: c.folder_id,
+            kind: c.kind.clone(),
+            favorite: c.favorite,
+            reprompt: c.reprompt,
+            notes: c.notes.clone(),
+            custom_fields: c.custom_fields.clone(),
+            created_at: Some(c.created_at),
+            password_history: c.password_history.clone(),
+            attachments: c.attachments.clone(),
+            archived: c.archived,
+            tags: c.tags.clone(),
+        }
+    }
+}
+
 /// Custom field on a cipher.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomField {
