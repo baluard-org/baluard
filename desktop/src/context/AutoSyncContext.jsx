@@ -45,6 +45,13 @@ export function AutoSyncProvider(props) {
   // switches, so without resetting, switching A(3 conflicts)->B would suppress
   // B's first 3 conflicts (0 > 3 is false) and flash A's stale count. Reset on
   // active-slug change.
+  //
+  // Phase 4: also clear the conflict-resolution queue. The daemon side drains
+  // its pending_conflicts on deactivate (lock), but a vault SWITCH keeps both
+  // vaults unlocked (keep-unlocked model) — the ConflictResolutionProvider
+  // does NOT unmount, so without this clear a conflict surfaced for vault A
+  // would persist in the queue while viewing vault B. The queue re-populates
+  // from the real sync.conflict poll if B has its own pending conflict.
   const switcher = useVaultSwitcher();
   createEffect(() => {
     const slug = switcher.activeSlug();
@@ -52,12 +59,20 @@ export function AutoSyncProvider(props) {
       lastSeenConflicts = 0;
       setConflictsResolved(0);
       setBannerDismissed(true);
+      conflicts.clear();
     }
     lastSeenActive = slug;
   });
 
   async function refresh() {
     try {
+      // Phase 4 review fix: capture the active slug BEFORE the awaits so we can
+      // detect a vault switch that happened while the poll was in flight. A
+      // conflict enqueued for vault A must NOT land in the queue after the user
+      // switched to vault B — the createEffect on activeSlug already clears the
+      // queue on switch, but a stale poll resuming after the clear would
+      // re-introduce A's conflict into B's view.
+      const targetSlug = switcher.activeSlug();
       const raw = await daemon("sync.autosync_status");
       const s = JSON.parse(raw);
       setActive(s.active);
@@ -75,9 +90,13 @@ export function AutoSyncProvider(props) {
       // Phase 2b-4: NeedsDecision → fetch the real conflict and feed the panel.
       // If the daemon auto-merged, fetchPendingConflict returns {auto_merged}:
       // no queue entry; the sync badge just reflects the resolved state.
+      // Phase 4: re-check the slug after the second await — if the user
+      // switched vaults while the poll was in flight, drop the result (it
+      // belongs to the old vault; the new vault's poll will surface its own).
       if (s.state === "needsdecision") {
         try {
           const body = await fetchPendingConflict();
+          if (switcher.activeSlug() !== targetSlug) return;
           const pending = toPendingConflict(body);
           if (pending) conflicts.enqueue(pending);
         } catch {
