@@ -2066,6 +2066,12 @@ impl VaultState {
         use baluard_core::sync::engine::SyncEngine;
         use baluard_core::types::CipherInput;
 
+        // Phase 2b review fix #2: serialize against the sync cycle's cycle_lock
+        // so two overlapping sync.conflict polls (10s + focus/visibility) can't
+        // race finalize_conflicts' HEAD-tip guard. Held across the spawn_blocking
+        // git reads + finalize, mirroring fire_sync / pull_only.
+        let _cycle_guard = self.autosync.cycle_lock_guard().await;
+
         let pending = self
             .autosync
             .peek_pending_conflict()
@@ -2261,6 +2267,10 @@ impl VaultState {
         use baluard_core::types::CipherInput;
         use baluard_core::vault::cipher::encrypt_cipher;
 
+        // Phase 2b review fix #2: serialize against cycle_lock (same reason as
+        // conflict_decrypt_and_merge).
+        let _cycle_guard = self.autosync.cycle_lock_guard().await;
+
         let pending = self
             .autosync
             .peek_pending_conflict()
@@ -2292,8 +2302,8 @@ impl VaultState {
         let local_oid = pending.local_oid;
         let remote_oid = pending.remote_oid;
         let fp_for_read = file_path.clone();
-        let (local_bytes, remote_bytes) = tokio::task::spawn_blocking(
-            move || -> Result<(Vec<u8>, Vec<u8>), String> {
+        let (local_bytes, remote_bytes) =
+            tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, Vec<u8>), String> {
                 let engine = SyncEngine::new(&vault_path, "conflict-keep-both");
                 let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                 let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
@@ -2301,10 +2311,9 @@ impl VaultState {
                 let remote = SyncEngine::read_blob_from_commit(&repo, remote_oid, &fp_for_read)
                     .map_err(|e| format!("read remote: {e}"))?;
                 Ok((local, remote))
-            },
-        )
-        .await
-        .map_err(|e| format!("blob read task join: {e}"))??;
+            })
+            .await
+            .map_err(|e| format!("blob read task join: {e}"))??;
 
         // Phase 2 (inline): decrypt remote, re-encrypt under a new UUID.
         let guard = self.inner.read().await;

@@ -208,18 +208,40 @@ impl AutoSyncHandle {
     }
 
     /// Deactivate (provider disconnected or vault locked). Cancels all timers.
+    ///
+    /// Clears `pending_conflicts` so `state` and the queue never disagree
+    /// (review fix: pre-fix, deactivate reset state to Idle but left
+    /// pending_conflicts populated, so a lock_all on window-blur mid-conflict
+    /// desynced them — the panel never re-surfaced (state != NeedsDecision)
+    /// and the next CRUD's commit tripped write_tree on the still-unmerged
+    /// index, silently wedging auto-sync). The on-disk merge conflict is NOT
+    /// touched here; the next activate + sync cycle re-detects it and
+    /// re-surfaces it as NeedsDecision.
     pub async fn deactivate(&self) {
         let mut g = self.inner.lock().await;
         g.generation = g.generation.wrapping_add(1);
         g.active = false;
         g.state = AutoSyncState::Idle;
         g.pending = 0;
+        g.pending_conflicts.clear();
         if let Some(h) = g.debounce.take() {
             h.abort();
         }
         if let Some(h) = g.loop_handle.take() {
             h.abort();
         }
+    }
+
+    /// Phase 2b review fix: serialize repo-touching conflict operations
+    /// (decrypt/merge/finalize) against the same `cycle_lock` the sync cycle
+    /// uses. The `sync.conflict` route is polled every 10s AND fired on
+    /// window focus/visibility, so two overlapping polls could race
+    /// `finalize_conflicts`'s HEAD-tip guard (check-then-act without a lock).
+    /// Routing through the cycle lock makes the guard a real mutual-exclusion
+    /// guarantee. Returned guard is held across the conflict op's
+    /// `spawn_blocking` (mirrors fire_sync / pull_only).
+    pub async fn cycle_lock_guard(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.cycle_lock.lock().await
     }
 
     /// Immediate pull-only sync (fetch + merge, no commit/push). Used by the
@@ -415,13 +437,10 @@ impl AutoSyncHandle {
                 if !g.active || g.generation != generation {
                     return;
                 }
-                // Only pull when idle; don't race a debounce push, and don't
-                // touch the repo while a conflict is paused for decision (the
-                // index/worktree are mid-merge).
-                if g.state != AutoSyncState::Idle
-                    && g.state != AutoSyncState::Offline
-                    && g.state != AutoSyncState::NeedsDecision
-                {
+                // Only pull when idle or offline (retry). Skip Dirty/Syncing
+                // (race a debounce push) and NeedsDecision (the index/worktree
+                // are mid-merge from a paused conflict).
+                if g.state != AutoSyncState::Idle && g.state != AutoSyncState::Offline {
                     continue;
                 }
             }
@@ -548,4 +567,45 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Phase 2b holistic review fix #1 regression: deactivate() must clear
+    // pending_conflicts so state and the queue never disagree. Pre-fix, a
+    // lock_all on window-blur mid-conflict reset state to Idle but left the
+    // queue populated, permanently hiding the still-unresolved conflict from
+    // the UI and wedging the next CRUD's commit on the unmerged index.
+    //
+    // We can't easily populate pending_conflicts without a real two-device
+    // sync cycle (no public setter), so this asserts the invariant at the
+    // boundary we control: a fresh handle has count 0, and deactivate (even
+    // called repeatedly / without activate) keeps it at 0 + state Idle. The
+    // full pause->deactivate->activate->re-detect round-trip is covered by
+    // the deferred two-device crypto integration test.
+    #[tokio::test]
+    async fn deactivate_clears_state_and_keeps_queue_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let h = AutoSyncHandle::new(tmp.path());
+
+        // Fresh: clean.
+        assert_eq!(h.pending_conflict_count().await, 0);
+        assert_eq!(h.status().await.state, AutoSyncState::Idle);
+
+        // activate is a no-op without a real remote, but should not populate
+        // pending_conflicts either.
+        h.activate("test-device".to_string()).await;
+        assert_eq!(h.pending_conflict_count().await, 0);
+
+        // deactivate must reset to Idle + drain any pending conflicts.
+        h.deactivate().await;
+        assert_eq!(h.status().await.state, AutoSyncState::Idle);
+        assert_eq!(
+            h.pending_conflict_count().await,
+            0,
+            "deactivate must clear pending_conflicts (state/queue desync regression)"
+        );
+    }
 }

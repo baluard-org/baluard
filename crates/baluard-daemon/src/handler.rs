@@ -4189,9 +4189,15 @@ async fn handle_sync_conflict_resolve(
 
     if verdict == "keep_both" {
         // keep_both needs decrypt + re-encrypt under a new cipher id. Delegate
-        // to the state method that holds the handle.
+        // to the state method that holds the handle (acquires cycle_lock
+        // internally).
         return state.conflict_resolve_keep_both().await;
     }
+
+    // Phase 2b review fix #2: serialize keep_local/keep_remote repo writes
+    // against cycle_lock too (two overlapping sync.conflict.resolve calls
+    // could race finalize_conflicts' HEAD-tip guard).
+    let _cycle_guard = state.autosync.cycle_lock_guard().await;
 
     let pending = state
         .autosync
