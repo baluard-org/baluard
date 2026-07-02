@@ -34,8 +34,8 @@ const STRINGS = {
     search: "Search",
     noMatches: "No logins for this site",
     fill: "Fill",
-    copyUser: "Copy username",
-    copyPass: "Copy password",
+    copyUsername: "Copy username",
+    copyPassword: "Copy password",
     copyTotp: "Copy code",
     copied: "Copied",
     refresh: "Refresh",
@@ -57,8 +57,8 @@ const STRINGS = {
     search: "Buscar",
     noMatches: "No hay inicios de sesión para este sitio",
     fill: "Rellenar",
-    copyUser: "Copiar usuario",
-    copyPass: "Copiar contraseña",
+    copyUsername: "Copiar usuario",
+    copyPassword: "Copiar contraseña",
     copyTotp: "Copiar código",
     copied: "Copiado",
     refresh: "Actualizar",
@@ -284,9 +284,9 @@ function App() {
               <div style={{ display: "flex", gap: "6px", "margin-top": "6px" }}>
                 <button style={miniBtn()} onClick={() => fill(m)}>{t("fill")}</button>
                 <Show when={m.username}>
-                  <button style={miniBtn()} onClick={() => copyField(m, "username")}>{t("copyUser")}</button>
+                  <button style={miniBtn()} onClick={() => copyField(m, "username")}>{t("copyUsername")}</button>
                 </Show>
-                <button style={miniBtn()} onClick={() => copyField(m, "password")}>{t("copyPass")}</button>
+                <button style={miniBtn()} onClick={() => copyField(m, "password")}>{t("copyPassword")}</button>
                 <button style={miniBtn()} onClick={() => copyTotp(m)}>{t("copyTotp")}</button>
               </div>
               <Show when={copied().startsWith(`username-${m.id}`) || copied().startsWith(`password-${m.id}`) || copied().startsWith(`totp-${m.id}`)}>

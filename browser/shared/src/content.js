@@ -48,14 +48,18 @@ function fillLoginForm(cred) {
   const pwField = passwords[0];
   setNativeValue(pwField, password);
 
-  // Find the username field: the last visible text/email input BEFORE the
-  // password field, within the same form (or the closest preceding one).
+  // Find the username field: the last visible text-like input BEFORE the
+  // password field in DOM order, within the same form (review agy I5).
+  // Considering inputs AFTER the password (search boxes, captcha, OTP)
+  // would misroute the username into the wrong field.
   const form = pwField.form;
   let userField = null;
   if (form) {
-    const candidates = Array.from(form.querySelectorAll("input")).filter(
-      (i) => isTextLike(i) && isVisible(i)
-    );
+    const allInputs = Array.from(form.querySelectorAll("input"));
+    const pwIndex = allInputs.indexOf(pwField);
+    const candidates = allInputs
+      .slice(0, pwIndex)
+      .filter((i) => isTextLike(i) && isVisible(i));
     userField = candidates[candidates.length - 1] || null;
   }
   if (!userField) {

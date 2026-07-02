@@ -67,6 +67,9 @@ export default function BridgeTab() {
       // The browser hint is unknown until the extension calls pair_complete;
       // pair_start creates the pending slot the extension will attach to.
       const data = JSON.parse(await daemon("bridge.pair_start", JSON.stringify({ browser: "unknown" })));
+      // pair_start does not return started_at; stamp it client-side so the
+      // TTL poll below can compute elapsed time (review agy C1).
+      data.started_at = Date.now() / 1000;
       setPending(data);
       // Begin polling: the pending slot may be superseded or the extension
       // may attach. We refresh pending state every 2s until TTL or approval.

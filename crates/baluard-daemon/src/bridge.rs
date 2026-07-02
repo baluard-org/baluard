@@ -89,15 +89,14 @@ fn now_secs() -> u64 {
 
 impl BridgeRegistry {
     /// Create a fresh pending pairing request. Supersedes any prior pending
-    /// (and any prior waiter — a re-started ceremony cancels the old one).
+    /// (and any prior waiter — a re-started ceremony cancels the old one by
+    /// DROPPING the sender, which triggers `RecvError` on the held
+    /// `pair_complete` so it lands in the timeout/superseded error path
+    /// rather than being treated as a successful approval — review agy C2).
     pub fn start_pair(&mut self, browser_hint: impl Into<String>) -> String {
-        // Cancel any in-flight extension waiter.
-        if let Some(w) = self.waiter.take() {
-            let _ = w.send(WaiterPayload {
-                name: String::new(),
-                browser: String::new(),
-            });
-        }
+        // Cancel any in-flight extension waiter by dropping the sender.
+        // (Do NOT send an empty payload — the receiver would treat it as success.)
+        drop(self.waiter.take());
         let request_id = uuid::Uuid::new_v4().to_string();
         self.pending = Some(PendingPair {
             request_id: request_id.clone(),
@@ -461,5 +460,29 @@ mod tests {
         assert!(reg.verify_token(&token).is_none());
         let pf = PairingFile::load().unwrap_or_default();
         assert!(pf.get(&id).is_none());
+    }
+
+    /// C2 regression (review agy): a re-`start_pair` must CANCEL an in-flight
+    /// waiter by dropping the sender (RecvError), NOT by sending an empty
+    /// payload (which the receiver would mistake for approval). The old
+    /// extension's held pair_complete must fail, not hijack the new slot.
+    #[tokio::test]
+    async fn start_pair_cancels_waiter_via_drop_not_send() {
+        let _sb = sandbox();
+        let mut reg = BridgeRegistry::default();
+        reg.start_pair("chrome-old");
+        // Extension A registers a waiter (held pair_complete).
+        let rx_old = reg.register_waiter("old".into(), "chrome".into());
+        // Desktop user re-starts the ceremony (e.g. clicked Add again).
+        reg.start_pair("chrome-new");
+        // The old waiter receiver must now be RESOLVED WITH ERROR, not yield
+        // a (possibly empty) success payload.
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), rx_old).await;
+        assert!(
+            matches!(outcome, Ok(Err(_))),
+            "dropped sender must produce RecvError, not a hijack-success"
+        );
+        // And the new pending is intact (not consumed).
+        assert!(reg.pending().is_some());
     }
 }
