@@ -48,6 +48,13 @@ pub enum AutoSyncState {
     Syncing,
     /// Remote unreachable; retrying on a timer.
     Offline,
+    /// Pull hit a conflict the daemon opted to pause for field-level
+    /// resolution (Phase 2b). One or more `PendingConflictState` are held on
+    /// `Inner`; the UI surfaces them via `sync.conflict` and the user's
+    /// verdict resumes the cycle via `sync.conflict.resolve`. The background
+    /// loop and debounce DO NOT fire in this state (the repo is mid-merge);
+    /// they resume once the queue drains.
+    NeedsDecision,
 }
 
 /// Snapshot of coordinator status, returned by the `sync.autosync_status` route.
@@ -71,6 +78,14 @@ struct Inner {
     last_sync: Option<u64>,
     pending: u32,
     conflicts_resolved: u32,
+    /// Phase 2b: conflicts paused for field-level resolution. Populated when
+    /// `run_sync_cycle` returns `NeedsDecision`; drained by `sync.conflict`
+    /// (read) and `sync.conflict.resolve` (consume + finalize). Empty in all
+    /// other states.
+    pending_conflicts: Vec<baluard_core::sync::engine::PendingConflictState>,
+    /// Device name captured at `activate` so `note_resolved` can re-arm the
+    /// debounce push after a conflict drains without the route re-passing it.
+    device_name: String,
     /// Live debounce task. Replaced on each mutation (timer reset).
     debounce: Option<JoinHandle<()>>,
     /// Live background loop (pull + offline retry). One per coordinator.
@@ -103,6 +118,8 @@ impl AutoSyncHandle {
                 last_sync: None,
                 pending: 0,
                 conflicts_resolved: 0,
+                pending_conflicts: Vec::new(),
+                device_name: String::new(),
                 debounce: None,
                 loop_handle: None,
                 generation: 0,
@@ -129,6 +146,50 @@ impl AutoSyncHandle {
         self.inner.lock().await.active
     }
 
+    /// Phase 2b: number of conflicts currently paused for user decision.
+    /// Drives the `sync.conflict` route's count + the UI badge.
+    pub async fn pending_conflict_count(&self) -> usize {
+        self.inner.lock().await.pending_conflicts.len()
+    }
+
+    /// Phase 2b: clone the head pending conflict (for the `sync.conflict` route
+    /// to surface masked details to the UI). None if no conflict is pending.
+    /// Does NOT consume — the conflict stays until `note_resolved`.
+    pub async fn peek_pending_conflict(
+        &self,
+    ) -> Option<baluard_core::sync::engine::PendingConflictState> {
+        self.inner.lock().await.pending_conflicts.first().cloned()
+    }
+
+    /// Phase 2b: drop the head pending conflict and, if the queue is now empty,
+    /// transition to Dirty so the next debounce cycle pushes the merge commit
+    /// (written by `finalize_conflicts` in the route) AND any edits queued via
+    /// `nudge` while the conflict was paused. If more conflicts remain queued,
+    /// stay in `NeedsDecision` for the next one.
+    pub async fn note_resolved(&self) {
+        let mut g = self.inner.lock().await;
+        g.pending_conflicts.remove(0);
+        if g.pending_conflicts.is_empty() {
+            // Re-sync: the merge commit + any queued mutations. Going to Dirty
+            // arms the debounce; pending (if any nudges landed) is preserved.
+            g.state = AutoSyncState::Dirty;
+            // Arm a fresh debounce so the push happens promptly.
+            if let Some(h) = g.debounce.take() {
+                h.abort();
+            }
+            let me = self.clone();
+            let gen_id = g.generation;
+            // device_name is read from the vault in the route; nudge used it.
+            // For the post-resolve push we reuse the stored device name on the
+            // handle via a clone — see AutoSyncHandle.device_name (added below).
+            let device_name = g.device_name.clone();
+            g.debounce = Some(tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(PUSH_DEBOUNCE_SECS)).await;
+                me.fire_sync(device_name, gen_id).await;
+            }));
+        }
+    }
+
     /// Activate the coordinator (remote configured + provider connected).
     /// Starts the background pull/offline loop. Idempotent.
     pub async fn activate(&self, device_name: String) {
@@ -137,6 +198,7 @@ impl AutoSyncHandle {
             return;
         }
         g.active = true;
+        g.device_name = device_name.clone();
         g.state = AutoSyncState::Idle;
         let me = self.clone();
         let gen_id = g.generation;
@@ -233,6 +295,15 @@ impl AutoSyncHandle {
         if !g.active {
             return;
         }
+        // Phase 2b: if a conflict is paused for decision, DO NOT clobber the
+        // state or arm the debounce — the repo is mid-merge (index/worktree
+        // in conflict) and a cycle now would race the resolution. Queue the
+        // mutation via `pending`; the resolution path transitions to Dirty
+        // after draining so the new edit syncs on the next cycle.
+        if g.state == AutoSyncState::NeedsDecision {
+            g.pending = g.pending.saturating_add(1);
+            return;
+        }
         g.pending = g.pending.saturating_add(1);
         g.state = AutoSyncState::Dirty;
         // Reset any in-flight debounce timer.
@@ -294,6 +365,15 @@ impl AutoSyncHandle {
             Ok(Ok(SyncOutcome::Offline)) => {
                 g.state = AutoSyncState::Offline;
             }
+            Ok(Ok(SyncOutcome::NeedsDecision { pending })) => {
+                // Phase 2b: hold the paused conflicts and surface to the UI.
+                // The background loop and debounce must NOT fire while the repo
+                // is mid-merge; they resume once the queue drains via
+                // sync.conflict.resolve. last_sync is NOT advanced (the cycle
+                // did not complete).
+                g.pending_conflicts = pending;
+                g.state = AutoSyncState::NeedsDecision;
+            }
             Ok(Err(_e)) => {
                 // Sync error: do not go offline unless it was a network failure,
                 // which run_sync_cycle already mapped to Offline. Stay Idle so
@@ -335,8 +415,13 @@ impl AutoSyncHandle {
                 if !g.active || g.generation != generation {
                     return;
                 }
-                // Only pull when idle; don't race a debounce push.
-                if g.state != AutoSyncState::Idle && g.state != AutoSyncState::Offline {
+                // Only pull when idle; don't race a debounce push, and don't
+                // touch the repo while a conflict is paused for decision (the
+                // index/worktree are mid-merge).
+                if g.state != AutoSyncState::Idle
+                    && g.state != AutoSyncState::Offline
+                    && g.state != AutoSyncState::NeedsDecision
+                {
                     continue;
                 }
             }
@@ -374,8 +459,16 @@ impl AutoSyncHandle {
 
 #[derive(Debug)]
 enum SyncOutcome {
-    Synced { conflicts: u32 },
+    Synced {
+        conflicts: u32,
+    },
     Offline,
+    /// Phase 2b: a conflict was paused for field-level resolution. The repo
+    /// is mid-merge (HEAD unchanged, index/worktree in conflict state); the
+    /// coordinator holds `pending` and transitions to `NeedsDecision`.
+    NeedsDecision {
+        pending: Vec<baluard_core::sync::engine::PendingConflictState>,
+    },
 }
 
 /// Blocking pull → merge → push. Returns the outcome + conflict count.
@@ -384,16 +477,21 @@ enum SyncOutcome {
 /// regular error.
 #[cfg(feature = "git-sync")]
 fn run_sync_cycle(vault_path: &Path, device_name: &str) -> Result<SyncOutcome, String> {
-    use baluard_core::sync::engine::{SyncCycleOutcome, SyncEngine};
+    use baluard_core::sync::engine::{ConflictResolution, SyncCycleOutcome, SyncEngine};
 
     let engine = SyncEngine::new(vault_path, device_name);
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
-    // Delegates to the canonical commit → pull → resolve → push workflow in
-    // core (H2 ordering + C2 conflict resolution + C1 force-checkout). The
-    // daemon stays free of direct git2 type references.
-    match engine.run_sync_cycle(&repo) {
+    // Phase 2b: opt in to field-level resolution. On conflict, PAUSE the cycle
+    // (no merge commit, no push) and surface the PendingConflictState to the
+    // coordinator, which holds it for the UI. The daemon-side decrypt + merge
+    // lands in 2b-2; today the resolver always pauses, and sync.conflict.resolve
+    // picks the raw blob (local or remote bytes) per the user's verdict.
+    match engine.run_sync_cycle_with_resolver(&repo, &mut |_| ConflictResolution::Pause) {
         Ok(SyncCycleOutcome::Synced { conflicts }) => Ok(SyncOutcome::Synced { conflicts }),
         Ok(SyncCycleOutcome::Offline) => Ok(SyncOutcome::Offline),
+        Ok(SyncCycleOutcome::NeedsDecision { pending }) => {
+            Ok(SyncOutcome::NeedsDecision { pending })
+        }
         Err(e) => Err(format!("{e}")),
     }
 }
