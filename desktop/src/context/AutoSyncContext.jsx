@@ -1,5 +1,7 @@
 import { createSignal, createContext, useContext, onMount, onCleanup, createEffect } from "solid-js";
 import { daemon } from "../lib/daemon.js";
+import { fetchPendingConflict, toPendingConflict } from "../lib/conflictFlow.js";
+import { useConflictResolution } from "./ConflictResolutionContext.jsx";
 import { useVaultSwitcher } from "./VaultSwitcherContext.jsx";
 
 // Auto-sync coordinator state, polled from the daemon every 10s.
@@ -20,6 +22,11 @@ const POLL_MS = 10_000;
 const AutoSyncContext = createContext();
 
 export function AutoSyncProvider(props) {
+  // Phase 2b-4: when the daemon enters NeedsDecision, fetch the real conflict
+  // and feed it to the panel's queue. Idempotent on cipherId so re-polls don't
+  // duplicate. Lives here (not in ConflictResolutionContext) because the poll
+  // cadence + NeedsDecision trigger belong to the sync coordinator.
+  const conflicts = useConflictResolution();
   const [active, setActive] = createSignal(false);
   const [state, setState] = createSignal("idle");
   const [lastSync, setLastSync] = createSignal(null);
@@ -64,6 +71,19 @@ export function AutoSyncProvider(props) {
         setBannerDismissed(false);
       }
       lastSeenConflicts = s.conflicts_resolved ?? 0;
+
+      // Phase 2b-4: NeedsDecision → fetch the real conflict and feed the panel.
+      // If the daemon auto-merged, fetchPendingConflict returns {auto_merged}:
+      // no queue entry; the sync badge just reflects the resolved state.
+      if (s.state === "needsdecision") {
+        try {
+          const body = await fetchPendingConflict();
+          const pending = toPendingConflict(body);
+          if (pending) conflicts.enqueue(pending);
+        } catch {
+          // Best-effort: the next poll retries. Don't crash the status poll.
+        }
+      }
     } catch {
       // Daemon unreachable or not connected to a remote — leave signals as-is.
     }
