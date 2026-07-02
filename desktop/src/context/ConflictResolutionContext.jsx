@@ -67,18 +67,18 @@ export function ConflictResolutionProvider(props) {
 
   /**
     * Resolve the current conflict with a verdict. Invokes the caller-supplied
-    * resolver (the future IPC call) and drops the conflict from the queue.
+    * resolver (the future IPC call) and, on success, drops the conflict from
+    * the queue. On resolver failure the error propagates and the conflict
+    * STAYS in the queue so the caller (the panel) can surface a toast and the
+    * user can retry or pick a different verdict.
     * @param {ConflictVerdict} verdict
     * @param {(conflict: PendingConflict, verdict: ConflictVerdict) => Promise<void>|void} [resolver]
     */
   async function resolve(verdict, resolver) {
     const head = current();
     if (!head) return;
-    try {
-      if (resolver) await resolver(head, verdict);
-    } finally {
-      setPending((prev) => prev.filter((c) => c.cipherId !== head.cipherId));
-    }
+    if (resolver) await resolver(head, verdict);
+    setPending((prev) => prev.filter((c) => c.cipherId !== head.cipherId));
   }
 
   /** Drop everything (e.g. on vault lock / switch). */

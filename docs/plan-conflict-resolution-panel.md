@@ -187,3 +187,15 @@ so the panel explains it at the entry level ("changed from a login to a note").
 - Conflict TTL: if the user ignores the panel for hours, do we auto-keep-local
   after a warning? Recommendation: never auto-decide destructively; the panel is
   non-dismissable until a verdict is chosen (it is modal by design).
+- **Stuck-queue escape (resolve-failure path).** The panel's `decide()` keeps
+  the conflict in the queue when the resolver throws (retry-friendly), and the
+  panel is non-dismissable. If the real `sync.conflict.resolve` IPC
+  permanently fails (daemon down, item key unrecoverable), the head never
+  leaves the queue and the user is locked behind a modal whose actions all
+  fail. Acceptable today because the route isn't wired yet (dev-only mock
+  triggers). When wiring lands, add one of: (a) a max-retry counter that falls
+  back to a safe non-destructive state (e.g. "skip for now, re-merge on next
+  sync") after N consecutive failures, (b) a manual escape hatch (close +
+  re-queue via persistent state, or a link to logs), or (c) an explicit product
+  decision to keep the modal hard-blocking. Tracked as `TODO(stuck-queue)` in
+  `ConflictResolutionPanel.jsx::decide`.

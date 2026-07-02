@@ -91,19 +91,19 @@ describe("ConflictResolutionContext", () => {
     });
   });
 
-  it("resolve re-throws resolver errors but still drops the head (finally runs)", async () => {
+  it("resolve re-throws resolver errors and keeps the head in the queue (retry-friendly)", async () => {
     await withProvider(async (ctx) => {
       ctx.enqueue(mockSampleConflict({ cipherId: "a" }));
       const resolver = vi.fn(() => {
         throw new Error("boom");
       });
-      // The try/finally in resolve() guarantees the head is dropped even when
-      // the resolver throws. The error itself propagates so the caller (the
-      // panel) can surface a toast instead of silently losing the IPC result.
+      // resolve no longer wraps in try/finally: a thrown resolver keeps the
+      // conflict in the queue so the panel can toast + let the user retry.
       await expect(ctx.resolve("keep_remote", resolver)).rejects.toThrow("boom");
       expect(resolver).toHaveBeenCalledTimes(1);
-      expect(ctx.count()).toBe(0);
-      expect(ctx.hasPending()).toBe(false);
+      expect(ctx.count()).toBe(1);
+      expect(ctx.hasPending()).toBe(true);
+      expect(ctx.current().cipherId).toBe("a");
     });
   });
 

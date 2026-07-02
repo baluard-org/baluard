@@ -2,6 +2,7 @@ import { createSignal, For, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { useConflictResolution } from "../context/ConflictResolutionContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
+import { toastError } from "../context/toastSignal.js";
 import FocusTrap from "./FocusTrap.jsx";
 import { IconAlert, IconCopy, IconMonitor, IconSwitch } from "./Icon.jsx";
 
@@ -20,6 +21,12 @@ export default function ConflictResolutionPanel(props) {
   const conflicts = useConflictResolution();
   const { t } = useI18n();
   const [explainOpen, setExplainOpen] = createSignal(false);
+  // Re-entrancy guard: a decision is an async IPC call. Without this, a
+  // double-click (or a nervous user mashing a button) fires two concurrent
+  // resolve() calls against the same head with potentially different verdicts
+  // — last-write-wins on a destructive UI whose whole purpose is preventing
+  // silent wrong defaults. Buttons are disabled while a resolve is in flight.
+  const [isResolving, setIsResolving] = createSignal(false);
   let panelRef;
 
   // Friendly device names, falling back to plain "this / the other device".
@@ -35,9 +42,29 @@ export default function ConflictResolutionPanel(props) {
       total: conflicts.count(),
     });
 
-  function decide(verdict) {
-    conflicts.resolve(verdict, props.resolver);
-    setExplainOpen(false);
+  async function decide(verdict) {
+    // Re-entrancy guard: one decision at a time (see isResolving comment).
+    if (isResolving()) return;
+    setIsResolving(true);
+    // resolve() re-throws on resolver failure and keeps the conflict in the
+    // queue (see ConflictResolutionContext). Surface a toast so the user
+    // knows the decision didn't go through and can retry or pick again.
+    //
+    // TODO(stuck-queue): if the real sync.conflict.resolve IPC permanently
+    // fails (daemon down, item key unrecoverable), the head never leaves the
+    // queue and this modal is non-dismissable, locking the user out of the
+    // vault UI. Acceptable today because the route isn't wired yet (dev-only
+    // mock triggers). When wiring lands, add either a max-retry fallback to a
+    // safe non-destructive state or a manual escape hatch. See
+    // docs/plan-conflict-resolution-panel.md.
+    try {
+      await conflicts.resolve(verdict, props.resolver);
+      setExplainOpen(false);
+    } catch (e) {
+      toastError(t("conflict.resolveFailed"));
+    } finally {
+      setIsResolving(false);
+    }
   }
 
   return (
@@ -145,6 +172,7 @@ export default function ConflictResolutionPanel(props) {
                   desc={t("conflict.keepLocal.desc", { local: localLabel() })}
                   onClick={() => decide("keep_local")}
                   variant="primary"
+                  disabled={isResolving()}
                 />
                 <DecisionButton
                   icon={<IconSwitch class="w-4 h-4" />}
@@ -153,6 +181,7 @@ export default function ConflictResolutionPanel(props) {
                     remote: remoteLabel(),
                   })}
                   onClick={() => decide("keep_remote")}
+                  disabled={isResolving()}
                 />
                 {/* Non-destructive escape hatch — never loses data. */}
                 <DecisionButton
@@ -161,6 +190,7 @@ export default function ConflictResolutionPanel(props) {
                   desc={t("conflict.keepBoth.desc")}
                   onClick={() => decide("keep_both")}
                   highlight
+                  disabled={isResolving()}
                 />
               </div>
             </div>
@@ -176,7 +206,10 @@ function DecisionButton(props) {
     <button
       type="button"
       onClick={props.onClick}
-      class={`group flex items-start gap-3 px-4 py-3 rounded-xl border text-left transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] active:scale-[0.99] ${
+      disabled={props.disabled}
+      class={`group flex items-start gap-3 px-4 py-3 rounded-xl border text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] active:scale-[0.99] ${
+        props.disabled ? "opacity-60 cursor-not-allowed active:scale-100" : "cursor-pointer"
+      } ${
         props.variant === "primary"
           ? "bg-[var(--color-primary)] border-transparent text-[var(--color-primary-text)] hover:bg-[var(--color-primary-hover)]"
           : props.highlight
