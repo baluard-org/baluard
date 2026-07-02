@@ -12,16 +12,17 @@ baluard/
 ├── proto/                      # Shared Protobuf Schemas (vault.proto, space.proto, auth.proto)
 │                               # Compiled into Rust via prost-build in daemon + CLI
 ├── crates/                     # Rust Workspace
-│   ├── baluard-core/             # Core Engine: crypto, keys, vault, padding, git sync
+│   ├── baluard-core/             # Core Engine: crypto, keys, vault, padding, git sync, providers, bridge
 │   │   └── src/
-│   │       ├── crypto/         # AES-256-GCM, KDF (Argon2id), HKDF, HPKE, Ed25519, TOTP (RFC 6238)
-│   │       ├── keys/           # Key hierarchy, epochs, rotation, nonces
-│   │       ├── vault/          # Padding engine (5KB/30KB/100KB/250KB/2MB tiers), envelope, manifest, CRUD, canary, attachment, avatar, slug
-│   │       ├── sync/           # git2-rs sync engine, conflict auto-heal, state machine, known_hosts, credentials
+│   │       ├── crypto/         # AES-256-GCM (aead), KDF Argon2id (kdf), HKDF (hkdf_derive), HPKE wrap (hpke_wrap), Ed25519 (signature), TOTP (RFC 6238), + webauthn/ subdir
+│   │       ├── keys/           # Key hierarchy (hierarchy), epochs (epoch), rotation (rotation), nonces (nonce)
+│   │       ├── vault/          # Padding engine (5KB/30KB/100KB/250KB/2MB tiers), envelope, manifest, CRUD, canary, attachment, avatar, slug, registry, keywrap, index
+│   │       ├── sync/           # git2-rs sync engine, conflict 3-way merge, state machine, known_hosts, credentials, operations, commit
 │   │       ├── import/         # 8 import parsers (bw_json, bw_csv, chrome_csv, firefox_csv, lastpass_csv, 1password_1pux, 1password_csv, keepass_xml) + 2 export formats
-│   │       ├── providers/      # Git provider abstraction: github adapter + token store
-│   │       ├── biometric.rs    # OS-keychain-backed master password escrow (macOS Security.framework + cross-platform keyring)
-│   │       ├── device_manager.rs # Device registry, rotation, activity, enrollment
+│   │       ├── providers/      # Git provider abstraction: github, gitlab, codeberg adapters + token store + shared types
+│   │       ├── bridge/         # Browser extension bridge: pairing file format + atomic writes (pairing), bridge token mint/verify (token)
+│   │       ├── biometric.rs    # OS-keychain-backed master password escrow (per-vault scoped, deterministic vault_id from KDF salt)
+│   │       ├── device_manager.rs # Device registry, rotation, activity, enrollment, recovery-phrase enrollment
 │   │       ├── devices.rs      # Lower-level device entry types
 │   │       ├── emergency.rs    # Break-glass access
 │   │       ├── health.rs       # Password health report
@@ -35,33 +36,43 @@ baluard/
 │       └── src/
 │           ├── main.rs         # Command dispatch
 │           ├── client.rs       # Protobuf socket client, session tokens
-│           └── commands/       # Dual-mode handlers (daemon + --direct)
+│           └── commands/       # Dual-mode handlers (daemon + --direct) -- single mod.rs file (~112K)
 │   └── baluard-daemon/           # Background IPC Daemon
 │       └── src/
-│           ├── main.rs         # tokio Unix socket listener, auto-lock timer, SIGINT/SIGTERM
-│           ├── handler.rs      # Protobuf routing, 30+ routes, token-gated actions, SO_PEERCRED
-│           └── state.rs        # VaultState, activity tracking, TOTP code gen, folder ops, SSH key gen, avatar ops
+│           ├── main.rs         # tokio Unix socket listener, auto-lock walker, SIGINT/SIGTERM, 0600 perms
+│           ├── handler.rs      # Protobuf routing, ~72 routes, token-gated actions, SO_PEERCRED, bridge allowlist
+│           ├── host.rs         # VaultHost: RwLock<VaultHostInner> with HashMap<String, Arc<VaultState>> + active pointer (Phase 6 multi-vault)
+│           ├── state.rs        # VaultState (Arc<RwLock>), activity tracking, TOTP code gen, folder ops, SSH key gen, avatar ops, PIN escrow
+│           ├── autosync.rs     # Debounced push + event-driven pull + 30-min idle fallback + offline retry + cycle_lock mutex
+│           ├── pin.rs          # Session PIN escrow (PinEscrow). In-memory only, 5-strike nuke
+│           ├── bridge.rs       # Bridge token registry on VaultHost + TokenKind::Bridge branch + allowlist enforcement
+│           ├── rate_limit.rs    # Per-action rate limiting
+│           ├── socket_path.rs   # Platform socket path resolution
+│           ├── crypto.rs        # Crypto module glue
+│           └── lib.rs           # Test surface (re-exports host/state/handler for integration tests)
+│   └── baluard-nmh/              # Native Messaging Host (browser extension bridge). stdio-JSON <-> varint-protobuf. Stateless. Reads pairing entry on spawn, re-mints ephemeral bridge token
 ├── desktop/                    # Tauri v2 Desktop App (SolidJS/Tailwind, full CRUD, 8 cipher types)
-│   ├── src-tauri/              # Rust backend: daemon proxy, tray, proto codegen
-│   ├── src/                    # SolidJS webview: login, vault, cipher CRUD
-│   │   ├── components/         # 26 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, etc.)
-│   │   ├── context/            # AuthContext, VaultContext, themeSignal, toastSignal
-│   │   ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, eff-words.js, wordlist-{en,es}.js
-│   │   ├── __tests__/          # vitest tests (payload, utils, filters, cipherSchema)
+│   ├── src-tauri/              # Rust backend: daemon sidecar + baluard-nmh sidecar + tray + proto codegen
+│   ├── src/                    # SolidJS webview: login, vault, cipher CRUD, settings
+│   │   ├── components/         # 38 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, WelcomeScreen, CloneFromProviderScreen, BridgeTab, ConflictBanner, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, VaultSwitcher, AutoSyncIndicator, DeviceFleetPanel, SyncTab, SettingsModal, ...)
+│   │   ├── context/            # AuthContext, VaultContext, VaultSwitcherContext, AutoSyncContext, ConflictResolutionContext, themeSignal, toastSignal
+│   │   ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
+│   │   ├── __tests__/          # vitest tests (~84 cases: payload, utils, filters, cipherSchema, cloneFlow)
 │   │   └── i18n/locales/       # en.json, es.json (all user-facing strings)
 │   └── package.json            # SolidJS, Tailwind v4, Tauri API v2
-├── mobile/                     # Kotlin Multiplatform Mobile App [PLACEHOLDER]
-│   └── build.gradle.kts        # KMP targets: Android, iOS
-├── extension/                  # MV3 Browser Extension [PLACEHOLDER]
-│   └── package.json
-└── docs/                       # Architecture & design docs
+├── browser/                    # MV3 Browser Extensions (Chromium + Firefox, shared codebase)
+│   ├── shared/                 # 95% of code: SolidJS popup, service worker, content script, nmh wrapper, autofill, pair
+│   ├── chrome/                 # Chrome MV3 wrapper (manifest.extra.json)
+│   └── firefox/                # Firefox MV3 wrapper (manifest.extra.json)
+├── mobile/                     # Kotlin Multiplatform Mobile App [PLACEHOLDER] -- no UniFFI annotations applied yet
+└── docs/                       # Architecture, design, plans, PRDs, threat model, post-quantum, 2fa, brand, app icons
 ```
 
 ---
 
 ## 2. Single-String Protobuf Gateway
 
-**Current state**: Protobuf gateway fully wired. CLI has dual-mode (daemon-first + `--direct` fallback). Daemon has 70+ routes (vault CRUD, sync, devices, folders, TOTP, settings, SSH key generation, avatar, tags, providers). Tauri desktop with full CRUD UI, i18n (en/es).
+**Current state**: Protobuf gateway fully wired. CLI has dual-mode (daemon-first + `--direct` fallback). Daemon has ~72 routes (vault CRUD, sync, devices, folders, TOTP, settings, SSH key generation, avatar, tags, providers, vaults host, autosync, bridge, passkey, biometric, pin, clone, favicon). Tauri desktop with full CRUD UI, i18n (en/es). Browser extensions (Chromium + Firefox) connect via the `baluard-nmh` native messaging host: stdio-JSON over the browser API, varint-protobuf over the daemon socket.
 
 **Target state**: All application tiers (Tauri Webview, CLI, KMP Mobile, Browser Extension) communicate with baluard-core through a serialized Single-String Protocol Buffer Gateway:
 
@@ -96,16 +107,16 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 
 ### 3.1 Desktop Tier (B2C/B2B)
 
-**Current state**: CLI dual-mode (daemon-first via socket + `--direct` fallback). Daemon fully implemented with vault state, sync, devices, TOTP, auto-lock, and auto-sync (debounced push after CRUD, periodic pull, offline retry, conflict auto-resolve). Tauri desktop with full CRUD UI, 8 cipher types, generator, TOTP widget.
+**Current state**: CLI dual-mode (daemon-first via socket + `--direct` fallback). Daemon fully implemented with multi-vault host, sync coordinator, devices, TOTP, auto-lock, auto-sync (debounced push + event-driven pull + 30-min idle fallback + offline retry + conflict auto-resolve), PIN escrow, biometric unlock (per-vault scoped), bridge module for browser extension. Tauri desktop with full CRUD UI, 8 cipher types, generator, TOTP widget, multi-vault switcher, browser-extension pairing UI, conflict resolution panel, vault detach.
 
 **Implemented**:
-- **Rust Daemon (`baluard-daemon`)**: Started by the Tauri tray wrapper on boot. Unlocks the vault directly in `zeroize`-protected memory. Opens a platform-aware Unix domain socket (Linux: `$XDG_RUNTIME_DIR/baluard/baluard.sock`, macOS: `~/Library/Application Support/baluard/baluard.sock`) with 0600 permissions (set via umask before bind to avoid TOCTOU race). Listens for length-delimited Protobuf requests via tokio async I/O. SO_PEERCRED peer UID verification on Linux.
-- **CLI (`baluard-cli`)**: Dual-mode binary. Default: compiles flags into Protobuf, transmits over socket, prints response. `--direct` fallback links baluard-core in-process. `--socket <path>` for custom daemon path.
-- **Tauri v2 UI**: SolidJS/Tailwind v4 webview. `daemon_request` Tauri command (async + `spawn_blocking`) proxies to daemon via Protobuf over Unix socket. System tray with Show/Quit menu. Full cipher CRUD with 8 types (Login, Card, Identity, SSH Key, Secure Note, Bank Account, Driver's License, Passport/ID). Password generator (CSPRNG + EFF 7776-word passphrase). TOTP code widget with boundary-aligned refresh. Auto-lock settings. Dark/light/system themes. Nested folders. Import/export (8 formats). Device fleet dashboard. Biometric unlock. SSH key generation (Ed25519/ECDSA P-256; RSA 4096 removed in L7 fix for RUSTSEC-2023-0071). User profile (display name, subtitle, avatar). Tag management with sidebar pills. Modal accessibility (FocusTrap). Full i18n (English + Spanish). Toast notifications. Vault creation wizard (3-step: language+password, recovery phrase, profile+preferences). **Auto-sync**: when a remote + provider are connected, a status pill in the sidebar header reflects coordinator state (idle/syncing/dirty/offline); a non-blocking banner surfaces auto-resolved conflicts. Global browser-autofill suppression (`disableAutofill.js`, opt-in via `data-autofill="on"`).
+- **Rust Daemon (`baluard-daemon`)**: Started by the Tauri tray wrapper on boot. Unlocks the vault directly in `zeroize`-protected memory. Opens a platform-aware Unix domain socket (Linux: `$XDG_RUNTIME_DIR/baluard/baluard.sock`, macOS: `~/Library/Application Support/baluard/baluard.sock`) with 0600 permissions (set via umask before bind to avoid TOCTOU race). Listens for length-delimited Protobuf requests via tokio async I/O. SO_PEERCRED peer UID verification on Linux. **VaultHost multi-vault (Phase 6)**: single `RwLock<VaultHostInner>` over `HashMap<String, Arc<VaultState>>` + `active: Option<String>` pointer (one critical section). Per-vault session tokens; `vault.unlock` returns `{slug, token}`. Auto-lock walker iterates the map every 30s. Cover-commit timers are per-vault, keyed to locked/unlocked (never to active). Lock-all on `Tauri WindowEvent::Focused(false)`; OS suspend/screen-lock hooks documented as follow-up. `log_mlock_budget` reports resident key bytes + RLIMIT_MEMLOCK after every unlock.
+- **CLI (`baluard-cli`)**: Dual-mode binary. Default: compiles flags into Protobuf, transmits over socket, prints response. `--direct` fallback links baluard-core in-process. `--socket <path>` for custom daemon path. `--vault <slug>` targets a specific vault (uses daemon if open in map, `--direct` otherwise). Commands: `init`, `unlock`, `lock`, `add`, `tags`, `get`, `list`, `edit`, `delete`, `archive`, `folders`, `sync`, `import`, `export`, `health`, `attach-*`, `devices`, `passkey`, `vaults`, `provider`, `ssh-key`, `biometric`, `pin`, `bridge`, `ping`.
+- **Tauri v2 UI**: SolidJS/Tailwind v4 webview. `daemon_request` Tauri command (async + `spawn_blocking`) proxies to daemon via Protobuf over Unix socket. System tray with Show/Quit menu (monochrome support). Full cipher CRUD with 8 types (Login, Card, Identity, SSH Key, Secure Note, Bank Account, Driver's License, Passport/ID). Password generator (CSPRNG + EFF 7776-word passphrase). TOTP code widget with boundary-aligned refresh. Auto-lock settings. Dark/light/system themes. Nested folders. Import/export (8 formats). Device fleet dashboard. **Biometric unlock (per-vault scoped)** via `security-framework` v3 (macOS `SecAccessControl BIOMETRY_ANY`) + `keyring` crate (other platforms). **Session PIN** (Linux + Windows-without-Hello fallback): in-memory `PinEscrow` on `VaultState`, 5-strike nuke, survives soft-lock, dies on close/restart. SSH key generation (Ed25519/ECDSA P-256; RSA 4096 removed in L7 fix for RUSTSEC-2023-0071). User profile (display name, subtitle, avatar). Tag management with sidebar pills. Modal accessibility (FocusTrap on 9 modals). Full i18n (English + Spanish). Toast notifications. Vault creation wizard (3-step: language+password, recovery phrase, profile+preferences). **Multi-vault switcher** (`VaultSwitcher` dropdown, 30s heartbeat, per-vault unlock screen via `SwitchUnlockModal`). **Vault detach** (`DetachVaultModal` — safe detach only; destructive arm CLI-only). **Favicons** (opt-in persisted website icons fetched at save time). **Auto-sync**: sidebar header shows provider + repo link (`SyncTab` one-click UI replaces git jargon); `AutoSyncIndicator` status pill (idle/syncing/dirty/offline). **Conflict resolution panel** (top-floating, drives on destructive field-level merge outcomes). **Browser extension pairing** (`BridgeTab`: list, pair new, revoke; approve-don't-type flow). Global browser-autofill suppression (`disableAutofill.js`, opt-in via `data-autofill="on"`).
 
 ### 3.2 Mobile Tier (B2C)
 
-**Current state**: Placeholder scaffold only. No UniFFI annotations applied.
+**Current state**: Placeholder scaffold only. No UniFFI annotations applied. Browser extension Phase 0+1 is the active dogfood target before mobile (extension reaches the same daily-use surface as mobile autofill without the platform-cert maze).
 
 **Target architecture**:
 - **KMP UI**: The application interface written in Compose Multiplatform (Kotlin Multiplatform) for shared Android/iOS screens.

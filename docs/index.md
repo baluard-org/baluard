@@ -6,9 +6,9 @@
 
 | Document | Description |
 |----------|-------------|
-| [Architecture Decisions](software-architecture-decisions.md) | Design rationale, tradeoffs, device fleet (DOMAIN 5), device lifecycle & rotation (DOMAIN 6), frontend architecture (DOMAIN 7) |
+| [Architecture Decisions](software-architecture-decisions.md) | Design rationale, tradeoffs, device fleet (DOMAIN 5), device lifecycle & rotation (DOMAIN 6), frontend architecture (DOMAIN 7), quick unlock (D20), browser extension (D21), conflict resolution panel (D22), event-driven sync (D24) |
 | [Software Architecture](software-architecture.md) | Component diagram, data flows, IPC protocol, key lifecycle, cryptographic ceremonies |
-| [Threat Model](threat-model.md) | Adversaries, attack surfaces, mitigations |
+| [Threat Model](threat-model.md) | Adversaries, attack surfaces, mitigations (incl. T15 multi-vault key material, T10 biometric) |
 
 ## Security
 
@@ -21,7 +21,7 @@
 
 | Document | Description |
 |----------|-------------|
-| [Dev Setup & Workflow](dev-setup.md) | Prerequisites, platform-specific setup, build commands, testing (89 desktop vitest tests), troubleshooting |
+| [Dev Setup & Workflow](dev-setup.md) | Prerequisites, platform-specific setup, build commands, testing (~84 desktop vitest tests + 205 Rust tests), troubleshooting |
 | [Progress](progress.md) | Implementation status, review history, pending work |
 | [Cover Commit Policy](threat-model.md#t14-cover-commit-correlation) | Timing-noise scheduling rules and rationale |
 
@@ -38,6 +38,8 @@
 | Document | Description |
 |----------|-------------|
 | [PRD: Git Providers & Multi-Vault](prd-git-providers-multi-vault.md) | Product requirements for the multi-vault and online git provider feature |
-| [Plan: Git Providers & Multi-Vault](plan-git-providers-multi-vault.md) | Phased implementation plan tracking the PRD progress |
+| [Plan: Git Providers & Multi-Vault](plan-git-providers-multi-vault.md) | Phased implementation plan tracking the PRD progress. Phases 1-6 complete. |
+| [Plan: Browser Extension](plan-browser-extension.md) | KeePassXC-Browser-style bridge client (MV3 Chromium + Firefox). Phases 0+1 complete (NMH binary, paired-companion auth, scoped bridge token, action allowlist). Phase 2 deferred. |
+| [Plan: Conflict Resolution Panel](plan-conflict-resolution-panel.md) | Top-floating slide-down panel for destructive field-level merge outcomes. UI built, backend wiring deferred (still falls back to keep-local). |
 | [Plan: Passkey Support](plan-passkey-support.md) | FIDO2/WebAuthn passkey storage + ceremony. Phase 0+1 complete (schema, BW import, ceremony wiring, CLI, daemon IPC). Phase 2+ pending (browser extension, mobile). |
 | [ADR 0007: passkey-rs Evaluation](plan-passkey-rs-evaluation.md) | Decision to adopt `passkey-rs` 0.5.x as the WebAuthn authenticator library |
