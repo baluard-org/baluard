@@ -21,7 +21,7 @@
 
 | Document | Description |
 |----------|-------------|
-| [Dev Setup & Workflow](dev-setup.md) | Prerequisites, platform-specific setup, build commands, testing (~84 desktop vitest tests + 205 Rust tests), troubleshooting |
+| [Dev Setup & Workflow](dev-setup.md) | Prerequisites, platform-specific setup, build commands, testing (~117 desktop vitest tests + 389 Rust tests), troubleshooting |
 | [Progress](progress.md) | Implementation status, review history, pending work |
 | [Cover Commit Policy](threat-model.md#t14-cover-commit-correlation) | Timing-noise scheduling rules and rationale |
 

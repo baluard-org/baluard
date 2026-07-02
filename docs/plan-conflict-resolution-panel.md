@@ -197,6 +197,15 @@ so the panel explains it at the entry level ("changed from a login to a note").
   queue empties so the merge commit + queued mutations sync on the next cycle.
 - ~~Conflict TTL / auto-keep-local?~~ **Answered:** never auto-decide
   destructively; the panel is non-dismissable until a verdict is chosen.
+- **Frontend queue lifecycle (Phase 4, answered):** the daemon-side
+  `pending_conflicts` drains on `deactivate()` (lock). The frontend
+  `ConflictResolutionContext` queue: cleared automatically on lock (the vault
+  subtree unmounts via `<Show>`, destroying the queue signals) AND cleared
+  explicitly on vault switch (`AutoSyncContext`'s `activeSlug` effect calls
+  `conflicts.clear()`, because the keep-unlocked model keeps the provider
+  mounted across switches). `refresh()` also captures the slug before its
+  awaits and re-checks after, so a stale poll for vault A can't re-enqueue
+  A's conflict into vault B's view after the clear.
 - **Stuck-queue escape (resolve-failure path) — STILL OPEN.** The panel's
   `decide()` keeps the conflict in the queue when the resolver throws
   (retry-friendly), and the panel is non-dismissable. If the real
