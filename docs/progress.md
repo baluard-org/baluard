@@ -399,7 +399,7 @@ baluard/
 │   │   ├── components/         # 38 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, WelcomeScreen, CloneFromProviderScreen, BridgeTab, ConflictBanner, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, VaultSwitcher, AutoSyncIndicator, DeviceFleetPanel, SyncTab, SettingsModal, ...)
 │   │   ├── context/             # AuthContext.jsx, VaultContext.jsx, VaultSwitcherContext.jsx, AutoSyncContext.jsx, ConflictResolutionContext.jsx, themeSignal.js, toastSignal.js
 │   │   ├── lib/                 # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
-│   │   ├── __tests__/           # vitest tests (~84 cases: payload, utils, filters, cipherSchema, cloneFlow)
+│   │   ├── __tests__/           # vitest tests (~117 cases: payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
 │   │   └── i18n/locales/        # en.json, es.json (all user-facing strings)
 ├── browser/                      # MV3 Browser extensions (Chromium + Firefox, shared codebase)
 │   ├── shared/                    # 95% of code (popup SolidJS, service worker, content script, nmh wrapper, autofill, pair)

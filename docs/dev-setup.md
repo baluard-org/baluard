@@ -146,7 +146,7 @@ crates/baluard-nmh/      # Native messaging host (browser extension bridge)
 desktop/               # Tauri v2 + SolidJS + Tailwind
   src-tauri/           # Rust backend (daemon sidecar + baluard-nmh sidecar + tray + proto codegen)
   src/                 # SolidJS frontend
-    __tests__/          # Vitest tests (~84 cases: payload, utils, filters, cipherSchema, cloneFlow)
+    __tests__/          # Vitest tests (~117 cases: payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
     components/         # 38 components including Icon.jsx (40+ SVG icons), BridgeTab, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, AutoSyncIndicator, CloneFromProviderScreen, WelcomeScreen, VaultSwitcher
     context/            # AuthContext.jsx, VaultContext.jsx, VaultSwitcherContext.jsx, AutoSyncContext.jsx, ConflictResolutionContext.jsx, themeSignal.js, toastSignal.js
     lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
