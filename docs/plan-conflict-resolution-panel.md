@@ -41,7 +41,7 @@ wholesale** for every conflicting file and ignores the remote content. It then
 builds a 2-parent merge commit so the next push fast-forwards. The frontend only
 ever learns the integer `conflicts_resolved` via `sync.autosync_status`.
 
-Storage layout matters: each cipher lives at `entries/<cipher_id>/...`, so a
+Storage layout matters: each cipher lives at `ciphers/<cipher_id>.enc` (flat), so a
 git-level conflict only fires when **the same cipher** is touched on two
 devices. Two different ciphers edited concurrently never conflict (different
 paths, fast-forward cleanly).
@@ -58,7 +58,7 @@ From this, the destructive failure modes where the panel should eventually fire:
 Desktop edits the **password** of "GitHub". Mobile, before pulling, edits the
 **notes** of the same "GitHub" entry.
 
-- Git path conflict on `entries/<id>/...`.
+- Git path conflict on `ciphers/<id>.enc`.
 - `resolve_conflict_keep_local` keeps the local file. The remote notes edit is
   **discarded entirely**.
 - `merge_ciphers` would have merged these cleanly (different fields, no

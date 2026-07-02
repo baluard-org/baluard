@@ -2632,7 +2632,14 @@ mod tests {
         let (dir_a, _engine) = make_test_repo();
         setup_signing_keys_with(dir_a.path(), &signing_key);
         let engine_a = SyncEngine::new(dir_a.path(), "test-device");
-        std::fs::write(dir_a.path().join("cipher.enc"), b"BASE").unwrap();
+        std::fs::create_dir_all(dir_a.path().join("ciphers")).unwrap();
+        std::fs::write(
+            dir_a
+                .path()
+                .join("ciphers/deadbeef-0000-0000-0000-000000000001.enc"),
+            b"BASE",
+        )
+        .unwrap();
         let repo_a = engine_a.init_repo().unwrap();
 
         let remote_dir = tempfile::tempdir().unwrap();
@@ -2684,11 +2691,23 @@ mod tests {
         // TRUE divergence from a shared base. A pushes base, both edit the
         // same file from that base. A pushes A's edit. B commits B's edit, then
         // pulls → conflict detected on B's side (B is behind + diverged).
-        std::fs::write(dir_a.path().join("cipher.enc"), b"FROM_A").unwrap();
+        std::fs::write(
+            dir_a
+                .path()
+                .join("ciphers/deadbeef-0000-0000-0000-000000000001.enc"),
+            b"FROM_A",
+        )
+        .unwrap();
         engine_a.commit_all(&repo_a, "").unwrap();
         engine_a.push(&repo_a, "origin").unwrap();
 
-        std::fs::write(dir_b.path().join("cipher.enc"), b"FROM_B").unwrap();
+        std::fs::write(
+            dir_b
+                .path()
+                .join("ciphers/deadbeef-0000-0000-0000-000000000001.enc"),
+            b"FROM_B",
+        )
+        .unwrap();
         engine_b.commit_all(&repo_b, "").unwrap();
 
         // B pulls → conflict (both sides changed cipher.enc from base).
@@ -2703,7 +2722,10 @@ mod tests {
             .unwrap();
         assert!(matches!(outcome, SyncCycleOutcome::NeedsDecision { .. }));
         assert_eq!(paused.len(), 1, "resolver must be invoked exactly once");
-        assert_eq!(paused[0].files, vec!["cipher.enc".to_string()]);
+        assert_eq!(
+            paused[0].files,
+            vec!["ciphers/deadbeef-0000-0000-0000-000000000001.enc".to_string()]
+        );
 
         // The merge commit was NOT written: HEAD still points at B's tip, not a
         // 2-parent merge. (If finalize never runs, the next cycle redetects.)
@@ -2759,7 +2781,14 @@ mod tests {
         let (dir_a, _engine) = make_test_repo();
         setup_signing_keys_with(dir_a.path(), &signing_key);
         let engine_a = SyncEngine::new(dir_a.path(), "test-device");
-        std::fs::write(dir_a.path().join("cipher.enc"), b"BASE").unwrap();
+        std::fs::create_dir_all(dir_a.path().join("ciphers")).unwrap();
+        std::fs::write(
+            dir_a
+                .path()
+                .join("ciphers/deadbeef-0000-0000-0000-000000000001.enc"),
+            b"BASE",
+        )
+        .unwrap();
         let repo_a = engine_a.init_repo().unwrap();
 
         let remote_dir = tempfile::tempdir().unwrap();
@@ -2805,11 +2834,23 @@ mod tests {
             .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
             .unwrap();
 
-        std::fs::write(dir_a.path().join("cipher.enc"), b"FROM_A").unwrap();
+        std::fs::write(
+            dir_a
+                .path()
+                .join("ciphers/deadbeef-0000-0000-0000-000000000001.enc"),
+            b"FROM_A",
+        )
+        .unwrap();
         engine_a.commit_all(&repo_a, "").unwrap();
         engine_a.push(&repo_a, "origin").unwrap();
 
-        std::fs::write(dir_b.path().join("cipher.enc"), b"FROM_B").unwrap();
+        std::fs::write(
+            dir_b
+                .path()
+                .join("ciphers/deadbeef-0000-0000-0000-000000000001.enc"),
+            b"FROM_B",
+        )
+        .unwrap();
         engine_b.commit_all(&repo_b, "").unwrap();
 
         // Backward-compat path: KeepLocal. B pulls → conflict → keep B's bytes,
@@ -2826,7 +2867,14 @@ mod tests {
         let (dir_a2, _engine) = make_test_repo();
         setup_signing_keys_with(dir_a2.path(), &signing_key);
         let engine_a2 = SyncEngine::new(dir_a2.path(), "test-device");
-        std::fs::write(dir_a2.path().join("cipher.enc"), b"BASE").unwrap();
+        std::fs::create_dir_all(dir_a2.path().join("ciphers")).unwrap();
+        std::fs::write(
+            dir_a2
+                .path()
+                .join("ciphers/deadbeef-0000-0000-0000-000000000002.enc"),
+            b"BASE",
+        )
+        .unwrap();
         let repo_a2 = engine_a2.init_repo().unwrap();
         let remote_dir2 = tempfile::tempdir().unwrap();
         let remote_path2 = remote_dir2.path().join("vault.git");
@@ -2872,10 +2920,22 @@ mod tests {
             .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
             .unwrap();
 
-        std::fs::write(dir_a2.path().join("cipher.enc"), b"FROM_A").unwrap();
+        std::fs::write(
+            dir_a2
+                .path()
+                .join("ciphers/deadbeef-0000-0000-0000-000000000002.enc"),
+            b"FROM_A",
+        )
+        .unwrap();
         engine_a2.commit_all(&repo_a2, "").unwrap();
         engine_a2.push(&repo_a2, "origin").unwrap();
-        std::fs::write(dir_c.path().join("cipher.enc"), b"FROM_C").unwrap();
+        std::fs::write(
+            dir_c
+                .path()
+                .join("ciphers/deadbeef-0000-0000-0000-000000000002.enc"),
+            b"FROM_C",
+        )
+        .unwrap();
         engine_c.commit_all(&repo_c, "").unwrap();
 
         let mut saw_conflict = false;
@@ -2887,7 +2947,10 @@ mod tests {
         let outcome = engine_c
             .run_sync_cycle_with_resolver(&repo_c, &mut |state| {
                 saw_conflict = true;
-                assert_eq!(state.files, vec!["cipher.enc".to_string()]);
+                assert_eq!(
+                    state.files,
+                    vec!["ciphers/deadbeef-0000-0000-0000-000000000002.enc".to_string()]
+                );
                 ConflictResolution::KeepLocal
             })
             .unwrap();
