@@ -56,7 +56,7 @@ fn mask_conflict(
         .collect();
     MaskedConflict {
         name: local.name.clone(),
-        cipher_type: format!("{:?}", local.kind).to_lowercase(),
+        cipher_type: format!("{:?}", local.kind.cipher_type()).to_lowercase(),
         fields,
     }
 }
