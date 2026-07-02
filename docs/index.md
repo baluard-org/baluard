@@ -40,6 +40,6 @@
 | [PRD: Git Providers & Multi-Vault](prd-git-providers-multi-vault.md) | Product requirements for the multi-vault and online git provider feature |
 | [Plan: Git Providers & Multi-Vault](plan-git-providers-multi-vault.md) | Phased implementation plan tracking the PRD progress. Phases 1-6 complete. |
 | [Plan: Browser Extension](plan-browser-extension.md) | KeePassXC-Browser-style bridge client (MV3 Chromium + Firefox). Phases 0+1 complete (NMH binary, paired-companion auth, scoped bridge token, action allowlist). Phase 2 deferred. |
-| [Plan: Conflict Resolution Panel](plan-conflict-resolution-panel.md) | Top-floating slide-down panel for destructive field-level merge outcomes. UI built, backend wiring deferred (still falls back to keep-local). |
+| [Plan: Conflict Resolution Panel](plan-conflict-resolution-panel.md) | Top-floating slide-down panel for destructive field-level merge outcomes. Phase 2 complete (2026-07-02): engine seam, daemon decrypt+merge_ciphers, keep_both, frontend IPC. F1 auto-merges; F2/F3/F4 surface the panel. Open: stuck-queue escape. |
 | [Plan: Passkey Support](plan-passkey-support.md) | FIDO2/WebAuthn passkey storage + ceremony. Phase 0+1 complete (schema, BW import, ceremony wiring, CLI, daemon IPC). Phase 2+ pending (browser extension, mobile). |
 | [ADR 0007: passkey-rs Evaluation](plan-passkey-rs-evaluation.md) | Decision to adopt `passkey-rs` 0.5.x as the WebAuthn authenticator library |

@@ -62,12 +62,16 @@ Decrypts Entries (entries/*.enc)
 
 ### D4. Conflict Auto-Resolution & Index Healing
 
-**Decision: Field-level 3-way merge with keep-local fallback**
+**Decision: Field-level 3-way merge with user-verdict backstop (Phase 2, 2026-07-02)**
 
-- **Field-level merge** (`sync/conflict.rs::merge_ciphers`): on a pull conflict, decrypt base/local/remote cipher versions and merge non-overlapping field changes automatically. Security-sensitive field groups (username + password + TOTP) are atomic: if any field in the group conflicts, the whole group flags for user resolution. URIs and custom fields union.
-- **Keep-local fallback** (`SyncEngine::resolve_conflict_keep_local`): when field-level merge is not yet wired into the cycle (Phase 1), the local version of each conflicting file is taken, and a proper 2-parent merge commit is created on top of both local and remote so the next push fast-forwards. Local edits are never lost; remote edits that conflicted remain in git history for review.
-- **Auto-sync integration**: the coordinator (`autosync.rs`) calls `SyncEngine::run_sync_cycle` which runs commit → pull → resolve → push. Conflicts are resolved automatically and a non-blocking banner surfaces to the user. Phase 2 will decrypt + run `merge_ciphers` for silent non-destructive merge before falling back to keep-local on true same-field conflicts.
-- **Index healing**: if `meta/index.enc` conflicts, baluard-core rebuilds the index from the `entries/` folder.
+- **Field-level merge** (`sync/conflict.rs::merge_ciphers`): on a pull conflict, the daemon decrypts base/local/remote cipher versions (`VaultHandle::decrypt_cipher_bytes`) and merges non-overlapping field changes automatically. Security-sensitive field groups (username + password + TOTP) are atomic: if any field in the group conflicts, the whole group flags for user resolution. URIs and custom fields union.
+- **Auto-merge path** (`MergeResult::Merged`): the merged cipher is re-encrypted under the merging device's `current_epoch` + `max(local_seq, remote_seq)+1` and finalized via `SyncEngine::finalize_conflicts` (writes a 2-parent merge commit + pushes). No UI prompt.
+- **User-verdict path** (`MergeResult::Conflict`): same-field conflicts surface the top-floating `ConflictResolutionPanel` (D22) with a masked `MaskedConflict`. Verdicts: keep_local / keep_remote (raw blob from the chosen OID, no re-encrypt) or keep_both (new uuid clone under current epoch + seq 1, mirrors `add_cipher`).
+- **Cross-epoch safety**: if any side's envelope is at an epoch the held `SpaceGroupKey` cannot reach (remote pre-rotation with destroyed old RootKey, or local behind post-rotation), `try_derive_item_key` returns `None` and the conflict surfaces with a `cross_epoch` flag; only keep_local/keep_remote (raw blob) remain safe verdicts. `keep_both` is refused (can't clone a side we can't decrypt).
+- **Keep-local fallback** (`SyncEngine::resolve_conflict_keep_local`): the pre-Phase-2 path, still the default when a caller uses `run_sync_cycle` (the backward-compat wrapper delegates with a `ConflictResolution::KeepLocal` closure). The daemon's auto-sync coordinator opts in via `run_sync_cycle_with_resolver(..., Pause)`.
+- **Engine seam** (Phase 2a): `run_sync_cycle_with_resolver` + `ConflictResolution { KeepLocal, Pause }` + `PendingConflictState` + `SyncCycleOutcome::NeedsDecision`. Additive; the cycle still falls back to keep-local when the caller doesn't opt in. `finalize_conflicts` is HEAD-guarded against double-resolve.
+- **Index rebuild**: all three verdict paths call `rebuild_cipher_index()` after finalize (they write cipher files via `SyncEngine`, bypassing the `VaultHandle::add/update/delete` hooks that normally rebuild `meta/index.enc`). Critical for keep_both (the new clone cipher_id was never indexed).
+- **Latent bug fixed in 2a**: `pull_inner` pre-transitioned the sync state machine to `Idle` before returning `Conflict`, making the subsequent `resolve_conflicts` final `Idle→Idle` transition invalid on any real conflict. Now leaves the state in `Merging` so the resolution path completes `Merging→Idle` legitimately. Pre-existing, untested before the 2a conflict tests.
 
 > NOTE: earlier versions of this ADR described "silently force-pushes" and "renames the local version, accepts the remote commit." That was inaccurate and unsafe. The current policy preserves local edits and creates merge commits; never force-pushes.
 
@@ -919,9 +923,9 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 - The panel **may show**: entry name, cipher type, the list of conflicting field LABELS with a `sensitive` flag. The actual secret value NEVER crosses IPC.
 - Lives in `desktop/src/components/ConflictResolutionPanel.jsx` with FocusTrap accessibility.
 
-**Backend wiring deferred** to a follow-up pass. When wired, the cycle will run `merge_ciphers` per conflicting cipher; `Merged` writes the merged cipher; `Conflict` pauses the cycle with a `SyncCycleOutcome::NeedsDecision`, surfaces the conflict via a new `sync.conflict` route, and resumes on `sync.conflict.resolve`. Until then the panel is wired to a mock queue and the cycle continues to keep-local.
+**Backend wired (Phase 2).** The cycle runs `merge_ciphers` per conflicting cipher via `run_sync_cycle_with_resolver(..., Pause)`; `Merged` writes the merged cipher + finalizes; `Conflict` pauses the cycle (`SyncCycleOutcome::NeedsDecision`), surfaces the conflict via the `sync.conflict` route, and resumes on `sync.conflict.resolve`. keep_local/keep_remote use raw blob selection (no re-encrypt); keep_both clones under a new uuid (mirrors `add_cipher`). Cross-epoch decrypt failure surfaces a `cross_epoch` flag. See D4 for the full mechanic and `docs/plan-conflict-resolution-panel.md` for the contract.
 
-**Why ship the UI before the backend?** The frontend contract (`PendingConflict` shape, three-way decision, masking rule) is the load-bearing interface; getting it reviewed and dogfooded before the backend pins it lets the worst-case decisions about secret masking, sensitive-field labels, and the "keep both" escape hatch land in isolation. See `docs/plan-conflict-resolution-panel.md` for the full design contract.
+**Stuck-queue escape still open.** The panel is non-dismissable and keeps the conflict in the queue on resolver failure (retry-friendly). A permanently-failing `sync.conflict.resolve` IPC would lock the user out. Tracked as `TODO(stuck-queue)` in `decide()`; resolution options (max-retry fallback / manual escape hatch / hard-blocking product decision) deferred. Today the daemon route exists and works, so the risk is a degraded-network edge case, not a default path.
 
 ### D23. Event-Driven Sync Pull (2026-06-XX; DONE; refines D5-bis)
 
