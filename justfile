@@ -138,7 +138,7 @@ _sidecar-force:
 	set -euo pipefail
 	TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
 	mkdir -p desktop/src-tauri/binaries
-	{{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli
+	{{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh
 	cp target/release/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
 	cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
 	# Force-refresh sidecar in tauri target/debug
@@ -155,24 +155,31 @@ _sidecar:
 	TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
 	mkdir -p desktop/src-tauri/binaries
 
-	# Staleness check: skip cargo+copy if sidecar is newer than all Rust sources
+	# Staleness check: skip cargo+copy if sidecars are newer than all Rust
+	# sources. Reference mtime is the OLDER of (daemon sidecar, NMH binary) so
+	# a change to EITHER crate triggers a rebuild (NMH sources can change
+	# without touching daemon sources, and vice versa).
 	SIDECAR="desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
-	if [ -f "$SIDECAR" ]; then
-	  # Find any .rs file newer than the sidecar binary
-	  NEWEST_SRC=$(find crates -name '*.rs' -newer "$SIDECAR" -print -quit 2>/dev/null || true)
+	NMH_BIN="target/release/baluard-nmh"
+	NEWEST_REFERENCE="$SIDECAR"
+	if [ -f "$NMH_BIN" ] && [ "$NMH_BIN" -nt "$NEWEST_REFERENCE" ]; then
+	  NEWEST_REFERENCE="$NMH_BIN"
+	fi
+	if [ -f "$SIDECAR" ] && [ -f "$NMH_BIN" ]; then
+	  NEWEST_SRC=$(find crates -name '*.rs' -newer "$NEWEST_REFERENCE" -print -quit 2>/dev/null || true)
 	  if [ -z "$NEWEST_SRC" ]; then
-	    echo "Sidecar up-to-date (no Rust changes detected)"
+	    echo "Sidecars up-to-date (no Rust changes detected)"
 	  else
-	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli
+	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh
 	    cp target/release/baluard-daemon "$SIDECAR"
 	    cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
-	    echo "Sidecar rebuilt: $SIDECAR"
+	    echo "Sidecars rebuilt (stale): $SIDECAR, $NMH_BIN"
 	  fi
 	else
-	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli
+	    {{ linuxbrew_env }} cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh
 	    cp target/release/baluard-daemon "$SIDECAR"
 	    cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
-	    echo "Sidecar rebuilt: $SIDECAR"
+	    echo "Sidecars rebuilt (missing): $SIDECAR, $NMH_BIN"
 	fi
 
 	# Force-refresh sidecar in tauri target/debug (tauri-build copies from binaries/
