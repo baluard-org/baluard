@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-06-23 (Phase 4 hardening: `provider.disconnect` wired to `revoke_token`)
+> Last updated: 2026-07-02 (Browser extension Phase 0+1, conflict resolution panel, event-driven sync pull, quick unlock scoping + session PIN, wizard redesign, vault detach, favicons, app icons, sync header refactor)
 
 ---
 
@@ -20,10 +20,14 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
-- `/crates/baluard-core` - Rust core engine: crypto, keys, vault, padding, git sync
+- `/crates/baluard-core` - Rust core engine: crypto, keys, vault, padding, git sync, providers, bridge
 - `/crates/baluard-cli` - Terminal CLI client (clap, daemon-first with `--direct` fallback)
-- `/crates/baluard-daemon` - Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state, SSH key generation)
-- `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 8 cipher types, generator, TOTP, auto-lock, dark/light themes, i18n en/es)
+- `/crates/baluard-daemon` - Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state, SSH key generation, auto-sync coordinator, multi-vault host, browser bridge)
+- `/crates/baluard-nmh` - Native messaging host binary (browser extension bridge, stdio-JSON <-> varint-protobuf)
+- `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 8 cipher types, generator, TOTP, auto-lock, dark/light themes, i18n en/es, 38 components)
+- `/browser` - Chromium + Firefox MV3 extensions (shared codebase, two targets). KeePassXC-Browser-style bridge client. Paired companion model (rides the desktop's unlock state)
+- `/mobile` - Kotlin Multiplatform scaffold (PLACEHOLDER; UniFFI mobile bindings planned, not started)
+- `/docs` - Architecture, design, threat model, plans, PRDs, ADRs
 
 ---
 
@@ -41,9 +45,15 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | `sync/conflict` | Done | Field-level 3-way merge (`merge_ciphers`, semantic atomic groups); `resolve_conflict_keep_local` for keep-local conflict resolution |
 | `sync/state_machine` | Done | Sync state machine for tracking sync progress |
 | `daemon/socket` | Done | Unix socket listener. 0600 via umask. SIGINT/SIGTERM graceful shutdown |
-| `daemon/handler` | Done | Protobuf gateway. Length-delimited wire. Token-gated IPC. Password zeroized |
+| `daemon/handler` | Done | Protobuf gateway. Length-delimited wire. Token-gated IPC. Password zeroized. ~72 routes including bridge, vault_host, autosync |
 | `daemon/state` | Done | VaultState with Arc<RwLock>. KDF outside write lock. Double-check unlock pattern |
+| `daemon/host` | Done (Phase 6) | `VaultHost` multi-vault: `RwLock<VaultHostInner>` over `HashMap<String, Arc<VaultState>>` + `active: Option<String>` pointer. Per-vault session tokens. 11 integration tests |
+| `daemon/autosync` | Done | Event-driven pull (unlock + window focus w/ 10-min guard) + 30-min idle fallback + offline retry (30s probe). `cycle_lock` tokio mutex (C3). Network errors classified via `is_network_error` |
+| `daemon/pin` | Done | Session PIN escrow (`PinEscrow`). In-memory only. Argon2id PIN verifier. 5-strike nuke. Survives soft-lock, dies on close/restart |
+| `daemon/bridge` | Done (Phase 0+1) | Bridge token registry on `VaultHost`. `TokenKind::Bridge { pairing_id }` branches off `TokenKind::Vault` in `verify_session_token`. Allowlist enforcement. Field-gated `vault.update` (reject `fido2_credentials` + `uris` from bridge) |
 | `daemon/passkey-ipc` | Done (Phase 1) | 7 passkey routes: list, delete, rename, challenge_register, finish_register, challenge_assert, finish_assert. All token-gated. `delete` and `rename` take `credential_id` (not cipher_id) for multi-passkey Logins. |
+| `core/bridge` | Done (Phase 0+1) | Pairing file format + atomic writes, bridge token mint/verify, action allowlist. New module: `crates/baluard-core/src/bridge/{mod,pairing,token}.rs` |
+| `nmh/binary` | Done (Phase 0+1) | `baluard-nmh` standalone Rust binary. stdio-JSON <-> varint-protobuf. Stateless. Reads pairing entry on spawn, re-mints ephemeral bridge token. Per-OS manifest install via `just install-nmh-manifest <browser> <ext_id>` |
 | `cli/dual-mode` | Done | All commands: daemon-first + `--direct` fallback. `--socket <path>` override |
 | `desktop` | Done | SolidJS/Tailwind v4 + Tauri v2. 3-column layout, dark/light themes, tray, daemon spawn |
 | Uniform bucket padding | Done | 5 tiers (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB). Auto-selected via `Tier::fit()` |
@@ -59,18 +69,25 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | Reprompt | Done | Per-entry master password challenge with 30s grant |
 | Password Health | Done | Weak/reused/old password detection |
 | Attachments | Done | AES-256-GCM encrypted, max 2MB. Plaintext zeroized after use |
-| Biometric Unlock | Done | OS keychain (macOS native security-framework with Touch ID, keyring for others). Daemon-side unlock, secret never over IPC |
+| Biometric Unlock | Done | OS keychain (macOS `security-framework` v3 with `SecAccessControl BIOMETRY_ANY`; other platforms via `keyring` crate: Linux `linux-native`+`sync-secret-service`+`crypto-rust`, Windows `windows-native` DPAPI). Per-vault scoped by deterministic `vault_id` from KDF salt (stable across renames + git-sync). Legacy global `quick-unlock` wiped once at daemon startup. Daemon-side unlock, secret never over IPC |
+| Session PIN | Done | In-memory `PinEscrow` on `VaultState::pin` (KEK + Argon2id PIN verifier, both zeroized on drop, NEVER on disk). `vault.pin_status`/`vault.pin_enable`/`vault.pin_disable`/`vault.pin_unlock` daemon routes. 5-strike nuke (`MAX_PIN_FAILURES`). Survives soft-lock, dies on close/restart. Skips Argon2id master KDF via `unlock_with_kek` (still verifies keywrap + canaries). Linux + Windows-without-Hello fallback |
 | Linked Custom Fields | Done | 24 LinkedFieldType variants with type-safe resolution |
 | Nested Folders | Done | Max depth 16. Cascade delete. BFS descendant collection |
 | Archive | Done | Archive/unarchive ciphers. Separate list view |
 | Extra cipher types | Done | BankAccount (10 fields), DriversLicense (12 fields), Passport & ID (13 fields)
 | SSH key generation | Done | Ed25519 (default), ECDSA P-256. RSA 4096 removed (L7 fix: rsa crate had RUSTSEC-2023-0071 Marvin Attack, no fix). Daemon-side via `ssh-key` crate. OpenSSH format output |
 | User profile | Done | Display name, subtitle, avatar in VaultSettings. Avatar file in vault dir. Sidebar reads from context |
-| Modal accessibility | Done | FocusTrap component (Tab trap, Escape dismiss, auto-focus, restore focus). Applied to all 6 modals |
+| Modal accessibility | Done | FocusTrap component (Tab trap, Escape dismiss, auto-focus, restore focus). Applied to all 9 modals (Add/Edit, DeleteConfirm, ArchiveConfirm, Reprompt, Generator, Settings, EmptyTrash, SetupScreen, DetachVault, SwitchUnlock) |
 | Tag deletion | Done | Hover X on sidebar pills, confirmation modal, tag.delete daemon command |
 | Archive confirmation | Done | ArchiveConfirmModal with FocusTrap. Prompts before archiving entries |
 | i18n completion | Done | All hardcoded strings replaced with t() keys. en.json + es.json in sync |
-| Toast notifications | Done | toastSignal.js standalone signals. All user feedback via toasts | |
+| Toast notifications | Done | toastSignal.js standalone signals. All user feedback via toasts |
+| Favicons | Done | Opt-in persisted website icons (`favicon` cipher field). Fetched at save time. 16KB cap + magic-byte check + default-off. `desktop/src/lib/cipherSchema.js` + `Avatar`/`CipherRow` chip treatment |
+| App icons | Done | `just app-icons SOURCE OUT` builds 48/128 PNG variants from brand logo for all platforms (macOS/Windows/Linux/Android/iOS + tray monochrome + system tray). `desktop/src-tauri/icons/` |
+| Vault detach | Done | UI: `DetachVaultModal` in `VaultSwitcher` dropdown (safe detach only — drops registry entry). Destructive arm (`delete_from_disk`) NOT exposed in UI; CLI-only via `baluard vaults detach <slug> --delete-from-disk` (slug retyping + `.baluard` marker check). `vaults.detach` daemon route still supports both for the CLI caller |
+| Browser extension Phase 0+1 | Done | NMH binary + bridge module + paired-companion pairing flow. `bridge.pair_start` (desktop-initiated, token-gated, one-shot pending approval) + `bridge.pair_complete` (held pending Approve click in desktop UI). Scoped bridge token (`TokenKind::Bridge { pairing_id }`) on host registry; allowlist (no `vault.list_full`, no `vault.delete`, no `settings.*`, no `passkey.*`, no `sync.*` mutations). Per-`pairing_id` rate cap on `bridge.match`+`vault.get`. Top-frame-only content script, popup-driven fill (no auto-fill on load). See `docs/plan-browser-extension.md` |
+| Sync header refactor | Done | One-click sync UI replaces git jargon. Sidebar header shows provider + repo link (`cc09c51`). `AutoSyncIndicator` shows status pill (idle/syncing/dirty/offline). Sync label gated with `Show` inside `Transition` to silence background pulls. Provider state scoped to active vault (`58016d4`) |
+| Conflict resolution panel (UI) | Done | Top-floating slide-down panel (`ConflictResolutionPanel.jsx`) drives on destructive field-level merge outcomes. Backed by `ConflictResolutionContext.jsx`. Backend wiring deferred (still falls back to `resolve_conflict_keep_local`). See `docs/plan-conflict-resolution-panel.md` | |
 | Orgs | Done | Team/org sharing. HPKE key wrapping. Auto-rekey on member removal |
 | Emergency access | Done | Break-glass access. Pre-wrapped Root Key. Advisory time gate |
 | Providers | Done | GitHub (device flow) / GitLab (device flow + 2h refresh) / Codeberg (web-OAuth PKCE) adapters. OAuth + PAT fallback. Advanced Options for self-hosted + user-owned apps. Auto-create vault repo |
@@ -182,8 +199,18 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 | **Phase 3** | GitHub repo operations + first sync + credential wiring | **Done** |
 | Phase 4 | Remote vault clone + three-button wizard — **implemented**. `vault.clone_start/progress/finalize` daemon job flow (host-level, pre-unlock, NOT token-gated) + `SyncEngine::clone_remote` (provider-hinted creds + git2 `transfer_progress` -> live `CloneProgress`). CLI `baluard sync clone <provider> <repo>` (daemon-only). Desktop: `WelcomeScreen` (new vault / open local / download from provider) + `CloneFromProviderScreen` (provider pick -> auth -> `provider.vault_repos` list -> clone w/ progress bar -> master-pw unlock). `vaults.register_local` route (open-local, no copy). `provider.repos`/`vault_repos` un-gated (sentinel-safe, pre-unlock). 2FA warning banner (dismissible, per-provider). Orphan-dir cleanup on clone failure. `tauri-plugin-dialog` for the dir picker. Core + JS tests (clone progress, unreachable source, poll/finalize, failure path). | **Done** |
 | **Phase 5** | GitLab (device flow + PAT + 2h refresh) + Codeberg (web-OAuth PKCE + PAT) providers | **Done** |
-| **Phase 6** | Vault switching + CLI polish — **implemented**. Keep-unlocked/switch-pointer model: daemon holds `RwLock<VaultHostInner>` with `HashMap<String, Arc<VaultState>>` + `active` pointer (one critical section). Switch = pointer flip (no zeroization, no token change). Per-vault session tokens. `vaults.list/switch/active/close/set_active` routes. `vault.unlock` returns `{slug, token}`. Single auto-lock checker walks the map. 11 integration tests pass. | **Done** |
+| **Phase 6** | Vault switching + CLI polish — **implemented**. Keep-unlocked/switch-pointer model: daemon holds `RwLock<VaultHostInner>` with `HashMap<String, Arc<VaultState>>` + `active` pointer (one critical section). Switch = pointer flip (no zeroization, no token change). Per-vault session tokens. `vaults.list/switch/active/close/set_active` routes. `vault.unlock` returns `{slug, token}`. Single auto-lock checker walks the map. 11 integration tests pass. Lock-all on `Tauri WindowEvent::Focused(false)` (frontend token cache clear + focus-regain refresh); OS suspend / screen-lock / lid-close hooks documented as follow-up (macOS NSWorkspace, Linux login1 D-Bus PrepareForSleep, Windows WM_POWERBROADCAST/SessionSwitch). | **Done** |
 | Provider selection UI | Desktop SyncTab: device-flow (GitHub/GitLab) + web-OAuth (Codeberg) + PAT under Advanced Options | **Done** |
+| Sync header refactor | One-click sync UI replaces git jargon. Sidebar header shows provider + repo link (`cc09c51`). `AutoSyncIndicator` status pill (idle/syncing/dirty/offline). Sync label gated with `Show` inside `Transition` to silence background pulls. Provider state scoped to active vault (`58016d4`). | **Done** |
+| Vault detach | UI: `DetachVaultModal` in `VaultSwitcher` dropdown (safe detach only). Destructive arm (`delete_from_disk`) NOT exposed in UI; CLI-only via `baluard vaults detach <slug> --delete-from-disk`. `vaults.detach` daemon route still supports both | **Done** |
+
+### Browser Extension (KeePassXC-Browser-style bridge)
+
+| Item | Description | Status |
+|------|-------------|--------|
+| **Phase 0** | `baluard-nmh` standalone Rust binary + `core/bridge/{mod,pairing,token}.rs` module + paired-companion auth model. Desktop pairing UI (`BridgeTab`). Per-OS NMH manifest install via `just install-nmh-manifest <browser> <ext_id>`. `baluard-nmh` shipped as Tauri sidecar (desktop builds include it) | **Done** |
+| **Phase 1** | Chromium + Firefox MV3 extension builds (`just ext-build`, `ext-build-chrome`, `ext-build-firefox`). SolidJS popup (NO unlock). Top-frame-only content script (no auto-fill on load, popup-driven fill). Scoped `TokenKind::Bridge { pairing_id }` token on host registry. Action allowlist (no `vault.list_full`, no `vault.delete`, no `settings.*`, no `passkey.*`, no `sync.*` mutations). Field-gated `vault.update` (reject `fido2_credentials` + `uris` from bridge). Per-`pairing_id` rate cap on `bridge.match`+`vault.get`. Desktop-initiated approve-don't-type pairing flow (no codes to transcribe) | **Done** |
+| **Phase 2** | Phase 2 deferred: passkey ceremony in the browser, cross-device assertion via QR pairing, mobile (iOS/Android) | **Pending** |
 
 ### Nice to Have / Future
 
@@ -316,7 +343,7 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 | Command | Mode | Description |
 |---------|------|-------------|
 | `init [OPTIONS]` | Direct | Create new vault. Flags: `--profile`, `--name`, `--slug`, `--theme`, `--lang`, `--auto-lock` (no `--subtitle`: removed 2026-06-11) |
-| `unlock` | Daemon/Direct | Unlock vault |
+| `unlock` | Daemon/Direct | Unlock vault (returns `{slug, token}`) |
 | `lock` | Daemon | Lock vault, zeroize keys |
 | `add <type> ...` | Daemon/Direct | Add cipher (8 subcommands: login, card, secure-note, identity, ssh-key, bank-account, drivers-license, passport) |
 | `tags {create\|list\|rename\|delete}` | Daemon/Direct | Tag management |
@@ -326,15 +353,22 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 | `delete <id>` | Daemon/Direct | Delete cipher |
 | `archive <id>` / `unarchive <id>` | Daemon/Direct | Archive/restore cipher |
 | `folders {create\|list\|rename\|delete}` | Daemon/Direct | Folder management |
-| `sync {init\|remote\|push\|pull\|...}` | Daemon/Direct | Git sync operations |
+| `sync {init\|remote\|push\|pull\|clone\|...}` | Daemon/Direct | Git sync operations |
 | `import <format> <file>` | Daemon | Import entries |
 | `export <format> <file>` | Daemon | Export entries |
 | `health` | Daemon | Password health report |
 | `attach-*` | Daemon | Attachment upload/download/delete/list |
-| `devices list` | Direct | List enrolled devices |
+| `devices {list\|revoke\|info\|rotation-status\|rotation-abort\|enroll-with-phrase}` | Direct/Daemon | Device fleet |
+| `passkey {list\|delete\|rename}` | Daemon | FIDO2 passkey management |
+| `vaults {list\|switch\|close\|set-default\|detach\|prune}` | Daemon | Multi-vault CLI |
+| `provider {list\|connect\|disconnect\|repos\|vault-repos\|status}` | Daemon | Git provider ops |
+| `ssh-key` | Daemon | SSH key generation |
+| `biometric {enable\|disable\|status}` | Daemon | Per-vault biometric quick-unlock |
+| `pin {enable\|disable\|status}` | Daemon | Session PIN quick-unlock (Linux + Windows-without-Hello) |
+| `bridge {list\|pair-start\|pair-complete\|revoke\|reauth}` | Daemon | Browser extension pairing (desktop UI drives these) |
 | `ping` | Daemon | Check daemon connectivity |
 
-**Flags**: `--vault-path <dir>`, `--direct` (skip daemon), `--socket <path>`
+**Flags**: `--vault-path <dir>`, `--vault <slug>`, `--direct` (skip daemon), `--socket <path>`
 
 **Env vars**: `BALUARD_PASSWORD` (bypass TTY prompt for scripting), `BALUARD_DEBUG=1`, `BALUARD_LOG_DIR=<path>`
 
@@ -346,20 +380,32 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 baluard/
 ├── proto/                        # Shared Protobuf Schemas (vault, space, auth)
 ├── crates/
-│   ├── baluard-core/               # Rust Core: crypto, keys, vault, padding, sync, import/export, health, biometric, attachments, providers, orgs, emergency, integrity, recovery
-│   │   └── src/                    # Layout: crypto/, keys/, vault/, sync/, import/, providers/ subdirs + biometric.rs, device_manager.rs, devices.rs, emergency.rs, health.rs, integrity.rs, orgs.rs, recovery.rs, paths.rs, types.rs, error.rs, lib.rs
+│   ├── baluard-core/               # Rust Core: crypto, keys, vault, padding, sync, import/export, health, biometric, attachments, providers, orgs, emergency, integrity, recovery, bridge
+│   │   └── src/                    # crypto/{aead,hkdf_derive,hpke_wrap,kdf,signature,totp}.rs + webauthn/
+│   │                                 # keys/{epoch,hierarchy,nonce,rotation}.rs
+│   │                                 # vault/{attachment,avatar,canary,cipher,creation,envelope,handle,index,keywrap,manifest,padding,registry,slug}.rs
+│   │                                 # sync/{commit,conflict,credentials,engine,known_hosts,operations,state_machine}.rs
+│   │                                 # import/ + providers/{codeberg,github,gitlab,mod,token,types}.rs
+│   │                                 # bridge/{mod,pairing,token}.rs
+│   │                                 # biometric.rs, device_manager.rs, devices.rs, emergency.rs, health.rs, integrity.rs, orgs.rs, recovery.rs, paths.rs, types.rs, error.rs, lib.rs
 │   ├── baluard-cli/                # Terminal CLI (daemon-first + --direct fallback)
-│   │   └── src/                    # main.rs, client.rs, commands/mod.rs
-│   └── baluard-daemon/             # IPC daemon (Unix socket, Protobuf, VaultState, auto-lock, TOTP, attachments, biometric, SSH key gen)
-│       └── src/                    # main.rs, handler.rs (72 routes), state.rs, rate_limit.rs, socket_path.rs, crypto.rs
+│   │   └── src/                    # main.rs, client.rs, commands/mod.rs (~112K)
+│   ├── baluard-daemon/             # IPC daemon (Unix socket, Protobuf, VaultHost multi-vault, auto-sync, auto-lock, TOTP, attachments, biometric, PIN, bridge, SSH key gen)
+│   │   └── src/                    # main.rs, handler.rs (~72 routes), state.rs, host.rs, autosync.rs, pin.rs, bridge.rs, rate_limit.rs, socket_path.rs, crypto.rs, lib.rs
+│   └── baluard-nmh/                # Native messaging host (browser extension bridge). stdio-JSON <-> varint-protobuf. Stateless
 ├── desktop/                      # Tauri v2 Desktop (SolidJS/Tailwind)
-│   ├── src-tauri/                  # Rust backend: daemon sidecar, tray, proto codegen
+│   ├── src-tauri/                  # Rust backend: daemon sidecar, baluard-nmh sidecar, tray, proto codegen
 │   ├── src/
-│   │   ├── components/         # 26 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, etc.)
-│   │   ├── context/             # AuthContext.jsx, VaultContext.jsx, themeSignal.js, toastSignal.js
-│   │   ├── lib/                 # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, eff-words.js, wordlist-en.js, wordlist-es.js
-│   │   ├── __tests__/           # vitest tests (89 tests: payload, utils, filters, cipherSchema)
+│   │   ├── components/         # 38 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, WelcomeScreen, CloneFromProviderScreen, BridgeTab, ConflictBanner, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, VaultSwitcher, AutoSyncIndicator, DeviceFleetPanel, SyncTab, SettingsModal, ...)
+│   │   ├── context/             # AuthContext.jsx, VaultContext.jsx, VaultSwitcherContext.jsx, AutoSyncContext.jsx, ConflictResolutionContext.jsx, themeSignal.js, toastSignal.js
+│   │   ├── lib/                 # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
+│   │   ├── __tests__/           # vitest tests (~84 cases: payload, utils, filters, cipherSchema, cloneFlow)
 │   │   └── i18n/locales/        # en.json, es.json (all user-facing strings)
-├── docs/                         # Architecture & design docs
-└── justfile                      # Build system
+├── browser/                      # MV3 Browser extensions (Chromium + Firefox, shared codebase)
+│   ├── shared/                    # 95% of code (popup SolidJS, service worker, content script, nmh wrapper, autofill, pair)
+│   ├── chrome/                    # Chrome MV3 wrapper
+│   └── firefox/                   # Firefox MV3 wrapper
+├── mobile/                       # Kotlin Multiplatform scaffold [PLACEHOLDER]
+├── docs/                         # Architecture & design docs (index, arch, decisions, plans, PRDs, threat model, 2fa, post-quantum, brand, app icons)
+└── justfile                      # Build system (`just` recipes for build, test, lint, fmt, desktop, ext-*, app-icons, build-nmh, install-nmh-manifest, codesign)
 ```

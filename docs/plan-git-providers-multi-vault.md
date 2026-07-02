@@ -106,23 +106,30 @@ Deferred to later phases:
 
 ## Phase 4: Remote Vault Clone + Three-Screen Wizard
 
+**Status**: Implemented (2026-06-XX). `vault.clone_start` / `vault.clone_progress` / `vault.clone_finalize` daemon routes (host-level, pre-unlock, NOT token-gated); `SyncEngine::clone_remote` streams git2 `transfer_progress` to live `CloneProgress`. CLI `baluard sync clone <provider> <repo>` (daemon-only). Desktop `WelcomeScreen` (three buttons: new vault / open local / download from provider) + `CloneFromProviderScreen` (provider pick -> auth -> `provider.vault_repos` list -> clone w/ progress bar -> master-pw unlock). `vaults.register_local` route (open-local, no copy). `provider.repos` / `provider.vault_repos` un-gated (sentinel-safe, pre-unlock). 2FA warning banner (dismissible, per-provider). Orphan-dir cleanup on clone failure. `tauri-plugin-dialog` for the dir picker. Core + JS tests (clone progress, unreachable source, poll/finalize, failure path).
+
 **User stories**: 7, 17, 18, 19, 20, 21
 
-### What to build
+### What was built
 
-Redesign desktop wizard first screen: three buttons (new vault, open local vault, download from provider). Build "Download from provider" flow: pick provider -> authenticate if needed -> show detected vault repos (filtered by `.baluard` marker) -> user selects one -> clone with progress events -> prompt for master password -> unlock. Implement three-tier vault detection (search API, list+fetch fallback, manual). Add `vault.clone_remote` daemon route with git2-rs `transfer_progress()` streaming progress. Implement `provider.disconnect` with token revocation attempt. Add 2FA warning banner on provider selection.
+- Desktop `WelcomeScreen` with three buttons: new vault, open local vault, download from provider.
+- "Download from provider" flow: pick provider -> authenticate if needed -> show detected vault repos (filtered by `.baluard` marker) -> user selects one -> clone with progress events -> prompt for master password -> unlock.
+- Three-tier vault detection (search API, list+fetch fallback, manual).
+- `vault.clone_start` / `vault.clone_progress` / `vault.clone_finalize` daemon routes with git2-rs `transfer_progress()` streaming.
+- `provider.disconnect` with token revocation attempt.
+- 2FA warning banner on provider selection.
 
 ### Acceptance criteria
 
-- [ ] Desktop wizard shows three options: new vault, open local vault, download from provider
-- [ ] "Open local vault" opens file picker, imports into registry at original path
-- [ ] "Download from provider" shows provider picker -> auth -> vault repo list -> clone -> unlock
-- [ ] Remote vault list filters by `.baluard` marker (search API on GitHub, fallback on others)
-- [ ] Clone shows progress (bytes/objects) streamed to desktop, percentage in CLI
-- [ ] Cloned vault registered in registry with provider info
+- [x] Desktop wizard shows three options: new vault, open local vault, download from provider
+- [x] "Open local vault" opens file picker, imports into registry at original path
+- [x] "Download from provider" shows provider picker -> auth -> vault repo list -> clone -> unlock
+- [x] Remote vault list filters by `.baluard` marker (search API on GitHub, fallback on others)
+- [x] Clone shows progress (bytes/objects) streamed to desktop, percentage in CLI
+- [x] Cloned vault registered in registry with provider info
 - [x] `provider.disconnect` revokes token at provider (non-blocking on failure), clears keyring + providers.json
-- [ ] 2FA warning banner shown on provider selection, dismissible, shown once per provider
-- [ ] Full adversarial test: expired token, orphaned repo cleanup, keyring failure, device flow expiry
+- [x] 2FA warning banner shown on provider selection, dismissible, shown once per provider
+- [ ] Full adversarial test: expired token, orphaned repo cleanup, keyring failure, device flow expiry (partial: orphaned-dir cleanup implemented, full adversarial matrix deferred)
 
 ---
 
@@ -155,7 +162,7 @@ Both providers use **raw reqwest** (not the `gitlab`/`forgejo-api` crates the or
 - [x] Provider selection shows all three providers with auth method (device-flow / web-oauth / PAT label)
 - [x] PAT input under Advanced Options includes scope hint (write:repository for Codeberg)
 - [x] `provider.vault_repos` works for GitLab and Codeberg (list+fetch `.baluard`, concurrent per page via JoinSet)
-- [ ] `vault.clone_remote` works with GitLab and Codeberg repos (Phase 4, not yet implemented)
+- [x] `vault.clone_start`/`vault.clone_progress`/`vault.clone_finalize` works with GitLab and Codeberg repos (Phase 4 implemented)
 - [x] Same git2-rs credential callback works for all three providers (token as password, username from URL)
 
 ### Known limitations

@@ -835,15 +835,130 @@ CLI chains profile + preferences into `VaultCreator` builder before `execute()`.
 
 **Files NOT touched (already safe):** `kdf-params.json` (salt + cost are public by design; encrypting them is circular), `recovery.json` (already an HPKE-wrapped blob; the public keys it contains are public by definition), `keywrap/*.json` (same — wrapped material).
 
+### D19-bis. Phase 6 Multi-Vault Switching (2026-06-17; DONE)
+
+See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acceptance criteria. Implemented in `crates/baluard-daemon/src/host.rs` + 11 integration tests in `crates/baluard-daemon/tests/phase6_switching.rs`. The keep-unlocked / switch-pointer model replaces the pre-Phase 6 single `Arc<VaultState>`:
+
+- `VaultHost` wraps a single `RwLock<VaultHostInner>` over `vaults: HashMap<String, Arc<VaultState>>` + `active: Option<String>`. One lock guards both (no two-lock race; the `active`-is-in-the-map invariant is provable).
+- `vaults.switch` is a pointer flip: validate slug + set `active` under one write lock, touch registry `last_opened` OUTSIDE the lock. No zeroization, no token change.
+- Per-vault session tokens (`vault.unlock` returns `{slug, token}`). Desktop keeps `Map<slug, token>`. Token check is per-vault; vault-A token rejected for vault-B op.
+- Handler snapshots the target `Arc<VaultState>` clone once per request (no TOCTOU from mid-request `switch`).
+- `vaults.close` is Arc-drain — removes the entry, clears `active` if needed, returns immediately. In-flight handlers finish and zeroize on last drop.
+- Auto-lock walker iterates the map every 30s, applies each vault's own `auto_lock_minutes` + `last_activity`. **Active-pointer-on-autolock policy:** when the active vault auto-locks, `active` is LEFT pointing at it (re-unlock UX, not the picker).
+- Cover-commit timers are per-vault, keyed to locked/unlocked (never to `active`). A switch touches no cover timer.
+- Lock-all on `Tauri WindowEvent::Focused(false)` (desktop clears token cache, refreshes on focus regain). OS suspend / screen-lock / lid-close hooks (macOS NSWorkspace, Linux login1 D-Bus PrepareForSleep, Windows WM_POWERBROADCAST/SessionSwitch) documented as follow-up.
+- `log_mlock_budget` logs aggregate resident key bytes (96 B/vault: RootKey+SGK) + RLIMIT_MEMLOCK after every unlock.
+
+### D20. Quick Unlock: Per-Vault Biometric Scoping + Session PIN (2026-06-XX; DONE)
+
+**Decision: Split quick-unlock into two distinct mechanisms, both per-vault.**
+
+**Motivation.** The pre-D20 single global keychain entry (`quick-unlock`) was a privacy bug across multi-vault setups: enabling biometric unlock on vault A also unlocked vault B under the same OS keychain entry. It was also wrong for the common case where one vault supports Touch ID and another should require master password only.
+
+**Decision:**
+
+**A) Per-vault biometric (master-password escrow in OS keychain):**
+- **Keychain account:** `quick-unlock:<vault_id>` instead of `quick-unlock`. The `vault_id` is a deterministic UUID derived from the KDF salt (`VaultHandle::derive_vault_id` / `vault_id_for_path`), stable across vault renames + git-sync.
+- **macOS** (`security-framework` v3): stored with `SecAccessControl(BIOMETRY_ANY)` so Touch ID / passcode is required on every read.
+- **Linux**: `keyring` crate with `linux-native` backend + `sync-secret-service` feature + `crypto-rust` (requires `libsecret` dev packages at build time).
+- **Windows**: `keyring` crate with `windows-native` backend (Credential Manager / DPAPI). Note: Windows Credential Manager is NOT biometric-gated per-read, hence the session-PIN fallback below.
+- **Migration:** legacy global `quick-unlock` entry wiped once at daemon startup via `disable_legacy_global()`.
+- **Routes:** `vault.biometric_status` (not token-gated), `vault.biometric_enable` / `vault.biometric_disable` (token-gated), `vault.biometric_unlock` (host-level, not token-gated).
+
+**B) Session PIN (Linux + Windows-without-Hello fallback):**
+- **In-memory only.** `PinEscrow` on `VaultState::pin` holds the Argon2id-derived KEK + an Argon2id verifier over the PIN. Both zeroized on drop, NEVER on disk.
+- **Skips Argon2id master KDF.** PIN unlock calls `VaultHandle::unlock_with_kek`, which still verifies keywrap + canaries (a stale KEK — master password changed on another device — fails closed).
+- **Session-bound:** dies on daemon restart / vault close. **Survives soft-lock** (escrow is a separate `VaultState` field from the handle).
+- **5-strike nuke:** after `pin::MAX_PIN_FAILURES` (=5) wrong PINs the escrow is destroyed and the master password becomes mandatory. The 10^6 keyspace cannot be brute-forced through this in-process cap.
+- **Routes:** `vault.pin_status` (not token-gated), `vault.pin_enable` / `vault.pin_disable` (token-gated), `vault.pin_unlock` (host-level, not token-gated, mirrors `vault.biometric_unlock`).
+
+**Frontend (desktop):** the login screen queries both `vault.biometric_status` and `vault.pin_status` (slug-routed, pre-unlock safe) and shows whichever buttons are enabled for the selected vault.
+
+**Why two mechanisms.** Biometric is the primary UX on macOS (Touch ID). On Linux there's no biometric keychain; the in-memory PIN fills the same role (cheap re-unlock while the daemon is alive) without weakening the master-password-derived KEK chain. Windows-without-Hello gets the same PIN fallback because `keyring` `windows-native` does not gate reads biometrically.
+
+**Vault Detach (asymmetric UI vs CLI):** Detaching a vault (drop registry entry) is exposed in the `VaultSwitcher` dropdown (`DetachVaultModal`). The destructive arm (`delete_from_disk`) is deliberately NOT exposed in the UI — only the safe, reversible detach. The power-user escape hatch is the CLI: `baluard vaults detach <slug> --delete-from-disk` (gated by slug retyping + the daemon-side `.baluard` marker check). A future revision may add a master-password-reprompt gated destructive arm back to the UI; until then the UI is destructive-action-free. The daemon route `vaults.detach` still supports both flags for the CLI caller.
+
+### D21. Browser Extension: Paired-Companion Bridge (2026-06-XX; Phases 0+1 DONE)
+
+**Decision: KeePassXC-Browser-style MV3 extensions talk to `baluard-daemon` via a new `baluard-nmh` native messaging host. The extension is a paired companion — it never unlocks, never holds the master password, never holds the vault session token. It rides the desktop's unlock state via a scoped bridge token.**
+
+**Motivation.** Baluard has no server; Bitwarden/1Password's "extension talks to company API" model does not apply. The correct reference architecture is **KeePassXC-Browser**: extension -> native messaging host (stdio) -> local socket -> app. A 0600 Unix socket cannot be opened by a WebExtension (no raw-socket API in MV3); the only cross-browser escape hatch is `nativeMessaging` (Chrome `runtime.connectNative`/`sendNativeMessage`, Firefox identical).
+
+**Architecture (see `docs/plan-browser-extension.md` for the full design):**
+- **`baluard-nmh`** — standalone Rust binary. stdio-JSON <-> varint-protobuf. Stateless.
+- **`core/bridge/`** (new module: `mod.rs`, `pairing.rs`, `token.rs`) — pairing file format + atomic writes, bridge token mint/verify, action allowlist.
+- **Scoped bridge token (`TokenKind::Bridge { pairing_id }`)** lives on a host-level bridge registry (`VaultHost::bridges`, `HashMap<pairing_id, BridgeTokenEntry>`). Vault-agnostic (extension follows the desktop's active pointer per D6-bis Phase 10). TTL parity with the per-vault session token (`SESSION_TOKEN_TTL_SECONDS`, 4h).
+- **Action allowlist** (server-enforced in `verify_session_token` after token verification): `bridge.match`, `vault.get` (single, on fill/copy only), `vault.add`, `vault.update` (field-gated: password/username/notes/totp OK; `fido2_credentials` + `uris` REJECTED for bridge tokens), `cipher.totp_code`, `generator.history_add`, `generator.history_clear`, `sync.autosync_status`, `bridge.config`. **Excluded (rejected even with a valid bridge token):** `vault.list_full`, `vault.delete`, `vault.export`, `vault.change_password`, `device.revoke`, all `sync.*` mutations, all `provider.*`, `vault.attach_*`, `ssh.generate_key`, `passkey.*`, `vault.clone_*`, `folder.*`, `tag.*`, `vault.archive`/`unarchive`, `cipher.clone`, `settings.*`, `vault.trash.*`, `generator.history_list`, `favicon.get`.
+- **Pairing flow:** approve-don't-type. Desktop user clicks "Add browser extension" -> `bridge.pair_start` (desktop-session-token-gated, one-shot pending-approval flag, short TTL). Extension calls `bridge.pair_complete` (held pending). Desktop UI shows "A Baluard extension wants to connect" with Approve/Deny. Approve consumes the flag, writes pairing file, returns pairing secret to the NMH. **No codes to transcribe, no brute-force surface, no vault nuke on ceremony abuse** (the prior 5-strike nuke was a DoS landmine for non-tech users — removed in sonnet B-2).
+- **Per-`pairing_id` rate cap on `bridge.match` + `vault.get`** via the existing `RateLimiter` (~10-20/min). Bounds a browser compromise to a handful of credentials, not the whole vault. Burst abuse escalates to `bridge.revoke`.
+- **Fill policy:** popup-driven, per-fill user gesture. **No auto-fill on load.** Top-frame-only content script (`frameIds: [0]`). Fill-time origin re-check (content script re-verifies `location.origin` against the credential's stored URI before writing to the DOM, fails closed on mismatch). Closes the classic credential-theft vector of cross-origin login iframes + the popup-match/navigate-during-IPC race.
+- **Pairing file ownership:** daemon is the sole writer (`<data_dir>/bridge/pairings.json`, atomic tmp+rename). Desktop mutates only via daemon routes. NMH reads its own entry read-only.
+- **Lifecycle:** `connectNative` spawns a fresh NMH (browser SIGTERM/SIGKILL on disconnect). On spawn: NMH reads pairing entry via core, presents secret to daemon, daemon re-mints ephemeral bridge token. Token dies with the NMH; pairing file is durable and revocable.
+
+**Why not a direct `vault.list_full` for the extension?** It returns the entire decrypted vault in one call (a de-facto export, and the real blast radius). Instead the extension sees metadata + one credential at a time.
+
+**Why allowlist not deny-list?** Pre-1.0 WIP (per STATUS), expansion is a deliberate allowlist change + same-change call-site update. The friction is intentional — it forces a conscious security decision per route.
+
+**Files:**
+- `crates/baluard-core/src/bridge/{mod,pairing,token}.rs` — pairing + bridge token
+- `crates/baluard-daemon/src/bridge.rs` — bridge routes + allowlist enforcement
+- `crates/baluard-nmh/` — native messaging host binary
+- `browser/{shared,chrome,firefox}/` — MV3 extension codebases (shared 95%, target wrappers)
+- `desktop/src/components/BridgeTab.jsx` — paired-extension management UI
+
+### D22. Conflict Resolution Panel (2026-06-XX; UI BUILT, backend wiring DEFERRED)
+
+**Decision: Build the human-in-the-loop UI panel for destructive field-level merge outcomes now; defer the backend wiring (still falls back to `resolve_conflict_keep_local`) until Phase 1 of conflict resolution lands.**
+
+**Motivation.** The auto-sync path today silently keep-locals on any file-level conflict, which can lose non-overlapping field edits from the remote device (F1: same item, non-overlapping fields — HIGH severity). A non-technical user has no way to see this happened. `merge_ciphers` exists and is tested (`sync/conflict.rs`), but is never wired into the cycle. The panel is the user surface for the destructive cases Phase 1 of conflict resolution will eventually surface; it can be built first because it consumes a structured `PendingConflict` queue that's purely frontend-derivable from the current `sync.autosync_status` payload for the mock case.
+
+**Decision (UI side):**
+- Top-floating modal-like panel with subtle slide-down animation (`ConflictResolutionPanel.jsx`).
+- `ConflictResolutionContext.jsx` holds a queue of `PendingConflict` entries.
+- Three options, ordered simplest-first: keep local, keep remote, keep both as separate entries. Per-entry granularity. Per-field picking is intentionally excluded (would require shipping secret values to the UI; rejected).
+- The panel **may show**: entry name, cipher type, the list of conflicting field LABELS with a `sensitive` flag. The actual secret value NEVER crosses IPC.
+- Lives in `desktop/src/components/ConflictResolutionPanel.jsx` with FocusTrap accessibility.
+
+**Backend wiring deferred** to a follow-up pass. When wired, the cycle will run `merge_ciphers` per conflicting cipher; `Merged` writes the merged cipher; `Conflict` pauses the cycle with a `SyncCycleOutcome::NeedsDecision`, surfaces the conflict via a new `sync.conflict` route, and resumes on `sync.conflict.resolve`. Until then the panel is wired to a mock queue and the cycle continues to keep-local.
+
+**Why ship the UI before the backend?** The frontend contract (`PendingConflict` shape, three-way decision, masking rule) is the load-bearing interface; getting it reviewed and dogfooded before the backend pins it lets the worst-case decisions about secret masking, sensitive-field labels, and the "keep both" escape hatch land in isolation. See `docs/plan-conflict-resolution-panel.md` for the full design contract.
+
+### D23. Event-Driven Sync Pull (2026-06-XX; DONE; refines D5-bis)
+
+**Decision: Replace the periodic 3-minute heartbeat pull with event-driven triggers + a 30-minute idle fallback.**
+
+**Motivation.** A predictable 3-min heartbeat is a measurable timing fingerprint (T14) and burns git round-trips while the desktop is idle. The events that actually need a fresh vault (unlock, window focus returning, after a local CRUD round-trip) can drive pulls directly.
+
+**Decision:**
+- **Pull immediately on vault unlock.** `VaultState::unlock` calls `pull_only` after `activate`.
+- **Pull on window focus.** Desktop fires `sync.autosync_nudge_pull` on `Tauri WindowEvent::Focused(true)` (after a refocus); daemon applies a 10-min `FOCUS_PULL_MIN_GAP_SECS` guard so flicker collapses to one pull per 10 min.
+- **The push cycle itself commits -> pulls -> pushes.** Concurrent remote edits land right after a local mutation; no separate event needed.
+- **30-min idle fallback** (`PULL_INTERVAL_SECS`) catches the rare "left open on two machines" case. Deliberately quiet — no predictable periodic heartbeat.
+- **`cycle_lock` tokio Mutex** (C3 fix) guarantees only one sync cycle touches the on-disk repo at a time; losers bail cleanly.
+- **Activation in `VaultState::unlock`** (immediate, not lazy); deactivated on lock.
+- **No daemon-side decrypted cache** — `get_cipher` / `list_folders` read from disk every call, so after a pull the handle serves fresh data without a reload (root_key/SGK stay valid).
+
+**Frontend:** desktop polls `sync.autosync_status` every 10s (`AutoSyncContext`); status pill in sidebar header (`AutoSyncIndicator`); non-blocking conflict banner (`ConflictBanner`). No Tauri event channel (request/response only).
+
+**Why we still need the 30-min fallback:** with N unlocked vaults under the keep-unlocked model (D19-bis), an event-driven-only pull can miss the "device A made an edit, device B sat idle" case if device B's events never fire. The 30-min timer is the quiet backstop, not the primary sync path.
+
+### D24. Sync Header Refactor + Favicons (2026-06-XX; DONE)
+
+**Sync header:** replaced git jargon ("push", "pull", "remote", "branch") with a one-click sync UI. Sidebar header shows provider + repo link (`cc09c51`). `AutoSyncIndicator` status pill (idle / syncing / dirty / offline). Sync label gated with `<Show>` inside `<Transition>` to silence background pulls. Provider state scoped to active vault (`58016d4`) — multi-vault provider state was previously leaking across switches.
+
+**Favicons:** opt-in persisted website icons fetched at save time. New `favicon` field on cipher envelope (16KB cap, magic-byte check, default-off). `desktop/src/lib/cipherSchema.js` + `Avatar`/`CipherRow` chip treatment. Solves the "every login in the list looks the same" UX problem without bloating every entry with a base64 payload.
+
+**App icons:** `just app-icons SOURCE OUT` builds 48/128 PNG variants from a source logo for all platforms (macOS/Windows/Linux/Android/iOS + tray monochrome + system tray). Replaces the previous hand-curated icon set with a deterministic pipeline; `desktop/src-tauri/icons/` regenerated on build.
+
 ---
 
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.
 - **Phase 2: Git Sync Engine**: git2-rs sync, conflict auto-healing, state machine. DONE.
-- **Phase 3: IPC Daemon & CLI**: baluard-daemon (tokio Unix socket server), baluard-cli (socket client), Protobuf gateway handler.
-- **Phase 4: Desktop UI & Open-Source Launch**: SolidJS/Tailwind Tauri v2 app, system tray, GPL-3.0 license.
-- **Phase 5: Mobile & Extension**: UniFFI Kotlin/Swift bindings, KMP mobile app, MV3 browser extension with native messaging.
+- **Phase 3: IPC Daemon & CLI**: baluard-daemon (tokio Unix socket server), baluard-cli (socket client), Protobuf gateway handler. DONE.
+- **Phase 4: Desktop UI & Open-Source Launch**: SolidJS/Tailwind Tauri v2 app, system tray, GPL-3.0 license. DONE.
+- **Phase 5: Browser Extension & Mobile**: MV3 browser extension (Chromium + Firefox) with native messaging (Phases 0+1 DONE, Phase 2 deferred). UniFFI Kotlin/Swift bindings, KMP mobile app — not started.
 
 ---
 
