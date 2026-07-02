@@ -9,9 +9,10 @@
 
 import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import sharp from "sharp";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const target = process.env.TARGET || "chrome";
@@ -42,7 +43,7 @@ function mergeManifest() {
 function extensionPackPlugin() {
   return {
     name: "baluard-extension-pack",
-    closeBundle() {
+    async closeBundle() {
       const outDir = resolve(__dirname, "..", target, "dist");
       mkdirSync(outDir, { recursive: true });
       copyFileSync(
@@ -68,10 +69,19 @@ function extensionPackPlugin() {
         resolve(__dirname, "popup.html"),
         resolve(outDir, "popup.html")
       );
-      // icons placeholder dir
-      try {
-        mkdirSync(resolve(outDir, "icons"), { recursive: true });
-      } catch {}
+      // icons: generate 48 + 128 from the brand logo (desktop/src/assets/logo.png).
+      // Skipped only if sharp is unavailable or the source is missing — the
+      // manifest still references the files, so a missing source is a hard error.
+      const iconsDir = resolve(outDir, "icons");
+      mkdirSync(iconsDir, { recursive: true });
+      const logoSrc = resolve(__dirname, "../../desktop/src/assets/logo.png");
+      if (!existsSync(logoSrc)) {
+        throw new Error(`[baluard-extension-pack] icon source not found: ${logoSrc}`);
+      }
+      await Promise.all([
+        sharp(logoSrc).resize(48, 48, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toFile(resolve(iconsDir, "icon-48.png")),
+        sharp(logoSrc).resize(128, 128, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toFile(resolve(iconsDir, "icon-128.png")),
+      ]);
     },
   };
 }
