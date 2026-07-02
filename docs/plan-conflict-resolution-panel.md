@@ -1,7 +1,7 @@
 # Conflict Resolution Panel — failure modes + design contract
 
-Status: **Design / UI built. Backend wiring deferred (see Scope).**
-Related: `crates/baluard-core/src/sync/engine.rs`, `crates/baluard-core/src/sync/conflict.rs`, `desktop/src/components/ConflictResolutionPanel.jsx`.
+Status: **Phase 2 implemented (2026-07-02).** Backend wired: engine seam (`run_sync_cycle_with_resolver`, `ConflictResolution`, `NeedsDecision`, `finalize_conflicts`), daemon decrypt + `merge_ciphers` (`conflict_decrypt_and_merge`), `keep_both` (`conflict_resolve_keep_both`), frontend real IPC (`conflictFlow.js`, AutoSyncContext poll, panel resolver). Open: stuck-queue escape (see below).
+Related: `crates/baluard-core/src/sync/engine.rs`, `crates/baluard-core/src/sync/conflict.rs`, `crates/baluard-daemon/src/state.rs`, `crates/baluard-daemon/src/autosync.rs`, `desktop/src/components/ConflictResolutionPanel.jsx`, `desktop/src/lib/conflictFlow.js`.
 
 ## Goal
 
@@ -9,67 +9,75 @@ A top-floating, modal-like panel (subtle slide-down animation) shown **only** wh
 the automatic sync path cannot safely consolidate an item edited on two devices.
 It lets a non-technical user pick between keeping their local version, the remote
 version, or keeping both as separate entries. This is the human-in-the-loop
-backstop for the destructive cases the auto path currently resolves silently.
+backstop for the destructive cases the auto path used to resolve silently.
 
-## Scope (explicit)
+## Scope (current)
 
-We do **not** change the sync engine's state machine in this pass. This document
-defines (a) how the current infra fails, (b) exactly when the panel should fire,
-and (c) the data contract the UI consumes. The UI panel itself is built now and
-driven by a mockable frontend signal; the daemon route that feeds it is a
-follow-up.
+Phase 2 added the engine seam + daemon decrypt/merge + verdicts + frontend
+wiring on top of the original UI-only panel. The cycle now runs `merge_ciphers`
+on pull conflicts; auto-mergeable cases (F1) resolve with no prompt; same-field
+conflicts (F2/F4) and type-change conflicts (F3) surface this panel. The
+remaining open item is the **stuck-queue escape** (the panel is non-dismissable;
+a permanently-failing `sync.conflict.resolve` IPC would lock the user out).
 
-## How the current infrastructure can fail (destructive paths)
+## How conflicts are now handled (Phase 2)
 
-The authoritative cycle is `SyncEngine::run_sync_cycle` (`sync/engine.rs:1053`):
-
-```
-commit local  →  pull  →  resolve conflicts  →  push
-```
-
-The pull step returns `PullResult::Conflict { files, local_oid, remote_oid }`
-when git reports a **file-level** conflict: the same path was modified on both
-sides. In production the resolution is unconditional:
+The authoritative cycle is `SyncEngine::run_sync_cycle_with_resolver`
+(`sync/engine.rs`), which the daemon's auto-sync coordinator calls with a
+`ConflictResolution::Pause` closure. On a pull conflict:
 
 ```rust
-self.resolve_conflict_keep_local(repo, local_oid, remote_oid, &files)?;
-conflicts = 1;
+match engine.run_sync_cycle_with_resolver(&repo, &mut |_| ConflictResolution::Pause) {
+    Ok(SyncCycleOutcome::NeedsDecision { pending }) => { /* coordinator holds it */ }
+    ...
+}
 ```
 
-`resolve_conflict_keep_local` (`engine.rs:1026`) takes the **local bytes
-wholesale** for every conflicting file and ignores the remote content. It then
-builds a 2-parent merge commit so the next push fast-forwards. The frontend only
-ever learns the integer `conflicts_resolved` via `sync.autosync_status`.
+The coordinator (`autosync.rs`) stores the `PendingConflictState` and enters
+`AutoSyncState::NeedsDecision` (the background loop and debounce do NOT fire
+while paused; `nudge` queues mutations for after the drain).
+
+The `sync.conflict` route then drives `VaultState::conflict_decrypt_and_merge`,
+which decrypts base/local/remote via `VaultHandle::decrypt_cipher_bytes` (item
+key derived per-envelope from the held `SpaceGroupKey`; cross-epoch decrypt
+failure fails closed) and runs `conflict::merge_ciphers`:
+
+- **`MergeResult::Merged`** → re-encrypt under the merging device's
+  `current_epoch` + `max(local_seq, remote_seq)+1` and `finalize_conflicts`
+  (writes a 2-parent merge commit + pushes). **No panel.**
+- **`MergeResult::Conflict`** → surface a masked `MaskedConflict` (name, type,
+  field labels + sensitive flag; NO plaintext values) for the user verdict.
+- **Cross-epoch** (a side is at an epoch this device can't decrypt) → surface
+  a `cross_epoch` flag; only keep_local/keep_remote (raw blob, no decrypt)
+  remain safe verdicts. `keep_both` is refused (can't clone a side we can't read).
+
+`sync.conflict.resolve` applies the verdict:
+- **keep_local / keep_remote** → raw blob selection from the chosen side's OID
+  (the envelope is already valid + AAD-consistent; no re-encrypt).
+- **keep_both** → `conflict_resolve_keep_both`: local stays at the original path
+  (untouched blob) + a fresh cipher under a new uuid at `ciphers/<new_id>.enc`
+  with the remote content re-encrypted under the new id + current epoch + seq 1
+  (mirrors `add_cipher`). Both land in one merge commit.
+
+All three paths call `rebuild_cipher_index()` after `finalize_conflicts`, since
+they write cipher files directly via `SyncEngine` (bypassing the
+`VaultHandle::add/update/delete` hooks that normally rebuild `meta/index.enc`).
 
 Storage layout matters: each cipher lives at `ciphers/<cipher_id>.enc` (flat), so a
 git-level conflict only fires when **the same cipher** is touched on two
 devices. Two different ciphers edited concurrently never conflict (different
 paths, fast-forward cleanly).
 
-The field-level 3-way merge `merge_ciphers` (`sync/conflict.rs:89`) **exists and
-is tested, but is never called** in the production cycle. It can auto-merge
-non-overlapping fields and detect true conflicts (`MergeResult::Conflict`). It is
-dormant.
+### The failure modes the panel exists for (F2/F3/F4)
 
-From this, the destructive failure modes where the panel should eventually fire:
+(Pre-Phase-2, ALL of these silently kept local. Now F1 auto-merges; F2/F3/F4
+surface the panel.)
 
-### F1. Same item, non-overlapping fields — silent field loss (HIGH severity)
+### F1. Same item, non-overlapping fields — NOW auto-merged (was silent field loss)
 
-Desktop edits the **password** of "GitHub". Mobile, before pulling, edits the
-**notes** of the same "GitHub" entry.
-
-- Git path conflict on `ciphers/<id>.enc`.
-- `resolve_conflict_keep_local` keeps the local file. The remote notes edit is
-  **discarded entirely**.
-- `merge_ciphers` would have merged these cleanly (different fields, no
-  conflict). But it is not wired in, so the loss is silent.
-- The user sees only: "This item was also edited on another device. We kept the
-  most recent version." — a claim that is **not** what happened (we kept local,
-  not "most recent").
-
-This is the primary case the user wants surfaced. Even after `merge_ciphers` is
-wired, this case auto-resolves and the panel is NOT needed. The panel is needed
-for F2/F3.
+Desktop edits the **password**, mobile edits the **notes** of the same entry.
+`merge_ciphers` merges cleanly (different fields). **No panel fires.** Both
+edits land in the merged cipher.
 
 ### F2. Same item, same field, divergent values — true conflict (HIGH severity)
 
@@ -99,19 +107,19 @@ discards the remote group wholesale.
 - Network failure → `SyncCycleOutcome::Offline`, retry path, no data decision.
 - Push rejected (non-fast-forward) → re-runs the cycle, no user decision.
 
-## When the panel fires (trigger contract)
+## When the panel fires (implemented trigger)
 
-The panel is shown when, and only when, the sync engine hits a conflict it
-cannot auto-merge and decides to defer to the user instead of silently keeping
-local. Concretely, the future backend wiring (not in this pass):
+Implemented in `run_sync_cycle_with_resolver` + `conflict_decrypt_and_merge`:
 
-1. In `run_sync_cycle`, on `PullResult::Conflict`, run `merge_ciphers` per
-   conflicting cipher instead of unconditionally `resolve_conflict_keep_local`.
-2. If `MergeResult::Merged` → write the merged cipher, continue (no panel).
-3. If `MergeResult::Conflict` → **pause** the cycle, hold the `ConflictInfo`
-   in memory on `VaultState`, return a new `SyncCycleOutcome::NeedsDecision`,
-   and surface the conflict (masked, see below) via a `sync.conflict` route.
-4. On `sync.conflict.resolve`, resume the cycle with the user's verdict.
+1. On `PullResult::Conflict`, the cycle pauses (returns
+   `SyncCycleOutcome::NeedsDecision { pending }`); the coordinator holds the
+   `PendingConflictState` and enters `NeedsDecision`.
+2. The `sync.conflict` route runs `merge_ciphers` on the decrypted base/local/remote.
+3. `MergeResult::Merged` → re-encrypt + `finalize_conflicts` (no panel).
+4. `MergeResult::Conflict` → surface the masked `MaskedConflict` via the route;
+   AutoSyncContext's 10s poll feeds it to the panel queue.
+5. `sync.conflict.resolve` applies the user's verdict + drains the queue
+   (`note_resolved` → Dirty if empty, so queued mutations + the merge sync).
 
 The panel consumes a queue of pending conflicts (one or more entries may have
 diverged in a single sync).
@@ -177,16 +185,34 @@ type ConflictVerdict =
 `typeChanged: true` overrides the per-field list: the whole entry shape differs,
 so the panel explains it at the entry level ("changed from a login to a note").
 
-## Open questions (for the backend wiring pass)
+## Open questions
 
-- Where is `ConflictInfo` held while paused? `VaultState` is the natural home;
-  it must be zeroized on drop / lock (the struct already implements `Drop`).
-- Does a paused block freeze the auto-sync coordinator's debounce window, or
-  queue new mutations behind the decision? Recommendation: queue (do not lose
-  the user's newer edits) and re-merge after the verdict.
-- Conflict TTL: if the user ignores the panel for hours, do we auto-keep-local
-  after a warning? Recommendation: never auto-decide destructively; the panel is
-  non-dismissable until a verdict is chosen (it is modal by design).
+- ~~Where is `ConflictInfo` held while paused?~~ **Answered:** the engine-side
+  `PendingConflictState` lives on the autosync coordinator's `Inner`; the
+  decrypted `MaskedConflict` is built on demand in `conflict_decrypt_and_merge`
+  (never persisted).
+- ~~Does a paused block freeze the debounce window, or queue mutations?~~
+  **Answered (queue):** `nudge` increments `pending` and returns early when
+  state is `NeedsDecision`; `note_resolved` transitions to `Dirty` when the
+  queue empties so the merge commit + queued mutations sync on the next cycle.
+- ~~Conflict TTL / auto-keep-local?~~ **Answered:** never auto-decide
+  destructively; the panel is non-dismissable until a verdict is chosen.
+- **Stuck-queue escape (resolve-failure path) — STILL OPEN.** The panel's
+  `decide()` keeps the conflict in the queue when the resolver throws
+  (retry-friendly), and the panel is non-dismissable. If the real
+  `sync.conflict.resolve` IPC permanently fails (daemon down, item key
+  unrecoverable), the head never leaves the queue and the user is locked behind
+  a modal whose actions all fail. Tracked as `TODO(stuck-queue)` in
+  `ConflictResolutionPanel.jsx::decide`. Resolution options for a future pass:
+  (a) max-retry fallback to a safe non-destructive state, (b) a manual escape
+  hatch (close + re-queue via persistent state, or a link to logs), (c) an
+  explicit product decision to keep the modal hard-blocking.
+- **Full two-device crypto integration test.** The engine seam has unit tests
+  (`run_sync_cycle_with_resolver_pause_and_finalize`,
+  `run_sync_cycle_backward_compat_uses_keep_local`) and the cross-epoch guard
+  has a unit test (`try_derive_item_key_returns_none_on_epoch_mismatch`). The
+  full decrypt→merge→re-encrypt→finalize round-trip across two real vaults with
+  rotation is deferred to a dedicated integration test pass.
 - **Stuck-queue escape (resolve-failure path).** The panel's `decide()` keeps
   the conflict in the queue when the resolver throws (retry-friendly), and the
   panel is non-dismissable. If the real `sync.conflict.resolve` IPC

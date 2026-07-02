@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-07-02 (Browser extension Phase 0+1, conflict resolution panel, event-driven sync pull, quick unlock scoping + session PIN, wizard redesign, vault detach, favicons, app icons, sync header refactor)
+> Last updated: 2026-07-02 (Phase 2 field-level conflict resolution shipped: engine seam, daemon decrypt+merge, keep_both, frontend IPC)
 
 ---
 
@@ -87,7 +87,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | Vault detach | Done | UI: `DetachVaultModal` in `VaultSwitcher` dropdown (safe detach only — drops registry entry). Destructive arm (`delete_from_disk`) NOT exposed in UI; CLI-only via `baluard vaults detach <slug> --delete-from-disk` (slug retyping + `.baluard` marker check). `vaults.detach` daemon route still supports both for the CLI caller |
 | Browser extension Phase 0+1 | Done | NMH binary + bridge module + paired-companion pairing flow. `bridge.pair_start` (desktop-initiated, token-gated, one-shot pending approval) + `bridge.pair_complete` (held pending Approve click in desktop UI). Scoped bridge token (`TokenKind::Bridge { pairing_id }`) on host registry; allowlist (no `vault.list_full`, no `vault.delete`, no `settings.*`, no `passkey.*`, no `sync.*` mutations). Per-`pairing_id` rate cap on `bridge.match`+`vault.get`. Top-frame-only content script, popup-driven fill (no auto-fill on load). See `docs/plan-browser-extension.md` |
 | Sync header refactor | Done | One-click sync UI replaces git jargon. Sidebar header shows provider + repo link (`cc09c51`). `AutoSyncIndicator` shows status pill (idle/syncing/dirty/offline). Sync label gated with `Show` inside `Transition` to silence background pulls. Provider state scoped to active vault (`58016d4`) |
-| Conflict resolution panel (UI) | Done | Top-floating slide-down panel (`ConflictResolutionPanel.jsx`) drives on destructive field-level merge outcomes. Backed by `ConflictResolutionContext.jsx`. Backend wiring deferred (still falls back to `resolve_conflict_keep_local`). See `docs/plan-conflict-resolution-panel.md` | |
+| Conflict resolution panel (UI) | Done | Top-floating slide-down panel (`ConflictResolutionPanel.jsx`) driven by `ConflictResolutionContext.jsx`. **Phase 2 backend wired (2026-07-02)**: engine seam (`run_sync_cycle_with_resolver`, `NeedsDecision`, `finalize_conflicts`), daemon decrypt + `merge_ciphers` (`conflict_decrypt_and_merge`), `keep_both` (`conflict_resolve_keep_both`), frontend real IPC (`conflictFlow.js`, AutoSyncContext poll). F1 auto-merges (no prompt); F2/F3/F4 surface the panel. Cross-epoch decrypt failure bails to keep-local raw blob with a UI flag. See `docs/plan-conflict-resolution-panel.md` | |
 | Orgs | Done | Team/org sharing. HPKE key wrapping. Auto-rekey on member removal |
 | Emergency access | Done | Break-glass access. Pre-wrapped Root Key. Advisory time gate |
 | Providers | Done | GitHub (device flow) / GitLab (device flow + 2h refresh) / Codeberg (web-OAuth PKCE) adapters. OAuth + PAT fallback. Advanced Options for self-hosted + user-owned apps. Auto-create vault repo |
