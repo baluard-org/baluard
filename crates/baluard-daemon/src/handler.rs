@@ -1364,36 +1364,52 @@ async fn handle_bridge_host_route(
             ))
         }
 
-        // Called by the extension/NMH. Held pending until the desktop user
-        // clicks Approve (consumes the one-shot flag). Not token-gated
-        // (the extension has no token yet) — gated by the approval instead.
+        // Called by the extension/NMH. Registered as a waiter and HELD until
+        // the desktop user clicks Approve (which resolves the waiter). Not
+        // token-gated (the extension has no token yet). If the desktop
+        // approves before the extension calls, the next pair_complete
+        // proceeds immediately (fast path).
         "bridge.pair_complete" => {
             let payload: serde_json::Value = serde_json::from_str(&req.payload)
                 .map_err(|e| format!("Invalid JSON: {e}"))
                 .ok()?;
             let name = payload["name"].as_str().unwrap_or("Browser").to_string();
             let browser = payload["browser"].as_str().unwrap_or("unknown").to_string();
-            let mut reg = host.bridge().write().await;
-            match reg.complete_pair(name, browser) {
-                Ok((pairing_id, token_hex)) => {
-                    // Return BOTH the pairing secret (for future reauth) and
-                    // the first bridge token. The NMH persists the secret.
-                    let pf = baluard_core::bridge::pairing::PairingFile::load().unwrap_or_default();
-                    let secret_hex = pf
-                        .get(&pairing_id)
-                        .map(|e| e.secret.clone())
-                        .unwrap_or_default();
-                    Some(ok_resp(
-                        serde_json::json!({
-                            "pairing_id": pairing_id.to_string(),
-                            "secret": secret_hex,
-                            "token": token_hex,
-                        })
-                        .to_string(),
-                        None,
-                    ))
+
+            // Fast path: desktop already approved (pending marked Approved).
+            let already_approved = host
+                .bridge()
+                .read()
+                .await
+                .pending()
+                .map(|p| matches!(p.approval, Some(crate::bridge::PairApproval::Approved)))
+                .unwrap_or(false);
+            if already_approved {
+                let mut reg = host.bridge().write().await;
+                return Some(finalize_pair(&mut reg, name, browser).await);
+            }
+
+            // Slow path: register a waiter and block until the desktop
+            // approves or the TTL expires.
+            let rx = host
+                .bridge()
+                .write()
+                .await
+                .register_waiter(name.clone(), browser.clone());
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(crate::bridge::PENDING_TTL_SECONDS),
+                rx,
+            )
+            .await;
+            match result {
+                Ok(Ok(_payload)) => {
+                    let mut reg = host.bridge().write().await;
+                    Some(finalize_pair(&mut reg, name, browser).await)
                 }
-                Err(msg) => Some(err_response(msg.to_string())),
+                _ => {
+                    // Timeout or sender dropped (superseded). Fail closed.
+                    Some(err_response("pairing timed out or was superseded"))
+                }
             }
         }
 
@@ -1411,9 +1427,9 @@ async fn handle_bridge_host_route(
             }
             let mut reg = host.bridge().write().await;
             match reg.approve_pending() {
-                Ok(p) => Some(ok_resp(
+                Ok(request_id) => Some(ok_resp(
                     serde_json::json!({
-                        "request_id": p.request_id,
+                        "request_id": request_id,
                         "approved": true,
                     })
                     .to_string(),
@@ -1560,12 +1576,21 @@ async fn route_bridge_request(
         Ok(pair) => pair,
         Err(_) => return err_response("locked"),
     };
-    let state: SharedVaultState = snapshot.1;
+    let state: SharedVaultState = snapshot.1.clone();
+    let active_slug = snapshot.0.clone();
 
     // 5. Active vault MUST be unlocked.
     if !state.is_unlocked().await {
         return err_response("locked");
     }
+
+    // Resolve the active vault's display name for the popup header (review I8:
+    // silent cross-vault hazard; the extension must show WHERE a capture/fill
+    // lands). Best-effort: registry lookup, fall back to the slug.
+    let vault_name = baluard_core::vault::registry::VaultRegistry::load_locked()
+        .ok()
+        .and_then(|r| r.get(&active_slug).map(|e| e.display_name.clone()))
+        .unwrap_or_else(|| active_slug.clone());
 
     // 6. Dispatch the allowlisted action. bridge.match / bridge.config are
     //    NEW routes; the rest reuse the existing per-vault handler by
@@ -1578,7 +1603,7 @@ async fn route_bridge_request(
         d
     };
     match req.action.as_str() {
-        "bridge.match" => handle_bridge_match(req, &state).await,
+        "bridge.match" => handle_bridge_match(req, &state, &vault_name).await,
         "bridge.config" => handle_bridge_config(&state).await,
         // vault.get / vault.add / vault.update / cipher.totp_code /
         // generator.* / sync.autosync_status all reuse the normal path.
@@ -1615,16 +1640,55 @@ fn bridge_update_touches_forbidden(payload: &serde_json::Value) -> bool {
 ///
 /// v1: reuses the vault's `list_all` batch endpoint, filters server-side by
 /// hostname, and returns ONLY metadata (id/name/username/type). Passwords
+/// Finalize a pairing after approval: complete_pair (write pairing file +
+/// mint first token), then build the response with the secret + token.
+async fn finalize_pair(
+    reg: &mut crate::bridge::BridgeRegistry,
+    name: String,
+    browser: String,
+) -> GatewayResponse {
+    match reg.complete_pair(name, browser) {
+        Ok((pairing_id, token_hex)) => {
+            // Return BOTH the pairing secret (for future reauth) and the first
+            // bridge token. The NMH persists the secret.
+            let pf = baluard_core::bridge::pairing::PairingFile::load().unwrap_or_default();
+            let secret_hex = pf
+                .get(&pairing_id)
+                .map(|e| e.secret.clone())
+                .unwrap_or_default();
+            ok_resp(
+                serde_json::json!({
+                    "pairing_id": pairing_id.to_string(),
+                    "secret": secret_hex,
+                    "token": token_hex,
+                })
+                .to_string(),
+                None,
+            )
+        }
+        Err(msg) => err_response(msg.to_string()),
+    }
+}
+
+/// bridge.match: URL -> matching CipherMeta (metadata only, no passwords).
+///
 /// never cross this boundary — the extension calls `vault.get` for the one
 /// the user picks.
-async fn handle_bridge_match(req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
+async fn handle_bridge_match(
+    req: GatewayRequest,
+    state: &SharedVaultState,
+    vault_name: &str,
+) -> GatewayResponse {
     let url: String = match serde_json::from_str::<serde_json::Value>(&req.payload) {
         Ok(v) => v["url"].as_str().unwrap_or("").to_string(),
         Err(_) => return err_response("Invalid JSON"),
     };
     let want = hostname_of(&url);
     if want.is_empty() {
-        return ok_resp(serde_json::json!({ "matches": [] }).to_string(), None);
+        return ok_resp(
+            serde_json::json!({ "matches": [], "active_vault": vault_name }).to_string(),
+            None,
+        );
     }
     match state.list_all().await {
         Ok(blob) => {
@@ -1658,7 +1722,10 @@ async fn handle_bridge_match(req: GatewayRequest, state: &SharedVaultState) -> G
                     })
                 })
                 .collect();
-            ok_resp(serde_json::json!({ "matches": matched }).to_string(), None)
+            ok_resp(
+                serde_json::json!({ "matches": matched, "active_vault": vault_name }).to_string(),
+                None,
+            )
         }
         Err(e) => err_response(e),
     }

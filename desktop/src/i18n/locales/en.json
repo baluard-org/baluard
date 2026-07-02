@@ -296,7 +296,8 @@
     "avatarRemoved": "Avatar removed",
     "profileSaved": "Profile updated",
     "tabSync": "Sync",
-    "syncNotAvailable": "Sync is not available on this build."
+    "syncNotAvailable": "Sync is not available on this build.",
+    "tabBridge": "Browser extensions"
   },
   "sync": {
     "title": "Vault Sync",
@@ -395,7 +396,7 @@
   "conflict": {
     "title": "This item was edited on two devices",
     "step": "{current} of {total}",
-    "intro": "\u201c{name}\u201d changed on two devices and we couldn't merge the changes automatically. Choose which version to keep.",
+    "intro": "“{name}” changed on two devices and we couldn't merge the changes automatically. Choose which version to keep.",
     "thisDevice": "this device",
     "otherDevice": "the other device",
     "changedFields": "What changed",
@@ -578,5 +579,40 @@
     "minutes": "{n} min",
     "hours": "{n} h",
     "days": "{n} d"
+  },
+  "bridge": {
+    "title": "Browser extensions",
+    "description": "Connect a browser extension to autofill passwords from this vault. The extension only works while this app is unlocked.",
+    "add": "Add browser extension",
+    "waitingForExtension": "Waiting for extension",
+    "waitingHint": "Open the Baluard extension in your browser and follow its steps. When it asks to connect, click Approve here.",
+    "approve": "Approve",
+    "approved": "Extension connected",
+    "approveFailed": "Could not approve the extension",
+    "pairStartFailed": "Could not start pairing",
+    "revoke": "Revoke",
+    "revoked": "Extension disconnected",
+    "nonePaired": "No browser extensions connected.",
+    "pairedOn": "Connected"
+  },
+  "bridge_ext": {
+    "appRequired": "Open the Baluard app",
+    "appRequiredDesc": "The Baluard desktop app must be running and unlocked to use the extension.",
+    "locked": "Vault locked",
+    "lockedDesc": "Unlock the Baluard app to fill passwords.",
+    "notPaired": "Connect to Baluard",
+    "notPairedDesc": "Open the Baluard app and add a browser extension to connect.",
+    "connect": "Waiting for approval",
+    "connectDesc": "Approve the connection in the Baluard app.",
+    "versionSkew": "Update required",
+    "versionSkewDesc": "Update the Baluard desktop app to use this extension.",
+    "search": "Search logins",
+    "noMatches": "No logins for this site",
+    "fill": "Fill",
+    "copyUsername": "Copy username",
+    "copyPassword": "Copy password",
+    "copyTotp": "Copy code",
+    "activeVault": "Vault",
+    "copied": "Copied"
   }
 }

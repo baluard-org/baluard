@@ -14,6 +14,7 @@ import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, I
 import FocusTrap from "./FocusTrap.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 import SyncTab from "./SyncTab.jsx";
+import BridgeTab from "./BridgeTab.jsx";
 
 export default function SettingsModal() {
   const vault = useVault();
@@ -410,6 +411,15 @@ export default function SettingsModal() {
                   <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
                 </Show>
               </button>
+              <button
+                onClick={() => setActiveTab("bridge")}
+                class={`py-3 text-xs font-bold transition-all relative cursor-pointer ${activeTab() === "bridge" ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
+              >
+                {t("settings.tabBridge")}
+                <Show when={activeTab() === "bridge"}>
+                  <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
+                </Show>
+              </button>
             </div>
 
             {/* Content */}
@@ -737,6 +747,9 @@ export default function SettingsModal() {
 
               <Show when={activeTab() === "devices"}>
                 <DeviceFleetPanel />
+              </Show>
+              <Show when={activeTab() === "bridge"}>
+                <BridgeTab />
               </Show>
             </div>
           </div>

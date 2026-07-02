@@ -49,6 +49,19 @@ function extensionPackPlugin() {
         resolve(__dirname, "src/background.js"),
         resolve(outDir, "background.js")
       );
+      // Phase 1: content script (fill executor) + offscreen clipboard doc.
+      copyFileSync(
+        resolve(__dirname, "src/content.js"),
+        resolve(outDir, "content.js")
+      );
+      copyFileSync(
+        resolve(__dirname, "offscreen.html"),
+        resolve(outDir, "offscreen.html")
+      );
+      copyFileSync(
+        resolve(__dirname, "src/offscreen.js"),
+        resolve(outDir, "offscreen.js")
+      );
       writeFileSync(resolve(outDir, "manifest.json"), mergeManifest());
       // Copy popup.html into outDir (vite emits assets/ for JS).
       copyFileSync(

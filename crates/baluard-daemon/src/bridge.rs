@@ -49,6 +49,18 @@ pub struct BridgeRegistry {
     /// pairing may be pending at a time per daemon; a new `pair_start`
     /// supersedes any prior pending.
     pending: Option<PendingPair>,
+    /// A waiter registered by an in-flight `bridge.pair_complete` (extension).
+    /// When the desktop calls `pair_approve`, this sender is resolved so the
+    /// held pair_complete unblocks and mints the token. Replaced on each
+    /// new pair_start / pair_complete.
+    waiter: Option<tokio::sync::oneshot::Sender<WaiterPayload>>,
+}
+
+/// What the held pair_complete receives when the desktop approves.
+#[derive(Clone)]
+pub struct WaiterPayload {
+    pub name: String,
+    pub browser: String,
 }
 
 /// A pending approve-don't-type pairing.
@@ -76,8 +88,16 @@ fn now_secs() -> u64 {
 }
 
 impl BridgeRegistry {
-    /// Create a fresh pending pairing request. Supersedes any prior pending.
+    /// Create a fresh pending pairing request. Supersedes any prior pending
+    /// (and any prior waiter — a re-started ceremony cancels the old one).
     pub fn start_pair(&mut self, browser_hint: impl Into<String>) -> String {
+        // Cancel any in-flight extension waiter.
+        if let Some(w) = self.waiter.take() {
+            let _ = w.send(WaiterPayload {
+                name: String::new(),
+                browser: String::new(),
+            });
+        }
         let request_id = uuid::Uuid::new_v4().to_string();
         self.pending = Some(PendingPair {
             request_id: request_id.clone(),
@@ -95,31 +115,64 @@ impl BridgeRegistry {
             .filter(|p| now_secs().saturating_sub(p.created_at) <= PENDING_TTL_SECONDS)
     }
 
-    /// Mark the pending request Approved. Consumes the pending handle so it
-    /// can't be double-approved.
-    pub fn approve_pending(&mut self) -> Result<&PendingPair, &'static str> {
+    /// Register an in-flight `bridge.pair_complete` waiter. Returns a receiver
+    /// that resolves when the desktop approves (or the ceremony is
+    /// superseded/expired). The handler awaits this with a TTL timeout.
+    pub fn register_waiter(
+        &mut self,
+        _name: String,
+        browser: String,
+    ) -> tokio::sync::oneshot::Receiver<WaiterPayload> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.waiter = Some(tx);
+        // Remember the extension's requested browser so approve can show it.
+        if let Some(p) = self.pending.as_mut() {
+            if p.browser_hint == "unknown" || p.browser_hint.is_empty() {
+                p.browser_hint = browser;
+            }
+        }
+        rx
+    }
+
+    /// Mark the pending request Approved. If an extension pair_complete is
+    /// waiting, resolves it (the handler then mints the token). Returns the
+    /// request_id so the desktop can confirm which request it approved.
+    pub fn approve_pending(&mut self) -> Result<String, &'static str> {
         let p = self.pending.as_mut().ok_or("no pending pairing")?;
         if now_secs().saturating_sub(p.created_at) > PENDING_TTL_SECONDS {
             self.pending = None;
+            // Also fail any waiter.
+            self.waiter.take();
             return Err("pending pairing expired");
         }
-        p.approval = Some(PairApproval::Approved);
-        Ok(self.pending.as_ref().unwrap())
+        let request_id = p.request_id.clone();
+        // Resolve the extension waiter if one is registered. The handler that
+        // owns the receiver performs the actual complete_pair + token mint.
+        if let Some(tx) = self.waiter.take() {
+            let _ = tx.send(WaiterPayload {
+                name: p.browser_hint.clone(),
+                browser: p.browser_hint.clone(),
+            });
+        } else {
+            // No extension waiting yet: mark approved so a later pair_complete
+            // can proceed immediately.
+            p.approval = Some(PairApproval::Approved);
+        }
+        Ok(request_id)
     }
 
-    /// Complete pairing: only valid after the pending was Approved. Writes the
-    /// pairing file, mints the first bridge token, returns the token hex.
+    /// Complete pairing: writes the pairing file, mints the first bridge token,
+    /// returns the token hex. Called by the pair_complete handler AFTER the
+    /// waiter resolves (desktop approved). Requires the pending to still be
+    /// present and within TTL.
     pub fn complete_pair(
         &mut self,
         name: impl Into<String>,
         browser: impl Into<String>,
     ) -> Result<(PairingId, String), &'static str> {
-        // Confirm approval.
+        // Confirm a pending exists and is within TTL.
         {
             let p = self.pending.as_ref().ok_or("no pending pairing")?;
-            if !matches!(p.approval, Some(PairApproval::Approved)) {
-                return Err("pairing not approved");
-            }
             if now_secs().saturating_sub(p.created_at) > PENDING_TTL_SECONDS {
                 self.pending = None;
                 return Err("pending pairing expired");
@@ -368,12 +421,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_pair_requires_prior_approval() {
+    async fn complete_pair_requires_a_pending() {
         let _sb = sandbox();
         let mut reg = BridgeRegistry::default();
-        reg.start_pair("chrome-deny");
-        // No approve_pending() call:
+        // No start_pair: no pending exists -> complete_pair must fail.
         assert!(reg.complete_pair("test", "chrome").is_err());
+    }
+
+    /// New ceremony invariant (Phase 1 fix): approve_pending WITHOUT a waiter
+    /// marks the pending Approved, so a subsequent pair_complete fast-path
+    /// proceeds immediately. This is the desktop-approves-first ordering.
+    #[tokio::test]
+    async fn approve_before_complete_fast_path() {
+        let _sb = sandbox();
+        let mut reg = BridgeRegistry::default();
+        reg.start_pair("chrome-fast");
+        // Desktop approves first (no extension waiting yet).
+        let req_id = reg.approve_pending().unwrap();
+        assert!(!req_id.is_empty());
+        // Pending is now marked Approved.
+        assert!(matches!(
+            reg.pending().map(|p| p.approval),
+            Some(Some(PairApproval::Approved))
+        ));
+        // Extension's pair_complete then completes immediately.
+        let (id, _token) = reg.complete_pair("test", "chrome").unwrap();
+        let pf = PairingFile::load().unwrap_or_default();
+        assert!(pf.get(&id).is_some());
     }
 
     #[tokio::test]

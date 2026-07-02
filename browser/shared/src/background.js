@@ -120,10 +120,90 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     });
     return false;
   }
+  // Local action: clipboard copy via offscreen document (service worker has
+  // no DOM). Auto-clears after 20s (review M2).
+  if (msg.action === "clipboard-copy") {
+    clipboardCopy(msg.text)
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
   send(msg.action, msg.payload || {})
     .then((r) => sendResponse({ ok: true, payload: r.payload }))
     .catch((e) => sendResponse({ ok: false, error: e.message, code: e.code }));
   return true; // async
+});
+
+// ── Clipboard via offscreen document (review M2) ──
+// The service worker has no DOM, so navigator.clipboard is unavailable. We
+// create a hidden offscreen document that writes to the clipboard, then
+// schedule a clear-after-20s to avoid leaving secrets in the clipboard.
+const CLIPBOARD_CLEAR_SECONDS = 20;
+
+async function clipboardCopy(text) {
+  await ensureOffscreen();
+  await chrome.runtime.sendMessage({
+    action: "offscreen-copy",
+    target: "offscreen",
+    text,
+  });
+  // Schedule clear. Alarms survive SW termination; the offscreen doc handles
+  // the actual clear on the alarm message.
+  chrome.alarms.create("baluard-clipboard-clear", {
+    delayInMinutes: CLIPBOARD_CLEAR_SECONDS / 60,
+  });
+}
+
+async function ensureOffscreen() {
+  const existing = await chrome.offscreen?.hasDocument?.();
+  if (existing) return;
+  await chrome.offscreen.createDocument({
+    url: "offscreen.html",
+    reasons: ["CLIPBOARD"],
+    justification: "Copy passwords/TOTP from the popup; service worker has no DOM.",
+  });
+}
+
+chrome.alarms?.onAlarm?.addListener((alarm) => {
+  if (alarm.name === "baluard-clipboard-clear") {
+    // Tell the offscreen doc to clear the clipboard.
+    chrome.runtime
+      .sendMessage({ action: "offscreen-clear", target: "offscreen" })
+      .catch(() => {});
+  }
+});
+
+// ── Toolbar badge: match count for the active tab (review sonnet B-3) ──
+// Pure browser-native badge API; zero DOM injection, zero attack surface.
+// Updates on tab activation + navigation. Queries bridge.match for the URL.
+function updateBadgeForTab(tabId, url) {
+  if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) {
+    chrome.action.setBadgeText({ tabId, text: "" });
+    return;
+  }
+  send("bridge.match", { url })
+    .then((payload) => {
+      const data = JSON.parse(payload || "{}");
+      const n = (data.matches || []).length;
+      chrome.action.setBadgeText({ tabId, text: n > 0 ? String(n) : "" });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: "#0a7" });
+    })
+    .catch(() => {
+      chrome.action.setBadgeText({ tabId, text: "" });
+    });
+}
+
+chrome.tabs?.onActivated?.addListener((info) => {
+  chrome.tabs.get(info.tabId, (tab) => {
+    if (chrome.runtime.lastError) return;
+    updateBadgeForTab(info.tabId, tab.url);
+  });
+});
+
+chrome.tabs?.onUpdated?.addListener((tabId, change, tab) => {
+  if (change.url && tab.active) {
+    updateBadgeForTab(tabId, change.url);
+  }
 });
 
 // Connect on worker start.
