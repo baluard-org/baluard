@@ -16,6 +16,7 @@ import WelcomeScreen from "./components/WelcomeScreen.jsx";
 import VaultView from "./components/VaultView.jsx";
 import AutoSyncIndicator from "./components/AutoSyncIndicator.jsx";
 import ConflictResolutionPanel from "./components/ConflictResolutionPanel.jsx";
+import ConflictDevTrigger from "./lib/conflictDevTriggers.jsx";
 import ToastContainer from "./components/ToastContainer.jsx";
 
 export default function App() {
@@ -108,6 +109,7 @@ export default function App() {
                   <AutoSyncIndicator />
                   <VaultView />
                   <ConflictResolutionPanel />
+                  <ConflictDevTrigger />
                 </AutoSyncProvider>
               </ConflictResolutionProvider>
             </VaultProvider>
