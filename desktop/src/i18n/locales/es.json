@@ -277,7 +277,8 @@
     "avatarRemoved": "Avatar eliminado",
     "profileSaved": "Perfil actualizado",
     "tabSync": "Sincronización",
-    "syncNotAvailable": "La sincronización no está disponible en esta compilación."
+    "syncNotAvailable": "La sincronización no está disponible en esta compilación.",
+    "tabBridge": "Extensiones de navegador"
   },
   "sync": {
     "title": "Sincronización de bóveda",
@@ -376,7 +377,7 @@
   "conflict": {
     "title": "Este elemento fue editado en dos dispositivos",
     "step": "{current} de {total}",
-    "intro": "\u201c{name}\u201d cambió en dos dispositivos y no pudimos combinar los cambios automáticamente. Elige qué versión conservar.",
+    "intro": "“{name}” cambió en dos dispositivos y no pudimos combinar los cambios automáticamente. Elige qué versión conservar.",
     "thisDevice": "este dispositivo",
     "otherDevice": "el otro dispositivo",
     "changedFields": "Lo que cambió",
@@ -559,5 +560,40 @@
     "minutes": "{n} min",
     "hours": "{n} h",
     "days": "{n} d"
+  },
+  "bridge": {
+    "title": "Extensiones de navegador",
+    "description": "Conecta una extensión de navegador para autocompletar contraseñas desde esta caja fuerte. La extensión solo funciona mientras esta app esté desbloqueada.",
+    "add": "Añadir extensión de navegador",
+    "waitingForExtension": "Esperando extensión",
+    "waitingHint": "Abre la extensión de Baluard en tu navegador y sigue sus pasos. Cuando pida conectarse, pulsa Aprobar aquí.",
+    "approve": "Aprobar",
+    "approved": "Extensión conectada",
+    "approveFailed": "No se pudo aprobar la extensión",
+    "pairStartFailed": "No se pudo iniciar el emparejamiento",
+    "revoke": "Revocar",
+    "revoked": "Extensión desconectada",
+    "nonePaired": "No hay extensiones conectadas.",
+    "pairedOn": "Conectada"
+  },
+  "bridge_ext": {
+    "appRequired": "Abre la app de Baluard",
+    "appRequiredDesc": "La app de escritorio de Baluard debe estar abierta y desbloqueada para usar la extensión.",
+    "locked": "Caja fuerte bloqueada",
+    "lockedDesc": "Desbloquea la app de Baluard para rellenar contraseñas.",
+    "notPaired": "Conectar a Baluard",
+    "notPairedDesc": "Abre la app de Baluard y añade una extensión de navegador para conectar.",
+    "connect": "Esperando aprobación",
+    "connectDesc": "Aprueba la conexión en la app de Baluard.",
+    "versionSkew": "Actualización necesaria",
+    "versionSkewDesc": "Actualiza la app de escritorio de Baluard para usar esta extensión.",
+    "search": "Buscar inicios de sesión",
+    "noMatches": "No hay inicios de sesión para este sitio",
+    "fill": "Rellenar",
+    "copyUsername": "Copiar usuario",
+    "copyPassword": "Copiar contraseña",
+    "copyTotp": "Copiar código",
+    "activeVault": "Caja fuerte",
+    "copied": "Copiado"
   }
 }
