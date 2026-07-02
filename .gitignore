@@ -47,6 +47,9 @@ local.properties
 # ── Browser Extension ──
 /extension/node_modules/
 /extension/dist/
+browser/*/dist/
+browser/shared/node_modules/
+browser/shared/*.tgz
 
 # ── top-level Node ──
 node_modules/

@@ -3,6 +3,7 @@ members = [
     "crates/baluard-core",
     "crates/baluard-cli",
     "crates/baluard-daemon",
+    "crates/baluard-nmh",
 ]
 resolver = "2"
 

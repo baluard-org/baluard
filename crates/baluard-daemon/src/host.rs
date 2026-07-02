@@ -69,6 +69,9 @@ impl VaultHostInner {
 /// Multi-vault host shared across all connection handlers.
 pub struct VaultHost {
     inner: RwLock<VaultHostInner>,
+    /// Host-level bridge-token registry (vault-agnostic, per Decision 10).
+    /// Separate lock from `inner` so bridge auth never blocks vault ops.
+    bridge: crate::bridge::SharedBridgeRegistry,
 }
 
 /// Convenience alias — the daemon always shares an `Arc<VaultHost>`.
@@ -82,12 +85,18 @@ impl VaultHost {
     pub fn new() -> Self {
         Self {
             inner: RwLock::new(VaultHostInner::default()),
+            bridge: std::sync::Arc::new(RwLock::new(crate::bridge::BridgeRegistry::default())),
         }
     }
 
     /// Wrap into the shared handle the daemon passes to connection handlers.
     pub fn shared() -> Arc<Self> {
         Arc::new(Self::new())
+    }
+
+    /// Borrow the bridge registry (for `bridge.*` routes + token verification).
+    pub fn bridge(&self) -> &crate::bridge::SharedBridgeRegistry {
+        &self.bridge
     }
 
     // ── lookups ──

@@ -1258,6 +1258,28 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
         return handle_vault_clone_finalize(req, host).await;
     }
 
+    // ── Browser bridge (bridge.*) — host-level, vault-agnostic (Decision 10) ──
+    if let Some(resp) = handle_bridge_host_route(req.clone(), host).await {
+        return resp;
+    }
+
+    // ── Bridge-token detection (Decision 5). Branch BEFORE the per-vault ──
+    // session-token gate: if the request carries a valid bridge token, we
+    // enforce the bridge allowlist (NOT TOKEN_REQUIRED_ACTIONS) + the
+    // vault.update field gate, then snapshot the ACTIVE vault (bridge tokens
+    // are slug-agnostic). Otherwise fall through to the existing per-vault path.
+    //
+    // Fast path (review agy I4): bridge tokens are always 64-char hex. If the
+    // request's token is empty or a different shape, skip the registry lock
+    // entirely so the common desktop/CLI path never contends on the bridge
+    // mutex. verify_token does the same length gate, but avoiding the
+    // `.read().await` on the hot path matters more for latency.
+    if req.session_token.len() == 64 {
+        if let Some(pairing_id) = host.bridge().read().await.verify_token(&req.session_token) {
+            return route_bridge_request(req, host, pairing_id).await;
+        }
+    }
+
     // ── Everything else: resolve target slug + snapshot, then delegate ──
     // Phase 6: target slug resolution priority: req.slug (proto field, M2) →
     // payload JSON `slug` (legacy/inline) → active pointer. req.slug is the
@@ -1286,6 +1308,425 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     let _slug_for_log = snapshot.0.clone();
     let state: SharedVaultState = snapshot.1;
     route_request(req, &state).await
+}
+
+// ── Browser bridge routing ─────────────────────────────────────────────
+//
+// `handle_bridge_host_route`: the bridge.* routes that are NOT token-gated
+//   the normal way (pair_start is desktop-token-gated; pair_complete is
+//   approval-gated; reauth is secret-gated; list/revoke are desktop-token-
+//   gated). Returns Some(resp) when it handled the action, None otherwise.
+//
+// `route_bridge_request`: the allowlisted actions a bridge token permits,
+//   run AFTER bridge-token verification. Enforces BRIDGE_ALLOWED_ACTIONS +
+//   the vault.update field gate (no fido2_credentials / uris) + the
+//   per-pairing read-rate cap (sonnet A-1).
+
+/// Handle the pairing/ceremony host routes. Returns None if `req.action` is
+/// not a bridge.* route (caller continues to the per-vault path).
+async fn handle_bridge_host_route(
+    req: GatewayRequest,
+    host: &SharedVaultHost,
+) -> Option<GatewayResponse> {
+    use crate::bridge as br;
+    match req.action.as_str() {
+        // Desktop-initiated pairing ceremony (Decision 4 approve-don't-type).
+        // pair_start is desktop-token-gated (the "Add browser extension"
+        // button). It creates a pending-approval handle; it does NOT mint
+        // any token.
+        "bridge.pair_start" => {
+            // Require a valid desktop session token: pick the active vault
+            // and check its token. This proves the caller is the desktop.
+            let slug = host.active_slug().await?;
+            let state = host.get(&slug).await?;
+            if state
+                .verify_session_token(&req.session_token)
+                .await
+                .is_err()
+            {
+                return Some(err_response("desktop session token required"));
+            }
+            let payload: serde_json::Value =
+                serde_json::from_str(&req.payload).unwrap_or(serde_json::json!({}));
+            let browser_hint = payload["browser"]
+                .as_str()
+                .unwrap_or("a browser")
+                .to_string();
+            let request_id = host.bridge().write().await.start_pair(browser_hint.clone());
+            Some(ok_resp(
+                serde_json::json!({
+                    "request_id": request_id,
+                    "browser_hint": browser_hint,
+                    "ttl_seconds": br::PENDING_TTL_SECONDS,
+                })
+                .to_string(),
+                None,
+            ))
+        }
+
+        // Called by the extension/NMH. Held pending until the desktop user
+        // clicks Approve (consumes the one-shot flag). Not token-gated
+        // (the extension has no token yet) — gated by the approval instead.
+        "bridge.pair_complete" => {
+            let payload: serde_json::Value = serde_json::from_str(&req.payload)
+                .map_err(|e| format!("Invalid JSON: {e}"))
+                .ok()?;
+            let name = payload["name"].as_str().unwrap_or("Browser").to_string();
+            let browser = payload["browser"].as_str().unwrap_or("unknown").to_string();
+            let mut reg = host.bridge().write().await;
+            match reg.complete_pair(name, browser) {
+                Ok((pairing_id, token_hex)) => {
+                    // Return BOTH the pairing secret (for future reauth) and
+                    // the first bridge token. The NMH persists the secret.
+                    let pf = baluard_core::bridge::pairing::PairingFile::load().unwrap_or_default();
+                    let secret_hex = pf
+                        .get(&pairing_id)
+                        .map(|e| e.secret.clone())
+                        .unwrap_or_default();
+                    Some(ok_resp(
+                        serde_json::json!({
+                            "pairing_id": pairing_id.to_string(),
+                            "secret": secret_hex,
+                            "token": token_hex,
+                        })
+                        .to_string(),
+                        None,
+                    ))
+                }
+                Err(msg) => Some(err_response(msg.to_string())),
+            }
+        }
+
+        // Desktop "Approve" button consumes the pending flag. Token-gated
+        // (desktop only).
+        "bridge.pair_approve" => {
+            let slug = host.active_slug().await?;
+            let state = host.get(&slug).await?;
+            if state
+                .verify_session_token(&req.session_token)
+                .await
+                .is_err()
+            {
+                return Some(err_response("desktop session token required"));
+            }
+            let mut reg = host.bridge().write().await;
+            match reg.approve_pending() {
+                Ok(p) => Some(ok_resp(
+                    serde_json::json!({
+                        "request_id": p.request_id,
+                        "approved": true,
+                    })
+                    .to_string(),
+                    None,
+                )),
+                Err(msg) => Some(err_response(msg.to_string())),
+            }
+        }
+
+        // NMH spawn-time re-mint (Decision 3/8). Secret-gated, idempotent.
+        "bridge.reauth" => {
+            let payload: serde_json::Value = serde_json::from_str(&req.payload)
+                .map_err(|e| format!("Invalid JSON: {e}"))
+                .ok()?;
+            let secret_hex = payload["secret"].as_str()?.to_string();
+            let mut reg = host.bridge().write().await;
+            match reg.reauth(&secret_hex) {
+                br::ReauthOutcome::Ok {
+                    token_hex,
+                    pairing_id,
+                } => Some(ok_resp(
+                    serde_json::json!({
+                        "pairing_id": pairing_id.to_string(),
+                        "token": token_hex,
+                    })
+                    .to_string(),
+                    None,
+                )),
+                br::ReauthOutcome::NotPaired => Some(err_response("not-paired")),
+            }
+        }
+
+        // Desktop UI: list paired browsers. Token-gated.
+        "bridge.list" => {
+            let slug = host.active_slug().await?;
+            let state = host.get(&slug).await?;
+            if state
+                .verify_session_token(&req.session_token)
+                .await
+                .is_err()
+            {
+                return Some(err_response("desktop session token required"));
+            }
+            let pf = baluard_core::bridge::pairing::PairingFile::load().unwrap_or_default();
+            Some(ok_resp(
+                serde_json::json!({ "pairings": pf.pairings }).to_string(),
+                None,
+            ))
+        }
+
+        // Desktop UI: revoke a paired browser. Token-gated. Drops the
+        // in-memory token AND the pairing-file entry.
+        "bridge.revoke" => {
+            let slug = host.active_slug().await?;
+            let state = host.get(&slug).await?;
+            if state
+                .verify_session_token(&req.session_token)
+                .await
+                .is_err()
+            {
+                return Some(err_response("desktop session token required"));
+            }
+            let payload: serde_json::Value = serde_json::from_str(&req.payload)
+                .map_err(|e| format!("Invalid JSON: {e}"))
+                .ok()?;
+            let pairing_id = payload["pairing_id"]
+                .as_str()
+                .map(|s| baluard_core::bridge::PairingId::from(s.to_string()))?;
+            let mut reg = host.bridge().write().await;
+            match reg.revoke(&pairing_id) {
+                Ok(()) => Some(ok_resp(
+                    serde_json::json!({ "revoked": pairing_id.to_string() }).to_string(),
+                    None,
+                )),
+                Err(msg) => Some(err_response(msg.to_string())),
+            }
+        }
+
+        _ => None,
+    }
+}
+
+/// Route an allowlisted action for a verified bridge token.
+///
+/// Enforces: BRIDGE_ALLOWED_ACTIONS (Decision 7); vault.update field gate
+/// (no fido2_credentials, no uris — Decision 13); per-pairing read-rate cap
+/// on bridge.match / vault.get (sonnet A-1); active vault MUST be unlocked
+/// (Decision 5 lock binding). Then snapshots the active vault and delegates
+/// the actual op (bridge.match / bridge.config are NEW; the rest reuse the
+/// existing vault.* semantics via route_request).
+async fn route_bridge_request(
+    req: GatewayRequest,
+    host: &SharedVaultHost,
+    pairing_id: baluard_core::bridge::PairingId,
+) -> GatewayResponse {
+    use crate::bridge as br;
+
+    log::debug!(
+        "[daemon] <- action={} kind=Bridge pairing_id={}",
+        req.action,
+        pairing_id
+    );
+
+    // 1. Allowlist.
+    if !br::BridgeRegistry::action_allowed(&req.action) {
+        log::warn!(
+            "[daemon] bridge token denied non-allowlisted action '{}'",
+            req.action
+        );
+        return err_response(format!(
+            "action '{}' not permitted for bridge token",
+            req.action
+        ));
+    }
+
+    // 2. Rate-cap reads (bridge.match + vault.get). Abuse -> auto-revoke.
+    let is_read = matches!(req.action.as_str(), "bridge.match" | "vault.get");
+    if is_read {
+        let over_cap = !host.bridge().write().await.charge_read(&pairing_id);
+        if over_cap {
+            log::warn!(
+                "[daemon] bridge pairing {} exceeded read cap; auto-revoking",
+                pairing_id
+            );
+            let _ = host.bridge().write().await.revoke(&pairing_id);
+            return err_response("rate-limited: pairing revoked");
+        }
+    }
+
+    // 3. vault.update field gate: reject fido2_credentials / uris mutation.
+    if req.action.as_str() == "vault.update" {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.payload) {
+            if bridge_update_touches_forbidden(&v) {
+                log::warn!(
+                    "[daemon] bridge token denied vault.update touching fido2_credentials/uris"
+                );
+                return err_response("bridge tokens may not modify fido2_credentials or uris");
+            }
+        }
+    }
+
+    // 4. Snapshot the ACTIVE vault (bridge tokens are slug-agnostic).
+    let snapshot = match host.snapshot_target(None).await {
+        Ok(pair) => pair,
+        Err(_) => return err_response("locked"),
+    };
+    let state: SharedVaultState = snapshot.1;
+
+    // 5. Active vault MUST be unlocked.
+    if !state.is_unlocked().await {
+        return err_response("locked");
+    }
+
+    // 6. Dispatch the allowlisted action. bridge.match / bridge.config are
+    //    NEW routes; the rest reuse the existing per-vault handler by
+    //    stamping the vault's own token (the request was already allowlisted
+    //    + field-gated + rate-capped, so delegating is safe).
+    let delegated = {
+        let mut d = req.clone();
+        let tok = state.get_session_token().await.unwrap_or_default();
+        d.session_token = tok;
+        d
+    };
+    match req.action.as_str() {
+        "bridge.match" => handle_bridge_match(req, &state).await,
+        "bridge.config" => handle_bridge_config(&state).await,
+        // vault.get / vault.add / vault.update / cipher.totp_code /
+        // generator.* / sync.autosync_status all reuse the normal path.
+        _ => route_request(delegated, &state).await,
+    }
+}
+
+/// Does a vault.update payload attempt to mutate passkey or URI fields?
+/// (Decision 13: bridge tokens may edit pw/user/notes/totp but NOT these.)
+/// CipherKind serializes as {"type":"login","data":{...}} (#[serde(tag="type",
+/// content="data")]), so the forbidden fields live under `kind.data`, NOT
+/// `kind` directly. Path verified via serde round-trip (review agy C2).
+fn bridge_update_touches_forbidden(payload: &serde_json::Value) -> bool {
+    // Resolve the inner `data` block across the layouts the update handler
+    // accepts: {kind:{type,data}}, {kind:{...fields}}, or {data:{...}}.
+    let data = payload
+        .get("kind")
+        .and_then(|k| k.get("data"))
+        .or_else(|| payload.get("data"))
+        .or_else(|| payload.get("kind"));
+    let Some(data) = data else {
+        return false;
+    };
+    if data.get("fido2_credentials").is_some() {
+        return true;
+    }
+    if data.get("uris").is_some() {
+        return true;
+    }
+    false
+}
+
+/// bridge.match: URL -> matching CipherMeta (metadata only, no passwords).
+///
+/// v1: reuses the vault's `list_all` batch endpoint, filters server-side by
+/// hostname, and returns ONLY metadata (id/name/username/type). Passwords
+/// never cross this boundary — the extension calls `vault.get` for the one
+/// the user picks.
+async fn handle_bridge_match(req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
+    let url: String = match serde_json::from_str::<serde_json::Value>(&req.payload) {
+        Ok(v) => v["url"].as_str().unwrap_or("").to_string(),
+        Err(_) => return err_response("Invalid JSON"),
+    };
+    let want = hostname_of(&url);
+    if want.is_empty() {
+        return ok_resp(serde_json::json!({ "matches": [] }).to_string(), None);
+    }
+    match state.list_all().await {
+        Ok(blob) => {
+            let v: serde_json::Value = serde_json::from_str(&blob).unwrap_or_default();
+            let ciphers = v["ciphers"].as_array().cloned().unwrap_or_default();
+            let matched: Vec<serde_json::Value> = ciphers
+                .into_iter()
+                .filter(|c| {
+                    // CipherKind serializes as {"type":"login","data":{...}}
+                    // (#[serde(tag="type", content="data")]). URIs live at
+                    // kind.data.uris for the Login variant (review agy C2/4th-bug).
+                    let uris = c["kind"]["data"]["uris"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default();
+                    uris.iter().any(|u| {
+                        let stored = u["uri"]
+                            .as_str()
+                            .or_else(|| u.as_str())
+                            .map(hostname_of)
+                            .unwrap_or_default();
+                        !stored.is_empty() && hostname_matches(&stored, &want)
+                    })
+                })
+                .map(|c| {
+                    serde_json::json!({
+                        "id": c["id"],
+                        "name": c["name"],
+                        "username": c.get("username").cloned().unwrap_or(serde_json::Value::Null),
+                        "cipher_type": c.get("cipher_type").cloned().unwrap_or(serde_json::Value::Null),
+                    })
+                })
+                .collect();
+            ok_resp(serde_json::json!({ "matches": matched }).to_string(), None)
+        }
+        Err(e) => err_response(e),
+    }
+}
+
+/// bridge.config: returns ONLY default_uri_match (Decision 7; NOT settings.get
+/// which leaks slug/enrollment_policy/profile PII).
+async fn handle_bridge_config(state: &SharedVaultState) -> GatewayResponse {
+    match state.settings_get().await {
+        Ok(s) => {
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap_or_default();
+            ok_resp(
+                serde_json::json!({
+                    "default_uri_match": v.get("default_uri_match").cloned().unwrap_or_default(),
+                })
+                .to_string(),
+                None,
+            )
+        }
+        Err(e) => err_response(e),
+    }
+}
+
+/// Extract the hostname from a URL (loose parser; http/https assumed).
+fn hostname_of(url: &str) -> String {
+    let stripped = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    stripped
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+/// Safe hostname match with dot-boundary enforcement (review agy C3).
+/// Exact match, or one is a proper subdomain of the other (separated by a
+/// literal dot). Rejects the `evilgithub.com` matches `github.com` phishing
+/// hole that a naive `ends_with` would allow. Also rejects bare-suffix
+/// matches like `com` matching `github.com` (a value with no dot is only
+/// allowed to match exactly).
+fn hostname_matches(stored: &str, want: &str) -> bool {
+    if stored == want {
+        return true;
+    }
+    // A candidate suffix must itself contain a dot, otherwise it's a bare
+    // TLD-like fragment ("com", "co") that shouldn't match any domain.
+    // want is a subdomain of stored: want = "api.github.com", stored = "github.com"
+    if stored.contains('.') {
+        if let Some(prefix) = want.strip_suffix(stored) {
+            if prefix.ends_with('.') {
+                return true;
+            }
+        }
+    }
+    // stored is a subdomain of want: stored = "api.github.com", want = "github.com"
+    if want.contains('.') {
+        if let Some(prefix) = stored.strip_suffix(want) {
+            if prefix.ends_with('.') {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// `vault.unlock` (Phase 6): takes an explicit `slug` (or falls back to
@@ -3895,5 +4336,59 @@ mod tests {
             Some("https://codeberg.org/carol/data".into())
         );
         assert_eq!(repo_web_url_from_remote("not-a-url"), None);
+    }
+
+    // ── Browser bridge regression tests (review agy C2/C3) ──
+
+    use super::{bridge_update_touches_forbidden, hostname_matches};
+
+    /// C2 regression: the field-gate MUST see fido2_credentials / uris under
+    /// kind.data (the real serialized CipherKind shape), not kind directly.
+    /// Before the fix, this payload was allowed through.
+    #[test]
+    fn bridge_update_gate_catches_forbidden_fields_under_kind_data() {
+        // Real shape: {"kind":{"type":"login","data":{...}}}.
+        let with_fido2 = serde_json::json!({
+            "kind": { "type": "login", "data": { "fido2_credentials": [{"credential_id": "x"}] } }
+        });
+        assert!(
+            bridge_update_touches_forbidden(&with_fido2),
+            "fido2_credentials under kind.data must be caught"
+        );
+        let with_uris = serde_json::json!({
+            "kind": { "type": "login", "data": { "uris": [{"uri": "https://evil.com"}] } }
+        });
+        assert!(
+            bridge_update_touches_forbidden(&with_uris),
+            "uris under kind.data must be caught"
+        );
+    }
+
+    /// C2 companion: a benign update (password only) MUST pass the gate.
+    #[test]
+    fn bridge_update_gate_allows_benign_password_change() {
+        let benign = serde_json::json!({
+            "id": "abc-123",
+            "kind": { "type": "login", "data": { "password": "newpw" } }
+        });
+        assert!(!bridge_update_touches_forbidden(&benign));
+    }
+
+    /// C3 regression: hostname matching MUST NOT let `evilgithub.com` match
+    /// `github.com`. Dot-boundary is required for subdomain matches.
+    #[test]
+    fn hostname_match_rejects_phishing_lookalikes() {
+        // Exact match is fine.
+        assert!(hostname_matches("github.com", "github.com"));
+        // Legit subdomain.
+        assert!(hostname_matches("github.com", "api.github.com"));
+        assert!(hostname_matches("api.github.com", "github.com"));
+        // Phishing: evilgithub.com must NOT match github.com (no dot boundary).
+        assert!(!hostname_matches("github.com", "evilgithub.com"));
+        assert!(!hostname_matches("evilgithub.com", "github.com"));
+        // Phishing: github.com.evil.com must NOT match.
+        assert!(!hostname_matches("github.com", "github.com.evil.com"));
+        // Bare TLD must not match a domain sharing that suffix.
+        assert!(!hostname_matches("com", "github.com"));
     }
 }
