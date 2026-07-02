@@ -420,7 +420,8 @@
     "keepBoth": {
       "title": "Keep both as separate items",
       "desc": "Nothing is lost. You'll get two copies to review later."
-    }
+    },
+    "resolveFailed": "We couldn't save that decision. Try again or pick a different option."
   },
   "errors": {
     "daemonNotRunning": "Daemon is not running",
