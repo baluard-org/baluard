@@ -60,7 +60,14 @@ export default function ConflictResolutionPanel(props) {
     // mock triggers). When wiring lands, add either a max-retry fallback to a
     // safe non-destructive state or a manual escape hatch. See
     // docs/plan-conflict-resolution-panel.md.
-    const resolver = props.resolver ?? ((_conflict, v) => resolveConflict(v));
+    // Mock head (dev trigger): the daemon has no matching pending_conflict
+    // for a mock, so a real IPC would toast on every click. Use a no-op
+    // resolver that just succeeds, draining the queue locally. Per-item flag
+    // (not a global mode) so a mock and a real conflict can coexist without
+    // the mock's no-op leaking onto the real one.
+    const resolver = conflicts.headIsMock()
+      ? async () => {}
+      : props.resolver ?? ((_conflict, v) => resolveConflict(v));
     try {
       await conflicts.resolve(verdict, resolver);
       setExplainOpen(false);

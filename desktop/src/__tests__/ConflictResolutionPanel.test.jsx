@@ -218,4 +218,44 @@ describe("ConflictResolutionPanel", () => {
       expect(findButton("Keep this device's version").disabled).toBe(false),
     );
   });
+
+  it("mock head (dev trigger): drains the queue WITHOUT calling the real IPC resolver", async () => {
+    const conflicts = mountPanel();
+    // Dev-trigger mocks enqueue with { mock: true } — the daemon has no
+    // matching pending_conflict, so a real sync.conflict.resolve would toast.
+    // The __mock flag on the item swaps in a no-op resolver so clicks drain
+    // the queue locally.
+    conflicts.enqueue(mockSampleConflict({ cipherId: "mock-1" }), { mock: true });
+
+    findButton("Keep this device's version").click();
+    await vi.waitFor(() => expect(conflicts.hasPending()).toBe(false));
+    // The real IPC resolver must NOT be called for a mock head.
+    expect(resolveConflictMock).not.toHaveBeenCalled();
+  });
+
+  it("mock flag is per-item: a real conflict behind a mock still uses the IPC resolver", async () => {
+    const conflicts = mountPanel();
+    // Mock first, then a REAL conflict enqueued without { mock }. The mock is
+    // head; resolving it must not leak its no-op resolver onto the real one.
+    conflicts.enqueue(mockSampleConflict({ cipherId: "mock-1" }), { mock: true });
+    conflicts.enqueue(mockSampleConflict({ cipherId: "real-1" }));
+    expect(conflicts.headIsMock()).toBe(true);
+
+    // Resolve the mock head -> no IPC call.
+    findButton("Keep this device's version").click();
+    await vi.waitFor(() => expect(conflicts.hasPending()).toBe(true));
+    expect(resolveConflictMock).not.toHaveBeenCalled();
+
+    // Now the real conflict is head -> IPC resolver fires. Re-query the
+    // button: the panel re-renders on head change (name/fields differ), so a
+    // stale node reference can detach.
+    expect(conflicts.headIsMock()).toBe(false);
+    await vi.waitFor(() =>
+      expect(findButton("Keep this device's version")).toBeTruthy(),
+    );
+    findButton("Keep this device's version").click();
+    await vi.waitFor(() =>
+      expect(resolveConflictMock).toHaveBeenCalledWith("keep_local"),
+    );
+  });
 });

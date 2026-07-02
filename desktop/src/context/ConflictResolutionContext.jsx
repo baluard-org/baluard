@@ -35,6 +35,7 @@ const ConflictResolutionContext = createContext();
 
 export function ConflictResolutionProvider(props) {
   // Queue of pending conflicts. The panel resolves one at a time (1 of N).
+  // Each item may carry a __mock flag (set by the dev trigger) — see enqueue.
   const [pending, setPending] = createSignal(
     /** @type {PendingConflict[]} */ ([]),
   );
@@ -45,19 +46,27 @@ export function ConflictResolutionProvider(props) {
   /** The current (first) conflict, or null. */
   const current = () => pending()[0] ?? null;
 
+  /** True if the head conflict is a dev-trigger mock (use a no-op resolver). */
+  const headIsMock = () => pending()[0]?.__mock === true;
+
   /**
     * Enqueue conflicts surfaced by the sync engine. Idempotent on cipherId:
     * a cipher already in the queue is not duplicated.
     * @param {PendingConflict | PendingConflict[]} conflicts
+    * @param {{ mock?: boolean }} [opts] mock=true stamps each item with
+    *   __mock so the panel uses a no-op resolver for it. Per-item (NOT a
+    *   global flag) so a mock and a real conflict can coexist in the queue
+    *   without the mock's no-op resolver leaking onto the real one.
     */
-  function enqueue(conflicts) {
+  function enqueue(conflicts, opts) {
     const list = Array.isArray(conflicts) ? conflicts : [conflicts];
+    const stamp = opts?.mock ? (c) => ({ ...c, __mock: true }) : (c) => c;
     setPending((prev) => {
       const seen = new Set(prev.map((c) => c.cipherId));
       const merged = [...prev];
       for (const c of list) {
         if (c && !seen.has(c.cipherId)) {
-          merged.push(c);
+          merged.push(stamp(c));
           seen.add(c.cipherId);
         }
       }
@@ -91,6 +100,7 @@ export function ConflictResolutionProvider(props) {
     hasPending,
     current,
     count: () => pending().length,
+    headIsMock,
     enqueue,
     resolve,
     clear,

@@ -30,14 +30,14 @@ export default function ConflictDevTrigger() {
         <div class="mb-2 flex flex-col gap-1 p-2 rounded-xl bg-[var(--color-sidebar)] border border-amber-900/40 shadow-xl min-w-[16rem]">
           <button
             type="button"
-            onClick={() => conflicts.enqueue(mockSampleConflict())}
+            onClick={() => conflicts.enqueue(mockSampleConflict(), { mock: true })}
             class="px-3 py-2 rounded-lg text-left text-xs hover:bg-[var(--color-bg)] cursor-pointer"
           >
             Force sample conflict
           </button>
           <button
             type="button"
-            onClick={() => conflicts.enqueue(mockSampleTypeChange())}
+            onClick={() => conflicts.enqueue(mockSampleTypeChange(), { mock: true })}
             class="px-3 py-2 rounded-lg text-left text-xs hover:bg-[var(--color-bg)] cursor-pointer"
           >
             Force type-change conflict
@@ -51,6 +51,7 @@ export default function ConflictDevTrigger() {
                   localDevice: null,
                   remoteDevice: null,
                 }),
+                { mock: true },
               )
             }
             class="px-3 py-2 rounded-lg text-left text-xs hover:bg-[var(--color-bg)] cursor-pointer"
