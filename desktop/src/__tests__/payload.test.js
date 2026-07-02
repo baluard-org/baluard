@@ -10,7 +10,6 @@ import {
   buildImportPayload,
   buildExportPayload,
   buildAttachDownloadPayload,
-  buildBiometricEnablePayload,
 } from "../lib/payload.js";
 
 // ── buildUris ──
@@ -299,13 +298,5 @@ describe("buildAttachDownloadPayload", () => {
       cipher_id: "cipher-1",
       attachment_id: "attach-2",
     });
-  });
-});
-
-// ── buildBiometricEnablePayload ──
-
-describe("buildBiometricEnablePayload", () => {
-  test("structure", () => {
-    expect(buildBiometricEnablePayload("masterpw")).toEqual({ password: "masterpw" });
   });
 });
