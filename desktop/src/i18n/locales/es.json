@@ -194,7 +194,8 @@
     "sshKeyCopyPublic": "Copiar llave pública",
     "sshKeyCopyFingerprint": "Copiar huella digital",
     "sshKeyCopyPrivate": "Copiar llave privada",
-    "sshKeyCopied": "¡Copiado!"
+    "sshKeyCopied": "¡Copiado!",
+    "rename": "Renombrar"
   },
   "settings": {
     "faviconLabel": "Mostrar iconos de sitios web",
@@ -278,7 +279,8 @@
     "profileSaved": "Perfil actualizado",
     "tabSync": "Sincronización",
     "syncNotAvailable": "La sincronización no está disponible en esta compilación.",
-    "tabBridge": "Extensiones de navegador"
+    "tabBridge": "Extensiones de navegador",
+    "themeSystem": "Sistema"
   },
   "sync": {
     "title": "Sincronización de bóveda",
@@ -364,7 +366,8 @@
     "webOAuthOpenLink": "Abrir {provider}",
     "webOAuthWaiting": "Esperando autorización en tu navegador...",
     "webOAuthError": "Autenticación fallida. Intenta de nuevo.",
-    "errorRepoCreatePartial": "Es posible que el repositorio se haya creado en el proveedor pero la configuración de sincronización falló. Si abandonas, puede que necesites eliminar el repositorio vacío en {provider} manualmente."
+    "errorRepoCreatePartial": "Es posible que el repositorio se haya creado en el proveedor pero la configuración de sincronización falló. Si abandonas, puede que necesites eliminar el repositorio vacío en {provider} manualmente.",
+    "copyCode": "Copiar código"
   },
   "autosync": {
     "upToDate": "Todos los cambios sincronizados",
@@ -595,5 +598,10 @@
     "copyTotp": "Copiar código",
     "activeVault": "Caja fuerte",
     "copied": "Copiado"
+  },
+  "common": {
+    "cancel": "Cancelar",
+    "loading": "Cargando...",
+    "processing": "Procesando..."
   }
 }

@@ -360,7 +360,7 @@ export default function SettingsModal() {
           onClick={() => vault.setShowSettingsModal(false)}
         >
           <FocusTrap containerRef={dialogRef} onEscape={() => vault.setShowSettingsModal(false)} />
-          <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[500px] max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl w-[720px] max-w-[94vw] max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div class="p-6 pb-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
               <h3 id="settings-title" class="text-lg font-bold text-[var(--color-text)]">{t("settings.title")}</h3>
@@ -483,7 +483,7 @@ export default function SettingsModal() {
                       class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "system" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
                     >
                       <IconMonitor class="w-4 h-4" />
-                      <span class="text-xs font-bold">{t("setup.themeSystem")}</span>
+                      <span class="text-xs font-bold">{t("settings.themeSystem")}</span>
                     </button>
                     <button
                       onClick={() => changeTheme("dark")}

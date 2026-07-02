@@ -4,7 +4,10 @@
   },
   "common": {
     "back": "Back",
-    "dismiss": "Dismiss"
+    "dismiss": "Dismiss",
+    "cancel": "Cancel",
+    "loading": "Loading...",
+    "processing": "Processing..."
   },
   "login": {
     "title": "Baluard",
@@ -213,7 +216,8 @@
     "sshKeyCopyPublic": "Copy public key",
     "sshKeyCopyFingerprint": "Copy fingerprint",
     "sshKeyCopyPrivate": "Copy private key",
-    "sshKeyCopied": "Copied!"
+    "sshKeyCopied": "Copied!",
+    "rename": "Rename"
   },
   "settings": {
     "faviconLabel": "Show website icons",
@@ -297,7 +301,8 @@
     "profileSaved": "Profile updated",
     "tabSync": "Sync",
     "syncNotAvailable": "Sync is not available on this build.",
-    "tabBridge": "Browser extensions"
+    "tabBridge": "Browser extensions",
+    "themeSystem": "System"
   },
   "sync": {
     "title": "Vault Sync",
@@ -383,7 +388,8 @@
     "webOAuthOpenLink": "Open {provider}",
     "webOAuthWaiting": "Waiting for authorization in your browser...",
     "webOAuthError": "Authentication failed. Please try again.",
-    "errorRepoCreatePartial": "Repository may have been created on the provider but sync setup failed. If you give up, you may need to delete the empty repo on {provider} manually."
+    "errorRepoCreatePartial": "Repository may have been created on the provider but sync setup failed. If you give up, you may need to delete the empty repo on {provider} manually.",
+    "copyCode": "Copy code"
   },
   "autosync": {
     "upToDate": "All changes synced",
