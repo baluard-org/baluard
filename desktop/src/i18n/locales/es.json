@@ -380,13 +380,13 @@
   "conflict": {
     "title": "Este elemento fue editado en dos dispositivos",
     "step": "{current} de {total}",
-    "intro": "“{name}” cambió en dos dispositivos y no pudimos combinar los cambios automáticamente. Elige qué versión conservar.",
+    "intro": "“{name}” se actualizó en dos dispositivos antes de sincronizarse online. ¿Qué versión quieres conservar?",
     "thisDevice": "este dispositivo",
     "otherDevice": "el otro dispositivo",
     "changedFields": "Lo que cambió",
     "typeChanged": "El elemento se cambió a un tipo distinto en el otro dispositivo (por ejemplo, de inicio de sesión a nota).",
     "whatDoesThisMean": "¿Qué significa esto?",
-    "explanation": "Editaste este elemento en {local} y también en {remote}. Ambas copias llegaron a la bóveda y no podemos saber cuál es la correcta. Elige la versión que quieras conservar, o guarda ambas para estar seguro.",
+    "explanation": "Editaste esto en {local} y en {remote}. No podemos saber cuál es la correcta. Elige una versión, o guarda ambas para estar seguro.",
     "keepLocal": {
       "title": "Conservar la versión de este dispositivo",
       "desc": "La versión de {local}. Se descartan los cambios del otro dispositivo."

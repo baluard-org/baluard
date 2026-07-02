@@ -402,13 +402,13 @@
   "conflict": {
     "title": "This item was edited on two devices",
     "step": "{current} of {total}",
-    "intro": "“{name}” changed on two devices and we couldn't merge the changes automatically. Choose which version to keep.",
+    "intro": "“{name}” was updated on two devices before they sync online. Which version do you want to keep?",
     "thisDevice": "this device",
     "otherDevice": "the other device",
     "changedFields": "What changed",
     "typeChanged": "The item was changed to a different type on the other device (for example, from a login to a note).",
     "whatDoesThisMean": "What does this mean?",
-    "explanation": "You edited this item on {local} and also on {remote}. Both copies reached the vault and we can't tell which one is right. Pick the version you want to keep, or keep both to be safe.",
+    "explanation": "You edited this on {local} and on {remote}. We can't tell which one is right. Pick a version, or keep both to be safe.",
     "keepLocal": {
       "title": "Keep this device's version",
       "desc": "The version on {local}. The other device's changes are discarded."
