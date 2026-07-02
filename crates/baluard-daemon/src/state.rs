@@ -2205,6 +2205,7 @@ impl VaultState {
                 .await
                 .map_err(|e| format!("finalize task join: {e}"))??;
                 self.autosync.note_resolved().await;
+                self.rebuild_cipher_index().await;
                 Ok(serde_json::json!({
                     "pending": self.autosync.pending_conflict_count().await > 0,
                     "auto_merged": true,
@@ -2227,6 +2228,148 @@ impl VaultState {
                 .to_string())
             }
         }
+    }
+
+    /// Phase 2b: rebuild `meta/index.enc` after a conflict resolution wrote
+    /// cipher files directly via SyncEngine (bypassing VaultHandle's
+    /// add/update/delete hooks that normally rebuild it). Without this, a
+    /// keep_both clone (new cipher_id never indexed) is invisible in
+    /// vault.list until an unrelated edit triggers a rebuild. Best-effort:
+    /// a rebuild failure is logged, not fatal (the index is a cache; it
+    /// self-heals on the next VaultHandle mutation).
+    pub(crate) async fn rebuild_cipher_index(&self) {
+        let guard = self.inner.read().await;
+        if let Some(handle) = guard.as_ref() {
+            if let Err(e) = handle.rebuild_index() {
+                log::warn!("[conflict] index rebuild failed (will self-heal): {e}");
+            }
+        }
+    }
+
+    /// Phase 2b-3 (keep_both verdict): the local version stays at the original
+    /// path (winning raw blob) AND a fresh second cipher is written under a new
+    /// UUID with the remote side's decrypted content, re-encrypted under the
+    /// new cipher_id + current epoch + seq 1 (mirrors `VaultHandle::add_cipher`'s
+    /// new-object path per the design review). Both files go into the
+    /// `finalize_conflicts` resolved vec so a single merge commit lands both.
+    ///
+    /// Cross-epoch: if the remote side can't be decrypted (foreign epoch),
+    /// keep_both cannot run (can't clone a side we can't read) and the conflict
+    /// stays pending with a cross_epoch flag for the UI.
+    pub async fn conflict_resolve_keep_both(&self) -> Result<String, String> {
+        use baluard_core::sync::engine::SyncEngine;
+        use baluard_core::types::CipherInput;
+        use baluard_core::vault::cipher::encrypt_cipher;
+
+        let pending = self
+            .autosync
+            .peek_pending_conflict()
+            .await
+            .ok_or_else(|| "no pending conflict to resolve".to_string())?;
+        if pending.files.len() != 1 {
+            return Err("keep_both supports only single-file conflicts".to_string());
+        }
+        let file_path = pending.files[0].clone();
+        let cipher_id = file_path
+            .strip_prefix("ciphers/")
+            .and_then(|s| s.strip_suffix(".enc"))
+            .ok_or_else(|| format!("unexpected conflict path shape: {file_path}"))?
+            .parse::<uuid::Uuid>()
+            .map_err(|e| format!("cipher_id parse from {file_path}: {e}"))?;
+
+        // device_id for the SyncEngine commit-author context (2b-2 review fix).
+        let device_id_str = {
+            let guard = self.inner.read().await;
+            guard
+                .as_ref()
+                .ok_or("Vault not opened".to_string())?
+                .device_id
+                .to_string()
+        };
+
+        // Phase 1 (blocking): read both sides' raw blobs.
+        let vault_path = self.vault_path.clone();
+        let local_oid = pending.local_oid;
+        let remote_oid = pending.remote_oid;
+        let fp_for_read = file_path.clone();
+        let (local_bytes, remote_bytes) = tokio::task::spawn_blocking(
+            move || -> Result<(Vec<u8>, Vec<u8>), String> {
+                let engine = SyncEngine::new(&vault_path, "conflict-keep-both");
+                let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
+                let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
+                    .map_err(|e| format!("read local: {e}"))?;
+                let remote = SyncEngine::read_blob_from_commit(&repo, remote_oid, &fp_for_read)
+                    .map_err(|e| format!("read remote: {e}"))?;
+                Ok((local, remote))
+            },
+        )
+        .await
+        .map_err(|e| format!("blob read task join: {e}"))??;
+
+        // Phase 2 (inline): decrypt remote, re-encrypt under a new UUID.
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        let remote_cipher = match handle.decrypt_cipher_bytes(cipher_id, &remote_bytes) {
+            Ok(c) => c,
+            Err(e) => {
+                drop(guard);
+                return Ok(serde_json::json!({
+                    "pending": true,
+                    "cross_epoch": true,
+                    "unreachable_side": "remote",
+                    "detail": format!("{e}"),
+                    "error": "keep_both needs to decrypt the remote side, which is at an unreachable epoch",
+                })
+                .to_string());
+            }
+        };
+        let new_id = uuid::Uuid::new_v4();
+        let epoch = handle.current_epoch().ok_or("vault locked mid-keep-both")?;
+        let remote_input = CipherInput::from_cipher(&remote_cipher);
+        let new_file = encrypt_cipher(
+            handle.vault_id,
+            new_id,
+            &remote_input,
+            &handle.derive_item_key(new_id, epoch),
+            epoch,
+            1, // new cipher: seq starts at 1, mirrors add_cipher
+        )
+        .map_err(|e| format!("re-encrypt clone: {e}"))?;
+        let new_path = format!("ciphers/{new_id}.enc");
+        // resolved = [original path with LOCAL bytes, new path with CLONE bytes]
+        let resolved = vec![
+            (file_path.clone(), local_bytes),
+            (new_path, new_file.envelope_bytes),
+        ];
+        drop(guard);
+
+        // Phase 3 (blocking): finalize (single merge commit lands both files).
+        // Distinguish push-failure (merge landed) from real failure so the
+        // conflict doesn't wedge against finalize_conflicts' HEAD guard.
+        let vault_path = self.vault_path.clone();
+        let pending_for_finalize = pending.clone();
+        let push_failed = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let engine = SyncEngine::new(&vault_path, &device_id_str);
+            let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
+            match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
+                Ok(_) => Ok(false),
+                Err(e) if baluard_core::sync::engine::is_network_error(&e) => Ok(true),
+                Err(e) => Err(format!("finalize keep_both: {e}")),
+            }
+        })
+        .await
+        .map_err(|e| format!("finalize task join: {e}"))??;
+        self.autosync.note_resolved().await;
+        // The clone is a brand-new cipher_id the index has never seen; rebuild
+        // so vault.list surfaces it immediately.
+        self.rebuild_cipher_index().await;
+        Ok(serde_json::json!({
+            "resolved": true,
+            "remaining": self.autosync.pending_conflict_count().await,
+            "new_cipher_id": new_id.to_string(),
+            "push_pending": push_failed,
+        })
+        .to_string())
     }
 
     /// Get biometric unlock status for THIS vault only.

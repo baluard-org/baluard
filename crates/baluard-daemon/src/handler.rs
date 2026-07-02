@@ -4188,8 +4188,9 @@ async fn handle_sync_conflict_resolve(
         .ok_or_else(|| "missing \"verdict\" (keep_local|keep_remote|keep_both)".to_string())?;
 
     if verdict == "keep_both" {
-        // 2b-3: new cipher UUID + second entry write. Not yet implemented.
-        return Err("keep_both is not implemented yet (Phase 2b-3)".to_string());
+        // keep_both needs decrypt + re-encrypt under a new cipher id. Delegate
+        // to the state method that holds the handle.
+        return state.conflict_resolve_keep_both().await;
     }
 
     let pending = state
@@ -4242,6 +4243,10 @@ async fn handle_sync_conflict_resolve(
     // Drain the head. note_resolved transitions to Dirty (re-sync) when the
     // queue empties.
     state.autosync.note_resolved().await;
+    // Phase 2b: the resolution wrote cipher files directly via SyncEngine
+    // (bypassing VaultHandle's index-rebuild hooks). Rebuild so vault.list
+    // reflects the change (best-effort; index self-heals on next mutation).
+    state.rebuild_cipher_index().await;
 
     let body = serde_json::json!({ "resolved": true, "remaining": state.autosync.pending_conflict_count().await });
     serde_json::to_string(&body).map_err(|e| format!("JSON error: {e}"))
