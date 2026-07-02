@@ -228,6 +228,10 @@ const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
     "sync.disconnect",
     // Focus-triggered pull: touches the on-disk repo, must be token-gated.
     "sync.autosync_nudge_pull",
+    // Phase 2b: read paused-conflict metadata (file paths) and apply a
+    // verdict (writes a merge commit + pushes). Both must be token-gated.
+    "sync.conflict",
+    "sync.conflict.resolve",
     // C4 fix: device.revoke triggers destructive rekey, must be token-gated
     "device.revoke",
     // M4/PR-2: recovery-phrase enrollment mutates the device registry and
@@ -2997,6 +3001,57 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             state.autosync.nudge_focus_pull(dn).await;
             ok_resp("ok".to_string(), token_str)
         }
+        // Phase 2b: read the head conflict paused for user decision. Returns
+        // masked details (no secret values). The frontend ConflictResolution
+        // panel consumes this. 2b-2 will decrypt + run merge_ciphers and return
+        // field labels + a sensitive flag; today it returns the file path +
+        // local/remote OIDs (opaque to the UI, which only needs the count + a
+        // placeholder until 2b-2 ships the masked field list).
+        "sync.conflict" => match state.autosync.peek_pending_conflict().await {
+            Some(pending) => {
+                // 2b-1 placeholder shape. 2b-2 replaces this with a MaskedConflict
+                // (cipher name, type, masked field labels) derived from decrypt +
+                // merge_ciphers. For now the UI shows a generic conflict card.
+                let body = serde_json::json!({
+                    "pending": true,
+                    "count": state.autosync.pending_conflict_count().await,
+                    "files": pending.files,
+                    // Opaque to the UI; included so 2b-2 can correlate.
+                    "local_oid": format!("{}", pending.local_oid),
+                    "remote_oid": format!("{}", pending.remote_oid),
+                    // 2b-2 will populate these from the decrypted ConflictInfo:
+                    "cipher_id": null,
+                    "name": null,
+                    "cipher_type": null,
+                    "fields": [],
+                });
+                match serde_json::to_string(&body) {
+                    Ok(json) => ok_resp(json, token_str),
+                    Err(e) => err_response(format!("JSON error: {e}")),
+                }
+            }
+            None => {
+                let body = serde_json::json!({ "pending": false, "count": 0 });
+                match serde_json::to_string(&body) {
+                    Ok(json) => ok_resp(json, token_str),
+                    Err(e) => err_response(format!("JSON error: {e}")),
+                }
+            }
+        },
+        // Phase 2b: apply the user's verdict to the head conflict + finalize
+        // (write the 2-parent merge commit + push). Payload: {"verdict":
+        // "keep_local"|"keep_remote"|"keep_both"}. 2b-1 implements
+        // keep_local/keep_remote via raw blob selection (no decrypt).
+        // keep_both is 2b-3 (new UUID + second entry) and errors here.
+        "sync.conflict.resolve" => {
+            if req.payload.is_empty() {
+                return err_response("Missing verdict JSON in payload");
+            }
+            match handle_sync_conflict_resolve(state, &req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
 
         // ── Settings (token required) ──
         "settings.get" => match state.settings_get().await {
@@ -4125,6 +4180,98 @@ pub(crate) fn repo_web_url_from_remote(remote_url: &str) -> Option<String> {
         return Some(cleaned.to_string());
     }
     None
+}
+
+/// Phase 2b: apply the user's verdict to the head paused conflict.
+///
+/// `keep_local` / `keep_remote` read the raw blob from the chosen side's OID
+/// and hand the bytes to [`SyncEngine::finalize_conflicts`], which writes the
+/// 2-parent merge commit + pushes. No decryption happens here (2b-2 will add
+/// field-level merge; 2b-3 adds `keep_both` with a new cipher UUID).
+///
+/// On success the head is drained via [`AutoSyncHandle::note_resolved`]; if
+/// the queue is now empty the coordinator transitions to Dirty and re-arms the
+/// debounce push (covers both the merge commit and any mutations queued while
+/// the conflict was paused).
+#[cfg(feature = "git-sync")]
+async fn handle_sync_conflict_resolve(
+    state: &crate::state::VaultState,
+    payload_str: &str,
+) -> Result<String, String> {
+    use baluard_core::sync::engine::SyncEngine;
+
+    let payload: serde_json::Value = serde_json::from_str(payload_str)
+        .map_err(|e| format!("invalid conflict.resolve payload: {e}"))?;
+    let verdict = payload["verdict"]
+        .as_str()
+        .ok_or_else(|| "missing \"verdict\" (keep_local|keep_remote|keep_both)".to_string())?;
+
+    if verdict == "keep_both" {
+        // 2b-3: new cipher UUID + second entry write. Not yet implemented.
+        return Err("keep_both is not implemented yet (Phase 2b-3)".to_string());
+    }
+
+    let pending = state
+        .autosync
+        .peek_pending_conflict()
+        .await
+        .ok_or_else(|| "no pending conflict to resolve".to_string())?;
+
+    // Pick the source OID for each conflicting file's bytes.
+    let src_oid = match verdict {
+        "keep_local" => pending.local_oid,
+        "keep_remote" => pending.remote_oid,
+        other => return Err(format!("unknown verdict: {other}")),
+    };
+
+    let vault_path = state.vault_path.clone();
+    let device = device_name(&vault_path);
+    let pending_clone = pending.clone();
+    let (merge_ok, err) = tokio::task::spawn_blocking(move || -> (bool, Option<String>) {
+        let engine = SyncEngine::new(&vault_path, &device);
+        let repo = match engine.open_repo() {
+            Ok(r) => r,
+            Err(e) => return (false, Some(format!("open repo: {e}"))),
+        };
+        // Read each conflicting file's bytes from the chosen side.
+        let mut resolved: Vec<(String, Vec<u8>)> = Vec::with_capacity(pending_clone.files.len());
+        for f in &pending_clone.files {
+            let bytes = match SyncEngine::read_blob_from_commit(&repo, src_oid, f) {
+                Ok(b) => b,
+                Err(e) => return (false, Some(format!("read {f}: {e}"))),
+            };
+            resolved.push((f.clone(), bytes));
+        }
+        match engine.finalize_conflicts(&repo, &pending_clone, &resolved) {
+            Ok(_) => (true, None),
+            // A push network failure still leaves the merge commit written
+            // locally; the coordinator will retry the push on the next cycle.
+            // Treat as success for queue-draining purposes.
+            Err(e) if baluard_core::sync::engine::is_network_error(&e) => (true, None),
+            Err(e) => (false, Some(format!("finalize: {e}"))),
+        }
+    })
+    .await
+    .map_err(|e| format!("finalize task join: {e}"))?;
+
+    if !merge_ok {
+        return Err(err.unwrap_or_else(|| "finalize failed".to_string()));
+    }
+
+    // Drain the head. note_resolved transitions to Dirty (re-sync) when the
+    // queue empties.
+    state.autosync.note_resolved().await;
+
+    let body = serde_json::json!({ "resolved": true, "remaining": state.autosync.pending_conflict_count().await });
+    serde_json::to_string(&body).map_err(|e| format!("JSON error: {e}"))
+}
+
+#[cfg(not(feature = "git-sync"))]
+async fn handle_sync_conflict_resolve(
+    _state: &crate::state::VaultState,
+    _payload_str: &str,
+) -> Result<String, String> {
+    Err("git-sync feature disabled".to_string())
 }
 
 #[cfg(feature = "git-sync")]
