@@ -1495,6 +1495,17 @@ impl VaultHandle {
         Self::derive_item_key_from_sgk(sgk, cipher_id, key_epoch)
     }
 
+    /// The currently-held epoch (the RootKey/SGK this device has in memory).
+    /// None when locked. Used by Phase 2b conflict merge to stamp re-encrypted
+    /// merged ciphers with the merging device's actual current epoch (per the
+    /// design review: an envelope's epoch must match held key material).
+    pub fn current_epoch(&self) -> Option<u64> {
+        match &self.state {
+            VaultState::Unlocked(u) => Some(u.current_epoch),
+            VaultState::Locked => None,
+        }
+    }
+
     /// Get a cipher (decrypts if unlocked, returns metadata only if locked).
     /// Looks up in both active ciphers and trash.
     pub fn get_cipher(&self, cipher_id: Uuid) -> Result<CipherRead, BaluardError> {
@@ -1543,6 +1554,58 @@ impl VaultHandle {
                 }))
             }
         }
+    }
+
+    /// Decrypt a cipher from raw envelope bytes (e.g. read from a specific git
+    /// commit via `SyncEngine::read_blob_from_commit`), rather than from the
+    /// working tree. Used by Phase 2b field-level conflict merge to decrypt
+    /// the base / local / remote versions of a conflicting cipher.
+    ///
+    /// The `key_epoch` is read from the envelope header (NOT supplied by the
+    /// caller); the item key is derived for that epoch via
+    /// [`derive_item_key`]. If the vault's held SpaceGroupKey cannot reach the
+    /// envelope's epoch (cross-rotation: remote pre-rotation with destroyed
+    /// old RootKey, or local behind post-rotation), decryption fails cleanly —
+    /// callers MUST treat this as "cannot merge this side," not retry.
+    ///
+    /// AAD is recomputed from the envelope's own header fields (same invariant
+    /// as `get_cipher`), so a blob swapped from a different cipher_id or vault
+    /// fails closed.
+    pub fn decrypt_cipher_bytes(
+        &self,
+        cipher_id: Uuid,
+        envelope_bytes: &[u8],
+    ) -> Result<crate::types::Cipher, BaluardError> {
+        let envelope = crate::vault::envelope::deserialize(envelope_bytes)?;
+        // Cross-epoch safe path: the envelope may be at a foreign epoch (e.g.
+        // a remote pre-rotation version whose RootKey this device no longer
+        // holds). try_derive_item_key returns None on epoch mismatch instead
+        // of panicking (the plain derive_item_key debug-asserts, which would
+        // crash the daemon on the exact safety path). Map None to a clean Err
+        // the caller reports as `cross_epoch`.
+        let sgk = match &self.state {
+            VaultState::Unlocked(u) => &u.space_group_key,
+            VaultState::Locked => {
+                return Err(VaultError::Corrupt(
+                    "decrypt_cipher_bytes called on locked vault".into(),
+                )
+                .into());
+            }
+        };
+        let item_key = sgk
+            .try_derive_item_key(cipher_id, envelope.header.key_epoch)
+            .ok_or_else(|| {
+                BaluardError::from(VaultError::Corrupt(format!(
+                    "cross-epoch decrypt: envelope epoch {} != held SGK epoch {}",
+                    envelope.header.key_epoch,
+                    sgk.epoch()
+                )))
+            })?;
+        let file = crate::vault::cipher::CipherFile {
+            id: cipher_id,
+            envelope_bytes: envelope_bytes.to_vec(),
+        };
+        crate::vault::cipher::decrypt_cipher(self.vault_id, cipher_id, &file, &item_key)
     }
 
     /// Delete a cipher by ID. By default, moves it to trash.

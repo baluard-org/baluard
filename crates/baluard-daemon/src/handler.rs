@@ -3003,41 +3003,22 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
         // Phase 2b: read the head conflict paused for user decision. Returns
         // masked details (no secret values). The frontend ConflictResolution
-        // panel consumes this. 2b-2 will decrypt + run merge_ciphers and return
-        // field labels + a sensitive flag; today it returns the file path +
-        // local/remote OIDs (opaque to the UI, which only needs the count + a
-        // placeholder until 2b-2 ships the masked field list).
-        "sync.conflict" => match state.autosync.peek_pending_conflict().await {
-            Some(pending) => {
-                // 2b-1 placeholder shape. 2b-2 replaces this with a MaskedConflict
-                // (cipher name, type, masked field labels) derived from decrypt +
-                // merge_ciphers. For now the UI shows a generic conflict card.
-                let body = serde_json::json!({
-                    "pending": true,
-                    "count": state.autosync.pending_conflict_count().await,
-                    "files": pending.files,
-                    // Opaque to the UI; included so 2b-2 can correlate.
-                    "local_oid": format!("{}", pending.local_oid),
-                    "remote_oid": format!("{}", pending.remote_oid),
-                    // 2b-2 will populate these from the decrypted ConflictInfo:
-                    "cipher_id": null,
-                    "name": null,
-                    "cipher_type": null,
-                    "fields": [],
-                });
-                match serde_json::to_string(&body) {
-                    Ok(json) => ok_resp(json, token_str),
-                    Err(e) => err_response(format!("JSON error: {e}")),
-                }
-            }
-            None => {
+        // panel consumes this. 2b-2: decrypt base/local/remote, run
+        // merge_ciphers. Auto-merges (Merged) with no UI prompt; surfaces
+        // masked details (Conflict) or a cross_epoch flag (decrypt failure)
+        // for a user verdict via sync.conflict.resolve.
+        "sync.conflict" => {
+            // Fast path: nothing pending → skip the decrypt entirely.
+            if state.autosync.pending_conflict_count().await == 0 {
                 let body = serde_json::json!({ "pending": false, "count": 0 });
-                match serde_json::to_string(&body) {
+                ok_resp(body.to_string(), token_str)
+            } else {
+                match state.conflict_decrypt_and_merge().await {
                     Ok(json) => ok_resp(json, token_str),
-                    Err(e) => err_response(format!("JSON error: {e}")),
+                    Err(e) => err_response(e),
                 }
             }
-        },
+        }
         // Phase 2b: apply the user's verdict to the head conflict + finalize
         // (write the 2-parent merge commit + push). Payload: {"verdict":
         // "keep_local"|"keep_remote"|"keep_both"}. 2b-1 implements

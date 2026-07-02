@@ -11,6 +11,56 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use zeroize::Zeroize;
 
+/// UI-facing masked conflict. NO secret values; field labels + a sensitive
+/// flag only. Mirrors `PendingConflict` in the frontend contract
+/// (`docs/plan-conflict-resolution-panel.md`).
+#[derive(serde::Serialize)]
+struct MaskedConflict {
+    name: String,
+    cipher_type: String,
+    fields: Vec<MaskedField>,
+}
+
+#[derive(serde::Serialize)]
+struct MaskedField {
+    key: String,
+    label: String,
+    sensitive: bool,
+}
+
+/// Build a `MaskedConflict` from the local decrypted cipher + the engine's
+/// `ConflictInfo`. `ConflictInfo.conflicting_fields` carries plaintext
+/// local/remote values (intentionally not Serialize); we surface ONLY the
+/// field name + a coarse sensitive classification, never the value.
+fn mask_conflict(
+    local: &baluard_core::types::Cipher,
+    info: &baluard_core::sync::conflict::ConflictInfo,
+) -> MaskedConflict {
+    // Coarse sensitive-field classifier. Mirrors the semantic groups in
+    // conflict.rs (username/password/totp atomic) + card/ssh private material.
+    const SENSITIVE_KEYS: &[&str] = &["password", "totp_uri", "code", "number", "private_key"];
+    let fields = info
+        .conflicting_fields
+        .iter()
+        .map(|f| {
+            let key = f.field_name.clone();
+            let sensitive = SENSITIVE_KEYS.iter().any(|s| key == *s)
+                || key.contains("private")
+                || key.contains("secret");
+            MaskedField {
+                label: key.clone(),
+                key,
+                sensitive,
+            }
+        })
+        .collect();
+    MaskedConflict {
+        name: local.name.clone(),
+        cipher_type: format!("{:?}", local.kind).to_lowercase(),
+        fields,
+    }
+}
+
 /// Shared vault state accessible from all connection handlers.
 pub struct VaultState {
     /// Path to the vault directory on disk.
@@ -1998,6 +2048,185 @@ impl VaultState {
         baluard_core::vault::handle::VaultHandle::vault_id_for_path(&self.vault_path)
             .map(|u| u.to_string())
             .map_err(|e| format!("{e}"))
+    }
+
+    /// Phase 2b-2: decrypt the head pending conflict's base/local/remote
+    /// versions, run `merge_ciphers`, and either auto-resolve (Merged) or
+    /// return a masked conflict for the UI. Returns a JSON body shaped for
+    /// the `sync.conflict` route.
+    ///
+    /// Cross-epoch safety (per design review): if any side's envelope is at
+    /// an epoch this device's held SpaceGroupKey cannot reach, decryption
+    /// fails cleanly. That is treated as "cannot merge" and the conflict is
+    /// surfaced with a `cross_epoch: true` flag so the UI can explain it and
+    /// offer keep_local/keep_remote (raw-blob, no decrypt) as the only safe
+    /// verdicts. keep_both is refused for cross-epoch conflicts.
+    pub async fn conflict_decrypt_and_merge(&self) -> Result<String, String> {
+        use baluard_core::sync::conflict::{MergeResult, merge_ciphers};
+        use baluard_core::sync::engine::SyncEngine;
+        use baluard_core::types::CipherInput;
+
+        let pending = self
+            .autosync
+            .peek_pending_conflict()
+            .await
+            .ok_or_else(|| "no pending conflict".to_string())?;
+
+        // Parse cipher_id from the (single, flat) conflicting file path
+        // `ciphers/<uuid>.enc`.
+        if pending.files.len() != 1 {
+            return Err(format!(
+                "multi-file conflicts not yet supported (got {}): {:?}",
+                pending.files.len(),
+                pending.files
+            ));
+        }
+        let file_path = pending.files[0].clone();
+        let cipher_id = file_path
+            .strip_prefix("ciphers/")
+            .and_then(|s| s.strip_suffix(".enc"))
+            .ok_or_else(|| format!("unexpected conflict path shape: {file_path}"))?
+            .parse::<uuid::Uuid>()
+            .map_err(|e| format!("cipher_id parse from {file_path}: {e}"))?;
+
+        // Phase 1 (blocking pool): git reads only — returns owned envelope
+        // bytes for base/local/remote. No handle access, so no lifetime issue.
+        let vault_path = self.vault_path.clone();
+        let local_oid = pending.local_oid;
+        let remote_oid = pending.remote_oid;
+        let fp_for_read = file_path.clone();
+        let (base_bytes, local_bytes, remote_bytes) = tokio::task::spawn_blocking(
+            #[allow(clippy::type_complexity)]
+            move || -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
+                let engine = SyncEngine::new(&vault_path, "conflict-merge");
+                let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
+                let merge_base = repo
+                    .merge_base(local_oid, remote_oid)
+                    .map_err(|e| format!("merge_base: {e}"))?;
+                let base = SyncEngine::read_blob_from_commit(&repo, merge_base, &fp_for_read)
+                    .map_err(|e| format!("read base: {e}"))?;
+                let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
+                    .map_err(|e| format!("read local: {e}"))?;
+                let remote = SyncEngine::read_blob_from_commit(&repo, remote_oid, &fp_for_read)
+                    .map_err(|e| format!("read remote: {e}"))?;
+                Ok((base, local, remote))
+            },
+        )
+        .await
+        .map_err(|e| format!("blob read task join: {e}"))??;
+
+        // Phase 2 (inline): decrypt + merge + re-encrypt. Holds the vault
+        // handle borrow; these are fast CPU ops (a handful of AEAD/HKDF calls).
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+
+        let count = self.autosync.pending_conflict_count().await;
+        let cross_epoch_ret = |which: &'static str, detail: String, count: usize| -> String {
+            serde_json::json!({
+                "pending": true,
+                "cross_epoch": true,
+                "unreachable_side": which,
+                "detail": detail,
+                "count": count,
+            })
+            .to_string()
+        };
+
+        let base_cipher = match handle.decrypt_cipher_bytes(cipher_id, &base_bytes) {
+            Ok(c) => c,
+            Err(e) => {
+                drop(guard);
+                return Ok(cross_epoch_ret("base", format!("{e}"), count));
+            }
+        };
+        let local_cipher = match handle.decrypt_cipher_bytes(cipher_id, &local_bytes) {
+            Ok(c) => c,
+            Err(e) => {
+                drop(guard);
+                return Ok(cross_epoch_ret("local", format!("{e}"), count));
+            }
+        };
+        let remote_cipher = match handle.decrypt_cipher_bytes(cipher_id, &remote_bytes) {
+            Ok(c) => c,
+            Err(e) => {
+                drop(guard);
+                return Ok(cross_epoch_ret("remote", format!("{e}"), count));
+            }
+        };
+
+        // The vault handle knows its own device_id (canonical, from the
+        // registry). Capture it for the SyncEngine commit-author context
+        // before we drop the borrow. NB: this feeds device-activity tracking
+        // only; commit signing key lookup iterates all devices regardless.
+        let device_id = handle.device_id.to_string();
+        let base_input = CipherInput::from_cipher(&base_cipher);
+        let local_input = CipherInput::from_cipher(&local_cipher);
+        let remote_input = CipherInput::from_cipher(&remote_cipher);
+        let merge_result = merge_ciphers(&base_input, &local_input, &remote_input);
+
+        match merge_result {
+            MergeResult::Merged(merged) => {
+                // Re-encrypt + finalize. Epoch = current active (design review
+                // Q1: the merging device's held epoch); seq = max+1.
+                let new_seq = local_cipher.update_seq.max(remote_cipher.update_seq) + 1;
+                let epoch = handle.current_epoch().ok_or("vault locked mid-merge")?;
+                let file = baluard_core::vault::cipher::encrypt_cipher(
+                    handle.vault_id,
+                    cipher_id,
+                    &merged,
+                    &handle.derive_item_key(cipher_id, epoch),
+                    epoch,
+                    new_seq,
+                )
+                .map_err(|e| format!("re-encrypt merged: {e}"))?;
+                let resolved = vec![(file_path.clone(), file.envelope_bytes)];
+                drop(guard);
+                // Phase 3 (blocking pool): write merge commit + push.
+                // Distinguish push-failure (merge commit landed) from real
+                // failure: a SyncError::Network on push must still drain the
+                // conflict or it wedges (the finalize_conflicts HEAD guard
+                // would reject all later retries against the now-advanced HEAD).
+                let vault_path = self.vault_path.clone();
+                let pending_for_finalize = pending.clone();
+                let push_failed = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+                    let engine = SyncEngine::new(&vault_path, &device_id);
+                    let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
+                    match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
+                        Ok(_) => Ok(false),
+                        Err(e) if baluard_core::sync::engine::is_network_error(&e) => {
+                            // Merge commit landed; only the push failed.
+                            // The next debounce cycle pushes it. Treat as
+                            // resolved so the conflict clears.
+                            Ok(true)
+                        }
+                        Err(e) => Err(format!("finalize merged: {e}")),
+                    }
+                })
+                .await
+                .map_err(|e| format!("finalize task join: {e}"))??;
+                self.autosync.note_resolved().await;
+                Ok(serde_json::json!({
+                    "pending": self.autosync.pending_conflict_count().await > 0,
+                    "auto_merged": true,
+                    "push_pending": push_failed,
+                })
+                .to_string())
+            }
+            MergeResult::Conflict(info) => {
+                let masked = mask_conflict(&local_cipher, &info);
+                drop(guard);
+                Ok(serde_json::json!({
+                    "pending": true,
+                    "cross_epoch": false,
+                    "count": self.autosync.pending_conflict_count().await,
+                    "cipher_id": cipher_id.to_string(),
+                    "name": masked.name,
+                    "cipher_type": masked.cipher_type,
+                    "fields": masked.fields,
+                })
+                .to_string())
+            }
+        }
     }
 
     /// Get biometric unlock status for THIS vault only.

@@ -218,14 +218,30 @@ impl SpaceGroupKey {
             "SpaceGroupKey epoch mismatch: SGK bound to epoch {} but derive_item_key called with epoch {}",
             self.epoch, epoch
         );
+        self.derive_item_key_unchecked(cipher_id)
+    }
 
+    /// Checked variant: returns None if the requested epoch does not match
+    /// this SGK's bound epoch (the cross-rotation case — the held key material
+    /// cannot reach that epoch). Used by the conflict-merge decrypt path, which
+    /// legitimately receives envelopes at foreign epochs and must fail closed
+    /// instead of panicking. Non-cross-epoch callers should use
+    /// [`derive_item_key`] (which asserts the invariant for genuine bugs).
+    pub fn try_derive_item_key(&self, cipher_id: uuid::Uuid, epoch: u64) -> Option<ItemKey> {
+        if epoch != self.epoch {
+            return None;
+        }
+        Some(self.derive_item_key_unchecked(cipher_id))
+    }
+
+    fn derive_item_key_unchecked(&self, cipher_id: uuid::Uuid) -> ItemKey {
         use hkdf::Hkdf;
         use sha2::Sha256;
 
         // "baluard-item-v1" (13 bytes) + epoch (8 bytes) + UUID (16 bytes) = 37 bytes
         let mut info = Vec::with_capacity(37);
         info.extend_from_slice(b"baluard-item-v1");
-        info.extend_from_slice(&epoch.to_le_bytes());
+        info.extend_from_slice(&self.epoch.to_le_bytes());
         info.extend_from_slice(cipher_id.as_bytes());
 
         let hkdf = Hkdf::<Sha256>::new(None, self.key.as_slice());
@@ -365,5 +381,35 @@ mod tests {
         let rk = RootKey::generate();
         let sgk = SpaceGroupKey::derive_from_root_key(&rk, 42);
         assert_eq!(sgk.epoch(), 42);
+    }
+
+    /// Phase 2b-2 regression: try_derive_item_key must return None (not panic)
+    /// when asked to derive for a foreign epoch. This is the cross-rotation
+    /// safety path — the held key material cannot reach that epoch, and the
+    /// conflict-merge decrypt path maps None to a clean cross_epoch error
+    /// instead of crashing. The plain derive_item_key debug-asserts, which
+    /// would abort a debug-mode daemon on the exact path it's supposed to
+    /// handle safely.
+    #[test]
+    fn try_derive_item_key_returns_none_on_epoch_mismatch() {
+        let rk = RootKey::generate();
+        let sgk = SpaceGroupKey::derive_from_root_key(&rk, 7);
+        let id = uuid::Uuid::new_v4();
+        // Matching epoch derives a key.
+        assert!(sgk.try_derive_item_key(id, 7).is_some());
+        // Foreign epoch (older or newer) returns None, no panic.
+        assert!(
+            sgk.try_derive_item_key(id, 6).is_none(),
+            "pre-rotation epoch must be unreachable"
+        );
+        assert!(
+            sgk.try_derive_item_key(id, 8).is_none(),
+            "post-rotation epoch must be unreachable"
+        );
+        // Both reachable paths produce the same key (sanity: unchecked path
+        // used by both derive_item_key and try_derive_item_key agrees).
+        let a = sgk.try_derive_item_key(id, 7).unwrap();
+        let b = sgk.derive_item_key(id, 7);
+        assert_eq!(a.as_bytes(), b.as_bytes());
     }
 }
