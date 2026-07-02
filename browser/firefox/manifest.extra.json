@@ -1,0 +1,8 @@
+{
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "baluard@actitud.xyz",
+      "strict_min_version": "115.0"
+    }
+  }
+}

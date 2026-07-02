@@ -1,0 +1,19 @@
+{
+  "name": "baluard-extension-shared",
+  "version": "0.1.0",
+  "description": "Baluard browser extension (shared source, chrome + firefox targets)",
+  "type": "module",
+  "scripts": {
+    "build:chrome": "cross-env TARGET=chrome vite build",
+    "build:firefox": "cross-env TARGET=firefox vite build",
+    "build": "npm run build:chrome && npm run build:firefox"
+  },
+  "dependencies": {
+    "solid-js": "^1.8.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0",
+    "vite-plugin-solid": "^2.10.0",
+    "cross-env": "^7.0.3"
+  }
+}

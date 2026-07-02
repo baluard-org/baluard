@@ -1,0 +1,25 @@
+[package]
+name = "baluard-nmh"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Browser-extension native messaging host for Baluard (stdio <-> daemon socket bridge)"
+
+[[bin]]
+name = "baluard-nmh"
+path = "src/main.rs"
+
+[dependencies]
+baluard-core = { path = "../baluard-core" }
+prost = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+zeroize = { workspace = true }
+uuid = { workspace = true }
+hex = { workspace = true }
+anyhow.workspace = true
+env_logger = "0.11"
+
+[build-dependencies]
+prost-build = "0.13"

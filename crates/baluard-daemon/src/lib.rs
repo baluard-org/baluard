@@ -6,6 +6,7 @@
 //! lives here.
 
 pub mod autosync;
+pub mod bridge;
 pub mod crypto;
 pub mod handler;
 pub mod host;

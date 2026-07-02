@@ -629,3 +629,66 @@ build-signed: build-release
 # Show version
 version:
 	@echo "{{ binary }} {{ version }}"
+
+# ── Browser extension + NMH (Phase 0) ───────────────────────────────────────
+
+nmh := "baluard-nmh"
+
+# Build the native messaging host binary (release).
+build-nmh:
+	cargo build --release -p {{ nmh }}
+
+# Build both Chrome and Firefox extension bundles (Vite).
+ext-build:
+	cd browser/shared && npm install && npm run build
+
+ext-build-chrome:
+	cd browser/shared && npm run build:chrome
+
+ext-build-firefox:
+	cd browser/shared && npm run build:firefox
+
+# Print the NMH binary path (for the host manifest `path` field).
+nmh-path:
+	@echo "{{ absolute_path('target/release/' + nmh) }}"
+
+# Install the native messaging host manifest for the current OS + browser.
+# Usage: just install-nmh-manifest chrome <EXT_ID>   # or firefox <ADDON_ID>
+# Writes the host manifest JSON to the per-OS user-level NMH directory and
+# points its `path` at the release NMH binary.
+install-nmh-manifest browser ext_id:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	BIN="{{ absolute_path('target/release/' + nmh) }}"
+	mkdir -p target/release
+	cargo build --release -p {{ nmh }}
+	case "{{ os }}:{{ browser }}" in
+	  linux:chrome)   DIR="$HOME/.config/google-chrome/NativeMessagingHosts" ;;
+	  linux:chromium) DIR="$HOME/.config/chromium/NativeMessagingHosts" ;;
+	  linux:firefox)  DIR="$HOME/.mozilla/native-messaging-hosts" ;;
+	  macos:chrome)   DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts" ;;
+	  macos:chromium) DIR="$HOME/Library/Application Support/Chromium/NativeMessagingHosts" ;;
+	  macos:firefox)  DIR="$HOME/Library/Application Support/Mozilla/NativeMessagingHosts" ;;
+	  *) echo "Unsupported OS/browser combo: {{ os }}/{{ browser }}"; exit 1 ;;
+	esac
+	mkdir -p "$DIR"
+	if [ "{{ browser }}" = "firefox" ]; then
+	  cat > "$DIR/xyz.actitud.baluard.json" <<EOF
+	{"name":"xyz.actitud.baluard","description":"Baluard bridge","path":"$BIN","type":"stdio","allowed_extensions":["{{ ext_id }}"]}
+	EOF
+	else
+	  cat > "$DIR/xyz.actitud.baluard.json" <<EOF
+	{"name":"xyz.actitud.baluard","description":"Baluard bridge","path":"$BIN","type":"stdio","allowed_origins":["chrome-extension://{{ ext_id }}/"]}
+	EOF
+	fi
+	echo "Installed NMH manifest -> $DIR/xyz.actitud.baluard.json"
+	echo "Pointed at: $BIN"
+	echo "Next: load browser/chrome/dist or browser/firefox/dist as unpacked/temporary."
+
+# Dev: build Chrome bundle + print load-unpacked instructions.
+ext-dev-chrome: ext-build-chrome
+	@echo "Load: chrome://extensions -> Developer mode -> Load unpacked -> {{ absolute_path('browser/chrome/dist') }}"
+
+# Dev: build Firefox bundle + print about:debugging instructions.
+ext-dev-firefox: ext-build-firefox
+	@echo "Load: about:debugging -> This Firefox -> Load Temporary Add-on -> {{ absolute_path('browser/firefox/dist/manifest.json') }}"
