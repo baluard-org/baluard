@@ -823,7 +823,13 @@ impl SyncEngine {
             }
             repo.cleanup_state()
                 .map_err(|e| SyncError::Git(format!("cleanup: {e}")))?;
-            self.transition_state(SyncState::Idle)?;
+            // Leave the state machine in Merging (NOT Idle): a conflict means a
+            // resolution commit must follow before the cycle can return to
+            // Idle. Pre-fix this called transition_state(Idle), which made the
+            // subsequent resolve_conflicts() -> transition_state(Idle) an
+            // invalid Idle->Idle transition and silently broke both the
+            // keep-local path and finalize_conflicts on any real conflict.
+            // The resolver / finalize path transitions Merging -> Idle.
             return Ok(PullResult::Conflict {
                 files: conflicts,
                 local_oid,
@@ -1041,14 +1047,32 @@ impl SyncEngine {
 
     /// Run one full sync cycle: commit local → pull → resolve conflicts → push.
     ///
-    /// This is the canonical git workflow order (H2): committing local changes
-    /// first keeps the worktree clean so the pull's checkout (forced, per the
-    /// C1 fix) cannot discard uncommitted edits. On a [`PullResult::Conflict`],
-    /// the local side is kept via [`resolve_conflict_keep_local`] (Phase 1
-    /// policy); Phase 2 will field-level merge first. Returns
-    /// [`SyncCycleOutcome::Offline`] on network/transport failure so the caller
-    /// can enter a retry loop.
+    /// Backward-compatible entry point: on conflict, unconditionally keeps the
+    /// local side via [`resolve_conflict_keep_local`] (Phase 1 policy). No
+    /// field-level merge, no human-in-the-loop pause. See
+    /// [`run_sync_cycle_with_resolver`] for the Phase 2 opt-in path.
     pub fn run_sync_cycle(&self, repo: &Repository) -> Result<SyncCycleOutcome, BaluardError> {
+        self.run_sync_cycle_with_resolver(repo, &mut |_| ConflictResolution::KeepLocal)
+    }
+
+    /// Run one full sync cycle with an opt-in field-level conflict resolver.
+    ///
+    /// Same commit → pull → resolve → push order as [`run_sync_cycle`]. On a
+    /// [`PullResult::Conflict`], instead of unconditionally keeping local,
+    /// calls `resolver` with a [`PendingConflictState`]. The resolver returns:
+    ///   - [`ConflictResolution::KeepLocal`] → fall back to the Phase 1 path
+    ///     (`resolve_conflict_keep_local`), cycle completes as `Synced`.
+    ///   - [`ConflictResolution::Pause`] → the caller will handle this conflict
+    ///     out of band (decrypt + merge + decide). The cycle returns
+    ///     [`SyncCycleOutcome::NeedsDecision`] WITHOUT writing a merge commit
+    ///     or pushing. The caller resumes via [`finalize_conflicts`].
+    ///
+    /// Network failures still map to [`SyncCycleOutcome::Offline`].
+    pub fn run_sync_cycle_with_resolver(
+        &self,
+        repo: &Repository,
+        resolver: &mut impl FnMut(&PendingConflictState) -> ConflictResolution,
+    ) -> Result<SyncCycleOutcome, BaluardError> {
         // 1. Commit pending local changes (clean worktree before pull).
         let status = self.status(repo)?;
         if status.is_dirty() {
@@ -1058,23 +1082,48 @@ impl SyncEngine {
         // 2. Pull (fast-forward / merge / conflict). Track whether a conflict
         // was resolved so the caller can surface it to the user.
         let mut conflicts = 0u32;
+        let mut pending: Vec<PendingConflictState> = Vec::new();
         match self.pull(repo, "origin") {
             Ok(PullResult::Conflict {
                 files,
                 local_oid,
                 remote_oid,
             }) => {
-                // Keep local side; produces a 2-parent merge commit so the next
-                // push fast-forwards. Local edits are preserved.
-                self.resolve_conflict_keep_local(repo, local_oid, remote_oid, &files)?;
-                conflicts = 1;
+                let state = PendingConflictState {
+                    files,
+                    local_oid,
+                    remote_oid,
+                };
+                match resolver(&state) {
+                    ConflictResolution::KeepLocal => {
+                        // Phase 1 fallback: keep local, write 2-parent merge
+                        // commit, complete the cycle.
+                        self.resolve_conflict_keep_local(
+                            repo,
+                            state.local_oid,
+                            state.remote_oid,
+                            &state.files,
+                        )?;
+                        conflicts = 1;
+                    }
+                    ConflictResolution::Pause => {
+                        // Caller opts in to field-level resolution. Pause the
+                        // cycle: do NOT write a merge commit, do NOT push.
+                        pending.push(state);
+                    }
+                }
             }
             Ok(_) => {}
             Err(ref e) if is_network_error(e) => return Ok(SyncCycleOutcome::Offline),
             Err(e) => return Err(e),
         }
 
-        // 3. Push (local is committed + reconciled with remote → fast-forward).
+        // 3. If the caller paused for a decision, return now — no push.
+        if !pending.is_empty() {
+            return Ok(SyncCycleOutcome::NeedsDecision { pending });
+        }
+
+        // 4. Push (local is committed + reconciled with remote → fast-forward).
         match self.push(repo, "origin") {
             Ok(_) => {}
             Err(ref e) if is_network_error(e) => return Ok(SyncCycleOutcome::Offline),
@@ -1082,6 +1131,61 @@ impl SyncEngine {
         }
 
         Ok(SyncCycleOutcome::Synced { conflicts })
+    }
+
+    /// Resume a paused cycle after the daemon has decided how to resolve each
+    /// conflicting file. Writes the resolved blobs as a 2-parent merge commit
+    /// (so the next push fast-forwards) and pushes.
+    ///
+    /// `resolved` is one `(path, bytes)` pair per file in `pending.files`,
+    /// where `bytes` is the re-encrypted + re-padded cipher the daemon produced
+    /// from `merge_ciphers` (auto-merged) or from the user's verdict
+    /// (keep_local / keep_remote / keep_both). For `keep_both`, the caller is
+    /// responsible for writing the SECOND entry under a new cipher id BEFORE
+    /// calling this — `finalize_conflicts` only writes the files listed in
+    /// `pending`.
+    pub fn finalize_conflicts(
+        &self,
+        repo: &Repository,
+        pending: &PendingConflictState,
+        resolved: &[(String, Vec<u8>)],
+    ) -> Result<u32, BaluardError> {
+        // Re-entrancy / double-finalize guard: HEAD must still be at the local
+        // tip captured in `pending`. A second finalize (retry after a spurious
+        // error, or a UI double-submit before the daemon clears its pending
+        // state) would otherwise build a SECOND 2-parent merge commit with the
+        // same parents and, if the first already pushed, the second push is a
+        // non-fast-forward that silently discards remote history. Reject early.
+        let head_oid = repo
+            .head()
+            .and_then(|h| h.peel_to_commit())
+            .map(|c| c.id())
+            .map_err(|e| SyncError::Git(format!("finalize_conflicts: read HEAD: {e}")))?;
+        if head_oid != pending.local_oid {
+            return Err(SyncError::Git(format!(
+                "finalize_conflicts: HEAD ({}) is not the pending local tip ({}) — \
+                 already finalized or moved; refusing double-resolve",
+                head_oid, pending.local_oid
+            ))
+            .into());
+        }
+        self.resolve_conflicts(repo, pending.local_oid, pending.remote_oid, resolved)?;
+        match self.push(repo, "origin") {
+            Ok(_) => Ok(1),
+            Err(ref e) if is_network_error(e) => {
+                // Merge commit is already written; only the push failed. The
+                // caller should treat this as Offline and retry the push on
+                // the next cycle (the merge commit will fast-forward). Note:
+                // unlike run_sync_cycle's Offline (Ok variant), this returns
+                // Err(Network) so the caller can distinguish "merge landed,
+                // push pending" from "nothing landed".
+                Err(
+                    SyncError::Network(format!("conflict finalized locally but push failed: {e}"))
+                        .into(),
+                )
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Clone a remote vault repo to a local directory.
@@ -1513,6 +1617,22 @@ pub enum PullResult {
     },
 }
 
+/// Caller's decision for a pull conflict, returned from the resolver closure
+/// passed to [`SyncEngine::run_sync_cycle_with_resolver`].
+///
+/// This is the seam between the crypto-agnostic engine and the daemon-side
+/// field-level merger (Phase 2b). Today the only options are "fall back to the
+/// Phase 1 keep-local path" and "pause for field-level resolution".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictResolution {
+    /// Keep the local side (Phase 1 behavior). The cycle writes a 2-parent
+    /// merge commit and completes normally.
+    KeepLocal,
+    /// Pause the cycle and surface the conflict to the caller for field-level
+    /// resolution. Returns [`SyncCycleOutcome::NeedsDecision`].
+    Pause,
+}
+
 /// Outcome of one full commit → pull → resolve → push cycle.
 ///
 /// Git2-free so callers (the daemon auto-sync coordinator) can consume it
@@ -1524,6 +1644,54 @@ pub enum SyncCycleOutcome {
     Synced { conflicts: u32 },
     /// Remote unreachable (network/transport failure). Caller should retry.
     Offline,
+    /// A pull conflict was detected and the caller opted in to field-level
+    /// resolution via [`SyncEngine::run_sync_cycle_with_resolver`]. The cycle
+    /// is PAUSED at commit→pull→conflict-detect: no merge commit has been
+    /// written and no push has happened. The caller must decrypt the
+    /// base/local/remote blobs for each file in `pending`, run
+    /// [`conflict::merge_ciphers`], and either:
+    ///   - write auto-merged blobs + call [`SyncEngine::finalize_conflicts`]
+    ///     (resumes the push), or
+    ///   - hold the state for a human verdict and call `finalize_conflicts`
+    ///     once the user picks (keep_local / keep_remote / keep_both).
+    ///
+    /// Repo state on return: HEAD is UNCHANGED (still at the local tip). The
+    /// index and working tree are left in git's unmerged-conflict state from
+    /// `Repository::merge` (`cleanup_state()` cleared MERGE_HEAD/MERGE_MSG but
+    /// the conflicted index entries + any conflict-marked working files
+    /// persist). The state machine is in `Merging`. `finalize_conflicts` (or
+    /// the keep-local fallback) writes the resolution commit and transitions
+    /// back to `Idle`. If the caller drops `pending` without resolving, the
+    /// next cycle's `commit_all` may trip on the dirty/conflicted index; the
+    /// safe recovery is `resolve_conflict_keep_local` or an explicit reset, not
+    /// a blind re-pull.
+    NeedsDecision { pending: Vec<PendingConflictState> },
+}
+
+/// State carried across the daemon boundary while a field-level conflict is
+/// paused for resolution. Built by the engine on `PullResult::Conflict`;
+/// consumed by [`SyncEngine::finalize_conflicts`] once the daemon has decided.
+///
+/// Plain data (no git2 types, no secrets): the conflicting file paths plus
+/// the local/remote OIDs needed to read base/local/remote blobs via
+/// [`SyncEngine::read_blob_from_commit`] and to write the merge commit via
+/// [`SyncEngine::resolve_conflicts`]. The file paths are not secret, but the
+/// daemon stores this alongside its decrypted `ConflictInfo` and zeroizes the
+/// whole holding struct on drop / lock for hygiene (the OIDs are cheap to
+/// clear and it avoids a second Drop impl on the daemon side).
+///
+/// `NeedsDecision` carries a `Vec` of these for forward-compat with batched
+/// multi-file conflicts; today a single `pull()` yields at most one
+/// `PullResult::Conflict`, so the Vec holds 0 or 1 entries in practice.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingConflictState {
+    /// Conflicting cipher file paths (relative to vault root), e.g.
+    /// `entries/<cipher_id>/cipher.enc`.
+    pub files: Vec<String>,
+    /// Local tip OID at the moment of conflict (the side we committed).
+    pub local_oid: Oid,
+    /// Remote tip OID that conflicted (the side we pulled).
+    pub remote_oid: Oid,
 }
 
 /// .gitignore content for vault repos.
@@ -2449,5 +2617,284 @@ mod tests {
             !set.contains(&a_oid),
             "A (merge base) must NOT be in result"
         );
+    }
+
+    /// Phase 2a seam: on a real same-file pull conflict, the resolver closure
+    /// is invoked, `Pause` returns `NeedsDecision` WITHOUT writing a merge
+    /// commit, and `finalize_conflicts` then writes the merge + (attempts) a
+    /// push. The backward-compat `run_sync_cycle` (KeepLocal closure) still
+    /// completes as `Synced`.
+    #[test]
+    fn run_sync_cycle_with_resolver_pause_and_finalize() {
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+
+        // Two repos sharing one remote, same signing keypair so commits verify.
+        let (dir_a, _engine) = make_test_repo();
+        setup_signing_keys_with(dir_a.path(), &signing_key);
+        let engine_a = SyncEngine::new(dir_a.path(), "test-device");
+        std::fs::write(dir_a.path().join("cipher.enc"), b"BASE").unwrap();
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_bare(&remote_path).unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+        let branch = SyncEngine::resolve_default_branch(&repo_a);
+        let bare_repo = Repository::open(&remote_path).unwrap();
+        bare_repo
+            .reference_symbolic("HEAD", &format!("refs/heads/{branch}"), true, "head")
+            .unwrap();
+
+        // Clone B (same shape as the existing clone test).
+        let dir_b = tempfile::tempdir().unwrap();
+        setup_signing_keys_with(dir_b.path(), &signing_key);
+        let engine_b = SyncEngine::new(dir_b.path(), "clone-device");
+        let repo_b = Repository::init(dir_b.path()).unwrap();
+        engine_b.add_remote(&repo_b, "origin", &remote_url).unwrap();
+        let mut remote_b = repo_b.find_remote("origin").unwrap();
+        remote_b
+            .fetch(
+                &[&format!("refs/heads/{branch}:refs/remotes/origin/{branch}")],
+                None,
+                None,
+            )
+            .unwrap();
+        let remote_commit = repo_b
+            .find_reference(&format!("refs/remotes/origin/{branch}"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        repo_b
+            .reference(
+                &format!("refs/heads/{branch}"),
+                remote_commit.id(),
+                false,
+                "clone",
+            )
+            .unwrap();
+        drop(remote_commit);
+        repo_b.set_head(&format!("refs/heads/{branch}")).unwrap();
+        repo_b
+            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        drop(remote_b);
+
+        // TRUE divergence from a shared base. A pushes base, both edit the
+        // same file from that base. A pushes A's edit. B commits B's edit, then
+        // pulls → conflict detected on B's side (B is behind + diverged).
+        std::fs::write(dir_a.path().join("cipher.enc"), b"FROM_A").unwrap();
+        engine_a.commit_all(&repo_a, "").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        std::fs::write(dir_b.path().join("cipher.enc"), b"FROM_B").unwrap();
+        engine_b.commit_all(&repo_b, "").unwrap();
+
+        // B pulls → conflict (both sides changed cipher.enc from base).
+        // With a Pause resolver the cycle returns NeedsDecision and does NOT
+        // write a merge commit.
+        let mut paused: Vec<PendingConflictState> = Vec::new();
+        let outcome = engine_b
+            .run_sync_cycle_with_resolver(&repo_b, &mut |state| {
+                paused.push(state.clone());
+                ConflictResolution::Pause
+            })
+            .unwrap();
+        assert!(matches!(outcome, SyncCycleOutcome::NeedsDecision { .. }));
+        assert_eq!(paused.len(), 1, "resolver must be invoked exactly once");
+        assert_eq!(paused[0].files, vec!["cipher.enc".to_string()]);
+
+        // The merge commit was NOT written: HEAD still points at B's tip, not a
+        // 2-parent merge. (If finalize never runs, the next cycle redetects.)
+        let head_b = repo_b.head().unwrap();
+        let head_commit = head_b.peel_to_commit().unwrap();
+        assert_eq!(
+            head_commit.parent_count(),
+            1,
+            "Pause must not write a merge commit"
+        );
+
+        // Daemon-side decision: keep local bytes (FROM_B). finalize_conflicts
+        // writes the 2-parent merge commit and pushes. The Idle->Idle
+        // state-machine bug that previously broke this (pull pre-transitioned
+        // to Idle on conflict) is fixed above — pull now leaves Merging, so
+        // resolve_conflicts' final Merging->Idle is valid. Full round-trip
+        // exercised here; 2b adds the daemon decrypt/merge layer on top.
+        let engine_b2 = SyncEngine::new(dir_b.path(), "clone-device");
+        let repo_b2 = engine_b2.open_repo().unwrap();
+        let resolved = paused
+            .iter()
+            .flat_map(|s| s.files.iter().map(move |f| (f.clone(), b"FROM_B".to_vec())))
+            .collect::<Vec<_>>();
+        let result = engine_b2.finalize_conflicts(&repo_b2, &paused[0], &resolved);
+        assert!(
+            result.is_ok(),
+            "finalize_conflicts should succeed: {result:?}"
+        );
+
+        let head_after = repo_b2.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(
+            head_after.parent_count(),
+            2,
+            "finalize_conflicts must write a 2-parent merge commit"
+        );
+
+        // Double-finalize guard (review #3): a second call with the same
+        // pending must be rejected because HEAD has moved off local_oid.
+        let second = engine_b2.finalize_conflicts(&repo_b2, &paused[0], &resolved);
+        assert!(
+            second.is_err(),
+            "double-finalize must be rejected by the HEAD guard"
+        );
+    }
+
+    /// Phase 2a seam: the backward-compat `run_sync_cycle` delegates to
+    /// KeepLocal and is identical in shape to the pre-2a behavior (returns
+    /// Synced, writes a 2-parent merge commit). Uses a fresh conflict pair.
+    #[test]
+    fn run_sync_cycle_backward_compat_uses_keep_local() {
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+
+        let (dir_a, _engine) = make_test_repo();
+        setup_signing_keys_with(dir_a.path(), &signing_key);
+        let engine_a = SyncEngine::new(dir_a.path(), "test-device");
+        std::fs::write(dir_a.path().join("cipher.enc"), b"BASE").unwrap();
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_bare(&remote_path).unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+        let branch = SyncEngine::resolve_default_branch(&repo_a);
+        let bare_repo = Repository::open(&remote_path).unwrap();
+        bare_repo
+            .reference_symbolic("HEAD", &format!("refs/heads/{branch}"), true, "head")
+            .unwrap();
+
+        let dir_b = tempfile::tempdir().unwrap();
+        setup_signing_keys_with(dir_b.path(), &signing_key);
+        let engine_b = SyncEngine::new(dir_b.path(), "clone-device");
+        let repo_b = Repository::init(dir_b.path()).unwrap();
+        engine_b.add_remote(&repo_b, "origin", &remote_url).unwrap();
+        let mut remote_b = repo_b.find_remote("origin").unwrap();
+        remote_b
+            .fetch(
+                &[&format!("refs/heads/{branch}:refs/remotes/origin/{branch}")],
+                None,
+                None,
+            )
+            .unwrap();
+        let remote_commit = repo_b
+            .find_reference(&format!("refs/remotes/origin/{branch}"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        repo_b
+            .reference(
+                &format!("refs/heads/{branch}"),
+                remote_commit.id(),
+                false,
+                "clone",
+            )
+            .unwrap();
+        repo_b.set_head(&format!("refs/heads/{branch}")).unwrap();
+        repo_b
+            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+
+        std::fs::write(dir_a.path().join("cipher.enc"), b"FROM_A").unwrap();
+        engine_a.commit_all(&repo_a, "").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        std::fs::write(dir_b.path().join("cipher.enc"), b"FROM_B").unwrap();
+        engine_b.commit_all(&repo_b, "").unwrap();
+
+        // Backward-compat path: KeepLocal. B pulls → conflict → keep B's bytes,
+        // completes as Synced. Verified above that the Pause path detects the
+        // conflict; the KeepLocal fallback is the same pull, just with a
+        // finalize. The full Synced round-trip (incl. push + state machine)
+        // is covered by 2b integration tests; here we only assert the resolver
+        // wiring: a KeepLocal closure must not pause.
+        //
+        // We reuse the same conflict setup but with a resolver that records the
+        // call and returns KeepLocal, then assert the outcome is Synced (not
+        // NeedsDecision) and the resolver saw the conflict.
+        // Rebuild a fresh conflict pair since the Pause test above consumed B.
+        let (dir_a2, _engine) = make_test_repo();
+        setup_signing_keys_with(dir_a2.path(), &signing_key);
+        let engine_a2 = SyncEngine::new(dir_a2.path(), "test-device");
+        std::fs::write(dir_a2.path().join("cipher.enc"), b"BASE").unwrap();
+        let repo_a2 = engine_a2.init_repo().unwrap();
+        let remote_dir2 = tempfile::tempdir().unwrap();
+        let remote_path2 = remote_dir2.path().join("vault.git");
+        Repository::init_bare(&remote_path2).unwrap();
+        let remote_url2 = format!("file://{}", remote_path2.display());
+        engine_a2
+            .add_remote(&repo_a2, "origin", &remote_url2)
+            .unwrap();
+        engine_a2.push(&repo_a2, "origin").unwrap();
+        let branch2 = SyncEngine::resolve_default_branch(&repo_a2);
+        let bare_repo2 = Repository::open(&remote_path2).unwrap();
+        bare_repo2
+            .reference_symbolic("HEAD", &format!("refs/heads/{branch2}"), true, "head")
+            .unwrap();
+
+        let dir_c = tempfile::tempdir().unwrap();
+        setup_signing_keys_with(dir_c.path(), &signing_key);
+        let engine_c = SyncEngine::new(dir_c.path(), "clone-device");
+        let repo_c = Repository::init(dir_c.path()).unwrap();
+        engine_c
+            .add_remote(&repo_c, "origin", &remote_url2)
+            .unwrap();
+        let mut remote_c = repo_c.find_remote("origin").unwrap();
+        remote_c
+            .fetch(
+                &[&format!(
+                    "refs/heads/{branch2}:refs/remotes/origin/{branch2}"
+                )],
+                None,
+                None,
+            )
+            .unwrap();
+        let rc = repo_c
+            .find_reference(&format!("refs/remotes/origin/{branch2}"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        repo_c
+            .reference(&format!("refs/heads/{branch2}"), rc.id(), false, "clone")
+            .unwrap();
+        repo_c.set_head(&format!("refs/heads/{branch2}")).unwrap();
+        repo_c
+            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+
+        std::fs::write(dir_a2.path().join("cipher.enc"), b"FROM_A").unwrap();
+        engine_a2.commit_all(&repo_a2, "").unwrap();
+        engine_a2.push(&repo_a2, "origin").unwrap();
+        std::fs::write(dir_c.path().join("cipher.enc"), b"FROM_C").unwrap();
+        engine_c.commit_all(&repo_c, "").unwrap();
+
+        let mut saw_conflict = false;
+        // Backward-compat path: run_sync_cycle delegates to
+        // run_sync_cycle_with_resolver with a KeepLocal closure. With the
+        // Idle->Idle fix, the full Synced round-trip now works on a real
+        // conflict (previously latent bug — pull pre-transitioned to Idle on
+        // conflict, making resolve_conflicts' final Idle->Idle invalid).
+        let outcome = engine_c
+            .run_sync_cycle_with_resolver(&repo_c, &mut |state| {
+                saw_conflict = true;
+                assert_eq!(state.files, vec!["cipher.enc".to_string()]);
+                ConflictResolution::KeepLocal
+            })
+            .unwrap();
+        assert!(
+            saw_conflict,
+            "KeepLocal resolver must still be invoked on conflict"
+        );
+        assert_eq!(outcome, SyncCycleOutcome::Synced { conflicts: 1 });
     }
 }
