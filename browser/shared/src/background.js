@@ -164,33 +164,43 @@ async function ensureOffscreen() {
   });
 }
 
-chrome.alarms?.onAlarm?.addListener((alarm) => {
+chrome.alarms?.onAlarm?.addListener(async (alarm) => {
   if (alarm.name === "baluard-clipboard-clear") {
-    // Tell the offscreen doc to clear the clipboard.
-    chrome.runtime
-      .sendMessage({ action: "offscreen-clear", target: "offscreen" })
-      .catch(() => {});
+    // The SW may have been terminated + respawned and the offscreen doc
+    // torn down with it; re-create before clearing (review agy I3).
+    try {
+      await ensureOffscreen();
+      await chrome.runtime.sendMessage({ action: "offscreen-clear", target: "offscreen" });
+    } catch (e) {
+      console.error("[baluard] clipboard clear failed:", e);
+    }
   }
 });
 
 // ── Toolbar badge: match count for the active tab (review sonnet B-3) ──
 // Pure browser-native badge API; zero DOM injection, zero attack surface.
 // Updates on tab activation + navigation. Queries bridge.match for the URL.
+// Debounced: a burst of tab updates (slow-loading page firing many progress
+// events) collapses to one lookup (review agy I4).
+let badgeTimer = null;
 function updateBadgeForTab(tabId, url) {
   if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) {
     chrome.action.setBadgeText({ tabId, text: "" });
     return;
   }
-  send("bridge.match", { url })
-    .then((payload) => {
-      const data = JSON.parse(payload || "{}");
-      const n = (data.matches || []).length;
-      chrome.action.setBadgeText({ tabId, text: n > 0 ? String(n) : "" });
-      chrome.action.setBadgeBackgroundColor({ tabId, color: "#0a7" });
-    })
-    .catch(() => {
-      chrome.action.setBadgeText({ tabId, text: "" });
-    });
+  if (badgeTimer) clearTimeout(badgeTimer);
+  badgeTimer = setTimeout(() => {
+    send("bridge.match", { url })
+      .then((payload) => {
+        const data = JSON.parse(payload || "{}");
+        const n = (data.matches || []).length;
+        chrome.action.setBadgeText({ tabId, text: n > 0 ? String(n) : "" });
+        chrome.action.setBadgeBackgroundColor({ tabId, color: "#0a7" });
+      })
+      .catch(() => {
+        chrome.action.setBadgeText({ tabId, text: "" });
+      });
+  }, 250);
 }
 
 chrome.tabs?.onActivated?.addListener((info) => {

@@ -1545,9 +1545,14 @@ async fn route_bridge_request(
         ));
     }
 
-    // 2. Rate-cap reads (bridge.match + vault.get). Abuse -> auto-revoke.
-    let is_read = matches!(req.action.as_str(), "bridge.match" | "vault.get");
-    if is_read {
+    // 2. Rate-cap secret reads. Only `vault.get` returns plaintext
+    //    credentials; `bridge.match` returns metadata only (no passwords),
+    //    so it is NOT capped — the toolbar badge legitimately calls it on
+    //    every tab activate/update, and capping it would auto-revoke the
+    //    pairing under normal browsing (review agy I4). vault.get remains
+    //    capped to bound a browser-compromise exfil (sonnet A-1).
+    let is_secret_read = req.action.as_str() == "vault.get";
+    if is_secret_read {
         let over_cap = !host.bridge().write().await.charge_read(&pairing_id);
         if over_cap {
             log::warn!(
