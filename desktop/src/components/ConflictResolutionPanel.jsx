@@ -3,6 +3,7 @@ import { Portal } from "solid-js/web";
 import { useConflictResolution } from "../context/ConflictResolutionContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { toastError } from "../context/toastSignal.js";
+import { resolveConflict } from "../lib/conflictFlow.js";
 import FocusTrap from "./FocusTrap.jsx";
 import { IconAlert, IconCopy, IconMonitor, IconSwitch } from "./Icon.jsx";
 
@@ -46,9 +47,11 @@ export default function ConflictResolutionPanel(props) {
     // Re-entrancy guard: one decision at a time (see isResolving comment).
     if (isResolving()) return;
     setIsResolving(true);
-    // resolve() re-throws on resolver failure and keeps the conflict in the
-    // queue (see ConflictResolutionContext). Surface a toast so the user
-    // knows the decision didn't go through and can retry or pick again.
+    // Phase 2b-4: default resolver calls the real sync.conflict.resolve IPC.
+    // Callers can override via props.resolver (e.g. for tests or a future
+    // batch-resolve flow). resolve() re-throws on resolver failure and keeps
+    // the conflict in the queue (see ConflictResolutionContext). Surface a
+    // toast so the user knows the decision didn't go through and can retry.
     //
     // TODO(stuck-queue): if the real sync.conflict.resolve IPC permanently
     // fails (daemon down, item key unrecoverable), the head never leaves the
@@ -57,8 +60,9 @@ export default function ConflictResolutionPanel(props) {
     // mock triggers). When wiring lands, add either a max-retry fallback to a
     // safe non-destructive state or a manual escape hatch. See
     // docs/plan-conflict-resolution-panel.md.
+    const resolver = props.resolver ?? ((_conflict, v) => resolveConflict(v));
     try {
-      await conflicts.resolve(verdict, props.resolver);
+      await conflicts.resolve(verdict, resolver);
       setExplainOpen(false);
     } catch (e) {
       toastError(t("conflict.resolveFailed"));
