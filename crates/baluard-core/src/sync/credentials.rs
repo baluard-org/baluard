@@ -202,31 +202,58 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn load_without_env_or_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let config = CredentialConfig::load(dir.path());
-        assert!(config.https_token.is_none());
+    /// Clear `BALUARD_GIT_TOKEN` AND redirect `BALUARD_DATA_DIR` to an empty
+    /// tempdir for the duration of a test so the keyring lookup
+    /// (`ProvidersState::load` reads `providers.json` from data_dir) can't
+    /// pull the developer's real cached GitHub token into a credential
+    /// test. Both env vars are restored on drop. Marked `#[serial]` so
+    /// tests don't race on the process-wide env.
+    fn with_credential_test_env<F: FnOnce()>(f: F) {
+        let prev_token = std::env::var("BALUARD_GIT_TOKEN").ok();
+        let prev_data_dir = std::env::var("BALUARD_DATA_DIR").ok();
+        let tmp = tempfile::tempdir().unwrap();
+        // SAFETY: serialised by #[serial]; in tests that pair with this.
+        unsafe { std::env::remove_var("BALUARD_GIT_TOKEN"); }
+        unsafe { std::env::set_var("BALUARD_DATA_DIR", tmp.path()); }
+        f();
+        match prev_token {
+            Some(v) => unsafe { std::env::set_var("BALUARD_GIT_TOKEN", v); },
+            None => unsafe { std::env::remove_var("BALUARD_GIT_TOKEN"); },
+        }
+        match prev_data_dir {
+            Some(v) => unsafe { std::env::set_var("BALUARD_DATA_DIR", v); },
+            None => unsafe { std::env::remove_var("BALUARD_DATA_DIR"); },
+        }
+        drop(tmp); // also serves as proof the dir was empty / unused.
     }
 
     #[test]
-    fn load_from_config_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let meta = dir.path().join("meta");
-        std::fs::create_dir_all(&meta).unwrap();
-        let config_path = meta.join("git-credentials.json");
-        std::fs::write(&config_path, r#"{"token":"ghp_test123"}"#).unwrap();
+    #[serial_test::serial]
+    fn load_without_env_or_file() {
+        with_credential_test_env(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let config = CredentialConfig::load(dir.path());
+            assert!(config.https_token.is_none());
+        });
+    }
 
-        let config = CredentialConfig::load(dir.path());
-        if std::env::var("BALUARD_GIT_TOKEN").is_ok() {
-            assert!(config.https_token.is_some());
-        } else {
+    #[test]
+    #[serial_test::serial]
+    fn load_from_config_file() {
+        with_credential_test_env(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let meta = dir.path().join("meta");
+            std::fs::create_dir_all(&meta).unwrap();
+            let config_path = meta.join("git-credentials.json");
+            std::fs::write(&config_path, r#"{"token":"ghp_test123"}"#).unwrap();
+
+            let config = CredentialConfig::load(dir.path());
             assert!(config.https_token.is_some());
             assert_eq!(
                 config.expose_token().as_deref().map(|s| s.as_str()),
                 Some("ghp_test123")
             );
-        }
+        });
     }
 
     #[test]

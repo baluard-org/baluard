@@ -149,34 +149,54 @@ mod tests {
         assert!(data.is_absolute() || data.starts_with("."));
     }
 
+    /// RAII guard for a process-wide env var. Restores the previous value
+    /// (or removes the var) on drop — exception-safe, so a panic in the
+    /// test body cannot leak the test's env state to subsequent tests.
+    /// Holds `ENV_LOCK` for its lifetime so concurrent env-mutating tests
+    /// are serialised.
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let prev = std::env::var(key).ok();
+            // SAFETY: serialised by ENV_LOCK (held for the guard's lifetime).
+            unsafe { std::env::set_var(key, value) };
+            EnvGuard { key, prev, _lock: lock }
+        }
+    }
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: serialised by ENV_LOCK (released after this Drop).
+            match self.prev.take() {
+                Some(v) => unsafe { std::env::set_var(self.key, v) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
     #[test]
     fn log_dir_respects_env_override() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        // Save and restore
-        let orig = std::env::var("BALUARD_LOG_DIR").ok();
-        unsafe { std::env::set_var("BALUARD_LOG_DIR", "/tmp/baluard-test-logs") };
+        let _g = EnvGuard::set("BALUARD_LOG_DIR", "/tmp/baluard-test-logs");
         assert_eq!(log_dir(), PathBuf::from("/tmp/baluard-test-logs"));
-        match orig {
-            Some(v) => unsafe { std::env::set_var("BALUARD_LOG_DIR", v) },
-            None => unsafe { std::env::remove_var("BALUARD_LOG_DIR") },
-        }
     }
 
     #[test]
     fn data_dir_respects_env_override() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        // Save and restore BALUARD_DATA_DIR
-        let orig = std::env::var("BALUARD_DATA_DIR").ok();
-        unsafe { std::env::set_var("BALUARD_DATA_DIR", "/tmp/baluard-test-data") };
+        let _g = EnvGuard::set("BALUARD_DATA_DIR", "/tmp/baluard-test-data");
         assert_eq!(data_dir(), PathBuf::from("/tmp/baluard-test-data"));
-        match orig {
-            Some(v) => unsafe { std::env::set_var("BALUARD_DATA_DIR", v) },
-            None => unsafe { std::env::remove_var("BALUARD_DATA_DIR") },
-        }
     }
 
     #[test]
     fn debug_log_path_is_inside_log_dir() {
+        // Hold the env lock so a concurrent env-mutating test cannot leave a
+        // BALUARD_LOG_DIR / BALUARD_DATA_DIR override in flight that would
+        // make log_dir() here return a different path than debug_log_path()
+        // expects. The lock is harmless when no env is set (read-only access).
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(debug_log_path(), log_dir().join("daemon.log"));
     }
 
