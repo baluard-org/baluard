@@ -3129,11 +3129,19 @@ impl VaultState {
         };
 
         // Run creation ceremony (CPU-heavy, no lock needed)
+        // Pass the slug from the payload so the .baluard marker is written
+        // at creation (marker write is gated on slug being set; without it
+        // the vault is created but undetectable by discover_orphans / detach).
+        let slug_for_marker = v.get("slug")
+            .and_then(|s| s.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
         let (handle, secrets) = baluard_core::vault::creation::VaultCreator::new(
             &self.vault_path,
             &password,
             "this-device",
         )
+        .slug(slug_for_marker)
         .kdf_profile(profile)
         .profile(vault_name.clone(), None)
         .execute()
