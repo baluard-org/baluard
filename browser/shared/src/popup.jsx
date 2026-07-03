@@ -432,128 +432,453 @@ function App() {
   const t = (k) => (STRINGS[detectLocale()] || STRINGS.en)[k] || k;
 
   return (
-    <div style={{ width: "340px", "font-family": "system-ui, sans-serif", padding: "12px" }}>
-      {/* CSS vars + dark-mode handling. The popup is a standalone doc (no
-          access to the desktop app's stylesheet), so we define the small
-          palette here and honor the browser's color-scheme preference. */}
+    <div class="baluard-popup">
+      {/* Brand styling using modern CSS custom properties and native nesting.
+          Dark Mode is the default. Light Mode overrides via prefers-color-scheme media query. */}
       <style>{`
         :root {
-          --baluard-text: #1a1a1a;
-          --baluard-muted: #666;
-          --baluard-surface: #fff;
-          --baluard-border: #ccc;
-          --baluard-primary: #2563eb;
-          --baluard-primary-text: #fff;
-          --baluard-danger: #c00;
+          /* Dark Mode (Default) - Deep Forest Teal / Soft Lavender / Lime Accent */
+          --color-bg: #091315;
+          --color-sidebar: #0f2022;
+          --color-list: #14292c;
+          --color-detail: #193236;
+          --color-card: #0b1517;
+          --color-border: #1d3a3d;
+          --color-border-focus: #b3e55c;
+          --color-text: #f3f4f6;
+          --color-muted: #a2b7ba;
+          --color-primary: #b3e55c;
+          --color-primary-text: #102427;
+          --color-primary-hover: #c5f279;
+          --color-accent: #cfc6f9;
+          --color-danger: #ef4444;
+          --color-success: #10b981;
         }
-        @media (prefers-color-scheme: dark) {
+
+        @media (prefers-color-scheme: light) {
           :root {
-            --baluard-text: #e8e8e8;
-            --baluard-muted: #9a9a9a;
-            --baluard-surface: #1e1e1e;
-            --baluard-border: #3a3a3a;
-            --baluard-primary: #4d8bff;
-            --baluard-primary-text: #fff;
-            --baluard-danger: #ff6b6b;
+            /* Light Mode - Clean White / Slate / Dark Teal Accent */
+            --color-bg: #f4f6f6;
+            --color-sidebar: #e9ecec;
+            --color-list: #ffffff;
+            --color-detail: #f8fafc;
+            --color-card: #ffffff;
+            --color-border: #d1dbdb;
+            --color-border-focus: #102427;
+            --color-text: #102427;
+            --color-muted: #495c5f;
+            --color-primary: #102427;
+            --color-primary-text: #ffffff;
+            --color-primary-hover: #1b383c;
+            --color-accent: #7c3aed;
+            --color-danger: #ef4444;
+            --color-success: #10b981;
           }
         }
-        .baluard-primary-btn {
-          padding: 8px 12px; font-size: 13px; cursor: pointer; width: 100%;
-          border: none; border-radius: 5px;
-          background: var(--baluard-primary); color: var(--baluard-primary-text);
+
+        * {
+          box-sizing: border-box;
+          margin: 0;
+          padding: 0;
         }
-        .baluard-link {
-          padding: 8px 12px; font-size: 13px; color: var(--baluard-primary);
-          text-decoration: none; border: 1px solid var(--baluard-border);
-          border-radius: 5px; background: var(--baluard-surface);
-          display: block; text-align: center;
+
+        body {
+          background-color: var(--color-bg);
+          color: var(--color-text);
+          font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+          font-size: 13px;
+          line-height: 1.4;
+          width: 350px;
+          overflow-x: hidden;
+        }
+
+        .baluard-popup {
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          background-color: var(--color-bg);
+          min-height: 150px;
+        }
+
+        /* Focus rings for keyboard navigation */
+        *:focus-visible {
+          outline: 2px solid var(--color-border-focus);
+          outline-offset: 2px;
+        }
+
+        /* Header area */
+        .popup-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          border-bottom: 1px solid var(--color-border);
+          padding-bottom: 10px;
+
+          .brand-title {
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--color-text);
+          }
+
+          .vault-badge {
+            font-size: 11px;
+            background-color: var(--color-sidebar);
+            color: var(--color-muted);
+            padding: 2px 8px;
+            border-radius: 9999px;
+            border: 1px solid var(--color-border);
+            font-weight: 500;
+          }
+        }
+
+        /* UI State Blocks */
+        .state-block {
+          padding: 12px;
+          border-radius: 8px;
+          background-color: var(--color-card);
+          border: 1px solid var(--color-border);
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+
+          &.danger {
+            border-color: rgba(239, 68, 68, 0.4);
+            background-color: rgba(239, 68, 68, 0.05);
+          }
+
+          .state-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--color-text);
+          }
+
+          .state-desc {
+            font-size: 12px;
+            color: var(--color-muted);
+            line-height: 1.5;
+          }
+        }
+
+        /* Buttons & Actions */
+        .btn-primary {
+          background-color: var(--color-primary);
+          color: var(--color-primary-text);
+          border: none;
+          padding: 10px 14px;
+          border-radius: 6px;
+          font-weight: 600;
+          font-size: 13px;
+          cursor: pointer;
+          width: 100%;
+          text-align: center;
+          transition: background-color 0.15s ease, transform 0.1s ease;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+
+          &:hover {
+            background-color: var(--color-primary-hover);
+          }
+
+          &:active {
+            transform: scale(0.98);
+          }
+        }
+
+        .btn-secondary {
+          background-color: var(--color-sidebar);
+          color: var(--color-text);
+          border: 1px solid var(--color-border);
+          padding: 9px 14px;
+          border-radius: 6px;
+          font-weight: 500;
+          font-size: 13px;
+          cursor: pointer;
+          width: 100%;
+          text-align: center;
+          transition: all 0.15s ease;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+
+          &:hover {
+            background-color: var(--color-list);
+            border-color: var(--color-border-focus);
+          }
+
+          &:active {
+            transform: scale(0.98);
+          }
+        }
+
+        .link-btn {
+          text-decoration: none;
+        }
+
+        /* Welcome screen list & Connect guide */
+        .guide-list {
+          padding-left: 20px;
+          margin: 4px 0 8px 0;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+
+          li {
+            font-size: 12px;
+            color: var(--color-muted);
+            line-height: 1.4;
+          }
+        }
+
+        /* Matching entries list */
+        .matches-list {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .match-card {
+          border: 1px solid var(--color-border);
+          border-radius: 8px;
+          padding: 12px;
+          background-color: var(--color-card);
+          transition: border-color 0.15s ease, box-shadow 0.15s ease;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+
+          &:hover {
+            border-color: var(--color-border-focus);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+          }
+
+          .match-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+          }
+
+          .match-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--color-text);
+          }
+
+          .match-user {
+            font-size: 12px;
+            color: var(--color-muted);
+            word-break: break-all;
+          }
+
+          .match-actions-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 4px;
+            border-top: 1px solid rgba(29, 58, 61, 0.3);
+            padding-top: 8px;
+          }
+        }
+
+        .btn-primary-mini {
+          background-color: var(--color-primary);
+          color: var(--color-primary-text);
+          border: none;
+          padding: 6px 12px;
+          border-radius: 5px;
+          font-weight: 600;
+          font-size: 12px;
+          cursor: pointer;
+          transition: background-color 0.15s ease, transform 0.1s ease;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+
+          &:hover {
+            background-color: var(--color-primary-hover);
+          }
+
+          &:active {
+            transform: scale(0.98);
+          }
+        }
+
+        .match-secondary-actions {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+
+        .btn-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 28px;
+          height: 28px;
+          border-radius: 6px;
+          background-color: var(--color-sidebar);
+          color: var(--color-muted);
+          border: 1px solid var(--color-border);
+          cursor: pointer;
+          transition: all 0.12s ease;
+
+          &:hover {
+            color: var(--color-text);
+            background-color: var(--color-list);
+            border-color: var(--color-border-focus);
+          }
+
+          &:active {
+            transform: scale(0.95);
+          }
+        }
+
+        .toast-copied {
+          font-size: 11px;
+          color: var(--color-success);
+          font-weight: 500;
+          margin-top: 4px;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          animation: fadeIn 0.2s ease-out;
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(2px); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
-      <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", "margin-bottom": "10px" }}>
-        <strong style={{ "font-size": "15px" }}>{t("title")}</strong>
+
+      <div class="popup-header">
+        <strong class="brand-title">{t("title")}</strong>
         <Show when={activeVault()}>
-          <span style={{ "font-size": "11px", color: "var(--baluard-muted)" }}>{t("activeVault")}: {activeVault()}</span>
+          <span class="vault-badge">{t("activeVault")}: {activeVault()}</span>
         </Show>
       </div>
 
       <Show when={state() === "loading"}>
-        <div style={{ "font-size": "13px", color: "var(--baluard-muted)" }}>{t("loading")}</div>
+        <div class="state-block">
+          <div class="state-desc">{t("loading")}</div>
+        </div>
       </Show>
 
       {/* First-run welcome (one-time) */}
       <Show when={state() === "welcome"}>
-        <div style={{ "font-size": "15px", "font-weight": "bold", "margin-bottom": "8px" }}>{t("welcome")}</div>
-        <div style={{ "font-size": "12px", color: "var(--baluard-muted)", "margin-bottom": "12px", "line-height": "1.5" }}>{t("welcomeDesc")}</div>
-        <a href={DOWNLOAD_URL} target="_blank" rel="noopener" class="baluard-link" style={{ "margin-bottom": "6px" }}>{t("downloadApp")}</a>
-        <button onClick={dismissWelcome} class="baluard-primary-btn">{t("haveApp")}</button>
+        <div class="state-block">
+          <div class="state-title">{t("welcome")}</div>
+          <div class="state-desc">{t("welcomeDesc")}</div>
+        </div>
+        <a href={DOWNLOAD_URL} target="_blank" rel="noopener" class="link-btn btn-secondary">{t("downloadApp")}</a>
+        <button onClick={dismissWelcome} class="btn-primary">{t("haveApp")}</button>
       </Show>
 
       {/* Not paired: step-by-step onboarding */}
       <Show when={state() === "not-paired"}>
-        <div style={{ "font-size": "14px", "font-weight": "bold", "margin-bottom": "4px" }}>{t("notPaired")}</div>
-        <div style={{ "font-size": "12px", color: "var(--baluard-muted)", "margin-bottom": "12px" }}>{t("notPairedIntro")}</div>
-        <ol style={{ "font-size": "12px", color: "var(--baluard-text)", "padding-left": "20px", "margin-bottom": "14px", "line-height": "1.7" }}>
-          <li>{t("step1")}</li>
-          <li>{t("step2")}</li>
-          <li>{t("step3")}</li>
-        </ol>
-        <button onClick={connect} class="baluard-primary-btn">{t("connectCta")}</button>
+        <div class="state-block">
+          <div class="state-title">{t("notPaired")}</div>
+          <div class="state-desc">{t("notPairedIntro")}</div>
+          <ol class="guide-list">
+            <li>{t("step1")}</li>
+            <li>{t("step2")}</li>
+            <li>{t("step3")}</li>
+          </ol>
+        </div>
+        <button onClick={connect} class="btn-primary">{t("connectCta")}</button>
       </Show>
 
       <Show when={state() === "connecting"}>
-        <StateBlock title={t("connect")} desc={t("connectDesc")} color="var(--baluard-muted)" />
+        <StateBlock title={t("connect")} desc={t("connectDesc")} class="" />
       </Show>
 
       {/* Daemon states: friendly + actionable */}
       <Show when={state() === "no-daemon"}>
-        <StateBlock title={t("appRequired")} desc={t("appRequiredDesc")} color="var(--baluard-danger)" />
-        <button onClick={() => refresh(false)} style={{ ...btnStyle(), "margin-bottom": "6px" }}>{t("retry")}</button>
-        <a href={DOWNLOAD_URL} target="_blank" rel="noopener" class="baluard-link">{t("downloadApp")}</a>
+        <StateBlock title={t("appRequired")} desc={t("appRequiredDesc")} class="danger" />
+        <button onClick={() => refresh(false)} class="btn-secondary">{t("retry")}</button>
+        <a href={DOWNLOAD_URL} target="_blank" rel="noopener" class="link-btn btn-secondary">{t("downloadApp")}</a>
       </Show>
+
       <Show when={state() === "locked"}>
-        <StateBlock title={t("locked")} desc={t("lockedDesc")} color="var(--baluard-danger)" />
-        <button onClick={() => refresh(false)} style={btnStyle()}>{t("retry")}</button>
+        <StateBlock title={t("locked")} desc={t("lockedDesc")} class="danger" />
+        <button onClick={() => refresh(false)} class="btn-primary">{t("retry")}</button>
       </Show>
+
       <Show when={state() === "version-skew"}>
-        <StateBlock title={t("versionSkew")} desc={t("versionSkewDesc")} color="var(--baluard-danger)" />
-        <a href={DOWNLOAD_URL} target="_blank" rel="noopener" class="baluard-link">{t("updateApp")}</a>
+        <StateBlock title={t("versionSkew")} desc={t("versionSkewDesc")} class="danger" />
+        <a href={DOWNLOAD_URL} target="_blank" rel="noopener" class="link-btn btn-primary">{t("updateApp")}</a>
       </Show>
 
       <Show when={state() === "ready"}>
         <Show when={matches().length === 0}>
-          <div style={{ "font-size": "13px", color: "var(--baluard-muted)", "margin-bottom": "8px" }}>{t("noMatches")}</div>
+          <div class="state-block">
+            <div class="state-desc">{t("noMatches")}</div>
+          </div>
         </Show>
-        <For each={matches()}>
-          {(m) => (
-            <div style={{ border: "1px solid var(--baluard-border)", "border-radius": "6px", padding: "8px", "margin-bottom": "6px", background: "var(--baluard-surface)" }}>
-              <div style={{ "font-size": "13px", "font-weight": "bold", color: "var(--baluard-text)" }}>{m.name}</div>
-              <Show when={m.username}>
-                <div style={{ "font-size": "12px", color: "var(--baluard-muted)" }}>{m.username}</div>
-              </Show>
-              <div style={{ display: "flex", gap: "6px", "margin-top": "6px", "flex-wrap": "wrap" }}>
-                <button style={miniBtn()} onClick={() => fill(m)}>{t("fill")}</button>
-                <Show when={m.username}>
-                  <button style={miniBtn()} onClick={() => copyField(m, "username")}>{t("copyUsername")}</button>
+        <div class="matches-list">
+          <For each={matches()}>
+            {(m) => (
+              <div class="match-card">
+                <div class="match-info">
+                  <div class="match-name">{m.name}</div>
+                  <Show when={m.username}>
+                    <div class="match-user">{m.username}</div>
+                  </Show>
+                </div>
+                <div class="match-actions-row">
+                  <button class="btn-primary-mini" onClick={() => fill(m)}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;">
+                      <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                    </svg>
+                    {t("fill")}
+                  </button>
+                  <div class="match-secondary-actions">
+                    <Show when={m.username}>
+                      <button class="btn-icon" onClick={() => copyField(m, "username")} title={t("copyUsername")}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                          <circle cx="12" cy="7" r="4" />
+                        </svg>
+                      </button>
+                    </Show>
+                    <button class="btn-icon" onClick={() => copyField(m, "password")} title={t("copyPassword")}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                      </svg>
+                    </button>
+                    <button class="btn-icon" onClick={() => copyTotp(m)} title={t("copyTotp")}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10" />
+                        <polyline points="12 6 12 12 16 14" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <Show when={copied().startsWith(`username-${m.id}`) || copied().startsWith(`password-${m.id}`) || copied().startsWith(`totp-${m.id}`)}>
+                  <div class="toast-copied">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>{t("copied")}</span>
+                  </div>
                 </Show>
-                <button style={miniBtn()} onClick={() => copyField(m, "password")}>{t("copyPassword")}</button>
-                <button style={miniBtn()} onClick={() => copyTotp(m)}>{t("copyTotp")}</button>
               </div>
-              <Show when={copied().startsWith(`username-${m.id}`) || copied().startsWith(`password-${m.id}`) || copied().startsWith(`totp-${m.id}`)}>
-                <div style={{ "font-size": "11px", color: "#080", "margin-top": "4px" }}>{t("copied")}</div>
-              </Show>
-            </div>
-          )}
-        </For>
-        <button style={{ ...btnStyle(), "margin-top": "8px" }} onClick={() => refresh(false)}>{t("refresh")}</button>
+            )}
+          </For>
+        </div>
+        <button class="btn-secondary" onClick={() => refresh(false)}>{t("refresh")}</button>
       </Show>
 
       <Show when={state() === "error"}>
         <StateBlock
           title={t("errorTitle")}
           desc={error() && error().includes("timeout") ? t("errorTimeout") : (error() || t("errorTimeout"))}
-          color="var(--baluard-danger)"
+          class="danger"
         />
-        <button onClick={() => refresh(false)} style={btnStyle()}>{t("retry")}</button>
+        <button onClick={() => refresh(false)} class="btn-secondary">{t("retry")}</button>
       </Show>
     </div>
   );
@@ -561,18 +886,12 @@ function App() {
 
 function StateBlock(props) {
   return (
-    <div style={{ "margin-bottom": "10px" }}>
-      <div style={{ "font-size": "14px", "font-weight": "bold", color: props.color || "var(--baluard-text)" }}>{props.title}</div>
-      <div style={{ "font-size": "12px", color: "var(--baluard-muted)", "margin-top": "3px", "line-height": "1.5" }}>{props.desc}</div>
+    <div class={`state-block ${props.class || ""}`}>
+      <div class="state-title">{props.title}</div>
+      <div class="state-desc">{props.desc}</div>
     </div>
   );
 }
 
-function btnStyle() {
-  return { padding: "7px 11px", "font-size": "13px", cursor: "pointer", width: "100%", border: "1px solid var(--baluard-border)", "border-radius": "5px", background: "var(--baluard-surface)", color: "var(--baluard-text)" };
-}
-function miniBtn() {
-  return { padding: "4px 7px", "font-size": "11px", cursor: "pointer", border: "1px solid var(--baluard-border)", "border-radius": "4px", background: "var(--baluard-surface)", color: "var(--baluard-text)" };
-}
-
 render(() => <App />, document.body);
+
