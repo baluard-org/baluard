@@ -267,7 +267,28 @@ impl VaultHost {
         };
 
         // Read the registry without holding the host lock.
-        let reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
+        let mut reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
+
+        // Self-heal: if the registry lost entries (e.g. a crash wrote an
+        // empty index while vault files are intact), re-discover orphaned
+        // vaults from the default vaults directory and persist them so the
+        // user never has to know the path or touch a hidden folder.
+        if reg.vaults.is_empty() {
+            let orphans = reg.discover_orphans();
+            if !orphans.is_empty() {
+                for entry in orphans {
+                    // add() validates the slug + dedupes; ignore a failure on
+                    // one entry and keep going (best-effort recovery).
+                    let _ = reg.add(entry);
+                }
+                if reg.save_locked().is_ok() {
+                    log::info!(
+                        "[host] registry self-healed: recovered {} vault(s) from disk",
+                        reg.vaults.len()
+                    );
+                }
+            }
+        }
 
         let mut rows = Vec::with_capacity(reg.vaults.len());
         for entry in reg.vaults.values() {
