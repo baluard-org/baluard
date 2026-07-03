@@ -21,6 +21,12 @@ use zeroize::Zeroize;
 
 /// Maximum frame size: 4MB (largest bucket is 1MB, leave headroom)
 const MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
+/// Hard cap on any blocking git2 operation (push/pull/remote/status). libgit2
+/// has no transport timeout, so a hung SSH/HTTPS negotiation to a dead
+/// remote would otherwise leak the spawn_blocking thread forever; under
+/// autosync retries the pool exhausts and the whole daemon starves (the
+/// EAGAIN storm). 60s is generous for a real sync yet bounds the leak.
+pub(crate) const SYNC_OP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Handle a single client connection (length-delimited Protobuf frames).
 /// Verifies peer UID matches daemon UID on Linux (SO_PEERCRED).
@@ -2953,40 +2959,61 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             // other connection (root cause of the EAGAIN storm).
             let vault_path = state.vault_path.clone();
             let payload = req.payload.clone();
-            match tokio::task::spawn_blocking(move || sync_remote(&vault_path, &payload)).await {
-                Ok(Ok(msg)) => ok_resp(msg, token_str),
-                Ok(Err(e)) => err_response(e),
-                Err(e) => err_response(format!("Task join: {e}")),
+            let joined = tokio::time::timeout(
+                SYNC_OP_TIMEOUT,
+                tokio::task::spawn_blocking(move || sync_remote(&vault_path, &payload)),
+            ).await;
+            match joined {
+                Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
+                Ok(Ok(Err(e))) => err_response(e),
+                Ok(Err(e)) => err_response(format!("Task join: {e}")),
+                Err(_) => err_response("sync.remote timed out".to_string()),
             }
         }
         "sync.push" => {
             refresh_connected_tokens_if_needed().await;
             // git2 push does real network I/O (SSH/HTTPS) with no transport
-            // timeout — must run off the async worker pool (see sync.remote).
+            // timeout — must run off the async worker pool, bounded by
+            // SYNC_OP_TIMEOUT so a hung push can't leak the thread (see sync.remote).
             let vault_path = state.vault_path.clone();
-            match tokio::task::spawn_blocking(move || sync_push(&vault_path)).await {
-                Ok(Ok(msg)) => ok_resp(msg, token_str),
-                Ok(Err(e)) => err_response(e),
-                Err(e) => err_response(format!("Task join: {e}")),
+            let joined = tokio::time::timeout(
+                SYNC_OP_TIMEOUT,
+                tokio::task::spawn_blocking(move || sync_push(&vault_path)),
+            ).await;
+            match joined {
+                Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
+                Ok(Ok(Err(e))) => err_response(e),
+                Ok(Err(e)) => err_response(format!("Task join: {e}")),
+                Err(_) => err_response("sync.push timed out".to_string()),
             }
         }
         "sync.pull" => {
             refresh_connected_tokens_if_needed().await;
             // git2 pull does real network I/O — must run off the async worker
-            // pool (see sync.remote).
+            // pool, bounded by SYNC_OP_TIMEOUT (see sync.remote).
             let vault_path = state.vault_path.clone();
-            match tokio::task::spawn_blocking(move || sync_pull(&vault_path)).await {
-                Ok(Ok(msg)) => ok_resp(msg, token_str),
-                Ok(Err(e)) => err_response(e),
-                Err(e) => err_response(format!("Task join: {e}")),
+            let joined = tokio::time::timeout(
+                SYNC_OP_TIMEOUT,
+                tokio::task::spawn_blocking(move || sync_pull(&vault_path)),
+            ).await;
+            match joined {
+                Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
+                Ok(Ok(Err(e))) => err_response(e),
+                Ok(Err(e)) => err_response(format!("Task join: {e}")),
+                Err(_) => err_response("sync.pull timed out".to_string()),
             }
         }
         "sync.status" => {
             let vault_path = state.vault_path.clone();
-            match tokio::task::spawn_blocking(move || sync_status(&vault_path)).await {
-                Ok(Ok(msg)) => ok_resp(msg, token_str),
-                Ok(Err(e)) => err_response(e),
-                Err(e) => err_response(format!("Task join: {e}")),
+            let joined = tokio::time::timeout(
+                SYNC_OP_TIMEOUT,
+                tokio::task::spawn_blocking(move || sync_status(&vault_path)),
+            ).await;
+            match joined {
+                Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
+                Ok(Ok(Err(e))) => err_response(e),
+                Ok(Err(e)) => err_response(format!("Task join: {e}")),
+                Err(_) => err_response("sync.status timed out".to_string()),
             }
         }
         "sync.log" => {
