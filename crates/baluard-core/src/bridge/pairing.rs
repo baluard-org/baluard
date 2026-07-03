@@ -253,14 +253,14 @@ mod tests {
         assert!(pf.pairings.is_empty());
     }
 
-    #[cfg(proptest)]
-    proptest::test! {
+    #[cfg(test)]
+    proptest::proptest! {
         #[test]
-        fn secret_hex_always_64_chars(s in "()") {
+        fn secret_hex_always_64_chars(s in ".*") {
             let _ = s;
             let secret = PairingSecret::generate();
             let hex = secret.to_hex();
-            prop_assert_eq!(hex.len(), 64);
+            assert_eq!(hex.len(), 64);
         }
     }
 }

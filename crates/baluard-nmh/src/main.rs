@@ -23,8 +23,7 @@ use baluard_core::bridge::pairing::PairingFile;
 /// Optional debug log file. Chrome doesn't surface NMH stderr, so during
 /// development we tee our trace to /tmp/baluard-nmh.debug.log. Always-on
 /// while the browser-extension pairing flow is being stabilized.
-static DEBUG_LOG: std::sync::OnceLock<std::sync::Mutex<std::fs::File>> =
-    std::sync::OnceLock::new();
+static DEBUG_LOG: std::sync::OnceLock<std::sync::Mutex<std::fs::File>> = std::sync::OnceLock::new();
 
 fn init_debug_log_file() {
     if let Ok(f) = std::fs::OpenOptions::new()
@@ -106,8 +105,16 @@ fn run() -> anyhow::Result<()> {
             None => break, // EOF — browser closed the port; finish in-flight work.
         };
         let stdout = stdout.clone();
-        let mid = msg.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_default();
-        let maction = msg.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let mid = msg
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let maction = msg
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         dlog(&format!("[baluard-nmh] recv id='{mid}' action='{maction}'"));
         let handle = std::thread::spawn(move || {
             let resp = handle_message(msg);
@@ -133,7 +140,9 @@ fn run() -> anyhow::Result<()> {
             if let Err(e) = write_result {
                 dlog(&format!("[baluard-nmh] stdout write error: {e}"));
             } else {
-                dlog(&format!("[baluard-nmh] wrote response for action='{maction}'"));
+                dlog(&format!(
+                    "[baluard-nmh] wrote response for action='{maction}'"
+                ));
             }
         });
         if let Ok(mut w) = workers.lock() {
@@ -146,7 +155,10 @@ fn run() -> anyhow::Result<()> {
     // held 120s) can't keep a dead NMH process alive after the browser left;
     // nobody is reading the response once the port closed anyway. JoinHandle
     // has no join_timeout, so we race each join against a deadline thread.
-    let pending: Vec<_> = workers.lock().map(|mut w| std::mem::take(&mut *w)).unwrap_or_default();
+    let pending: Vec<_> = workers
+        .lock()
+        .map(|mut w| std::mem::take(&mut *w))
+        .unwrap_or_default();
     let grace = std::time::Duration::from_secs(2);
     for h in pending {
         if join_with_timeout(h, grace).is_err() {
@@ -218,7 +230,9 @@ fn handle_message(msg: serde_json::Value) -> serde_json::Value {
     // but they must be forwardable so pairing can happen at all.
     let is_bootstrap = BOOTSTRAP_ACTIONS.contains(&action.as_str());
     if !is_allowed(&action) && !is_bootstrap {
-        dlog(&format!("[baluard-nmh] denied non-allowlisted action '{action}'"));
+        dlog(&format!(
+            "[baluard-nmh] denied non-allowlisted action '{action}'"
+        ));
         return err(id, &format!("action '{action}' not permitted"), "denied");
     }
 
@@ -244,10 +258,15 @@ fn handle_message(msg: serde_json::Value) -> serde_json::Value {
     };
 
     // Forward to the daemon.
-    dlog(&format!("[baluard-nmh] forwarding action='{action}' is_bootstrap={is_bootstrap}"));
+    dlog(&format!(
+        "[baluard-nmh] forwarding action='{action}' is_bootstrap={is_bootstrap}"
+    ));
     match forward(&action, payload, &token) {
         Ok(resp) => {
-            dlog(&format!("[baluard-nmh] forward ok success={} action='{action}'", resp.success));
+            dlog(&format!(
+                "[baluard-nmh] forward ok success={} action='{action}'",
+                resp.success
+            ));
             serde_json::json!({
                 "id": id,
                 "ok": resp.success,
@@ -262,7 +281,7 @@ fn handle_message(msg: serde_json::Value) -> serde_json::Value {
                     "denied"
                 },
             })
-        },
+        }
         Err(e) => {
             dlog(&format!("[baluard-nmh] forward error: {e}"));
             err(id, &e.to_string(), "no-daemon")
