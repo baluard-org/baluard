@@ -170,24 +170,26 @@ export default function GeneratorModal(props) {
             </div>
 
             {/* Mode tabs */}
-            <div class="px-6 flex gap-4 border-b border-[var(--color-border)] shrink-0 bg-[var(--color-sidebar)]/30">
+            <div class="px-6 py-3 border-b border-[var(--color-border)] shrink-0 bg-[var(--color-sidebar)]/30 flex gap-2">
               <button
                 onClick={() => setMode(MODE_PASSWORD)}
-                class={`py-3 text-xs font-bold transition-all relative cursor-pointer ${mode() === MODE_PASSWORD ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
+                class={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
+                  mode() === MODE_PASSWORD
+                    ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
+                    : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)]/50"
+                }`}
               >
                 {t("generator.passwordTab")}
-                <Show when={mode() === MODE_PASSWORD}>
-                   <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
-                </Show>
               </button>
               <button
                 onClick={() => setMode(MODE_PASSPHRASE)}
-                class={`py-3 text-xs font-bold transition-all relative cursor-pointer ${mode() === MODE_PASSPHRASE ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)]"}`}
+                class={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
+                  mode() === MODE_PASSPHRASE
+                    ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
+                    : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)]/50"
+                }`}
               >
                 {t("generator.passphraseTab")}
-                <Show when={mode() === MODE_PASSPHRASE}>
-                   <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
-                </Show>
               </button>
             </div>
 

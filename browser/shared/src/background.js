@@ -16,6 +16,13 @@ let nextId = 1;
 let versionInfo = null;
 let versionSkew = false; // review agy I6: hard-fail closed on NMH version skew
 
+// Last native-messaging disconnect reason (from chrome.runtime.lastError).
+// Surfaced to the popup so the user isn't staring at a generic failure.
+// Chromium sets lastError on disconnect with the real cause, e.g.
+// "Specified native messaging host not found" or
+// "Access to the specified native messaging host is forbidden".
+let lastDisconnectReason = null;
+
 function connect() {
   try {
     port = chrome.runtime.connectNative(NMH_HOST);
@@ -25,11 +32,17 @@ function connect() {
   }
   port.onMessage.addListener(onMessage);
   port.onDisconnect.addListener(() => {
+    // Chrome populates lastError with the *reason* the host failed to start.
+    const reason = chrome.runtime.lastError?.message || "disconnected";
+    lastDisconnectReason = reason;
+    console.error("[baluard] NMH disconnected:", reason);
     port = null;
     // Reject all in-flight; the popup will see failures + reconnect on next action.
     for (const { reject } of pending.values()) {
       try {
-        reject(new Error("nmh-disconnected"));
+        const e = new Error(reason);
+        e.code = classifyDisconnect(reason);
+        reject(e);
       } catch (_) {}
     }
     pending.clear();
@@ -39,8 +52,16 @@ function connect() {
   // partially-understood protocol.
   send("ping", {})
     .then((r) => {
+      console.log("[baluard] ping raw resp:", JSON.stringify(r));
       versionInfo = r;
-      const nmh = (r && r.nmh_version) || "0.0.0";
+      // ping's payload is a JSON string like {"nmh_version":"0.1.0",...}.
+      let nmh = "0.0.0";
+      try {
+        const raw = typeof r === "string" ? r : (r && r.payload);
+        const parsed = JSON.parse(raw);
+        nmh = parsed.nmh_version || "0.0.0";
+      } catch (_) {}
+      console.log("[baluard] parsed nmh_version:", nmh);
       if (compareVersions(nmh, MIN_NMH_VERSION) < 0) {
         versionSkew = true;
         console.error(
@@ -56,9 +77,13 @@ function connect() {
 }
 
 function onMessage(msg) {
+  console.log("[baluard-sw] onMessage", msg && msg.id, msg && msg.ok, msg && msg.code);
   if (!msg || msg.id == null) return;
   const entry = pending.get(msg.id);
-  if (!entry) return;
+  if (!entry) {
+    console.log("[baluard-sw] no pending entry for id", msg && msg.id);
+    return;
+  }
   pending.delete(msg.id);
   if (msg.ok) entry.resolve(msg);
   else entry.reject(buildError(msg));
@@ -81,13 +106,22 @@ function send(action, payload) {
       return;
     }
     const id = nextId++;
-    pending.set(id, { resolve, reject });
+    pending.set(String(id), { resolve, reject });
     port.postMessage({
       id: String(id),
       action,
       payload: typeof payload === "string" ? payload : JSON.stringify(payload),
     });
   });
+}
+
+// Map a Chromium native-messaging disconnect reason to a friendly code.
+// "not found" / "forbidden" => no-daemon (manifest missing or NMH not installed).
+// Anything else stays generic but the raw reason travels in the message.
+function classifyDisconnect(reason) {
+  const r = (reason || "").toLowerCase();
+  if (r.includes("not found") || r.includes("forbidden")) return "no-daemon";
+  return "nmh-error";
 }
 
 function err(message, code) {

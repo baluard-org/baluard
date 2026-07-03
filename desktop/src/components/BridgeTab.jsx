@@ -82,17 +82,27 @@ export default function BridgeTab() {
     }
   }
 
+  // Extension-connected signal: flips true when the extension's
+  // pair_complete arrives (daemon waiter registered). Drives the UI from
+  // "Waiting for extension" to "Extension connected — approve now".
+  const [extConnected, setExtConnected] = createSignal(false);
+
   function startPoll() {
     stopPoll();
     pollTimer = setInterval(async () => {
-      // Re-fetch the pending state by calling pair_start again is wrong
-      // (it supersedes). Instead: there's no dedicated "peek pending" route,
-      // so we just let the Approve button be the action. Poll is a no-op
-      // placeholder for future pending-refresh; clear it after TTL.
+      // TTL guard: abandon the ceremony if pair_start's window elapsed.
       if (pending() && Date.now() / 1000 - (pending().started_at || 0) > (pending().ttl_seconds || 120)) {
         cancelPending();
+        return;
       }
-    }, 2000);
+      // Peek the daemon: has the extension connected?
+      try {
+        const data = JSON.parse(await daemon("bridge.pending"));
+        setExtConnected(Boolean(data.extension_connected));
+      } catch {
+        /* daemon busy / locked — keep last known state */
+      }
+    }, 1000);
   }
 
   function stopPoll() {
@@ -103,6 +113,7 @@ export default function BridgeTab() {
   function cancelPending() {
     stopPoll();
     setPending(null);
+    setExtConnected(false);
   }
 
   async function approve() {
@@ -144,9 +155,14 @@ export default function BridgeTab() {
       </div>
 
       <Show when={pending()}>
-        <div class="p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] space-y-3">
-          <div class="text-sm font-semibold">{t("bridge.waitingForExtension")}</div>
-          <div class="text-xs text-[var(--color-muted)]">{t("bridge.waitingHint")}</div>
+        <div class={`p-4 rounded-lg border space-y-3 ${extConnected() ? "border-[var(--color-primary)] bg-[var(--color-primary)]/5" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+          <Show when={extConnected()} fallback={<div class="text-sm font-semibold">{t("bridge.waitingForExtension")}</div>}>
+            <div class="text-sm font-semibold text-[var(--color-primary)]">{t("bridge.extensionConnected")}</div>
+            <div class="text-xs text-[var(--color-muted)]">{t("bridge.extensionConnectedHint")}</div>
+          </Show>
+          <Show when={!extConnected()}>
+            <div class="text-xs text-[var(--color-muted)]">{t("bridge.waitingHint")}</div>
+          </Show>
           <div class="flex gap-2">
             <Button onClick={approve} disabled={pairBusy()}>
               <Show when={pairBusy()} fallback={t("bridge.approve")}>

@@ -132,6 +132,29 @@ _kill_daemon:
 	rm -f "$SOCK"
 	sleep 0.2
 
+# Kill ALL running Baluard processes: daemon, desktop app, NMH, CLI.
+# Used by desktop-debug so every run starts from a clean stack (no stale
+# daemons holding the socket, no orphan NMH workers from a prior browser
+# session, no lingering desktop). Exact binary-name match only — no
+# collateral damage to other processes.
+_kill_procs:
+	#!/usr/bin/env bash
+	set +e
+	SOCK="${XDG_RUNTIME_DIR:-$HOME/.local/share/baluard}/baluard.sock"
+	[[ "$OSTYPE" == "darwin"* ]] && SOCK="$HOME/Library/Application Support/baluard/baluard.sock"
+
+	for proc in baluard-daemon baluard-desktop baluard-nmh baluard; do
+		pgrep -x "$proc" 2>/dev/null | while IFS= read -r pid; do
+			[ -z "$pid" ] && continue
+			kill "$pid" 2>/dev/null
+			echo "Stopped $proc (pid=$pid)"
+		done
+	done
+
+	# Clean up stale socket
+	rm -f "$SOCK"
+	sleep 0.3
+
 # Unconditionally rebuild sidecar binaries (no staleness check)
 _sidecar-force:
 	#!/usr/bin/env bash
@@ -253,7 +276,7 @@ desktop-dev: _sidecar-force desktop-deps
 desktop-debug: _sidecar-force desktop-deps
 	#!/usr/bin/env bash
 	set -euo pipefail
-	just _kill_daemon
+	just _kill_procs
 	LOG_DIR="$(pwd)/logs"
 	mkdir -p "$LOG_DIR"
 	# Clear previous logs for a clean session
@@ -672,9 +695,14 @@ install-nmh-manifest browser ext_id:
 	case "{{ os }}:{{ browser }}" in
 	  linux:chrome)   DIR="$HOME/.config/google-chrome/NativeMessagingHosts" ;;
 	  linux:chromium) DIR="$HOME/.config/chromium/NativeMessagingHosts" ;;
+	  linux:brave)    DIR="$HOME/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts" ;;
+	  linux:edge)     DIR="$HOME/.config/microsoft-edge/NativeMessagingHosts" ;;
 	  linux:firefox)  DIR="$HOME/.mozilla/native-messaging-hosts" ;;
 	  macos:chrome)   DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts" ;;
 	  macos:chromium) DIR="$HOME/Library/Application Support/Chromium/NativeMessagingHosts" ;;
+	  macos:brave)    DIR="$HOME/Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts" ;;
+	  macos:brave-origin) DIR="$HOME/Library/Application Support/BraveSoftware/Brave-Origin/NativeMessagingHosts" ;;
+	  macos:edge)     DIR="$HOME/Library/Application Support/Microsoft Edge/NativeMessagingHosts" ;;
 	  macos:firefox)  DIR="$HOME/Library/Application Support/Mozilla/NativeMessagingHosts" ;;
 	  *) echo "Unsupported OS/browser combo: {{ os }}/{{ browser }}"; exit 1 ;;
 	esac

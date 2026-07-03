@@ -114,6 +114,14 @@ impl BridgeRegistry {
             .filter(|p| now_secs().saturating_sub(p.created_at) <= PENDING_TTL_SECONDS)
     }
 
+    /// True if an extension has called `bridge.pair_complete` and is currently
+    /// blocked waiting for the desktop to approve. Lets the desktop UI
+    /// transition from "Waiting for extension" to "Extension connected —
+    /// approve now" so the user knows the ceremony is live.
+    pub fn has_waiter(&self) -> bool {
+        self.waiter.is_some()
+    }
+
     /// Register an in-flight `bridge.pair_complete` waiter. Returns a receiver
     /// that resolves when the desktop approves (or the ceremony is
     /// superseded/expired). The handler awaits this with a TTL timeout.

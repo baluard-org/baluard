@@ -1484,6 +1484,31 @@ async fn handle_bridge_host_route(
             ))
         }
 
+        // Desktop UI: peek the pending pairing ceremony state so the UI can
+        // show "extension connected" the moment pair_complete arrives. Token-
+        // gated (desktop only).
+        "bridge.pending" => {
+            let slug = host.active_slug().await?;
+            let state = host.get(&slug).await?;
+            if state
+                .verify_session_token(&req.session_token)
+                .await
+                .is_err()
+            {
+                return Some(err_response("desktop session token required"));
+            }
+            let reg = host.bridge().read().await;
+            Some(ok_resp(
+                serde_json::json!({
+                    "pending": reg.pending().is_some(),
+                    "extension_connected": reg.has_waiter(),
+                    "browser_hint": reg.pending().map(|p| p.browser_hint.clone()).unwrap_or_default(),
+                })
+                .to_string(),
+                None,
+            ))
+        }
+
         // Desktop UI: revoke a paired browser. Token-gated. Drops the
         // in-memory token AND the pairing-file entry.
         "bridge.revoke" => {
@@ -2922,29 +2947,48 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             if req.payload.is_empty() {
                 return err_response("Missing remote URL in payload");
             }
-            match sync_remote(&state.vault_path, &req.payload) {
-                Ok(msg) => ok_resp(msg, token_str),
-                Err(e) => err_response(e),
+            // git2 FFI (add_remote + network) — must not block the async
+            // runtime. Without spawn_blocking a hung git2 network call
+            // permanently consumes a tokio worker thread, starving every
+            // other connection (root cause of the EAGAIN storm).
+            let vault_path = state.vault_path.clone();
+            let payload = req.payload.clone();
+            match tokio::task::spawn_blocking(move || sync_remote(&vault_path, &payload)).await {
+                Ok(Ok(msg)) => ok_resp(msg, token_str),
+                Ok(Err(e)) => err_response(e),
+                Err(e) => err_response(format!("Task join: {e}")),
             }
         }
         "sync.push" => {
             refresh_connected_tokens_if_needed().await;
-            match sync_push(&state.vault_path) {
-                Ok(msg) => ok_resp(msg, token_str),
-                Err(e) => err_response(e),
+            // git2 push does real network I/O (SSH/HTTPS) with no transport
+            // timeout — must run off the async worker pool (see sync.remote).
+            let vault_path = state.vault_path.clone();
+            match tokio::task::spawn_blocking(move || sync_push(&vault_path)).await {
+                Ok(Ok(msg)) => ok_resp(msg, token_str),
+                Ok(Err(e)) => err_response(e),
+                Err(e) => err_response(format!("Task join: {e}")),
             }
         }
         "sync.pull" => {
             refresh_connected_tokens_if_needed().await;
-            match sync_pull(&state.vault_path) {
-                Ok(msg) => ok_resp(msg, token_str),
-                Err(e) => err_response(e),
+            // git2 pull does real network I/O — must run off the async worker
+            // pool (see sync.remote).
+            let vault_path = state.vault_path.clone();
+            match tokio::task::spawn_blocking(move || sync_pull(&vault_path)).await {
+                Ok(Ok(msg)) => ok_resp(msg, token_str),
+                Ok(Err(e)) => err_response(e),
+                Err(e) => err_response(format!("Task join: {e}")),
             }
         }
-        "sync.status" => match sync_status(&state.vault_path) {
-            Ok(msg) => ok_resp(msg, token_str),
-            Err(e) => err_response(e),
-        },
+        "sync.status" => {
+            let vault_path = state.vault_path.clone();
+            match tokio::task::spawn_blocking(move || sync_status(&vault_path)).await {
+                Ok(Ok(msg)) => ok_resp(msg, token_str),
+                Ok(Err(e)) => err_response(e),
+                Err(e) => err_response(format!("Task join: {e}")),
+            }
+        }
         "sync.log" => {
             let limit: usize = if req.payload.is_empty() {
                 10
