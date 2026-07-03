@@ -367,10 +367,13 @@ impl AutoSyncHandle {
             }
         };
 
-        let outcome = tokio::task::spawn_blocking({
-            let vault_path = self.vault_path.clone();
-            move || run_sync_cycle(&vault_path, &device_name)
-        })
+        let outcome = tokio::time::timeout(
+            crate::handler::SYNC_OP_TIMEOUT,
+            tokio::task::spawn_blocking({
+                let vault_path = self.vault_path.clone();
+                move || run_sync_cycle(&vault_path, &device_name)
+            }),
+        )
         .await;
         drop(lock_guard);
 
@@ -379,15 +382,15 @@ impl AutoSyncHandle {
             return;
         }
         match outcome {
-            Ok(Ok(SyncOutcome::Synced { conflicts })) => {
+            Ok(Ok(Ok(SyncOutcome::Synced { conflicts }))) => {
                 g.conflicts_resolved = g.conflicts_resolved.saturating_add(conflicts);
                 g.last_sync = Some(now_secs());
                 g.state = AutoSyncState::Idle;
             }
-            Ok(Ok(SyncOutcome::Offline)) => {
+            Ok(Ok(Ok(SyncOutcome::Offline))) => {
                 g.state = AutoSyncState::Offline;
             }
-            Ok(Ok(SyncOutcome::NeedsDecision { pending })) => {
+            Ok(Ok(Ok(SyncOutcome::NeedsDecision { pending }))) => {
                 // Phase 2b: hold the paused conflicts and surface to the UI.
                 // The background loop and debounce must NOT fire while the repo
                 // is mid-merge; they resume once the queue drains via
@@ -396,14 +399,13 @@ impl AutoSyncHandle {
                 g.pending_conflicts = pending;
                 g.state = AutoSyncState::NeedsDecision;
             }
-            Ok(Err(_e)) => {
-                // Sync error: do not go offline unless it was a network failure,
-                // which run_sync_cycle already mapped to Offline. Stay Idle so
-                // the next mutation retries. L1 fix: do NOT advance last_sync
-                // on error, or the UI would falsely show "All synced".
-                g.state = AutoSyncState::Idle;
-            }
-            Err(_join) => {
+            _ => {
+                // Op error, join error, or SYNC_OP_TIMEOUT: do not go offline
+                // unless run_sync_cycle mapped it to Offline (handled above).
+                // Stay Idle so the next mutation retries. L1 fix: do NOT
+                // advance last_sync on error, or the UI would falsely show
+                // "All synced". The timeout case is what stops a hung git2 op
+                // (no libgit2 transport timeout) from leaking the pool thread.
                 g.state = AutoSyncState::Idle;
             }
         }
@@ -455,19 +457,22 @@ impl AutoSyncHandle {
             // Pull-only cycle (no commit/push): just reconcile remote changes.
             let vault_path = self.vault_path.clone();
             let dn = device_name.clone();
-            let outcome =
-                tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &dn)).await;
+            let outcome = tokio::time::timeout(
+                crate::handler::SYNC_OP_TIMEOUT,
+                tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &dn)),
+            )
+            .await;
             drop(lock_guard);
             let mut g = self.inner.lock().await;
             if !g.active || g.generation != generation {
                 return;
             }
             match outcome {
-                Ok(Ok(true)) => {
+                Ok(Ok(Ok(true))) => {
                     g.last_sync = Some(now_secs());
                     g.state = AutoSyncState::Idle;
                 }
-                Ok(Ok(false)) => {
+                Ok(Ok(Ok(false))) => {
                     g.state = AutoSyncState::Offline;
                 }
                 _ => {}
