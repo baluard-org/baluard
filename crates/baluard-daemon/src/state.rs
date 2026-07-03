@@ -2101,24 +2101,28 @@ impl VaultState {
         let local_oid = pending.local_oid;
         let remote_oid = pending.remote_oid;
         let fp_for_read = file_path.clone();
-        let (base_bytes, local_bytes, remote_bytes) = tokio::task::spawn_blocking(
-            #[allow(clippy::type_complexity)]
-            move || -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
-                let engine = SyncEngine::new(&vault_path, "conflict-merge");
-                let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
-                let merge_base = repo
-                    .merge_base(local_oid, remote_oid)
-                    .map_err(|e| format!("merge_base: {e}"))?;
-                let base = SyncEngine::read_blob_from_commit(&repo, merge_base, &fp_for_read)
-                    .map_err(|e| format!("read base: {e}"))?;
-                let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
-                    .map_err(|e| format!("read local: {e}"))?;
-                let remote = SyncEngine::read_blob_from_commit(&repo, remote_oid, &fp_for_read)
-                    .map_err(|e| format!("read remote: {e}"))?;
-                Ok((base, local, remote))
-            },
+        let (base_bytes, local_bytes, remote_bytes) = tokio::time::timeout(
+            crate::handler::SYNC_OP_TIMEOUT,
+            tokio::task::spawn_blocking(
+                #[allow(clippy::type_complexity)]
+                move || -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
+                    let engine = SyncEngine::new(&vault_path, "conflict-merge");
+                    let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
+                    let merge_base = repo
+                        .merge_base(local_oid, remote_oid)
+                        .map_err(|e| format!("merge_base: {e}"))?;
+                    let base = SyncEngine::read_blob_from_commit(&repo, merge_base, &fp_for_read)
+                        .map_err(|e| format!("read base: {e}"))?;
+                    let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
+                        .map_err(|e| format!("read local: {e}"))?;
+                    let remote = SyncEngine::read_blob_from_commit(&repo, remote_oid, &fp_for_read)
+                        .map_err(|e| format!("read remote: {e}"))?;
+                    Ok((base, local, remote))
+                },
+            ),
         )
         .await
+        .map_err(|_| "conflict blob read timed out".to_string())?
         .map_err(|e| format!("blob read task join: {e}"))??;
 
         // Phase 2 (inline): decrypt + merge + re-encrypt. Holds the vault
@@ -2194,21 +2198,25 @@ impl VaultState {
                 // would reject all later retries against the now-advanced HEAD).
                 let vault_path = self.vault_path.clone();
                 let pending_for_finalize = pending.clone();
-                let push_failed = tokio::task::spawn_blocking(move || -> Result<bool, String> {
-                    let engine = SyncEngine::new(&vault_path, &device_id);
-                    let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
-                    match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
-                        Ok(_) => Ok(false),
-                        Err(e) if baluard_core::sync::engine::is_network_error(&e) => {
-                            // Merge commit landed; only the push failed.
-                            // The next debounce cycle pushes it. Treat as
-                            // resolved so the conflict clears.
-                            Ok(true)
+                let push_failed = tokio::time::timeout(
+                    crate::handler::SYNC_OP_TIMEOUT,
+                    tokio::task::spawn_blocking(move || -> Result<bool, String> {
+                        let engine = SyncEngine::new(&vault_path, &device_id);
+                        let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
+                        match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
+                            Ok(_) => Ok(false),
+                            Err(e) if baluard_core::sync::engine::is_network_error(&e) => {
+                                // Merge commit landed; only the push failed.
+                                // The next debounce cycle pushes it. Treat as
+                                // resolved so the conflict clears.
+                                Ok(true)
+                            }
+                            Err(e) => Err(format!("finalize merged: {e}")),
                         }
-                        Err(e) => Err(format!("finalize merged: {e}")),
-                    }
-                })
+                    }),
+                )
                 .await
+                .map_err(|_| "conflict finalize timed out".to_string())?
                 .map_err(|e| format!("finalize task join: {e}"))??;
                 self.autosync.note_resolved().await;
                 self.rebuild_cipher_index().await;
@@ -2303,16 +2311,20 @@ impl VaultState {
         let remote_oid = pending.remote_oid;
         let fp_for_read = file_path.clone();
         let (local_bytes, remote_bytes) =
-            tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, Vec<u8>), String> {
-                let engine = SyncEngine::new(&vault_path, "conflict-keep-both");
-                let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
-                let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
-                    .map_err(|e| format!("read local: {e}"))?;
-                let remote = SyncEngine::read_blob_from_commit(&repo, remote_oid, &fp_for_read)
-                    .map_err(|e| format!("read remote: {e}"))?;
-                Ok((local, remote))
-            })
+            tokio::time::timeout(
+                crate::handler::SYNC_OP_TIMEOUT,
+                tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, Vec<u8>), String> {
+                    let engine = SyncEngine::new(&vault_path, "conflict-keep-both");
+                    let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
+                    let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
+                        .map_err(|e| format!("read local: {e}"))?;
+                    let remote = SyncEngine::read_blob_from_commit(&repo, remote_oid, &fp_for_read)
+                        .map_err(|e| format!("read remote: {e}"))?;
+                    Ok((local, remote))
+                }),
+            )
             .await
+            .map_err(|_| "conflict blob read timed out".to_string())?
             .map_err(|e| format!("blob read task join: {e}"))??;
 
         // Phase 2 (inline): decrypt remote, re-encrypt under a new UUID.
@@ -2357,16 +2369,20 @@ impl VaultState {
         // conflict doesn't wedge against finalize_conflicts' HEAD guard.
         let vault_path = self.vault_path.clone();
         let pending_for_finalize = pending.clone();
-        let push_failed = tokio::task::spawn_blocking(move || -> Result<bool, String> {
-            let engine = SyncEngine::new(&vault_path, &device_id_str);
-            let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
-            match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
-                Ok(_) => Ok(false),
-                Err(e) if baluard_core::sync::engine::is_network_error(&e) => Ok(true),
-                Err(e) => Err(format!("finalize keep_both: {e}")),
-            }
-        })
+        let push_failed = tokio::time::timeout(
+            crate::handler::SYNC_OP_TIMEOUT,
+            tokio::task::spawn_blocking(move || -> Result<bool, String> {
+                let engine = SyncEngine::new(&vault_path, &device_id_str);
+                let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
+                match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
+                    Ok(_) => Ok(false),
+                    Err(e) if baluard_core::sync::engine::is_network_error(&e) => Ok(true),
+                    Err(e) => Err(format!("finalize keep_both: {e}")),
+                }
+            }),
+        )
         .await
+        .map_err(|_| "conflict finalize timed out".to_string())?
         .map_err(|e| format!("finalize task join: {e}"))??;
         self.autosync.note_resolved().await;
         // The clone is a brand-new cipher_id the index has never seen; rebuild
