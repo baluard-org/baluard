@@ -457,9 +457,14 @@ impl<'a> VaultCreator<'a> {
                 super::write_vault_file(&path.join("meta/kek-canary.enc"), &kek_canary)?;
                 super::write_vault_file(&path.join("meta/rk-canary.enc"), &rk_canary)?;
 
-                // Write .baluard marker file (vault detection, not secret)
+                // Write .baluard marker file (vault detection, not secret).
+                // Required for discover_orphans / vaults.detach / registry
+                // self-heal. Only written when a slug is set: the daemon's
+                // create path always sets one (plumbed from the wizard), and
+                // the .baluard path is ALSO used as a directory by
+                // device_manager (.baluard/rekey/), so writing the marker
+                // unconditionally would collide with that dir layout.
                 if let Some(ref slug) = self.slug {
-                    // Validate slug at library boundary
                     crate::vault::slug::validate_slug(slug).map_err(|e| {
                         BaluardError::from(VaultError::Corrupt(format!("invalid slug: {e}")))
                     })?;
