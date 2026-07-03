@@ -291,6 +291,63 @@ impl VaultRegistry {
         }
     }
 
+    /// Discover orphaned vaults on disk that are missing from the registry.
+    ///
+    /// Scans the default vaults directory (`<data_dir>/vaults/*`) for
+    /// subdirectories containing a `.baluard` marker. Any marker whose slug is
+    /// not already in this registry is returned as a `VaultEntry`, ready to
+    /// `add()`. This self-heals the registry if it is ever emptied while the
+    /// vault files are intact (e.g. after a crash that wrote an empty index),
+    /// so the user never has to know the vault path or touch a hidden folder.
+    ///
+    /// `display_name` falls back to the slug (the human-friendly name lives in
+    /// the encrypted `profile.enc`, only readable after unlock); the UI
+    /// refreshes it once the vault is opened.
+    pub fn discover_orphans(&self) -> Vec<VaultEntry> {
+        let vaults_dir = crate::paths::vaults_dir();
+        let entries = match std::fs::read_dir(&vaults_dir) {
+            Ok(rd) => rd,
+            Err(_) => return Vec::new(), // dir missing — nothing to discover
+        };
+        let mut found = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            // Must be a real vault (has the marker).
+            let marker = match BaluardMarker::read_from_vault(&path) {
+                Ok(Some(m)) => m,
+                _ => continue, // no marker or unreadable — skip
+            };
+            // Already registered? Skip.
+            if self.vaults.contains_key(&marker.slug) {
+                continue;
+            }
+            // Slug also derives from the dir name as a fallback; the marker
+            // is authoritative.
+            let slug = if marker.slug.is_empty() {
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("vault")
+                    .to_string()
+            } else {
+                marker.slug.clone()
+            };
+            found.push(VaultEntry {
+                slug: slug.clone(),
+                display_name: slug, // updated from profile.enc after first unlock
+                path,
+                provider: None,
+                remote_url: None,
+                last_synced: None,
+                last_opened: None,
+                vault_id: marker.vault_id,
+            });
+        }
+        found
+    }
+
     /// List all vault slugs.
     pub fn list_slugs(&self) -> Vec<&str> {
         self.vaults.keys().map(|s| s.as_str()).collect()
