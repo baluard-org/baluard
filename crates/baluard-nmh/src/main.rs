@@ -20,6 +20,32 @@ use std::io::{Read, Write};
 use baluard_core::bridge::is_allowed;
 use baluard_core::bridge::pairing::PairingFile;
 
+/// Optional debug log file. Chrome doesn't surface NMH stderr, so during
+/// development we tee our trace to /tmp/baluard-nmh.debug.log. Always-on
+/// while the browser-extension pairing flow is being stabilized.
+static DEBUG_LOG: std::sync::OnceLock<std::sync::Mutex<std::fs::File>> =
+    std::sync::OnceLock::new();
+
+fn init_debug_log_file() {
+    if let Ok(f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/baluard-nmh.debug.log")
+    {
+        let _ = DEBUG_LOG.set(std::sync::Mutex::new(f));
+    }
+}
+
+fn dlog(msg: &str) {
+    eprintln!("{msg}");
+    if let Some(m) = DEBUG_LOG.get() {
+        use std::io::Write;
+        if let Ok(mut f) = m.lock() {
+            let _ = writeln!(f, "{msg}");
+        }
+    }
+}
+
 mod proto {
     #![allow(dead_code)] // generated; DeviceIdentityEscrow unused here
     include!(concat!(env!("OUT_DIR"), "/baluard.auth.rs"));
@@ -32,15 +58,23 @@ use proto::{GatewayRequest, GatewayResponse};
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 /// NMH -> browser cap. Browser hard-limits host->ext at 1MB.
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+/// Pairing-ceremony bootstrap routes. These are forwarded with NO bridge
+/// token (none exists yet — pairing is what mints one). They are NOT vault
+/// actions, so they are deliberately absent from BRIDGE_ALLOWED_ACTIONS;
+/// this separate list is the NMH's defense-in-depth permit for the ceremony.
+const BOOTSTRAP_ACTIONS: &[&str] = &["bridge.pair_complete"];
 
 fn main() {
-    // Initialise logging to stderr only (stdout must stay protocol-clean).
+    // Initialise logging. stderr is the conventional target for NMH (stdout
+    // must stay protocol-clean), but Chrome doesn't surface NMH stderr anywhere
+    // visible, so during development we ALSO tee to a file for debugging.
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .target(env_logger::Target::Stderr)
         .try_init();
+    init_debug_log_file();
 
     if let Err(e) = run() {
-        eprintln!("[baluard-nmh] fatal: {e:#}");
+        dlog(&format!("[baluard-nmh] fatal: {e:#}"));
         // On fatal error, emit one error frame so the extension sees a clean
         // code rather than a silent disconnect.
         let _ = write_message(
@@ -52,30 +86,107 @@ fn main() {
 
 fn run() -> anyhow::Result<()> {
     let mut stdin = std::io::stdin().lock();
-    let mut stdout = std::io::stdout().lock();
+    // stdout is shared across worker threads: each handler that blocks on the
+    // daemon (e.g. bridge.pair_complete, held up to 120s for desktop approval)
+    // runs on its own thread so the read loop can keep draining stdin. The
+    // Mutex serializes the (length-prefix + body) write so frames never
+    // interleave. Without this, a single blocking pair_complete would freeze
+    // the whole extension (badge updates, other popup actions, etc.) for the
+    // full ceremony TTL.
+    let stdout = std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout()));
+    // In-flight worker handles. On stdin EOF (browser closed the port) we
+    // drain these so pending responses are flushed before the process exits;
+    // without this, a fast ping could lose the race against main-loop exit.
+    let workers: std::sync::Arc<std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
     loop {
         let msg = match read_message(&mut stdin)? {
             Some(m) => m,
-            None => return Ok(()), // EOF — browser closed the port
+            None => break, // EOF — browser closed the port; finish in-flight work.
         };
-        let resp = handle_message(msg);
-        let resp_json = serde_json::to_vec(&resp)?;
-        if resp_json.len() > MAX_RESPONSE_BYTES {
-            // Shouldn't happen for our allowlisted routes; fail closed.
-            let truncated = serde_json::json!({
-                "id": resp.get("id").cloned().unwrap_or(serde_json::Value::Null),
-                "ok": false,
-                "error": "response too large",
-                "code": "proto",
-            });
-            write_message(&truncated)?;
-        } else {
-            stdout.write_all(&((resp_json.len() as u32).to_ne_bytes()))?;
-            stdout.write_all(&resp_json)?;
-            stdout.flush()?;
+        let stdout = stdout.clone();
+        let mid = msg.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_default();
+        let maction = msg.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        dlog(&format!("[baluard-nmh] recv id='{mid}' action='{maction}'"));
+        let handle = std::thread::spawn(move || {
+            let resp = handle_message(msg);
+            let resp_json = match serde_json::to_vec(&resp) {
+                Ok(b) => b,
+                Err(e) => {
+                    dlog(&format!("[baluard-nmh] response encode error: {e}"));
+                    return;
+                }
+            };
+            let mut out = stdout.lock().unwrap();
+            let write_result = if resp_json.len() > MAX_RESPONSE_BYTES {
+                let truncated = serde_json::json!({
+                    "id": resp.get("id").cloned().unwrap_or(serde_json::Value::Null),
+                    "ok": false,
+                    "error": "response too large",
+                    "code": "proto",
+                });
+                write_frame(&mut *out, &truncated)
+            } else {
+                write_frame_bytes(&mut *out, &resp_json)
+            };
+            if let Err(e) = write_result {
+                dlog(&format!("[baluard-nmh] stdout write error: {e}"));
+            } else {
+                dlog(&format!("[baluard-nmh] wrote response for action='{maction}'"));
+            }
+        });
+        if let Ok(mut w) = workers.lock() {
+            w.push(handle);
         }
     }
+
+    // Drain in-flight workers so pending responses reach the browser before
+    // exit. Cap the wait so a wedged/long-running ceremony (e.g. pair_complete
+    // held 120s) can't keep a dead NMH process alive after the browser left;
+    // nobody is reading the response once the port closed anyway. JoinHandle
+    // has no join_timeout, so we race each join against a deadline thread.
+    let pending: Vec<_> = workers.lock().map(|mut w| std::mem::take(&mut *w)).unwrap_or_default();
+    let grace = std::time::Duration::from_secs(2);
+    for h in pending {
+        if join_with_timeout(h, grace).is_err() {
+            // Timed out: detach the worker so it doesn't block process exit;
+            // its response (if any) is already unwritable — browser is gone.
+        }
+    }
+    Ok(())
+}
+
+/// Join a thread with a deadline. JoinHandle lacks join_timeout, so we spawn a
+/// helper that signals completion via a channel; if the deadline fires first we
+/// return Err (the handle is consumed and dropped, detaching the thread).
+fn join_with_timeout(
+    handle: std::thread::JoinHandle<()>,
+    timeout: std::time::Duration,
+) -> Result<(), ()> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = handle.join();
+        let _ = tx.send(());
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(()) => Ok(()),
+        Err(_) => Err(()),
+    }
+}
+
+/// Write one framed JSON value to stdout (serialize + frame).
+fn write_frame(out: &mut impl Write, v: &serde_json::Value) -> anyhow::Result<()> {
+    let bytes = serde_json::to_vec(v)?;
+    write_frame_bytes(out, &bytes)
+}
+
+/// Write pre-serialized bytes as one length-prefixed frame.
+fn write_frame_bytes(out: &mut impl Write, bytes: &[u8]) -> anyhow::Result<()> {
+    out.write_all(&((bytes.len() as u32).to_ne_bytes()))?;
+    out.write_all(bytes)?;
+    out.flush()?;
+    Ok(())
 }
 
 /// Dispatch one browser message. Returns the JSON to send back.
@@ -102,8 +213,12 @@ fn handle_message(msg: serde_json::Value) -> serde_json::Value {
     }
 
     // Defense-in-depth: enforce the allowlist BEFORE touching the socket.
-    if !is_allowed(&action) {
-        eprintln!("[baluard-nmh] denied non-allowlisted action '{action}'");
+    // Bootstrap routes (pairing ceremony) are permit-listed separately: they
+    // are NOT vault actions, so they don't belong in BRIDGE_ALLOWED_ACTIONS,
+    // but they must be forwardable so pairing can happen at all.
+    let is_bootstrap = BOOTSTRAP_ACTIONS.contains(&action.as_str());
+    if !is_allowed(&action) && !is_bootstrap {
+        dlog(&format!("[baluard-nmh] denied non-allowlisted action '{action}'"));
         return err(id, &format!("action '{action}' not permitted"), "denied");
     }
 
@@ -114,32 +229,42 @@ fn handle_message(msg: serde_json::Value) -> serde_json::Value {
     }
 
     // Resolve a bridge token (reauth if needed). Errors here -> not-paired /
-    // no-daemon / locked codes.
-    let token = match resolve_token() {
-        Ok(t) => t,
-        Err(code) => {
-            return err(id, &code.to_string(), code.as_str());
+    // no-daemon / locked codes. Bootstrap routes (pairing ceremony) skip
+    // this: no pairing exists yet, so there is no token to resolve. The
+    // daemon's pair_complete handler needs no token by design.
+    let token = if is_bootstrap {
+        String::new()
+    } else {
+        match resolve_token() {
+            Ok(t) => t,
+            Err(code) => {
+                return err(id, &code.to_string(), code.as_str());
+            }
         }
     };
 
     // Forward to the daemon.
+    dlog(&format!("[baluard-nmh] forwarding action='{action}' is_bootstrap={is_bootstrap}"));
     match forward(&action, payload, &token) {
-        Ok(resp) => serde_json::json!({
-            "id": id,
-            "ok": resp.success,
-            "payload": resp.payload,
-            "error": if resp.success { "".to_string() } else { resp.error_message.clone() },
-            // Map a few daemon error strings to NMH codes for friendly UI.
-            "code": if resp.success {
-                "ok"
-            } else if resp.error_message.contains("locked") || resp.error_message.contains("Unlock") {
-                "locked"
-            } else {
-                "denied"
-            },
-        }),
+        Ok(resp) => {
+            dlog(&format!("[baluard-nmh] forward ok success={} action='{action}'", resp.success));
+            serde_json::json!({
+                "id": id,
+                "ok": resp.success,
+                "payload": resp.payload,
+                "error": if resp.success { "".to_string() } else { resp.error_message.clone() },
+                // Map a few daemon error strings to NMH codes for friendly UI.
+                "code": if resp.success {
+                    "ok"
+                } else if resp.error_message.contains("locked") || resp.error_message.contains("Unlock") {
+                    "locked"
+                } else {
+                    "denied"
+                },
+            })
+        },
         Err(e) => {
-            eprintln!("[baluard-nmh] forward error: {e}");
+            dlog(&format!("[baluard-nmh] forward error: {e}"));
             err(id, &e.to_string(), "no-daemon")
         }
     }
@@ -168,14 +293,10 @@ fn read_message<R: Read>(r: &mut R) -> anyhow::Result<Option<serde_json::Value>>
 }
 
 /// Write one length-prefixed message to stdout (used only for the fatal-error
-/// fallback; the hot path writes inline in `run`).
+/// fallback before the worker-thread runtime is up).
 fn write_message(v: &serde_json::Value) -> anyhow::Result<()> {
-    let bytes = serde_json::to_vec(v)?;
     let mut stdout = std::io::stdout().lock();
-    stdout.write_all(&((bytes.len() as u32).to_ne_bytes()))?;
-    stdout.write_all(&bytes)?;
-    stdout.flush()?;
-    Ok(())
+    write_frame(&mut stdout, v)
 }
 
 fn err(id: Option<serde_json::Value>, error: &str, code: &str) -> serde_json::Value {
@@ -255,6 +376,16 @@ fn forward(action: &str, payload: &str, token: &str) -> anyhow::Result<GatewayRe
 
     let socket = baluard_core::paths::socket_path();
     let mut stream = UnixStream::connect(&socket).map_err(|e| anyhow::anyhow!("socket: {e}"))?;
+    // Bounded I/O so a stalled daemon can't wedge this worker thread
+    // forever (mirrors the desktop client's timeouts). Without this, every
+    // browser-triggered forward that hits a starved daemon blocks
+    // indefinitely, leaking threads.
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+        .map_err(|e| anyhow::anyhow!("set_read_timeout: {e}"))?;
+    stream
+        .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+        .map_err(|e| anyhow::anyhow!("set_write_timeout: {e}"))?;
 
     let req = GatewayRequest {
         action: action.to_string(),

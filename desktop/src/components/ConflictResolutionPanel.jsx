@@ -1,10 +1,9 @@
 import { createSignal, For, Show } from "solid-js";
-import { Portal } from "solid-js/web";
 import { useConflictResolution } from "../context/ConflictResolutionContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { toastError } from "../context/toastSignal.js";
 import { resolveConflict } from "../lib/conflictFlow.js";
-import FocusTrap from "./FocusTrap.jsx";
+import ConsolePanel from "./ConsolePanel.jsx";
 import { IconAlert, IconCopy, IconMonitor, IconSwitch } from "./Icon.jsx";
 
 // Top-floating, modal decision panel for git-sync conflicts the auto path
@@ -79,136 +78,129 @@ export default function ConflictResolutionPanel(props) {
   }
 
   return (
-    <Show when={conflicts.hasPending()}>
-      <Portal>
-        <div class="fixed inset-0 z-50">
-          {/* Backdrop: blocks interaction (modal). No click-to-dismiss. */}
-          <div class="absolute inset-0 bg-black/50 backdrop-blur-[1px]" />
-
-          {/* Panel: floats from the top, centered, slides down. */}
-          <div
-            ref={panelRef}
-            class="animate-conflict-panel absolute top-6 left-1/2 -translate-x-1/2 w-[min(30rem,92vw)]"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="conflict-title"
-            aria-describedby="conflict-desc"
-          >
-            <FocusTrap
-              containerRef={panelRef}
-              onEscape={() => {
-                /* intentionally no-op: no dismiss without a verdict */
-              }}
-            />
-            <div class="bg-[var(--color-sidebar)] border border-amber-900/40 rounded-2xl shadow-2xl overflow-hidden">
-              {/* Header */}
-              <div class="flex items-start gap-3 px-5 pt-5 pb-4 bg-amber-950/20 border-b border-amber-900/30">
-                <div class="shrink-0 w-9 h-9 rounded-xl bg-amber-900/30 flex items-center justify-center">
-                  <IconAlert class="w-5 h-5 text-amber-400" />
-                </div>
-                <div class="flex-1 min-w-0">
-                  <h2
-                    id="conflict-title"
-                    class="text-sm font-bold text-[var(--color-text)] leading-snug"
-                  >
-                    {t("conflict.title")}
-                  </h2>
-                  <p class="text-xs text-[var(--color-muted)] mt-0.5">
-                    {stepLabel()}
-                  </p>
-                </div>
-              </div>
-
-              {/* Body */}
-              <div class="px-5 py-4">
-                <p
-                  id="conflict-desc"
-                  class="text-sm text-[var(--color-text)] leading-relaxed"
-                >
-                  {t("conflict.intro", { name: conflicts.current()?.name })}
-                </p>
-
-                {/* What diverged — masked, never shows secret values. */}
-                <Show
-                  when={!conflicts.current()?.typeChanged}
-                  fallback={
-                    <div class="mt-4 px-3 py-2.5 rounded-lg bg-amber-950/20 border border-amber-900/30 text-xs text-amber-200 leading-relaxed">
-                      {t("conflict.typeChanged")}
-                    </div>
-                  }
-                >
-                  <div class="mt-4 px-3 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
-                    <p class="text-[10px] font-bold uppercase tracking-wide text-[var(--color-muted)] mb-1.5">
-                      {t("conflict.changedFields")}
-                    </p>
-                    <ul class="flex flex-wrap gap-1.5">
-                      <For each={conflicts.current()?.fields}>
-                        {(f) => (
-                          <li class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-900/20 border border-amber-900/30 text-xs text-amber-100">
-                            <Show when={f.sensitive}>
-                              <span aria-hidden="true">••••</span>
-                            </Show>
-                            <span>{f.label}</span>
-                          </li>
-                        )}
-                      </For>
-                    </ul>
-                  </div>
-                </Show>
-
-                {/* Expandable plain-language explanation for the curious. */}
-                <button
-                  type="button"
-                  onClick={() => setExplainOpen((v) => !v)}
-                  aria-expanded={explainOpen()}
-                  class="mt-3 text-xs text-[var(--color-muted)] hover:text-[var(--color-text)] underline underline-offset-2 cursor-pointer"
-                >
-                  {t("conflict.whatDoesThisMean")}
-                </button>
-                <Show when={explainOpen()}>
-                  <p class="mt-2 text-xs text-[var(--color-muted)] leading-relaxed">
-                    {t("conflict.explanation", {
-                      local: localLabel(),
-                      remote: remoteLabel(),
-                    })}
-                  </p>
-                </Show>
-              </div>
-
-              {/* Decision tree — per entry, simplest first. */}
-              <div class="px-5 pb-5 flex flex-col gap-2">
-                <DecisionButton
-                  icon={<IconMonitor class="w-4 h-4" />}
-                  title={t("conflict.keepLocal.title")}
-                  desc={t("conflict.keepLocal.desc", { local: localLabel() })}
-                  onClick={() => decide("keep_local")}
-                  variant="primary"
-                  disabled={isResolving()}
-                />
-                <DecisionButton
-                  icon={<IconSwitch class="w-4 h-4" />}
-                  title={t("conflict.keepRemote.title")}
-                  desc={t("conflict.keepRemote.desc", {
-                    remote: remoteLabel(),
-                  })}
-                  onClick={() => decide("keep_remote")}
-                  disabled={isResolving()}
-                />
-                {/* Non-destructive escape hatch — never loses data. */}
-                <DecisionButton
-                  icon={<IconCopy class="w-4 h-4" />}
-                  title={t("conflict.keepBoth.title")}
-                  desc={t("conflict.keepBoth.desc")}
-                  onClick={() => decide("keep_both")}
-                  highlight
-                  disabled={isResolving()}
-                />
-              </div>
+    <ConsolePanel
+      show={conflicts.hasPending()}
+      accentClass="border-amber-500"
+      minHeightClass="min-h-[24rem]"
+      role="alertdialog"
+      ariaLabelledby="conflict-title"
+      ariaDescribedby="conflict-desc"
+      onEscape={() => {
+        /* intentionally no-op: no dismiss without a verdict */
+      }}
+    >
+      <div class="w-full flex flex-col md:flex-row gap-6 md:gap-10 items-stretch">
+        {/* Column 1: Info and Details */}
+        <div class="flex-1 min-w-0 flex flex-col gap-4">
+          {/* Header */}
+          <div class="flex items-center gap-3 pb-3 border-b border-[var(--color-border)]">
+            <div class="shrink-0 w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+              <IconAlert class="w-4 h-4 text-amber-500" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <h2
+                id="conflict-title"
+                class="text-sm font-bold uppercase tracking-wider text-[var(--color-text)] leading-none"
+              >
+                {t("conflict.title")}
+              </h2>
+              <span class="text-[10px] font-mono text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 mt-1 inline-block">
+                {stepLabel()}
+              </span>
             </div>
           </div>
+
+          {/* Body */}
+          <p
+            id="conflict-desc"
+            class="text-sm text-[var(--color-text)] leading-relaxed"
+          >
+            {t("conflict.intro", { name: conflicts.current()?.name })}
+          </p>
+
+          {/* What diverged — masked, never shows secret values. */}
+          <Show
+            when={!conflicts.current()?.typeChanged}
+            fallback={
+              <div class="px-3 py-2.5 rounded-lg bg-amber-950/20 border border-amber-900/30 text-xs text-amber-200 leading-relaxed font-mono">
+                {t("conflict.typeChanged")}
+              </div>
+            }
+          >
+            <div class="px-3 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+              <p class="text-[10px] font-bold uppercase tracking-wide text-[var(--color-muted)] mb-1.5 font-mono">
+                {t("conflict.changedFields")}
+              </p>
+              <ul class="flex flex-wrap gap-1.5">
+                <For each={conflicts.current()?.fields}>
+                  {(f) => (
+                    <li class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/30 border border-amber-900/40 text-xs text-amber-200 font-mono">
+                      <Show when={f.sensitive}>
+                        <span aria-hidden="true">••••</span>
+                      </Show>
+                      <span>{f.label}</span>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </div>
+          </Show>
+
+          {/* Expandable plain-language explanation for the curious. */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setExplainOpen((v) => !v)}
+              aria-expanded={explainOpen()}
+              class="text-xs text-amber-500 hover:text-amber-400 font-mono underline underline-offset-2 cursor-pointer flex items-center gap-1"
+            >
+              <span>&gt;</span> {t("conflict.whatDoesThisMean")}
+            </button>
+            <Show when={explainOpen()}>
+              <p class="mt-2 text-xs text-[var(--color-muted)] leading-relaxed bg-[var(--color-bg)]/40 p-3 rounded border border-[var(--color-border)]">
+                {t("conflict.explanation", {
+                  local: localLabel(),
+                  remote: remoteLabel(),
+                })}
+              </p>
+            </Show>
+          </div>
         </div>
-      </Portal>
-    </Show>
+
+        {/* Column 2: Decision buttons */}
+        <div class="w-full md:w-96 shrink-0 flex flex-col gap-2 justify-start pt-6 md:pt-1 md:pl-8 border-t md:border-t-0 md:border-l border-[var(--color-border)]">
+          <p class="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] mb-1 font-mono">
+            // RESOLUTION VERDICT REQUIRED
+          </p>
+          <DecisionButton
+            icon={<IconMonitor class="w-4 h-4" />}
+            title={t("conflict.keepLocal.title")}
+            desc={t("conflict.keepLocal.desc", { local: localLabel() })}
+            onClick={() => decide("keep_local")}
+            variant="primary"
+            disabled={isResolving()}
+          />
+          <DecisionButton
+            icon={<IconSwitch class="w-4 h-4" />}
+            title={t("conflict.keepRemote.title")}
+            desc={t("conflict.keepRemote.desc", {
+              remote: remoteLabel(),
+            })}
+            onClick={() => decide("keep_remote")}
+            disabled={isResolving()}
+          />
+          {/* Non-destructive escape hatch — never loses data. */}
+          <DecisionButton
+            icon={<IconCopy class="w-4 h-4" />}
+            title={t("conflict.keepBoth.title")}
+            desc={t("conflict.keepBoth.desc")}
+            onClick={() => decide("keep_both")}
+            highlight
+            disabled={isResolving()}
+          />
+        </div>
+      </div>
+    </ConsolePanel>
   );
 }
 

@@ -427,5 +427,22 @@ select option {
   animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
 }
 
+/* Quake 3 console-style sliding panel styles */
+@keyframes consoleSlideDown {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+.animate-console-panel {
+  will-change: transform;
+  animation: consoleSlideDown 0.38s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+}
+
+
+
 
 

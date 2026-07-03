@@ -2,7 +2,7 @@ import { createSignal, Show } from "solid-js";
 import { Transition } from "solid-transition-group";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
-import FocusTrap from "./FocusTrap.jsx";
+import ConsolePanel from "./ConsolePanel.jsx";
 import { Button, Input } from "./Primitives.jsx";
 
 let repromptCallback = null;
@@ -38,45 +38,51 @@ export default function RepromptModal(props) {
 
   return (
     <Transition name="fade">
-      <Show when={show()}>
-        <div
-          ref={dialogRef}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="reprompt-title"
-          class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-        >
-          <FocusTrap containerRef={dialogRef} onEscape={() => { setShow(false); setPassword(""); setFailed(false); }} />
-          <div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-            <h3 id="reprompt-title" class="text-lg font-bold text-[var(--color-text)] mb-2">{t("entry.confirmPassword")}</h3>
-            <p class="text-sm text-[var(--color-muted)] mb-4">{t("entry.enterMasterPasswordToContinue")}</p>
-            <Show when={failed()}>
-              <div class="mb-3 p-2 rounded-lg bg-red-950/40 border border-red-900/30 text-red-300 text-xs">{t("errors.invalidPassword")}</div>
-            </Show>
-            <Input
-              type="password"
-              autocomplete="current-password"
-              placeholder={t("login.passwordPlaceholder")}
-              value={password()}
-              onInput={e => { setPassword(e.target.value); setFailed(false); }}
-              onKeyPress={e => { if (e.key === "Enter") handleConfirm(); }}
-              class="mb-4"
-              aria-label={t("entry.confirmPassword")}
-            />
-            <div class="flex gap-3">
-              <Button
-                onClick={() => { setShow(false); setPassword(""); setFailed(false); }}
-                class="flex-1 py-2.5"
-              >{t("entry.cancel")}</Button>
-              <Button
-                onClick={handleConfirm}
-                variant="primary"
-                class="flex-1 py-2.5"
-              >{t("entry.confirm")}</Button>
+      <ConsolePanel
+        show={show()}
+        accentClass="border-red-600"
+        minHeightClass="min-h-[20rem]"
+        role="dialog"
+        ariaLabelledby="reprompt-title"
+        onEscape={() => { setShow(false); setPassword(""); setFailed(false); }}
+      >
+        <div class="w-full max-w-md mx-auto flex flex-col">
+          <h3 id="reprompt-title" class="text-sm font-bold uppercase tracking-wider text-[var(--color-text)] mb-1 font-mono flex items-center gap-2">
+            <span class="inline-block w-2.5 h-2.5 bg-red-600 rounded-full animate-pulse" />
+            {t("entry.confirmPassword")}
+          </h3>
+          <p class="text-xs text-[var(--color-muted)] mb-4 font-mono">// {t("entry.enterMasterPasswordToContinue")}</p>
+          
+          <Show when={failed()}>
+            <div class="mb-4 p-2.5 rounded bg-red-950/30 border border-red-900/40 text-red-300 text-xs font-mono">
+              ERROR: {t("errors.invalidPassword")}
             </div>
+          </Show>
+          
+          <Input
+            type="password"
+            autocomplete="current-password"
+            placeholder={t("login.passwordPlaceholder")}
+            value={password()}
+            onInput={e => { setPassword(e.target.value); setFailed(false); }}
+            onKeyPress={e => { if (e.key === "Enter") handleConfirm(); }}
+            class="mb-5 font-mono"
+            aria-label={t("entry.confirmPassword")}
+          />
+          
+          <div class="flex gap-3">
+            <Button
+              onClick={() => { setShow(false); setPassword(""); setFailed(false); }}
+              class="flex-1 py-2.5 font-mono text-xs uppercase"
+            >{t("entry.cancel")}</Button>
+            <Button
+              onClick={handleConfirm}
+              variant="primary"
+              class="flex-1 py-2.5 font-mono text-xs uppercase bg-red-600 border-transparent text-white hover:bg-red-700 focus-visible:ring-red-600"
+            >{t("entry.confirm")}</Button>
           </div>
         </div>
-      </Show>
+      </ConsolePanel>
     </Transition>
   );
 }
