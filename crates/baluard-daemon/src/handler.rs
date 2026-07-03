@@ -1285,7 +1285,8 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     // mutex. verify_token does the same length gate, but avoiding the
     // `.read().await` on the hot path matters more for latency.
     if req.session_token.len() == 64 {
-        if let Some(pairing_id) = host.bridge().read().await.verify_token(&req.session_token) {
+        let pairing_id = host.bridge().read().await.verify_token(&req.session_token);
+        if let Some(pairing_id) = pairing_id {
             return route_bridge_request(req, host, pairing_id).await;
         }
     }
@@ -4286,32 +4287,39 @@ async fn handle_sync_conflict_resolve(
     let vault_path = state.vault_path.clone();
     let device = device_name(&vault_path);
     let pending_clone = pending.clone();
-    let (merge_ok, err) = tokio::task::spawn_blocking(move || -> (bool, Option<String>) {
-        let engine = SyncEngine::new(&vault_path, &device);
-        let repo = match engine.open_repo() {
-            Ok(r) => r,
-            Err(e) => return (false, Some(format!("open repo: {e}"))),
-        };
-        // Read each conflicting file's bytes from the chosen side.
-        let mut resolved: Vec<(String, Vec<u8>)> = Vec::with_capacity(pending_clone.files.len());
-        for f in &pending_clone.files {
-            let bytes = match SyncEngine::read_blob_from_commit(&repo, src_oid, f) {
-                Ok(b) => b,
-                Err(e) => return (false, Some(format!("read {f}: {e}"))),
+    let join_result = tokio::time::timeout(
+        SYNC_OP_TIMEOUT,
+        tokio::task::spawn_blocking(move || -> (bool, Option<String>) {
+            let engine = SyncEngine::new(&vault_path, &device);
+            let repo = match engine.open_repo() {
+                Ok(r) => r,
+                Err(e) => return (false, Some(format!("open repo: {e}"))),
             };
-            resolved.push((f.clone(), bytes));
-        }
-        match engine.finalize_conflicts(&repo, &pending_clone, &resolved) {
-            Ok(_) => (true, None),
-            // A push network failure still leaves the merge commit written
-            // locally; the coordinator will retry the push on the next cycle.
-            // Treat as success for queue-draining purposes.
-            Err(e) if baluard_core::sync::engine::is_network_error(&e) => (true, None),
-            Err(e) => (false, Some(format!("finalize: {e}"))),
-        }
-    })
-    .await
-    .map_err(|e| format!("finalize task join: {e}"))?;
+            // Read each conflicting file's bytes from the chosen side.
+            let mut resolved: Vec<(String, Vec<u8>)> = Vec::with_capacity(pending_clone.files.len());
+            for f in &pending_clone.files {
+                let bytes = match SyncEngine::read_blob_from_commit(&repo, src_oid, f) {
+                    Ok(b) => b,
+                    Err(e) => return (false, Some(format!("read {f}: {e}"))),
+                };
+                resolved.push((f.clone(), bytes));
+            }
+            match engine.finalize_conflicts(&repo, &pending_clone, &resolved) {
+                Ok(_) => (true, None),
+                // A push network failure still leaves the merge commit written
+                // locally; the coordinator will retry the push on the next cycle.
+                // Treat as success for queue-draining purposes.
+                Err(e) if baluard_core::sync::engine::is_network_error(&e) => (true, None),
+                Err(e) => (false, Some(format!("finalize: {e}"))),
+            }
+        }),
+    )
+    .await;
+    let (merge_ok, err) = match join_result {
+        Ok(Ok(inner)) => inner,
+        Ok(Err(join_e)) => (false, Some(format!("finalize task join: {join_e}"))),
+        Err(_) => (false, Some("conflict finalize timed out".to_string())),
+    };
 
     if !merge_ok {
         return Err(err.unwrap_or_else(|| "finalize failed".to_string()));
