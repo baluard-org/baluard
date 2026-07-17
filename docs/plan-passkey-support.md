@@ -2,7 +2,7 @@
 
 **Status**: Phase 0 + Phase 1 complete. Phase 2 pending. **Model rework done (2026-06-12)**: passkeys embedded in `LoginData::fido2_credentials` (no standalone `CipherKind::Passkey`).
 **Date**: 2026-06-12
-**Author**: TARS (post Esteban's brief)
+**Author**: Esteban
 **Reviewers**: External peer review (3 rounds: Phase 0, Phase 1 mid-point, comprehensive Phase 0+1)
 **Goal**: Baluard can **store**, **generate**, and **serve** FIDO2/WebAuthn passkeys for end users. Mobile (iOS + Android) and browser extension clients are the primary delivery surface; the desktop app is the local orchestrator that talks to the daemon.
 

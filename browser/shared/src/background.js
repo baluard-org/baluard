@@ -14,7 +14,7 @@ let port = null;
 let pending = new Map(); // id -> {resolve, reject}
 let nextId = 1;
 let versionInfo = null;
-let versionSkew = false; // review agy I6: hard-fail closed on NMH version skew
+let versionSkew = false; // hard-fail closed on NMH version skew
 
 // Last native-messaging disconnect reason (from chrome.runtime.lastError).
 // Surfaced to the popup so the user isn't staring at a generic failure.
@@ -47,8 +47,8 @@ function connect() {
     }
     pending.clear();
   });
-  // Version handshake immediately on connect (review X5). Hard-fail closed on
-  // skew (review agy I6): a password manager must never silently run a
+  // Version handshake immediately on connect. Hard-fail closed on
+  // skew: a password manager must never silently run a
   // partially-understood protocol.
   send("ping", {})
     .then((r) => {
@@ -145,7 +145,7 @@ function compareVersions(a, b) {
 // ── Popup / content-script message routing ──
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || typeof msg.action !== "string") return;
-  // Version-skew gate: refuse everything except ping (review agy I6).
+  // Version-skew gate: refuse everything except ping.
   if (versionSkew && msg.action !== "ping") {
     sendResponse({
       ok: false,
@@ -201,7 +201,7 @@ async function ensureOffscreen() {
 chrome.alarms?.onAlarm?.addListener(async (alarm) => {
   if (alarm.name === "baluard-clipboard-clear") {
     // The SW may have been terminated + respawned and the offscreen doc
-    // torn down with it; re-create before clearing (review agy I3).
+    // torn down with it; re-create before clearing.
     try {
       await ensureOffscreen();
       await chrome.runtime.sendMessage({ action: "offscreen-clear", target: "offscreen" });
@@ -211,11 +211,11 @@ chrome.alarms?.onAlarm?.addListener(async (alarm) => {
   }
 });
 
-// ── Toolbar badge: match count for the active tab (review sonnet B-3) ──
+// ── Toolbar badge: match count for the active tab ──
 // Pure browser-native badge API; zero DOM injection, zero attack surface.
 // Updates on tab activation + navigation. Queries bridge.match for the URL.
 // Debounced: a burst of tab updates (slow-loading page firing many progress
-// events) collapses to one lookup (review agy I4).
+// events) collapses to one lookup.
 let badgeTimer = null;
 function updateBadgeForTab(tabId, url) {
   if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) {

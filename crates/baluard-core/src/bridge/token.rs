@@ -90,7 +90,7 @@ pub struct BridgeTokenEntry {
     /// Unix epoch seconds when minted.
     pub created: u64,
     /// Per-pairing abuse limiter state (loose window over `bridge.match` +
-    /// `vault.get`). See Decision 5 / sonnet A-1.
+    /// `vault.get`). See Decision 5.
     pub reads_in_window: u32,
     pub window_started_at: u64,
 }
@@ -121,7 +121,7 @@ impl BridgeTokenEntry {
     }
 }
 
-/// Reads-per-minute cap before a pairing is auto-revoked (sonnet A-1).
+/// Reads-per-minute cap before a pairing is auto-revoked.
 /// A human fills a handful of logins a minute; ~30/min is generous. Burst abuse
 /// (a compromised browser looping `bridge.match` over a domain list then
 /// `vault.get`-ing every hit) trips this and revokes the pairing.

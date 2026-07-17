@@ -710,7 +710,7 @@ pub struct CustomField {
 }
 
 /// Custom field type.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CustomFieldType {
     Text,
     Hidden,
@@ -722,7 +722,7 @@ pub enum CustomFieldType {
 
 /// Built-in fields that a linked custom field can reference.
 /// Mirrors Bitwarden's linked field IDs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum LinkedFieldType {
     // Login fields
     LoginUsername,

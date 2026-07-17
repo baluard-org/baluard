@@ -139,8 +139,7 @@ voids -> NMH re-pairs cheaply on next spawn, daemon says "locked, open the
 desktop app" if still locked. One binary, standard lifecycle, ephemeral token,
 durable revocable pairing.
 
-**Decision 4 — Pairing ceremony: desktop-initiated approve-don't-type (review
-sonnet B-1; supersedes the typed 6-digit code).**
+**Decision 4 — Pairing ceremony: desktop-initiated approve-don't-type (review; supersedes the typed 6-digit code).**
 No digits to transcribe. The user opens the desktop app and clicks "Add
 browser extension" (or the extension triggers a pairing request and the
 desktop surfaces it). The daemon creates a **pending-approval flag**
@@ -150,7 +149,7 @@ desktop surfaces it). The daemon creates a **pending-approval flag**
 **Approve** (desktop token-gated) -> the daemon unblocks, mints the first
 bridge token, writes the pairing file, returns the pairing secret to the NMH.
 
-**Why this beats the typed code on both axes (sonnet B-1 + B-2):**
+**Why this beats the typed code on both axes:**
 - **Usability:** one click instead of read-then-type-under-a-60s-timer. No
   fat-finger lockout path. No brute-force surface AT ALL (no code = nothing to
   guess), so the entire rate-limit/nuke machinery below is gone.
@@ -171,8 +170,7 @@ the digit-carrying step is simply removed.
 **Residual abuse protection:** `bridge.pair_complete` still routes through the
 existing per-vault `RateLimiter` (defense against a flooding attacker), but
 there is **no vault nuke** on abuse — the worst case is the pending-approval is
-rejected/dropped, the user re-clicks "Add browser extension." (sonnet A-4/B-2:
-the prior 5-strike vault-nuke was a DoS landmine for a non-tech user and
+rejected/dropped, the user re-clicks "Add browser extension." (the prior 5-strike vault-nuke was a DoS landmine for a non-tech user and
 borrowed the PIN nuke for a lower-stakes ceremony where it didn't fit. Removed.)
 
 **Why a surprise-Approve is no weaker than a surprise-code:** a same-UID
@@ -217,12 +215,12 @@ daemon today holds one `session_token: RwLock<Option<String>>` per `VaultState`;
 - **Lifetime binding to lock state:** a bridge request fails `locked` when the
   active vault is locked. The daemon need not proactively wipe tokens on lock;
   every bridge request re-checks active-vault unlocked state.
-- **TTL parity with the vault token (review sonnet A-2):** bridge tokens carry
+- **TTL parity with the vault token:** bridge tokens carry
   `bridge_token_created` and expire on the same cadence as the per-vault session
   token (`SESSION_TOKEN_TTL_SECONDS`, 4h). On expiry the NMH re-runs
   `bridge.reauth` (cheap, idempotent). Prevents a bridge token from quietly
   becoming the least-scrutinized long-lived credential.
-- **Per-`pairing_id` rate cap on credential-read routes (review sonnet A-1 —
+- **Per-`pairing_id` rate cap on credential-read routes (review —
   BLOCKER):** without this, the allowlist redesign is theater. The daemon caps
   `bridge.match` + `vault.get` per `pairing_id` via the existing `RateLimiter`
   (~10-20/min; a human fills a handful of logins a minute). Burst abuse escalates
@@ -251,7 +249,7 @@ dependency edge. The pairing file format becomes a first-class, proptest-able,
 auditable artifact.
 
 **Decision 7 — Allowlist: minimal, no bulk-plaintext, one credential at a time
-(review-revised Stance A; resolves C2, C4, I1, I2, D3, agy-#4).**
+(review-revised Stance A; resolves C2, C4, I1, I2, D3, #4).**
 Bridge tokens permit ONLY these actions (enforced server-side in the daemon's
 handler after token verification). **`vault.list_full` is NOT on the list** —
 it returns the entire decrypted vault in one call (a de-facto export, and the
@@ -374,7 +372,7 @@ Consequences that REDUCE the plan's complexity vs a naive Trigger 3:
    copy-paste from the popup). This designs out the page-influenced-target
    exfil class rather than mitigating it. Pair with `documentUrlPatterns`
    matching the popup-confirmed origin.
-4. **Fill-time origin re-check (review sonnet A-5):** the content script
+4. **Fill-time origin re-check:** the content script
    re-verifies `location.origin` against the credential's stored URI
    immediately before writing to the DOM, and fails closed on mismatch. Closes
    the narrow race where the popup matched tab A's URL, the user clicked fill,
@@ -635,7 +633,7 @@ Each phase is independently verifiable end-to-end.
   `bridge.reauth` on spawn.
 - `bridge.match` (current-tab URL -> matching `CipherMeta`) -> popup list.
   Popup header shows active vault name (review I8).
-- **Toolbar badge (review sonnet B-3):** `chrome.action.setBadgeText` shows the
+- **Toolbar badge:** `chrome.action.setBadgeText` shows the
   match count for the current tab on the toolbar icon — zero-DOM ambient
   discoverability with no attack surface. The "it just works" feedback the plan
   was missing.
@@ -644,7 +642,7 @@ Each phase is independently verifiable end-to-end.
   form.
 - Copy-to-clipboard via offscreen doc, auto-clear after ~20s (review M2).
   TOTP copy (`cipher.totp_code`).
-- **Error-state UX (review sonnet B-5) — Phase-1 GATE, not Phase-3 polish:**
+- **Error-state UX — Phase-1 GATE, not Phase-3 polish:**
   every NMH error code (`locked|no-daemon|denied|proto|not-paired|version-skew`)
   maps to a friendly, actionable, i18n'd message (en/es, reuse desktop strings).
   Bar = PIN's "Incorrect PIN. N attempts left." e.g. `no-daemon` -> "Open the
@@ -656,7 +654,7 @@ Each phase is independently verifiable end-to-end.
 **Phase 2 - Capture + edit + generator**
 - Capture: on form submit in content script, detect new/changed credentials,
   prompt **"Save to <em>Personal</em> vault?"** — vault name IN the affirmative
-  prompt (review sonnet B-4), not just an ambient header label. Protects against
+  prompt, not just an ambient header label. Protects against
   "I forgot I switched vaults this morning" writing a secret into the wrong
   (possibly shared/work) vault. -> `vault.add` / `vault.update`.
 - Generator in popup (reuse `generator.*`).
@@ -757,8 +755,7 @@ priority and primary test target.
    secrets.
 3. **NMH lifecycle:** stateless + durable pairing file (Option β). Ephemeral
    bridge token re-minted per spawn via the pairing secret.
-4. **Pairing ceremony:** desktop-initiated **approve-don't-type** (review
-   sonnet B-1; supersedes the typed 6-digit code). One-shot desktop-token-gated
+4. **Pairing ceremony:** desktop-initiated **approve-don't-type** (review; supersedes the typed 6-digit code). One-shot desktop-token-gated
    pending-approval flag; user clicks Approve. No code, no brute-force surface.
 5. **Token model:** scoped bridge token, not the per-vault session token
    (Model 2). `TokenKind::Bridge { pairing_id }` + server-enforced allowlist.
@@ -776,9 +773,9 @@ priority and primary test target.
 10. **Multi-vault:** extension follows the daemon's active pointer (Model ii).
     No extension-side vault selector. Popup header shows active vault name.
 
-### Resolved via peer review (claude/opus x2 + agy)
+### Resolved via peer review
 
-11. **Pairing abuse defense (review sonnet A-4/B-2, revised):** the prior
+11. **Pairing abuse defense (review A-4/B-2, revised):** the prior
     6-digit-code + 5-strike vault-nuke was a DoS landmine for a non-tech user.
     Replaced by approve-don't-type (no code = nothing to brute-force).
     `bridge.pair_complete` still rate-limited (flood defense), but **no vault
@@ -805,32 +802,32 @@ priority and primary test target.
 18. **Defense-in-depth + audit:** NMH enforces the same allowlist as the daemon;
     daemon log tags every request `Vault` vs `Bridge{pairing_id}`.
 19. **Overturned review findings (kept for honesty):** `favicon.get` is NOT an
-    SSRF (fixed Google endpoint, claude-2 verified in source); `generator.history_list`
+    SSRF (fixed Google endpoint, verified in source); `generator.history_list`
     leak is real but subordinate to the `vault.list_full` baseline it shares —
     both removed.
 
-### Resolved via sonnet review (security + usability lens)
+### Resolved via review (security + usability lens)
 
-20. **Per-`pairing_id` rate cap on credential reads (BLOCKER, sonnet A-1):**
+20. **Per-`pairing_id` rate cap on credential reads (BLOCKER):**
     `bridge.match` + `vault.get` capped ~10-20/min via `RateLimiter`, burst ->
     `bridge.revoke`. Without it a compromised browser loops `bridge.match` over a
     bank/github/gmail domain list then `vault.get`s every hit — a chunked
     `vault.list_full`. This is what makes the allowlist redesign actually bound
     a browser compromise.
-21. **Approve-don't-type pairing (sonnet B-1/B-2):** see Decision 4 + entry 11.
+21. **Approve-don't-type pairing:** see Decision 4 + entry 11.
     Strictly friendlier AND removes the brute-force surface + the nuke DoS.
-22. **Bridge-token TTL parity (sonnet A-2):** bridge tokens expire on
+22. **Bridge-token TTL parity:** bridge tokens expire on
     `SESSION_TOKEN_TTL_SECONDS` (4h) like the vault token; NMH re-runs
     `bridge.reauth` on expiry.
-23. **Fill-time origin re-check (sonnet A-5):** content script re-verifies
+23. **Fill-time origin re-check:** content script re-verifies
     `location.origin` vs the credential URI before writing; fails closed on
     tab-navigate-during-IPC race.
-24. **Usability gates (sonnet B-3/B-4/B-5):** toolbar badge for ambient
+24. **Usability gates:** toolbar badge for ambient
     discoverability (no DOM, no attack surface); vault name IN the capture
     prompt ("Save to *Personal* vault?"), not just a header label; error-state
     UX is a Phase-1 gate — every code -> friendly actionable i18n string, no
     hard tech terms (AGENTS.md UX principle).
-25. **macOS keychain for pairing secret (sonnet A-3, platform-conditional):**
+25. **macOS keychain for pairing secret:**
     on macOS, store the pairing secret in a `SecAccessControl` keychain entry
     scoped to the NMH code signature (Touch ID/passcode on read), raising the
     bar above a flat 0600 file. Linux/Windows keyring backends are same-UID-
@@ -852,7 +849,7 @@ priority and primary test target.
    to re-mangle the manifest when the flatpak browser overwrites it on update.
    Defer to Phase 3; decide if needed once the installer's auto-setup is
    tested against browser updates.
-4. **Extension discoverability (sonnet B-6).** Decision 8's "Add browser
+4. **Extension discoverability.** Decision 8's "Add browser
    extension" button assumes the extension is already installed. How does a
    user learn the extension exists + where to get it (store listing, first-run
    desktop banner)? Likely out of scope for this doc but worth a line so it

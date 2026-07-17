@@ -587,13 +587,13 @@ impl VaultHandle {
         enc_path: &std::path::Path,
         epoch: u64,
     ) -> Result<(), BaluardError> {
-        let nonce_counter = {
-            use rand::RngCore;
-            let mut bytes = [0u8; 8];
-            rand::thread_rng().fill_bytes(&mut bytes);
-            u64::from_le_bytes(bytes)
-        };
-        let nonce = crate::crypto::aead::build_nonce(nonce_counter, Uuid::nil());
+        let nonce = crate::crypto::aead::build_random_nonce();
+        // Header stores only a u64 `nonce_counter`; derive it from the first
+        // 8 bytes of the 96-bit random nonce so the field stays populated
+        // (metadata-only — decrypt reads the full 12-byte nonce from the
+        // envelope, not this field). A-1 fix: previously build_nonce(counter,
+        // Uuid::nil()) zeroed the shard tail, leaving only 64 random bits.
+        let nonce_counter = u64::from_le_bytes(nonce[..8].try_into().unwrap());
         let aad = crate::crypto::aead::build_aad(
             self.vault_id,
             crate::types::ObjectType::Meta,
@@ -2511,7 +2511,7 @@ impl VaultHandle {
                 VaultState::Unlocked(u) => u.root_key.clone(),
                 VaultState::Locked => return Err(VaultError::Locked.into()),
             };
-            let existing = self.try_decrypt_cipher_with_root_key(&old_root, &file)?;
+            let mut existing = self.try_decrypt_cipher_with_root_key(&old_root, &file)?;
             drop(old_root);
 
             let input = CipherInput {
@@ -2539,6 +2539,11 @@ impl VaultHandle {
                 new_epoch,
                 existing.update_seq,
             )?;
+
+            // Zeroize decrypted plaintext after re-encrypt (B-5: rotate_root_key
+            // previously skipped this, leaving every secret in freed heap
+            // after a routine non-revocation rotation).
+            Self::zeroize_decrypted_cipher(&mut existing);
 
             // Write to .tmp path (staged)
             let tmp_path = file_path.with_extension("enc.tmp");
@@ -2660,6 +2665,71 @@ impl VaultHandle {
         Self::rewrap_recovery_key(&self.path, &new_root_key)?;
 
         Ok(())
+    }
+
+    /// Zeroize sensitive plaintext fields of a decrypted cipher in place.
+    ///
+    /// Shared by `rotate_root_key` and `revoke_device_and_rekey` so the
+    /// per-kind zeroize logic cannot drift between them (B-5: rotate_root_key
+    /// previously skipped this entirely, leaving every secret in the vault
+    /// lingering in freed heap after a routine non-revocation rotation).
+    ///
+    /// Mirrors the field set in [`crate::sync::conflict::ConflictInfo::drop`].
+    /// Notes, custom-field hidden values, and the kind-specific secret fields
+    /// (Login password/TOTP/passkey keys, Card number/code, SshKey private
+    /// key) are zeroized. Public/non-secret fields (names, URIs, etc.) are
+    /// left for the caller to drop normally.
+    fn zeroize_decrypted_cipher(existing: &mut crate::types::Cipher) {
+        use zeroize::Zeroize;
+        if let Some(n) = existing.notes.as_mut() {
+            n.zeroize();
+        }
+        for cf in existing.custom_fields.iter_mut() {
+            if matches!(cf.field_type, crate::types::CustomFieldType::Hidden) {
+                cf.value.zeroize();
+            }
+        }
+        match &mut existing.kind {
+            crate::types::CipherKind::Login(d) => {
+                if let Some(p) = d.password.as_mut() {
+                    p.zeroize();
+                }
+                if let Some(u) = d.username.as_mut() {
+                    u.zeroize();
+                }
+                if let Some(t) = d.totp_uri.as_mut() {
+                    t.zeroize();
+                }
+                if let Some(ref mut fido2_list) = d.fido2_credentials {
+                    for pk in fido2_list.iter_mut() {
+                        if let Some(k) = pk.private_key.as_mut() {
+                            k.zeroize();
+                        }
+                        if let Some(k) = pk.prf_key.as_mut() {
+                            k.zeroize();
+                        }
+                    }
+                }
+            }
+            crate::types::CipherKind::Card(d) => {
+                if let Some(n) = d.number.as_mut() {
+                    n.zeroize();
+                }
+                if let Some(c) = d.code.as_mut() {
+                    c.zeroize();
+                }
+            }
+            crate::types::CipherKind::SshKey(d) => {
+                if let Some(k) = d.private_key.as_mut() {
+                    k.zeroize();
+                }
+            }
+            crate::types::CipherKind::Identity(_)
+            | crate::types::CipherKind::BankAccount(_)
+            | crate::types::CipherKind::DriversLicense(_)
+            | crate::types::CipherKind::Passport(_)
+            | crate::types::CipherKind::SecureNote => {}
+        }
     }
 
     /// Re-wrap the Root Key in meta/recovery.json after rotation.
@@ -2861,51 +2931,9 @@ impl VaultHandle {
                 existing.update_seq,
             )?;
 
-            // Zeroize decrypted plaintext after use
-            if let Some(n) = existing.notes.as_mut() {
-                n.zeroize()
-            }
-            match &mut existing.kind {
-                crate::types::CipherKind::Login(d) => {
-                    if let Some(p) = d.password.as_mut() {
-                        p.zeroize()
-                    }
-                    if let Some(u) = d.username.as_mut() {
-                        u.zeroize()
-                    }
-                    if let Some(t) = d.totp_uri.as_mut() {
-                        t.zeroize()
-                    }
-                    if let Some(ref mut fido2_list) = d.fido2_credentials {
-                        for pk in fido2_list.iter_mut() {
-                            if let Some(k) = pk.private_key.as_mut() {
-                                k.zeroize()
-                            }
-                            if let Some(k) = pk.prf_key.as_mut() {
-                                k.zeroize()
-                            }
-                        }
-                    }
-                }
-                crate::types::CipherKind::Card(d) => {
-                    if let Some(n) = d.number.as_mut() {
-                        n.zeroize()
-                    }
-                    if let Some(c) = d.code.as_mut() {
-                        c.zeroize()
-                    }
-                }
-                crate::types::CipherKind::SshKey(d) => {
-                    if let Some(k) = d.private_key.as_mut() {
-                        k.zeroize()
-                    }
-                }
-                crate::types::CipherKind::Identity(_)
-                | crate::types::CipherKind::BankAccount(_)
-                | crate::types::CipherKind::DriversLicense(_)
-                | crate::types::CipherKind::Passport(_)
-                | crate::types::CipherKind::SecureNote => {}
-            };
+            // Zeroize decrypted plaintext after use (B-5: shared helper so
+            // rotate_root_key and revoke_device_and_rekey cannot drift).
+            Self::zeroize_decrypted_cipher(&mut existing);
 
             let tmp_path = file_path.with_extension("enc.tmp");
             std::fs::write(&tmp_path, &new_file.envelope_bytes)?;

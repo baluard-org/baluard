@@ -281,12 +281,15 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
         &mut conflicts,
     );
 
-    // Custom fields: union by name, prefer local on name collision
-    for cf in &remote.custom_fields {
-        if !merged.custom_fields.iter().any(|f| f.name == cf.name) {
-            merged.custom_fields.push(cf.clone());
-        }
-    }
+    // Custom fields: 3-way merge per field keyed by name. Previously this
+    // was union-by-name prefer-local, which ignored `base`: a remote-edited
+    // field value lost to the stale local value, and a remote-DELETED field
+    // silently reappeared from local (B-4 fix). The logic:
+    //   - present in all three: 3-way merge value + field_type
+    //   - deleted on one side, unchanged on the other: honor the delete
+    //   - deleted on one side, EDITED on the other: conflict (preserve local)
+    //   - added on one side only: take it
+    merge_custom_fields(base, local, remote, &mut merged.custom_fields, &mut conflicts);
 
     // Check semantic groups
     for group in SEMANTIC_GROUPS {
@@ -366,6 +369,153 @@ fn merge_3way_field_opt(
             local_value: local.as_deref().unwrap_or("").to_string(),
             remote_value: remote.as_deref().unwrap_or("").to_string(),
         });
+    }
+}
+
+/// 3-way merge of custom fields, keyed by field name.
+///
+/// Produces the merged list (in `out`) and pushes conflicts for any field
+/// where local and remote diverged from base incompatibly. The cases:
+///
+/// - present in all three: merge `value` and `field_type` via 3-way
+///   (same-on-both-sides, only-one-side-changed, or both-changed = conflict).
+/// - present in base + local only, deleted from remote: if local is
+///   unchanged from base, honor the remote delete (drop it); if local
+///   edited it, flag a conflict but preserve local (do not silently lose
+///   either intent).
+/// - present in base + remote only, deleted from local: mirror.
+/// - added on one side only (not in base): take it as-is.
+///
+/// The previous code was union-by-name prefer-local, which silently kept a
+/// stale local value over a remote edit and resurrected remote-deleted
+/// fields from local (B-4 fix).
+fn merge_custom_fields(
+    base: &CipherInput,
+    local: &CipherInput,
+    remote: &CipherInput,
+    out: &mut Vec<crate::types::CustomField>,
+    conflicts: &mut Vec<FieldConflict>,
+) {
+    use crate::types::CustomField;
+
+    fn find<'a>(
+        list: &'a [CustomField],
+        name: &str,
+    ) -> Option<&'a CustomField> {
+        list.iter().find(|f| f.name == name)
+    }
+
+    // Walk the union of names, deterministic order: local names first (in
+    // their existing order), then any remote-only names.
+    //
+    // `out` starts as `merged.custom_fields` which was cloned from local in
+    // the caller; we rebuild the full list here (taking deletes into
+    // account), so clear it first to avoid duplicates.
+    out.clear();
+    let mut seen = std::collections::HashSet::new();
+    let local_names = local.custom_fields.iter().map(|f| f.name.clone());
+    let remote_only_names = remote
+        .custom_fields
+        .iter()
+        .map(|f| f.name.clone())
+        .filter(|n| find(&local.custom_fields, n).is_none());
+    for name in local_names.chain(remote_only_names) {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let b = find(&base.custom_fields, &name);
+        let l = find(&local.custom_fields, &name);
+        let r = find(&remote.custom_fields, &name);
+
+        let merged_field = match (b, l, r) {
+            // Added on one side only (not in base): take it.
+            (None, Some(l), None) => Some(l.clone()),
+            (None, None, Some(r)) => Some(r.clone()),
+            // In all three: 3-way merge value + field_type.
+            (Some(b), Some(l), Some(r)) => {
+                // value 3-way (reuses the string merge primitive, scoped to
+                // the custom field name so the conflict label is useful).
+                let mut value = l.value.clone();
+                let mut sub_conflicts = Vec::new();
+                merge_3way_field(
+                    &b.value,
+                    &mut value,
+                    &r.value,
+                    &format!("custom_field[{name}]"),
+                    &mut sub_conflicts,
+                );
+                conflicts.extend(sub_conflicts);
+                // field_type: 3-way, but field_type has no string payload, so
+                // if both sides changed it differently it is a conflict too.
+                let field_type = if l.field_type == r.field_type {
+                    l.field_type.clone()
+                } else if l.field_type == b.field_type {
+                    r.field_type.clone()
+                } else if r.field_type == b.field_type {
+                    l.field_type.clone()
+                } else {
+                    conflicts.push(FieldConflict {
+                        field_name: format!("custom_field[{name}].type"),
+                        local_value: format!("{:?}", l.field_type),
+                        remote_value: format!("{:?}", r.field_type),
+                    });
+                    l.field_type.clone()
+                };
+                Some(CustomField { name, value, field_type })
+            }
+            // Deleted from remote, present in base + local.
+            (Some(b), Some(l), None) => {
+                if l.value == b.value {
+                    // Local unchanged: honor the remote delete.
+                    None
+                } else {
+                    // Local edited while remote deleted: conflict, keep local.
+                    conflicts.push(FieldConflict {
+                        field_name: format!("custom_field[{name}]"),
+                        local_value: l.value.clone(),
+                        remote_value: "<deleted>".to_string(),
+                    });
+                    Some(l.clone())
+                }
+            }
+            // Deleted from local, present in base + remote.
+            (Some(b), None, Some(r)) => {
+                if r.value == b.value {
+                    // Remote unchanged: honor the local delete.
+                    None
+                } else {
+                    // Remote edited while local deleted: conflict, keep
+                    // remote (we are rebuilding `out`; push remote so the
+                    // edit is not lost).
+                    conflicts.push(FieldConflict {
+                        field_name: format!("custom_field[{name}]"),
+                        local_value: "<deleted>".to_string(),
+                        remote_value: r.value.clone(),
+                    });
+                    Some(r.clone())
+                }
+            }
+            // Present in base only: both sides deleted. Stay deleted.
+            (Some(_), None, None) => None,
+            // Added on both sides independently (not in base).
+            (None, Some(l), Some(r)) => {
+                if l.value == r.value && l.field_type == r.field_type {
+                    Some(l.clone())
+                } else {
+                    conflicts.push(FieldConflict {
+                        field_name: format!("custom_field[{name}]"),
+                        local_value: l.value.clone(),
+                        remote_value: r.value.clone(),
+                    });
+                    Some(l.clone())
+                }
+            }
+            // Cannot happen (name came from local or remote union).
+            (None, None, None) => None,
+        };
+        if let Some(f) = merged_field {
+            out.push(f);
+        }
     }
 }
 
@@ -646,6 +796,94 @@ mod tests {
                     .any(|c| c.field_name == "number"));
             }
             MergeResult::Merged(_) => panic!("expected conflict on overlapping number"),
+        }
+    }
+
+    // B-4 regression: remote edit to a custom field value used to lose to
+    // the stale local value (union-by-name prefer-local). Must now take the
+    // remote change via 3-way merge.
+    #[test]
+    fn custom_field_remote_edit_merges() {
+        let mut base = base_input("Item");
+        base.custom_fields.push(crate::types::CustomField {
+            name: "pin".into(),
+            value: "1111".into(),
+            field_type: crate::types::CustomFieldType::Hidden,
+        });
+
+        let local = base.clone(); // local did not touch the field
+
+        let mut remote = base.clone();
+        if let Some(f) = remote.custom_fields.iter_mut().find(|f| f.name == "pin") {
+            f.value = "2222".into();
+        }
+
+        let result = merge_ciphers(&base, &local, &remote);
+        match result {
+            MergeResult::Merged(m) => {
+                let f = m
+                    .custom_fields
+                    .iter()
+                    .find(|f| f.name == "pin")
+                    .expect("pin field present");
+                assert_eq!(f.value, "2222", "remote edit must win when local unchanged");
+            }
+            MergeResult::Conflict(_) => panic!("expected clean merge"),
+        }
+    }
+
+    // B-4 regression: a remote-DELETED custom field used to silently
+    // reappear from local. With local unchanged, the delete must be honored.
+    #[test]
+    fn custom_field_remote_delete_honored() {
+        let mut base = base_input("Item");
+        base.custom_fields.push(crate::types::CustomField {
+            name: "old".into(),
+            value: "x".into(),
+            field_type: crate::types::CustomFieldType::Text,
+        });
+
+        let local = base.clone(); // local did not touch it
+        let remote = base_input("Item"); // remote dropped the field
+
+        let result = merge_ciphers(&base, &local, &remote);
+        match result {
+            MergeResult::Merged(m) => {
+                assert!(
+                    m.custom_fields.iter().find(|f| f.name == "old").is_none(),
+                    "remote-deleted field must not reappear"
+                );
+            }
+            MergeResult::Conflict(_) => panic!("expected clean merge honoring delete"),
+        }
+    }
+
+    // B-4: same custom field edited on both sides must conflict.
+    #[test]
+    fn custom_field_both_edit_conflicts() {
+        let mut base = base_input("Item");
+        base.custom_fields.push(crate::types::CustomField {
+            name: "pin".into(),
+            value: "1111".into(),
+            field_type: crate::types::CustomFieldType::Hidden,
+        });
+
+        let mut local = base.clone();
+        if let Some(f) = local.custom_fields.iter_mut().find(|f| f.name == "pin") {
+            f.value = "local".into();
+        }
+
+        let mut remote = base.clone();
+        if let Some(f) = remote.custom_fields.iter_mut().find(|f| f.name == "pin") {
+            f.value = "remote".into();
+        }
+
+        let result = merge_ciphers(&base, &local, &remote);
+        match result {
+            MergeResult::Conflict(info) => {
+                assert!(info.conflicting_fields.iter().any(|c| c.field_name == "custom_field[pin]"));
+            }
+            MergeResult::Merged(_) => panic!("expected conflict on both-edit custom field"),
         }
     }
 }

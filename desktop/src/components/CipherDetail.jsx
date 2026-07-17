@@ -6,7 +6,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { copyToClipboard } from "../lib/clipboard.js";
 import { daemon } from "../lib/daemon.js";
 import { toastError } from "../context/toastSignal.js";
-import { uriStr, formatCardNumber } from "../lib/utils.js";
+import { uriStr, formatCardNumber, sanitizeError } from "../lib/utils.js";
 import { SECTION_LABEL } from "../lib/helpers.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
 import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint } from "./Icon.jsx";
@@ -480,9 +480,9 @@ export default function CipherDetail(props) {
                 };
                 async function handleDownload() {
                   try {
-                    const result = await daemon("vault.attach_download", JSON.stringify(
+                    const result = JSON.parse(await daemon("vault.attach_download", JSON.stringify(
                       buildAttachDownloadPayload(cipher().id, attach.id)
-                    ));
+                    )));
                     const b64 = result.data_base64;
                     const binary = atob(b64);
                     const bytes = new Uint8Array(binary.length);
@@ -492,7 +492,7 @@ export default function CipherDetail(props) {
                     const a = document.createElement("a");
                     a.href = url; a.download = attach.filename; a.click();
                     URL.revokeObjectURL(url);
-                  } catch(e) { alert(t("entry.downloadFailed") + ": " + e.message); }
+                  } catch(e) { toastError(t("entry.downloadFailed") + ": " + sanitizeError(e, t)); }
                 }
                 return (
                   <div class="flex items-center justify-between p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">

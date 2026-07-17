@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-10
 **Status:** Draft (original requirements record)
-**Author:** Esteban (product), TARS (architecture)
+**Author:** Esteban (product)
 
 > **Implementation note (2026-06-15):** Phases 1-3 + 5 + provider selection UI are **Done**. Phase 4 (clone) and Phase 6 (switching) remain. This PRD is the original requirements record; for current implementation reality see `docs/plan-git-providers-multi-vault.md` (Phase 5) and `docs/git-provider-apps-and-tokens.md` (provider app registration + token strategy).
 >

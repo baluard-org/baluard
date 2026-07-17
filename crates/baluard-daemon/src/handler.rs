@@ -1279,7 +1279,7 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     // vault.update field gate, then snapshot the ACTIVE vault (bridge tokens
     // are slug-agnostic). Otherwise fall through to the existing per-vault path.
     //
-    // Fast path (review agy I4): bridge tokens are always 64-char hex. If the
+    // Fast path: bridge tokens are always 64-char hex. If the
     // request's token is empty or a different shape, skip the registry lock
     // entirely so the common desktop/CLI path never contends on the bridge
     // mutex. verify_token does the same length gate, but avoiding the
@@ -1331,7 +1331,7 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
 // `route_bridge_request`: the allowlisted actions a bridge token permits,
 //   run AFTER bridge-token verification. Enforces BRIDGE_ALLOWED_ACTIONS +
 //   the vault.update field gate (no fido2_credentials / uris) + the
-//   per-pairing read-rate cap (sonnet A-1).
+//   per-pairing read-rate cap.
 
 /// Handle the pairing/ceremony host routes. Returns None if `req.action` is
 /// not a bridge.* route (caller continues to the per-vault path).
@@ -1552,7 +1552,7 @@ async fn handle_bridge_host_route(
 ///
 /// Enforces: BRIDGE_ALLOWED_ACTIONS (Decision 7); vault.update field gate
 /// (no fido2_credentials, no uris — Decision 13); per-pairing read-rate cap
-/// on bridge.match / vault.get (sonnet A-1); active vault MUST be unlocked
+/// on bridge.match / vault.get; active vault MUST be unlocked
 /// (Decision 5 lock binding). Then snapshots the active vault and delegates
 /// the actual op (bridge.match / bridge.config are NEW; the rest reuse the
 /// existing vault.* semantics via route_request).
@@ -1585,8 +1585,8 @@ async fn route_bridge_request(
     //    credentials; `bridge.match` returns metadata only (no passwords),
     //    so it is NOT capped — the toolbar badge legitimately calls it on
     //    every tab activate/update, and capping it would auto-revoke the
-    //    pairing under normal browsing (review agy I4). vault.get remains
-    //    capped to bound a browser-compromise exfil (sonnet A-1).
+    //    pairing under normal browsing. vault.get remains
+    //    capped to bound a browser-compromise exfil.
     let is_secret_read = req.action.as_str() == "vault.get";
     if is_secret_read {
         let over_cap = !host.bridge().write().await.charge_read(&pairing_id);
@@ -1656,7 +1656,7 @@ async fn route_bridge_request(
 /// (Decision 13: bridge tokens may edit pw/user/notes/totp but NOT these.)
 /// CipherKind serializes as {"type":"login","data":{...}} (#[serde(tag="type",
 /// content="data")]), so the forbidden fields live under `kind.data`, NOT
-/// `kind` directly. Path verified via serde round-trip (review agy C2).
+/// `kind` directly. Path verified via serde round-trip.
 fn bridge_update_touches_forbidden(payload: &serde_json::Value) -> bool {
     // Resolve the inner `data` block across the layouts the update handler
     // accepts: {kind:{type,data}}, {kind:{...fields}}, or {data:{...}}.
@@ -1740,7 +1740,7 @@ async fn handle_bridge_match(
                 .filter(|c| {
                     // CipherKind serializes as {"type":"login","data":{...}}
                     // (#[serde(tag="type", content="data")]). URIs live at
-                    // kind.data.uris for the Login variant (review agy C2/4th-bug).
+                    // kind.data.uris for the Login variant.
                     let uris = c["kind"]["data"]["uris"]
                         .as_array()
                         .cloned()
@@ -1806,7 +1806,7 @@ fn hostname_of(url: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Safe hostname match with dot-boundary enforcement (review agy C3).
+/// Safe hostname match with dot-boundary enforcement.
 /// Exact match, or one is a proper subdomain of the other (separated by a
 /// literal dot). Rejects the `evilgithub.com` matches `github.com` phishing
 /// hole that a naive `ends_with` would allow. Also rejects bare-suffix
@@ -4628,7 +4628,7 @@ mod tests {
         assert_eq!(repo_web_url_from_remote("not-a-url"), None);
     }
 
-    // ── Browser bridge regression tests (review agy C2/C3) ──
+    // ── Browser bridge regression tests ──
 
     use super::{bridge_update_touches_forbidden, hostname_matches};
 

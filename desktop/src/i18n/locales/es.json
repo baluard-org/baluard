@@ -603,8 +603,25 @@
     "copied": "Copiado"
   },
   "common": {
+    "back": "Atrás",
+    "dismiss": "Cerrar",
     "cancel": "Cancelar",
     "loading": "Cargando...",
     "processing": "Procesando..."
+  },
+  "clone": {
+    "title": "Descargar caja fuerte",
+    "pickProvider": "Elige dónde se guarda tu caja fuerte.",
+    "pickRepo": "Selecciona la caja fuerte para descargar.",
+    "cloning": "Descargando caja fuerte...",
+    "cloned": "Caja fuerte descargada",
+    "enterPassword": "Introduce la contraseña maestra para abrirla.",
+    "objects": "objetos",
+    "noVaultRepos": "No se encontraron cajas fuertes de Baluard en esta cuenta.",
+    "twoFaWarning": "Por tu seguridad, activa la verificación en dos pasos en tu cuenta del proveedor. Baluard guarda un token de acceso en este dispositivo.",
+    "webOAuthOpened": "Se abrió tu navegador para iniciar sesión.",
+    "webOAuthRelink": "Reabrir página de inicio de sesión",
+    "timeout": "La descarga tardó demasiado.",
+    "failed": "Error en la descarga."
   }
 }

@@ -2,7 +2,7 @@
 //!
 //! Host-level (vault-agnostic, per Decision 10): one registry per daemon,
 //! keyed by `PairingId`. Holds live bridge tokens, enforces the per-pairing
-//! read-rate cap (sonnet A-1), and owns the approve-don't-type pairing
+//! read-rate cap, and owns the approve-don't-type pairing
 //! ceremony state (Decision 4).
 //!
 //! This module is the bridge auth brain; `handler.rs` is the thin router.
@@ -92,7 +92,7 @@ impl BridgeRegistry {
     /// (and any prior waiter — a re-started ceremony cancels the old one by
     /// DROPPING the sender, which triggers `RecvError` on the held
     /// `pair_complete` so it lands in the timeout/superseded error path
-    /// rather than being treated as a successful approval — review agy C2).
+    /// rather than being treated as a successful approval).
     pub fn start_pair(&mut self, browser_hint: impl Into<String>) -> String {
         // Cancel any in-flight extension waiter by dropping the sender.
         // (Do NOT send an empty payload — the receiver would treat it as success.)
@@ -261,7 +261,7 @@ impl BridgeRegistry {
     /// Verify a presented token (from the request's `session_token` field)
     /// against the live registry. Returns the `PairingId` on match.
     ///
-    /// Constant-time posture (review agy C1): bridge tokens are 256-bit
+    /// Constant-time posture: bridge tokens are 256-bit
     /// random, so timing enumeration is infeasible regardless, but we harden
     /// the cheap wins: (a) length-check BEFORE hex::decode so decode failures
     /// don't act as a format oracle, (b) fixed-size byte compare via ct_eq,
@@ -304,12 +304,12 @@ impl BridgeRegistry {
 
     /// Charge a read (bridge.match / vault.get) against this pairing's
     /// rate window. Returns `false` if the pairing must be auto-revoked for
-    /// abuse (sonnet A-1). Caller is responsible for the actual revoke.
+    /// abuse. Caller is responsible for the actual revoke.
     ///
     /// Atomicity: takes `&mut self`; the caller in `route_bridge_request`
     /// holds `host.bridge().write().await` across the check-and-increment, so
     /// two concurrent `vault.get` calls for the same pairing serialize through
-    /// this exclusive lock. No separate atomic needed (review agy I5).
+    /// this exclusive lock. No separate atomic needed.
     pub fn charge_read(&mut self, pairing_id: &PairingId) -> bool {
         let Some(entry) = self.tokens.get_mut(pairing_id) else {
             return false; // unknown pairing -> reject downstream
@@ -470,7 +470,7 @@ mod tests {
         assert!(pf.get(&id).is_none());
     }
 
-    /// C2 regression (review agy): a re-`start_pair` must CANCEL an in-flight
+    /// C2 regression: a re-`start_pair` must CANCEL an in-flight
     /// waiter by dropping the sender (RecvError), NOT by sending an empty
     /// payload (which the receiver would mistake for approval). The old
     /// extension's held pair_complete must fail, not hijack the new slot.

@@ -2,7 +2,7 @@
 
 **Status**: Design exploration — NOT for immediate implementation
 **Last updated**: 2026-05-30
-**Reviewers**: Peer review (analysis), TARS (synthesis)
+**Reviewers**: Peer review (analysis + synthesis)
 
 ---
 
