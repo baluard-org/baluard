@@ -18,7 +18,7 @@ import { createSignal, Show, For, onMount } from "solid-js";
 //
 // Per Decision 2: popup holds NO secrets. The bridge token lives in the NMH.
 
-// i18n. The extension bundles its own strings (review sonnet B-5: every error
+// i18n. The extension bundles its own strings (review: every error
 // code -> friendly actionable message, no hard tech terms). Mirrors the
 // desktop's en/es shape so the two can stay in sync.
 const STRINGS = {

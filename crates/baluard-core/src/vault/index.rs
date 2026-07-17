@@ -44,14 +44,14 @@ pub fn encrypt_index(
         1,
     );
 
-    let nonce_counter = {
-        use rand::RngCore;
-        let mut bytes = [0u8; 8];
-        rand::thread_rng().fill_bytes(&mut bytes);
-        u64::from_le_bytes(bytes)
-    };
-
-    let nonce = aead::build_nonce(nonce_counter, Uuid::nil());
+    let nonce = aead::build_random_nonce();
+    // Header stores only a u64 `nonce_counter`; derive it from the first
+    // 8 bytes of the 96-bit random nonce so the field stays populated
+    // (metadata-only — decrypt reads the full 12-byte nonce from the
+    // envelope, not this field). A-1 fix: previously build_nonce(counter,
+    // Uuid::nil()) zeroed the shard tail, leaving only 64 random bits under
+    // a fixed key on the highest-write-frequency object.
+    let nonce_counter = u64::from_le_bytes(nonce[..8].try_into().unwrap());
 
     let header = EnvelopeHeader {
         version: BALUARD_VERSION,

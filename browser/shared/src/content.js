@@ -3,7 +3,7 @@
 // Injected TOP-FRAME ONLY via chrome.scripting.executeScript({frameIds:[0]})
 // from the popup when the user clicks Fill. NOT continuously registered.
 // Receives a baluard-fill message, re-verifies the page origin matches the
-// credential's expected origin (review sonnet A-5), then fills the best-
+// credential's expected origin, then fills the best-
 // detected login form.
 
 (() => {
@@ -15,7 +15,7 @@
     if (!msg || msg.type !== "baluard-fill") return;
     chrome.runtime.onMessage.removeListener(listener);
 
-    // Fill-time origin re-check (review sonnet A-5). The popup matched the
+    // Fill-time origin re-check. The popup matched the
     // tab's URL, but the tab may have navigated during the IPC round trip.
     const currentHost = location.hostname.toLowerCase();
     if (msg.expectedOrigin && currentHost !== msg.expectedOrigin) {
@@ -49,7 +49,7 @@ function fillLoginForm(cred) {
   setNativeValue(pwField, password);
 
   // Find the username field: the last visible text-like input BEFORE the
-  // password field in DOM order, within the same form (review agy I5).
+  // password field in DOM order, within the same form.
   // Considering inputs AFTER the password (search boxes, captcha, OTP)
   // would misroute the username into the wrong field.
   const form = pwField.form;

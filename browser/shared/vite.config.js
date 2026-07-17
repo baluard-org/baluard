@@ -31,7 +31,7 @@ function mergeManifest() {
   }
   // Firefox MV3: `background.service_worker` is only supported on FF 121+,
   // and our strict_min is 115. Use the event-page `scripts` form for broad
-  // compat (review agy Nit). background.js has no ES imports, so a plain
+  // compat. background.js has no ES imports, so a plain
   // script tag loads cleanly. Chrome keeps service_worker.
   if (target === "firefox") {
     merged.background = { scripts: ["background.js"] };

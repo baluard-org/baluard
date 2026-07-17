@@ -10,7 +10,7 @@
 //      pairing file. The extension is now paired.
 //   4. The list below shows all paired browsers; revoke per row.
 //
-// No codes to type (review sonnet B-1). The trust anchor is the desktop
+// No codes to type. The trust anchor is the desktop
 // session token (all routes here are desktop-token-gated).
 
 import { createSignal, Show, For, onMount, onCleanup } from "solid-js";
@@ -68,7 +68,7 @@ export default function BridgeTab() {
       // pair_start creates the pending slot the extension will attach to.
       const data = JSON.parse(await daemon("bridge.pair_start", JSON.stringify({ browser: "unknown" })));
       // pair_start does not return started_at; stamp it client-side so the
-      // TTL poll below can compute elapsed time (review agy C1).
+      // TTL poll below can compute elapsed time.
       data.started_at = Date.now() / 1000;
       setPending(data);
       // Begin polling: the pending slot may be superseded or the extension

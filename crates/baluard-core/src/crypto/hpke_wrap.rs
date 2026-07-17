@@ -1,13 +1,31 @@
-//! HPKE-based key wrapping (X25519 + HPKE, RFC 9180).
+//! HPKE-based key wrapping (DHKEM(X25519, HKDF-SHA256), AES-256-GCM).
 //!
 //! D3: Root Key wrapped per-device via HPKE with X25519.
 //! D17: Org Key wrapped per-member via HPKE.
 //! D18: Emergency access keys wrapped via HPKE.
+//!
+//! Implemented with the `hpke` crate (RFC 9180) single-shot API in Base mode
+//! (no PSK, no sender auth). This retires the prior homegrown ECIES:
+//!   - proper DHKEM key encap (kem_context binds BOTH ephemeral + recipient pubkeys)
+//!   - HKDF-derived AEAD key + nonce (not raw DH bytes)
+//!   - contributory check is part of DHKEM (rejects low-order points)
+//!   - AAD flows through the HPKE context (callers still pass the wire AAD)
+//!
+//! Wire shape is unchanged: callers persist `{ ephemeral_public, encrypted_key, tag }`.
+//! HPKE's single-shot seal returns ciphertext-with-tag-appended; we split it at
+//! the boundary so existing on-disk `WrappedKeyEntry` files keep their 3-field
+//! shape. The split is cosmetic: tag is always the last 16 bytes of the HPKE
+//! ciphertext per RFC 9180 §6.1 (AES-256-GCM tag length = 16).
 
+use hpke::kem::X25519HkdfSha256;
+use hpke::{aead::AesGcm256, kdf::HkdfSha256, Deserializable, OpModeR, OpModeS, Serializable};
 use rand::rngs::OsRng;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::error::CryptoError;
+
+/// AES-256-GCM tag length in bytes (RFC 9180 §6.1).
+const GCM_TAG_LEN: usize = 16;
 
 /// Result of HPKE key wrapping: (ephemeral_public_key, encrypted_key, auth_tag).
 pub type WrapResult = Result<(Vec<u8>, Vec<u8>, [u8; 16]), CryptoError>;
@@ -21,56 +39,44 @@ pub fn generate_x25519_keypair() -> (StaticSecret, PublicKey) {
 
 /// Wrap (encrypt) a key using HPKE with the recipient's X25519 public key.
 ///
-/// Simplified HPKE seal: X25519 ECIES with authenticated encryption.
-/// For production, use a full HPKE library (RFC 9180).
-///
-/// Returns: (ephemeral_public_key, encrypted_key, auth_tag)
+/// Uses DHKEM(X25519, HKDF-SHA256) + AES-256-GCM in Base mode (RFC 9180).
+/// Returns: (ephemeral_public_key, encrypted_key, auth_tag).
 pub fn wrap_key(plaintext_key: &[u8], recipient_pub: &PublicKey) -> WrapResult {
-    // Generate ephemeral X25519 keypair
-    let eph_secret = StaticSecret::random_from_rng(OsRng);
-    let eph_public = PublicKey::from(&eph_secret);
+    let recip_pub_hpke = <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey::from_bytes(recipient_pub.as_bytes())
+        .map_err(|e| CryptoError::HpkeFailed(format!("recipient pubkey import: {e}")))?;
 
-    // DH shared secret
-    let shared = eph_secret.diffie_hellman(recipient_pub);
+    let mut rng = OsRng;
+    let (encapped, ciphertext_with_tag) = hpke::single_shot_seal::<
+        AesGcm256,
+        HkdfSha256,
+        X25519HkdfSha256,
+        _,
+    >(
+        &OpModeS::Base,
+        &recip_pub_hpke,
+        b"baluard-hpke-wrap-v2",
+        plaintext_key,
+        b"baluard-keywrap",
+        &mut rng,
+    )
+    .map_err(|e| CryptoError::HpkeFailed(format!("seal: {e}")))?;
 
-    // Derive wrapping key from shared secret using HKDF
-    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(eph_public.as_bytes()), shared.as_bytes());
+    // Split ciphertext || tag (hpke returns them appended) into the on-disk
+    // 3-field shape. Tag is always the final 16 bytes.
+    if ciphertext_with_tag.len() < GCM_TAG_LEN {
+        return Err(CryptoError::HpkeFailed(format!(
+            "ciphertext too short: {} bytes",
+            ciphertext_with_tag.len()
+        )));
+    }
+    let ct_len = ciphertext_with_tag.len() - GCM_TAG_LEN;
+    let mut tag = [0u8; GCM_TAG_LEN];
+    tag.copy_from_slice(&ciphertext_with_tag[ct_len..]);
 
-    let mut wrap_key = [0u8; 32];
-    hkdf.expand(b"baluard-hpke-wrap-v1", &mut wrap_key)
-        .map_err(|e| CryptoError::HpkeFailed(format!("HKDF expand: {e}")))?;
+    // EncappedKey serializes to exactly the 32-byte ephemeral X25519 public key.
+    let eph_pub_bytes = encapped.to_bytes().to_vec();
 
-    // AES-256-GCM encrypt the plaintext key
-    use aes_gcm::aead::{Aead, KeyInit};
-    use aes_gcm::{Aes256Gcm, Nonce};
-
-    let cipher =
-        Aes256Gcm::new_from_slice(&wrap_key).map_err(|e| CryptoError::HpkeFailed(e.to_string()))?;
-
-    // Use first 12 bytes of shared secret as nonce (safe: unique per ephemeral key)
-    let mut nonce_bytes = [0u8; 12];
-    nonce_bytes.copy_from_slice(&shared.as_bytes()[..12]);
-
-    let ciphertext = cipher
-        .encrypt(
-            Nonce::from_slice(&nonce_bytes),
-            aes_gcm::aead::Payload {
-                msg: plaintext_key,
-                aad: b"baluard-keywrap",
-            },
-        )
-        .map_err(|e| CryptoError::EncryptFailed(e.to_string()))?;
-
-    // Split ciphertext and tag
-    let ct_len = ciphertext.len() - 16;
-    let mut tag = [0u8; 16];
-    tag.copy_from_slice(&ciphertext[ct_len..]);
-
-    Ok((
-        eph_public.as_bytes().to_vec(),
-        ciphertext[..ct_len].to_vec(),
-        tag,
-    ))
+    Ok((eph_pub_bytes, ciphertext_with_tag[..ct_len].to_vec(), tag))
 }
 
 /// Unwrap (decrypt) a key using HPKE with the recipient's X25519 private key.
@@ -87,44 +93,30 @@ pub fn unwrap_key(
         });
     }
 
-    let mut eph_pub_bytes = [0u8; 32];
-    eph_pub_bytes.copy_from_slice(ephemeral_pub_bytes);
-    let eph_pub = PublicKey::from(eph_pub_bytes);
+    // Reconstruct the HPKE EncappedKey from the serialized ephemeral pubkey.
+    let encapped = <X25519HkdfSha256 as hpke::kem::Kem>::EncappedKey::from_bytes(ephemeral_pub_bytes)
+        .map_err(|e| CryptoError::HpkeFailed(format!("encapped import: {e}")))?;
 
-    // DH shared secret
-    let shared = recipient_priv.diffie_hellman(&eph_pub);
+    // Import the recipient's x25519_dalek private key into hpke's wrapper type.
+    let recip_priv_hpke = <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey::from_bytes(&recipient_priv.to_bytes())
+        .map_err(|e| CryptoError::HpkeFailed(format!("recipient privkey import: {e}")))?;
 
-    // Derive wrapping key
-    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(eph_pub_bytes.as_slice()), shared.as_bytes());
-
-    let mut wrap_key = [0u8; 32];
-    hkdf.expand(b"baluard-hpke-wrap-v1", &mut wrap_key)
-        .map_err(|e| CryptoError::HpkeFailed(format!("HKDF expand: {e}")))?;
-
-    // Reconstruct ciphertext + tag
-    let mut ct_with_tag = Vec::with_capacity(ciphertext.len() + 16);
+    // Re-assemble ciphertext || tag (hpke expects them appended).
+    let mut ct_with_tag = Vec::with_capacity(ciphertext.len() + GCM_TAG_LEN);
     ct_with_tag.extend_from_slice(ciphertext);
     ct_with_tag.extend_from_slice(tag);
 
-    // AES-256-GCM decrypt
-    use aes_gcm::aead::{Aead, KeyInit};
-    use aes_gcm::{Aes256Gcm, Nonce};
+    let plaintext = hpke::single_shot_open::<AesGcm256, HkdfSha256, X25519HkdfSha256>(
+        &OpModeR::Base,
+        &recip_priv_hpke,
+        &encapped,
+        b"baluard-hpke-wrap-v2",
+        &ct_with_tag,
+        b"baluard-keywrap",
+    )
+    .map_err(|e| CryptoError::UnwrapFailed(format!("HPKE open: {e}")))?;
 
-    let cipher =
-        Aes256Gcm::new_from_slice(&wrap_key).map_err(|e| CryptoError::HpkeFailed(e.to_string()))?;
-
-    let mut nonce_bytes = [0u8; 12];
-    nonce_bytes.copy_from_slice(&shared.as_bytes()[..12]);
-
-    cipher
-        .decrypt(
-            Nonce::from_slice(&nonce_bytes),
-            aes_gcm::aead::Payload {
-                msg: &ct_with_tag,
-                aad: b"baluard-keywrap",
-            },
-        )
-        .map_err(|_| CryptoError::UnwrapFailed("HPKE unwrap failed".into()))
+    Ok(plaintext)
 }
 
 #[cfg(test)]
@@ -149,5 +141,25 @@ mod tests {
 
         let (eph_pub, ct, tag) = wrap_key(b"secret-key-material", &pub_key).unwrap();
         assert!(unwrap_key(&eph_pub, &ct, &tag, &wrong_priv).is_err());
+    }
+
+    #[test]
+    fn ephemeral_public_is_32_bytes() {
+        // Wire-shape guard: the encapped key must serialize to exactly the
+        // 32-byte X25519 public key, matching the on-disk format.
+        let (_, pub_key) = generate_x25519_keypair();
+        let (eph_pub, _ct, _tag) = wrap_key(b"any", &pub_key).unwrap();
+        assert_eq!(eph_pub.len(), 32);
+    }
+
+    #[test]
+    fn tampered_ciphertext_fails() {
+        // A-3/A-4 guards: HPKE authenticates the whole ciphertext + AAD; a
+        // single-bit flip in ct must fail the tag check, not unwrap to garbage.
+        let (priv_key, pub_key) = generate_x25519_keypair();
+        let secret = b"thirty-two-byte-root-key-xxxxxxx";
+        let (eph_pub, mut ct, tag) = wrap_key(secret, &pub_key).unwrap();
+        ct[0] ^= 0xff;
+        assert!(unwrap_key(&eph_pub, &ct, &tag, &priv_key).is_err());
     }
 }

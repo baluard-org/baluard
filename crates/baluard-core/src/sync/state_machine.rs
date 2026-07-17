@@ -77,11 +77,18 @@ impl SyncStateMachine {
     }
 
     /// Persist the state machine to disk.
+    //
+    // Atomic (tmp + rename): a truncate-in-place `std::fs::write` here used
+    // to risk a torn sync-state.json on crash, and the loader falls back to
+    // Idle on parse failure, so a paused Merging state was silently lost
+    // (B-6 fix). Mirrors the atomic pattern used for the device-epoch file.
     pub fn save_to_file(&self, vault_path: &Path) -> Result<(), String> {
         let path = vault_path.join("meta/sync-state.json");
         let data =
             serde_json::to_string_pretty(self).map_err(|e| format!("serialize state: {e}"))?;
-        std::fs::write(&path, data).map_err(|e| format!("write state to file: {e}"))?;
+        let tmp_path = path.with_extension("json.tmp");
+        std::fs::write(&tmp_path, &data).map_err(|e| format!("write state tmp: {e}"))?;
+        std::fs::rename(&tmp_path, &path).map_err(|e| format!("rename state into place: {e}"))?;
         Ok(())
     }
 
