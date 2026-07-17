@@ -284,7 +284,7 @@ Rules:
 - UUID big-endian comparison: sort enrolled UUIDs as 128-bit integers, elect lowest.
 - Elected device aborts stalled rotation (epoch -> ACTIVE) and can re-initiate.
 - User confirmation required before aborting another device's rotation.
-- Abort marker: `.baluard/rekey/{new_epoch}.aborted`
+- Abort marker: `meta/rekey/{new_epoch}.aborted`
 
 ### Signed Commits
 
@@ -379,18 +379,18 @@ Phase 1 — PROPOSE (initiating device, online now):
      HPKE(RK', device_x25519_pk) → wrapped_keys[device_id]
   3. Build RekeyTransaction:
      { old_epoch, new_epoch, wrapped_keys, initiator, timestamp }
-  4. Write .baluard/rekey/{new_epoch}.txn
+  4. Write meta/rekey/{new_epoch}.txn
   5. Git commit + push
   6. Transition epoch → ROTATING
   7. Vault: READS allowed (old epoch), WRITES blocked
 
 Phase 2 — ACKNOWLEDGE (each device, async, on next sync):
   1. Pull from remote
-  2. Read .baluard/rekey/{new_epoch}.txn
+  2. Read meta/rekey/{new_epoch}.txn
   3. Unwrap own HPKE(RK', my_pk) → verify RK' is sane
   4. Compute txn_hash = SHA-256(serialized .txn file)
   5. Sign: Ed25519(my_signing_sk, "ack" || epoch || device_id || txn_hash)
-  6. Write .baluard/rekey/{new_epoch}.ack.{device_id}
+  6. Write meta/rekey/{new_epoch}.ack.{device_id}
   7. Git commit + push
 
 Phase 3 — COMMIT (any device observing quorum):
@@ -401,7 +401,7 @@ Phase 3 — COMMIT (any device observing quorum):
      - Verify txn_hash matches the .txn file (prevents ack transplant)
   4. If verified ack count >= quorum (ceil(N/2)):
      - Re-derive SGKs under new RK'
-     - Write .baluard/rekey/{new_epoch}.committed
+     - Write meta/rekey/{new_epoch}.committed
      - Transition: old epoch → RETIRED, new epoch → ACTIVE
      - Delete old keywrap files for evicted devices
      - Vault WRITES re-enabled
@@ -594,13 +594,14 @@ Recovery bypasses DeviceManager enrollment entirely. The recovery phrase IS the 
 ### File Layout
 
 ```
-.baluard/
+.baluard                   # Vault detection marker FILE (version, vault_id, slug). Not a dir.
+
+meta/
   rekey/
     {epoch}.txn            # Rotation proposal (HPKE-wrapped RK' per device)
     {epoch}.ack.{device}   # Device acknowledgment (signed, with txn_hash binding)
     {epoch}.committed      # Finalized rotation (populated commit_barrier)
-
-meta/
+    {epoch}.aborted        # Abort marker for a cancelled rotation
   devices.json             # DeviceRegistry (enrolled devices, keys)
   epoch.json               # EpochInfo (current epoch state)
   seen-nonces.json         # Anti-replay enrollment nonces

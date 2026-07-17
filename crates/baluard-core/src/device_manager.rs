@@ -349,7 +349,7 @@ pub trait DeviceManagerStore: Send + Sync {
 
 /// Filesystem-backed DeviceManager store.
 /// Persists to `meta/devices.json`, `meta/epoch.json`, `meta/seen-nonces.json`,
-/// and `.baluard/rekey/` for rotation artifacts.
+/// and `meta/rekey/` for rotation artifacts.
 pub struct FileDeviceManagerStore {
     vault_path: std::path::PathBuf,
 }
@@ -359,6 +359,35 @@ impl FileDeviceManagerStore {
         Self {
             vault_path: vault_path.to_path_buf(),
         }
+    }
+
+    /// Migrate legacy rekey artifacts from `.baluard/rekey/` to `meta/rekey/`.
+    ///
+    /// Pre-collision-fix vaults stored rotation coordination files under
+    /// `.baluard/rekey/`. The `.baluard` path is now exclusively the vault
+    /// detection marker FILE; rekey artifacts live under `meta/rekey/` with
+    /// the rest of device state. Best-effort, idempotent, one-time: only a
+    /// `.baluard` DIRECTORY (never the marker file) is the old layout.
+    fn migrate_legacy_rekey(&self) -> std::io::Result<()> {
+        let legacy = self.vault_path.join(".baluard");
+        if !legacy.is_dir() {
+            return Ok(());
+        }
+        let legacy_rekey = legacy.join("rekey");
+        if legacy_rekey.is_dir() {
+            let new_rekey = self.vault_path.join("meta/rekey");
+            std::fs::create_dir_all(&new_rekey)?;
+            // rename is atomic on the same filesystem (both under vault root)
+            for entry in std::fs::read_dir(&legacy_rekey)? {
+                let entry = entry?;
+                let _ = std::fs::rename(entry.path(), new_rekey.join(entry.file_name()));
+            }
+            let _ = std::fs::remove_dir_all(&legacy_rekey);
+        }
+        // Remove the now-empty legacy `.baluard` dir; no-op if it held other
+        // contents (defensive: never delete something we didn't create).
+        let _ = std::fs::remove_dir(&legacy);
+        Ok(())
     }
 }
 
@@ -408,7 +437,7 @@ impl DeviceManagerStore for FileDeviceManagerStore {
         // because each device produces them independently. Per-file atomic_write
         // is correct here.
         if let Some(ref tx) = state.pending_transaction {
-            let rekey_dir = self.vault_path.join(".baluard/rekey");
+            let rekey_dir = self.vault_path.join("meta/rekey");
             std::fs::create_dir_all(&rekey_dir)
                 .map_err(|e| SyncError::Git(format!("create rekey dir: {e}")))?;
 
@@ -435,6 +464,13 @@ impl DeviceManagerStore for FileDeviceManagerStore {
     fn load_state(&self) -> Result<Option<DeviceManagerState>, BaluardError> {
         if !Self::exists_at(&self.vault_path) {
             return Ok(None);
+        }
+
+        // Best-effort one-time migration of the legacy rekey layout. Never
+        // fails the load: a corrupt old dir just stays put and rotation
+        // would surface the error explicitly.
+        if let Err(e) = self.migrate_legacy_rekey() {
+            eprintln!("warning: legacy rekey migration skipped: {e}");
         }
 
         // M9 fix: prefer the combined atomic state file (meta/device-state.json)
@@ -481,7 +517,7 @@ impl DeviceManagerStore for FileDeviceManagerStore {
 
         let mut pending_transaction = None;
         let mut collected_acks = Vec::new();
-        let rekey_dir = self.vault_path.join(".baluard/rekey");
+        let rekey_dir = self.vault_path.join("meta/rekey");
         if rekey_dir.exists() {
             let next_epoch = epoch.epoch + 1;
             let txn_path = rekey_dir.join(format!("{next_epoch}.txn"));
@@ -520,7 +556,7 @@ impl DeviceManagerStore for FileDeviceManagerStore {
     }
 
     fn save_committed(&self, epoch: u64, data: &str) -> Result<(), BaluardError> {
-        let rekey_dir = self.vault_path.join(".baluard/rekey");
+        let rekey_dir = self.vault_path.join("meta/rekey");
         std::fs::create_dir_all(&rekey_dir)
             .map_err(|e| SyncError::Git(format!("create rekey dir: {e}")))?;
         let committed_path = rekey_dir.join(format!("{}.committed", epoch));
@@ -742,7 +778,7 @@ impl DeviceManager {
         if let Some(ref store) = self.store {
             if let Some(vp) = store.vault_path() {
                 if let Some(new_epoch) = aborted_new_epoch {
-                    let rekey_dir = vp.join(".baluard/rekey");
+                    let rekey_dir = vp.join("meta/rekey");
                     let _ = std::fs::create_dir_all(&rekey_dir);
                     let abort_path = rekey_dir.join(format!("{}.aborted", new_epoch));
                     let ts = std::time::SystemTime::now()
@@ -762,7 +798,7 @@ impl DeviceManager {
     pub fn has_abort_marker(&self, epoch: u64) -> bool {
         if let Some(ref store) = self.store {
             if let Some(vp) = store.vault_path() {
-                let abort_path = vp.join(format!(".baluard/rekey/{}.aborted", epoch));
+                let abort_path = vp.join(format!("meta/rekey/{}.aborted", epoch));
                 return abort_path.exists();
             }
         }
@@ -2381,6 +2417,51 @@ mod tests {
             assert_eq!(mgr.epoch_state(), EpochState::Rotating);
             assert!(mgr.pending_transaction.is_some());
         }
+    }
+
+    // Rekey path migration: legacy `.baluard/rekey/` → `meta/rekey/`.
+    // Regression guard for the file/dir collision fix: a vault laid out
+    // under the old path self-heals on load, idempotently.
+    #[test]
+    fn legacy_rekey_dir_migrated_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path();
+
+        // Seed real device-manager state so load_state parses cleanly.
+        {
+            let mut mgr = DeviceManager::new();
+            mgr.epoch.activate().unwrap();
+            mgr.set_vault_path(vault_path);
+            mgr.save_to_vault().unwrap(); // writes meta/epoch.json + devices.json
+        }
+
+        // Simulate the pre-fix legacy layout: `.baluard` is a DIRECTORY
+        // holding rekey/ coordination files. Use a stale epoch (5) that is
+        // not the current next_epoch (1) so load_state migrates without
+        // trying to re-parse the txn as an active rotation.
+        let legacy_rekey = vault_path.join(".baluard/rekey");
+        std::fs::create_dir_all(&legacy_rekey).unwrap();
+        std::fs::write(legacy_rekey.join("5.txn"), b"{}").unwrap();
+        std::fs::write(legacy_rekey.join("5.ack.dev1"), b"{}").unwrap();
+        std::fs::write(legacy_rekey.join("5.committed"), b"done").unwrap();
+
+        // load_from_vault -> load_state -> migrate_legacy_rekey (best-effort).
+        let _ = DeviceManager::load_from_vault(vault_path).unwrap();
+
+        // Legacy dir gone; artifacts now under meta/rekey/.
+        assert!(
+            !vault_path.join(".baluard").is_dir(),
+            "legacy .baluard dir should be removed"
+        );
+        let new_rekey = vault_path.join("meta/rekey");
+        assert!(new_rekey.is_dir(), "meta/rekey/ should exist");
+        assert!(new_rekey.join("5.txn").exists(), "txn migrated");
+        assert!(new_rekey.join("5.ack.dev1").exists(), "ack migrated");
+        assert!(new_rekey.join("5.committed").exists(), "committed migrated");
+
+        // Idempotent: a second load is a no-op (files unchanged, no error).
+        let _ = DeviceManager::load_from_vault(vault_path).unwrap();
+        assert!(new_rekey.join("5.txn").exists(), "still there after re-load");
     }
 
     // MISS-5: recovery from BIP-39 phrase bootstraps new device

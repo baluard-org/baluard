@@ -459,18 +459,20 @@ impl<'a> VaultCreator<'a> {
 
                 // Write .baluard marker file (vault detection, not secret).
                 // Required for discover_orphans / vaults.detach / registry
-                // self-heal. Only written when a slug is set: the daemon's
-                // create path always sets one (plumbed from the wizard), and
-                // the .baluard path is ALSO used as a directory by
-                // device_manager (.baluard/rekey/), so writing the marker
-                // unconditionally would collide with that dir layout.
-                if let Some(ref slug) = self.slug {
+                // self-heal. Always written: when a slug is set it is validated
+                // and stored; when omitted (test fixtures, direct CLI without
+                // --slug) an empty slug is stored and orphan discovery falls
+                // back to the directory name (registry::discover_orphans).
+                // Rotation artifacts live under meta/rekey/, so there is no
+                // file/dir collision on this path.
+                let slug = self.slug.as_deref().unwrap_or("");
+                if !slug.is_empty() {
                     crate::vault::slug::validate_slug(slug).map_err(|e| {
                         BaluardError::from(VaultError::Corrupt(format!("invalid slug: {e}")))
                     })?;
-                    let marker = crate::vault::registry::BaluardMarker::new(vault_id, slug);
-                    marker.write_to_vault(&path)?;
                 }
+                let marker = crate::vault::registry::BaluardMarker::new(vault_id, slug);
+                marker.write_to_vault(&path)?;
 
                 // Initialize Git Sync Repo if required
                 #[cfg(feature = "git-sync")]
