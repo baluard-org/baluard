@@ -53,14 +53,20 @@ function AuthProvider(props) {
     }
   }
 
-  onMount(() => {
-    // Fetch active vault name from plaintext registry (pre-unlock)
-    refreshActiveVault();
-    // Quick Unlock status is query per-vault (post-QU fix: keychain entry is
-    // namespaced by vault_id). Initial refresh covers the active vault;
-    // UIs that change the selected vault call refreshBiometric(slug).
-    refreshBiometric();
-    refreshPin();
+  onMount(async () => {
+    // Fetch active vault name from plaintext registry (pre-unlock).
+    // Quick Unlock probes are per-vault (post-QU fix: keychain entry is
+    // namespaced by vault_id), so they only mean something when a vault is
+    // already active in the daemon (returning user, daemon still holding it
+    // open). On cold start there is no active vault — `active` is an
+    // in-memory pointer on VaultHost, not persisted — so skip the probes
+    // instead of firing 3 erroring round-trips that spam the log at WARN.
+    // UIs that change the selected vault call refreshBiometric(slug) directly.
+    await refreshActiveVault();
+    if (activeVault()) {
+      refreshBiometric();
+      refreshPin();
+    }
   });
 
   // Query Quick Unlock availability for a specific vault (slug). When slug
