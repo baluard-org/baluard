@@ -165,7 +165,7 @@ impl SyncEngine {
     /// Best-effort: logs a warning on failure.
     fn refresh_gitignore(&self) {
         let gitignore = self.vault_path.join(".gitignore");
-        const NEW_ENTRIES: &[&str] = &["meta/sync-head.json", "meta/sync-state.json", ".baluard/"];
+        const NEW_ENTRIES: &[&str] = &["meta/sync-head.json", "meta/sync-state.json"];
         let needs_update = match std::fs::read_to_string(&gitignore) {
             Ok(existing) => NEW_ENTRIES.iter().any(|e| !existing.contains(e)),
             Err(_) => true,
@@ -600,7 +600,7 @@ impl SyncEngine {
         let new_epoch = epoch + 1;
         let abort_path = self
             .vault_path
-            .join(format!(".baluard/rekey/{new_epoch}.aborted"));
+            .join(format!("meta/rekey/{new_epoch}.aborted"));
         if abort_path.exists() {
             return Some(new_epoch);
         }
@@ -1719,9 +1719,6 @@ target/
 # OS artifacts
 .DS_Store
 Thumbs.db
-
-# Baluard internal state (rekey abort markers, etc.)
-.baluard/
 
 # Pi agent
 .pi/
