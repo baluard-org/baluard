@@ -120,6 +120,19 @@ pub enum VaultError {
 
     #[error("crypto error: {0}")]
     Crypto(String),
+
+    /// The cipher envelope is at a key epoch the held key material cannot
+    /// reach (e.g. a remote pre-rotation blob received while the local
+    /// device holds the post-rotation RootKey, or vice-versa). Returned by
+    /// the cipher read path instead of silently deriving the wrong key and
+    /// failing the AEAD check (which the old code did, then dropped the
+    /// entry from the index with no signal). Callers should surface this,
+    /// not swallow it.
+    #[error("cipher at unreachable key epoch {envelope_epoch}, held epoch {held_epoch}")]
+    CrossEpoch {
+        envelope_epoch: u64,
+        held_epoch: u64,
+    },
 }
 
 /// Git sync and conflict errors.

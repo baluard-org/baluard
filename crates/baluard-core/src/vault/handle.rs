@@ -147,6 +147,34 @@ impl VaultHandle {
                 .map_err(|e| BaluardError::from(crate::error::KeyError::InvalidEpochState(e)))?;
         }
 
+        // B-1 fix: reconcile an interrupted root-key rotation.
+        //
+        // `rotate_root_key` writes staged .tmp files then renames them in
+        // order (ciphers -> canary -> keywrap, keywrap being the point of no
+        // return). The RAII RotationGuard sweeps .tmp on drop if the function
+        // unwinds, but a hard process kill leaves the marker + leftover .tmp
+        // behind. We cannot finish a half-applied rotation here (no new
+        // RootKey), so the safe reconciliation is: sweep any staged .tmp
+        // files so the next rotation starts clean, and surface the marker
+        // loudly so the user knows the vault may be in a mixed-epoch state.
+        //
+        // The marker only exists for the brief rotation window; if it
+        // survives to here the rotation did not commit cleanly.
+        let pending_marker = path.join("meta/.rotation-pending");
+        if pending_marker.exists() {
+            eprintln!(
+                "WARNING: vault at {} has a leftover .rotation-pending marker; \
+                 a root-key rotation did not complete cleanly. Sweeping staged files.",
+                path.display()
+            );
+            for dir_name in &["ciphers", "trash", "meta", "meta/keywrap"] {
+                remove_tmp_files(&path.join(dir_name));
+            }
+            remove_tmp_files_recursive(&path.join("entries"));
+            // Leave the marker in place: a sweep is not a successful commit,
+            // and the epoch state below may still need operator attention.
+        }
+
         // H3 fix: Rollback detection on vault open.
         // Load integrity manifest and compare against actual file state.
         // Warn on rollback (don't block: manifest is in writable tree, not externally anchored).
@@ -1364,7 +1392,28 @@ impl VaultHandle {
 
             let c = match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &file) {
                 Ok(c) => c,
-                Err(_) => continue, // skip undecryptable entries
+                Err(crate::error::BaluardError::Vault(crate::error::VaultError::CrossEpoch {
+                    envelope_epoch,
+                    held_epoch,
+                })) => {
+                    // Cipher at a key epoch the held RootKey/SGK cannot reach.
+                    // Previously this was silently `continue`d, which made the
+                    // entry vanish from vault.list with no signal. Surface it
+                    // so the user knows a re-sync / device refresh is needed
+                    // (B-2 fix). Still skip rather than fail the whole list —
+                    // a vault with one stray remote blob should still render.
+                    eprintln!(
+                        "warning: cipher {id} at epoch {envelope_epoch} cannot be decrypted with held epoch {held_epoch}; skipping from index",
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    // Genuine corrupt envelope / IO error: log and skip rather
+                    // than abort the whole index (graceful degradation), but
+                    // keep this path noisy so it does not hide silent loss.
+                    eprintln!("warning: cipher {id} skipped during index build: {e}");
+                    continue;
+                }
             };
 
             let username = match &c.kind {
@@ -1467,12 +1516,25 @@ impl VaultHandle {
 
     /// Derive an item key from the cached Space Group Key in UnlockedState.
     /// DESIGN-3: Uses the SGK already held in UnlockedState, avoiding redundant derivation.
+    ///
+    /// Routes through the checked `try_derive_item_key` so a cipher at a key
+    /// epoch the held SGK cannot reach surfaces as a typed `CrossEpoch` error
+    /// instead of (a) panicking in debug builds or (b) silently deriving the
+    /// wrong key in release builds and failing the downstream AEAD check,
+    /// which the index rebuild then dropped with no signal (B-2 fix).
     fn derive_item_key_from_sgk(
         sgk: &crate::keys::hierarchy::SpaceGroupKey,
         cipher_id: Uuid,
         epoch: u64,
-    ) -> ItemKey {
-        sgk.derive_item_key(cipher_id, epoch)
+    ) -> Result<ItemKey, BaluardError> {
+        sgk.try_derive_item_key(cipher_id, epoch)
+            .ok_or_else(|| {
+                VaultError::CrossEpoch {
+                    envelope_epoch: epoch,
+                    held_epoch: sgk.epoch(),
+                }
+                .into()
+            })
     }
 
     /// Fallback: derive item key from RootKey by first deriving an SGK.
@@ -1492,7 +1554,14 @@ impl VaultHandle {
             VaultState::Unlocked(u) => &u.space_group_key,
             VaultState::Locked => panic!("derive_item_key called on locked vault"),
         };
-        Self::derive_item_key_from_sgk(sgk, cipher_id, key_epoch)
+        // Routed through the checked derive so a genuine held-epoch mismatch
+        // (encrypt/re-encrypt path with the wrong key_epoch) panics with a
+        // typed message instead of silently deriving the wrong key. Callers
+        // on the encrypt path always pass the held current_epoch, so a
+        // mismatch here is an invariant violation, not user data.
+        Self::derive_item_key_from_sgk(sgk, cipher_id, key_epoch).expect(
+            "derive_item_key: key_epoch does not match held SpaceGroupKey epoch",
+        )
     }
 
     /// The currently-held epoch (the RootKey/SGK this device has in memory).
@@ -1534,7 +1603,7 @@ impl VaultHandle {
                     &unlocked.space_group_key,
                     cipher_id,
                     envelope.header.key_epoch,
-                );
+                )?;
                 let cipher = crate::vault::cipher::decrypt_cipher(
                     self.vault_id,
                     cipher_id,
@@ -1722,7 +1791,7 @@ impl VaultHandle {
             &unlocked.space_group_key,
             cipher_id,
             unlocked.current_epoch,
-        );
+        )?;
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -1822,7 +1891,7 @@ impl VaultHandle {
         }
 
         let item_key =
-            Self::derive_item_key_from_sgk(&unlocked.space_group_key, cipher_id, key_epoch);
+            Self::derive_item_key_from_sgk(&unlocked.space_group_key, cipher_id, key_epoch)?;
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -2418,6 +2487,11 @@ impl VaultHandle {
             serde_json::to_string_pretty(&pending_data).unwrap(),
         )?;
         let _ = std::fs::set_permissions(&pending_marker, std::fs::Permissions::from_mode(0o600));
+        // B-1 fix: arm the RAII guard so a panic or early-return mid-rotation
+        // sweeps staged .tmp files (ciphers, canary, keywrap) and leaves the
+        // marker in place for VaultHandle::open to reconcile. Without this, a
+        // crash mid-rename-loop left a mixed-epoch vault with no recovery.
+        let mut _guard = RotationGuard::new(&self.path, &pending_marker);
 
         // Phase 1: Re-encrypt all ciphers to .tmp files (staged)
         let mut staged_renames: Vec<(PathBuf, PathBuf)> = Vec::new();
@@ -2578,7 +2652,8 @@ impl VaultHandle {
             let _ = self.save_activity_enc(&activity);
         }
 
-        // Clean up rotation-pending marker
+        // Clean up rotation-pending marker (disarm guard first)
+        _guard.disarm();
         let _ = std::fs::remove_file(self.path.join("meta/.rotation-pending"));
 
         // H4 fix: re-wrap recovery key with new Root Key (propagate error)
@@ -3055,7 +3130,28 @@ impl VaultHandle {
 
             let c = match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &file) {
                 Ok(c) => c,
-                Err(_) => continue, // skip undecryptable entries
+                Err(crate::error::BaluardError::Vault(crate::error::VaultError::CrossEpoch {
+                    envelope_epoch,
+                    held_epoch,
+                })) => {
+                    // Cipher at a key epoch the held RootKey/SGK cannot reach.
+                    // Previously this was silently `continue`d, which made the
+                    // entry vanish from vault.list with no signal. Surface it
+                    // so the user knows a re-sync / device refresh is needed
+                    // (B-2 fix). Still skip rather than fail the whole list —
+                    // a vault with one stray remote blob should still render.
+                    eprintln!(
+                        "warning: cipher {id} at epoch {envelope_epoch} cannot be decrypted with held epoch {held_epoch}; skipping from index",
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    // Genuine corrupt envelope / IO error: log and skip rather
+                    // than abort the whole index (graceful degradation), but
+                    // keep this path noisy so it does not hide silent loss.
+                    eprintln!("warning: cipher {id} skipped during index build: {e}");
+                    continue;
+                }
             };
 
             let username = match &c.kind {

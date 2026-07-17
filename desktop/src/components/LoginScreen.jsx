@@ -130,10 +130,15 @@ export default function LoginScreen() {
                 if (bruteLock()) return;
                 try {
                   // Touch ID prompt (UX gate)
+                  const target = auth.switchTarget();
+                  // Daemon reads password from file-based keychain + unlocks
+                  // vault. Pass the target slug so we unlock the vault the
+                  // user actually selected (mirrors the PIN path below); a bare
+                  // no-slug call would fall through to the daemon-active vault
+                  // and unlock the wrong one in a multi-vault setup.
                   await biometryPrompt();
-                  // Daemon reads password from file-based keychain + unlocks vault
-                  await daemon("vault.open");
-                  await daemon("vault.biometric_unlock");
+                  await daemon("vault.open", "", target);
+                  await daemon("vault.biometric_unlock", "", target);
                   auth.setStatus("unlocked");
                 } catch (e) {
                   if (!/cancelled|canceled|user cancel/i.test(e?.message || "")) {
