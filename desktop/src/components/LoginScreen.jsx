@@ -19,13 +19,20 @@ export default function LoginScreen() {
 
   const [wrongPassword, setWrongPassword] = createSignal(false);
 
-  // Re-query Quick Unlock status whenever the selected vault changes.
+  // Re-query Quick Unlock status whenever the effective target vault changes.
   // Post-QU fix the keychain entry is per-vault, so the button must reflect
   // the currently-targeted vault, not a global flag.
+  //
+  // The effective slug is switchTarget (explicit pick) falling back to the
+  // switcher's activeSlug (the daemon-active vault). Tracking activeSlug here
+  // is what fixes the cold-start race: the effect fires on mount before the
+  // daemon is reachable (activeSlug still null), so it skips; once vaults.list
+  // resolves and activeSlug populates, the effect re-fires and probes the
+  // right slug. Skip entirely when there is no target yet so we never fire a
+  // no-slug probe that errors and logs at WARN.
   createEffect(() => {
-    const target = auth.switchTarget();
-    // switchTarget() is read here to track it; refreshBiometric queries the
-    // daemon for that slug (or the active vault when target is null).
+    const target = auth.switchTarget() ?? switcher.activeSlug();
+    if (!target) return;
     auth.refreshBiometric(target);
     // Session PIN escrow is also per-vault (in-memory). Re-query alongside.
     auth.refreshPin(target);
