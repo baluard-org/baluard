@@ -70,6 +70,30 @@ pub struct FieldConflict {
     pub remote_value: String,
 }
 
+/// Merge every `Option<String>` field of a kind struct, flagging conflicts.
+/// `base`/`local`/`remote` are expressions yielding `&XxxData`; `merged` is
+/// `&mut XxxData`. Each `$field` becomes the conflict label verbatim.
+///
+/// Why a macro, not reflection: every field is plain `Option<String>`, so the
+/// per-field merge is byte-identical except the field name. A macro keeps the
+/// conflict labels as readable string literals ("number", "ssn", ...) and the
+/// type system still rejects a wrong field name at compile time. The previous
+/// code silently dropped remote edits for 7 of 8 kinds via a no-op
+/// `keep local as-is` arm; this is the surgical fix.
+macro_rules! merge_kind_fields {
+    ($base:expr, $local:expr, $remote:expr, $merged:expr, $conflicts:expr, [$($field:ident),* $(,)?]) => {
+        $(
+            merge_3way_field_opt(
+                &$base.$field,
+                &mut $merged.$field,
+                &$remote.$field,
+                stringify!($field),
+                $conflicts,
+            );
+        )*
+    };
+}
+
 /// Black-box zeroization on drop for individual conflicts as well.
 impl Drop for FieldConflict {
     fn drop(&mut self) {
@@ -137,13 +161,107 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
             }
             merged.kind = CipherKind::Login(merged_login);
         }
-        // Same non-Login type on all sides: keep local (no field-level merge for Card/Identity/SshKey yet)
-        (_base, _local, _remote)
-            if _local.cipher_type() == _base.cipher_type()
-                && _remote.cipher_type() == _base.cipher_type() =>
-        {
-            // All three have the same type — keep local as-is (intentional)
+        // Per-field 3-way merge for every other kind. Previously this arm was
+        // a no-op `keep local` that silently discarded remote edits; for a
+        // sync product that is the worst-case failure (two devices edit the
+        // same Card, one change is lost). All these structs are plain bags of
+        // `Option<String>`, so the macro merges each field by name.
+        (
+            CipherKind::Card(base_d),
+            CipherKind::Card(local_d),
+            CipherKind::Card(remote_d),
+        ) => {
+            let mut merged_d = local_d.clone();
+            merge_kind_fields!(
+                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                [cardholder_name, brand, number, exp_month, exp_year, code]
+            );
+            merged.kind = CipherKind::Card(merged_d);
         }
+        (
+            CipherKind::Identity(base_d),
+            CipherKind::Identity(local_d),
+            CipherKind::Identity(remote_d),
+        ) => {
+            let mut merged_d = local_d.clone();
+            merge_kind_fields!(
+                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                [
+                    title, first_name, middle_name, last_name, username, company,
+                    email, phone, address1, address2, address3, city, state,
+                    postal_code, country, ssn, passport_number, license_number
+                ]
+            );
+            merged.kind = CipherKind::Identity(merged_d);
+        }
+        (
+            CipherKind::SshKey(base_d),
+            CipherKind::SshKey(local_d),
+            CipherKind::SshKey(remote_d),
+        ) => {
+            let mut merged_d = local_d.clone();
+            merge_kind_fields!(
+                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                [private_key, public_key, key_fingerprint]
+            );
+            merged.kind = CipherKind::SshKey(merged_d);
+        }
+        (
+            CipherKind::BankAccount(base_d),
+            CipherKind::BankAccount(local_d),
+            CipherKind::BankAccount(remote_d),
+        ) => {
+            let mut merged_d = local_d.clone();
+            merge_kind_fields!(
+                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                [
+                    bank_name, name_on_account, account_type, account_number,
+                    routing_number, branch_number, pin, swift_code, iban,
+                    bank_contact_phone
+                ]
+            );
+            merged.kind = CipherKind::BankAccount(merged_d);
+        }
+        (
+            CipherKind::DriversLicense(base_d),
+            CipherKind::DriversLicense(local_d),
+            CipherKind::DriversLicense(remote_d),
+        ) => {
+            let mut merged_d = local_d.clone();
+            merge_kind_fields!(
+                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                [
+                    first_name, middle_name, last_name, date_of_birth,
+                    license_number, issuing_country, issuing_state, issue_date,
+                    expiration_date, issuing_authority, license_class
+                ]
+            );
+            merged.kind = CipherKind::DriversLicense(merged_d);
+        }
+        (
+            CipherKind::Passport(base_d),
+            CipherKind::Passport(local_d),
+            CipherKind::Passport(remote_d),
+        ) => {
+            let mut merged_d = local_d.clone();
+            merge_kind_fields!(
+                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                [
+                    surname, given_name, date_of_birth, sex, birth_place,
+                    nationality, issuing_country, passport_number, passport_type,
+                    national_identification_number, issuing_authority,
+                    issue_date, expiration_date
+                ]
+            );
+            merged.kind = CipherKind::Passport(merged_d);
+        }
+        // SecureNote has no kind-specific data fields; only notes (merged
+        // below) and the common fields apply.
+        (
+            CipherKind::SecureNote,
+            CipherKind::SecureNote,
+            CipherKind::SecureNote,
+        ) => {}
         // Cross-type conflict: one side changed the cipher type
         _ => {
             conflicts.push(FieldConflict {
@@ -436,5 +554,98 @@ mod tests {
 
         let result = merge_ciphers(&base, &local, &remote);
         assert!(matches!(result, MergeResult::Merged(_)));
+    }
+
+    // B-3 regression: non-overlapping Card field edits used to silently drop
+    // the remote edit (the old "keep local" no-op arm). Both changes must now
+    // land via per-field 3-way merge.
+    #[test]
+    fn non_overlapping_card_fields_merge() {
+        let base = CipherInput {
+            name: "Card".into(),
+            folder_id: None,
+            kind: CipherKind::Card(crate::types::CardData {
+                cardholder_name: Some("Alice".into()),
+                number: Some("1111".into()),
+                ..Default::default()
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            reprompt: false,
+            tags: vec![],
+        };
+
+        // Local changes the cardholder name only.
+        let mut local = base.clone();
+        if let CipherKind::Card(d) = &mut local.kind {
+            d.cardholder_name = Some("Alice Q".into());
+        }
+
+        // Remote changes the number only.
+        let mut remote = base.clone();
+        if let CipherKind::Card(d) = &mut remote.kind {
+            d.number = Some("2222".into());
+        }
+
+        let result = merge_ciphers(&base, &local, &remote);
+        match result {
+            MergeResult::Merged(merged) => match &merged.kind {
+                CipherKind::Card(d) => {
+                    assert_eq!(d.cardholder_name.as_deref(), Some("Alice Q"));
+                    assert_eq!(d.number.as_deref(), Some("2222"));
+                }
+                _ => panic!("expected card"),
+            },
+            MergeResult::Conflict(_) => panic!("expected clean 3-way merge"),
+        }
+    }
+
+    // B-3 regression: same Card field edited on both sides must conflict
+    // (previously local silently won).
+    #[test]
+    fn overlapping_card_field_conflicts() {
+        let base = CipherInput {
+            name: "Card".into(),
+            folder_id: None,
+            kind: CipherKind::Card(crate::types::CardData {
+                number: Some("1111".into()),
+                ..Default::default()
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            reprompt: false,
+            tags: vec![],
+        };
+
+        let mut local = base.clone();
+        if let CipherKind::Card(d) = &mut local.kind {
+            d.number = Some("local".into());
+        }
+
+        let mut remote = base.clone();
+        if let CipherKind::Card(d) = &mut remote.kind {
+            d.number = Some("remote".into());
+        }
+
+        let result = merge_ciphers(&base, &local, &remote);
+        match result {
+            MergeResult::Conflict(info) => {
+                assert!(info
+                    .conflicting_fields
+                    .iter()
+                    .any(|c| c.field_name == "number"));
+            }
+            MergeResult::Merged(_) => panic!("expected conflict on overlapping number"),
+        }
     }
 }
