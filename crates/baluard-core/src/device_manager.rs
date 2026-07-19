@@ -2461,7 +2461,10 @@ mod tests {
 
         // Idempotent: a second load is a no-op (files unchanged, no error).
         let _ = DeviceManager::load_from_vault(vault_path).unwrap();
-        assert!(new_rekey.join("5.txn").exists(), "still there after re-load");
+        assert!(
+            new_rekey.join("5.txn").exists(),
+            "still there after re-load"
+        );
     }
 
     // MISS-5: recovery from BIP-39 phrase bootstraps new device
