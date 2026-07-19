@@ -431,6 +431,13 @@ seed-demo: build-release
 		add_passkey "$PERSONAL" demo-google-passkey.json
 
 		echo ""
+		echo "[personal] Seeding browser-extension test logins ==="
+		# Public practice sites for safe extension autofill testing.
+		baluard add login --name "VBSca Login Practice" --username "student" --password "Password123" --uri "http://vbsca.ca/login/login.asp" --notes "Classic ASP practice login form." --tags personal --folder "$PERSONAL"
+		baluard add login --name "Practice Test Automation" --username "student" --password "Password123" --uri "https://practicetestautomation.com/practice-test-login/" --notes "Public login practice page." --tags personal --folder "$PERSONAL"
+		baluard add login --name "scheb 2FA Demo" --username "user1" --password "test" --uri "https://2fa.scheb.de/login" --totp-uri "otpauth://totp/BaluardTest:scheb-2fa?secret=JBSWY3DPEHPK3PXP&issuer=scheb-2fa&digits=6&period=30" --notes "Two-factor practice site. TOTP secret is a sample (RFC test vector); re-register on the site to bind the real one." --tags personal,mfa --folder "$PERSONAL"
+
+		echo ""
 		echo "[personal] Seeding cards ==="
 		baluard add card --name "Visa Platinum" --cardholder-name "Esteban Forge" --brand "Visa" --number "4532123456789012" --exp-month "09" --exp-year "2028" --code "123" --tags personal,important --folder "$FINANCE"
 		baluard add card --name "Amex Gold" --cardholder-name "Esteban Forge" --brand "American Express" --number "378282246310005" --exp-month "12" --exp-year "2029" --code "7890" --notes "Travel rewards card" --tags personal --folder "$TRAVEL"
@@ -506,6 +513,13 @@ seed-demo: build-release
 		add_passkey "$WORK" demo-figma-passkey.json
 
 		echo ""
+		echo "[work] Seeding browser-extension test logins ==="
+		# Public practice sites for safe extension autofill testing.
+		baluard add login --name "VBSca Login Practice" --username "student" --password "Password123" --uri "http://vbsca.ca/login/login.asp" --notes "Classic ASP practice login form." --tags work --folder "$WORK"
+		baluard add login --name "Practice Test Automation" --username "student" --password "Password123" --uri "https://practicetestautomation.com/practice-test-login/" --notes "Public login practice page." --tags work --folder "$WORK"
+		baluard add login --name "scheb 2FA Demo" --username "user1" --password "test" --uri "https://2fa.scheb.de/login" --totp-uri "otpauth://totp/BaluardTest:scheb-2fa?secret=JBSWY3DPEHPK3PXP&issuer=scheb-2fa&digits=6&period=30" --notes "Two-factor practice site. TOTP secret is a sample (RFC test vector); re-register on the site to bind the real one." --tags work,mfa --folder "$WORK"
+
+		echo ""
 		echo "[work] Seeding card ==="
 		baluard add card --name "Mastercard Business" --cardholder-name "Esteban Forge" --brand "Mastercard" --number "5412345678901234" --exp-month "03" --exp-year "2027" --code "456" --tags work --folder "$FINANCE"
 
@@ -544,7 +558,7 @@ seed-demo: build-release
 	echo "  Password (both): baluard99"
 	echo ""
 	echo "  Personal vault:"
-	echo "    Logins:        7  (incl. 1 passkey login)"
+	echo "    Logins:        10 (incl. 1 passkey login + 3 extension-test logins)"
 	echo "    Cards:         2"
 	echo "    Notes:         5  (incl. 1 Carnet)"
 	echo "    Identities:    1"
@@ -555,7 +569,7 @@ seed-demo: build-release
 	echo "    Tags:    personal, important, mfa, backup, shared, urgent"
 	echo ""
 	echo "  Work vault:"
-	echo "    Logins:        9  (incl. 3 passkey logins)"
+	echo "    Logins:        12 (incl. 3 passkey logins + 3 extension-test logins)"
 	echo "    Cards:         1"
 	echo "    Notes:         3"
 	echo "    Identities:    1"
