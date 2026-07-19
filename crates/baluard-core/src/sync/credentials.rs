@@ -213,16 +213,28 @@ mod tests {
         let prev_data_dir = std::env::var("BALUARD_DATA_DIR").ok();
         let tmp = tempfile::tempdir().unwrap();
         // SAFETY: serialised by #[serial]; in tests that pair with this.
-        unsafe { std::env::remove_var("BALUARD_GIT_TOKEN"); }
-        unsafe { std::env::set_var("BALUARD_DATA_DIR", tmp.path()); }
+        unsafe {
+            std::env::remove_var("BALUARD_GIT_TOKEN");
+        }
+        unsafe {
+            std::env::set_var("BALUARD_DATA_DIR", tmp.path());
+        }
         f();
         match prev_token {
-            Some(v) => unsafe { std::env::set_var("BALUARD_GIT_TOKEN", v); },
-            None => unsafe { std::env::remove_var("BALUARD_GIT_TOKEN"); },
+            Some(v) => unsafe {
+                std::env::set_var("BALUARD_GIT_TOKEN", v);
+            },
+            None => unsafe {
+                std::env::remove_var("BALUARD_GIT_TOKEN");
+            },
         }
         match prev_data_dir {
-            Some(v) => unsafe { std::env::set_var("BALUARD_DATA_DIR", v); },
-            None => unsafe { std::env::remove_var("BALUARD_DATA_DIR"); },
+            Some(v) => unsafe {
+                std::env::set_var("BALUARD_DATA_DIR", v);
+            },
+            None => unsafe {
+                std::env::remove_var("BALUARD_DATA_DIR");
+            },
         }
         drop(tmp); // also serves as proof the dir was empty / unused.
     }

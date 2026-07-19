@@ -166,14 +166,14 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
         // sync product that is the worst-case failure (two devices edit the
         // same Card, one change is lost). All these structs are plain bags of
         // `Option<String>`, so the macro merges each field by name.
-        (
-            CipherKind::Card(base_d),
-            CipherKind::Card(local_d),
-            CipherKind::Card(remote_d),
-        ) => {
+        (CipherKind::Card(base_d), CipherKind::Card(local_d), CipherKind::Card(remote_d)) => {
             let mut merged_d = local_d.clone();
             merge_kind_fields!(
-                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                base_d,
+                local_d,
+                remote_d,
+                merged_d,
+                &mut conflicts,
                 [cardholder_name, brand, number, exp_month, exp_year, code]
             );
             merged.kind = CipherKind::Card(merged_d);
@@ -185,23 +185,42 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
         ) => {
             let mut merged_d = local_d.clone();
             merge_kind_fields!(
-                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                base_d,
+                local_d,
+                remote_d,
+                merged_d,
+                &mut conflicts,
                 [
-                    title, first_name, middle_name, last_name, username, company,
-                    email, phone, address1, address2, address3, city, state,
-                    postal_code, country, ssn, passport_number, license_number
+                    title,
+                    first_name,
+                    middle_name,
+                    last_name,
+                    username,
+                    company,
+                    email,
+                    phone,
+                    address1,
+                    address2,
+                    address3,
+                    city,
+                    state,
+                    postal_code,
+                    country,
+                    ssn,
+                    passport_number,
+                    license_number
                 ]
             );
             merged.kind = CipherKind::Identity(merged_d);
         }
-        (
-            CipherKind::SshKey(base_d),
-            CipherKind::SshKey(local_d),
-            CipherKind::SshKey(remote_d),
-        ) => {
+        (CipherKind::SshKey(base_d), CipherKind::SshKey(local_d), CipherKind::SshKey(remote_d)) => {
             let mut merged_d = local_d.clone();
             merge_kind_fields!(
-                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                base_d,
+                local_d,
+                remote_d,
+                merged_d,
+                &mut conflicts,
                 [private_key, public_key, key_fingerprint]
             );
             merged.kind = CipherKind::SshKey(merged_d);
@@ -213,10 +232,21 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
         ) => {
             let mut merged_d = local_d.clone();
             merge_kind_fields!(
-                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                base_d,
+                local_d,
+                remote_d,
+                merged_d,
+                &mut conflicts,
                 [
-                    bank_name, name_on_account, account_type, account_number,
-                    routing_number, branch_number, pin, swift_code, iban,
+                    bank_name,
+                    name_on_account,
+                    account_type,
+                    account_number,
+                    routing_number,
+                    branch_number,
+                    pin,
+                    swift_code,
+                    iban,
                     bank_contact_phone
                 ]
             );
@@ -229,11 +259,23 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
         ) => {
             let mut merged_d = local_d.clone();
             merge_kind_fields!(
-                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                base_d,
+                local_d,
+                remote_d,
+                merged_d,
+                &mut conflicts,
                 [
-                    first_name, middle_name, last_name, date_of_birth,
-                    license_number, issuing_country, issuing_state, issue_date,
-                    expiration_date, issuing_authority, license_class
+                    first_name,
+                    middle_name,
+                    last_name,
+                    date_of_birth,
+                    license_number,
+                    issuing_country,
+                    issuing_state,
+                    issue_date,
+                    expiration_date,
+                    issuing_authority,
+                    license_class
                 ]
             );
             merged.kind = CipherKind::DriversLicense(merged_d);
@@ -245,23 +287,32 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
         ) => {
             let mut merged_d = local_d.clone();
             merge_kind_fields!(
-                base_d, local_d, remote_d, merged_d, &mut conflicts,
+                base_d,
+                local_d,
+                remote_d,
+                merged_d,
+                &mut conflicts,
                 [
-                    surname, given_name, date_of_birth, sex, birth_place,
-                    nationality, issuing_country, passport_number, passport_type,
-                    national_identification_number, issuing_authority,
-                    issue_date, expiration_date
+                    surname,
+                    given_name,
+                    date_of_birth,
+                    sex,
+                    birth_place,
+                    nationality,
+                    issuing_country,
+                    passport_number,
+                    passport_type,
+                    national_identification_number,
+                    issuing_authority,
+                    issue_date,
+                    expiration_date
                 ]
             );
             merged.kind = CipherKind::Passport(merged_d);
         }
         // SecureNote has no kind-specific data fields; only notes (merged
         // below) and the common fields apply.
-        (
-            CipherKind::SecureNote,
-            CipherKind::SecureNote,
-            CipherKind::SecureNote,
-        ) => {}
+        (CipherKind::SecureNote, CipherKind::SecureNote, CipherKind::SecureNote) => {}
         // Cross-type conflict: one side changed the cipher type
         _ => {
             conflicts.push(FieldConflict {
@@ -289,7 +340,13 @@ pub fn merge_ciphers(base: &CipherInput, local: &CipherInput, remote: &CipherInp
     //   - deleted on one side, unchanged on the other: honor the delete
     //   - deleted on one side, EDITED on the other: conflict (preserve local)
     //   - added on one side only: take it
-    merge_custom_fields(base, local, remote, &mut merged.custom_fields, &mut conflicts);
+    merge_custom_fields(
+        base,
+        local,
+        remote,
+        &mut merged.custom_fields,
+        &mut conflicts,
+    );
 
     // Check semantic groups
     for group in SEMANTIC_GROUPS {
@@ -398,10 +455,7 @@ fn merge_custom_fields(
 ) {
     use crate::types::CustomField;
 
-    fn find<'a>(
-        list: &'a [CustomField],
-        name: &str,
-    ) -> Option<&'a CustomField> {
+    fn find<'a>(list: &'a [CustomField], name: &str) -> Option<&'a CustomField> {
         list.iter().find(|f| f.name == name)
     }
 
@@ -461,7 +515,11 @@ fn merge_custom_fields(
                     });
                     l.field_type.clone()
                 };
-                Some(CustomField { name, value, field_type })
+                Some(CustomField {
+                    name,
+                    value,
+                    field_type,
+                })
             }
             // Deleted from remote, present in base + local.
             (Some(b), Some(l), None) => {
@@ -790,10 +848,11 @@ mod tests {
         let result = merge_ciphers(&base, &local, &remote);
         match result {
             MergeResult::Conflict(info) => {
-                assert!(info
-                    .conflicting_fields
-                    .iter()
-                    .any(|c| c.field_name == "number"));
+                assert!(
+                    info.conflicting_fields
+                        .iter()
+                        .any(|c| c.field_name == "number")
+                );
             }
             MergeResult::Merged(_) => panic!("expected conflict on overlapping number"),
         }
@@ -881,7 +940,11 @@ mod tests {
         let result = merge_ciphers(&base, &local, &remote);
         match result {
             MergeResult::Conflict(info) => {
-                assert!(info.conflicting_fields.iter().any(|c| c.field_name == "custom_field[pin]"));
+                assert!(
+                    info.conflicting_fields
+                        .iter()
+                        .any(|c| c.field_name == "custom_field[pin]")
+                );
             }
             MergeResult::Merged(_) => panic!("expected conflict on both-edit custom field"),
         }

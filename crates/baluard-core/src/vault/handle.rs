@@ -1527,14 +1527,13 @@ impl VaultHandle {
         cipher_id: Uuid,
         epoch: u64,
     ) -> Result<ItemKey, BaluardError> {
-        sgk.try_derive_item_key(cipher_id, epoch)
-            .ok_or_else(|| {
-                VaultError::CrossEpoch {
-                    envelope_epoch: epoch,
-                    held_epoch: sgk.epoch(),
-                }
-                .into()
-            })
+        sgk.try_derive_item_key(cipher_id, epoch).ok_or_else(|| {
+            VaultError::CrossEpoch {
+                envelope_epoch: epoch,
+                held_epoch: sgk.epoch(),
+            }
+            .into()
+        })
     }
 
     /// Fallback: derive item key from RootKey by first deriving an SGK.
@@ -1559,9 +1558,8 @@ impl VaultHandle {
         // typed message instead of silently deriving the wrong key. Callers
         // on the encrypt path always pass the held current_epoch, so a
         // mismatch here is an invariant violation, not user data.
-        Self::derive_item_key_from_sgk(sgk, cipher_id, key_epoch).expect(
-            "derive_item_key: key_epoch does not match held SpaceGroupKey epoch",
-        )
+        Self::derive_item_key_from_sgk(sgk, cipher_id, key_epoch)
+            .expect("derive_item_key: key_epoch does not match held SpaceGroupKey epoch")
     }
 
     /// The currently-held epoch (the RootKey/SGK this device has in memory).

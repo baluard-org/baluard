@@ -165,7 +165,11 @@ mod tests {
             let prev = std::env::var(key).ok();
             // SAFETY: serialised by ENV_LOCK (held for the guard's lifetime).
             unsafe { std::env::set_var(key, value) };
-            EnvGuard { key, prev, _lock: lock }
+            EnvGuard {
+                key,
+                prev,
+                _lock: lock,
+            }
         }
     }
     impl Drop for EnvGuard {
