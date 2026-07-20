@@ -237,12 +237,16 @@ fn spawn_with_vault() -> VaultedDaemon {
     // SAFETY: each #[test] in this file runs single-threaded with respect
     // to the data_dir reader; the env var is set before the registry is
     // touched and unset at the end via TempDir drop.
-    unsafe {
-        std::env::set_var("BALUARD_DATA_DIR", data_dir.path());
-    }
+    // Use load_from / save_to (explicit path) so the test process NEVER
+    // reads the process-global BALUARD_DATA_DIR env var. That env var is
+    // set only on the daemon subprocess via Command::env() below — which
+    // is race-free because Command::env() sets the value in the CHILD's
+    // env table at spawn time. The earlier set_var pattern raced with
+    // other test threads in the same binary.
+    let registry_path = data_dir.path().join("registry.json");
     {
         use baluard_core::vault::registry::{VaultEntry, VaultRegistry};
-        let mut reg = VaultRegistry::load().unwrap_or_default();
+        let mut reg = VaultRegistry::load_from(&registry_path).unwrap_or_default();
         reg.add(VaultEntry {
             slug: "spawn-test".into(),
             display_name: "Spawn Test".into(),
@@ -254,7 +258,7 @@ fn spawn_with_vault() -> VaultedDaemon {
             vault_id: uuid::Uuid::new_v4(),
         })
         .expect("registry add");
-        reg.save().expect("registry save");
+        reg.save_to(&registry_path).expect("registry save");
     }
     // Now spawn the daemon pointed at the data dir.
     let socket_path = data_dir.path().join("baluard.sock");
