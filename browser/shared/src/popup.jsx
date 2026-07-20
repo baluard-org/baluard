@@ -873,9 +873,16 @@ function App() {
       </Show>
 
       <Show when={state() === "error"}>
+        {(() => {
+          // Keep the raw technical error out of the UI (users see a friendly
+          // message) but surface it for debugging so a stale-token / NMH
+          // glitch is diagnosable from the console.
+          if (error()) console.error("[baluard] popup error:", error());
+          return null;
+        })()}
         <StateBlock
           title={t("errorTitle")}
-          desc={error() && error().includes("timeout") ? t("errorTimeout") : (error() || t("errorTimeout"))}
+          desc={t("errorTimeout")}
           class="danger"
         />
         <button onClick={() => refresh(false)} class="btn-secondary">{t("retry")}</button>

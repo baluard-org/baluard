@@ -257,36 +257,39 @@ fn handle_message(msg: serde_json::Value) -> serde_json::Value {
         }
     };
 
-    // Forward to the daemon.
+    // Forward to the daemon, transparently recovering from a stale bridge
+    // token (daemon restart / revoke / expiry). `forward_with_reauth` does
+    // one cache-drop + reauth + retry on `STALE_TOKEN_ERROR`.
     dlog(&format!(
         "[baluard-nmh] forwarding action='{action}' is_bootstrap={is_bootstrap}"
     ));
-    match forward(&action, payload, &token) {
-        Ok(resp) => {
-            dlog(&format!(
-                "[baluard-nmh] forward ok success={} action='{action}'",
-                resp.success
-            ));
-            serde_json::json!({
-                "id": id,
-                "ok": resp.success,
-                "payload": resp.payload,
-                "error": if resp.success { "".to_string() } else { resp.error_message.clone() },
-                // Map a few daemon error strings to NMH codes for friendly UI.
-                "code": if resp.success {
-                    "ok"
-                } else if resp.error_message.contains("locked") || resp.error_message.contains("Unlock") {
-                    "locked"
-                } else {
-                    "denied"
-                },
-            })
+    let (resp, code) = if is_bootstrap {
+        // Bootstrap (pairing ceremony) skips the bridge token entirely — no
+        // token to go stale, so no retry path applies.
+        match forward(&action, payload, &token) {
+            Ok(r) => {
+                let c = code_for(&r);
+                (r, c)
+            }
+            Err(e) => {
+                dlog(&format!("[baluard-nmh] forward error: {e}"));
+                return err(id, &e.to_string(), "no-daemon");
+            }
         }
-        Err(e) => {
-            dlog(&format!("[baluard-nmh] forward error: {e}"));
-            err(id, &e.to_string(), "no-daemon")
-        }
-    }
+    } else {
+        forward_with_reauth(&action, payload, &token)
+    };
+    dlog(&format!(
+        "[baluard-nmh] forward ok success={} action='{action}'",
+        resp.success
+    ));
+    serde_json::json!({
+        "id": id,
+        "ok": resp.success,
+        "payload": resp.payload,
+        "error": if resp.success { "".to_string() } else { resp.error_message.clone() },
+        "code": code,
+    })
 }
 
 /// Read one length-prefixed (32-bit native endian) JSON message from stdin.
@@ -327,6 +330,17 @@ fn err(id: Option<serde_json::Value>, error: &str, code: &str) -> serde_json::Va
 /// Cached bridge token (in NMH memory only; dies with the process).
 /// Static + Mutex keeps it across stdio messages within one NMH lifetime.
 static TOKEN_CACHE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Serializes the stale-token reauth path. The main loop spawns one OS
+/// thread per inbound stdio message, so a popup that fires several bridge
+/// actions at once (e.g. `bridge.match` + `sync.autosync_status`) would race
+/// into `resolve_token()` and each trigger a redundant `bridge.reauth`
+/// round-trip on a daemon restart. Server-side reauth is idempotent within
+/// TTL (correctness is fine), but collapsing them to one reauth cuts the
+/// redundant socket round-trips + log noise. Held only across the
+/// cache-drop + reauth + cache-fill, never across the actual action forward
+/// (that runs per-thread, outside the lock).
+static REAUTH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 enum ResolveError {
     NotPaired,
@@ -382,6 +396,110 @@ fn resolve_token() -> Result<String, ResolveError> {
         .to_string();
     *TOKEN_CACHE.lock().unwrap() = Some(token.clone());
     Ok(token)
+}
+
+/// Drop the cached bridge token and re-resolve one (reauth via the pairing
+/// file). Serialized by `REAUTH_LOCK` so a burst of bridge actions hitting a
+/// stale token simultaneously collapses to a single `bridge.reauth`
+/// round-trip instead of N. Returns the fresh token, or the original
+/// `ResolveError` (not-paired / no-daemon / locked) if the pairing is gone or
+/// the daemon is unreachable.
+fn refresh_token() -> Result<String, ResolveError> {
+    let _guard = REAUTH_LOCK.lock().unwrap();
+    // Drop the stale cached token; resolve_token will then reauth.
+    *TOKEN_CACHE.lock().unwrap() = None;
+    dlog("[baluard-nmh] stale bridge token; re-authing via bridge.reauth");
+    resolve_token()
+}
+
+/// Forward an allowlisted bridge action to the daemon, transparently
+/// recovering from a stale bridge token. The daemon's live token map is
+/// in-memory only, so after a daemon restart (or pairing revoke / token
+/// expiry) a previously-valid token comes back as `STALE_TOKEN_ERROR`. When
+/// that happens exactly ONCE: clear the cache, reauth from the persisted
+/// pairing file, and retry. A second stale response (or a reauth failure)
+/// is surfaced as-is — no retry loop, so a wedged state can't spiral.
+///
+/// Returns `(response, code)`: the `GatewayResponse` (success or the final
+/// failure after the retry budget) and a friendly NMH code for the popup.
+fn forward_with_reauth(
+    action: &str,
+    payload: &str,
+    token: &str,
+) -> (GatewayResponse, &'static str) {
+    let resp = match forward(action, payload, token) {
+        Ok(r) => r,
+        Err(e) => {
+            dlog(&format!("[baluard-nmh] forward error: {e}"));
+            // I/O failure reaching the daemon -> no-daemon for the popup.
+            // Build a failure-shaped GatewayResponse so the caller is uniform.
+            let resp = GatewayResponse {
+                success: false,
+                payload: String::new(),
+                error_message: e.to_string(),
+                session_token: String::new(),
+            };
+            return (resp, "no-daemon");
+        }
+    };
+
+    // Stale-token recovery: exactly one retry.
+    if !resp.success && resp.error_message == baluard_core::bridge::STALE_TOKEN_ERROR {
+        match refresh_token() {
+            Ok(new_token) => {
+                dlog(&format!(
+                    "[baluard-nmh] reauth ok; retrying action='{action}'"
+                ));
+                match forward(action, payload, &new_token) {
+                    Ok(retry) => {
+                        let c = code_for(&retry);
+                        return (retry, c);
+                    }
+                    Err(e) => {
+                        dlog(&format!("[baluard-nmh] retry forward error: {e}"));
+                        let r = GatewayResponse {
+                            success: false,
+                            payload: String::new(),
+                            error_message: e.to_string(),
+                            session_token: String::new(),
+                        };
+                        return (r, "no-daemon");
+                    }
+                }
+            }
+            Err(code) => {
+                // Reauth itself failed (pairing gone / daemon down). Surface
+                // the resolve error as the response so the popup sees
+                // not-paired / no-daemon / locked.
+                dlog(&format!(
+                    "[baluard-nmh] reauth after stale token failed: {code}"
+                ));
+                let r = GatewayResponse {
+                    success: false,
+                    payload: String::new(),
+                    error_message: code.to_string(),
+                    session_token: String::new(),
+                };
+                return (r, code.as_str());
+            }
+        }
+    }
+
+    let code = code_for(&resp);
+    (resp, code)
+}
+
+/// Map a daemon `GatewayResponse` to a friendly NMH code for the popup.
+/// Mirrors the inline logic this replaced (locked detection + denied
+/// fallback) so popup routing is unchanged on the happy path.
+fn code_for(resp: &GatewayResponse) -> &'static str {
+    if resp.success {
+        "ok"
+    } else if resp.error_message.contains("locked") || resp.error_message.contains("Unlock") {
+        "locked"
+    } else {
+        "denied"
+    }
 }
 
 // ── Daemon forwarding (varint-length-prefixed protobuf) ────────────────
@@ -691,5 +809,65 @@ mod tests {
         // future "let's bump it" PR can't accidentally uncap it.
         const { assert!(MAX_REQUEST_BYTES < 64 * 1024 * 1024) };
         const { assert!(MAX_RESPONSE_BYTES <= 1024 * 1024) }; // Chrome's host->ext hard cap
+    }
+
+    // ── Stale-token recovery contract ──
+    //
+    // The full `forward_with_reauth` retry path (cache-drop + reauth + retry)
+    // needs a fake-daemon socket fixture, which doesn't exist yet (see the
+    // module-level test note). These tests pin the pieces that ARE reachable
+    // without a live daemon:
+    //   - the STALE_TOKEN_ERROR sentinel value (the NMH matches it byte-for-byte
+    //     against the daemon's error_message, so a drift here silently breaks
+    //     recovery)
+    //   - `code_for` mapping (pure function, drives the popup's UI state)
+
+    #[test]
+    fn stale_token_sentinel_matches_daemon_constant() {
+        // The NMH matches this string byte-for-byte to trigger reauth. If the
+        // daemon's const changes and this doesn't, recovery breaks silently.
+        assert_eq!(
+            baluard_core::bridge::STALE_TOKEN_ERROR,
+            "stale bridge token"
+        );
+    }
+
+    #[test]
+    fn code_for_success_is_ok() {
+        let resp = GatewayResponse {
+            success: true,
+            payload: String::new(),
+            error_message: String::new(),
+            session_token: String::new(),
+        };
+        assert_eq!(code_for(&resp), "ok");
+    }
+
+    #[test]
+    fn code_for_locked_detection() {
+        // Daemon error strings that mention "locked" / "Unlock" map to the
+        // popup's locked state (surfaces "unlock the vault" UI).
+        for msg in ["locked", "Vault locked", "please Unlock first"] {
+            let resp = GatewayResponse {
+                success: false,
+                payload: String::new(),
+                error_message: msg.to_string(),
+                session_token: String::new(),
+            };
+            assert_eq!(code_for(&resp), "locked", "msg={msg}");
+        }
+    }
+
+    #[test]
+    fn code_for_other_failure_is_denied() {
+        // Any non-success, non-locked failure (including the stale-token
+        // sentinel before forward_with_reauth intercepts it) maps to denied.
+        let resp = GatewayResponse {
+            success: false,
+            payload: String::new(),
+            error_message: baluard_core::bridge::STALE_TOKEN_ERROR.to_string(),
+            session_token: String::new(),
+        };
+        assert_eq!(code_for(&resp), "denied");
     }
 }

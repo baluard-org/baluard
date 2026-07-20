@@ -18,7 +18,7 @@
 //! ciphertext per RFC 9180 §6.1 (AES-256-GCM tag length = 16).
 
 use hpke::kem::X25519HkdfSha256;
-use hpke::{aead::AesGcm256, kdf::HkdfSha256, Deserializable, OpModeR, OpModeS, Serializable};
+use hpke::{Deserializable, OpModeR, OpModeS, Serializable, aead::AesGcm256, kdf::HkdfSha256};
 use rand::rngs::OsRng;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -42,24 +42,21 @@ pub fn generate_x25519_keypair() -> (StaticSecret, PublicKey) {
 /// Uses DHKEM(X25519, HKDF-SHA256) + AES-256-GCM in Base mode (RFC 9180).
 /// Returns: (ephemeral_public_key, encrypted_key, auth_tag).
 pub fn wrap_key(plaintext_key: &[u8], recipient_pub: &PublicKey) -> WrapResult {
-    let recip_pub_hpke = <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey::from_bytes(recipient_pub.as_bytes())
-        .map_err(|e| CryptoError::HpkeFailed(format!("recipient pubkey import: {e}")))?;
+    let recip_pub_hpke =
+        <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey::from_bytes(recipient_pub.as_bytes())
+            .map_err(|e| CryptoError::HpkeFailed(format!("recipient pubkey import: {e}")))?;
 
     let mut rng = OsRng;
-    let (encapped, ciphertext_with_tag) = hpke::single_shot_seal::<
-        AesGcm256,
-        HkdfSha256,
-        X25519HkdfSha256,
-        _,
-    >(
-        &OpModeS::Base,
-        &recip_pub_hpke,
-        b"baluard-hpke-wrap-v2",
-        plaintext_key,
-        b"baluard-keywrap",
-        &mut rng,
-    )
-    .map_err(|e| CryptoError::HpkeFailed(format!("seal: {e}")))?;
+    let (encapped, ciphertext_with_tag) =
+        hpke::single_shot_seal::<AesGcm256, HkdfSha256, X25519HkdfSha256, _>(
+            &OpModeS::Base,
+            &recip_pub_hpke,
+            b"baluard-hpke-wrap-v2",
+            plaintext_key,
+            b"baluard-keywrap",
+            &mut rng,
+        )
+        .map_err(|e| CryptoError::HpkeFailed(format!("seal: {e}")))?;
 
     // Split ciphertext || tag (hpke returns them appended) into the on-disk
     // 3-field shape. Tag is always the final 16 bytes.
@@ -94,12 +91,14 @@ pub fn unwrap_key(
     }
 
     // Reconstruct the HPKE EncappedKey from the serialized ephemeral pubkey.
-    let encapped = <X25519HkdfSha256 as hpke::kem::Kem>::EncappedKey::from_bytes(ephemeral_pub_bytes)
-        .map_err(|e| CryptoError::HpkeFailed(format!("encapped import: {e}")))?;
+    let encapped =
+        <X25519HkdfSha256 as hpke::kem::Kem>::EncappedKey::from_bytes(ephemeral_pub_bytes)
+            .map_err(|e| CryptoError::HpkeFailed(format!("encapped import: {e}")))?;
 
     // Import the recipient's x25519_dalek private key into hpke's wrapper type.
-    let recip_priv_hpke = <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey::from_bytes(&recipient_priv.to_bytes())
-        .map_err(|e| CryptoError::HpkeFailed(format!("recipient privkey import: {e}")))?;
+    let recip_priv_hpke =
+        <X25519HkdfSha256 as hpke::kem::Kem>::PrivateKey::from_bytes(&recipient_priv.to_bytes())
+            .map_err(|e| CryptoError::HpkeFailed(format!("recipient privkey import: {e}")))?;
 
     // Re-assemble ciphertext || tag (hpke expects them appended).
     let mut ct_with_tag = Vec::with_capacity(ciphertext.len() + GCM_TAG_LEN);
