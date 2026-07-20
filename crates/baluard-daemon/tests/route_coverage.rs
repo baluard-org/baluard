@@ -412,3 +412,278 @@ async fn should_auto_lock_immediately_on_fresh_state() {
         "freshly unlocked vault should NOT auto-lock immediately"
     );
 }
+
+// ── Cipher archive / unarchive ────────────────────────────────────
+
+#[tokio::test]
+async fn archive_unarchive_round_trip() {
+    let (_dir, state) = open_unlocked("archive").await;
+    let id = state
+        .add_cipher(&serde_json::to_string(&login_input("X", "u")).unwrap())
+        .await
+        .unwrap();
+    state.archive_cipher(&id).await.expect("archive");
+    // After archive, list_cipher_meta excludes it; list_archived_meta includes it.
+    assert_eq!(state.list_cipher_meta().await.unwrap().len(), 0);
+    assert_eq!(state.list_archived_meta().await.unwrap().len(), 1);
+    state.unarchive_cipher(&id).await.expect("unarchive");
+    assert_eq!(state.list_cipher_meta().await.unwrap().len(), 1);
+    assert_eq!(state.list_archived_meta().await.unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn archive_unknown_cipher_returns_error() {
+    let (_dir, state) = open_unlocked("archive-miss").await;
+    let err = state
+        .archive_cipher("00000000-0000-0000-0000-000000000000")
+        .await
+        .unwrap_err();
+    assert!(!err.is_empty(), "archive of unknown id should fail");
+}
+
+// ── Cipher update ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn update_cipher_changes_name() {
+    let (_dir, state) = open_unlocked("update").await;
+    let id = state
+        .add_cipher(&serde_json::to_string(&login_input("Old", "u")).unwrap())
+        .await
+        .unwrap();
+    let payload = serde_json::json!({
+        "id": id,
+        "name": "New",
+        "favorite": true,
+    })
+    .to_string();
+    state.update_cipher(&payload).await.expect("update");
+    let metas = state.list_cipher_meta().await.unwrap();
+    assert_eq!(metas.len(), 1);
+    assert_eq!(metas[0].name, "New");
+    assert!(metas[0].favorite, "favorite flag updated");
+}
+
+#[tokio::test]
+async fn update_cipher_missing_id_field_errors() {
+    let (_dir, state) = open_unlocked("update-bad").await;
+    state
+        .add_cipher(&serde_json::to_string(&login_input("X", "u")).unwrap())
+        .await
+        .unwrap();
+    let payload = serde_json::json!({ "name": "New" }).to_string();
+    let err = state.update_cipher(&payload).await.unwrap_err();
+    assert!(
+        err.contains("id") || err.contains("Missing"),
+        "expected missing-id error: {err}"
+    );
+}
+
+// ── Cipher delete ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn delete_cipher_removes_from_active_list() {
+    let (_dir, state) = open_unlocked("delete").await;
+    let id = state
+        .add_cipher(&serde_json::to_string(&login_input("Doomed", "u")).unwrap())
+        .await
+        .unwrap();
+    state.delete_cipher(&id).await.expect("delete");
+    assert_eq!(state.list_cipher_meta().await.unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn delete_cipher_unknown_id_errors() {
+    let (_dir, state) = open_unlocked("delete-miss").await;
+    let err = state
+        .delete_cipher("00000000-0000-0000-0000-000000000000")
+        .await
+        .unwrap_err();
+    assert!(!err.is_empty());
+}
+
+// ── Settings: theme + lang ─────────────────────────────────────────
+
+#[tokio::test]
+async fn settings_set_theme_persists() {
+    let (_dir, state) = open_unlocked("settings-theme").await;
+    let payload = serde_json::json!({ "theme": "dark" }).to_string();
+    state.settings_set(&payload).await.expect("settings_set");
+    let payload = state.settings_get().await.expect("settings_get");
+    let v: serde_json::Value = serde_json::from_str(&payload).expect("json");
+    assert_eq!(v["theme"], "dark");
+}
+
+#[tokio::test]
+async fn settings_set_lang_persists() {
+    let (_dir, state) = open_unlocked("settings-lang").await;
+    let payload = serde_json::json!({ "lang": "es" }).to_string();
+    state.settings_set(&payload).await.expect("settings_set");
+    let payload = state.settings_get().await.expect("settings_get");
+    let v: serde_json::Value = serde_json::from_str(&payload).expect("json");
+    assert_eq!(v["lang"], "es");
+}
+
+// ── Biometric status (no enable — needs OS keychain) ──────────────
+
+#[tokio::test]
+async fn biometric_status_on_fresh_vault() {
+    let (_dir, state) = open_unlocked("bio-status").await;
+    let payload = state.biometric_status().await.expect("biometric_status");
+    let v: serde_json::Value = serde_json::from_str(&payload).expect("json");
+    // Fresh vault has no biometric enrollment. The exact field names
+    // differ by platform; just confirm a status object came back.
+    assert!(v.is_object());
+}
+
+#[tokio::test]
+async fn biometric_disable_when_not_enrolled_is_safe() {
+    let (_dir, state) = open_unlocked("bio-disable").await;
+    // Idempotent: disabling without enrollment must not panic. Either
+    // succeeds (no-op) or returns a non-fatal error.
+    let _ = state.biometric_disable().await;
+}
+
+// ── Health report ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn health_report_on_fresh_vault_empty() {
+    let (_dir, state) = open_unlocked("health-empty").await;
+    let payload = state.health_report().await.expect("health_report");
+    let v: serde_json::Value = serde_json::from_str(&payload).expect("json");
+    assert_eq!(v["weak"].as_array().map(|a| a.len()).unwrap_or(0), 0);
+    assert_eq!(v["reused"].as_array().map(|a| a.len()).unwrap_or(0), 0);
+    assert_eq!(v["old"].as_array().map(|a| a.len()).unwrap_or(0), 0);
+}
+
+#[tokio::test]
+async fn health_report_with_short_password_flags_weak() {
+    let (_dir, state) = open_unlocked("health-weak").await;
+    // 6-char password is below the typical weak threshold (8 chars).
+    let weak_input = CipherInput {
+        name: "weak".to_string(),
+        folder_id: None,
+        kind: CipherKind::Login(LoginData {
+            username: Some("u".into()),
+            password: Some("abc".into()), // 3 chars
+            uris: vec![],
+            totp_uri: None,
+            autofill_on_page_load: false,
+            password_revision_date: None,
+            fido2_credentials: None,
+            favicon: None,
+        }),
+        favorite: false,
+        notes: None,
+        custom_fields: vec![],
+        created_at: None,
+        password_history: vec![],
+        attachments: vec![],
+        archived: false,
+        reprompt: false,
+        tags: vec![],
+    };
+    state
+        .add_cipher(&serde_json::to_string(&weak_input).unwrap())
+        .await
+        .unwrap();
+    let payload = state.health_report().await.expect("health_report");
+    let v: serde_json::Value = serde_json::from_str(&payload).expect("json");
+    // The health report should now surface at least one weak entry. If
+    // the threshold is higher than 3 chars in this build, accept any
+    // non-empty weak array; otherwise confirm >0.
+    let weak_count = v["weak"].as_array().map(|a| a.len()).unwrap_or(0);
+    assert!(weak_count >= 1, "expected >=1 weak entry, got: {v}");
+}
+
+// ── Generator history clear ──────────────────────────────────────
+
+#[tokio::test]
+async fn generator_history_clear_empties_list() {
+    let (_dir, state) = open_unlocked("gen-clear").await;
+    let add = serde_json::json!({
+        "value": "x", "kind": "password", "params": { "length": 8 }
+    })
+    .to_string();
+    state.generator_history_add(&add).await.unwrap();
+    let list = state.generator_history_list().await.unwrap();
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&list).expect("json");
+    assert!(!arr.is_empty(), "history has the added entry");
+    state.generator_history_clear().await.unwrap();
+    let list = state.generator_history_list().await.unwrap();
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&list).expect("json");
+    assert!(arr.is_empty(), "history cleared");
+}
+
+// ── Reprompt verify ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn reprompt_verify_with_correct_master_returns_ok() {
+    let (_dir, state) = open_unlocked("reprompt").await;
+    let payload = state
+        .reprompt_verify(MASTER)
+        .await
+        .expect("reprompt_verify ok");
+    // The success payload shape shifts; just confirm non-empty JSON success.
+    let v: serde_json::Value = serde_json::from_str(&payload).expect("json");
+    assert!(v.is_object());
+}
+
+#[tokio::test]
+async fn reprompt_verify_with_wrong_master_errors() {
+    let (_dir, state) = open_unlocked("reprompt-bad").await;
+    let err = state
+        .reprompt_verify("definitely-wrong-master-password")
+        .await
+        .unwrap_err();
+    assert!(err.to_lowercase().contains("incorrect") || err.to_lowercase().contains("invalid"));
+}
+
+// ── VaultHost: switch + lock_all ──────────────────────────────────
+
+#[tokio::test]
+async fn vault_host_switch_flips_active_pointer() {
+    let _sandbox = sandboxed_host_env();
+    let host = VaultHost::new();
+    let (_d1, p1) = make_vault("switch-1");
+    let (_d2, p2) = make_vault("switch-2");
+    let s1 = Arc::new(VaultState::new(p1));
+    let s2 = Arc::new(VaultState::new(p2));
+    s1.open().await.unwrap();
+    s2.open().await.unwrap();
+    host.insert("vault-1".into(), s1).await;
+    host.insert("vault-2".into(), s2).await;
+    host.switch("vault-1").await.expect("switch to vault-1");
+    assert_eq!(host.active_slug().await.as_deref(), Some("vault-1"));
+    host.switch("vault-2").await.expect("switch to vault-2");
+    assert_eq!(host.active_slug().await.as_deref(), Some("vault-2"));
+}
+
+#[tokio::test]
+async fn vault_host_switch_unknown_slug_errors() {
+    let _sandbox = sandboxed_host_env();
+    let host = VaultHost::new();
+    let err = host.switch("ghost").await.unwrap_err();
+    // Just confirm the error message references the slug.
+    assert!(
+        format!("{err:?}").contains("ghost")
+            || format!("{err:?}").to_lowercase().contains("unknown")
+    );
+}
+
+#[tokio::test]
+async fn vault_host_lock_all_returns_count() {
+    let _sandbox = sandboxed_host_env();
+    let host = VaultHost::new();
+    let (_d1, p1) = make_vault("lock-all-1");
+    let (_d2, p2) = make_vault("lock-all-2");
+    let s1 = Arc::new(VaultState::new(p1));
+    let s2 = Arc::new(VaultState::new(p2));
+    s1.open().await.unwrap();
+    s2.open().await.unwrap();
+    s1.unlock(MASTER).await.unwrap();
+    s2.unlock(MASTER).await.unwrap();
+    host.insert("la-1".into(), s1).await;
+    host.insert("la-2".into(), s2).await;
+    let n = host.lock_all().await;
+    assert_eq!(n, 2, "lock_all returns count of locked vaults");
+}
