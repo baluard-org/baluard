@@ -9,8 +9,8 @@
 //! that's still TODO. Tracked as Phase 9b/c.
 
 mod real_vault {
-    use baluard_core::vault::creation::VaultCreator;
     use baluard_core::types::{CipherInput, CipherKind, LoginData, LoginUri};
+    use baluard_core::vault::creation::VaultCreator;
     use baluard_daemon::state::VaultState;
     use base64::Engine;
     use std::path::PathBuf;
@@ -84,10 +84,13 @@ mod real_vault {
 
         // Download round-trip.
         let download = state
-            .attach_download(&serde_json::json!({
-                "cipher_id": id.to_string(),
-                "attachment_id": attach_id,
-            }).to_string())
+            .attach_download(
+                &serde_json::json!({
+                    "cipher_id": id.to_string(),
+                    "attachment_id": attach_id,
+                })
+                .to_string(),
+            )
             .await
             .expect("download");
         let d: serde_json::Value = serde_json::from_str(&download).expect("json");
@@ -107,11 +110,14 @@ mod real_vault {
             .await
             .unwrap();
         let upload = state
-            .attach_upload(&serde_json::json!({
-                "cipher_id": id.to_string(),
-                "filename": "a.bin",
-                "data_base64": base64::engine::general_purpose::STANDARD.encode(b"payload"),
-            }).to_string())
+            .attach_upload(
+                &serde_json::json!({
+                    "cipher_id": id.to_string(),
+                    "filename": "a.bin",
+                    "data_base64": base64::engine::general_purpose::STANDARD.encode(b"payload"),
+                })
+                .to_string(),
+            )
             .await
             .expect("upload");
         let attach_id = serde_json::from_str::<serde_json::Value>(&upload).unwrap()["id"]
@@ -127,10 +133,13 @@ mod real_vault {
 
         // Delete.
         state
-            .attach_delete(&serde_json::json!({
-                "cipher_id": id.to_string(),
-                "attachment_id": attach_id,
-            }).to_string())
+            .attach_delete(
+                &serde_json::json!({
+                    "cipher_id": id.to_string(),
+                    "attachment_id": attach_id,
+                })
+                .to_string(),
+            )
             .await
             .expect("delete");
 
@@ -206,7 +215,8 @@ mod real_vault {
             "kdf_profile": "desktop-std",
             "name": "My New Vault",
             "slug": "new-vault",
-        }).to_string();
+        })
+        .to_string();
         let result = state.create_vault(&payload).await.expect("create_vault");
         assert!(!result.is_empty(), "create_vault returns the new vault_id");
         // meta/kdf-params.json should now exist on disk.
@@ -223,7 +233,8 @@ mod real_vault {
             "kdf_profile": "desktop-std",
             "name": "Dup",
             "slug": "dup",
-        }).to_string();
+        })
+        .to_string();
         let err = state.create_vault(&payload).await.unwrap_err();
         assert!(err.contains("exists") || err.contains("already"));
     }

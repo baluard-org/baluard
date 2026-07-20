@@ -47,7 +47,13 @@ fn decode_varint(data: &[u8]) -> Result<(u64, usize), String> {
     Err("varint truncated".into())
 }
 
-fn request(socket: &PathBuf, action: &str, payload: &str, token: &str, slug: &str) -> GatewayResponse {
+fn request(
+    socket: &PathBuf,
+    action: &str,
+    payload: &str,
+    token: &str,
+    slug: &str,
+) -> GatewayResponse {
     let req = GatewayRequest {
         action: action.to_string(),
         payload: payload.to_string(),
@@ -77,7 +83,12 @@ fn dump_tree(path: &std::path::Path, prefix: &str) -> String {
             let name = e.file_name().to_string_lossy().to_string();
             let meta = e.metadata().ok();
             let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-            out.push_str(&format!("{}{} {}\n", prefix, if is_dir { "d " } else { "f " }, name));
+            out.push_str(&format!(
+                "{}{} {}\n",
+                prefix,
+                if is_dir { "d " } else { "f " },
+                name
+            ));
             if is_dir {
                 out.push_str(&dump_tree(&p, &format!("{}  ", prefix)));
             }
