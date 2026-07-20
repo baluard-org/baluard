@@ -83,6 +83,10 @@ test-cli:
 test-nmh:
 	{{ linuxbrew_env }} cargo test -p baluard-nmh
 
+# Run browser extension tests (vitest + jsdom, mock chrome.* APIs)
+test-browser:
+	cd browser/shared && npm test
+
 # Run tests with output
 test-verbose:
 	{{ linuxbrew_env }} cargo test -- --nocapture

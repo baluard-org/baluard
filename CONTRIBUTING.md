@@ -60,8 +60,10 @@ in the matching `tests/<command>.rs` file using the helpers in
 ### JavaScript / SolidJS
 
 Desktop uses Vitest (jsdom). Run via `npm test` from `desktop/`. The
-browser extension does not yet have a test runner wired — Phase 3 of the
-test-coverage plan.
+browser extension (`browser/shared/`) also uses Vitest + jsdom; run via
+`just test-browser` or `cd browser/shared && npm test`. The mock for
+`chrome.*` lives in `browser/shared/tests/setup.js` and is loaded via
+vitest `setupFiles` so it exists before any source IIFE runs.
 
 ## Code Standards
 
