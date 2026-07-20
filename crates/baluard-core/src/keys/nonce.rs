@@ -41,3 +41,46 @@ impl Default for NonceCounter {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_counter_starts_at_zero() {
+        let c = NonceCounter::new();
+        assert_eq!(c.counter, 0);
+    }
+
+    #[test]
+    fn default_matches_new() {
+        assert_eq!(NonceCounter::default().counter, NonceCounter::new().counter);
+    }
+
+    #[test]
+    fn advance_increments_by_one() {
+        let mut c = NonceCounter::new();
+        assert_eq!(c.advance(), 1);
+        assert_eq!(c.advance(), 2);
+        assert_eq!(c.advance(), 3);
+        assert_eq!(c.counter, 3);
+    }
+
+    #[test]
+    fn reset_returns_to_zero() {
+        let mut c = NonceCounter::new();
+        c.advance();
+        c.advance();
+        assert_eq!(c.counter, 2);
+        c.reset();
+        assert_eq!(c.counter, 0);
+    }
+
+    #[test]
+    fn advance_after_reset_starts_at_one() {
+        let mut c = NonceCounter::new();
+        c.advance();
+        c.reset();
+        assert_eq!(c.advance(), 1);
+    }
+}
