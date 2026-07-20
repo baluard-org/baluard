@@ -6,10 +6,10 @@
 //! the unit-level state tests can't (route lookup, token gating, varint
 //! framing, daemon binary smoke).
 
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
-use std::os::unix::net::UnixStream;
 
 use baluard_daemon::proto::{GatewayRequest, GatewayResponse};
 use prost::Message;
@@ -35,15 +35,16 @@ impl DaemonHandle {
         };
         let body = req.encode_to_vec();
 
-        let mut stream = UnixStream::connect(&self.socket_path)
-            .expect("connect to daemon socket");
+        let mut stream = UnixStream::connect(&self.socket_path).expect("connect to daemon socket");
         let mut header = Vec::with_capacity(10);
         encode_varint(body.len() as u64, &mut header);
         use std::io::Write;
         stream.write_all(&header).expect("write header");
         stream.write_all(&body).expect("write body");
         stream.flush().expect("flush");
-        stream.shutdown(std::net::Shutdown::Write).expect("shutdown write");
+        stream
+            .shutdown(std::net::Shutdown::Write)
+            .expect("shutdown write");
 
         let mut buf = Vec::with_capacity(4096);
         use std::io::Read;
@@ -151,7 +152,11 @@ fn daemon_starts_and_accepts_connections() {
 fn daemon_responds_to_ping() {
     let h = spawn_daemon();
     let resp = h.request("ping", "");
-    assert!(resp.success, "ping must succeed; error={}", resp.error_message);
+    assert!(
+        resp.success,
+        "ping must succeed; error={}",
+        resp.error_message
+    );
     // The ping payload shape is daemon-version-dependent; just confirm it's
     // non-empty (some early versions returned a plain "pong" string, others
     // return JSON). The contract that matters: ping succeeds with no
@@ -307,8 +312,7 @@ impl VaultedDaemon {
     /// Send vault.unlock and stash the returned session token for future
     /// calls in this handle.
     fn unlock_vault(&mut self) -> GatewayResponse {
-        let unlock_payload =
-            serde_json::json!({ "password": self.master_password }).to_string();
+        let unlock_payload = serde_json::json!({ "password": self.master_password }).to_string();
         let resp = self.request_with_token("vault.unlock", &unlock_payload);
         if resp.success && !resp.session_token.is_empty() {
             self.token = Some(resp.session_token.clone());
@@ -355,14 +359,25 @@ fn end_to_end_unlock_then_list() {
     })
     .to_string();
     let resp = v.unlock_vault();
-    assert!(resp.success, "vault.unlock must succeed; error={}", resp.error_message);
+    assert!(
+        resp.success,
+        "vault.unlock must succeed; error={}",
+        resp.error_message
+    );
     // The daemon returns the session token in the response itself (NOT
     // via a sidecar .tok file). Verify the token is non-empty.
-    assert!(!resp.session_token.is_empty(), "session token returned in response");
+    assert!(
+        !resp.session_token.is_empty(),
+        "session token returned in response"
+    );
 
     // 2. vault.list with the token returns the empty ciphers array.
     let resp = v.request_with_token("vault.list", "");
-    assert!(resp.success, "vault.list with token must succeed; error={}", resp.error_message);
+    assert!(
+        resp.success,
+        "vault.list with token must succeed; error={}",
+        resp.error_message
+    );
     let parsed: serde_json::Value = serde_json::from_str(&resp.payload).expect("json");
     let ciphers = parsed["ciphers"].as_array().expect("ciphers array");
     assert!(ciphers.is_empty(), "fresh vault has zero ciphers");
@@ -403,7 +418,11 @@ fn end_to_end_unlock_then_add_cipher() {
     })
     .to_string();
     let resp = v.request_with_token("vault.add", &add_payload);
-    assert!(resp.success, "vault.add must succeed; error={}", resp.error_message);
+    assert!(
+        resp.success,
+        "vault.add must succeed; error={}",
+        resp.error_message
+    );
     // The response payload is the cipher_id (UUID) as a raw string — NOT
     // JSON-encoded. Confirm it's non-empty and looks like a UUID.
     let trimmed = resp.payload.trim().trim_matches('"');
