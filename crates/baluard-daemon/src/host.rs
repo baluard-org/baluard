@@ -267,7 +267,8 @@ impl VaultHost {
         };
 
         // Read the registry without holding the host lock.
-        let mut reg = baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
+        let mut reg =
+            baluard_core::vault::registry::VaultRegistry::load_locked().unwrap_or_default();
 
         // Self-heal: if the registry lost entries (e.g. a crash wrote an
         // empty index while vault files are intact), re-discover orphaned

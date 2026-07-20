@@ -2963,7 +2963,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || sync_remote(&vault_path, &payload)),
-            ).await;
+            )
+            .await;
             match joined {
                 Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
                 Ok(Ok(Err(e))) => err_response(e),
@@ -2980,7 +2981,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || sync_push(&vault_path)),
-            ).await;
+            )
+            .await;
             match joined {
                 Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
                 Ok(Ok(Err(e))) => err_response(e),
@@ -2996,7 +2998,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || sync_pull(&vault_path)),
-            ).await;
+            )
+            .await;
             match joined {
                 Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
                 Ok(Ok(Err(e))) => err_response(e),
@@ -3009,7 +3012,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || sync_status(&vault_path)),
-            ).await;
+            )
+            .await;
             match joined {
                 Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
                 Ok(Ok(Err(e))) => err_response(e),
@@ -4296,7 +4300,8 @@ async fn handle_sync_conflict_resolve(
                 Err(e) => return (false, Some(format!("open repo: {e}"))),
             };
             // Read each conflicting file's bytes from the chosen side.
-            let mut resolved: Vec<(String, Vec<u8>)> = Vec::with_capacity(pending_clone.files.len());
+            let mut resolved: Vec<(String, Vec<u8>)> =
+                Vec::with_capacity(pending_clone.files.len());
             for f in &pending_clone.files {
                 let bytes = match SyncEngine::read_blob_from_commit(&repo, src_oid, f) {
                     Ok(b) => b,

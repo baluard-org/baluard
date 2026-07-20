@@ -2310,22 +2310,21 @@ impl VaultState {
         let local_oid = pending.local_oid;
         let remote_oid = pending.remote_oid;
         let fp_for_read = file_path.clone();
-        let (local_bytes, remote_bytes) =
-            tokio::time::timeout(
-                crate::handler::SYNC_OP_TIMEOUT,
-                tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, Vec<u8>), String> {
-                    let engine = SyncEngine::new(&vault_path, "conflict-keep-both");
-                    let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
-                    let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
-                        .map_err(|e| format!("read local: {e}"))?;
-                    let remote = SyncEngine::read_blob_from_commit(&repo, remote_oid, &fp_for_read)
-                        .map_err(|e| format!("read remote: {e}"))?;
-                    Ok((local, remote))
-                }),
-            )
-            .await
-            .map_err(|_| "conflict blob read timed out".to_string())?
-            .map_err(|e| format!("blob read task join: {e}"))??;
+        let (local_bytes, remote_bytes) = tokio::time::timeout(
+            crate::handler::SYNC_OP_TIMEOUT,
+            tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, Vec<u8>), String> {
+                let engine = SyncEngine::new(&vault_path, "conflict-keep-both");
+                let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
+                let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
+                    .map_err(|e| format!("read local: {e}"))?;
+                let remote = SyncEngine::read_blob_from_commit(&repo, remote_oid, &fp_for_read)
+                    .map_err(|e| format!("read remote: {e}"))?;
+                Ok((local, remote))
+            }),
+        )
+        .await
+        .map_err(|_| "conflict blob read timed out".to_string())?
+        .map_err(|e| format!("blob read task join: {e}"))??;
 
         // Phase 2 (inline): decrypt remote, re-encrypt under a new UUID.
         let guard = self.inner.read().await;
@@ -3132,7 +3131,8 @@ impl VaultState {
         // Pass the slug from the payload so the .baluard marker is written
         // at creation (marker write is gated on slug being set; without it
         // the vault is created but undetectable by discover_orphans / detach).
-        let slug_for_marker = v.get("slug")
+        let slug_for_marker = v
+            .get("slug")
             .and_then(|s| s.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
