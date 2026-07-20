@@ -29,6 +29,12 @@ dotenvy.workspace = true
 [build-dependencies]
 prost-build = "0.13"
 
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tempfile = "3"
+regex = "1"
+
 [features]
 default = ["git-sync"]
 git-sync = ["baluard-core/git-sync"]
