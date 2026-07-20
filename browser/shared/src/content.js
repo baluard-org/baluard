@@ -29,7 +29,7 @@
   chrome.runtime.onMessage.addListener(listener);
 })();
 
-function fillLoginForm(cred) {
+export function fillLoginForm(cred) {
   const password = cred.password || "";
   const username = cred.username || "";
 
@@ -77,16 +77,16 @@ function fillLoginForm(cred) {
   // user presses Enter. This is the safer default.
 }
 
-function visibleInputs(type) {
+export function visibleInputs(type) {
   return Array.from(document.querySelectorAll(`input[type="${type}"]`)).filter(isVisible);
 }
 
-function isTextLike(input) {
+export function isTextLike(input) {
   const t = (input.type || "text").toLowerCase();
   return t === "text" || t === "email" || t === "tel" || t === "username";
 }
 
-function isVisible(el) {
+export function isVisible(el) {
   if (!el || !el.getBoundingClientRect) return false;
   const rect = el.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return false;
@@ -96,7 +96,7 @@ function isVisible(el) {
 }
 
 // Set a value the way React/Vue/Svelte can hear: native setter + input event.
-function setNativeValue(el, value) {
+export function setNativeValue(el, value) {
   const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
   try {

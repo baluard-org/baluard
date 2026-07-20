@@ -95,6 +95,9 @@ function buildError(msg) {
   return e;
 }
 
+// Exported for unit tests; not used outside the SW module otherwise.
+export { buildError };
+
 function send(action, payload) {
   return new Promise((resolve, reject) => {
     if (!port) {
@@ -118,7 +121,7 @@ function send(action, payload) {
 // Map a Chromium native-messaging disconnect reason to a friendly code.
 // "not found" / "forbidden" => no-daemon (manifest missing or NMH not installed).
 // Anything else stays generic but the raw reason travels in the message.
-function classifyDisconnect(reason) {
+export function classifyDisconnect(reason) {
   const r = (reason || "").toLowerCase();
   if (r.includes("not found") || r.includes("forbidden")) return "no-daemon";
   return "nmh-error";
@@ -131,7 +134,7 @@ function err(message, code) {
 }
 
 // semver-ish compare (only needs major.minor.patch). Returns <0, 0, >0.
-function compareVersions(a, b) {
+export function compareVersions(a, b) {
   const pa = String(a).split(".").map(Number);
   const pb = String(b).split(".").map(Number);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {

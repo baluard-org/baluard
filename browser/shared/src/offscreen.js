@@ -6,7 +6,7 @@
 //   offscreen-copy { text } -> write text to clipboard
 //   offscreen-clear        -> overwrite clipboard with empty string
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+export function handleOffscreenMessage(msg, _sender, sendResponse) {
   if (!msg || msg.target !== "offscreen") return;
   if (msg.action === "offscreen-copy") {
     navigator.clipboard
@@ -22,4 +22,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .finally(() => sendResponse({ ok: true }));
     return true;
   }
-});
+}
+
+chrome.runtime.onMessage.addListener(handleOffscreenMessage);
