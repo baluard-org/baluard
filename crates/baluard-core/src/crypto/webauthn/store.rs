@@ -310,3 +310,128 @@ impl CredentialStore for BaluardCredentialStore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{Cipher, CipherKind, LoginData};
+    use uuid::Uuid;
+
+    fn make_cipher_without_passkey(name: &str) -> Cipher {
+        Cipher {
+            id: Uuid::new_v4(),
+            name: name.to_string(),
+            folder_id: None,
+            kind: CipherKind::Login(LoginData {
+                username: Some("u".into()),
+                password: Some("p".into()),
+                uris: vec![],
+                totp_uri: None,
+                autofill_on_page_load: false,
+                password_revision_date: None,
+                fido2_credentials: None,
+                favicon: None,
+            }),
+            favorite: false,
+            reprompt: false,
+            notes: None,
+            custom_fields: vec![],
+            key_epoch: 1,
+            update_seq: 1,
+            tier: crate::types::Tier::S,
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_000,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+        }
+    }
+
+    fn make_cipher_with_missing_passkey(name: &str) -> Cipher {
+        // A cipher whose passkey is private_key_missing=true. PasskeyIndex
+        // must skip it even though fido2_credentials is Some(non-empty).
+        let mut c = make_cipher_without_passkey(name);
+        if let CipherKind::Login(ref mut d) = c.kind {
+            d.fido2_credentials = Some(vec![PasskeyData {
+                rp_id: "example.com".into(),
+                rp_name: Some("Example".into()),
+                credential_id: "ignored".into(),
+                key_type: "public-key".into(),
+                key_algorithm: "ECDSA".into(),
+                key_curve: "P-256".into(),
+                key_value: "ignored".into(),
+                user_handle: Some(vec![1, 2, 3]),
+                user_name: Some("u".into()),
+                user_display_name: None,
+                private_key: Some(vec![0u8; 32]),
+                counter: 0,
+                aaguid: Uuid::nil(),
+                creation_date: 1_700_000_000,
+                private_key_missing: true, // <- the gate
+                prf_key: None,
+                linked_login_id: None,
+                name: None,
+            }]);
+        }
+        c
+    }
+
+    #[test]
+    fn passkey_index_from_empty_ciphers_is_empty() {
+        let index = PasskeyIndex::from_ciphers(&[]);
+        assert!(index.entries().is_empty());
+    }
+
+    #[test]
+    fn passkey_index_skips_login_without_passkey() {
+        let c = make_cipher_without_passkey("Plain Login");
+        let index = PasskeyIndex::from_ciphers(&[c]);
+        assert!(index.entries().is_empty());
+    }
+
+    #[test]
+    fn passkey_index_skips_private_key_missing() {
+        // Even though fido2_credentials is present, the gate
+        // `private_key_missing == true` must drop it.
+        let c = make_cipher_with_missing_passkey("Imported");
+        let index = PasskeyIndex::from_ciphers(&[c]);
+        assert!(
+            index.entries().is_empty(),
+            "imported passkey (private_key_missing=true) was not skipped"
+        );
+    }
+
+    #[test]
+    fn passkey_index_by_rp_with_no_match_returns_empty() {
+        // Empty index -> no RP -> empty result.
+        let index = PasskeyIndex::from_ciphers(&[]);
+        let by_rp = index.by_rp("github.com");
+        assert!(by_rp.is_empty());
+    }
+
+    #[test]
+    fn credential_store_empty_starts_with_no_credentials() {
+        let store = BaluardCredentialStore::empty();
+        assert!(store.take_new_credentials().is_empty());
+        assert!(store.take_counter_updates().is_empty());
+    }
+
+    #[test]
+    fn credential_store_take_new_credentials_clears_state() {
+        let store = BaluardCredentialStore::empty();
+        // First call returns nothing (empty).
+        assert!(store.take_new_credentials().is_empty());
+        // Second call also returns nothing (already cleared).
+        assert!(store.take_new_credentials().is_empty());
+    }
+
+    #[test]
+    fn credential_store_take_counter_updates_clears_state() {
+        let store = BaluardCredentialStore::empty();
+        assert!(store.take_counter_updates().is_empty());
+        // Re-take yields empty state (not stale).
+        let again = store.take_counter_updates();
+        assert!(again.is_empty());
+    }
+}
