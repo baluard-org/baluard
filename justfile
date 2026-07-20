@@ -75,6 +75,10 @@ test-release:
 test-core:
 	{{ linuxbrew_env }} cargo test -p baluard-core
 
+# Run CLI integration tests only (spawns the baluard binary against temp vaults)
+test-cli:
+	{{ linuxbrew_env }} cargo test -p baluard-cli
+
 # Run tests with output
 test-verbose:
 	{{ linuxbrew_env }} cargo test -- --nocapture

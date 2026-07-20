@@ -475,7 +475,12 @@ fn unlock_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let mut password = prompt_password("Master password: ")?;
+    // Resolve password: env var > TTY prompt. Mirrors handle_init + unlock_vault_direct
+    // so scripting (`BALUARD_PASSWORD=... baluard unlock`) and tests can skip the prompt.
+    let mut password = match std::env::var("BALUARD_PASSWORD") {
+        Ok(pw) => zeroize::Zeroizing::new(pw),
+        Err(_) => zeroize::Zeroizing::new(prompt_password("Master password: ")?),
+    };
     handle.unlock(&password)?;
     password.zeroize();
 
@@ -900,7 +905,16 @@ pub fn handle_list(
 
 fn list_direct(vault_path: &str, archived: bool) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let handle = VaultHandle::open(path)?;
+    // Auto-unlock when BALUARD_PASSWORD is set, so scripting/tests get full
+    // cipher metadata (name, type, username) without an explicit `unlock`
+    // step. Matches the env-var bypass used by `add`/`edit` via
+    // `unlock_vault_direct`. If the env var is unset we fall back to the
+    // locked-ID listing below.
+    let handle = if std::env::var("BALUARD_PASSWORD").is_ok() {
+        unlock_vault_direct(vault_path)?
+    } else {
+        VaultHandle::open(path)?
+    };
 
     // Try CipherMeta listing (requires unlock)
     if handle.is_unlocked() {
@@ -985,8 +999,9 @@ pub fn handle_archive(
             Ok(())
         }
         ConnectMode::Direct => {
-            let path = Path::new(vault_path);
-            let mut handle = VaultHandle::open(path)?;
+            // Auto-unlock when BALUARD_PASSWORD is set so scripting/tests can
+            // chain `add` → `archive` without an explicit `unlock` step.
+            let mut handle = unlock_vault_direct(vault_path)?;
             let cipher_id = uuid::Uuid::parse_str(id).map_err(|_| "invalid UUID")?;
             handle.archive_cipher(cipher_id)?;
             println!("Cipher archived: {id}");
@@ -1012,8 +1027,8 @@ pub fn handle_unarchive(
             Ok(())
         }
         ConnectMode::Direct => {
-            let path = Path::new(vault_path);
-            let mut handle = VaultHandle::open(path)?;
+            // Auto-unlock when BALUARD_PASSWORD is set (see handle_archive).
+            let mut handle = unlock_vault_direct(vault_path)?;
             let cipher_id = uuid::Uuid::parse_str(id).map_err(|_| "invalid UUID")?;
             handle.unarchive_cipher(cipher_id)?;
             println!("Cipher unarchived: {id}");
