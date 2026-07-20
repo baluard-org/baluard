@@ -101,3 +101,84 @@ pub fn decrypt_index(
 
     Ok(table.ciphers)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::CipherType;
+
+    fn sample_metas() -> Vec<CipherMeta> {
+        (0..5)
+            .map(|i| CipherMeta {
+                id: Uuid::new_v4(),
+                name: format!("cipher-{i}"),
+                folder_id: None,
+                cipher_type: CipherType::Login,
+                favorite: i % 2 == 0,
+                reprompt: false,
+                username: Some(format!("user{i}@example.com")),
+                tier: Tier::S,
+                key_epoch: 1,
+                update_seq: 1,
+                updated_at: 1_700_000_000,
+                archived: false,
+                tags: vec![],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn encrypt_decrypt_round_trip() {
+        let vault_id = Uuid::new_v4();
+        let index_key = [0x42u8; 32];
+        let metas = sample_metas();
+        let encrypted = encrypt_index(vault_id, &metas, &index_key, 1).expect("encrypt");
+        assert!(!encrypted.is_empty());
+        let decrypted = decrypt_index(vault_id, &encrypted, &index_key).expect("decrypt");
+        assert_eq!(decrypted.len(), metas.len());
+        for (got, want) in decrypted.iter().zip(metas.iter()) {
+            assert_eq!(got.id, want.id);
+            assert_eq!(got.name, want.name);
+            assert_eq!(got.favorite, want.favorite);
+        }
+    }
+
+    #[test]
+    fn decrypt_with_wrong_vault_id_fails() {
+        let vault_id = Uuid::new_v4();
+        let other_id = Uuid::new_v4();
+        let index_key = [0x42u8; 32];
+        let encrypted = encrypt_index(vault_id, &sample_metas(), &index_key, 1).unwrap();
+        // AAD mismatch must be detected — wrong vault_id means the AAD
+        // builder produces different bytes and decrypt rejects.
+        let err = decrypt_index(other_id, &encrypted, &index_key).unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("aad")
+                || err.to_string().to_lowercase().contains("identity"),
+            "expected AAD/identity error: {err}"
+        );
+    }
+
+    #[test]
+    fn decrypt_with_wrong_key_fails() {
+        let vault_id = Uuid::new_v4();
+        let index_key = [0x42u8; 32];
+        let other_key = [0x99u8; 32];
+        let encrypted = encrypt_index(vault_id, &sample_metas(), &index_key, 1).unwrap();
+        // Wrong key: AAD matches but AEAD tag check fails.
+        let err = decrypt_index(vault_id, &encrypted, &other_key).unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("auth")
+                || err.to_string().to_lowercase().contains("decrypt")
+        );
+    }
+
+    #[test]
+    fn empty_cipher_list_round_trips() {
+        let vault_id = Uuid::new_v4();
+        let index_key = [0x42u8; 32];
+        let encrypted = encrypt_index(vault_id, &[], &index_key, 1).unwrap();
+        let decrypted = decrypt_index(vault_id, &encrypted, &index_key).unwrap();
+        assert!(decrypted.is_empty());
+    }
+}
