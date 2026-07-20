@@ -253,6 +253,61 @@ mod tests {
         assert!(pf.pairings.is_empty());
     }
 
+    #[test]
+    fn pairing_id_new_is_a_uuid() {
+        let id = PairingId::new();
+        let s = id.as_str();
+        assert_eq!(s.len(), 36);
+        assert_eq!(s.chars().filter(|c| *c == '-').count(), 4);
+        uuid::Uuid::parse_str(s).expect("valid uuid");
+    }
+
+    #[test]
+    fn pairing_file_get_returns_matching_entry() {
+        let mut pf = PairingFile::default();
+        let id = PairingId::new();
+        pf.pairings.push(PairingEntry {
+            pairing_id: id.clone(),
+            name: "found".into(),
+            browser: "chrome".into(),
+            secret: "a".repeat(64),
+            created_at: 1,
+        });
+        pf.pairings.push(PairingEntry {
+            pairing_id: PairingId::new(),
+            name: "other".into(),
+            browser: "firefox".into(),
+            secret: "b".repeat(64),
+            created_at: 2,
+        });
+        let got = pf.get(&id).expect("found");
+        assert_eq!(got.name, "found");
+        assert!(pf.get(&PairingId::new()).is_none());
+    }
+
+    #[test]
+    fn pairing_file_remove_returns_true_on_existing_false_on_missing() {
+        let mut pf = PairingFile::default();
+        let id = PairingId::new();
+        pf.pairings.push(PairingEntry {
+            pairing_id: id.clone(),
+            name: "x".into(),
+            browser: "chrome".into(),
+            secret: "c".repeat(64),
+            created_at: 0,
+        });
+        assert!(pf.remove(&id), "remove returns true when entry exists");
+        assert!(!pf.remove(&id), "second remove returns false");
+        assert!(pf.pairings.is_empty());
+    }
+
+    #[test]
+    fn secret_from_hex_rejects_wrong_length() {
+        assert!(PairingSecret::from_hex(&"a".repeat(63)).is_err());
+        assert!(PairingSecret::from_hex(&"a".repeat(65)).is_err());
+        assert!(PairingSecret::from_hex("").is_err());
+    }
+
     #[cfg(test)]
     proptest::proptest! {
         #[test]

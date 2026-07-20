@@ -192,4 +192,17 @@ mod tests {
         let e = BridgeTokenEntry::fresh();
         assert!(!e.is_expired());
     }
+
+    #[test]
+    fn entry_with_old_created_at_is_expired() {
+        let now = BridgeTokenEntry::now();
+        let long_ago = now.saturating_sub(BRIDGE_TOKEN_TTL_SECONDS + 1);
+        let e = BridgeTokenEntry {
+            token: BridgeToken::generate(),
+            created: long_ago,
+            reads_in_window: 0,
+            window_started_at: now,
+        };
+        assert!(e.is_expired(), "entry older than TTL must be expired");
+    }
 }
