@@ -48,4 +48,15 @@ async function showWindow() {
   return invoke("show_window");
 }
 
-export { daemon, lockAllVaults, showWindow };
+// Read app-global desktop preferences (tray-only mode, etc.). Handled in the
+// Tauri layer, not the daemon — these are client-level, pre-unlock prefs.
+async function getDesktopPrefs() {
+  return invoke("get_desktop_prefs");
+}
+
+// Toggle tray-only mode (hide from Dock / taskbar). Persists + applies at once.
+async function setTrayOnly(enabled) {
+  return invoke("set_tray_only", { enabled });
+}
+
+export { daemon, lockAllVaults, showWindow, getDesktopPrefs, setTrayOnly };

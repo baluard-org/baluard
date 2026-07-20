@@ -5,7 +5,7 @@
 //! - Proxies vault operations via Protobuf-over-Unix-socket
 
 use prost::Message;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -413,6 +413,104 @@ struct BlurLockState {
 /// enough to be secure, long enough to ignore UI chatter.
 const BLUR_LOCK_DELAY: std::time::Duration = std::time::Duration::from_millis(1500);
 
+// ── Desktop app preferences (app-global, pre-unlock) ──
+//
+// Lives at <data_dir>/desktop-prefs.json in plaintext. Unlike VaultSettings
+// (per-vault, encrypted), these are client-level behaviors that must apply on
+// the login screen and across every vault. The tray/dock presence is not a
+// vault property, so it does not belong in settings.enc.
+
+/// App-global desktop preferences. Plaintext on disk; no secrets.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct DesktopPrefs {
+    /// Tray-only mode: hide the app from the macOS Dock / Windows+Linux
+    /// taskbar. The window stays reachable via the tray icon. Closing the
+    /// window still hides it to the tray (unchanged).
+    #[serde(default)]
+    tray_only: bool,
+}
+
+fn desktop_prefs_path() -> std::path::PathBuf {
+    baluard_core::paths::data_dir().join("desktop-prefs.json")
+}
+
+/// Load desktop prefs; missing/corrupt file falls back to default (tray off).
+/// Never propagates an error — a bad prefs file must not block app launch.
+fn load_desktop_prefs() -> DesktopPrefs {
+    match std::fs::read_to_string(desktop_prefs_path()) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => DesktopPrefs::default(),
+    }
+}
+
+/// Persist desktop prefs. Best-effort: logs on failure but does not abort —
+/// the in-memory apply still takes effect for this session.
+fn save_desktop_prefs(prefs: &DesktopPrefs) {
+    let path = desktop_prefs_path();
+    if let Err(e) = std::fs::create_dir_all(path.parent().unwrap_or_else(|| std::path::Path::new("."))) {
+        log::warn!("[desktop] prefs dir create failed: {e}");
+        return;
+    }
+    match serde_json::to_string_pretty(prefs) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                log::warn!("[desktop] prefs write failed: {e}");
+            }
+        }
+        Err(e) => log::warn!("[desktop] prefs serialize failed: {e}"),
+    }
+}
+
+/// Apply tray-only mode to the OS chrome.
+///
+/// macOS: switch the activation policy. `Accessory` removes the Dock icon
+/// (menu-bar-tray app); `Regular` restores it. This is the canonical macOS
+/// mechanism and is dynamic at runtime.
+/// Windows/Linux: no activation-policy equivalent, so toggle the window's
+/// taskbar button via `set_skip_taskbar`. The tray icon remains the anchor.
+///
+/// Returns `Err` if the OS call failed so the caller (set_tray_only command)
+/// can surface it to the UI instead of falsely reporting success. The prefs
+/// file write is handled separately by the caller and stays best-effort.
+fn apply_tray_only(app: &AppHandle, tray_only: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let policy = if tray_only {
+            tauri::ActivationPolicy::Accessory
+        } else {
+            tauri::ActivationPolicy::Regular
+        };
+        app.set_activation_policy(policy)
+            .map_err(|e| format!("set_activation_policy: {e}"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let w = app
+            .get_webview_window("main")
+            .ok_or_else(|| "main window not found".to_string())?;
+        w.set_skip_taskbar(tray_only)
+            .map_err(|e| format!("set_skip_taskbar: {e}"))
+    }
+}
+
+/// Read desktop prefs (for the Settings UI to reflect current state).
+#[tauri::command]
+fn get_desktop_prefs() -> DesktopPrefs {
+    load_desktop_prefs()
+}
+
+/// Toggle tray-only mode: persist + apply immediately.
+///
+/// The prefs file write is best-effort (logged on failure, matching the
+/// theme/locale persistence pattern): a failed write doesn't block the
+/// in-session apply. The OS-apply failure DOES propagate so the UI doesn't
+/// falsely report success when the Dock/taskbar state didn't actually change.
+#[tauri::command]
+fn set_tray_only(app: AppHandle, enabled: bool) -> Result<(), String> {
+    save_desktop_prefs(&DesktopPrefs { tray_only: enabled });
+    apply_tray_only(&app, enabled)
+}
+
 // ── App entry ──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -600,6 +698,18 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // Apply tray-only preference at startup so the Dock / taskbar
+            // state is correct from the first frame (no dock-icon flash on
+            // macOS). Loaded from <data_dir>/desktop-prefs.json.
+            let prefs = load_desktop_prefs();
+            if prefs.tray_only {
+                // Best-effort: a failure here must NOT abort app launch. Log
+                // and continue; the user can re-toggle from Settings.
+                if let Err(e) = apply_tray_only(app.handle(), true) {
+                    log::warn!("[desktop] startup tray-only apply failed: {e}");
+                }
+            }
+
             Ok(())
         })
         // Window events → defensive (policy-driven) lock.
@@ -705,8 +815,25 @@ pub fn run() {
             lock_all_vaults,
             show_window,
             update_tray_icon,
-            write_text_file
+            write_text_file,
+            get_desktop_prefs,
+            set_tray_only
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // macOS: clicking the dock icon while the app is already running
+            // (its window hidden to tray on close) fires RunEvent::Reopen.
+            // Without this handler the app stays hidden — only the tray icon
+            // restored it. Show + focus the main window on reopen. Showing an
+            // already-visible window is a harmless no-op, so we don't gate on
+            // `has_open_windows` (which stays true while the window exists but
+            // is hidden, making it an unreliable visibility signal here).
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Some(w) = app_handle.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+        });
 }
