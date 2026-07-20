@@ -466,3 +466,230 @@ fn decode_varint(data: &[u8]) -> anyhow::Result<(u64, usize)> {
     }
     anyhow::bail!("varint truncated");
 }
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the baluard-nmh bridge. Covers:
+    //! - stdio frame read/write (length-prefixed JSON over stdin/stdout)
+    //! - varint encode/decode (daemon-side framing)
+    //! - handle_message dispatch across all short-circuit paths
+    //!
+    //! The full forward-to-daemon path is exercised via the daemon's own test
+    //! suite once a fake-daemon fixture lands. For now we pin every path that
+    //! can be reached without a live daemon, plus the protocol primitives
+    //! that the browser-ext integration tests depend on.
+
+    use super::*;
+    use std::io::Cursor;
+    use std::path::{Path, PathBuf};
+    use std::sync::OnceLock;
+
+    /// Process-wide BALUARD_DATA_DIR override so `PairingFile::load()` (called
+    /// transitively by `resolve_token` for non-bootstrap actions) returns an
+    /// empty PairingFile without touching the developer's real config dir.
+    /// Initialized lazily on first call. TempDir lives for the whole test
+    /// binary's lifetime so all parallel tests see the same override.
+    fn nmh_test_env() -> &'static Path {
+        static DIR: OnceLock<PathBuf> = OnceLock::new();
+        DIR.get_or_init(|| {
+            let tmp = tempfile::tempdir().expect("nmh test tempdir");
+            let path = tmp.path().to_path_buf();
+            // Leak the TempDir so it's not dropped while tests run.
+            std::mem::forget(tmp);
+            // SAFETY: tests run single-threaded at this init point (OnceLock
+            // serializes the first call) and we never read BALUARD_DATA_DIR
+            // concurrently with the set.
+            unsafe {
+                std::env::set_var("BALUARD_DATA_DIR", &path);
+            }
+            path
+        })
+    }
+
+    // ── read_message ──
+
+    #[test]
+    fn read_message_happy() {
+        let body = br#"{"action":"ping","id":"abc"}"#;
+        let mut input = Vec::new();
+        input.extend_from_slice(&(body.len() as u32).to_ne_bytes());
+        input.extend_from_slice(body);
+        let mut cur = Cursor::new(input);
+        let msg = read_message(&mut cur).expect("read").expect("not eof");
+        assert_eq!(msg["action"], "ping");
+        assert_eq!(msg["id"], "abc");
+    }
+
+    #[test]
+    fn read_message_clean_eof() {
+        let mut cur = Cursor::new(Vec::<u8>::new());
+        let msg = read_message(&mut cur).expect("read");
+        assert!(msg.is_none(), "empty stdin -> Ok(None)");
+    }
+
+    #[test]
+    fn read_message_oversized_rejected() {
+        // Length prefix claims 1 MiB but no body follows. read_exact on the
+        // body will surface UnexpectedEof; we cap BEFORE reading the body so
+        // the rejection happens at length-parse time, not at body read.
+        let too_big = (MAX_REQUEST_BYTES + 1) as u32;
+        let mut input = Vec::new();
+        input.extend_from_slice(&too_big.to_ne_bytes());
+        let mut cur = Cursor::new(input);
+        let err = read_message(&mut cur).expect_err("must reject oversize");
+        assert!(
+            err.to_string().contains("request too large"),
+            "expected oversize error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn read_message_malformed_json_errors() {
+        let body = b"{not valid json";
+        let mut input = Vec::new();
+        input.extend_from_slice(&(body.len() as u32).to_ne_bytes());
+        input.extend_from_slice(body);
+        let mut cur = Cursor::new(input);
+        read_message(&mut cur).expect_err("must reject non-JSON");
+    }
+
+    // ── write_frame_bytes round-trip ──
+
+    #[test]
+    fn write_frame_bytes_round_trip() {
+        let body = br#"{"hello":"world"}"#;
+        let mut buf: Vec<u8> = Vec::new();
+        write_frame_bytes(&mut buf, body).expect("write");
+        // First 4 bytes are native-endian length
+        let len = u32::from_ne_bytes(buf[..4].try_into().unwrap()) as usize;
+        assert_eq!(len, body.len());
+        assert_eq!(&buf[4..], body);
+    }
+
+    // ── varint round-trip ──
+
+    #[test]
+    fn varint_round_trip() {
+        for &value in &[
+            0u64,
+            1,
+            127,             // 1 byte
+            128,             // 2 bytes (first has continuation)
+            16383,           // 2 bytes
+            16384,           // 3 bytes
+            u32::MAX as u64, // 5 bytes
+            u64::MAX,        // 10 bytes
+        ] {
+            let mut buf = Vec::new();
+            encode_varint(value, &mut buf);
+            let (decoded, consumed) = decode_varint(&buf).expect("decode");
+            assert_eq!(decoded, value, "value {value}");
+            assert_eq!(consumed, buf.len(), "consumed whole buffer for {value}");
+        }
+    }
+
+    #[test]
+    fn varint_truncated_rejected() {
+        // First byte has continuation bit set, second byte missing.
+        let truncated = [0xFFu8];
+        assert!(decode_varint(&truncated).is_err());
+    }
+
+    // ── handle_message ──
+
+    #[test]
+    fn handle_message_ping_returns_version_handshake() {
+        // Ping must work without a daemon, pairing, or socket.
+        let resp = handle_message(serde_json::json!({
+            "id": "req-1",
+            "action": "ping",
+        }));
+        assert_eq!(resp["ok"], true);
+        assert_eq!(resp["id"], "req-1");
+        let payload: serde_json::Value =
+            serde_json::from_str(resp["payload"].as_str().unwrap()).expect("payload json");
+        assert_eq!(payload["nmh_version"], env!("CARGO_PKG_VERSION"));
+        // BALUARD_VERSION is a u8, serialized as a JSON number.
+        assert_eq!(
+            payload["proto_version"],
+            baluard_core::BALUARD_VERSION as u64
+        );
+    }
+
+    #[test]
+    fn handle_message_missing_action() {
+        let resp = handle_message(serde_json::json!({ "id": "x" }));
+        assert_eq!(resp["ok"], false);
+        assert_eq!(resp["code"], "proto");
+        assert!(resp["error"].as_str().unwrap().contains("action"));
+    }
+
+    #[test]
+    fn handle_message_unknown_action_denied() {
+        // "totally.bogus" is not in BRIDGE_ALLOWED_ACTIONS nor in
+        // BOOTSTRAP_ACTIONS, so the defense-in-depth allowlist rejects it
+        // BEFORE touching the socket or pairing file.
+        let resp = handle_message(serde_json::json!({
+            "id": "x",
+            "action": "totally.bogus",
+            "payload": "{}",
+        }));
+        assert_eq!(resp["ok"], false);
+        assert_eq!(resp["code"], "denied");
+        assert!(resp["error"].as_str().unwrap().contains("not permitted"));
+    }
+
+    #[test]
+    fn handle_message_malformed_payload_rejected() {
+        // Pick an action that's in the allowlist so we reach payload
+        // validation. `vault.get` is in BRIDGE_ALLOWED_ACTIONS.
+        nmh_test_env(); // ensure no pairing file in tempdir
+        let resp = handle_message(serde_json::json!({
+            "id": "x",
+            "action": "vault.get",
+            "payload": "this is { not json",
+        }));
+        assert_eq!(resp["ok"], false);
+        assert_eq!(resp["code"], "proto");
+        assert!(resp["error"].as_str().unwrap().contains("valid JSON"));
+    }
+
+    #[test]
+    fn handle_message_allowlisted_action_without_pairing_returns_not_paired() {
+        // Allowlisted action + no pairing file in tempdir -> resolve_token
+        // fails with NotPaired before any socket call.
+        nmh_test_env();
+        let resp = handle_message(serde_json::json!({
+            "id": "x",
+            "action": "vault.get",
+            "payload": "{}",
+        }));
+        assert_eq!(resp["ok"], false);
+        assert_eq!(resp["code"], "not-paired");
+    }
+
+    #[test]
+    fn handle_message_bootstrap_action_skips_token_but_still_forwards() {
+        // bridge.pair_complete is bootstrap: no pairing needed yet, but the
+        // daemon still has to be reached. With no daemon running, the forward
+        // path returns code "no-daemon".
+        nmh_test_env();
+        let resp = handle_message(serde_json::json!({
+            "id": "x",
+            "action": "bridge.pair_complete",
+            "payload": "{}",
+        }));
+        assert_eq!(resp["ok"], false);
+        assert_eq!(resp["code"], "no-daemon");
+    }
+
+    // ── Constants sanity ──
+
+    #[test]
+    fn request_size_cap_smaller_than_native_messaging_max() {
+        // Chrome allows 64 MiB ext->host. We cap at 64 KiB. Pin the gap so a
+        // future "let's bump it" PR can't accidentally uncap it.
+        const { assert!(MAX_REQUEST_BYTES < 64 * 1024 * 1024) };
+        const { assert!(MAX_RESPONSE_BYTES <= 1024 * 1024) }; // Chrome's host->ext hard cap
+    }
+}

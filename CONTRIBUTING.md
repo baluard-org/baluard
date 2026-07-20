@@ -34,6 +34,35 @@ Behaviour which can be reasonably considered harassment will not be tolerated.
 6. Format code (`just fmt`)
 7. Submit a pull request
 
+## Testing
+
+### Rust
+
+- `just test` — full suite (core + daemon + CLI + desktop-driver bits)
+- `just test-core` — `baluard-core` only (~400 tests, ~5s)
+- `just test-cli` — CLI integration tests (`crates/baluard-cli/tests/`)
+- `just test-nmh` — native messaging host tests (`crates/baluard-nmh/`, ~14 tests)
+- `just test-verbose` — pass `--nocapture` to see stdout
+
+CLI tests spawn the `baluard` binary via `assert_cmd` against a
+`tempfile::TempDir` vault path and use `BALUARD_PASSWORD` (recognized by
+`init`, `unlock`, `add`, `list`, `archive`, `unarchive` in direct mode) to
+bypass the master-password prompt and the recovery-phrase verification
+step. `BALUARD_DATA_DIR` is redirected into the same `TempDir` so the
+global registry never leaks into the developer's real config.
+
+CLI tests cover init, unlock, list, and add today. `lock` is deferred to
+the daemon-spawn-fixture PR (it is daemon-only by design). PRs adding a
+new CLI command should add at least one happy-path + one error-path test
+in the matching `tests/<command>.rs` file using the helpers in
+`tests/common/mod.rs`.
+
+### JavaScript / SolidJS
+
+Desktop uses Vitest (jsdom). Run via `npm test` from `desktop/`. The
+browser extension does not yet have a test runner wired — Phase 3 of the
+test-coverage plan.
+
 ## Code Standards
 
 ### Rust
