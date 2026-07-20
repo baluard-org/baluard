@@ -110,6 +110,10 @@
   "settings": {
     "faviconLabel": "SHOW_WEBSITE_ICONS",
     "faviconDesc": "FETCH_FAVICONS_DESCRIPTION",
+    "trayOnlyLabel": "HIDE_FROM_DOCK_TASKBAR",
+    "trayOnlyDesc": "TRAY_ONLY_DESCRIPTION",
+    "trayOnlyEnabled": "TRAY_ONLY_ENABLED",
+    "trayOnlyDisabled": "TRAY_ONLY_DISABLED",
     "autolockSettings": "AUTOLOCK_SETTINGS",
     "autolockTimeout": "AUTOLOCK_TIMEOUT",
     "minutes": "MINUTES",

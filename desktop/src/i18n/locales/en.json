@@ -222,6 +222,10 @@
   "settings": {
     "faviconLabel": "Show website icons",
     "faviconDesc": "Fetch and store website icons when you add or edit an entry. Off by default. Queries only the first URL.",
+    "trayOnlyLabel": "Hide from Dock / Taskbar",
+    "trayOnlyDesc": "Keep Baluard in the system tray only. The window stays reachable from the tray icon; closing it still hides to the tray.",
+    "trayOnlyEnabled": "Tray-only mode on",
+    "trayOnlyDisabled": "Tray-only mode off",
     "autolockSettings": "Auto-lock settings",
     "autolockTimeout": "Auto-lock Timeout",
     "saved": "Saved",

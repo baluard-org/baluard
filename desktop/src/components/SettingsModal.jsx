@@ -4,7 +4,7 @@ import { useVault } from "../context/VaultContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { theme, setTheme } from "../context/themeSignal.js";
 import { useI18n } from "../i18n/index.jsx";
-import { daemon } from "../lib/daemon.js";
+import { daemon, getDesktopPrefs, setTrayOnly } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { buildImportPayload, buildExportPayload } from "../lib/payload.js";
@@ -50,6 +50,10 @@ export default function SettingsModal() {
 
   // Favicon state
   const [fetchFavicons, setFetchFavicons] = createSignal(false);
+
+  // Tray-only mode (app-global: hide from Dock / taskbar). Lives in the Tauri
+  // layer, not the daemon — pre-unlock client preference.
+  const [trayOnly, setTrayOnlySignal] = createSignal(false);
 
   // Import/Export state
   const [importing, setImporting] = createSignal(false);
@@ -112,6 +116,13 @@ export default function SettingsModal() {
       setBiometricEnabled(enabled);
       await loadPinStatus();
 
+      // Tray-only pref is app-global (Tauri layer), separate from daemon
+      // vault settings. Load failures fall back to off (default).
+      try {
+        const prefs = await getDesktopPrefs();
+        setTrayOnlySignal(!!prefs.tray_only);
+      } catch {}
+
       // Load profile
       setDisplayName(data.display_name || "");
       setAvatarExt(data.avatar_ext || "png");
@@ -152,6 +163,18 @@ export default function SettingsModal() {
       await daemon("settings.set", JSON.stringify({ fetch_favicons: next }));
     } catch (e) {
       setFetchFavicons(!next);
+    }
+  }
+
+  async function toggleTrayOnly() {
+    const next = !trayOnly();
+    setTrayOnlySignal(next);
+    try {
+      await setTrayOnly(next);
+      toastSuccess(t(next ? "settings.trayOnlyEnabled" : "settings.trayOnlyDisabled"));
+    } catch (e) {
+      setTrayOnlySignal(!next);
+      toastError(sanitizeError(e, t));
     }
   }
 
@@ -680,6 +703,22 @@ export default function SettingsModal() {
                       class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${fetchFavicons() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
                     >
                       {fetchFavicons() ? t("settings.enabled") : t("settings.disabled")}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tray-only mode (hide from Dock / taskbar) */}
+                <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
+                  <div class="flex items-center justify-between">
+                    <div class="flex flex-col flex-1 pr-4">
+                      <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.trayOnlyLabel")}</span>
+                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.trayOnlyDesc")}</span>
+                    </div>
+                    <button
+                      onClick={toggleTrayOnly}
+                      class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${trayOnly() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                    >
+                      {trayOnly() ? t("settings.enabled") : t("settings.disabled")}
                     </button>
                   </div>
                 </div>
