@@ -79,6 +79,10 @@ test-core:
 test-cli:
 	{{ linuxbrew_env }} cargo test -p baluard-cli
 
+# Run native messaging host tests (stdio<->daemon bridge)
+test-nmh:
+	{{ linuxbrew_env }} cargo test -p baluard-nmh
+
 # Run tests with output
 test-verbose:
 	{{ linuxbrew_env }} cargo test -- --nocapture
