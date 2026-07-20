@@ -17,6 +17,26 @@ use zeroize::Zeroizing;
 /// Kept here as a single source of truth the daemon imports.
 pub const BRIDGE_TOKEN_TTL_SECONDS: u64 = 4 * 3600;
 
+/// Error the daemon returns when a `bridge.*` action arrives carrying a
+/// bridge-shaped (64-hex) token that isn't in the live registry — i.e. the
+/// token is stale (daemon restarted, pairing revoked, or token expired).
+///
+/// The live token map is in-memory only, so it's empty after a daemon
+/// restart even though the on-disk pairing secret is still valid. Without
+/// this sentinel the request would fall through to the normal router and
+/// surface a confusing `"Unknown action: bridge.match"` to the user.
+///
+/// The NMH matches this string to drop its cached token, re-run
+/// `bridge.reauth` (which re-mints from the still-valid pairing file), and
+/// retry the action once — transparent recovery. Kept here so the daemon
+/// (emitter) and the NMH (matcher) cannot drift apart.
+///
+/// Scoped to `bridge.*` actions only: those are exclusively issued by the
+/// extension, so a 64-hex miss there is unambiguously a stale bridge token
+/// (never a desktop/CLI session token, which is also 64-hex but is used for
+/// `vault.*`, not `bridge.*`).
+pub const STALE_TOKEN_ERROR: &str = "stale bridge token";
+
 /// The allowlist of actions a bridge token may perform (Decision 7).
 ///
 /// Deliberately does NOT include `vault.list_full` (bulk plaintext), nor

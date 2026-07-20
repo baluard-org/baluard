@@ -1289,6 +1289,19 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
         if let Some(pairing_id) = pairing_id {
             return route_bridge_request(req, host, pairing_id).await;
         }
+        // A bridge-shaped (64-hex) token that no longer matches a live
+        // registry entry: the daemon restarted, the pairing was revoked, or
+        // the token expired (the live token map is in-memory only). `bridge.*`
+        // actions are served EXCLUSIVELY via bridge tokens — the desktop/CLI
+        // never call them — and they aren't routed in the normal path below,
+        // so letting them fall through would surface a confusing
+        // `"Unknown action: bridge.match"` to the user. Reject with the
+        // shared sentinel so the NMH can drop its stale cache, re-`reauth`,
+        // and retry once. (Non-`bridge.*` actions legitimately use 64-hex
+        // session tokens, so they keep falling through unchanged.)
+        if req.action.starts_with("bridge.") {
+            return err_response(baluard_core::bridge::STALE_TOKEN_ERROR);
+        }
     }
 
     // ── Everything else: resolve target slug + snapshot, then delegate ──

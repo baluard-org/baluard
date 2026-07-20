@@ -23,4 +23,7 @@ pub mod pairing;
 pub mod token;
 
 pub use pairing::{PairingEntry, PairingFile, PairingId, PairingSecret};
-pub use token::{BRIDGE_ALLOWED_ACTIONS, BridgeToken, BridgeTokenEntry, is_allowed};
+pub use token::{
+    BRIDGE_ALLOWED_ACTIONS, BRIDGE_TOKEN_TTL_SECONDS, BridgeToken, BridgeTokenEntry,
+    STALE_TOKEN_ERROR, is_allowed,
+};
