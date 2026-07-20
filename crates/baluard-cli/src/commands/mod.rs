@@ -971,8 +971,9 @@ pub fn handle_delete(
             Ok(())
         }
         ConnectMode::Direct => {
-            let path = Path::new(vault_path);
-            let handle = VaultHandle::open(path)?;
+            // Auto-unlock when BALUARD_PASSWORD is set so scripting/tests can
+            // chain `add` → `delete` without an explicit `unlock` step.
+            let handle = unlock_vault_direct(vault_path)?;
             handle.delete_cipher(cipher_id)?;
             println!("Cipher deleted: {cipher_id}");
             Ok(())
