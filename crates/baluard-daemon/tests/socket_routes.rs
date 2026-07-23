@@ -3,7 +3,7 @@
 //! passed to the test-process side via explicit paths
 //! (`VaultRegistry::load_from` / `save_to`) so the test process never
 //! reads the process-global `BALUARD_DATA_DIR` env var — that was the
-//! race Claude's review identified. The daemon subprocess gets the env
+//! race a prior review identified. The daemon subprocess gets the env
 //! var via `Command::env()`, which sets it in the CHILD's env table
 //! at spawn time (race-free).
 //!
