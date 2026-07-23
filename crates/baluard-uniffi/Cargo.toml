@@ -21,3 +21,5 @@ uniffi = { workspace = true, features = ["build"] }
 [dev-dependencies]
 uniffi_bindgen = "0.28"
 tokio = { workspace = true, features = ["macros", "rt"] }
+tempfile = "3"
+serde_json = { workspace = true }
