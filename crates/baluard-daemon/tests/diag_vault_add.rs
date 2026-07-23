@@ -2,7 +2,7 @@
 //! pre-created vault, tries vault.add, dumps daemon stderr + vault dir
 //! tree on failure. Uses `load_from`/`save_to` (not `load`/`save`) so the
 //! test-process side never reads the process-global `BALUARD_DATA_DIR`
-//! env var — that was the race Claude's review identified.
+//! env var — that was the race a prior review identified.
 
 use baluard_core::vault::creation::VaultCreator;
 use baluard_core::vault::registry::{VaultEntry, VaultRegistry};
