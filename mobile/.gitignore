@@ -1,0 +1,19 @@
+# Gradle / Android build artifacts
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.keystore
+.cxx/
+
+# iOS build artifacts
+DerivedData/
+*.xcworkspace/xcuserdata/
+Pods/
+
+# Kotlin/Native framework build output
+*.framework/
+
+# UniFFI-generated bindings ARE committed (regenerate only on Rust API change)
+# — do NOT gitignore shared/src/commonMain/kotlin/generated/

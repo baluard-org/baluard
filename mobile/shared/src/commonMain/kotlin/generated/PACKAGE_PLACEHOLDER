@@ -1,0 +1,19 @@
+// PACKAGE_PLACEHOLDER — This directory holds UniFFI-generated Kotlin bindings.
+//
+// DO NOT hand-edit. Regenerate from the Rust cdylib via uniffi-bindgen:
+//
+//   uniffi-bindgen --library ../../target/aarch64-linux-android/release/libbaluard_uniffi.so \
+//                  --language kotlin \
+//                  --out-dir mobile/shared/src/commonMain/kotlin/generated/
+//
+// The generated file (baluard.kt) defines package `xyz.actitud.baluard` with:
+//   - `fun generateRecoveryPhrase(): MobileRecoveryPhrase`
+//   - `fun deriveKek(password: String, salt: ByteArray): ByteArray`
+//   - `fun mobileVersion(): UInt`
+//   - `data class MobileRecoveryPhrase(phrase: String)`
+//
+// NOTE on the 0.28 bindgen runner: there is no standalone `uniffi-bindgen`
+// binary for UniFFI 0.28. Build a runner that calls
+// `uniffi_bindgen::library_mode::generate_bindings` (7-arg signature — see
+// the Phase 1 spike log). Once generated, COMMIT the .kt so CI doesn't need
+// to run the Rust build to compile Kotlin.
