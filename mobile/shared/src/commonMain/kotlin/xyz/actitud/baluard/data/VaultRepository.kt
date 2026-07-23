@@ -23,6 +23,12 @@ import xyz.actitud.baluard.createVault as uniffiCreateVault
 class VaultRepository {
     fun generateRecoveryPhrase(): MobileRecoveryPhrase = generateRecoveryPhrase()
 
+    suspend fun generatePassword(config: xyz.actitud.baluard.PasswordConfig): Result<String> =
+        runCatching { xyz.actitud.baluard.generatePassword(config) }
+
+    suspend fun generatePassphrase(config: xyz.actitud.baluard.PassphraseConfig): Result<String> =
+        runCatching { xyz.actitud.baluard.generatePassphrase(config) }
+
     suspend fun openVault(path: String): MobileVault = uniffiOpenVault(path)
     suspend fun createVault(path: String, password: String, deviceName: String): MobileVault =
         uniffiCreateVault(path, password, deviceName)
