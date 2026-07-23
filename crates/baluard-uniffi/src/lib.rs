@@ -71,6 +71,62 @@ pub fn derive_kek(password: String, salt: Vec<u8>) -> Result<Vec<u8>, String> {
     Ok(key.to_vec())
 }
 
+// ── Generator (plan §3.3 mobile_generate_password / mobile_generate_passphrase) ──
+// Ported to baluard-core::generator 2026-07-23 (was desktop JS only). FFI-facing
+// config records use u32 (not usize) because UniFFI prefers fixed-width ints
+// at the boundary; usize is platform-dependent.
+
+/// Options for [`generate_password`]. Mirrors `baluard_core::generator::PasswordOptions`.
+#[derive(uniffi::Record)]
+pub struct PasswordConfig {
+    /// Password length (>= 1). Default 16.
+    pub length: u32,
+    pub upper: bool,
+    pub numbers: bool,
+    pub symbols: bool,
+}
+
+/// Options for [`generate_passphrase`]. Mirrors `baluard_core::generator::PassphraseOptions`.
+#[derive(uniffi::Record)]
+pub struct PassphraseConfig {
+    /// Word count (>= 1). Default 5.
+    pub word_count: u32,
+    /// Separator between words (e.g. "-").
+    pub separator: String,
+    pub upper: bool,
+    pub number: bool,
+    pub symbol: bool,
+}
+
+/// Generate a random password. Uses OsRng (CSPRNG). Selection is unbiased
+/// (unlike the legacy desktop JS which used modulo).
+#[uniffi::export]
+pub fn generate_password(config: PasswordConfig) -> Result<String, String> {
+    let opts = baluard_core::generator::PasswordOptions {
+        length: config.length as usize,
+        upper: config.upper,
+        numbers: config.numbers,
+        symbols: config.symbols,
+    };
+    baluard_core::generator::generate_password(&opts)
+        .map_err(|e| format!("password generation failed: {e}"))
+}
+
+/// Generate a random passphrase from the EFF-EN + BIP-39-ES wordlist, with
+/// optional capitalize / insert-number / insert-symbol transforms.
+#[uniffi::export]
+pub fn generate_passphrase(config: PassphraseConfig) -> Result<String, String> {
+    let opts = baluard_core::generator::PassphraseOptions {
+        word_count: config.word_count as usize,
+        separator: config.separator,
+        upper: config.upper,
+        number: config.number,
+        symbol: config.symbol,
+    };
+    baluard_core::generator::generate_passphrase(&opts)
+        .map_err(|e| format!("passphrase generation failed: {e}"))
+}
+
 /// Trivial async fn to validate the UniFFI async -> Kotlin `suspend` bridge
 /// against the real `baluard-runtime` dependency (proves the tokio runtime +
 /// spawn_blocking path compiles and crosses the FFI boundary). Returns a
@@ -111,5 +167,43 @@ mod tests {
         // on-device in the Phase 1 APK build; here we prove the Rust side runs).
         let s = spike_async_probe().await;
         assert!(s.contains("async bridge ok"));
+    }
+
+    #[test]
+    fn ffi_generator_password_default() {
+        let cfg = PasswordConfig {
+            length: 16,
+            upper: true,
+            numbers: true,
+            symbols: true,
+        };
+        let p = generate_password(cfg).unwrap();
+        assert_eq!(p.len(), 16);
+        assert!(p.is_ascii());
+    }
+
+    #[test]
+    fn ffi_generator_passphrase_word_count() {
+        let cfg = PassphraseConfig {
+            word_count: 6,
+            separator: ".".into(),
+            upper: false,
+            number: false,
+            symbol: false,
+        };
+        let pp = generate_passphrase(cfg).unwrap();
+        assert_eq!(pp.split('.').count(), 6, "6 words joined by separator");
+    }
+
+    #[test]
+    fn ffi_generator_password_lower_only() {
+        let cfg = PasswordConfig {
+            length: 100,
+            upper: false,
+            numbers: false,
+            symbols: false,
+        };
+        let p = generate_password(cfg).unwrap();
+        assert!(p.chars().all(|c| c.is_ascii_lowercase()));
     }
 }
