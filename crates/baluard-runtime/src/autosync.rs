@@ -35,6 +35,15 @@ const PULL_INTERVAL_SECS: u64 = 30 * 60;
 const FOCUS_PULL_MIN_GAP_SECS: u64 = 10 * 60;
 /// Connectivity probe cadence while offline.
 const OFFLINE_POLL_SECS: u64 = 30;
+/// Wall-clock budget for a background-flush push (`on_background`). Shorter
+/// than [`SYNC_OP_TIMEOUT`] because mobile OS background-task budgets
+/// (Android `goAsync` can be a few seconds under memory pressure; iOS
+/// `beginBackgroundTask` ~30s) can be killed before a 60s git op completes.
+/// A kill mid-flush leaves the edit local (commit-pull-push ordering is
+/// corruption-safe); the next foreground/unlock pull catches it. Peer-reviewed
+/// decision (isolated peer review 2026-07-23): do NOT lower the shared
+/// `SYNC_OP_TIMEOUT` for this, give the flush its own budget.
+const BG_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// Wall-clock budget for a single sync operation (pull/push/finalize). Bounds
 /// `spawn_blocking` git work so a hung remote cannot leak a thread or stall the
 /// cycle. Previously `handler::SYNC_OP_TIMEOUT`; moved here (Phase 0 runtime
@@ -191,13 +200,123 @@ impl AutoSyncHandle {
             let device_name = g.device_name.clone();
             g.debounce = Some(tokio::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(PUSH_DEBOUNCE_SECS)).await;
-                me.fire_sync(device_name, gen_id).await;
+                me.fire_sync(device_name, gen_id, SYNC_OP_TIMEOUT).await;
             }));
         }
     }
 
+    // ── Event-method surface (mobile lifecycle) ────────────────────────────
+    //
+    // Mobile hosts the coordinator WITHOUT a background tokio loop: the host
+    // (Kotlin `ProcessLifecycleOwner` / iOS `SceneDelegate`) calls these event
+    // methods from OS lifecycle hooks. The daemon keeps its `background_loop`;
+    // both hosts drive the same `Inner` state machine, so there is ONE
+    // implementation of the debounce / offline-retry / conflict-queue logic.
+    //
+    // Most events are thin wrappers over the existing daemon-side methods so
+    // the mobile surface reads as lifecycle events rather than daemon
+    // internals. See `docs/plan-mobile-apps.md` §3.2/§3.5 and the Phase 0
+    // Task #2 state-machine map.
+
+    /// **`on_unlock`** — pull immediately after the vault unlocks so edits made
+    /// on another device land before the user starts working. Mirrors the
+    /// daemon's `VaultState::unlock` → `pull_only` hook.
+    pub async fn on_unlock(&self, device_name: String) {
+        self.pull_only(device_name).await;
+    }
+
+    /// **`on_mutation`** — arm (or re-arm) the 5s debounced push after a CRUD
+    /// mutation. A burst of edits coalesces into one commit + one round-trip.
+    /// Mirrors the daemon's post-CRUD `COVER_MUTATION_ACTIONS` hook.
+    pub async fn on_mutation(&self, device_name: String) {
+        self.nudge(device_name).await;
+    }
+
+    /// **`on_foreground`** — pull when the app regains focus, with a 10-minute
+    /// guard so focus flicker collapses to one pull per 10 min.
+    pub async fn on_foreground(&self, device_name: String) {
+        self.nudge_focus_pull(device_name).await;
+    }
+
+    /// **`on_background`** — FLUSH any pending debounce push immediately. The
+    /// OS suspends a backgrounded mobile process within seconds; if a user
+    /// edits then backgrounds the app (the common case), the 5s debounce timer
+    /// would be silently dropped and the edit would sit local-only. This fires
+    /// the push NOW, bounded by the OS background-task budget.
+    ///
+    /// Implementation notes (peer-reviewed, isolated session 2026-07-23):
+    /// - `device_name` is read from `Inner` (set once at `activate`) rather
+    ///   than passed in, because lifecycle hooks fire without device context.
+    ///   `activate()` fixes `device_name` for the coordinator's lifetime; a
+    ///   host that renames its device must `deactivate`/`activate` to update it.
+    /// - The debounce `JoinHandle` is `abort()`ed to stop the now-redundant
+    ///   timer from firing a second, unnecessary cycle later. The actual
+    ///   double-flush guard is the `Inner.state` transition under the shared
+    ///   `inner` mutex: once `fire_sync` flips `Dirty → Syncing` under the lock,
+    ///   a racing timer-fire observes `state != Dirty` and returns early.
+    ///   `abort()` keeps the work clean; `cycle_lock` (try_lock, loser bails)
+    ///   is the belt-and-suspenders against `background_loop`'s independent pull.
+    /// - This call uses a SHORTER timeout ([`BG_FLUSH_TIMEOUT`]) than the
+    ///   debounce path because the shared [`SYNC_OP_TIMEOUT`] (60s) is a
+    ///   desktop-scale bound that can exceed Android's `goAsync` budget.
+    ///   A kill mid-flush leaves the edit local (commit-pull-push ordering
+    ///   guarantees no corruption); the next `on_unlock` / `on_foreground`
+    ///   pull catches it.
+    /// - Idempotent on no-op: if nothing is pending (state != Dirty) this is a
+    ///   cheap lock-check + return.
+    pub async fn on_background(&self) {
+        let (device_name, generation) = {
+            let mut g = self.inner.lock().await;
+            if !g.active || g.state != AutoSyncState::Dirty {
+                return;
+            }
+            // Explicit cancel (amendment #1): don't race the timer.
+            if let Some(h) = g.debounce.take() {
+                h.abort();
+            }
+            (g.device_name.clone(), g.generation)
+        };
+        self.fire_sync(device_name, generation, BG_FLUSH_TIMEOUT)
+            .await;
+    }
+
+    /// **`pull_now`** — user-initiated pull (pull-to-refresh, "Sync now"). No
+    /// debounce, no commit/push: just reconcile remote changes.
+    pub async fn pull_now(&self, device_name: String) {
+        self.pull_only(device_name).await;
+    }
+
+    /// **`offline_tick`** — host-scheduled 30s connectivity probe while the
+    /// vault is `Offline` AND the app is foregrounded. This is the one piece
+    /// of `background_loop` mobile MUST reproduce: the loop polls every 30s
+    /// while Offline until back online, and without a background task mobile
+    /// must drive that probe explicitly from its foreground lifecycle. On a
+    /// successful pull the state settles to `Idle`; on continued failure it
+    /// stays `Offline`. No-op if not Offline (avoids redundant pulls).
+    pub async fn offline_tick(&self, device_name: String) {
+        let offline = {
+            let g = self.inner.lock().await;
+            g.active && g.state == AutoSyncState::Offline
+        };
+        if offline {
+            self.pull_only(device_name).await;
+        }
+    }
+
+    /// **`on_conflict`** — peek the head conflict paused for user decision
+    /// (masked, no secrets). None if no conflict is pending. Used by the mobile
+    /// conflict-resolution UI to surface the `ConflictResolutionPanel`.
+    pub async fn on_conflict(&self) -> Option<baluard_core::sync::engine::PendingConflictState> {
+        self.peek_pending_conflict().await
+    }
+
     /// Activate the coordinator (remote configured + provider connected).
     /// Starts the background pull/offline loop. Idempotent.
+    ///
+    /// `device_name` is captured here and reused by `note_resolved` and
+    /// `on_background` (lifecycle hooks fire without device context). It is
+    /// fixed for the coordinator's lifetime; a host that renames its device
+    /// must `deactivate`/`activate` to update it (peer review 2026-07-23).
     pub async fn activate(&self, device_name: String) {
         let mut g = self.inner.lock().await;
         if g.active {
@@ -211,6 +330,15 @@ impl AutoSyncHandle {
         g.loop_handle = Some(tokio::spawn(async move {
             me.background_loop(device_name, gen_id).await;
         }));
+    }
+
+    /// Test-only: force the coordinator into a given state. Used to exercise
+    /// guard logic (e.g. the `NeedsDecision` short-circuit in `pull_only`)
+    /// that depends on state a unit test cannot otherwise reach without a
+    /// real two-device git fixture. NOT part of the public API.
+    #[cfg(test)]
+    pub(crate) async fn force_state_for_test(&self, state: AutoSyncState) {
+        self.inner.lock().await.state = state;
     }
 
     /// Deactivate (provider disconnected or vault locked). Cancels all timers.
@@ -258,6 +386,18 @@ impl AutoSyncHandle {
         let generation = {
             let g = self.inner.lock().await;
             if !g.active {
+                return;
+            }
+            // NeedsDecision guard (peer review 2026-07-23):
+            // `nudge` and `background_loop` both refuse to touch the repo while
+            // a conflict is paused for field-level resolution — the index/
+            // worktree are mid-merge and a pull now would race the resolution
+            // (corruption risk). `pull_only` previously lacked this guard.
+            // Task #2's event surface added new public, host-triggerable entry
+            // points to it (`pull_now`, `offline_tick`, `on_unlock`), widening
+            // the exposure. Same guard as the other two repo-touching paths.
+            if g.state == AutoSyncState::NeedsDecision {
+                log::debug!("[autosync] pull_only skipped: conflict paused (NeedsDecision)");
                 return;
             }
             g.generation
@@ -342,13 +482,19 @@ impl AutoSyncHandle {
         let gen_id = g.generation;
         g.debounce = Some(tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_secs(PUSH_DEBOUNCE_SECS)).await;
-            me.fire_sync(device_name, gen_id).await;
+            me.fire_sync(device_name, gen_id, SYNC_OP_TIMEOUT).await;
         }));
     }
 
     /// Run one pull → merge → push cycle. Called from the debounce timer and
     /// from the background loop on its pull cadence.
-    async fn fire_sync(&self, device_name: String, generation: u64) {
+    ///
+    /// `timeout` bounds the `spawn_blocking` git work for THIS call only. The
+    /// debounce and post-resolve paths pass [`SYNC_OP_TIMEOUT`] (60s, the
+    /// desktop-scale default); the background-flush path ([`Self::on_background`])
+    /// passes a shorter budget ([`BG_FLUSH_TIMEOUT`]) so a mobile OS
+    /// background-task kill doesn't leak the pool thread against a 60s wall.
+    async fn fire_sync(&self, device_name: String, generation: u64, timeout: std::time::Duration) {
         {
             let mut g = self.inner.lock().await;
             if !g.active || g.generation != generation {
@@ -374,7 +520,7 @@ impl AutoSyncHandle {
         };
 
         let outcome = tokio::time::timeout(
-            SYNC_OP_TIMEOUT,
+            timeout,
             tokio::task::spawn_blocking({
                 let vault_path = self.vault_path.clone();
                 move || run_sync_cycle(&vault_path, &device_name)
@@ -618,5 +764,174 @@ mod tests {
             0,
             "deactivate must clear pending_conflicts (state/queue desync regression)"
         );
+    }
+
+    // ── Event-method surface tests (Phase 0 Task #2) ─────────────────────
+    //
+    // These verify the CONTRACT of the mobile event surface without a real
+    // git remote: that each event method resolves to the correct underlying
+    // state transition, that guards (no-op unless active, no-op unless Offline)
+    // hold, and that `on_background` flushes a Dirty debounce immediately.
+    //
+    // The full Offline-recovery reproduction (offline_tick driving Offline→Idle
+    // on a real network recovery) needs a two-device git fixture and is covered
+    // by the same deferred crypto integration test as the pause/resume cycle
+    // above. What we CAN prove here: offline_tick is a no-op unless Offline,
+    // so a host can safely call it on every foreground tick without spamming
+    // pulls when the vault is healthy.
+
+    #[tokio::test]
+    async fn event_methods_noop_when_inactive() {
+        // Before activate, every event method must be a safe no-op (mobile may
+        // fire lifecycle hooks before the coordinator is wired).
+        let tmp = tempfile::tempdir().unwrap();
+        let h = AutoSyncHandle::new(tmp.path());
+
+        h.on_unlock("d".to_string()).await;
+        h.on_mutation("d".to_string()).await;
+        h.on_foreground("d".to_string()).await;
+        h.on_background().await;
+        h.pull_now("d".to_string()).await;
+        h.offline_tick("d".to_string()).await;
+        assert!(h.on_conflict().await.is_none());
+
+        let s = h.status().await;
+        assert!(!s.active);
+        assert_eq!(s.state, AutoSyncState::Idle);
+        assert_eq!(s.pending, 0, "inactive nudge must not accumulate pending");
+    }
+
+    #[tokio::test]
+    async fn on_mutation_arms_debounce_and_sets_dirty() {
+        // The core event: a CRUD mutation arms the 5s debounce and marks Dirty.
+        // We activate WITHOUT a real remote (activate sets active=true + Idle,
+        // but no provider is connected); on_mutation still arms the debounce
+        // because it only checks `active`, not remote reachability.
+        let tmp = tempfile::tempdir().unwrap();
+        let h = AutoSyncHandle::new(tmp.path());
+        h.activate("test-device".to_string()).await;
+
+        h.on_mutation("test-device".to_string()).await;
+        let s = h.status().await;
+        assert_eq!(s.state, AutoSyncState::Dirty, "on_mutation must set Dirty");
+        assert_eq!(s.pending, 1, "on_mutation must increment pending");
+
+        // A burst coalesces: second nudge within the debounce window.
+        h.on_mutation("test-device".to_string()).await;
+        let s = h.status().await;
+        assert_eq!(s.pending, 2, "burst must accumulate in pending");
+        assert_eq!(s.state, AutoSyncState::Dirty);
+
+        h.deactivate().await;
+    }
+
+    #[tokio::test]
+    async fn on_background_flushes_dirty_debounce_immediately() {
+        // THE critical mobile contract (plan §3.5 "Flush-on-background is
+        // mandatory"): on_background must fire a Dirty debounce NOW, not wait
+        // for the 5s timer the OS is about to suspend. We verify the state
+        // transition Dirty → Syncing (the flush armed fire_sync).
+        //
+        // fire_sync will fail (no real remote) and settle back to Idle; we
+        // can't assert Syncing deterministically across awaits, so we verify
+        // the NEGATIVE: after on_background, the debounce handle is gone
+        // (flushed) and pending has reset to 0 (fire_sync clears it). A plain
+        // 5s-wait path would still show pending > 0 and Dirty here.
+        let tmp = tempfile::tempdir().unwrap();
+        let h = AutoSyncHandle::new(tmp.path());
+        h.activate("test-device".to_string()).await;
+        h.on_mutation("test-device".to_string()).await;
+        assert_eq!(h.status().await.state, AutoSyncState::Dirty);
+
+        h.on_background().await;
+
+        // fire_sync ran (and failed on no remote); state settled off Dirty,
+        // pending cleared. The debounce timer is no longer armed.
+        let s = h.status().await;
+        assert_ne!(
+            s.state,
+            AutoSyncState::Dirty,
+            "on_background must flush the Dirty debounce, not leave it pending"
+        );
+        assert_eq!(s.pending, 0, "flush must clear pending");
+
+        h.deactivate().await;
+    }
+
+    #[tokio::test]
+    async fn on_background_noop_when_not_dirty() {
+        // No pending debounce → on_background is a cheap no-op. Prevents
+        // mobile from firing empty push cycles every time the app backgrounds.
+        let tmp = tempfile::tempdir().unwrap();
+        let h = AutoSyncHandle::new(tmp.path());
+        h.activate("test-device".to_string()).await;
+        assert_eq!(h.status().await.state, AutoSyncState::Idle);
+
+        h.on_background().await; // must not panic, must not change state
+        assert_eq!(h.status().await.state, AutoSyncState::Idle);
+
+        h.deactivate().await;
+    }
+
+    #[tokio::test]
+    async fn offline_tick_noop_when_not_offline() {
+        // offline_tick is the host-scheduled 30s probe mobile MUST fire while
+        // foregrounded. It must be a no-op when the vault is healthy (Idle),
+        // otherwise every 30s tick would spam a redundant pull. Only fires
+        // when state == Offline. (The Offline→Idle recovery transition itself
+        // requires a real two-device git fixture; here we prove the guard.)
+        let tmp = tempfile::tempdir().unwrap();
+        let h = AutoSyncHandle::new(tmp.path());
+        h.activate("test-device".to_string()).await;
+        assert_eq!(h.status().await.state, AutoSyncState::Idle);
+
+        // Idle: no-op. We can't observe "did not pull" directly without a
+        // remote, but we assert the guard short-circuits without touching
+        // state (no transition away from Idle).
+        h.offline_tick("test-device".to_string()).await;
+        assert_eq!(
+            h.status().await.state,
+            AutoSyncState::Idle,
+            "offline_tick must be a no-op when not Offline"
+        );
+
+        h.deactivate().await;
+    }
+
+    #[tokio::test]
+    async fn pull_only_skips_when_needs_decision() {
+        // Regression for peer-review finding #7 (2026-07-23):
+        // pull_only must NOT run a git pull while a conflict is paused for
+        // field-level resolution — the index/worktree are mid-merge and a pull
+        // would race the resolution (corruption risk). nudge and background_loop
+        // already guard this; pull_only (now reachable from 3 new Task #2 event
+        // entry points: pull_now, offline_tick, on_unlock) must too.
+        //
+        // We can't reach NeedsDecision via a real sync cycle in a unit test
+        // (no two-device git fixture), so force_state_for_test sets it directly.
+        // The guard short-circuits before touching cycle_lock or the repo, so
+        // state stays NeedsDecision (proving pull_only returned early rather
+        // than running and settling to Idle/Offline).
+        let tmp = tempfile::tempdir().unwrap();
+        let h = AutoSyncHandle::new(tmp.path());
+        h.activate("test-device".to_string()).await;
+        h.force_state_for_test(AutoSyncState::NeedsDecision).await;
+        assert_eq!(h.status().await.state, AutoSyncState::NeedsDecision);
+
+        // Every public event that delegates to pull_only must be gated.
+        h.pull_now("test-device".to_string()).await;
+        h.offline_tick("test-device".to_string()).await;
+        h.on_unlock("test-device".to_string()).await;
+        h.on_foreground("test-device".to_string()).await; // -> nudge_focus_pull -> pull_only
+
+        // State unchanged: the guard fired on every path.
+        assert_eq!(
+            h.status().await.state,
+            AutoSyncState::NeedsDecision,
+            "pull_only (and its event wrappers) must skip in NeedsDecision, \
+             not race the paused conflict resolution"
+        );
+
+        h.deactivate().await;
     }
 }
