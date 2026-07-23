@@ -16,6 +16,19 @@
             </intent-filter>
         </activity>
 
+        <!-- Phase 6: Baluard autofill service. Runs as a SEPARATE process
+             with strict memory limits; unlocks via unlock_with_kek (KEK from
+             AndroidKeystore gated by BiometricPrompt), NEVER the master KDF.
+             See BaluardAutofillService for the OOM-guard invariant. -->
+        <service
+            android:name=".autofill.BaluardAutofillService"
+            android:exported="true"
+            android:permission="android.permission.BIND_AUTOFILL_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.autofill.AutofillService" />
+            </intent-filter>
+        </service>
+
         <!-- Native lib: the Rust cdylib (libbaluard.so) is packaged per-ABI
              under jniLibs/<abi>/ by the host build (cargo-ndk or manual copy).
              System.loadLibrary("baluard") resolves it at runtime. -->
