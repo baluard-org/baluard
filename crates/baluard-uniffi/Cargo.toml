@@ -1,0 +1,23 @@
+[package]
+name = "baluard-uniffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "UniFFI bindings for baluard-runtime + baluard-core (mobile FFI surface)"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "baluard_uniffi"
+
+[dependencies]
+baluard-core = { path = "../baluard-core", features = ["git-sync"] }
+baluard-runtime = { path = "../baluard-runtime" }
+uniffi = { workspace = true }
+
+[build-dependencies]
+uniffi = { workspace = true, features = ["build"] }
+
+[dev-dependencies]
+uniffi_bindgen = "0.28"
+tokio = { workspace = true, features = ["macros", "rt"] }

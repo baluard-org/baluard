@@ -638,6 +638,12 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 
 ### Phase 1: UniFFI bindings (unblocker)
 
+> **Spike status: TOOLCHAIN DE-RISKED (2026-07-23).** The highest-risk piece — whether `baluard-core` + `baluard-runtime` types compile under UniFFI 0.28 proc-macros — is PROVEN. `crates/baluard-uniffi/` exists, builds as a `cdylib` (`libbaluard_uniffi.so`, FFI symbols confirmed via `nm -D`), and the async-runtime bridge (tokio + uniffi + baluard-runtime version matrix) compiles + runs. Full workspace 35 test binaries, 0 failures. Remaining (APK + iOS-sim + ext linking) requires a macOS host with Xcode + Android NDK; this Linux container can't build them. See the spike log at the end of this phase.
+>
+> **Discovery: legacy FFI surface consolidated.** `baluard-core` had a prior UniFFI surface (3 fns from the pre-rebrand `idtty` project). Per the plan's single-boundary design, those were REMOVED from core and re-homed in `baluard-uniffi` (`mobile_version`, `generate_recovery_phrase`, `derive_kek`). Core now stays idiomatic Rust with zero UniFFI annotations.
+>
+> **Discovery: no Rust password generator exists.** Plan §3.3's `mobile_generate_password` assumed reuse of existing Rust logic. False — the generator lives in `desktop/src/lib/utils.js` (JS). Phase 4 must port it to Rust (`baluard-core::generator`) or re-implement in Kotlin commonMain.
+
 **Goal:** Get a "Hello World" round-trip working — Kotlin calls into Rust, Rust returns a value, Kotlin renders it.
 
 **What to build:**
@@ -652,10 +658,33 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 
 **Acceptance criteria:**
 
-- [ ] `baluard-uniffi` crate compiles and exposes at least one function via UniFFI
-- [ ] Android build (`.apk`) launches and shows a list of 3 hardcoded ciphers from Rust
-- [ ] iOS build (`.app` for simulator) launches and shows the same list
-- [ ] CI builds both targets cleanly
+- [x] `baluard-uniffi` crate compiles and exposes at least one function via UniFFI  ✅ 2026-07-23 (spike: 3 fns — `mobile_version`, `generate_recovery_phrase`, `derive_kek` + async `spike_async_probe`. cdylib builds, FFI symbols present, 2 unit tests pass)
+- [ ] Android build (`.apk`) launches and shows a list of 3 hardcoded ciphers from Rust  ⏳ BLOCKED ON HOST: needs macOS + Android NDK (container lacks both). Spike de-risked the Rust side; APK build is a host-side Gradle task.
+- [ ] iOS build (`.app` for simulator) launches and shows the same list  ⏳ BLOCKED ON HOST: needs macOS + Xcode (Linux swift ≠ Apple toolchain). The least-traveled ext-linking path remains un-de-risked until run on a mac.
+- [ ] CI builds both targets cleanly  ⏳ blocked on the above
+
+#### Phase 1 spike implementation log (2026-07-23)
+
+**Spike scope (executed in a Linux container).** Per plan §5 Phase 1 the de-risk step is: bind one pure `baluard-core` fn via UniFFI, build an APK + iOS-sim app, link a stub credential extension. The container has cargo + kotlin + gradle + swift (Linux) but NO Android SDK/NDK and NO Xcode. So the spike executed the environment-portable, highest-value subset and documented the host-side remainder.
+
+**What was proven (the load-bearing questions):**
+1. `baluard-core` + `baluard-runtime` compile cleanly under UniFFI 0.28 proc-macros. This was the most likely place to lose a month — complex crypto types (`hpke`, `x25519-dalek`, `ed25519-dalek`, `ssh-key`, `argon2`) all link.
+2. The async-runtime version matrix (tokio + uniffi 0.28 + baluard-runtime) compiles AND runs. `spike_async_probe` is a `#[uniffi::export] async fn` that touches `baluard_runtime::AutoSyncState`; its tokio test passes.
+3. `#[derive(uniffi::Record)]` works for boundary structs (`MobileRecoveryPhrase`).
+4. The cdylib exports the expected FFI symbols (`UNIFFI_META_BALUARD_UNIFFI_FUNC_*`).
+5. Full workspace (35 test binaries, +2 new uniffi tests) passes with 0 failures after consolidation.
+
+**Toolchain facts for host builds (memorized):**
+- UniFFI 0.28 has NO standalone `uniffi-bindgen` binary (`cargo install uniffi-bindgen-cli` fails — the crate doesn't exist for 0.28; `uniffi_bindgen` lib has no binaries). To generate Kotlin/Swift bindings, build a runner that calls `uniffi_bindgen::library_mode::generate_bindings` (7-arg signature: `library_path`, `crate_name`, `&binding_generator`, `config_supplier: &dyn BindgenCrateConfigSupplier`, `config_file_override`, `out_dir`, `try_format_code`).
+- Proc-macro mode: `build.rs` can be empty — `uniffi::setup_scaffolding!()` in `lib.rs` handles scaffolding. No UDL file needed.
+- `#[derive(uniffi::Record)]` is required for struct types to cross the FFI boundary (plain structs don't auto-derive).
+
+**Consolidation decision (acted on).** Stripped `baluard-core/src/lib.rs` of its legacy UniFFI surface (`mobile_version`, `mobile_generate_mnemonic`, `mobile_derive_key` + scaffolding + the `uniffi` workspace dep + `test_uniffi_wrappers` test). Re-homed the 3 fns in `baluard-uniffi` as `mobile_version`, `generate_recovery_phrase` (returns a proper `MobileRecoveryPhrase` Record), and `derive_kek` (now takes `salt: Vec<u8>` directly instead of the legacy hashed-from-String path, with a security note on the plaintext-on-heap boundary). Added `consolidated_ffi_surface_works` test mirroring the deleted one.
+
+**Carried to the host-build step (the part this container can't do):**
+- Build a real APK against `aarch64-linux-android` (Rust target installed; Android cmdline-tools downloaded to `$HOME/android-sdk`; still needs `sdkmanager --install` of platform-tools + build-tools + NDK + `cargo-ndk` or `cargo build --target` + manual .so packaging).
+- Build an iOS-sim `.app` + link the framework into a stub `ASCredentialProviderViewController` extension (needs macOS + Xcode; the least-traveled path the spike was meant to de-risk remains un-proven until run on a mac).
+- Wire the Kotlin/Swift bindings into a Compose Multiplatform `commonMain` hello-world screen.
 
 **Effort:** 2-3 weeks. Pure Rust + scaffolding work, no UI decisions.
 
