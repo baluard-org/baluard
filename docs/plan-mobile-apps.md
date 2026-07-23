@@ -692,6 +692,8 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 
 ### Phase 2: Auth flow + vault unlock
 
+> **Status: RUST DONE, UI SCAFFOLDED (2026-07-23).** The vault lifecycle FFI surface (`open_vault`, `create_vault`, `MobileVault::unlock/lock/is_unlocked`) is implemented in `baluard-uniffi` and proven by an in-process test (`vault_create_open_unlock_lock_roundtrip`) that runs the real Argon2id KDF + keywrap verification against a temp vault, including wrong-password-fails-closed. The Kotlin side is blind-scaffolded: `AuthViewModel`, `UnlockScreen` (master-password flow + biometric button stub), `Biometric` expect/actual (androidMain + iosM stubs returning false until the platform glue lands). Biometric quick-unlock (KEK path, `unlock_with_kek`, OOM guard) is the remaining Rust + platform work.
+
 **Goal:** Real authentication. Master password entry, biometric unlock, session token management.
 
 **What to build:**
@@ -721,6 +723,8 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 
 ### Phase 3: Vault list + cipher detail
 
+> **Status: RUST DONE, UI LIST SCAFFOLDED (2026-07-23).** `MobileVault::list_ciphers` returns a thin `MobileCipherMeta` Record (primitive fields, core stays UniFFI-free). `get_cipher/add_cipher/update_cipher/delete_cipher/totp_code` pass JSON through the FFI using the daemon wire format. In-process test `cipher_crud_roundtrip` proves add (encrypts under item key) -> list (index read) -> get (decrypts password) -> delete. Kotlin: `VaultListViewModel` (StateFlow + client-side search filter), `VaultListScreen` (LazyColumn render + lock action), wired in `App.kt`. Cipher DETAIL view (all 8 types) is the remaining UI work.
+
 **Goal:** Read-only view of the entire vault. Match desktop UX.
 
 **What to build:**
@@ -747,6 +751,8 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 **Risk:** Performance with large vaults (1,000+ entries). Mitigate with LazyColumn pagination + Rust-side search.
 
 ### Phase 4: Cipher edit + generator + TOTP
+
+> **Status: PARTIAL (2026-07-23).** Generator ported to Rust (`baluard-core::generator`, single source of truth) + exposed via `baluard-uniffi` (`generate_password`/`generate_passphrase`). Cipher CRUD Rust surface done (add/update/delete/totp via JSON passthrough). TOTP Rust surface done (`totp_code`, seed never crosses FFI). REMAINING: Compose `EditCipherScreen` for all 8 types, `GeneratorScreen`, `TOTPWidget`, debounced-push-after-save wiring, pull-to-refresh.
 
 **Goal:** Full CRUD on mobile. Match desktop UX.
 

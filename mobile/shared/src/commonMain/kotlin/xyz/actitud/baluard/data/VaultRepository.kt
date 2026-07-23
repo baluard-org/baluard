@@ -1,22 +1,37 @@
 package xyz.actitud.baluard.data
 
+import xyz.actitud.baluard.MobileCipherMeta
+import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.generateRecoveryPhrase
 import xyz.actitud.baluard.MobileRecoveryPhrase
+import xyz.actitud.baluard.openVault as uniffiOpenVault
+import xyz.actitud.baluard.createVault as uniffiCreateVault
 
 /**
  * Thin wrapper over the UniFFI-generated Kotlin bindings.
  *
- * Phase 1: exposes the spike fn (recovery phrase generation) so the hello-world
- * screen can prove the Rust round-trip. Phase 2+ grows this into the full
- * vault/cipher/sync surface (see plan §3.3 API draft).
+ * Exposes the vault lifecycle (Phase 2) + cipher CRUD (Phase 3-4) + generator
+ * (Phase 4 prereq). The generated binding functions are top-level Kotlin fns
+ * produced by uniffi-bindgen from the Rust `#[uniffi::export]` decls; they land
+ * in package `xyz.actitud.baluard` (set in uniffi.toml). Aliased on import to
+ * avoid clashing with the repository method names.
  *
- * NOTE: the generated binding functions (e.g. `generateRecoveryPhrase()`) are
- * top-level Kotlin fns produced by uniffi-bindgen from the Rust
- * `#[uniffi::export] pub fn generate_recovery_phrase()`. They land in package
- * `xyz.actitud.baluard` (set in uniffi.toml). Commit the generated sources;
- * regenerate only when the Rust API changes.
+ * All vault/cipher ops are `suspend` (UniFFI async -> Kotlin suspend); the
+ * Argon2id KDF and git ops run on the parked shared tokio Runtime off the UI
+ * thread (plan §3.3).
  */
 class VaultRepository {
-    fun generateRecoveryPhrase(): MobileRecoveryPhrase =
-        generateRecoveryPhrase()
+    fun generateRecoveryPhrase(): MobileRecoveryPhrase = generateRecoveryPhrase()
+
+    suspend fun openVault(path: String): MobileVault = uniffiOpenVault(path)
+    suspend fun createVault(path: String, password: String, deviceName: String): MobileVault =
+        uniffiCreateVault(path, password, deviceName)
+
+    suspend fun listCiphers(vault: MobileVault): List<MobileCipherMeta> = vault.listCiphers()
+    suspend fun getCipher(vault: MobileVault, id: String, decrypt: Boolean): String =
+        vault.getCipher(id, decrypt)
+    suspend fun addCipher(vault: MobileVault, payload: String): String = vault.addCipher(payload)
+    suspend fun updateCipher(vault: MobileVault, payload: String): Unit = vault.updateCipher(payload)
+    suspend fun deleteCipher(vault: MobileVault, id: String): Unit = vault.deleteCipher(id)
+    suspend fun totpCode(vault: MobileVault, id: String): String = vault.totpCode(id)
 }
