@@ -472,6 +472,39 @@ impl VaultState {
             .unwrap_or_default()
     }
 
+    /// Re-unlock the vault with a pre-derived KEK, skipping the Argon2id KDF.
+    /// This is the autofill / extension quick-unlock path (plan §3.2): the
+    /// caller retrieves the biometric-gated KEK from the platform keychain
+    /// (StrongBox / Secure Enclave) and passes it here. The master-password
+    /// KDF never runs in the memory-capped autofill process (OOM guard).
+    ///
+    /// Mirrors the `pin_unlock` tail: opens a fresh handle, runs the shared
+    /// `unlock_with_kek` (keywrap HPKE unwrap + canaries), mints a session
+    /// token. A stale/corrupted keywrap fails closed (a password changed on
+    /// another device invalidates the retained KEK).
+    pub async fn unlock_with_kek(&self, kek: &[u8; 32]) -> Result<(), String> {
+        // unlock_with_kek runs outside the lock (no KDF, but the HPKE unwrap
+        // + canary check still touch the keywrap).
+        let mut new_handle = baluard_core::vault::handle::VaultHandle::open(&self.vault_path)
+            .map_err(|e| format!("Failed to open vault for KEK unlock: {e}"))?;
+        new_handle
+            .unlock_with_kek(kek)
+            .map_err(|e| format!("KEK unlock failed: {e}"))?;
+        let mut guard = self.inner.write().await;
+        *guard = Some(new_handle);
+        drop(guard);
+        let mut token_guard = self.session_token.write().await;
+        *token_guard = Some(generate_session_token());
+        self.session_token_created.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            Ordering::Relaxed,
+        );
+        Ok(())
+    }
+
     /// List all cipher IDs (works locked or unlocked).
     #[allow(dead_code)]
     pub async fn list_cipher_ids(&self) -> Result<Vec<String>, String> {

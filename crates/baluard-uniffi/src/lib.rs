@@ -147,6 +147,24 @@ impl MobileVault {
         self.state.lock().await
     }
 
+    /// **Autofill / extension quick-unlock path (plan §3.2).** Unlocks with a
+    /// pre-derived KEK, SKIPPING the Argon2id KDF. The caller retrieves the
+    /// biometric-gated KEK from the platform keychain (StrongBox / Secure
+    /// Enclave) and passes it here. The master-password KDF never runs in the
+    /// memory-capped autofill process (OOM guard — a 64-256 MB KDF would OOM
+    /// an Android AutofillService or iOS credential extension).
+    ///
+    /// SECURITY: the [kek] is the Argon2id output over the master password
+    /// (NOT the password itself). Treat as sensitive at the FFI boundary.
+    pub async fn unlock_with_kek(&self, kek: Vec<u8>) -> Result<(), String> {
+        let mut arr = [0u8; 32];
+        if kek.len() != 32 {
+            return Err("KEK must be exactly 32 bytes".to_string());
+        }
+        arr.copy_from_slice(&kek);
+        self.state.unlock_with_kek(&arr).await
+    }
+
     /// Whether the vault currently holds an unlocked handle in memory.
     pub async fn is_unlocked(&self) -> bool {
         self.state.is_unlocked().await
