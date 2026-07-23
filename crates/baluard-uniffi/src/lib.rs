@@ -120,6 +120,18 @@ impl From<baluard_core::types::CipherMeta> for MobileCipherMeta {
     }
 }
 
+/// Coordinator status snapshot (plan §3.5). Drives the mobile sync indicator:
+/// `active` false = no remote/provider; `state` is the lowercase coordinator
+/// state (idle/dirty/syncing/offline/needsdecision); `pending` is the
+/// debounce-window mutation count; `last_sync` is unix seconds or None.
+#[derive(uniffi::Record)]
+pub struct MobileSyncStatus {
+    pub active: bool,
+    pub state: String,
+    pub last_sync: Option<u64>,
+    pub pending: u32,
+}
+
 #[uniffi::export]
 impl MobileVault {
     /// Unlock the vault with the master password. Derives the KEK via Argon2id,
@@ -182,6 +194,66 @@ impl MobileVault {
     /// The TOTP seed NEVER crosses the FFI boundary; only the derived code.
     pub async fn totp_code(&self, id: String) -> Result<String, String> {
         self.state.totp_code(&id).await
+    }
+
+    // ── Sync lifecycle events (Phase 5; plan §3.2/§3.5) ──────────────────
+    // Mobile drives the coordinator via these events instead of a background
+    // tokio loop. The daemon keeps its background_loop; both hit the same
+    // Inner state machine (Phase 0 Task #2). The OS host (Kotlin
+    // ProcessLifecycleOwner / iOS SceneDelegate) calls these from lifecycle
+    // hooks; device_name is read from the registry/handle so the host doesn't
+    // thread it through every lifecycle callback.
+
+    async fn device_name(&self) -> String {
+        self.state.device_name().await
+    }
+
+    /// Pull immediately after unlock so other-device edits land first.
+    pub async fn sync_on_unlock(&self) {
+        let dn = self.device_name().await;
+        self.state.autosync.on_unlock(dn).await;
+    }
+
+    /// Arm the 5s debounced push after a CRUD mutation (coalesces bursts).
+    pub async fn sync_on_mutation(&self) {
+        let dn = self.device_name().await;
+        self.state.autosync.on_mutation(dn).await;
+    }
+
+    /// Pull on app foreground (10-min guard collapses focus flicker).
+    pub async fn sync_on_foreground(&self) {
+        let dn = self.device_name().await;
+        self.state.autosync.on_foreground(dn).await;
+    }
+
+    /// FLUSH any pending debounce immediately on background (OS suspends the
+    /// process within seconds; the 5s timer would be dropped).
+    pub async fn sync_on_background(&self) {
+        self.state.autosync.on_background().await;
+    }
+
+    /// User pull-to-refresh / "Sync now".
+    pub async fn sync_pull_now(&self) {
+        let dn = self.device_name().await;
+        self.state.autosync.pull_now(dn).await;
+    }
+
+    /// Host-scheduled 30s probe while Offline + foregrounded (the one piece of
+    /// background_loop mobile must reproduce).
+    pub async fn sync_offline_tick(&self) {
+        let dn = self.device_name().await;
+        self.state.autosync.offline_tick(dn).await;
+    }
+
+    /// Coordinator status snapshot for the sync indicator.
+    pub async fn sync_status(&self) -> MobileSyncStatus {
+        let s = self.state.autosync.status().await;
+        MobileSyncStatus {
+            active: s.active,
+            state: format!("{:?}", s.state).to_lowercase(),
+            last_sync: s.last_sync,
+            pending: s.pending,
+        }
     }
 }
 

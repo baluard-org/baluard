@@ -453,6 +453,25 @@ impl VaultState {
         guard.as_ref().is_some_and(|h| h.is_unlocked())
     }
 
+    /// This device's display name from the device registry (the name under
+    /// which this device's commits appear in git history). Empty if the vault
+    /// is locked or the device isn't registered. Exposed for the mobile FFI
+    /// layer so the OS lifecycle host doesn't have to thread device_name
+    /// through every sync event callback (plan §3.5).
+    pub async fn device_name(&self) -> String {
+        let guard = self.inner.read().await;
+        guard
+            .as_ref()
+            .and_then(|h| {
+                h.device_manager
+                    .registry()
+                    .devices
+                    .get(&h.device_id)
+                    .map(|d| d.name.clone())
+            })
+            .unwrap_or_default()
+    }
+
     /// List all cipher IDs (works locked or unlocked).
     #[allow(dead_code)]
     pub async fn list_cipher_ids(&self) -> Result<Vec<String>, String> {
