@@ -40,7 +40,8 @@ fd-lock.workspace = true
 csv = "1.3"
 roxmltree = "0.20"
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
-uniffi.workspace = true
+# UniFFI bindings live in the dedicated `baluard-uniffi` crate (plan §3.3 single
+# FFI boundary). Core stays idiomatic Rust with no UniFFI annotations.
 # WebAuthn authenticator ceremony (Phase 1)
 passkey = { workspace = true, optional = true }
 url = { workspace = true, optional = true }

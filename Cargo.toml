@@ -2,6 +2,7 @@
 members = [
     "crates/baluard-core",
     "crates/baluard-runtime",
+    "crates/baluard-uniffi",
     "crates/baluard-cli",
     "crates/baluard-daemon",
     "crates/baluard-nmh",
