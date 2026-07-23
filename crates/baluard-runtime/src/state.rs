@@ -2102,7 +2102,7 @@ impl VaultState {
         let remote_oid = pending.remote_oid;
         let fp_for_read = file_path.clone();
         let (base_bytes, local_bytes, remote_bytes) = tokio::time::timeout(
-            crate::handler::SYNC_OP_TIMEOUT,
+            crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(
                 #[allow(clippy::type_complexity)]
                 move || -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
@@ -2199,7 +2199,7 @@ impl VaultState {
                 let vault_path = self.vault_path.clone();
                 let pending_for_finalize = pending.clone();
                 let push_failed = tokio::time::timeout(
-                    crate::handler::SYNC_OP_TIMEOUT,
+                    crate::autosync::SYNC_OP_TIMEOUT,
                     tokio::task::spawn_blocking(move || -> Result<bool, String> {
                         let engine = SyncEngine::new(&vault_path, &device_id);
                         let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
@@ -2251,7 +2251,7 @@ impl VaultState {
     /// vault.list until an unrelated edit triggers a rebuild. Best-effort:
     /// a rebuild failure is logged, not fatal (the index is a cache; it
     /// self-heals on the next VaultHandle mutation).
-    pub(crate) async fn rebuild_cipher_index(&self) {
+    pub async fn rebuild_cipher_index(&self) {
         let guard = self.inner.read().await;
         if let Some(handle) = guard.as_ref() {
             if let Err(e) = handle.rebuild_index() {
@@ -2311,7 +2311,7 @@ impl VaultState {
         let remote_oid = pending.remote_oid;
         let fp_for_read = file_path.clone();
         let (local_bytes, remote_bytes) = tokio::time::timeout(
-            crate::handler::SYNC_OP_TIMEOUT,
+            crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, Vec<u8>), String> {
                 let engine = SyncEngine::new(&vault_path, "conflict-keep-both");
                 let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
@@ -2369,7 +2369,7 @@ impl VaultState {
         let vault_path = self.vault_path.clone();
         let pending_for_finalize = pending.clone();
         let push_failed = tokio::time::timeout(
-            crate::handler::SYNC_OP_TIMEOUT,
+            crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || -> Result<bool, String> {
                 let engine = SyncEngine::new(&vault_path, &device_id_str);
                 let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
