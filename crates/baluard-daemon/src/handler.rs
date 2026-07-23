@@ -26,7 +26,9 @@ const MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
 /// remote would otherwise leak the spawn_blocking thread forever; under
 /// autosync retries the pool exhausts and the whole daemon starves (the
 /// EAGAIN storm). 60s is generous for a real sync yet bounds the leak.
-pub(crate) const SYNC_OP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+// SYNC_OP_TIMEOUT lives in the runtime (`baluard_runtime::autosync`) now; the
+// daemon re-exports the module so the bare name resolves unchanged.
+use crate::autosync::SYNC_OP_TIMEOUT;
 
 /// Handle a single client connection (length-delimited Protobuf frames).
 /// Verifies peer UID matches daemon UID on Linux (SO_PEERCRED).

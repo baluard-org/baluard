@@ -35,6 +35,12 @@ const PULL_INTERVAL_SECS: u64 = 30 * 60;
 const FOCUS_PULL_MIN_GAP_SECS: u64 = 10 * 60;
 /// Connectivity probe cadence while offline.
 const OFFLINE_POLL_SECS: u64 = 30;
+/// Wall-clock budget for a single sync operation (pull/push/finalize). Bounds
+/// `spawn_blocking` git work so a hung remote cannot leak a thread or stall the
+/// cycle. Previously `handler::SYNC_OP_TIMEOUT`; moved here (Phase 0 runtime
+/// extraction) so the runtime owns its own sync timeouts independently of the
+/// daemon transport layer.
+pub const SYNC_OP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Coordinator state, surfaced to clients via [`AutoSyncHandle::status`].
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -368,7 +374,7 @@ impl AutoSyncHandle {
         };
 
         let outcome = tokio::time::timeout(
-            crate::handler::SYNC_OP_TIMEOUT,
+            SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking({
                 let vault_path = self.vault_path.clone();
                 move || run_sync_cycle(&vault_path, &device_name)
@@ -458,7 +464,7 @@ impl AutoSyncHandle {
             let vault_path = self.vault_path.clone();
             let dn = device_name.clone();
             let outcome = tokio::time::timeout(
-                crate::handler::SYNC_OP_TIMEOUT,
+                SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &dn)),
             )
             .await;
