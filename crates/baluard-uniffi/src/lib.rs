@@ -15,7 +15,60 @@
 
 uniffi::setup_scaffolding!();
 
+/// Typed error for the mobile FFI surface.
+///
+/// UniFFI 0.28 requires the error type to be an enum implementing
+/// `std::error::Error` — `Result<T, String>` is not accepted (the bindgen
+/// panics with `unknown throw type: Some(String)`). The runtime layer
+/// (`baluard_runtime::VaultState`) currently returns `String` errors, so IO /
+/// serde / not-found cases are not separable here and surface as [`BaluardError::Vault`].
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum BaluardError {
+    /// A cryptographic operation failed (Argon2id KDF, keywrap verification,
+    /// BIP-39 entropy, RNG). A wrong master password surfaces here as a
+    /// keywrap-verify failure.
+    #[error("crypto error: {message}")]
+    Crypto { message: String },
+
+    /// A vault-layer operation failed (open, lock, cipher CRUD, TOTP). Carries
+    /// the runtime's error detail verbatim.
+    #[error("vault error: {message}")]
+    Vault { message: String },
+
+    /// Initializing a new vault on disk failed (device keys, keywrap, manifest).
+    #[error("vault creation failed: {message}")]
+    Creation { message: String },
+
+    /// Invalid input at the FFI boundary (KEK not 32 bytes, generator config).
+    #[error("invalid input: {message}")]
+    InvalidInput { message: String },
+}
+
+impl From<baluard_core::error::CryptoError> for BaluardError {
+    fn from(e: baluard_core::error::CryptoError) -> Self {
+        Self::Crypto {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<baluard_core::generator::GenerateError> for BaluardError {
+    fn from(e: baluard_core::generator::GenerateError) -> Self {
+        Self::InvalidInput {
+            message: e.to_string(),
+        }
+    }
+}
+
+// The runtime returns `String` errors; map them to the vault-layer variant.
+impl From<String> for BaluardError {
+    fn from(message: String) -> Self {
+        Self::Vault { message }
+    }
+}
+
 /// Library version (embedded in vault format headers).
+#[uniffi::export]
 pub fn mobile_version() -> u32 {
     baluard_core::BALUARD_VERSION as u32
 }
@@ -32,9 +85,8 @@ pub struct MobileRecoveryPhrase {
 /// Generate a fresh random 24-word BIP-39 recovery phrase. Uses `OsRng` under
 /// the hood (never `Math.random` — same crypto-strong path as desktop).
 #[uniffi::export]
-pub fn generate_recovery_phrase() -> Result<MobileRecoveryPhrase, String> {
-    let rp = baluard_core::recovery::RecoveryPhrase::generate()
-        .map_err(|e| format!("recovery phrase generation failed: {e}"))?;
+pub fn generate_recovery_phrase() -> Result<MobileRecoveryPhrase, BaluardError> {
+    let rp = baluard_core::recovery::RecoveryPhrase::generate()?;
     Ok(MobileRecoveryPhrase {
         phrase: rp.phrase(),
     })
@@ -50,7 +102,7 @@ pub fn generate_recovery_phrase() -> Result<MobileRecoveryPhrase, String> {
 /// §3.6 documents as deliberate. The caller (mobile runtime) must treat both
 /// args + the return as sensitive and avoid logging/persisting them.
 #[uniffi::export]
-pub fn derive_kek(password: String, salt: Vec<u8>) -> Result<Vec<u8>, String> {
+pub fn derive_kek(password: String, salt: Vec<u8>) -> Result<Vec<u8>, BaluardError> {
     use baluard_core::crypto::kdf::derive_kek as core_derive;
     use baluard_core::types::{KdfParams, KdfProfile};
 
@@ -67,7 +119,7 @@ pub fn derive_kek(password: String, salt: Vec<u8>) -> Result<Vec<u8>, String> {
         parallelism: KdfProfile::MobileLow.parallelism(),
         salt: salt_32,
     };
-    let key = core_derive(&password, &params).map_err(|e| format!("KEK derivation failed: {e}"))?;
+    let key = core_derive(&password, &params)?;
     Ok(key.to_vec())
 }
 
@@ -137,14 +189,14 @@ impl MobileVault {
     /// Unlock the vault with the master password. Derives the KEK via Argon2id,
     /// verifies the keywrap + canaries, and activates the auto-sync coordinator
     /// (if the vault has a remote). Heavy: runs the KDF on the shared runtime.
-    pub async fn unlock(&self, master_password: String) -> Result<(), String> {
-        self.state.unlock(&master_password).await
+    pub async fn unlock(&self, master_password: String) -> Result<(), BaluardError> {
+        Ok(self.state.unlock(&master_password).await?)
     }
 
     /// Lock the vault: zeroizes in-memory keys, clears the session token,
     /// deactivates auto-sync. The on-disk vault is untouched.
-    pub async fn lock(&self) -> Result<(), String> {
-        self.state.lock().await
+    pub async fn lock(&self) -> Result<(), BaluardError> {
+        Ok(self.state.lock().await?)
     }
 
     /// **Autofill / extension quick-unlock path (plan §3.2).** Unlocks with a
@@ -156,13 +208,15 @@ impl MobileVault {
     ///
     /// SECURITY: the [kek] is the Argon2id output over the master password
     /// (NOT the password itself). Treat as sensitive at the FFI boundary.
-    pub async fn unlock_with_kek(&self, kek: Vec<u8>) -> Result<(), String> {
+    pub async fn unlock_with_kek(&self, kek: Vec<u8>) -> Result<(), BaluardError> {
         let mut arr = [0u8; 32];
         if kek.len() != 32 {
-            return Err("KEK must be exactly 32 bytes".to_string());
+            return Err(BaluardError::InvalidInput {
+                message: "KEK must be exactly 32 bytes".to_string(),
+            });
         }
         arr.copy_from_slice(&kek);
-        self.state.unlock_with_kek(&arr).await
+        Ok(self.state.unlock_with_kek(&arr).await?)
     }
 
     /// Whether the vault currently holds an unlocked handle in memory.
@@ -179,7 +233,7 @@ impl MobileVault {
 
     /// List all ciphers' metadata (id, name, type, favorite, username).
     /// Lightweight: no decryption of field values, just the index.
-    pub async fn list_ciphers(&self) -> Result<Vec<MobileCipherMeta>, String> {
+    pub async fn list_ciphers(&self) -> Result<Vec<MobileCipherMeta>, BaluardError> {
         let metas = self.state.list_cipher_meta().await?;
         Ok(metas.into_iter().map(MobileCipherMeta::from).collect())
     }
@@ -187,31 +241,31 @@ impl MobileVault {
     /// Get a single cipher as a JSON string (the daemon wire format: nested
     /// `kind` object + flat top-level fields). `decrypt` true returns field
     /// values (password, notes); false returns masked/placeholder values.
-    pub async fn get_cipher(&self, id: String, decrypt: bool) -> Result<String, String> {
-        self.state.get_cipher(&id, decrypt).await
+    pub async fn get_cipher(&self, id: String, decrypt: bool) -> Result<String, BaluardError> {
+        Ok(self.state.get_cipher(&id, decrypt).await?)
     }
 
     /// Add a new cipher (JSON payload per the daemon wire format). Returns the
     /// new cipher's JSON (with generated id, tier, epoch).
-    pub async fn add_cipher(&self, payload: String) -> Result<String, String> {
-        self.state.add_cipher(&payload).await
+    pub async fn add_cipher(&self, payload: String) -> Result<String, BaluardError> {
+        Ok(self.state.add_cipher(&payload).await?)
     }
 
     /// Update an existing cipher (JSON payload). Parses `kind` from the
     /// payload (does NOT clone the existing kind).
-    pub async fn update_cipher(&self, payload: String) -> Result<(), String> {
-        self.state.update_cipher(&payload).await
+    pub async fn update_cipher(&self, payload: String) -> Result<(), BaluardError> {
+        Ok(self.state.update_cipher(&payload).await?)
     }
 
     /// Delete a cipher by id.
-    pub async fn delete_cipher(&self, id: String) -> Result<(), String> {
-        self.state.delete_cipher(&id).await
+    pub async fn delete_cipher(&self, id: String) -> Result<(), BaluardError> {
+        Ok(self.state.delete_cipher(&id).await?)
     }
 
     /// Current TOTP code for a cipher (6 digits + seconds-until-rollover).
     /// The TOTP seed NEVER crosses the FFI boundary; only the derived code.
-    pub async fn totp_code(&self, id: String) -> Result<String, String> {
-        self.state.totp_code(&id).await
+    pub async fn totp_code(&self, id: String) -> Result<String, BaluardError> {
+        Ok(self.state.totp_code(&id).await?)
     }
 
     // ── Sync lifecycle events (Phase 5; plan §3.2/§3.5) ──────────────────
@@ -279,7 +333,8 @@ impl MobileVault {
 /// disk via the desktop daemon or `create_vault`). Does NOT unlock — call
 /// [`MobileVault::unlock`] next. Idempotent: re-opening returns a fresh handle
 /// over the same path.
-pub async fn open_vault(path: String) -> Result<std::sync::Arc<MobileVault>, String> {
+#[uniffi::export]
+pub async fn open_vault(path: String) -> Result<std::sync::Arc<MobileVault>, BaluardError> {
     let state = std::sync::Arc::new(baluard_runtime::VaultState::new(std::path::PathBuf::from(
         path,
     )));
@@ -291,17 +346,20 @@ pub async fn open_vault(path: String) -> Result<std::sync::Arc<MobileVault>, Str
 /// local-create path; the OAuth-clone path is Phase 2 web-flow work, host-side).
 /// Derives the device keys, writes the keywrap + manifest, and returns an
 /// OPEN but NOT-YET-UNLOCKED handle. The caller unlocks with the same password.
+#[uniffi::export]
 pub async fn create_vault(
     path: String,
     master_password: String,
     device_name: String,
-) -> Result<std::sync::Arc<MobileVault>, String> {
+) -> Result<std::sync::Arc<MobileVault>, BaluardError> {
     // VaultCreator is a blocking builder (no async); the disk writes are fast
     // enough to run on the executor. Mobile callers get it as a suspend fn.
     let vault_path = std::path::PathBuf::from(&path);
     baluard_core::vault::creation::VaultCreator::new(&vault_path, &master_password, &device_name)
         .execute()
-        .map_err(|e| format!("vault creation failed: {e}"))?;
+        .map_err(|e| BaluardError::Creation {
+            message: e.to_string(),
+        })?;
     // Open a fresh VaultState over the just-created directory.
     let state = std::sync::Arc::new(baluard_runtime::VaultState::new(vault_path));
     state.open().await?;
@@ -338,21 +396,20 @@ pub struct PassphraseConfig {
 /// Generate a random password. Uses OsRng (CSPRNG). Selection is unbiased
 /// (unlike the legacy desktop JS which used modulo).
 #[uniffi::export]
-pub fn generate_password(config: PasswordConfig) -> Result<String, String> {
+pub fn generate_password(config: PasswordConfig) -> Result<String, BaluardError> {
     let opts = baluard_core::generator::PasswordOptions {
         length: config.length as usize,
         upper: config.upper,
         numbers: config.numbers,
         symbols: config.symbols,
     };
-    baluard_core::generator::generate_password(&opts)
-        .map_err(|e| format!("password generation failed: {e}"))
+    Ok(baluard_core::generator::generate_password(&opts)?)
 }
 
 /// Generate a random passphrase from the EFF-EN + BIP-39-ES wordlist, with
 /// optional capitalize / insert-number / insert-symbol transforms.
 #[uniffi::export]
-pub fn generate_passphrase(config: PassphraseConfig) -> Result<String, String> {
+pub fn generate_passphrase(config: PassphraseConfig) -> Result<String, BaluardError> {
     let opts = baluard_core::generator::PassphraseOptions {
         word_count: config.word_count as usize,
         separator: config.separator,
@@ -360,8 +417,7 @@ pub fn generate_passphrase(config: PassphraseConfig) -> Result<String, String> {
         number: config.number,
         symbol: config.symbol,
     };
-    baluard_core::generator::generate_passphrase(&opts)
-        .map_err(|e| format!("passphrase generation failed: {e}"))
+    Ok(baluard_core::generator::generate_passphrase(&opts)?)
 }
 
 /// Trivial async fn to validate the UniFFI async -> Kotlin `suspend` bridge
