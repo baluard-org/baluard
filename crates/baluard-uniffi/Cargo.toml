@@ -14,6 +14,12 @@ name = "baluard_uniffi"
 baluard-core = { path = "../baluard-core", features = ["git-sync"] }
 baluard-runtime = { path = "../baluard-runtime" }
 uniffi = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Vendored OpenSSL: lets git2/libgit2 cross-compile for Android ABIs
+# (no system OpenSSL on-device; desktop builds keep using the host lib).
+openssl-sys = { version = "0.9", features = ["vendored"] }
 
 [build-dependencies]
 uniffi = { workspace = true, features = ["build"] }
