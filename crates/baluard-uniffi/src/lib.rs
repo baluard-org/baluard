@@ -402,6 +402,87 @@ impl MobileVault {
             pending: s.pending,
         }
     }
+
+    /// Check if coordinator state has a pending conflict and return masked details JSON.
+    pub async fn get_pending_conflict_details(&self) -> Result<String, BaluardError> {
+        if self.state.autosync.pending_conflict_count().await == 0 {
+            let body = serde_json::json!({ "pending": false, "count": 0 });
+            Ok(body.to_string())
+        } else {
+            Ok(self.state.conflict_decrypt_and_merge().await?)
+        }
+    }
+
+    /// Resolve a pending conflict by cloning the remote entry with a new UUID (keep both).
+    pub async fn resolve_conflict_keep_both(&self) -> Result<String, BaluardError> {
+        Ok(self.state.conflict_resolve_keep_both().await?)
+    }
+
+    // ── Folders & Tags ────────────────────────────────────────────────────
+
+    /// List all folders as a JSON array string.
+    pub async fn list_folders(&self) -> Result<String, BaluardError> {
+        Ok(self.state.list_folders().await?)
+    }
+
+    /// Create a new folder (JSON payload `{"name": "..."}`).
+    pub async fn create_folder(&self, payload: String) -> Result<String, BaluardError> {
+        Ok(self.state.create_folder(&payload).await?)
+    }
+
+    /// Rename an existing folder (JSON payload `{"id": "...", "name": "..."}`).
+    pub async fn rename_folder(&self, payload: String) -> Result<(), BaluardError> {
+        Ok(self.state.rename_folder(&payload).await?)
+    }
+
+    /// Delete a folder by id (unassigns ciphers first).
+    pub async fn delete_folder(&self, id: String) -> Result<(), BaluardError> {
+        Ok(self.state.delete_folder(&id).await?)
+    }
+
+    /// List all tags as a JSON array string.
+    pub async fn list_tags(&self) -> Result<String, BaluardError> {
+        Ok(self.state.list_tags().await?)
+    }
+
+    /// Create a new tag by name.
+    pub async fn create_tag(&self, name: String) -> Result<String, BaluardError> {
+        Ok(self.state.create_tag(&name).await?)
+    }
+
+    /// Delete a tag by name.
+    pub async fn delete_tag(&self, name: String) -> Result<String, BaluardError> {
+        Ok(self.state.delete_tag(&name).await?)
+    }
+
+    // ── Vault Settings ───────────────────────────────────────────────────
+
+    /// Get current vault settings as JSON string.
+    pub async fn get_settings(&self) -> Result<String, BaluardError> {
+        Ok(self.state.settings_get().await?)
+    }
+
+    /// Update vault settings from JSON string.
+    pub async fn set_settings(&self, payload: String) -> Result<(), BaluardError> {
+        Ok(self.state.settings_set(&payload).await?)
+    }
+
+    // ── Generator History ─────────────────────────────────────────────────
+
+    /// Record a generated password into encrypted generator history.
+    pub async fn generator_history_add(&self, payload: String) -> Result<String, BaluardError> {
+        Ok(self.state.generator_history_add(&payload).await?)
+    }
+
+    /// List generator history entries as JSON string.
+    pub async fn generator_history_list(&self) -> Result<String, BaluardError> {
+        Ok(self.state.generator_history_list().await?)
+    }
+
+    /// Clear all generator history entries.
+    pub async fn generator_history_clear(&self) -> Result<(), BaluardError> {
+        Ok(self.state.generator_history_clear().await?)
+    }
 }
 
 /// Open an existing local vault directory (must already be initialized on
@@ -968,5 +1049,46 @@ mod tests {
         // KEK unlocks the vault via unlock_with_kek
         res.vault.unlock_with_kek(kek).await.unwrap();
         assert!(res.vault.is_unlocked().await);
+    }
+
+    #[tokio::test]
+    async fn mobile_vault_folder_tag_settings_generator_history_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let vault = create_vault(path, "pass123".to_string(), "test-dev".to_string())
+            .await
+            .unwrap();
+        vault.unlock("pass123".to_string()).await.unwrap();
+
+        // Folders
+        assert_eq!(vault.list_folders().await.unwrap(), "[]");
+        let f_id = vault
+            .create_folder(r#"{"name": "Work"}"#.to_string())
+            .await
+            .unwrap();
+        assert!(!f_id.is_empty(), "create_folder returns folder UUID");
+        let folders = vault.list_folders().await.unwrap();
+        assert!(folders.contains("Work"));
+
+        // Tags
+        assert_eq!(vault.list_tags().await.unwrap(), "[]");
+        vault.create_tag("important".to_string()).await.unwrap();
+        let tags = vault.list_tags().await.unwrap();
+        assert!(tags.contains("important"));
+
+        // Settings
+        let settings = vault.get_settings().await.unwrap();
+        assert!(settings.contains("theme") || settings.contains("system"));
+
+        // Generator History
+        assert_eq!(vault.generator_history_list().await.unwrap(), "[]");
+        vault
+            .generator_history_add(r#"{"value": "secret_pass_123"}"#.to_string())
+            .await
+            .unwrap();
+        let hist = vault.generator_history_list().await.unwrap();
+        assert!(hist.contains("secret_pass_123"));
+        vault.generator_history_clear().await.unwrap();
+        assert_eq!(vault.generator_history_list().await.unwrap(), "[]");
     }
 }
