@@ -3135,6 +3135,20 @@ impl VaultState {
         }
         std::fs::rename(&privkey_tmp, &privkey_path).map_err(|e| format!("rename privkey: {e}"))?;
 
+        // F3 fix: update self.inner under write lock so in-process state holds the new device_id
+        {
+            let mut guard = self.inner.write().await;
+            if let Some(handle) = guard.as_mut() {
+                handle.device_id = result.device_id;
+                handle.device_manager = dm;
+                if let Ok(data) = std::fs::read_to_string(vault_path.join("meta/devices.json")) {
+                    if let Ok(reg) = serde_json::from_str(&data) {
+                        handle.registry = reg;
+                    }
+                }
+            }
+        }
+
         let json = serde_json::json!({
             "device_id": result.device_id.to_string(),
             "name": result.entry.name,

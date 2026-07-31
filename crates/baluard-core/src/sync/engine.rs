@@ -1276,12 +1276,23 @@ impl SyncEngine {
         provider: crate::providers::types::Provider,
         progress: std::sync::Arc<std::sync::Mutex<CloneProgress>>,
     ) -> Result<Repository, BaluardError> {
+        Self::clone_remote_cancelable(url, target, provider, progress, None)
+    }
+
+    pub fn clone_remote_cancelable(
+        url: &str,
+        target: &Path,
+        provider: crate::providers::types::Provider,
+        progress: std::sync::Arc<std::sync::Mutex<CloneProgress>>,
+        cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<Repository, BaluardError> {
         validate_git_url(url)?;
         let mut builder = RepoBuilder::new();
         let cred_config = CredentialConfig::load_with_hint(target, Some(provider));
         let mut fetch_opts = FetchOptions::new();
         let https_token = cred_config.expose_token();
         let prog = progress.clone();
+        let cancel = cancel_flag.clone();
         let mut callbacks = git2::RemoteCallbacks::new();
         callbacks.credentials(move |_url, username_from_url, allowed_types| {
             if allowed_types.contains(git2::CredentialType::SSH_KEY) {
@@ -1328,6 +1339,11 @@ impl SyncEngine {
             }
         });
         callbacks.transfer_progress(move |p| {
+            if let Some(ref flag) = cancel {
+                if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return false;
+                }
+            }
             if let Ok(mut g) = prog.lock() {
                 g.objects_received = p.received_objects();
                 g.total_objects = p.total_objects();

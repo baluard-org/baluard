@@ -15,23 +15,46 @@
 
 uniffi::setup_scaffolding!();
 
+static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+
+pub fn rt() -> &'static tokio::runtime::Runtime {
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("tokio runtime")
+    })
+}
+
 /// Typed error for the mobile FFI surface.
-///
-/// UniFFI 0.28 requires the error type to be an enum implementing
-/// `std::error::Error` — `Result<T, String>` is not accepted (the bindgen
-/// panics with `unknown throw type: Some(String)`). The runtime layer
-/// (`baluard_runtime::VaultState`) currently returns `String` errors, so IO /
-/// serde / not-found cases are not separable here and surface as [`BaluardError::Vault`].
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum BaluardError {
-    /// A cryptographic operation failed (Argon2id KDF, keywrap verification,
-    /// BIP-39 entropy, RNG). A wrong master password surfaces here as a
-    /// keywrap-verify failure.
+    /// Network connection or transport failed.
+    #[error("network error: {detail}")]
+    Network { detail: String },
+
+    /// Git provider error (OAuth, device flow, PAT validation, repo detection).
+    #[error("provider error: {detail}")]
+    Provider { detail: String },
+
+    /// Device is not enrolled in the target vault (requires 24-word recovery phrase entry).
+    #[error("device not enrolled: {detail}")]
+    DeviceNotEnrolled { detail: String },
+
+    /// Master password verification failed (wrong password).
+    #[error("wrong master password")]
+    WrongPassword,
+
+    /// Target resource or key not found.
+    #[error("not found: {detail}")]
+    NotFound { detail: String },
+
+    /// A cryptographic operation failed (Argon2id KDF, keywrap verification, BIP-39 entropy).
     #[error("crypto error: {detail}")]
     Crypto { detail: String },
 
-    /// A vault-layer operation failed (open, lock, cipher CRUD, TOTP). Carries
-    /// the runtime's error detail verbatim.
+    /// A vault-layer operation failed (open, lock, cipher CRUD, TOTP).
     #[error("vault error: {detail}")]
     Vault { detail: String },
 
@@ -56,6 +79,39 @@ impl From<baluard_core::generator::GenerateError> for BaluardError {
     fn from(e: baluard_core::generator::GenerateError) -> Self {
         Self::InvalidInput {
             detail: e.to_string(),
+        }
+    }
+}
+
+impl From<baluard_core::error::BaluardError> for BaluardError {
+    fn from(e: baluard_core::error::BaluardError) -> Self {
+        match e {
+            baluard_core::error::BaluardError::Crypto(ce) => Self::Crypto {
+                detail: ce.to_string(),
+            },
+            baluard_core::error::BaluardError::Vault(ve) => match ve {
+                baluard_core::error::VaultError::NotFound(msg) => Self::NotFound { detail: msg },
+                baluard_core::error::VaultError::Metadata(msg) => Self::Vault { detail: msg },
+                baluard_core::error::VaultError::Corrupt(msg) => Self::Vault { detail: msg },
+                baluard_core::error::VaultError::NotInitialized => Self::Vault {
+                    detail: "Vault not initialized".to_string(),
+                },
+                other => Self::Vault {
+                    detail: other.to_string(),
+                },
+            },
+            baluard_core::error::BaluardError::Key(ke) => Self::Crypto {
+                detail: ke.to_string(),
+            },
+            baluard_core::error::BaluardError::Sync(se) => Self::Network {
+                detail: se.to_string(),
+            },
+            baluard_core::error::BaluardError::Provider(pe) => Self::Provider {
+                detail: pe.to_string(),
+            },
+            other => Self::Vault {
+                detail: other.to_string(),
+            },
         }
     }
 }
@@ -93,34 +149,53 @@ pub fn generate_recovery_phrase() -> Result<MobileRecoveryPhrase, BaluardError> 
 }
 
 /// Derive a 32-byte key-encryption key (KEK) from a master password + salt via
-/// Argon2id. Returns raw bytes for the FFI boundary.
-///
-/// SECURITY NOTE: the password crosses the FFI boundary as a `String` here
-/// because UniFFI can't enforce zeroize-on-drop across it. The returned `Vec<u8>`
-/// is the KEK (not the master password) and lives on the Kotlin/Swift managed
-/// heap with unbounded GC lifetime — same plaintext-on-heap boundary the plan
-/// §3.6 documents as deliberate. The caller (mobile runtime) must treat both
-/// args + the return as sensitive and avoid logging/persisting them.
-#[uniffi::export]
-pub fn derive_kek(password: String, salt: Vec<u8>) -> Result<Vec<u8>, BaluardError> {
-    use baluard_core::crypto::kdf::derive_kek as core_derive;
-    use baluard_core::types::{KdfParams, KdfProfile};
+/// Argon2id. Returns raw bytes for the FFI boundary. Runs off the UI thread via `spawn_blocking`.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn derive_kek(password: String, salt: Vec<u8>) -> Result<Vec<u8>, BaluardError> {
+    tokio::task::spawn_blocking(move || {
+        use baluard_core::crypto::kdf::derive_kek as core_derive;
+        use baluard_core::types::{KdfParams, KdfProfile};
 
-    // Pad/truncate salt to 32 bytes (matches the legacy core behavior so
-    // existing test vectors stay valid).
-    let mut salt_32 = vec![0u8; 32];
-    let len = salt.len().min(32);
-    salt_32[..len].copy_from_slice(&salt[..len]);
+        let mut salt_32 = vec![0u8; 32];
+        let len = salt.len().min(32);
+        salt_32[..len].copy_from_slice(&salt[..len]);
 
-    let params = KdfParams {
-        profile: KdfProfile::MobileLow,
-        memory_kib: KdfProfile::MobileLow.memory_kib(),
-        time_cost: KdfProfile::MobileLow.time_cost(),
-        parallelism: KdfProfile::MobileLow.parallelism(),
-        salt: salt_32,
-    };
-    let key = core_derive(&password, &params)?;
-    Ok(key.to_vec())
+        let params = KdfParams {
+            profile: KdfProfile::MobileLow,
+            memory_kib: KdfProfile::MobileLow.memory_kib(),
+            time_cost: KdfProfile::MobileLow.time_cost(),
+            parallelism: KdfProfile::MobileLow.parallelism(),
+            salt: salt_32,
+        };
+        let key = core_derive(&password, &params)?;
+        Ok(key.to_vec())
+    })
+    .await
+    .map_err(|e| BaluardError::Crypto { detail: e.to_string() })?
+}
+
+/// Derive KEK for a specific vault on disk by reading its own `meta/kdf-params.json`
+/// (no hardcoded params or salt truncation; fixes mobile autofill KDF mismatch).
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn derive_kek_for_vault(
+    vault_path: String,
+    password: String,
+) -> Result<Vec<u8>, BaluardError> {
+    tokio::task::spawn_blocking(move || {
+        let p = std::path::Path::new(&vault_path);
+        let kdf_json = std::fs::read_to_string(p.join("meta/kdf-params.json"))
+            .map_err(|e| BaluardError::InvalidInput {
+                detail: format!("reading kdf params: {e}"),
+            })?;
+        let params: baluard_core::types::KdfParams = serde_json::from_str(&kdf_json)
+            .map_err(|e| BaluardError::InvalidInput {
+                detail: format!("corrupt kdf params: {e}"),
+            })?;
+        let key = baluard_core::crypto::kdf::derive_kek(&password, &params)?;
+        Ok(key.to_vec())
+    })
+    .await
+    .map_err(|e| BaluardError::Crypto { detail: e.to_string() })?
 }
 
 // ── Vault lifecycle (plan §3.2/§3.3, Phase 2 auth) ──────────────────────
@@ -333,7 +408,7 @@ impl MobileVault {
 /// disk via the desktop daemon or `create_vault`). Does NOT unlock — call
 /// [`MobileVault::unlock`] next. Idempotent: re-opening returns a fresh handle
 /// over the same path.
-#[uniffi::export]
+#[uniffi::export(async_runtime = "tokio")]
 pub async fn open_vault(path: String) -> Result<std::sync::Arc<MobileVault>, BaluardError> {
     let state = std::sync::Arc::new(baluard_runtime::VaultState::new(std::path::PathBuf::from(
         path,
@@ -342,28 +417,55 @@ pub async fn open_vault(path: String) -> Result<std::sync::Arc<MobileVault>, Bal
     Ok(std::sync::Arc::new(MobileVault { state }))
 }
 
-/// Initialize a brand-new vault on disk (Phase 2 `mobile_vault_init` for the
-/// local-create path; the OAuth-clone path is Phase 2 web-flow work, host-side).
-/// Derives the device keys, writes the keywrap + manifest, and returns an
-/// OPEN but NOT-YET-UNLOCKED handle. The caller unlocks with the same password.
-#[uniffi::export]
+/// Initialize a brand-new vault on disk with MobileLow KDF profile.
+#[uniffi::export(async_runtime = "tokio")]
 pub async fn create_vault(
     path: String,
     master_password: String,
     device_name: String,
 ) -> Result<std::sync::Arc<MobileVault>, BaluardError> {
-    // VaultCreator is a blocking builder (no async); the disk writes are fast
-    // enough to run on the executor. Mobile callers get it as a suspend fn.
     let vault_path = std::path::PathBuf::from(&path);
     baluard_core::vault::creation::VaultCreator::new(&vault_path, &master_password, &device_name)
+        .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
         .execute()
         .map_err(|e| BaluardError::Creation {
             detail: e.to_string(),
         })?;
-    // Open a fresh VaultState over the just-created directory.
     let state = std::sync::Arc::new(baluard_runtime::VaultState::new(vault_path));
     state.open().await?;
     Ok(std::sync::Arc::new(MobileVault { state }))
+}
+
+/// Result of creating a vault with recovery phrase returned.
+#[derive(uniffi::Record)]
+pub struct MobileCreateResult {
+    pub vault: std::sync::Arc<MobileVault>,
+    pub recovery_phrase: MobileRecoveryPhrase,
+}
+
+/// Create a new vault and return both the vault handle and the 24-word recovery phrase.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn create_vault_with_recovery(
+    path: String,
+    master_password: String,
+    device_name: String,
+) -> Result<MobileCreateResult, BaluardError> {
+    let vault_path = std::path::PathBuf::from(&path);
+    let (_handle, secrets) = baluard_core::vault::creation::VaultCreator::new(&vault_path, &master_password, &device_name)
+        .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
+        .execute()
+        .map_err(|e| BaluardError::Creation {
+            detail: e.to_string(),
+        })?;
+
+    let state = std::sync::Arc::new(baluard_runtime::VaultState::new(vault_path));
+    state.open().await?;
+    Ok(MobileCreateResult {
+        vault: std::sync::Arc::new(MobileVault { state }),
+        recovery_phrase: MobileRecoveryPhrase {
+            phrase: secrets.recovery_phrase.phrase(),
+        },
+    })
 }
 
 // ── Generator (plan §3.3 mobile_generate_password / mobile_generate_passphrase) ──
@@ -432,6 +534,227 @@ pub async fn spike_async_probe() -> String {
     "baluard-uniffi async bridge ok".to_string()
 }
 
+// ── Provider connection & device flow (Slice B) ──────────────────────
+
+#[derive(uniffi::Enum)]
+pub enum MobileProvider {
+    GitHub,
+    GitLab,
+    Codeberg,
+}
+
+impl From<MobileProvider> for baluard_core::providers::Provider {
+    fn from(mp: MobileProvider) -> Self {
+        match mp {
+            MobileProvider::GitHub => Self::GitHub,
+            MobileProvider::GitLab => Self::GitLab,
+            MobileProvider::Codeberg => Self::Codeberg,
+        }
+    }
+}
+
+impl From<baluard_core::providers::Provider> for MobileProvider {
+    fn from(p: baluard_core::providers::Provider) -> Self {
+        match p {
+            baluard_core::providers::Provider::GitHub => Self::GitHub,
+            baluard_core::providers::Provider::GitLab => Self::GitLab,
+            baluard_core::providers::Provider::Codeberg => Self::Codeberg,
+        }
+    }
+}
+
+#[derive(uniffi::Record)]
+pub struct MobileProviderConfig {
+    pub client_id: Option<String>,
+    pub instance_url: Option<String>,
+}
+
+impl From<MobileProviderConfig> for baluard_core::providers::ProviderConfig {
+    fn from(cfg: MobileProviderConfig) -> Self {
+        baluard_core::providers::ProviderConfig {
+            client_id: cfg.client_id,
+            instance_url: cfg.instance_url,
+        }
+    }
+}
+
+#[derive(uniffi::Enum)]
+pub enum MobileDeviceFlowStatus {
+    Pending,
+    Success,
+    Expired,
+    SlowDown,
+}
+
+#[derive(uniffi::Object)]
+pub struct MobileDeviceFlow {
+    session: baluard_core::providers::DeviceFlowSession,
+    provider: baluard_core::providers::Provider,
+    config: baluard_core::providers::ProviderConfig,
+}
+
+#[uniffi::export]
+impl MobileDeviceFlow {
+    pub fn user_code(&self) -> String {
+        self.session.user_code.clone()
+    }
+
+    pub fn verification_uri(&self) -> String {
+        self.session.verification_uri.clone()
+    }
+
+    pub fn expires_at(&self) -> u64 {
+        self.session.expires_at
+    }
+
+    pub async fn poll(&self) -> Result<MobileDeviceFlowStatus, BaluardError> {
+        let p = baluard_core::providers::provider_for(self.provider, self.config.clone())
+            .map_err(|e| BaluardError::Provider { detail: e.to_string() })?;
+        match p.device_flow_poll(&self.session).await {
+            Ok(baluard_core::providers::DeviceFlowStatus::Success(token)) => {
+                let user_info = p.validate_token(&token).await.map_err(|e| BaluardError::Provider { detail: e.to_string() })?;
+                baluard_core::providers::token::store_token(self.provider, &user_info.username, &token)
+                    .map_err(|e| BaluardError::Provider { detail: format!("store token: {e}") })?;
+                let mut state = baluard_core::providers::token::ProvidersState::load()
+                    .map_err(|e| BaluardError::Provider { detail: format!("load state: {e}") })?;
+                state.set(user_info);
+                state.save()
+                    .map_err(|e| BaluardError::Provider { detail: format!("save state: {e}") })?;
+                Ok(MobileDeviceFlowStatus::Success)
+            }
+            Ok(baluard_core::providers::DeviceFlowStatus::Pending) => Ok(MobileDeviceFlowStatus::Pending),
+            Ok(baluard_core::providers::DeviceFlowStatus::Expired) => Ok(MobileDeviceFlowStatus::Expired),
+            Ok(baluard_core::providers::DeviceFlowStatus::SlowDown { .. }) => Ok(MobileDeviceFlowStatus::SlowDown),
+            Err(e) => Err(BaluardError::Provider { detail: e.to_string() }),
+        }
+    }
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn start_device_flow(
+    provider: MobileProvider,
+    config: MobileProviderConfig,
+) -> Result<std::sync::Arc<MobileDeviceFlow>, BaluardError> {
+    let p_enum = baluard_core::providers::Provider::from(provider);
+    let p_cfg = baluard_core::providers::ProviderConfig::from(config);
+    let session = baluard_runtime::providers::connect_device_flow(p_enum, p_cfg.clone()).await?;
+    Ok(std::sync::Arc::new(MobileDeviceFlow {
+        session,
+        provider: p_enum,
+        config: p_cfg,
+    }))
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn connect_pat(
+    provider: MobileProvider,
+    token: String,
+    config: MobileProviderConfig,
+) -> Result<(), BaluardError> {
+    let p_enum = baluard_core::providers::Provider::from(provider);
+    let p_cfg = baluard_core::providers::ProviderConfig::from(config);
+    baluard_runtime::providers::connect_pat(p_enum, &token, p_cfg).await?;
+    Ok(())
+}
+
+#[derive(uniffi::Record)]
+pub struct MobileRepo {
+    pub name: String,
+    pub full_name: String,
+    pub clone_url: String,
+    pub private: bool,
+    pub vault_slug: Option<String>,
+    pub vault_id: Option<String>,
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn list_vault_repos(provider: MobileProvider) -> Result<Vec<MobileRepo>, BaluardError> {
+    let p_enum = baluard_core::providers::Provider::from(provider);
+    let repos = baluard_runtime::providers::detect_vault_repos(p_enum).await?;
+    Ok(repos
+        .into_iter()
+        .map(|r| MobileRepo {
+            name: r.name,
+            full_name: r.full_name,
+            clone_url: r.clone_url,
+            private: r.private,
+            vault_slug: r.vault_slug,
+            vault_id: r.vault_id.map(|id| id.to_string()),
+        })
+        .collect())
+}
+
+#[derive(uniffi::Object)]
+pub struct MobileCloneJob {
+    cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[uniffi::export]
+impl MobileCloneJob {
+    pub fn cancel(&self) {
+        self.cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn clone_vault_start(
+    provider: MobileProvider,
+    clone_url: String,
+    local_path: String,
+) -> Result<std::sync::Arc<MobileCloneJob>, BaluardError> {
+    let p_enum = baluard_core::providers::Provider::from(provider);
+    let path = std::path::PathBuf::from(local_path);
+    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag_clone = cancel_flag.clone();
+
+    tokio::task::spawn_blocking(move || {
+        baluard_runtime::providers::clone_and_register(
+            p_enum,
+            &clone_url,
+            &path,
+            Some(flag_clone),
+        )
+    })
+    .await
+    .map_err(|e| BaluardError::Vault { detail: e.to_string() })??;
+
+    Ok(std::sync::Arc::new(MobileCloneJob { cancel_flag }))
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn enroll_device_with_phrase(
+    vault_path: String,
+    master_password: String,
+    recovery_phrase: String,
+    device_name: String,
+) -> Result<std::sync::Arc<MobileVault>, BaluardError> {
+    let path = std::path::PathBuf::from(&vault_path);
+    let pass_for_enroll = master_password.clone();
+    let handle = tokio::task::spawn_blocking(move || {
+        baluard_runtime::providers::enroll_device_pre_unlock(
+            &path,
+            &pass_for_enroll,
+            &recovery_phrase,
+            &device_name,
+        )
+    })
+    .await
+    .map_err(|e| BaluardError::Crypto { detail: e.to_string() })??;
+
+    let state = std::sync::Arc::new(baluard_runtime::VaultState::new(handle.path.clone()));
+    state.open().await?;
+    state.unlock(&master_password).await?;
+
+    Ok(std::sync::Arc::new(MobileVault { state }))
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn provider_disconnect(provider: MobileProvider) -> Result<(), BaluardError> {
+    let p_enum = baluard_core::providers::Provider::from(provider);
+    baluard_runtime::providers::disconnect(p_enum).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,8 +762,8 @@ mod tests {
     // Mirrors the legacy core test that was removed when the FFI surface
     // consolidated into this crate. Proves the three consolidated fns still
     // work from their new home.
-    #[test]
-    fn consolidated_ffi_surface_works() {
+    #[tokio::test]
+    async fn consolidated_ffi_surface_works() {
         assert_eq!(mobile_version(), 1);
         let phrase = generate_recovery_phrase().unwrap().phrase;
         assert_eq!(
@@ -449,7 +772,7 @@ mod tests {
             "BIP-39 must be 24 words"
         );
 
-        let key = derive_kek("password123".to_string(), b"salt123".to_vec()).unwrap();
+        let key = derive_kek("password123".to_string(), b"salt123".to_vec()).await.unwrap();
         assert_eq!(key.len(), 32, "KEK must be 32 bytes (AES-256)");
     }
 
@@ -625,5 +948,25 @@ mod tests {
             vault.list_ciphers().await.unwrap().is_empty(),
             "vault empty after delete"
         );
+    }
+
+    #[tokio::test]
+    async fn create_vault_with_recovery_returns_phrase_and_derive_kek_for_vault_works() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let pw = "master-pass-123".to_string();
+
+        let res = create_vault_with_recovery(path.clone(), pw.clone(), "device-rec".to_string())
+            .await
+            .unwrap();
+        assert_eq!(res.recovery_phrase.phrase.split_whitespace().count(), 24);
+
+        // Derive KEK using vault's on-disk params (2.2 fix)
+        let kek = derive_kek_for_vault(path, pw).await.unwrap();
+        assert_eq!(kek.len(), 32);
+
+        // KEK unlocks the vault via unlock_with_kek
+        res.vault.unlock_with_kek(kek).await.unwrap();
+        assert!(res.vault.is_unlocked().await);
     }
 }

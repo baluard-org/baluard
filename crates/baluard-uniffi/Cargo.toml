@@ -13,7 +13,9 @@ name = "baluard_uniffi"
 [dependencies]
 baluard-core = { path = "../baluard-core", features = ["git-sync"] }
 baluard-runtime = { path = "../baluard-runtime" }
-uniffi = { workspace = true }
+uniffi = { workspace = true, features = ["tokio"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macros"] }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]

@@ -177,9 +177,22 @@ impl<'a> rand_core::RngCore for RngAdapter<'a> {
 impl<'a> rand_core::CryptoRng for RngAdapter<'a> {}
 
 /// Dynamic or static keystore port for secure private key storage.
-pub trait SecureKeystore {
+pub trait SecureKeystore: Send + Sync {
     fn store_secret(&self, key: &str, secret: &[u8]) -> Result<(), BaluardError>;
     fn get_secret(&self, key: &str) -> Result<Vec<u8>, BaluardError>;
+}
+
+static GLOBAL_KEYSTORE: std::sync::RwLock<Option<std::sync::Arc<dyn SecureKeystore>>> =
+    std::sync::RwLock::new(None);
+
+pub fn set_global_keystore(keystore: std::sync::Arc<dyn SecureKeystore>) {
+    if let Ok(mut lock) = GLOBAL_KEYSTORE.write() {
+        *lock = Some(keystore);
+    }
+}
+
+pub fn get_global_keystore() -> Option<std::sync::Arc<dyn SecureKeystore>> {
+    GLOBAL_KEYSTORE.read().ok().and_then(|lock| lock.clone())
 }
 
 /// The target mode of the initialization ceremony.
@@ -432,6 +445,13 @@ impl<'a> VaultCreator<'a> {
                 )?;
 
                 if let Some(keystore) = self.keystore {
+                    let privkey_json = serde_json::json!({
+                        "x25519_private": hex::encode(device_x25519_secret.to_bytes()),
+                        "ed25519_private": hex::encode(device_ed25519_signing.to_bytes()),
+                    });
+                    let json_bytes = serde_json::to_vec(&privkey_json).unwrap_or_default();
+                    keystore.store_secret(&device_id.to_string(), &json_bytes)?;
+                    keystore.store_secret(&format!("device:{device_id}"), &json_bytes)?;
                     keystore
                         .store_secret("device_x25519_secret", &device_x25519_secret.to_bytes())?;
                     keystore.store_secret(
