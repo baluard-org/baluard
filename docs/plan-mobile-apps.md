@@ -692,7 +692,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 
 ### Phase 2: Auth flow + vault unlock
 
-> **Status: RUST DONE, UI SCAFFOLDED (2026-07-23).** The vault lifecycle FFI surface (`open_vault`, `create_vault`, `MobileVault::unlock/lock/is_unlocked`) is implemented in `baluard-uniffi` and proven by an in-process test (`vault_create_open_unlock_lock_roundtrip`) that runs the real Argon2id KDF + keywrap verification against a temp vault, including wrong-password-fails-closed. The Kotlin side is blind-scaffolded: `AuthViewModel`, `UnlockScreen` (master-password flow + biometric button stub), `Biometric` expect/actual (androidMain + iosM stubs returning false until the platform glue lands). Biometric quick-unlock (KEK path, `unlock_with_kek`, OOM guard) is the remaining Rust + platform work.
+> **Status: RUST & FFI COMPLETE (2026-07-31).** The vault onboarding + auth lifecycle FFI surface (`open_vault`, `create_vault`, `create_vault_with_recovery`, `derive_kek_for_vault`, `enroll_device_with_phrase`, `start_device_flow`, `connect_pat`, `list_vault_repos`, `clone_vault_start`, `provider_disconnect`, `MobileVault::unlock/lock/unlock_with_kek/is_unlocked`) is implemented in `baluard-uniffi` and verified by workspace unit tests. Provider orchestration extracted into `baluard-runtime/src/providers.rs`. Core multi-device bugs F1/F2/F3/F4/F6 resolved. See `docs/plan-mobile-onboarding.md`. Compose UI onboarding screens remain in KMP.
 
 **Goal:** Real authentication. Master password entry, biometric unlock, session token management.
 

@@ -1,32 +1,34 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-07-02 (Phase 2 field-level conflict resolution shipped: engine seam, daemon decrypt+merge, keep_both, frontend IPC)
+> Last updated: 2026-07-31 (Phase 2 mobile onboarding runtime & UniFFI surface complete; provider orchestration extracted; core multi-device fixes F1/F2/F3/F4/F6 shipped)
 
 ---
 
 ## Project Overview
 
 **What**: Git-backed password manager. Encrypted vault stored as a git repo. No server.
-**Stack**: Rust Core Engine (`baluard-core` crypto/keys/vault/sync + `baluard-daemon` IPC socket server + `baluard-cli` terminal client) + Tauri v2 Desktop (SolidJS/Tailwind) + Single-String Protobuf Gateway.
-**Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell.
-**Architecture docs**: `docs/architecture-decisions.md` through `docs/software-architecture.md`.
+**Stack**: Rust Core Engine (`baluard-core` crypto/keys/vault/sync + `baluard-daemon` IPC socket server + `baluard-cli` terminal client + `baluard-runtime` orchestration + `baluard-uniffi` FFI bindings) + Tauri v2 Desktop (SolidJS/Tailwind) + Single-String Protobuf Gateway.
+**Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell. Mobile: Android, iOS.
+**Architecture docs**: `docs/software-architecture-decisions.md` through `docs/software-architecture.md`.
 
 ---
 
 ## Current Status
 
-Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done** (embedded in LoginData, daemon IPC, CLI).
+Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done**. **Mobile Onboarding & FFI Surface Phase 2 complete**.
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
 - `/crates/baluard-core` - Rust core engine: crypto, keys, vault, padding, git sync, providers, bridge
+- `/crates/baluard-runtime` - In-process orchestration engine: VaultHost, VaultState, AutoSyncHandle, PinEscrow, ProviderManager
+- `/crates/baluard-uniffi` - UniFFI C-FFI / Kotlin / Swift bindings over baluard-runtime + baluard-core
 - `/crates/baluard-cli` - Terminal CLI client (clap, daemon-first with `--direct` fallback)
 - `/crates/baluard-daemon` - Background IPC daemon (tokio Unix socket, Protobuf gateway, vault state, SSH key generation, auto-sync coordinator, multi-vault host, browser bridge)
 - `/crates/baluard-nmh` - Native messaging host binary (browser extension bridge, stdio-JSON <-> varint-protobuf)
 - `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 8 cipher types, generator, TOTP, auto-lock, dark/light themes, i18n en/es, 38 components)
 - `/browser` - Chromium + Firefox MV3 extensions (shared codebase, two targets). KeePassXC-Browser-style bridge client. Paired companion model (rides the desktop's unlock state)
-- `/mobile` - Kotlin Multiplatform scaffold (PLACEHOLDER; UniFFI mobile bindings planned, not started)
+- `/mobile` - Kotlin Multiplatform shell (Compose UI + UniFFI integration)
 - `/docs` - Architecture, design, threat model, plans, PRDs, ADRs
 
 ---
