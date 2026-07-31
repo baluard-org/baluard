@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.auth.UnlockScreen
 import xyz.actitud.baluard.data.VaultRepository
+import xyz.actitud.baluard.ui.theme.BaluardTheme
 import xyz.actitud.baluard.vault.VaultListScreen
 import xyz.actitud.baluard.vault.VaultListViewModel
 
@@ -21,33 +22,32 @@ import xyz.actitud.baluard.vault.VaultListViewModel
  */
 @Composable
 fun App(vaultPath: String = "") {
-    val repo = remember { VaultRepository() }
-    val auth = remember { AuthViewModel(repo) }
-    val listVm = remember { VaultListViewModel(repo) }
-    var unlocked by remember { mutableStateOf(false) }
+    BaluardTheme {
+        val repo = remember { VaultRepository() }
+        val auth = remember { AuthViewModel(repo) }
+        val listVm = remember { VaultListViewModel(repo) }
+        var unlocked by remember { mutableStateOf(false) }
 
-    if (!unlocked) {
-        UnlockScreen(
-            vaultPath = vaultPath,
-            authViewModel = auth,
-            onUnlocked = {
-                auth.vault()?.let { v ->
-                    // Kick off the initial list load in the composition scope.
-                    unlocked = true
-                    // The VaultListScreen refreshes on first composition via a
-                    // LaunchedEffect when wired with the vault handle.
-                    listVm
-                }
-            },
-        )
-    } else {
-        auth.vault()?.let { vault ->
-            VaultListScreen(
-                vault = vault,
-                listViewModel = listVm,
+        if (!unlocked) {
+            UnlockScreen(
+                vaultPath = vaultPath,
                 authViewModel = auth,
-                onLocked = { unlocked = false },
+                onUnlocked = {
+                    auth.vault()?.let { v ->
+                        unlocked = true
+                        listVm
+                    }
+                },
             )
+        } else {
+            auth.vault()?.let { vault ->
+                VaultListScreen(
+                    vault = vault,
+                    listViewModel = listVm,
+                    authViewModel = auth,
+                    onLocked = { unlocked = false },
+                )
+            }
         }
     }
 }

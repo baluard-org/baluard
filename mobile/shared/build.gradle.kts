@@ -41,6 +41,10 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
+            // UniFFI 0.28 generates JNA-backed Kotlin bindings (com.sun.jna.*).
+            // The aar is the Android artifact; the binding is Android-only by
+            // nature, so JNA lives here, not in commonMain.
+            implementation("net.java.dev.jna:jna:5.14.0@aar")
         }
     }
 }

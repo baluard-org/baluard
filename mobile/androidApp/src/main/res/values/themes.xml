@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DayNight so the window background (splash/flash before Compose draws) and
+     system bars follow the OS dark-mode setting, not a hardcoded light theme.
+     No action bar (the app is a single-Activity Compose host). -->
+<resources>
+    <style name="Theme.Baluard" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

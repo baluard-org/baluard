@@ -27,27 +27,27 @@ pub enum BaluardError {
     /// A cryptographic operation failed (Argon2id KDF, keywrap verification,
     /// BIP-39 entropy, RNG). A wrong master password surfaces here as a
     /// keywrap-verify failure.
-    #[error("crypto error: {message}")]
-    Crypto { message: String },
+    #[error("crypto error: {detail}")]
+    Crypto { detail: String },
 
     /// A vault-layer operation failed (open, lock, cipher CRUD, TOTP). Carries
     /// the runtime's error detail verbatim.
-    #[error("vault error: {message}")]
-    Vault { message: String },
+    #[error("vault error: {detail}")]
+    Vault { detail: String },
 
     /// Initializing a new vault on disk failed (device keys, keywrap, manifest).
-    #[error("vault creation failed: {message}")]
-    Creation { message: String },
+    #[error("vault creation failed: {detail}")]
+    Creation { detail: String },
 
     /// Invalid input at the FFI boundary (KEK not 32 bytes, generator config).
-    #[error("invalid input: {message}")]
-    InvalidInput { message: String },
+    #[error("invalid input: {detail}")]
+    InvalidInput { detail: String },
 }
 
 impl From<baluard_core::error::CryptoError> for BaluardError {
     fn from(e: baluard_core::error::CryptoError) -> Self {
         Self::Crypto {
-            message: e.to_string(),
+            detail: e.to_string(),
         }
     }
 }
@@ -55,15 +55,15 @@ impl From<baluard_core::error::CryptoError> for BaluardError {
 impl From<baluard_core::generator::GenerateError> for BaluardError {
     fn from(e: baluard_core::generator::GenerateError) -> Self {
         Self::InvalidInput {
-            message: e.to_string(),
+            detail: e.to_string(),
         }
     }
 }
 
 // The runtime returns `String` errors; map them to the vault-layer variant.
 impl From<String> for BaluardError {
-    fn from(message: String) -> Self {
-        Self::Vault { message }
+    fn from(detail: String) -> Self {
+        Self::Vault { detail }
     }
 }
 
@@ -212,7 +212,7 @@ impl MobileVault {
         let mut arr = [0u8; 32];
         if kek.len() != 32 {
             return Err(BaluardError::InvalidInput {
-                message: "KEK must be exactly 32 bytes".to_string(),
+                detail: "KEK must be exactly 32 bytes".to_string(),
             });
         }
         arr.copy_from_slice(&kek);
@@ -358,7 +358,7 @@ pub async fn create_vault(
     baluard_core::vault::creation::VaultCreator::new(&vault_path, &master_password, &device_name)
         .execute()
         .map_err(|e| BaluardError::Creation {
-            message: e.to_string(),
+            detail: e.to_string(),
         })?;
     // Open a fresh VaultState over the just-created directory.
     let state = std::sync::Arc::new(baluard_runtime::VaultState::new(vault_path));

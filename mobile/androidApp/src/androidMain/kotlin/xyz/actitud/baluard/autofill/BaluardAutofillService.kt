@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.service.autofill.AutofillService
 import android.service.autofill.Dataset
+import android.service.autofill.FillCallback
 import android.service.autofill.FillRequest
 import android.service.autofill.FillResponse
 import android.service.autofill.SaveCallback
@@ -37,13 +38,13 @@ class BaluardAutofillService : AutofillService() {
     override fun onFillRequest(
         request: FillRequest,
         cancellationSignal: CancellationSignal,
-        callback: android.os.OutcomeReceiver<FillResponse, java.lang.Exception>,
+        callback: FillCallback,
     ) {
         // Phase 6 scaffold: parse the AssistStructure for username/password
         // fields + the package domain, then match against the vault index.
         val structure = request.fillContexts.lastOrNull()?.structure
         if (structure == null) {
-            callback.onError("no structure")
+            callback.onFailure("no structure")
             return
         }
 
@@ -53,7 +54,7 @@ class BaluardAutofillService : AutofillService() {
             try {
                 val parsed = parseAutofillFields(structure)
                 if (parsed.usernameId == null && parsed.passwordId == null) {
-                    callback.onError("no autofillable fields")
+                    callback.onFailure("no autofillable fields")
                     return@execute
                 }
 
@@ -62,9 +63,9 @@ class BaluardAutofillService : AutofillService() {
                 //   domain. Build a Dataset per matching login. For the scaffold we
                 //   return an empty response (no credentials yet) so the OS degrades
                 //   gracefully instead of crashing.
-                callback.onResult(FillResponse.Builder().build())
+                callback.onSuccess(FillResponse.Builder().build())
             } catch (e: Exception) {
-                callback.onError(e.message ?: "fill failed")
+                callback.onFailure(e.message ?: "fill failed")
             }
         }
     }

@@ -4,12 +4,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonNull
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.data.VaultRepository
 
@@ -77,18 +76,18 @@ class EditCipherViewModel(private val repo: VaultRepository) {
             if (id != null) put("id", id)
             put("name", f.name)
             put("favorite", f.favorite)
-            put("notes", f.notes.takeIf { it.isNotBlank() } ?: JsonPrimitive(""))
+            put("notes", JsonPrimitive(f.notes))
             put("kind", buildJsonObject {
                 put("type", "login")
                 put("data", buildJsonObject {
                     put("username", f.username)
                     put("password", f.password)
                     put("uris", kotlinx.serialization.json.buildJsonArray {})
-                    putJsonNull("totp_uri")
+                    put("totp_uri", JsonNull)
                     put("autofill_on_page_load", false)
-                    putJsonNull("password_revision_date")
-                    putJsonNull("favicon")
-                    putJsonNull("fido2_credentials")
+                    put("password_revision_date", JsonNull)
+                    put("favicon", JsonNull)
+                    put("fido2_credentials", JsonNull)
                 })
             })
         }
