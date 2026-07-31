@@ -680,6 +680,27 @@ build-signed: build-release
 	cp target/release/{{ daemon }}{{ ext }} {{ build_dir }}/
 	echo "Built: {{ build_dir }}/"
 
+# ── Mobile (Android) ────────────────────────────────────────────────────────
+# Build the Android debug APK. Runs on a macOS host: builds the Rust cdylib for
+# all 4 ABIs, writes local.properties, runs `./gradlew :androidApp:assembleDebug`.
+# Prereqs + flags: see mobile/scripts/build-android-apk.sh and docs/mobile-dev-setup.md.
+android-apk:
+	cd mobile && ./scripts/build-android-apk.sh
+
+# Build + install the debug APK on a connected device (adb). Extra args
+# forward to the script, e.g. `just android-install --device 192.168.1.50:38507`
+# (needed when wireless debugging shows one phone twice: IP:port + mDNS entry).
+android-install *ARGS:
+	cd mobile && ./scripts/build-android-apk.sh --install {{ARGS}}
+
+# Build the APK using the committed prebuilt .so (skip cargo-ndk).
+android-apk-fast:
+	cd mobile && ./scripts/build-android-apk.sh --skip-native
+
+# Regenerate the committed UniFFI Kotlin bindings (run after baluard-uniffi API change).
+android-bindings:
+	cd mobile && ./scripts/regen-bindings.sh
+
 # ── Version ─────────────────────────────────────────────────────────────────
 
 # Show version

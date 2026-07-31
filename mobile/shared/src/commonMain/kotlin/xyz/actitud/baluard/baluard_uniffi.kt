@@ -2449,10 +2449,10 @@ sealed class BaluardException: kotlin.Exception() {
      */
     class Crypto(
         
-        val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
-            get() = "message=${ `message` }"
+            get() = "detail=${ `detail` }"
     }
     
     /**
@@ -2461,10 +2461,10 @@ sealed class BaluardException: kotlin.Exception() {
      */
     class Vault(
         
-        val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
-            get() = "message=${ `message` }"
+            get() = "detail=${ `detail` }"
     }
     
     /**
@@ -2472,10 +2472,10 @@ sealed class BaluardException: kotlin.Exception() {
      */
     class Creation(
         
-        val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
-            get() = "message=${ `message` }"
+            get() = "detail=${ `detail` }"
     }
     
     /**
@@ -2483,10 +2483,10 @@ sealed class BaluardException: kotlin.Exception() {
      */
     class InvalidInput(
         
-        val `message`: kotlin.String
+        val `detail`: kotlin.String
         ) : BaluardException() {
         override val message
-            get() = "message=${ `message` }"
+            get() = "detail=${ `detail` }"
     }
     
 
@@ -2526,22 +2526,22 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
             is BaluardException.Crypto -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
             is BaluardException.Vault -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
             is BaluardException.Creation -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
             is BaluardException.InvalidInput -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
-                + FfiConverterString.allocationSize(value.`message`)
+                + FfiConverterString.allocationSize(value.`detail`)
             )
         }
     }
@@ -2550,22 +2550,22 @@ public object FfiConverterTypeBaluardError : FfiConverterRustBuffer<BaluardExcep
         when(value) {
             is BaluardException.Crypto -> {
                 buf.putInt(1)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is BaluardException.Vault -> {
                 buf.putInt(2)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is BaluardException.Creation -> {
                 buf.putInt(3)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is BaluardException.InvalidInput -> {
                 buf.putInt(4)
-                FfiConverterString.write(value.`message`, buf)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }

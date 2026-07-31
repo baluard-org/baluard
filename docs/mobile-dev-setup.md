@@ -402,59 +402,78 @@ cd mobile && ./gradlew :androidApp:installDebug
 
 ---
 
-## <a id="known-blockers"></a>Known blockers (the scaffold is blind code)
+## <a id="known-blockers"></a>Build status (first mac build 2026-07-30)
 
-The toolchain is fully proven through Step 4. Steps 5–6 hit scaffold-vs-UniFFI-0.28
-incompatibilities that need code changes, not config:
+The first real `just android-apk` on macOS surfaced four failures. All four are
+fixed in the same change set (verified: `cargo test -p baluard-uniffi` 7/7 green;
+host cdylib + UniFFI binding regenerated and committed):
 
-### Blocker A — `Result<T, String>` is not a valid UniFFI error type
+1. **`processDebugMainManifest` — manifest path.** Kotlin 2.4 KMP enforces the
+   V2 source-set layout: Kotlin sources + manifest must live under `src/androidMain/`,
+   not the deprecated `src/main/`. **Fixed:** moved `androidApp/src/main/{AndroidManifest.xml,kotlin}`
+   to `src/androidMain/`. (Note: AGP-native assets such as `jniLibs`/`res` are NOT
+   relocated by V2 — they stay at the AGP default `src/main/`. A first attempt wrongly
+   moved `jniLibs` too and added an explicit `jniLibs.srcDirs`, which made the same
+   `.so` register twice and fail `mergeDebugJniLibFolders`; reverted — the `.so` stays
+   at `src/main/jniLibs`, AGP's default, with no extra config.)
+2. **`Unresolved reference 'jna' / 'Structure' / 'Pointer' / 'Library'`** in the
+   generated `baluard_uniffi.kt`. UniFFI 0.28's Kotlin generator emits JNA-backed
+   bindings (`com.sun.jna.*`) by design; the JNA dependency was missing.
+   **Fixed:** added `implementation("net.java.dev.jna:jna:5.14.0@aar")` to
+   `shared/build.gradle.kts` `androidMain.dependencies` (JNA is Android/JVM-only
+   by nature, so it belongs there, not in `commonMain`; the iOS Kotlin/Native
+   targets are deferred per plan §1.1 and are not compiled by `assembleDebug`).
+3. **`EditCipherViewModel.kt` — `putJsonNull` unresolved + `Any` vs `JsonElement`.**
+   `putJsonNull` is **not** a `kotlinx-serialization-json` API (an earlier note
+   misjudged this as a non-issue; the build proved otherwise). **Fixed:** replaced
+   `putJsonNull("x")` with `put("x", JsonNull)`, and made the `notes` value a
+   `JsonPrimitive` to satisfy the `put(String, JsonElement)` overload.
+4. **`BaluardError` `val message` hides `Throwable.message`.** UniFFI 0.28
+   generates the error class extending `Exception`; a variant field literally
+   named `message` collides with `Throwable.message`. **Fixed:** renamed the
+   field `message` -> `detail` across `BaluardError` (4 variants, format strings,
+   all `From` impls + call sites) and regenerated the binding, which now emits
+   `override val message get() = ...` (correct override, no clash).
+5. **`mergeDebugJniLibFolders` — duplicate `.so`.** A first attempt moved
+   `jniLibs` into `src/androidMain/` and added an explicit `jniLibs.srcDirs`.
+   Wrong: KMP's V2 layout relocates only Kotlin sources + manifest, NOT
+   AGP-native assets (`jniLibs`/`res` stay at the AGP default `src/main/`).
+   **Fixed:** `.so` stays at `src/main/jniLibs` (AGP default, where `cargo-ndk -o`
+   already writes), explicit config removed, misplaced copy deleted.
+6. **`BaluardAutofillService.onFillRequest` — wrong callback API.** The scaffold
+   declared the callback as `OutcomeReceiver<FillResponse, Exception>` and called
+   `onError`/`onResult`; the real `AutofillService.onFillRequest` takes a
+   `FillCallback` with `onSuccess(FillResponse?)` / `onFailure(CharSequence)`.
+   **Fixed:** corrected the override signature + the three callback call sites to
+   the real `FillCallback` API. The body is still a Phase-6 TODO stub (returns an
+   empty `FillResponse`); real AssistStructure parsing + KEK-gated unlock land in Phase 6.
 
-Every exported function in `crates/baluard-uniffi/src/lib.rs` returns
-`Result<T, String>` (17 functions). UniFFI 0.28 **requires the error type `E` to be
-an `enum` implementing `std::error::Error`** — per the official docs
-(<https://mozilla.github.io/uniffi-rs/0.28/udl/errors.html>). The bindgen panics:
+**BUILD SUCCESSFUL (2026-07-30).** `just android-apk` produces
+`mobile/androidApp/build/outputs/apk/debug/androidApp-debug.apk` (~69 MB debug;
+4 ABIs x ~13 MB Rust `.so` + JNA + Compose runtime — release + ABI splits shrink
+this in Phase 8).
 
+**Binding freshness is now enforced:** `build-android-apk.sh` regenerates the
+committed `baluard_uniffi.kt` automatically when `lib.rs`/`uniffi.toml` are newer
+than the binding, so an API change can no longer produce a silently stale binding.
+
+The scaffold had never been compiled end-to-end before, so further Kotlin compile
+errors may still surface as the compiler advances past these four — clear them as
+they appear. The Gradle 8.10 / Kotlin 2.5.0 deprecation warning is non-blocking.
+
+## One-command build
+
+`mobile/scripts/build-android-apk.sh` automates Steps 1–6 (SDK/NDK/JDK 17
+detection, `local.properties`, the `cargo ndk` cdylib build, and `assembleDebug`).
+From the repo root:
+
+```sh
+just android-apk          # build the debug APK
+just android-install       # build + adb install + launch on a connected device
 ```
-thread 'main' panicked at uniffi_bindgen-0.28.3/src/interface/mod.rs:1126:14:
-unknown throw type: Some(String)
-```
 
-(`throws_name` only accepts `Enum`/`Object` error types.)
-
-**Fix (tracked):** define a proper error enum and convert every signature:
-
-```rust
-#[derive(Debug, thiserror::Error, uniffi::Error)]
-pub enum BaluardError {
-    #[error("{message}")]
-    Generic { message: String },
-    // add variants as the call sites need them
-}
-```
-
-Then `Result<T, String>` → `Result<T, BaluardError>` with `.map_err(|e| BaluardError::Generic { message: e.to_string() })`.
-
-### Blocker B — blind Kotlin scaffold compile errors
-
-Once the toolchain compiles, `./gradlew :androidApp:assembleDebug` surfaces the
-never-built Kotlin scaffold. Concrete errors found so far (2026-07-25):
-
-1. **Missing `#[uniffi::export]` on `open_vault`, `create_vault`, `mobile_version`**
-   (`crates/baluard-uniffi/src/lib.rs`). They are plain `pub fn`/`pub async fn`,
-   so the generated bindings omit them and `VaultRepository.kt`'s
-   `import xyz.actitud.baluard.openVault as uniffiOpenVault` / `createVault` /
-   `mobileVersion` fail with *Unresolved reference*. Add the attribute to each
-   and regenerate the bindings.
-2. **`AndroidManifest.xml` path** — AGP under the KMP source layout expects
-   `androidApp/src/androidMain/AndroidManifest.xml`, but the scaffold ships it at
-   `androidApp/src/main/AndroidManifest.xml` → `processDebugMainManifest` fails.
-   Move it to `src/androidMain/` (and likewise the `src/main/kotlin` sources).
-3. **`EditCipherViewModel.kt`** — `putJsonNull` *Unresolved reference* + an
-   `Any` vs `JsonElement` type mismatch against `kotlinx-serialization-json`
-   1.7.3. Rewrite the JSON builder calls.
-
-Treat each as it appears; the list is not exhaustive — the scaffold was never
-compiled, so clearing these three will likely surface more downstream.
+The bindings are committed and current; regenerate only after a
+`baluard-uniffi` API change (`just android-bindings` or `--regen-bindings`).
 
 ---
 
