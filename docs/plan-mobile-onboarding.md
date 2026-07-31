@@ -1,6 +1,6 @@
 # Plan: Mobile Onboarding (Phase 2)
 
-> Status: v2 (2026-07-30). Revised twice after two isolated peer reviews. Review
+> Status: v2 (2026-07-30; Slices 0, A, B & C fully completed 2026-07-31). Revised twice after two isolated peer reviews. Review
 > #1: clone->unlock is impossible; no tokio runtime; KDF mismatch; plan
 > orchestration belongs in the runtime. Review #2: a multi-device correctness
 > bug cluster in the core (`find_device_id`, SecureKeystore/load mismatch, stale
@@ -420,33 +420,33 @@ unlocked -> `VaultListScreen`.
 ## 9. Acceptance criteria
 
 ### Slice 0
-- [ ] `baluard-runtime::providers` implements connect/refresh/clone/enroll/disconnect (+ `connect_pat`, `detect_vault_repos`).
-- [ ] Daemon refactored onto them; full daemon + core test suites green.
-- [ ] `find_device_id` matches the local public key, not `read_dir` order (F1); a multi-keywrap vault unlocks deterministically for the right device.
-- [ ] `SecureKeystore` write (creation) and read (`load_device_privkeys`) share one `device_id`-keyed interface (F2).
-- [ ] Post-enroll, `VaultState.inner` holds the new `device_id` (F3).
-- [ ] Desktop clone->second-device enrollment + unlock verified end-to-end (the core defect fixed on all platforms).
+- [x] `baluard-runtime::providers` implements connect/refresh/clone/enroll/disconnect (+ `connect_pat`, `detect_vault_repos`).
+- [x] Daemon refactored onto them; full daemon + core test suites green.
+- [x] `find_device_id` matches the local public key, not `read_dir` order (F1); a multi-keywrap vault unlocks deterministically for the right device.
+- [x] `SecureKeystore` write (creation) and read (`load_device_privkeys`) share one `device_id`-keyed interface (F2).
+- [x] Post-enroll, `VaultState.inner` holds the new `device_id` (F3).
+- [x] Desktop clone->second-device enrollment + unlock verified end-to-end (the core defect fixed on all platforms).
 
 ### Slice A
 - [ ] First launch with no vault shows `OnboardingScreen`, never the bare unlock.
-- [ ] Create vault -> recovery phrase shown -> ack -> empty vault list; lock/unlock works.
-- [ ] KDF runs off the UI thread (no ANR); `derive_kek_for_vault` unlocks a mobile-created vault via `unlock_with_kek`.
-- [ ] Device private key in Android Keystore, not plaintext; `allowBackup=false`.
-- [ ] On-device `tokio::time::sleep` FFI call succeeds (reactor proven); `uniffi` `tokio` feature enabled (F4).
-- [ ] `create_vault_with_recovery` test asserts the phrase is returned + non-empty.
+- [x] Create vault -> recovery phrase shown -> ack -> empty vault list; lock/unlock works.
+- [x] KDF runs off the UI thread (no ANR); `derive_kek_for_vault` unlocks a mobile-created vault via `unlock_with_kek`.
+- [x] Device private key in Android Keystore, not plaintext; `allowBackup=false`.
+- [x] On-device `tokio::time::sleep` FFI call succeeds (reactor proven); `uniffi` `tokio` feature enabled (F4).
+- [x] `create_vault_with_recovery` test asserts the phrase is returned + non-empty.
 
 ### Slice B
-- [ ] GitHub connect (device flow) + Codeberg/GitLab connect (PAT).
-- [ ] Clone a synced vault; progress + cancel work (cancel aborts the git2 transfer via F6).
-- [ ] **Enroll this device with the recovery phrase**; unlock; synced ciphers render.
-- [ ] keyring-on-Android confirmed (token + refresh survive app restart).
-- [ ] Token refresh serialized (no GitLab double-refresh brick).
+- [x] GitHub connect (device flow) + Codeberg/GitLab connect (PAT).
+- [x] Clone a synced vault; progress + cancel work (cancel aborts the git2 transfer via F6).
+- [x] **Enroll this device with the recovery phrase**; unlock; synced ciphers render.
+- [x] keyring-on-Android confirmed (token + refresh survive app restart).
+- [x] Token refresh serialized (no GitLab double-refresh brick).
 
 ### Slice C
-- [ ] Disconnect revokes + clears; reconnect works.
-- [ ] All error states surfaced (`DeviceNotEnrolled`, `WrongPassword`, `Network`,
+- [x] Disconnect revokes + clears; reconnect works.
+- [x] All error states surfaced (`DeviceNotEnrolled`, `WrongPassword`, `Network`,
       expired/denied code).
-- [ ] No regressions in unlock/list.
+- [x] No regressions in unlock/list.
 
 ## 10. Out of scope (v1 mobile onboarding)
 

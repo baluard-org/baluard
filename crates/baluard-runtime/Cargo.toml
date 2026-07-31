@@ -32,3 +32,4 @@ git-sync = ["baluard-core/git-sync"]
 [dev-dependencies]
 tempfile = "3"
 serial_test = "3"
+git2 = { workspace = true }

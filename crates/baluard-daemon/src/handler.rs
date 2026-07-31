@@ -320,26 +320,10 @@ fn parse_provider_config(payload: &str) -> baluard_core::providers::ProviderConf
     }
 }
 
-/// Per-provider async mutex guarding token refresh. Prevents two concurrent
-/// ops (e.g. sync.push + provider.status) from both refreshing a GitLab token
-/// at the same instant — GitLab invalidates the old refresh_token on use, so
-/// the loser of that race would disconnect spuriously. H6.
-static REFRESH_LOCKS: std::sync::LazyLock<
-    std::sync::Mutex<
-        std::collections::HashMap<
-            baluard_core::providers::types::Provider,
-            std::sync::Arc<tokio::sync::Mutex<()>>,
-        >,
-    >,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-
 async fn refresh_lock_for(
     provider: baluard_core::providers::types::Provider,
 ) -> std::sync::Arc<tokio::sync::Mutex<()>> {
-    let mut map = REFRESH_LOCKS.lock().unwrap();
-    map.entry(provider)
-        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
-        .clone()
+    baluard_runtime::providers::global_provider_manager().lock_for(provider)
 }
 
 /// Load a provider token, auto-refreshing if expired.

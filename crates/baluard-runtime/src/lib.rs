@@ -26,6 +26,7 @@ pub mod bridge;
 pub mod crypto;
 pub mod host;
 pub mod pin;
+pub mod providers;
 pub mod rate_limit;
 pub mod state;
 
@@ -34,3 +35,4 @@ pub use bridge::SharedBridgeRegistry;
 pub use host::{SharedVaultHost, SnapshotError, VaultHost, VaultPresence};
 pub use pin::PinEscrow;
 pub use state::{SharedVaultState, VaultState};
+pub use providers::ProviderManager;

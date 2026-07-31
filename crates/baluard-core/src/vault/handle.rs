@@ -2291,17 +2291,60 @@ impl VaultHandle {
             return Err(VaultError::NotInitialized.into());
         }
 
+        let mut candidates = Vec::new();
         for entry in std::fs::read_dir(&keywrap_dir)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().to_string();
             if let Some(id_str) = name.strip_suffix(".json") {
                 if let Ok(id) = Uuid::parse_str(id_str) {
-                    return Ok(id);
+                    candidates.push(id);
                 }
             }
         }
 
-        Err(VaultError::NotFound("no keywrap files found".into()).into())
+        if candidates.is_empty() {
+            return Err(VaultError::NotFound("no keywrap files found".into()).into());
+        }
+
+        // F1 fix: match local device public key against devices.json registry per device
+        let registry_path = path.join("meta/devices.json");
+        let registry: Option<DeviceRegistry> = if registry_path.exists() {
+            std::fs::read_to_string(&registry_path)
+                .ok()
+                .and_then(|json| serde_json::from_str(&json).ok())
+        } else {
+            None
+        };
+
+        for candidate in &candidates {
+            if let Ok(privkeys) = load_device_privkeys(path, *candidate) {
+                let pub_key = x25519_dalek::PublicKey::from(&privkeys.x25519);
+                let local_pub_hex = hex::encode(pub_key.as_bytes());
+                if let Some(ref reg) = registry {
+                    if let Some(device_rec) = reg.devices.get(candidate) {
+                        if device_rec.encryption_public_key == local_pub_hex {
+                            return Ok(*candidate);
+                        }
+                    }
+                } else if candidates.len() == 1 {
+                    return Ok(*candidate);
+                }
+            }
+        }
+
+        // Fallback: candidate where load_device_privkeys succeeds
+        for candidate in &candidates {
+            if load_device_privkeys(path, *candidate).is_ok() {
+                return Ok(*candidate);
+            }
+        }
+
+        // Fallback for single keywrap file
+        if candidates.len() == 1 {
+            return Ok(candidates[0]);
+        }
+
+        Err(VaultError::NotFound("matching device keywrap not found for this device".into()).into())
     }
 
     pub fn derive_vault_id(kdf_params: &KdfParams) -> Uuid {
@@ -3363,6 +3406,21 @@ fn load_device_privkeys(
     vault_path: &Path,
     device_id: Uuid,
 ) -> Result<DevicePrivKeys, BaluardError> {
+    // 0. Consult SecureKeystore (global or injected)
+    if let Some(keystore) = crate::vault::creation::get_global_keystore() {
+        if let Ok(bytes) = keystore
+            .get_secret(&device_id.to_string())
+            .or_else(|_| keystore.get_secret(&format!("device:{device_id}")))
+            .or_else(|_| keystore.get_secret("device_x25519_secret"))
+        {
+            if let Ok(json) = String::from_utf8(bytes) {
+                if let Ok(keys) = parse_privkey_json(&json) {
+                    return Ok(keys);
+                }
+            }
+        }
+    }
+
     let service = keyring_service(vault_path);
     let account = device_id.to_string();
 
