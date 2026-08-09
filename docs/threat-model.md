@@ -11,13 +11,43 @@
 |-----------------|-----------------|----------------|-------------------|
 | A — Honest-but-curious Git Provider | Passive read of all repository objects | Metadata inference (bucket distribution), timing analysis | Cannot read entry plaintexts. File names are UUID hashes; entry sizes are uniform buckets (5KB, 30KB, 100KB, 250KB, 2MB). Cover commits obscure push frequency. |
 | B — Malicious Git Provider | Active: can modify refs, inject corrupted index | Rollback attacks, corrupted index injection | index.enc auto-healed locally by baluard-core. Rebuilt from entries if corrupted or conflicted. Unsigned commits rejected. Integrity manifest (Ed25519 checkpoints) detects rollback. |
-| C — Local Process (on same device) | Read IPC socket or pipes | Intercept IPC commands, steal secrets | Mitigated via `0600` socket permissions on Unix and system ACLs on Windows named pipes. Session token required for all cipher/sync operations (R7-2). SO_PEERCRED peer UID verification on Linux, getpeereid on macOS. |
+| C — Local Process (on same device) | Read IPC socket or pipes | Intercept IPC commands, steal secrets | Mitigated via `0600` socket permissions on Unix and system ACLs on Windows named pipes. Capability-based authorization: a per-vault 256-bit session token is required for all cipher/sync operations (R7-2). SO_PEERCRED peer UID verification on Linux, getpeereid on macOS. |
 | D — Local Attacker (physical disk access) | Read stored files directly | Offline brute force or cache recovery | Files are AES-256-GCM encrypted. Keys are isolated in host OS Keyring or `zeroize`-protected memory. |
 | E — Malware with OS root privileges | Full process memory interception | Dump memory, steal secrets | `zeroize`-protected memory with `mlock` guards prevents standard paging and core dump leakage. Key material mlock'd to prevent swap persistence (R7-3). Multi-vault (Phase 6) widens the amount of resident key material; bounded by per-vault auto-lock. See T15. |
 | F — Evicted Space Member | Possesses historical local git checkout | Read new entries or make unauthorized commits | Rotated Space Group Key renders future additions unreadable. Root key rotation re-encrypts all entries under new epoch. Git credential rotation is out-of-band (user must rotate deploy keys/PATs manually). |
 | G — Active Git Remote Adversary | Modify encrypted files on git remote | Swap/replace entries, cause victim to decrypt wrong data | SHA-256 hashed AAD identity binding in every envelope blocks swap attacks (T5). Git commit signing (Ed25519) provides repository-level integrity. |
 | H — Malicious Import File | Supply crafted CSV/JSON/XML/1PUX file | Parser exploitation, injected malicious data | Import parsers run in Rust (memory-safe). Parsed into `CipherInput` structs, batch-created. No code execution from import data. |
 | I — OS Keychain Compromise | Extract master password from OS keyring | Full vault access without user interaction | Biometric unlock is opt-in. Keychain-stored MP is no stronger than the OS keychain itself. See T10. |
+
+---
+
+## Design Principle: Brokered Capabilities, Never Bearer Secrets
+
+Baluard trusts exactly one boundary: the Rust daemon. Every privileged operation is **brokered** there. The client (Tauri webview, CLI, mobile UI, browser extension) is untrusted by default and receives **scoped capabilities**, never raw key material.
+
+This is the **capability broker** pattern, the opposite of bearer authority:
+
+- **Bearer authority**: whoever holds the secret wields it. A key handed to a client can end up anywhere that client's output goes.
+- **Brokered capability**: authority delegated as a narrow, revocable handle. The broker holds the secret and performs the action on the holder's behalf.
+
+The client never holds a vault key. It holds a token that *permits the daemon* to use the key on its behalf.
+
+| What the client receives | What never crosses the boundary | Reference |
+|---|---|---|
+| Per-vault 256-bit session token (opaque, constant-time verified) | Root Key, Space Group Key, Item Keys | T2, T15 |
+| Derived numeric TOTP code | TOTP seed | T9 |
+| Signed passkey assertion (COSE outputs) | Passkey private key | WebAuthn ceremony |
+| Brokered vault unlock (run server-side) | Master password (never returned over IPC) | T10 |
+| Scoped bridge token (allowlist-enforced) | Long-lived daemon session | Browser extension bridge |
+
+**Invariants**
+
+1. A same-UID process that did not take part in the unlock exchange holds no capability and is refused (T2, R7-2).
+2. Authority is **per-vault scoped**: a token minted for vault A is rejected for a vault B operation (multi-vault, Phase 6).
+3. Capabilities are **revocable and short-lived**: tokens die on lock, on close, and on daemon shutdown.
+4. The transport is **authenticated**: `0600` socket, peer-credential UID check (SO_PEERCRED on Linux, getpeereid on macOS).
+
+The session token is a capability in the object-capability sense: it is the only authority the client holds, it grants a scoped set of operations, and it does not expose the underlying secrets. This is why "token-gated IPC" and "capability-based authorization" name the same mechanism in Baluard.
 
 ---
 

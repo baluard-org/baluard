@@ -218,3 +218,4 @@ When a member is removed from a Space:
 - **Socket permissions**: Socket born with 0600 via `umask(0177)` before `bind()` (no TOCTOU race between bind and chmod).
 - **Graceful shutdown**: Daemon handles both SIGINT and SIGTERM for clean socket removal and vault zeroization.
 - **Zeroize**: All passwords zeroized server-side (handler) and client-side (CLI unlock, Tauri proxy). `zeroize` crate with `derive` feature for guaranteed memory scrubbing via `write_volatile` + `compiler_fence`.
+- **Capability broker**: The daemon is the sole trust boundary. Clients receive scoped, opaque capabilities (per-vault session token, derived TOTP code, signed passkey assertion), never raw key material. A same-UID process that missed the unlock exchange is refused. See `docs/threat-model.md` § Design Principle.
