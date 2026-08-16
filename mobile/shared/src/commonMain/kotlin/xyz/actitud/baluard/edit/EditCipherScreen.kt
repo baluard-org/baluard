@@ -11,6 +11,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -44,6 +45,7 @@ fun EditCipherScreen(
     cipherId: String?, // null = new
     viewModel: EditCipherViewModel,
     onSaved: () -> Unit,
+    onCancelled: () -> Unit = {},
 ) {
     val form by viewModel.form.collectAsState()
     val scope = rememberCoroutineScope()
@@ -51,7 +53,7 @@ fun EditCipherScreen(
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(cipherId) {
-        if (cipherId != null) viewModel.load(vault, cipherId)
+        if (cipherId != null) viewModel.load(vault, cipherId) else viewModel.reset()
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text(if (cipherId == null) t("edit.newEntry") else t("edit.editEntry")) }) }) { padding ->
@@ -106,6 +108,9 @@ fun EditCipherScreen(
                 enabled = form.name.isNotBlank() && !saving,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (saving) t("common.saving") else t("common.save")) }
+            TextButton(onClick = onCancelled, enabled = !saving) {
+                Text(t("common.back"))
+            }
             error?.let {
                 Spacer(Modifier.height(8.dp))
                 Text(it, color = androidx.compose.material3.MaterialTheme.colorScheme.error)

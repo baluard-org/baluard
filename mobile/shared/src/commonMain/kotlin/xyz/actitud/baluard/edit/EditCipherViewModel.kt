@@ -34,6 +34,12 @@ class EditCipherViewModel(private val repo: VaultRepository) {
     fun setNotes(v: String) { _form.value = _form.value.copy(notes = v) }
     fun setFavorite(v: Boolean) { _form.value = _form.value.copy(favorite = v) }
 
+    /** Blank the form for a new entry (shared VM instance across screens). */
+    fun reset() {
+        existingId = null
+        _form.value = EditForm()
+    }
+
     /** Load an existing cipher by id (decrypted) into the form. */
     suspend fun load(vault: MobileVault, id: String) {
         existingId = id

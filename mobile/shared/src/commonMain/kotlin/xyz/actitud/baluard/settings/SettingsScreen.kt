@@ -7,6 +7,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -36,12 +40,22 @@ fun SettingsScreen(
     vault: MobileVault,
     coordinator: SyncCoordinator,
     viewModel: SettingsViewModel,
+    onBack: () -> Unit = {},
 ) {
     val config by viewModel.config.collectAsState()
     val status by viewModel.status.collectAsState()
     val scope = rememberCoroutineScope()
 
-    Scaffold(topBar = { TopAppBar(title = { Text(t("settings.title")) }) }) { padding ->
+    Scaffold(topBar = {
+        TopAppBar(
+            title = { Text(t("settings.title")) },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = t("common.back"))
+                }
+            },
+        )
+    }) { padding ->
         Column(modifier = Modifier.fillMaxWidth().padding(padding).padding(16.dp)) {
             Text(t("settings.sync"), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))

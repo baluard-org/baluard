@@ -8,6 +8,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -38,12 +42,16 @@ import xyz.actitud.baluard.i18n.t
  * EFF-EN + BIP-39-ES wordlist).
  */
 @Composable
-fun GeneratorScreen(viewModel: GeneratorViewModel) {
+fun GeneratorScreen(viewModel: GeneratorViewModel, onBack: () -> Unit = {}) {
     val state by viewModel.state.collectAsState()
     val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = t("common.back"))
+            }
+            Spacer(Modifier.width(8.dp))
             Checkbox(checked = state.mode == GeneratorMode.PASSWORD, onCheckedChange = {
                 viewModel.setMode(GeneratorMode.PASSWORD)
             })
