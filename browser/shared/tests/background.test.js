@@ -12,7 +12,35 @@
 // are the highest-value regression surface.
 
 import { describe, it, expect } from "vitest";
-import { compareVersions, classifyDisconnect, buildError } from "../src/background.js";
+import { compareVersions, classifyDisconnect, buildError, senderUrl } from "../src/background.js";
+
+describe("senderUrl (inline autofill sender gating)", () => {
+  it("uses the privileged sender.tab.url", () => {
+    const sender = { tab: { id: 7, url: "https://example.com/login" } };
+    expect(senderUrl(sender)).toBe("https://example.com/login");
+  });
+
+  it("fails closed (empty) when there is no tab", () => {
+    expect(senderUrl({})).toBe("");
+    expect(senderUrl(null)).toBe("");
+  });
+
+  it("fails closed when the tab has no URL (chrome://, about:blank)", () => {
+    expect(senderUrl({ tab: { id: 1 } })).toBe("");
+    expect(senderUrl({ tab: { id: 1, url: "" } })).toBe("");
+  });
+
+  it("fails closed for non-http(s) URLs (extension pages, file:)", () => {
+    expect(senderUrl({ tab: { id: 1, url: "chrome-extension://abc/popup.html" } })).toBe("");
+    expect(senderUrl({ tab: { id: 1, url: "file:///etc/passwd" } })).toBe("");
+  });
+
+  it("keeps http pages eligible (not https-only, matches manifest)", () => {
+    expect(senderUrl({ tab: { id: 1, url: "http://intranet.local/login" } })).toBe(
+      "http://intranet.local/login"
+    );
+  });
+});
 
 describe("compareVersions", () => {
   it("returns 0 for equal versions", () => {

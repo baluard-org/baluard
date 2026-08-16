@@ -133,6 +133,68 @@ function err(message, code) {
   return e;
 }
 
+// ── Inline autofill: sender-gated routes ──
+// The inline content script runs IN the page's principal. Everything it asks
+// for must be gated on the SENDER (privileged tab metadata Chrome attaches),
+// never on anything the message payload claims. A hostile page cannot forge
+// these messages (no externally_connectable), but our own injected script is
+// reachable from page-influenced events — so the rules are:
+//   inline.matches -> match against sender.tab.url ONLY.
+//   inline.fill    -> fetch the credential, then PUSH it to the requesting
+//                     tab as baluard-inline-fill with expectedOrigin derived
+//                     from sender.tab.url. It is NEVER returned as the
+//                     message response (a page-compromised handler must not
+//                     be able to read the credential out of a response).
+
+// Extract the trustworthy URL for a content-script sender. Returns "" when
+// the sender is not a tab or the URL is not a normal web page (fail closed).
+export function senderUrl(sender) {
+  const url = sender && sender.tab && sender.tab.url;
+  if (!url) return "";
+  if (!url.startsWith("http://") && !url.startsWith("https://")) return "";
+  return url;
+}
+
+function hostnameOf(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+async function handleInlineMatches(sender) {
+  const url = senderUrl(sender);
+  if (!url) throw err("no matching tab", "no-match");
+  const r = await send("bridge.match", { url });
+  return r.payload;
+}
+
+async function handleInlineFill(sender, id) {
+  const url = senderUrl(sender);
+  if (!url) throw err("no matching tab", "no-match");
+  if (typeof id !== "string" || id.length === 0) throw err("missing id", "proto");
+  // Fetch the single credential (Decision 7 allowlist: one at a time).
+  const r = await send("vault.get", { id });
+  let cred = {};
+  try {
+    cred = JSON.parse(r.payload || "{}");
+  } catch {
+    cred = {};
+  }
+  // Push the fill to the requesting tab only. Content script re-checks the
+  // origin at fill time (fill-time origin re-check, Decision 9).
+  chrome.tabs.sendMessage(sender.tab.id, {
+    type: "baluard-inline-fill",
+    expectedOrigin: hostnameOf(url),
+    credential: {
+      username: cred.username || "",
+      password: cred.password || "",
+    },
+  });
+  return JSON.stringify({ filled: true });
+}
+
 // semver-ish compare (only needs major.minor.patch). Returns <0, 0, >0.
 export function compareVersions(a, b) {
   const pa = String(a).split(".").map(Number);
@@ -163,6 +225,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     clipboardCopy(msg.text)
       .then(() => sendResponse({ ok: true }))
       .catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+  // Inline autofill routes (sender-gated; see handleInline* above).
+  if (msg.action === "inline.matches" && sender && sender.tab) {
+    handleInlineMatches(sender)
+      .then((payload) => sendResponse({ ok: true, payload }))
+      .catch((e) => sendResponse({ ok: false, error: e.message, code: e.code }));
+    return true;
+  }
+  if (msg.action === "inline.fill" && sender && sender.tab) {
+    handleInlineFill(sender, msg.id)
+      .then((payload) => sendResponse({ ok: true, payload }))
+      .catch((e) => sendResponse({ ok: false, error: e.message, code: e.code }));
     return true;
   }
   send(msg.action, msg.payload || {})
@@ -253,5 +328,50 @@ chrome.tabs?.onUpdated?.addListener((tabId, change, tab) => {
   }
 });
 
+// ── Inline autofill: dynamic content-script registration ──
+// The inline dropdown script is registered ONLY while the inlineAutofill
+// setting is on, and persists across sessions (no re-registration dance on
+// every SW wake). Zero page surface when the setting is off.
+// Top-frame only (allFrames: false — Decision 9 C3/D1).
+const INLINE_SCRIPT_ID = "baluard-inline";
+const SETTINGS_KEY = "settings";
+
+async function syncInlineScript() {
+  if (!chrome.scripting?.registerContentScripts) return; // API unavailable
+  let settings = {};
+  try {
+    settings = await chrome.storage.local.get([SETTINGS_KEY]).then((r) => r[SETTINGS_KEY] || {});
+  } catch {
+    settings = {};
+  }
+  // Default ON (settings.js DEFAULT_SETTINGS mirrors this).
+  const enabled = settings.inlineAutofill !== false;
+  try {
+    const registered = await chrome.scripting.getRegisteredContentScripts();
+    const exists = registered.some((s) => s.id === INLINE_SCRIPT_ID);
+    if (enabled && !exists) {
+      await chrome.scripting.registerContentScripts([
+        {
+          id: INLINE_SCRIPT_ID,
+          js: ["inline.js"],
+          matches: ["http://*/*", "https://*/*"],
+          runAt: "document_idle",
+          allFrames: false,
+          persistAcrossSessions: true,
+        },
+      ]);
+    } else if (!enabled && exists) {
+      await chrome.scripting.unregisterContentScripts({ ids: [INLINE_SCRIPT_ID] });
+    }
+  } catch (e) {
+    console.error("[baluard] inline script sync failed:", e);
+  }
+}
+
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area === "local" && changes[SETTINGS_KEY]) syncInlineScript();
+});
+
 // Connect on worker start.
 connect();
+syncInlineScript();
