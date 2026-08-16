@@ -52,7 +52,9 @@ fun VaultListScreen(
     revision: Int = 0,
 ) {
     val query by listViewModel.query.collectAsState()
-    val ciphers by listViewModel.ciphers.collectAsState()
+    val typeFilter by listViewModel.typeFilter.collectAsState()
+    val tagFilter by listViewModel.tagFilter.collectAsState()
+    val favoritesOnly by listViewModel.favoritesOnly.collectAsState()
     val scope = rememberCoroutineScope()
 
     // Load on first composition; callers re-enter this screen after mutations,
@@ -93,7 +95,16 @@ fun VaultListScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            // Reads of ciphers/query above drive recomposition; filtering stays in the VM.
+            FilterChips(
+                types = listViewModel.allTypes(),
+                tags = listViewModel.allTags(),
+                typeFilter = typeFilter,
+                tagFilter = tagFilter,
+                favoritesOnly = favoritesOnly,
+                onType = { listViewModel.setTypeFilter(if (typeFilter == it) null else it) },
+                onTag = { listViewModel.setTagFilter(if (tagFilter == it) null else it) },
+                onFavorites = { listViewModel.setFavoritesOnly(it) },
+            )
             val visible = listViewModel.filtered()
             if (visible.isEmpty()) {
                 Text(
@@ -108,6 +119,46 @@ fun VaultListScreen(
                     CipherRow(meta, onClick = { onCipherClick(meta.id) })
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun FilterChips(
+    types: List<String>,
+    tags: List<String>,
+    typeFilter: String?,
+    tagFilter: String?,
+    favoritesOnly: Boolean,
+    onType: (String) -> Unit,
+    onTag: (String) -> Unit,
+    onFavorites: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        FilterChip(
+            selected = favoritesOnly,
+            onClick = { onFavorites(!favoritesOnly) },
+            label = { Text(t("vault.favorites")) },
+        )
+        types.forEach { wire ->
+            FilterChip(
+                selected = typeFilter == wire,
+                onClick = { onType(wire) },
+                label = { Text(t(typeLabelKey(normalizeTypeTag(wire)))) },
+            )
+        }
+        tags.forEach { tag ->
+            FilterChip(
+                selected = tagFilter == tag,
+                onClick = { onTag(tag) },
+                label = { Text(tag) },
+            )
         }
     }
 }

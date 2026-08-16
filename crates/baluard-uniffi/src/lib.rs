@@ -171,7 +171,9 @@ pub async fn derive_kek(password: String, salt: Vec<u8>) -> Result<Vec<u8>, Balu
         Ok(key.to_vec())
     })
     .await
-    .map_err(|e| BaluardError::Crypto { detail: e.to_string() })?
+    .map_err(|e| BaluardError::Crypto {
+        detail: e.to_string(),
+    })?
 }
 
 /// Derive KEK for a specific vault on disk by reading its own `meta/kdf-params.json`
@@ -183,19 +185,22 @@ pub async fn derive_kek_for_vault(
 ) -> Result<Vec<u8>, BaluardError> {
     tokio::task::spawn_blocking(move || {
         let p = std::path::Path::new(&vault_path);
-        let kdf_json = std::fs::read_to_string(p.join("meta/kdf-params.json"))
-            .map_err(|e| BaluardError::InvalidInput {
+        let kdf_json = std::fs::read_to_string(p.join("meta/kdf-params.json")).map_err(|e| {
+            BaluardError::InvalidInput {
                 detail: format!("reading kdf params: {e}"),
-            })?;
-        let params: baluard_core::types::KdfParams = serde_json::from_str(&kdf_json)
-            .map_err(|e| BaluardError::InvalidInput {
+            }
+        })?;
+        let params: baluard_core::types::KdfParams =
+            serde_json::from_str(&kdf_json).map_err(|e| BaluardError::InvalidInput {
                 detail: format!("corrupt kdf params: {e}"),
             })?;
         let key = baluard_core::crypto::kdf::derive_kek(&password, &params)?;
         Ok(key.to_vec())
     })
     .await
-    .map_err(|e| BaluardError::Crypto { detail: e.to_string() })?
+    .map_err(|e| BaluardError::Crypto {
+        detail: e.to_string(),
+    })?
 }
 
 // ── Vault lifecycle (plan §3.2/§3.3, Phase 2 auth) ──────────────────────
@@ -233,6 +238,10 @@ pub struct MobileCipherMeta {
     pub favorite: bool,
     /// Login username (if any) for quick display in the list; None otherwise.
     pub username: Option<String>,
+    /// Tags for filtering (sidebar pills on desktop).
+    pub tags: Vec<String>,
+    /// Archived entries are hidden from the mobile list.
+    pub archived: bool,
 }
 
 impl From<baluard_core::types::CipherMeta> for MobileCipherMeta {
@@ -243,6 +252,8 @@ impl From<baluard_core::types::CipherMeta> for MobileCipherMeta {
             cipher_type: format!("{:?}", m.cipher_type).to_lowercase(),
             favorite: m.favorite,
             username: m.username,
+            tags: m.tags,
+            archived: m.archived,
         }
     }
 }
@@ -532,12 +543,16 @@ pub async fn create_vault_with_recovery(
     device_name: String,
 ) -> Result<MobileCreateResult, BaluardError> {
     let vault_path = std::path::PathBuf::from(&path);
-    let (_handle, secrets) = baluard_core::vault::creation::VaultCreator::new(&vault_path, &master_password, &device_name)
-        .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
-        .execute()
-        .map_err(|e| BaluardError::Creation {
-            detail: e.to_string(),
-        })?;
+    let (_handle, secrets) = baluard_core::vault::creation::VaultCreator::new(
+        &vault_path,
+        &master_password,
+        &device_name,
+    )
+    .kdf_profile(baluard_core::types::KdfProfile::MobileLow)
+    .execute()
+    .map_err(|e| BaluardError::Creation {
+        detail: e.to_string(),
+    })?;
 
     let state = std::sync::Arc::new(baluard_runtime::VaultState::new(vault_path));
     state.open().await?;
@@ -689,24 +704,51 @@ impl MobileDeviceFlow {
     }
 
     pub async fn poll(&self) -> Result<MobileDeviceFlowStatus, BaluardError> {
-        let p = baluard_core::providers::provider_for(self.provider, self.config.clone())
-            .map_err(|e| BaluardError::Provider { detail: e.to_string() })?;
+        let p = baluard_core::providers::provider_for(self.provider, self.config.clone()).map_err(
+            |e| BaluardError::Provider {
+                detail: e.to_string(),
+            },
+        )?;
         match p.device_flow_poll(&self.session).await {
             Ok(baluard_core::providers::DeviceFlowStatus::Success(token)) => {
-                let user_info = p.validate_token(&token).await.map_err(|e| BaluardError::Provider { detail: e.to_string() })?;
-                baluard_core::providers::token::store_token(self.provider, &user_info.username, &token)
-                    .map_err(|e| BaluardError::Provider { detail: format!("store token: {e}") })?;
-                let mut state = baluard_core::providers::token::ProvidersState::load()
-                    .map_err(|e| BaluardError::Provider { detail: format!("load state: {e}") })?;
+                let user_info =
+                    p.validate_token(&token)
+                        .await
+                        .map_err(|e| BaluardError::Provider {
+                            detail: e.to_string(),
+                        })?;
+                baluard_core::providers::token::store_token(
+                    self.provider,
+                    &user_info.username,
+                    &token,
+                )
+                .map_err(|e| BaluardError::Provider {
+                    detail: format!("store token: {e}"),
+                })?;
+                let mut state =
+                    baluard_core::providers::token::ProvidersState::load().map_err(|e| {
+                        BaluardError::Provider {
+                            detail: format!("load state: {e}"),
+                        }
+                    })?;
                 state.set(user_info);
-                state.save()
-                    .map_err(|e| BaluardError::Provider { detail: format!("save state: {e}") })?;
+                state.save().map_err(|e| BaluardError::Provider {
+                    detail: format!("save state: {e}"),
+                })?;
                 Ok(MobileDeviceFlowStatus::Success)
             }
-            Ok(baluard_core::providers::DeviceFlowStatus::Pending) => Ok(MobileDeviceFlowStatus::Pending),
-            Ok(baluard_core::providers::DeviceFlowStatus::Expired) => Ok(MobileDeviceFlowStatus::Expired),
-            Ok(baluard_core::providers::DeviceFlowStatus::SlowDown { .. }) => Ok(MobileDeviceFlowStatus::SlowDown),
-            Err(e) => Err(BaluardError::Provider { detail: e.to_string() }),
+            Ok(baluard_core::providers::DeviceFlowStatus::Pending) => {
+                Ok(MobileDeviceFlowStatus::Pending)
+            }
+            Ok(baluard_core::providers::DeviceFlowStatus::Expired) => {
+                Ok(MobileDeviceFlowStatus::Expired)
+            }
+            Ok(baluard_core::providers::DeviceFlowStatus::SlowDown { .. }) => {
+                Ok(MobileDeviceFlowStatus::SlowDown)
+            }
+            Err(e) => Err(BaluardError::Provider {
+                detail: e.to_string(),
+            }),
         }
     }
 }
@@ -773,7 +815,8 @@ pub struct MobileCloneJob {
 #[uniffi::export]
 impl MobileCloneJob {
     pub fn cancel(&self) {
-        self.cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.cancel_flag
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -789,15 +832,12 @@ pub async fn clone_vault_start(
     let flag_clone = cancel_flag.clone();
 
     tokio::task::spawn_blocking(move || {
-        baluard_runtime::providers::clone_and_register(
-            p_enum,
-            &clone_url,
-            &path,
-            Some(flag_clone),
-        )
+        baluard_runtime::providers::clone_and_register(p_enum, &clone_url, &path, Some(flag_clone))
     })
     .await
-    .map_err(|e| BaluardError::Vault { detail: e.to_string() })??;
+    .map_err(|e| BaluardError::Vault {
+        detail: e.to_string(),
+    })??;
 
     Ok(std::sync::Arc::new(MobileCloneJob { cancel_flag }))
 }
@@ -820,7 +860,9 @@ pub async fn enroll_device_with_phrase(
         )
     })
     .await
-    .map_err(|e| BaluardError::Crypto { detail: e.to_string() })??;
+    .map_err(|e| BaluardError::Crypto {
+        detail: e.to_string(),
+    })??;
 
     let state = std::sync::Arc::new(baluard_runtime::VaultState::new(handle.path.clone()));
     state.open().await?;
@@ -853,7 +895,9 @@ mod tests {
             "BIP-39 must be 24 words"
         );
 
-        let key = derive_kek("password123".to_string(), b"salt123".to_vec()).await.unwrap();
+        let key = derive_kek("password123".to_string(), b"salt123".to_vec())
+            .await
+            .unwrap();
         assert_eq!(key.len(), 32, "KEK must be 32 bytes (AES-256)");
     }
 

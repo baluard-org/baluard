@@ -92,6 +92,7 @@ internal val EN: Map<String, String> = mapOf(
     "vault.lockVault" to "Lock vault",
     "vault.empty" to "No entries yet",
     "vault.addEntry" to "Add entry",
+    "vault.favorites" to "Favorites",
 
     // generator screen title
     "generator.title" to "Generator",
