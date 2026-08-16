@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.sync.SyncConfig
 import xyz.actitud.baluard.sync.SyncCoordinator
+import xyz.actitud.baluard.i18n.t
 
 /**
  * Settings screen with the sync toggles (plan §3.5) + a "Sync now" button.
@@ -40,37 +41,44 @@ fun SettingsScreen(
     val status by viewModel.status.collectAsState()
     val scope = rememberCoroutineScope()
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Settings") }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text(t("settings.title")) }) }) { padding ->
         Column(modifier = Modifier.fillMaxWidth().padding(padding).padding(16.dp)) {
-            Text("Sync", style = MaterialTheme.typography.titleMedium)
+            Text(t("settings.sync"), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
 
-            ToggleRow("Sync when I unlock the vault", config.syncOnUnlock) {
+            ToggleRow(t("settings.syncOnUnlock"), config.syncOnUnlock) {
                 viewModel.setSyncOnUnlock(it)
             }
-            ToggleRow("Sync after every change I make", config.syncAfterChange) {
+            ToggleRow(t("settings.syncAfterChange"), config.syncAfterChange) {
                 viewModel.setSyncAfterChange(it)
             }
-            ToggleRow("Sync when app returns to foreground", config.syncOnForeground) {
+            ToggleRow(t("settings.syncOnForeground"), config.syncOnForeground) {
                 viewModel.setSyncOnForeground(it)
             }
             ToggleRow(
-                "Background sync (every ${config.backgroundIntervalMinutes} min)",
+                t("settings.backgroundSync", config.backgroundIntervalMinutes),
                 config.backgroundSyncEnabled,
             ) { viewModel.setBackgroundSync(it) }
             Text(
-                "Uses more battery. Most users don't need this.",
+                t("settings.backgroundHint"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
             )
-            ToggleRow("Sync over Wi-Fi only (advisory)", config.wifiOnly) {
+            ToggleRow(t("settings.wifiOnly"), config.wifiOnly) {
                 viewModel.setWifiOnly(it)
             }
 
             HorizontalDivider(Modifier.padding(vertical = 16.dp))
 
-            Text("Status: ${status.state}${if (status.active) "" else " (inactive)"}", style = MaterialTheme.typography.bodyMedium)
-            Text("Pending: ${status.pending}", style = MaterialTheme.typography.bodySmall)
+            Text(
+                t(
+                    "settings.status",
+                    status.state,
+                    if (status.active) "" else t("settings.inactiveSuffix"),
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(t("settings.pending", status.pending), style = MaterialTheme.typography.bodySmall)
 
             Spacer(Modifier.height(16.dp))
             Button(onClick = {
@@ -78,7 +86,7 @@ fun SettingsScreen(
                     coordinator.pullNow(vault)
                     viewModel.refresh(vault, coordinator)
                 }
-            }) { Text("Sync now") }
+            }) { Text(t("settings.syncNow")) }
         }
     }
 }

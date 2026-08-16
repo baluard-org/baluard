@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import xyz.actitud.baluard.MobileVault
+import xyz.actitud.baluard.i18n.t
 
 /**
  * Live TOTP widget: 6-digit code + a countdown bar showing seconds until the
@@ -40,7 +41,7 @@ fun TotpWidget(
             is TotpState.Loading -> Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp))
                 Spacer(Modifier.height(8.dp))
-                Text("loading code…", style = MaterialTheme.typography.bodySmall)
+                Text(t("totp.loading"), style = MaterialTheme.typography.bodySmall)
             }
             is TotpState.Code -> {
                 Text(

@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.data.AuthState
 import xyz.actitud.baluard.data.UnlockResult
+import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.Biometric
 
 /**
@@ -62,7 +63,7 @@ fun UnlockScreen(
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("Master password") },
+            label = { Text(t("login.passwordPlaceholder")) },
             visualTransformation = PasswordVisualTransformation(),
             singleLine = true,
             enabled = state !is AuthState.Unlocking,
@@ -79,14 +80,14 @@ fun UnlockScreen(
                             onUnlocked()
                         }
                         is UnlockResult.Failure -> {
-                            state = AuthState.Error("Wrong password or corrupt vault")
+                            state = AuthState.Error(t("login.wrongPassword"))
                         }
                     }
                 }
             },
             enabled = password.isNotEmpty() && state !is AuthState.Unlocking,
         ) {
-            Text("Unlock")
+            Text(t("login.unlock"))
         }
 
         if (state is AuthState.Unlocking) {
@@ -98,7 +99,7 @@ fun UnlockScreen(
             Spacer(Modifier.height(24.dp))
             Button(onClick = {
                 biometric.prompt(
-                    title = "Unlock Baluard",
+                    title = t("login.biometricTitle"),
                     onSuccess = {
                         // TODO Phase 2 biometric: retrieve KEK from keychain,
                         // call repo.unlockWithKek (skips Argon2id KDF).
@@ -110,7 +111,7 @@ fun UnlockScreen(
                     onError = { state = AuthState.Error(it) },
                 )
             }) {
-                Text("Unlock with biometrics")
+                Text(t("login.unlockBiometric"))
             }
         }
 

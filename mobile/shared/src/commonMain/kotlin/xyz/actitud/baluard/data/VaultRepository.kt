@@ -1,11 +1,13 @@
 package xyz.actitud.baluard.data
 
 import xyz.actitud.baluard.MobileCipherMeta
+import xyz.actitud.baluard.MobileCreateResult
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.generateRecoveryPhrase
 import xyz.actitud.baluard.MobileRecoveryPhrase
 import xyz.actitud.baluard.openVault as uniffiOpenVault
 import xyz.actitud.baluard.createVault as uniffiCreateVault
+import xyz.actitud.baluard.createVaultWithRecovery as uniffiCreateVaultWithRecovery
 
 /**
  * Thin wrapper over the UniFFI-generated Kotlin bindings.
@@ -32,6 +34,17 @@ class VaultRepository {
     suspend fun openVault(path: String): MobileVault = uniffiOpenVault(path)
     suspend fun createVault(path: String, password: String, deviceName: String): MobileVault =
         uniffiCreateVault(path, password, deviceName)
+
+    /**
+     * Create a vault AND surface its 24-word recovery phrase (plan §3.5). The
+     * phrase is HPKE-wrapped to meta/recovery.json by the ceremony and shown
+     * exactly once here; [MobileCreateResult.vault] is already unlocked.
+     */
+    suspend fun createVaultWithRecovery(
+        path: String,
+        password: String,
+        deviceName: String,
+    ): MobileCreateResult = uniffiCreateVaultWithRecovery(path, password, deviceName)
 
     suspend fun listCiphers(vault: MobileVault): List<MobileCipherMeta> = vault.listCiphers()
     suspend fun getCipher(vault: MobileVault, id: String, decrypt: Boolean): String =

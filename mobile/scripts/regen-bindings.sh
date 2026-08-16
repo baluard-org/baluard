@@ -21,9 +21,14 @@ OUT_DIR="$MOBILE_DIR/shared/src/commonMain/kotlin"
 
 [[ -f "$UNIFFI_TOML" ]] || { echo "ERROR: $UNIFFI_TOML missing" >&2; exit 1; }
 
-echo "==> Building host cdylib (libbaluard_uniffi.dylib)..."
+echo "==> Building host cdylib..."
 ( cd "$REPO_ROOT" && cargo build -p baluard-uniffi --release )
-DYLIB="$REPO_ROOT/target/release/libbaluard_uniffi.dylib"
+# Pick the extension matching the host OS. A Linux target dir can carry a
+# stale foreign .dylib (copied from a macOS host); picking by glob order would
+# silently generate bindings from that stale artifact.
+DYLIB_EXT="so"
+[[ "$(uname -s)" == "Darwin" ]] && DYLIB_EXT="dylib"
+DYLIB="$REPO_ROOT/target/release/libbaluard_uniffi.$DYLIB_EXT"
 [[ -f "$DYLIB" ]] || { echo "ERROR: $DYLIB not built" >&2; exit 1; }
 
 RUNNER_DIR="$(mktemp -d)/uniffi-bindgen-runner"

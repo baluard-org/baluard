@@ -8,39 +8,37 @@ import androidx.compose.runtime.setValue
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.auth.UnlockScreen
 import xyz.actitud.baluard.data.VaultRepository
+import xyz.actitud.baluard.onboarding.CreateVaultScreen
+import xyz.actitud.baluard.onboarding.OnboardingScreen
+import xyz.actitud.baluard.platform.AppPaths
 import xyz.actitud.baluard.ui.theme.BaluardTheme
 import xyz.actitud.baluard.vault.VaultListScreen
 import xyz.actitud.baluard.vault.VaultListViewModel
 
 /**
- * Root navigation. Phase 2-3 skeleton: unlock screen -> vault list.
+ * Root navigation (plan §5): no vault at the default path -> OnboardingScreen;
+ * vault exists -> UnlockScreen; unlocked -> VaultListScreen. The create flow
+ * replaces the onboarding root until its recovery-phrase ack completes, then
+ * lands directly in the vault list (the FFI returns the vault unlocked).
  *
- * [vaultPath] is the on-disk vault directory. For the hello-world scaffold
- * this is a fixed path (set by the host build / intent); the vault-creation
- * wizard (init -> creating -> recovery -> setup states, plan "Auth State
- * Machine") lands with the full onboarding flow.
+ * [vaultPath] overrides the platform default (host intent / debug builds).
  */
 @Composable
-fun App(vaultPath: String = "") {
+fun App(vaultPath: String? = null) {
     BaluardTheme {
+        val path = remember(vaultPath) {
+            vaultPath?.takeIf { it.isNotBlank() } ?: AppPaths.defaultVaultPath()
+        }
+        var hasVault by remember { mutableStateOf(AppPaths.vaultExists(path)) }
+        var showCreate by remember { mutableStateOf(false) }
+        var unlocked by remember { mutableStateOf(false) }
+
         val repo = remember { VaultRepository() }
         val auth = remember { AuthViewModel(repo) }
         val listVm = remember { VaultListViewModel(repo) }
-        var unlocked by remember { mutableStateOf(false) }
 
-        if (!unlocked) {
-            UnlockScreen(
-                vaultPath = vaultPath,
-                authViewModel = auth,
-                onUnlocked = {
-                    auth.vault()?.let { v ->
-                        unlocked = true
-                        listVm
-                    }
-                },
-            )
-        } else {
-            auth.vault()?.let { vault ->
+        when {
+            unlocked -> auth.vault()?.let { vault ->
                 VaultListScreen(
                     vault = vault,
                     listViewModel = listVm,
@@ -48,6 +46,27 @@ fun App(vaultPath: String = "") {
                     onLocked = { unlocked = false },
                 )
             }
+
+            showCreate -> CreateVaultScreen(
+                vaultPath = path,
+                authViewModel = auth,
+                onCreated = {
+                    hasVault = true
+                    showCreate = false
+                    unlocked = true
+                },
+                onCancelled = { showCreate = false },
+            )
+
+            !hasVault -> OnboardingScreen(
+                onCreateVault = { showCreate = true },
+            )
+
+            else -> UnlockScreen(
+                vaultPath = path,
+                authViewModel = auth,
+                onUnlocked = { unlocked = true },
+            )
         }
     }
 }
