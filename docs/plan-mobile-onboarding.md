@@ -428,7 +428,7 @@ unlocked -> `VaultListScreen`.
 - [x] Desktop clone->second-device enrollment + unlock verified end-to-end (the core defect fixed on all platforms).
 
 ### Slice A
-- [ ] First launch with no vault shows `OnboardingScreen`, never the bare unlock.
+- [x] First launch with no vault shows `OnboardingScreen`, never the bare unlock (UI landed 2026-08-16: `App.kt` routes on `.baluard`-marker check via platform `vaultExists()`; structure-verified, on-device run pending host build).
 - [x] Create vault -> recovery phrase shown -> ack -> empty vault list; lock/unlock works.
 - [x] KDF runs off the UI thread (no ANR); `derive_kek_for_vault` unlocks a mobile-created vault via `unlock_with_kek`.
 - [x] Device private key in Android Keystore, not plaintext; `allowBackup=false`.

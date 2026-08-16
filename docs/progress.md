@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-07-31 (Phase 2 mobile onboarding runtime & UniFFI surface complete; provider orchestration extracted; core multi-device fixes F1/F2/F3/F4/F6 shipped)
+> Last updated: 2026-08-16 (mobile onboarding UI complete: onboarding root, create-vault + recovery-phrase screens, i18n EN/ES across all screens, bindings regenerated; earlier: Phase 2 mobile onboarding runtime & UniFFI surface complete; provider orchestration extracted; core multi-device fixes F1/F2/F3/F4/F6 shipped)
 
 ---
 
@@ -28,7 +28,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 - `/crates/baluard-nmh` - Native messaging host binary (browser extension bridge, stdio-JSON <-> varint-protobuf)
 - `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 8 cipher types, generator, TOTP, auto-lock, dark/light themes, i18n en/es, 38 components)
 - `/browser` - Chromium + Firefox MV3 extensions (shared codebase, two targets). KeePassXC-Browser-style bridge client. Paired companion model (rides the desktop's unlock state)
-- `/mobile` - Kotlin Multiplatform shell (Compose UI + UniFFI integration)
+- `/mobile` - Kotlin Multiplatform app (Compose UI + UniFFI integration; onboarding + create-vault/recovery-phrase flow, vault list, generator, TOTP, settings, i18n EN/ES)
 - `/docs` - Architecture, design, threat model, plans, PRDs, ADRs
 
 ---
@@ -407,7 +407,7 @@ baluard/
 │   ├── shared/                    # 95% of code (popup SolidJS, service worker, content script, nmh wrapper, autofill, pair)
 │   ├── chrome/                    # Chrome MV3 wrapper
 │   └── firefox/                   # Firefox MV3 wrapper
-├── mobile/                       # Kotlin Multiplatform scaffold [PLACEHOLDER]
+├── mobile/                       # Kotlin Multiplatform app (Compose UI, UniFFI bindings, onboarding + vault list + generator + TOTP + settings screens, i18n EN/ES; debug APK builds on macOS host)
 ├── docs/                         # Architecture & design docs (index, arch, decisions, plans, PRDs, threat model, 2fa, post-quantum, brand, app icons)
 └── justfile                      # Build system (`just` recipes for build, test, lint, fmt, desktop, ext-*, app-icons, build-nmh, install-nmh-manifest, codesign)
 ```
