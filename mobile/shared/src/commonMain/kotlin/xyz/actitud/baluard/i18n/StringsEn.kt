@@ -8,6 +8,7 @@ package xyz.actitud.baluard.i18n
 internal val EN: Map<String, String> = mapOf(
     // common
     "common.back" to "Back",
+    "common.cancel" to "Cancel",
     "common.continue" to "Continue",
     "common.search" to "Search",
     "common.save" to "Save",
@@ -24,7 +25,7 @@ internal val EN: Map<String, String> = mapOf(
     "onboarding.subtitle" to "Your passwords, stored only for you",
     "onboarding.createVault" to "Create new vault",
     "onboarding.openExisting" to "Open an existing vault",
-    "onboarding.openExistingHint" to "Opens a vault synced from another device (coming soon)",
+    "onboarding.openExistingHint" to "Opens a vault synced from another device",
 
     // create vault
     "onboarding.createButton" to "Create vault",
@@ -45,6 +46,46 @@ internal val EN: Map<String, String> = mapOf(
             "forget the master password. Write them down on paper and keep them safe.",
     "recovery.warning" to "Never store the phrase on this device or in the cloud.",
     "recovery.ack" to "I wrote it down on paper",
+
+    // provider connect (open existing vault)
+    "provider.title" to "Where is your vault?",
+    "provider.subtitle" to
+        "Connect your account to open a vault synced from another device.",
+    "provider.github" to "GitHub",
+    "provider.gitlab" to "GitLab",
+    "provider.codeberg" to "Codeberg",
+    "provider.selected" to "{0} ✓",
+    "provider.continueBrowser" to "Continue in browser",
+    "provider.usePatInstead" to "Use an access token instead",
+    "provider.continuePat" to "Continue with access token",
+    "provider.patLabel" to "Access token",
+    "provider.patConnect" to "Connect",
+
+    // device code (RFC 8628)
+    "deviceCode.title" to "Enter this code",
+    "deviceCode.subtitle" to
+        "Sign in to your account in the browser, then enter this code and approve. " +
+            "This screen waits by itself.",
+    "deviceCode.openBrowser" to "Open browser",
+    "deviceCode.waiting" to "Waiting for approval…",
+    "deviceCode.expired" to "This code expired. Go back and start again.",
+
+    // repo picker + clone
+    "repo.title" to "Choose your vault",
+    "repo.subtitle" to "These are the Baluard vaults found in your account.",
+    "repo.empty" to "No Baluard vaults found in this account.",
+    "repo.cloning" to "Downloading vault…",
+    "repo.cloningHint" to "This can take a moment. Keep the app open.",
+    "repo.private" to "Private",
+
+    // device enrollment
+    "enroll.title" to "Trust this device",
+    "enroll.subtitle" to
+        "This device is not trusted by the vault yet. Enter your 24-word recovery " +
+            "phrase and master password to add it.",
+    "enroll.phraseLabel" to "Recovery phrase ({0}/24 words)",
+    "enroll.phraseHint" to "Enter all 24 words, in order.",
+    "enroll.button" to "Add this device",
 
     // vault list
     "vault.title" to "Vault",
