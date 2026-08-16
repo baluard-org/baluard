@@ -160,6 +160,7 @@ internal val ES: Map<String, String> = mapOf(
     "edit.password" to "Contraseña",
     "edit.notes" to "Notas",
     "edit.favorite" to "Favorito",
+    "edit.typeLabel" to "Tipo",
 
     // generator
     "generator.password" to "Contraseña",

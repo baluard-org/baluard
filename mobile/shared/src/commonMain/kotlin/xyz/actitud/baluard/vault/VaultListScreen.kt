@@ -48,6 +48,8 @@ fun VaultListScreen(
     onAddEntry: () -> Unit = {},
     onOpenGenerator: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    /** Bumped by the caller after a save so the refresh effect re-fires. */
+    revision: Int = 0,
 ) {
     val query by listViewModel.query.collectAsState()
     val ciphers by listViewModel.ciphers.collectAsState()
@@ -55,7 +57,7 @@ fun VaultListScreen(
 
     // Load on first composition; callers re-enter this screen after mutations,
     // which re-runs this effect and refreshes the list.
-    LaunchedEffect(vault) { listViewModel.refresh(vault) }
+    LaunchedEffect(vault, revision) { listViewModel.refresh(vault) }
 
     Scaffold(topBar = {
         TopAppBar(

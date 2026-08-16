@@ -11,16 +11,18 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.data.VaultRepository
+import xyz.actitud.baluard.detail.fieldsFor
 
 /**
- * Drives the cipher edit form (Phase 4). Loads an existing cipher (decrypt) or
- * starts a blank login; builds the daemon-wire JSON payload on save; calls
- * addCipher or updateCipher.
+ * Drives the cipher edit form for all 8 types (plan §3: create/edit any
+ * type). The form is generic: field rows come from [fieldsFor] (the same
+ * schema the detail screen renders), keyed by wire field name.
  *
- * The payload shape mirrors the daemon wire format (`{name, kind: {type, data}}`)
- * — see AGENTS.md "Daemon Wire Format". Login is fully modeled here; the other
- * 7 cipher types are scaffolds to be expanded per type (card numbers, identity
- * fields, SSH key material, etc.) before Phase 4 is feature-complete.
+ * Merge-on-save semantics: the loaded cipher's `data` object is captured
+ * whole and only the edited keys are overwritten. This preserves fields the
+ * form does not model (passkeys, URIs, TOTP seed, password revision date) —
+ * replacing the object wholesale would wipe them, since update_cipher
+ * replaces `kind` entirely (AGENTS.md "Daemon Wire Format").
  */
 class EditCipherViewModel(private val repo: VaultRepository) {
     private val _form = MutableStateFlow(EditForm())
@@ -28,36 +30,51 @@ class EditCipherViewModel(private val repo: VaultRepository) {
 
     private var existingId: String? = null
 
+    /** Original decrypted `data` object; null for a new entry. */
+    private var originalData: JsonObject? = null
+
     fun setName(v: String) { _form.value = _form.value.copy(name = v) }
-    fun setUsername(v: String) { _form.value = _form.value.copy(username = v) }
-    fun setPassword(v: String) { _form.value = _form.value.copy(password = v) }
     fun setNotes(v: String) { _form.value = _form.value.copy(notes = v) }
     fun setFavorite(v: Boolean) { _form.value = _form.value.copy(favorite = v) }
+
+    /** Set one dynamic field value (wire key). */
+    fun setField(key: String, value: String) {
+        _form.value = _form.value.copy(values = _form.value.values + (key to value))
+    }
+
+    /** Switch type while composing a NEW entry (edit keeps the stored type). */
+    fun setType(tag: String) {
+        if (existingId != null) return
+        _form.value = _form.value.copy(typeTag = tag, values = emptyMap())
+    }
 
     /** Blank the form for a new entry (shared VM instance across screens). */
     fun reset() {
         existingId = null
+        originalData = null
         _form.value = EditForm()
     }
 
     /** Load an existing cipher by id (decrypted) into the form. */
     suspend fun load(vault: MobileVault, id: String) {
-        existingId = id
         runCatching {
             val raw = repo.getCipher(vault, id, decrypt = true)
             val obj = Json.parseToJsonElement(raw) as JsonObject
-            val name = (obj["name"] as? JsonPrimitive)?.content ?: ""
             val kind = obj["kind"] as? JsonObject
-            val data = kind?.get("data") as? JsonObject
-            val username = (data?.get("username") as? JsonPrimitive)?.content ?: ""
-            // Password may be absent (non-login); read defensively.
-            val password = (data?.get("password") as? JsonPrimitive)?.content ?: ""
-            val favorite = (obj["favorite"] as? JsonPrimitive)?.content == "true"
+            val tag = (kind?.get("type") as? JsonPrimitive)?.content ?: "login"
+            val data = kind?.get("data") as? JsonObject ?: JsonObject(emptyMap())
+
+            existingId = id
+            originalData = data
             _form.value = EditForm(
-                name = name,
-                username = username,
-                password = password,
-                favorite = favorite,
+                name = (obj["name"] as? JsonPrimitive)?.content ?: "",
+                typeTag = tag,
+                notes = (obj["notes"] as? JsonPrimitive)?.content ?: "",
+                favorite = (obj["favorite"] as? JsonPrimitive)?.content == "true",
+                values = fieldsFor(tag).mapNotNull { spec ->
+                    val v = (data[spec.wireKey] as? JsonPrimitive)?.content
+                    if (v.isNullOrBlank()) null else spec.wireKey to v
+                }.toMap(),
             )
         }
     }
@@ -65,7 +82,7 @@ class EditCipherViewModel(private val repo: VaultRepository) {
     /** Persist: addCipher if new, updateCipher if editing. Returns the cipher id. */
     suspend fun save(vault: MobileVault): Result<String> {
         val f = _form.value
-        val payload = buildLoginPayload(f, existingId)
+        val payload = buildPayload(f, existingId)
         return runCatching {
             if (existingId != null) {
                 repo.updateCipher(vault, payload)
@@ -76,25 +93,28 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         }
     }
 
-    /** Build the daemon-wire JSON for a login cipher. */
-    private fun buildLoginPayload(f: EditForm, id: String?): String {
+    /**
+     * Daemon-wire JSON: {name, favorite, notes, kind: {type, data}}. `data`
+     * starts from the original object (preserving unmodeled fields) and
+     * overlays the form values; a cleared field sends null so the stored
+     * value is removed. New entries start from an empty object (nulls).
+     */
+    private fun buildPayload(f: EditForm, id: String?): String {
+        val data = buildJsonObject {
+            originalData?.forEach { (k, v) -> put(k, v) }
+            fieldsFor(f.typeTag).forEach { spec ->
+                val v = f.values[spec.wireKey].orEmpty()
+                put(spec.wireKey, if (v.isBlank()) JsonNull else JsonPrimitive(v))
+            }
+        }
         val root = buildJsonObject {
             if (id != null) put("id", id)
             put("name", f.name)
             put("favorite", f.favorite)
-            put("notes", JsonPrimitive(f.notes))
+            put("notes", if (f.notes.isBlank()) JsonNull else JsonPrimitive(f.notes))
             put("kind", buildJsonObject {
-                put("type", "login")
-                put("data", buildJsonObject {
-                    put("username", f.username)
-                    put("password", f.password)
-                    put("uris", kotlinx.serialization.json.buildJsonArray {})
-                    put("totp_uri", JsonNull)
-                    put("autofill_on_page_load", false)
-                    put("password_revision_date", JsonNull)
-                    put("favicon", JsonNull)
-                    put("fido2_credentials", JsonNull)
-                })
+                put("type", f.typeTag)
+                put("data", data)
             })
         }
         return root.toString()
@@ -103,8 +123,9 @@ class EditCipherViewModel(private val repo: VaultRepository) {
 
 data class EditForm(
     val name: String = "",
-    val username: String = "",
-    val password: String = "",
+    val typeTag: String = "login",
     val notes: String = "",
     val favorite: Boolean = false,
+    /** Dynamic field values by wire key (see [fieldsFor]). */
+    val values: Map<String, String> = emptyMap(),
 )

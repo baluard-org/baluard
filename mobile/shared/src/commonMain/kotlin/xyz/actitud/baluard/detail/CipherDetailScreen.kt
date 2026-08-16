@@ -57,8 +57,10 @@ fun CipherDetailScreen(
     totpViewModel: TotpViewModel,
     onEdit: () -> Unit,
     onBack: () -> Unit,
+    /** Bumped by the caller after a save so the reload effect re-fires. */
+    revision: Int = 0,
 ) {
-    LaunchedEffect(cipherId) { detailViewModel.load(vault, cipherId) }
+    LaunchedEffect(cipherId, revision) { detailViewModel.load(vault, cipherId) }
 
     val state = detailViewModel.state
 
@@ -92,11 +94,8 @@ fun CipherDetailScreen(
                             )
                         }
                     }
-                    // Edit is login-only until the edit form models the other types.
-                    if (state?.typeTag == "login") {
-                        IconButton(onClick = onEdit) {
-                            Icon(Icons.Filled.Edit, contentDescription = t("detail.edit"))
-                        }
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Filled.Edit, contentDescription = t("detail.edit"))
                     }
                 },
             )

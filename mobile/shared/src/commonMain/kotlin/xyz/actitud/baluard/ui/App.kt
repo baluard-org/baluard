@@ -69,6 +69,7 @@ fun App(vaultPath: String? = null) {
         val totpVm = remember { TotpViewModel(repo) }
         val generatorVm = remember { GeneratorViewModel(repo) }
         var nav by remember { mutableStateOf<Nav>(Nav.List) }
+        var saveRevision by remember { mutableStateOf(0) }
 
         when {
             unlocked -> auth.vault()?.let { vault ->
@@ -85,6 +86,7 @@ fun App(vaultPath: String? = null) {
                         onAddEntry = { nav = Nav.Edit(null) },
                         onOpenGenerator = { nav = Nav.Generator },
                         onOpenSettings = { nav = Nav.Settings },
+                        revision = saveRevision,
                     )
 
                     is Nav.Detail -> CipherDetailScreen(
@@ -94,6 +96,7 @@ fun App(vaultPath: String? = null) {
                         totpViewModel = totpVm,
                         onEdit = { nav = Nav.Edit(n.cipherId) },
                         onBack = { nav = Nav.List },
+                        revision = saveRevision,
                     )
 
                     is Nav.Edit -> EditCipherScreen(
@@ -101,6 +104,7 @@ fun App(vaultPath: String? = null) {
                         cipherId = n.cipherId,
                         viewModel = editVm,
                         onSaved = {
+                            saveRevision++
                             nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId)
                         },
                         onCancelled = { nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId) },
