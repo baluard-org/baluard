@@ -25,6 +25,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
+import xyz.actitud.baluard.i18n.t
 
 /**
  * Edit cipher screen (Phase 4). Login form is fully modeled (name, username,
@@ -53,12 +54,12 @@ fun EditCipherScreen(
         if (cipherId != null) viewModel.load(vault, cipherId)
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text(if (cipherId == null) "New entry" else "Edit entry") }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text(if (cipherId == null) t("edit.newEntry") else t("edit.editEntry")) }) }) { padding ->
         Column(modifier = Modifier.fillMaxWidth().padding(padding).padding(16.dp)) {
             OutlinedTextField(
                 value = form.name,
                 onValueChange = viewModel::setName,
-                label = { Text("Name") },
+                label = { Text(t("edit.name")) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -66,7 +67,7 @@ fun EditCipherScreen(
             OutlinedTextField(
                 value = form.username,
                 onValueChange = viewModel::setUsername,
-                label = { Text("Username") },
+                label = { Text(t("edit.username")) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -74,7 +75,7 @@ fun EditCipherScreen(
             OutlinedTextField(
                 value = form.password,
                 onValueChange = viewModel::setPassword,
-                label = { Text("Password") },
+                label = { Text(t("edit.password")) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
@@ -83,13 +84,13 @@ fun EditCipherScreen(
             OutlinedTextField(
                 value = form.notes,
                 onValueChange = viewModel::setNotes,
-                label = { Text("Notes") },
+                label = { Text(t("edit.notes")) },
                 modifier = Modifier.fillMaxWidth().height(96.dp),
             )
             Spacer(Modifier.height(8.dp))
             androidx.compose.foundation.layout.Row {
                 Checkbox(checked = form.favorite, onCheckedChange = viewModel::setFavorite)
-                Text("Favorite", modifier = Modifier.padding(top = 12.dp))
+                Text(t("edit.favorite"), modifier = Modifier.padding(top = 12.dp))
             }
             Spacer(Modifier.height(16.dp))
             Button(
@@ -104,7 +105,7 @@ fun EditCipherScreen(
                 },
                 enabled = form.name.isNotBlank() && !saving,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (saving) "Saving…" else "Save") }
+            ) { Text(if (saving) t("common.saving") else t("common.save")) }
             error?.let {
                 Spacer(Modifier.height(8.dp))
                 Text(it, color = androidx.compose.material3.MaterialTheme.colorScheme.error)

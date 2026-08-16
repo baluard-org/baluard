@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
+import xyz.actitud.baluard.i18n.t
 
 /**
  * Vault list screen (Phase 3). Renders cipher metadata from the runtime index.
@@ -45,7 +46,7 @@ fun VaultListScreen(
 
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text("Vault") },
+            title = { Text(t("vault.title")) },
             actions = {
                 IconButton(onClick = {
                     scope.launch {
@@ -53,7 +54,7 @@ fun VaultListScreen(
                         onLocked()
                     }
                 }) {
-                    Icon(Icons.Default.Lock, contentDescription = "Lock vault")
+                    Icon(Icons.Default.Lock, contentDescription = t("vault.lockVault"))
                 }
             },
         )
@@ -62,7 +63,7 @@ fun VaultListScreen(
             OutlinedTextField(
                 value = query,
                 onValueChange = { listViewModel.setQuery(it) },
-                label = { Text("Search") },
+                label = { Text(t("common.search")) },
                 singleLine = true,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
@@ -70,6 +71,14 @@ fun VaultListScreen(
                 items(listViewModel.filtered(), key = { it.id }) { meta ->
                     CipherRow(meta)
                 }
+            }
+            if (listViewModel.filtered().isEmpty()) {
+                Text(
+                    t("vault.empty"),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(24.dp),
+                )
             }
         }
     }

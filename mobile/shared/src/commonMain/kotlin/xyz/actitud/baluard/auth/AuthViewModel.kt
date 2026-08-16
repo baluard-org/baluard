@@ -49,6 +49,15 @@ class AuthViewModel(private val repo: VaultRepository) {
     /** The unlocked vault, or null if not yet unlocked. */
     fun vault(): MobileVault? = vault
 
+    /**
+     * Adopt a vault handle produced outside [openAndUnlock]: the onboarding
+     * create flow (plan §5.5) and the recovery-phrase enroll flow (§5.4).
+     * The handle arrives already unlocked from the FFI.
+     */
+    fun adopt(v: MobileVault) {
+        vault = v
+    }
+
     /** Whether the open vault currently holds an unlocked handle. */
     suspend fun isUnlocked(): Boolean = vault?.isUnlocked() ?: false
 }
