@@ -8,6 +8,7 @@
 > were Request Changes; this version folds all of it in. Owner: Esteban. Builds on
 > `docs/plan-mobile-apps.md` and the desktop provider flow in
 > `docs/plan-git-providers-multi-vault.md`.
+> **UI addendum (2026-08-16):** all five screens (§5) now exist — OnboardingScreen, ProviderConnectScreen, DeviceCodeScreen, RepoPickerScreen, EnrollDeviceScreen, plus CreateVaultScreen + RecoveryPhraseScreen. App.kt routes on the `.baluard` marker. Structure-verified; on-device pass pending the macOS host build.
 
 ## 0. Review record (traceability)
 
