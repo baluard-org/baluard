@@ -1,5 +1,6 @@
 import { render } from "solid-js/web";
 import { createSignal, Show, For, onMount } from "solid-js";
+import { getSettings, updateSettings } from "./settings.js";
 
 // Phase 1 popup: first-run welcome -> pairing ceremony -> URL-filtered login
 // list + autofill/copy.
@@ -63,6 +64,11 @@ const STRINGS = {
     copyTotp: "Copy code",
     copied: "Copied",
     refresh: "Refresh",
+    // Settings
+    settings: "Settings",
+    back: "Back",
+    inlineAutofillTitle: "Show fill suggestions on login forms",
+    inlineAutofillDesc: "Adds a small Baluard button next to login fields. Click it to pick a login and fill the form — no need to open this window. Your passwords still never fill on their own.",
   },
   es: {
     title: "Baluard",
@@ -105,6 +111,11 @@ const STRINGS = {
     copyTotp: "Copiar código",
     copied: "Copiado",
     refresh: "Actualizar",
+    // Settings
+    settings: "Ajustes",
+    back: "Volver",
+    inlineAutofillTitle: "Mostrar sugerencias en formularios de inicio de sesión",
+    inlineAutofillDesc: "Añade un pequeño botón de Baluard junto a los campos de inicio de sesión. Púlsalo para elegir un inicio de sesión y rellenar el formulario — sin abrir esta ventana. Tus contraseñas nunca se rellenan solas.",
   },
 };
 
@@ -119,6 +130,9 @@ const [activeVault, setActiveVault] = createSignal("");
 const [tabUrl, setTabUrl] = createSignal("");
 const [error, setError] = createSignal(null);
 const [copied, setCopied] = createSignal("");
+// Settings view + inline autofill preference (chrome.storage.local).
+const [settingsOpen, setSettingsOpen] = createSignal(false);
+const [inlineAutofill, setInlineAutofill] = createSignal(true);
 
 // First-run flag: persisted in chrome.storage.local. Onboarded users skip the
 // welcome screen on subsequent opens.
@@ -427,6 +441,18 @@ async function isStillUnpaired() {
 }
 
 onMount(boot);
+onMount(async () => {
+  const s = await getSettings();
+  setInlineAutofill(Boolean(s.inlineAutofill));
+});
+
+// Flip the setting. The service worker listens for the storage change and
+// registers/unregisters the inline content script (see background.js
+// syncInlineScript). Takes effect on the next page load.
+async function toggleInlineAutofill() {
+  const next = await updateSettings({ inlineAutofill: !inlineAutofill() });
+  setInlineAutofill(Boolean(next.inlineAutofill));
+}
 
 function App() {
   const t = (k) => (STRINGS[detectLocale()] || STRINGS.en)[k] || k;
@@ -522,6 +548,12 @@ function App() {
             color: var(--color-text);
           }
 
+          .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+          }
+
           .vault-badge {
             font-size: 11px;
             background-color: var(--color-sidebar);
@@ -530,6 +562,67 @@ function App() {
             border-radius: 9999px;
             border: 1px solid var(--color-border);
             font-weight: 500;
+          }
+        }
+
+        /* Settings view */
+        .setting-row {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          cursor: pointer;
+
+          .setting-text {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            flex: 1;
+          }
+
+          .setting-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--color-text);
+          }
+        }
+
+        .toggle {
+          position: relative;
+          flex-shrink: 0;
+          width: 36px;
+          height: 20px;
+          border-radius: 9999px;
+          background-color: var(--color-border);
+          transition: background-color 0.15s ease;
+          display: inline-block;
+
+          &.on {
+            background-color: var(--color-primary);
+          }
+
+          input {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: pointer;
+            margin: 0;
+          }
+
+          .toggle-knob {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 16px;
+            height: 16px;
+            border-radius: 9999px;
+            background-color: #ffffff;
+            transition: transform 0.15s ease;
+            pointer-events: none;
+          }
+
+          &.on .toggle-knob {
+            transform: translateX(16px);
           }
         }
 
@@ -755,11 +848,45 @@ function App() {
 
       <div class="popup-header">
         <strong class="brand-title">{t("title")}</strong>
-        <Show when={activeVault()}>
-          <span class="vault-badge">{t("activeVault")}: {activeVault()}</span>
-        </Show>
+        <div class="header-actions">
+          <Show when={activeVault()}>
+            <span class="vault-badge">{t("activeVault")}: {activeVault()}</span>
+          </Show>
+          <Show when={!settingsOpen()}>
+            <button class="btn-icon" onClick={() => setSettingsOpen(true)} title={t("settings")} aria-label={t("settings")}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+          </Show>
+        </div>
       </div>
 
+      {/* Settings view (replaces the state views; gear toggles back) */}
+      <Show when={settingsOpen()}>
+        <div class="state-block">
+          <div class="state-title">{t("settings")}</div>
+          <label class="setting-row">
+            <div class="setting-text">
+              <div class="setting-name">{t("inlineAutofillTitle")}</div>
+              <div class="state-desc">{t("inlineAutofillDesc")}</div>
+            </div>
+            <span class={`toggle ${inlineAutofill() ? "on" : ""}`}>
+              <input
+                type="checkbox"
+                checked={inlineAutofill()}
+                onChange={toggleInlineAutofill}
+                aria-label={t("inlineAutofillTitle")}
+              />
+              <span class="toggle-knob" aria-hidden="true"></span>
+            </span>
+          </label>
+        </div>
+        <button class="btn-secondary" onClick={() => setSettingsOpen(false)}>{t("back")}</button>
+      </Show>
+
+      <Show when={!settingsOpen()}>
       <Show when={state() === "loading"}>
         <div class="state-block">
           <div class="state-desc">{t("loading")}</div>
@@ -886,6 +1013,7 @@ function App() {
           class="danger"
         />
         <button onClick={() => refresh(false)} class="btn-secondary">{t("retry")}</button>
+      </Show>
       </Show>
     </div>
   );

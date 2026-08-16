@@ -384,6 +384,32 @@ This is the modern industry-default posture (1Password default, Bitwarden
 (malicious page with disguised form harvests creds on visit); we do not repeat
 that mistake.
 
+**Amendment (2026-07-19): in-field dropdown menu, opt-out setting.** Decision
+9's consequence 1 ("no inline field icons") is amended for usability parity
+with 1Password/Bitwarden: `inline.js` is a persistent top-frame content
+script, registered ONLY while the `inlineAutofill` setting is on
+(`chrome.scripting.registerContentScripts`, allFrames: false, document_idle;
+setting default ON, toggle in the popup's Settings view). The security
+posture is unchanged in every load-bearing respect:
+- Still no auto-fill on load. Filling needs two user gestures on OUR UI
+  (icon click -> entry click); the UI lives in a closed Shadow DOM the page
+  cannot traverse, restyle, or synthetically click.
+- Matching stays server-side and origin-truthful: the SW's `inline.matches`
+  route matches against `sender.tab.url` (privileged tab metadata), never a
+  URL the content script claims. `senderUrl()` fails closed on non-http(s)
+  or missing URLs.
+- Credential delivery is push-only: `inline.fill` fetches `vault.get` and
+  pushes `baluard-inline-fill` to the requesting tab with `expectedOrigin`
+  from `sender.tab.url`. The credential is never returned as a message
+  response into the page context.
+- Fill-time origin re-check stays (inline.js refuses if `location.hostname`
+  drifted during the IPC round trip).
+- The icon appears on focus of username/password fields only
+  (`isUsernameField` heuristics: autocomplete hints, word-boundary
+  name/id/placeholder/aria-label hints, text-before-password structure).
+  No continuous form scanning, no page-load probing — nothing
+  fingerprintable beyond what the badge already queries.
+
 **Decision 10 — Multi-vault: extension follows the daemon's active pointer (Model ii).**
 The bridge token is vault-agnostic: scoped to `TokenKind::Bridge { pairing_id }`
 + the allowlist, NOT to a specific slug. The NMH forwards requests with no slug;
@@ -490,7 +516,8 @@ browser/
 │   │   ├── lib/
 │   │   │   ├── nmh.js      # connectNative wrapper, id-multiplex, reconnect
 │   │   │   ├── daemon.js   # allowlisted action helpers
-│   │   │   ├── autofill.js # field detection + fill heuristics (runs on command)
+│   │   │   ├── autofill.js # field detection + fill heuristics (shared: content.js + inline.js)
+│   │   │   ├── inline.js   # in-field dropdown (opt-out setting; registered dynamically by the SW)
 │   │   │   └── pair.js     # Ceremony 3 code entry + completion
 │   │   └── i18n/           # reuse desktop en.json / es.json
 │   └── vite.config.js

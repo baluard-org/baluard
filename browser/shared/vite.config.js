@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
+import { build as esbuild } from "esbuild";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const target = process.env.TARGET || "chrome";
@@ -46,15 +47,28 @@ function extensionPackPlugin() {
     async closeBundle() {
       const outDir = resolve(__dirname, "..", target, "dist");
       mkdirSync(outDir, { recursive: true });
-      copyFileSync(
-        resolve(__dirname, "src/background.js"),
-        resolve(outDir, "background.js")
-      );
-      // Phase 1: content script (fill executor) + offscreen clipboard doc.
-      copyFileSync(
-        resolve(__dirname, "src/content.js"),
-        resolve(outDir, "content.js")
-      );
+      // background.js bundles as an IIFE: it uses ES `export` for unit
+      // tests (which import the SOURCE file), but Firefox loads the built
+      // file as a classic event-page script (background.scripts) where
+      // `export` is a syntax error. IIFE bundling strips the exports;
+      // Chrome's service_worker (type: module) also accepts a plain IIFE.
+      // content.js (popup-driven fill executor) + inline.js (in-field
+      // dropdown, dynamically registered by the SW while the setting is on)
+      // share autofill.js via ES imports, so they bundle the same way.
+      await esbuild({
+        entryPoints: [
+          resolve(__dirname, "src/background.js"),
+          resolve(__dirname, "src/content.js"),
+          resolve(__dirname, "src/inline.js"),
+        ],
+        outdir: outDir,
+        bundle: true,
+        format: "iife",
+        target: "es2022",
+        minify: true,
+        legalComments: "none",
+        logLevel: "warning",
+      });
       copyFileSync(
         resolve(__dirname, "offscreen.html"),
         resolve(outDir, "offscreen.html")
