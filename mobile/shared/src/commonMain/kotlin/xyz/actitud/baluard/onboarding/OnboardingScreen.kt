@@ -22,10 +22,6 @@ import xyz.actitud.baluard.i18n.t
  * app-private path — replaces the bare unlock screen that had nothing to
  * unlock. Two paths mirror desktop: open an existing vault from a git
  * provider, or create a new one.
- *
- * The provider path is wired to the Slice B FFI surface but its screens are
- * not built yet, so the button stays disabled until ProviderConnectScreen
- * lands; [onOpenProvider] is the hook it plugs into.
  */
 @Composable
 fun OnboardingScreen(
@@ -57,7 +53,6 @@ fun OnboardingScreen(
         Spacer(Modifier.height(12.dp))
         OutlinedButton(
             onClick = onOpenProvider,
-            enabled = false,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(t("onboarding.openExisting"))

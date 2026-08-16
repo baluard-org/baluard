@@ -8,6 +8,7 @@ package xyz.actitud.baluard.i18n
 internal val ES: Map<String, String> = mapOf(
     // common
     "common.back" to "Atrás",
+    "common.cancel" to "Cancelar",
     "common.continue" to "Continuar",
     "common.search" to "Buscar",
     "common.save" to "Guardar",
@@ -24,7 +25,7 @@ internal val ES: Map<String, String> = mapOf(
     "onboarding.subtitle" to "Tus contraseñas, guardadas solo para ti",
     "onboarding.createVault" to "Crear una bóveda nueva",
     "onboarding.openExisting" to "Abrir una bóveda existente",
-    "onboarding.openExistingHint" to "Abre una bóveda sincronizada desde otro dispositivo (pronto)",
+    "onboarding.openExistingHint" to "Abre una bóveda sincronizada desde otro dispositivo",
 
     // create vault
     "onboarding.createButton" to "Crear bóveda",
@@ -45,6 +46,46 @@ internal val ES: Map<String, String> = mapOf(
             "si olvidas la contraseña maestra. Escríbelas en papel y guárdalas en un lugar seguro.",
     "recovery.warning" to "Nunca guardes la frase en este dispositivo ni en la nube.",
     "recovery.ack" to "La escribí en papel",
+
+    // provider connect (open existing vault)
+    "provider.title" to "¿Dónde está tu bóveda?",
+    "provider.subtitle" to
+        "Conecta tu cuenta para abrir una bóveda sincronizada desde otro dispositivo.",
+    "provider.github" to "GitHub",
+    "provider.gitlab" to "GitLab",
+    "provider.codeberg" to "Codeberg",
+    "provider.selected" to "{0} ✓",
+    "provider.continueBrowser" to "Continuar en el navegador",
+    "provider.usePatInstead" to "Usar un token de acceso",
+    "provider.continuePat" to "Continuar con token de acceso",
+    "provider.patLabel" to "Token de acceso",
+    "provider.patConnect" to "Conectar",
+
+    // device code (RFC 8628)
+    "deviceCode.title" to "Introduce este código",
+    "deviceCode.subtitle" to
+        "Inicia sesión en tu cuenta en el navegador, luego introduce este código y apruébalo. " +
+            "Esta pantalla espera por sí sola.",
+    "deviceCode.openBrowser" to "Abrir navegador",
+    "deviceCode.waiting" to "Esperando aprobación…",
+    "deviceCode.expired" to "Este código caducó. Vuelve atrás y empieza de nuevo.",
+
+    // repo picker + clone
+    "repo.title" to "Elige tu bóveda",
+    "repo.subtitle" to "Estas son las bóvedas de Baluard encontradas en tu cuenta.",
+    "repo.empty" to "No se encontraron bóvedas de Baluard en esta cuenta.",
+    "repo.cloning" to "Descargando bóveda…",
+    "repo.cloningHint" to "Esto puede tardar un momento. Mantén la app abierta.",
+    "repo.private" to "Privado",
+
+    // device enrollment
+    "enroll.title" to "Confía en este dispositivo",
+    "enroll.subtitle" to
+        "Este dispositivo aún no es de confianza para la bóveda. Introduce tu frase de " +
+            "recuperación de 24 palabras y la contraseña maestra para añadirlo.",
+    "enroll.phraseLabel" to "Frase de recuperación ({0}/24 palabras)",
+    "enroll.phraseHint" to "Escribe las 24 palabras, en orden.",
+    "enroll.button" to "Añadir este dispositivo",
 
     // vault list
     "vault.title" to "Bóveda",

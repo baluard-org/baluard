@@ -9,7 +9,12 @@ import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.auth.UnlockScreen
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.onboarding.CreateVaultScreen
+import xyz.actitud.baluard.onboarding.DeviceCodeScreen
+import xyz.actitud.baluard.onboarding.EnrollDeviceScreen
 import xyz.actitud.baluard.onboarding.OnboardingScreen
+import xyz.actitud.baluard.onboarding.ProviderConnectScreen
+import xyz.actitud.baluard.onboarding.ProviderFlowViewModel
+import xyz.actitud.baluard.onboarding.RepoPickerScreen
 import xyz.actitud.baluard.platform.AppPaths
 import xyz.actitud.baluard.ui.theme.BaluardTheme
 import xyz.actitud.baluard.vault.VaultListScreen
@@ -19,7 +24,9 @@ import xyz.actitud.baluard.vault.VaultListViewModel
  * Root navigation (plan §5): no vault at the default path -> OnboardingScreen;
  * vault exists -> UnlockScreen; unlocked -> VaultListScreen. The create flow
  * replaces the onboarding root until its recovery-phrase ack completes, then
- * lands directly in the vault list (the FFI returns the vault unlocked).
+ * lands directly in the vault list (the FFI returns the vault unlocked). The
+ * open-from-provider flow (connect -> code -> repos -> clone -> enroll) is
+ * driven by [ProviderFlowViewModel] stages.
  *
  * [vaultPath] overrides the platform default (host intent / debug builds).
  */
@@ -31,11 +38,13 @@ fun App(vaultPath: String? = null) {
         }
         var hasVault by remember { mutableStateOf(AppPaths.vaultExists(path)) }
         var showCreate by remember { mutableStateOf(false) }
+        var showOpen by remember { mutableStateOf(false) }
         var unlocked by remember { mutableStateOf(false) }
 
         val repo = remember { VaultRepository() }
         val auth = remember { AuthViewModel(repo) }
         val listVm = remember { VaultListViewModel(repo) }
+        val flowVm = remember { ProviderFlowViewModel(repo, auth) }
 
         when {
             unlocked -> auth.vault()?.let { vault ->
@@ -58,8 +67,56 @@ fun App(vaultPath: String? = null) {
                 onCancelled = { showCreate = false },
             )
 
+            showOpen -> {
+                val stage = flowVm.stage
+                val code = stage as? ProviderFlowViewModel.Stage.DeviceCode
+                val repos = stage as? ProviderFlowViewModel.Stage.Repos
+                when {
+                    code != null -> DeviceCodeScreen(
+                        vm = flowVm,
+                        flow = code.flow,
+                        onAuthorized = { }, // stage flipped to Repos by the VM
+                        onCancelled = {
+                            flowVm.backToPickProvider()
+                        },
+                    )
+
+                    stage is ProviderFlowViewModel.Stage.Enroll -> EnrollDeviceScreen(
+                        vm = flowVm,
+                        vaultPath = path,
+                        onEnrolled = {
+                            hasVault = true
+                            showOpen = false
+                            unlocked = true
+                        },
+                        onCancelled = { flowVm.backToRepos() },
+                    )
+
+                    repos != null || stage is ProviderFlowViewModel.Stage.Cloning -> RepoPickerScreen(
+                        vm = flowVm,
+                        repos = (repos?.repos ?: flowVm.repos),
+                        vaultPath = path,
+                        onCloneDone = { }, // stage drives the next screen
+                        onCancelled = { flowVm.backToPickProvider() },
+                    )
+
+                    else -> ProviderConnectScreen(
+                        vm = flowVm,
+                        onDeviceCodeStarted = { }, // stage flipped to DeviceCode
+                        onPatConnected = { }, // stage flipped to Repos
+                        onCancelled = {
+                            // A clone may have landed mid-flow; re-check so a
+                            // vault that exists routes to unlock, not onboarding.
+                            hasVault = AppPaths.vaultExists(path)
+                            showOpen = false
+                        },
+                    )
+                }
+            }
+
             !hasVault -> OnboardingScreen(
                 onCreateVault = { showCreate = true },
+                onOpenProvider = { showOpen = true },
             )
 
             else -> UnlockScreen(

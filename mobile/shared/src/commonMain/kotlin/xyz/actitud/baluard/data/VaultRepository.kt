@@ -8,6 +8,16 @@ import xyz.actitud.baluard.MobileRecoveryPhrase
 import xyz.actitud.baluard.openVault as uniffiOpenVault
 import xyz.actitud.baluard.createVault as uniffiCreateVault
 import xyz.actitud.baluard.createVaultWithRecovery as uniffiCreateVaultWithRecovery
+import xyz.actitud.baluard.MobileCloneJob
+import xyz.actitud.baluard.MobileDeviceFlow
+import xyz.actitud.baluard.MobileProvider
+import xyz.actitud.baluard.MobileProviderConfig
+import xyz.actitud.baluard.MobileRepo
+import xyz.actitud.baluard.cloneVaultStart as uniffiCloneVaultStart
+import xyz.actitud.baluard.connectPat as uniffiConnectPat
+import xyz.actitud.baluard.enrollDeviceWithPhrase as uniffiEnrollDeviceWithPhrase
+import xyz.actitud.baluard.listVaultRepos as uniffiListVaultRepos
+import xyz.actitud.baluard.startDeviceFlow as uniffiStartDeviceFlow
 
 /**
  * Thin wrapper over the UniFFI-generated Kotlin bindings.
@@ -53,4 +63,42 @@ class VaultRepository {
     suspend fun updateCipher(vault: MobileVault, payload: String): Unit = vault.updateCipher(payload)
     suspend fun deleteCipher(vault: MobileVault, id: String): Unit = vault.deleteCipher(id)
     suspend fun totpCode(vault: MobileVault, id: String): String = vault.totpCode(id)
+
+    // ── Slice B: provider onboarding (plan §4) ──
+
+    /** Start an RFC 8628 device-flow session; poll via [MobileDeviceFlow.poll]. */
+    suspend fun startDeviceFlow(
+        provider: MobileProvider,
+        config: MobileProviderConfig = MobileProviderConfig(null, null),
+    ): MobileDeviceFlow = uniffiStartDeviceFlow(provider, config)
+
+    /** Connect with a personal access token (Codeberg default; works for all). */
+    suspend fun connectPat(
+        provider: MobileProvider,
+        token: String,
+        config: MobileProviderConfig = MobileProviderConfig(null, null),
+    ) = uniffiConnectPat(provider, token, config)
+
+    /** Repos that look like Baluard vaults on the connected account. */
+    suspend fun listVaultRepos(provider: MobileProvider): List<MobileRepo> =
+        uniffiListVaultRepos(provider)
+
+    /** Clone a vault repo to [localPath]. Cancel via the returned job. */
+    suspend fun cloneVaultStart(
+        provider: MobileProvider,
+        cloneUrl: String,
+        localPath: String,
+    ): MobileCloneJob = uniffiCloneVaultStart(provider, cloneUrl, localPath)
+
+    /**
+     * Enroll this device into an existing vault clone with the 24-word
+     * recovery phrase (plan §2.4: clone -> enroll -> unlock). Returns the
+     * vault already unlocked.
+     */
+    suspend fun enrollDeviceWithPhrase(
+        vaultPath: String,
+        masterPassword: String,
+        recoveryPhrase: String,
+        deviceName: String,
+    ): MobileVault = uniffiEnrollDeviceWithPhrase(vaultPath, masterPassword, recoveryPhrase, deviceName)
 }
