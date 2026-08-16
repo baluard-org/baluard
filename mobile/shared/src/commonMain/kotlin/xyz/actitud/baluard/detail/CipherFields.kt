@@ -16,7 +16,16 @@ internal data class FieldSpec(
 )
 
 /** i18n key for a cipher type's display name. */
-internal fun typeLabelKey(tag: String): String = "detail.type.$tag"
+internal fun typeLabelKey(tag: String): String = "detail.type.${normalizeTypeTag(tag)}"
+
+/** Map the FFI's lowercase Debug tag ("sshkey") to the serde wire tag ("sshKey"). */
+internal fun normalizeTypeTag(tag: String): String = when (tag.lowercase()) {
+    "sshkey" -> "sshKey"
+    "securenote" -> "secureNote"
+    "bankaccount" -> "bankAccount"
+    "driverslicense" -> "driversLicense"
+    else -> tag
+}
 
 internal fun fieldsFor(tag: String): List<FieldSpec> = when (tag) {
     "login" -> listOf(
