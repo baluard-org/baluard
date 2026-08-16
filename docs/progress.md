@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-08-16 (mobile onboarding UI complete: onboarding root, create-vault + recovery-phrase screens, i18n EN/ES across all screens, bindings regenerated; earlier: Phase 2 mobile onboarding runtime & UniFFI surface complete; provider orchestration extracted; core multi-device fixes F1/F2/F3/F4/F6 shipped)
+> Last updated: 2026-08-16 (mobile UI sprint: onboarding root + create-vault/recovery-phrase flow, provider onboarding UI (connect/device-code/clone/enroll), cipher detail for all 8 types, generic edit form for all 8 types (merge-on-save preserves passkeys/URIs/TOTP), vault-list filtering (type/tag/favorites), full app navigation, i18n EN/ES across all screens with both dictionaries key-for-key in sync; MobileCipherMeta now carries tags+archived; bindings regenerated. All structure-verified; on-device run pending the macOS host build per docs/mobile-dev-setup.md. Earlier: Phase 2 mobile onboarding runtime & UniFFI surface complete; provider orchestration extracted; core multi-device fixes F1/F2/F3/F4/F6 shipped)
 
 ---
 
@@ -16,7 +16,7 @@
 
 ## Current Status
 
-Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done**. **Mobile Onboarding & FFI Surface Phase 2 complete**.
+Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done**. **Mobile: onboarding (create + provider flows), vault list w/ filters, detail + edit for all 8 cipher types, generator, TOTP, settings — all scaffolded structure-complete, host-build verification pending**.
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
@@ -28,7 +28,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 - `/crates/baluard-nmh` - Native messaging host binary (browser extension bridge, stdio-JSON <-> varint-protobuf)
 - `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 8 cipher types, generator, TOTP, auto-lock, dark/light themes, i18n en/es, 38 components)
 - `/browser` - Chromium + Firefox MV3 extensions (shared codebase, two targets). KeePassXC-Browser-style bridge client. Paired companion model (rides the desktop's unlock state)
-- `/mobile` - Kotlin Multiplatform app (Compose UI + UniFFI integration; onboarding + create-vault/recovery-phrase flow, vault list, generator, TOTP, settings, i18n EN/ES)
+- `/mobile` - Kotlin Multiplatform app (Compose UI + UniFFI integration; onboarding create + provider flows, vault list with type/tag/favorite filters, detail + edit for all 8 cipher types, generator, TOTP, settings, i18n EN/ES)
 - `/docs` - Architecture, design, threat model, plans, PRDs, ADRs
 
 ---
@@ -407,7 +407,7 @@ baluard/
 │   ├── shared/                    # 95% of code (popup SolidJS, service worker, content script, nmh wrapper, autofill, pair)
 │   ├── chrome/                    # Chrome MV3 wrapper
 │   └── firefox/                   # Firefox MV3 wrapper
-├── mobile/                       # Kotlin Multiplatform app (Compose UI, UniFFI bindings, onboarding + vault list + generator + TOTP + settings screens, i18n EN/ES; debug APK builds on macOS host)
+├── mobile/                       # Kotlin Multiplatform app (Compose UI, UniFFI bindings, onboarding + list/filter + detail + edit + generator + TOTP + settings screens, i18n EN/ES; debug APK builds on macOS host)
 ├── docs/                         # Architecture & design docs (index, arch, decisions, plans, PRDs, threat model, 2fa, post-quantum, brand, app icons)
 └── justfile                      # Build system (`just` recipes for build, test, lint, fmt, desktop, ext-*, app-icons, build-nmh, install-nmh-manifest, codesign)
 ```
