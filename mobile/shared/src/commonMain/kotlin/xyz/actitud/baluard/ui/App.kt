@@ -8,6 +8,10 @@ import androidx.compose.runtime.setValue
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.auth.UnlockScreen
 import xyz.actitud.baluard.data.VaultRepository
+import xyz.actitud.baluard.detail.CipherDetailScreen
+import xyz.actitud.baluard.detail.CipherDetailViewModel
+import xyz.actitud.baluard.edit.EditCipherScreen
+import xyz.actitud.baluard.edit.EditCipherViewModel
 import xyz.actitud.baluard.onboarding.CreateVaultScreen
 import xyz.actitud.baluard.onboarding.DeviceCodeScreen
 import xyz.actitud.baluard.onboarding.EnrollDeviceScreen
@@ -19,6 +23,21 @@ import xyz.actitud.baluard.platform.AppPaths
 import xyz.actitud.baluard.ui.theme.BaluardTheme
 import xyz.actitud.baluard.vault.VaultListScreen
 import xyz.actitud.baluard.vault.VaultListViewModel
+import xyz.actitud.baluard.settings.SettingsScreen
+import xyz.actitud.baluard.settings.SettingsViewModel
+import xyz.actitud.baluard.generator.GeneratorScreen
+import xyz.actitud.baluard.generator.GeneratorViewModel
+import xyz.actitud.baluard.totp.TotpViewModel
+import xyz.actitud.baluard.sync.SyncCoordinator
+
+/** Unlocked-subtree navigation (flat back stack, no nav library yet). */
+private sealed interface Nav {
+    data object List : Nav
+    data class Detail(val cipherId: String) : Nav
+    data class Edit(val cipherId: String?) : Nav
+    data object Generator : Nav
+    data object Settings : Nav
+}
 
 /**
  * Root navigation (plan §5): no vault at the default path -> OnboardingScreen;
@@ -45,15 +64,60 @@ fun App(vaultPath: String? = null) {
         val auth = remember { AuthViewModel(repo) }
         val listVm = remember { VaultListViewModel(repo) }
         val flowVm = remember { ProviderFlowViewModel(repo, auth) }
+        val detailVm = remember { CipherDetailViewModel(repo) }
+        val editVm = remember { EditCipherViewModel(repo) }
+        val totpVm = remember { TotpViewModel(repo) }
+        val generatorVm = remember { GeneratorViewModel(repo) }
+        var nav by remember { mutableStateOf<Nav>(Nav.List) }
 
         when {
             unlocked -> auth.vault()?.let { vault ->
-                VaultListScreen(
-                    vault = vault,
-                    listViewModel = listVm,
-                    authViewModel = auth,
-                    onLocked = { unlocked = false },
-                )
+                when (val n = nav) {
+                    is Nav.List -> VaultListScreen(
+                        vault = vault,
+                        listViewModel = listVm,
+                        authViewModel = auth,
+                        onLocked = {
+                            nav = Nav.List
+                            unlocked = false
+                        },
+                        onCipherClick = { nav = Nav.Detail(it) },
+                        onAddEntry = { nav = Nav.Edit(null) },
+                        onOpenGenerator = { nav = Nav.Generator },
+                        onOpenSettings = { nav = Nav.Settings },
+                    )
+
+                    is Nav.Detail -> CipherDetailScreen(
+                        vault = vault,
+                        cipherId = n.cipherId,
+                        detailViewModel = detailVm,
+                        totpViewModel = totpVm,
+                        onEdit = { nav = Nav.Edit(n.cipherId) },
+                        onBack = { nav = Nav.List },
+                    )
+
+                    is Nav.Edit -> EditCipherScreen(
+                        vault = vault,
+                        cipherId = n.cipherId,
+                        viewModel = editVm,
+                        onSaved = {
+                            nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId)
+                        },
+                        onCancelled = { nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId) },
+                    )
+
+                    Nav.Generator -> GeneratorScreen(
+                        viewModel = generatorVm,
+                        onBack = { nav = Nav.List },
+                    )
+
+                    Nav.Settings -> SettingsScreen(
+                        vault = vault,
+                        coordinator = remember { SyncCoordinator() },
+                        viewModel = remember { SettingsViewModel() },
+                        onBack = { nav = Nav.List },
+                    )
+                }
             }
 
             showCreate -> CreateVaultScreen(

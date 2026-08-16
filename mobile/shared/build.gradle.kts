@@ -27,6 +27,9 @@ kotlin {
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)
+            // Extended icons (ContentCopy, Visibility) for the detail screen;
+            // R8 shrinks unused glyphs on release builds.
+            implementation(compose.materialIconsExtended)
             implementation(compose.components.resources)
             // Coroutines for StateFlow / suspend FFI calls (UniFFI async).
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
