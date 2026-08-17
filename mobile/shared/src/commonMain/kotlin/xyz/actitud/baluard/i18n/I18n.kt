@@ -1,6 +1,8 @@
 package xyz.actitud.baluard.i18n
 
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import xyz.actitud.baluard.platform.platformLanguage
 
 /**

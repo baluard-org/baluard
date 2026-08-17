@@ -8,7 +8,7 @@ package xyz.actitud.baluard.detail
  *
  * Tags match the serde-tagged enum: {type: "login"|"card"|...} (camelCase).
  */
-internal data class FieldSpec(
+data class FieldSpec(
     val labelKey: String,
     val wireKey: String,
     val sensitive: Boolean = false,

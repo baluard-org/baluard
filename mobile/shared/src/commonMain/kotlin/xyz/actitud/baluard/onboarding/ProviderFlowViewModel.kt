@@ -83,11 +83,11 @@ class ProviderFlowViewModel(
     suspend fun pollDeviceFlow(flow: MobileDeviceFlow): MobileDeviceFlowStatus {
         return try {
             when (val s = flow.poll()) {
-                is MobileDeviceFlowStatus.SLOW_DOWN -> {
+                MobileDeviceFlowStatus.SLOW_DOWN -> {
                     pollIntervalMs += 5_000
                     s
                 }
-                is MobileDeviceFlowStatus.SUCCESS -> {
+                MobileDeviceFlowStatus.SUCCESS -> {
                     loadRepos()
                     s
                 }
