@@ -1,9 +1,11 @@
 package xyz.actitud.baluard.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.auth.UnlockScreen
@@ -29,6 +31,7 @@ import xyz.actitud.baluard.generator.GeneratorScreen
 import xyz.actitud.baluard.generator.GeneratorViewModel
 import xyz.actitud.baluard.totp.TotpViewModel
 import xyz.actitud.baluard.sync.SyncCoordinator
+import kotlinx.coroutines.launch
 
 /** Unlocked-subtree navigation (flat back stack, no nav library yet). */
 private sealed interface Nav {
@@ -62,6 +65,7 @@ fun App(vaultPath: String? = null) {
 
         val repo = remember { VaultRepository() }
         val auth = remember { AuthViewModel(repo) }
+        val sync = remember { SyncCoordinator() }
         val listVm = remember { VaultListViewModel(repo) }
         val flowVm = remember { ProviderFlowViewModel(repo, auth) }
         val detailVm = remember { CipherDetailViewModel(repo) }
@@ -70,6 +74,21 @@ fun App(vaultPath: String? = null) {
         val generatorVm = remember { GeneratorViewModel(repo) }
         var nav by remember { mutableStateOf<Nav>(Nav.List) }
         var saveRevision by remember { mutableStateOf(0) }
+        val scope = rememberCoroutineScope()
+
+        // B3 sync wiring: pull right after unlock. The Android foreground-pull
+        // lifecycle glue (ProcessLifecycleOwner -> onForeground) lands with the
+        // host build; the suspend bridge parks on the shared tokio runtime.
+        LaunchedEffect(unlocked) {
+            if (unlocked) auth.vault()?.let { v -> runCatching { sync.onUnlock(v) } }
+        }
+
+        /** Fire-and-forget the 5s debounced push after any local mutation. */
+        fun notifyMutation() {
+            auth.vault()?.let { v ->
+                scope.launch { runCatching { sync.onMutation(v) } }
+            }
+        }
 
         when {
             unlocked -> auth.vault()?.let { vault ->
@@ -97,6 +116,7 @@ fun App(vaultPath: String? = null) {
                         onEdit = { nav = Nav.Edit(n.cipherId) },
                         onDeleted = {
                             saveRevision++
+                            notifyMutation()
                             nav = Nav.List
                         },
                         onBack = { nav = Nav.List },
@@ -109,6 +129,7 @@ fun App(vaultPath: String? = null) {
                         viewModel = editVm,
                         onSaved = {
                             saveRevision++
+                            notifyMutation()
                             nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId)
                         },
                         onCancelled = { nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId) },
