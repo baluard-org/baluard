@@ -72,9 +72,9 @@ jobs:
         run: |
           # Add today's build (clobber if re-run same day/commit).
           gh release upload alpha-debug "/tmp/${APK_NAME}" --clobber -R "$GITHUB_REPOSITORY"
-          # Prune: keep the newest 10 date-stamped APKs.
+          # Prune: keep the newest 3 date-stamped APKs (alpha policy).
           gh release view alpha-debug -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' \
-            | grep '^baluard-alpha-2' | sort | head -n -10 \
+            | grep '^baluard-alpha-2' | sort | head -n -3 \
             | while read -r old; do
                 gh release delete-asset alpha-debug "$old" -y -R "$GITHUB_REPOSITORY" || true
               done
