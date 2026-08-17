@@ -800,8 +800,8 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 
 **Acceptance criteria:**
 
-- [ ] Pull-on-unlock works (within 5s of app foreground)
-- [ ] Push-after-CRUD works (within 10s of save)
+- [ ] Pull-on-unlock works (within 5s of app foreground)  🟡 pull-on-unlock wired 2026-08-17 (Wave B3, commonMain: `LaunchedEffect(unlocked)` → `SyncCoordinator.onUnlock`; foreground-pull lifecycle glue = ProcessLifecycleOwner, pending Android host build)
+- [ ] Push-after-CRUD works (within 10s of save)  🟡 wired 2026-08-17 (Wave B3: `notifyMutation()` on save + delete in `App.kt` → `SyncCoordinator.onMutation` → runtime 5s debounce; on-device timing verify pending APK)
 - [ ] Pull-to-refresh works
 - [ ] "Sync now" button works
 - [ ] Background sync toggle: when ON, sync runs every 15-30 min (platform-dependent)
