@@ -4240,105 +4240,19 @@ pub(crate) fn repo_web_url_from_remote(remote_url: &str) -> Option<String> {
 
 /// Phase 2b: apply the user's verdict to the head paused conflict.
 ///
-/// `keep_local` / `keep_remote` read the raw blob from the chosen side's OID
-/// and hand the bytes to [`SyncEngine::finalize_conflicts`], which writes the
-/// 2-parent merge commit + pushes. No decryption happens here (2b-2 will add
-/// field-level merge; 2b-3 adds `keep_both` with a new cipher UUID).
-///
-/// On success the head is drained via [`AutoSyncHandle::note_resolved`]; if
-/// the queue is now empty the coordinator transitions to Dirty and re-arms the
-/// debounce push (covers both the merge commit and any mutations queued while
-/// the conflict was paused).
+/// Delegates to [`VaultState::conflict_resolve_verdict`] (the single shared
+/// implementation — the mobile FFI hits the same code path).
 #[cfg(feature = "git-sync")]
 async fn handle_sync_conflict_resolve(
     state: &crate::state::VaultState,
     payload_str: &str,
 ) -> Result<String, String> {
-    use baluard_core::sync::engine::SyncEngine;
-
     let payload: serde_json::Value = serde_json::from_str(payload_str)
         .map_err(|e| format!("invalid conflict.resolve payload: {e}"))?;
     let verdict = payload["verdict"]
         .as_str()
         .ok_or_else(|| "missing \"verdict\" (keep_local|keep_remote|keep_both)".to_string())?;
-
-    if verdict == "keep_both" {
-        // keep_both needs decrypt + re-encrypt under a new cipher id. Delegate
-        // to the state method that holds the handle (acquires cycle_lock
-        // internally).
-        return state.conflict_resolve_keep_both().await;
-    }
-
-    // Phase 2b review fix #2: serialize keep_local/keep_remote repo writes
-    // against cycle_lock too (two overlapping sync.conflict.resolve calls
-    // could race finalize_conflicts' HEAD-tip guard).
-    let _cycle_guard = state.autosync.cycle_lock_guard().await;
-
-    let pending = state
-        .autosync
-        .peek_pending_conflict()
-        .await
-        .ok_or_else(|| "no pending conflict to resolve".to_string())?;
-
-    // Pick the source OID for each conflicting file's bytes.
-    let src_oid = match verdict {
-        "keep_local" => pending.local_oid,
-        "keep_remote" => pending.remote_oid,
-        other => return Err(format!("unknown verdict: {other}")),
-    };
-
-    let vault_path = state.vault_path.clone();
-    let device = device_name(&vault_path);
-    let pending_clone = pending.clone();
-    let join_result = tokio::time::timeout(
-        SYNC_OP_TIMEOUT,
-        tokio::task::spawn_blocking(move || -> (bool, Option<String>) {
-            let engine = SyncEngine::new(&vault_path, &device);
-            let repo = match engine.open_repo() {
-                Ok(r) => r,
-                Err(e) => return (false, Some(format!("open repo: {e}"))),
-            };
-            // Read each conflicting file's bytes from the chosen side.
-            let mut resolved: Vec<(String, Vec<u8>)> =
-                Vec::with_capacity(pending_clone.files.len());
-            for f in &pending_clone.files {
-                let bytes = match SyncEngine::read_blob_from_commit(&repo, src_oid, f) {
-                    Ok(b) => b,
-                    Err(e) => return (false, Some(format!("read {f}: {e}"))),
-                };
-                resolved.push((f.clone(), bytes));
-            }
-            match engine.finalize_conflicts(&repo, &pending_clone, &resolved) {
-                Ok(_) => (true, None),
-                // A push network failure still leaves the merge commit written
-                // locally; the coordinator will retry the push on the next cycle.
-                // Treat as success for queue-draining purposes.
-                Err(e) if baluard_core::sync::engine::is_network_error(&e) => (true, None),
-                Err(e) => (false, Some(format!("finalize: {e}"))),
-            }
-        }),
-    )
-    .await;
-    let (merge_ok, err) = match join_result {
-        Ok(Ok(inner)) => inner,
-        Ok(Err(join_e)) => (false, Some(format!("finalize task join: {join_e}"))),
-        Err(_) => (false, Some("conflict finalize timed out".to_string())),
-    };
-
-    if !merge_ok {
-        return Err(err.unwrap_or_else(|| "finalize failed".to_string()));
-    }
-
-    // Drain the head. note_resolved transitions to Dirty (re-sync) when the
-    // queue empties.
-    state.autosync.note_resolved().await;
-    // Phase 2b: the resolution wrote cipher files directly via SyncEngine
-    // (bypassing VaultHandle's index-rebuild hooks). Rebuild so vault.list
-    // reflects the change (best-effort; index self-heals on next mutation).
-    state.rebuild_cipher_index().await;
-
-    let body = serde_json::json!({ "resolved": true, "remaining": state.autosync.pending_conflict_count().await });
-    serde_json::to_string(&body).map_err(|e| format!("JSON error: {e}"))
+    state.conflict_resolve_verdict(verdict).await
 }
 
 #[cfg(not(feature = "git-sync"))]

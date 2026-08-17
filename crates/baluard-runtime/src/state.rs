@@ -2093,7 +2093,7 @@ impl VaultState {
     /// namespacing per-vault keychain entries. Prefers the loaded handle's
     /// id (available even while locked); falls back to deriving it from
     /// on-disk KDF params when the handle is not yet open.
-    async fn vault_id_str(&self) -> Result<String, String> {
+    pub async fn vault_id_str(&self) -> Result<String, String> {
         if let Some(handle) = self.inner.read().await.as_ref() {
             return Ok(handle.vault_id.to_string());
         }
@@ -2444,6 +2444,91 @@ impl VaultState {
             "remaining": self.autosync.pending_conflict_count().await,
             "new_cipher_id": new_id.to_string(),
             "push_pending": push_failed,
+        })
+        .to_string())
+    }
+
+    /// Phase 2b-1 (keep_local / keep_remote verdicts): read the raw blob from
+    /// the chosen side's OID and hand the bytes to `finalize_conflicts` —
+    /// no decryption happens on this path (cross-epoch safe by construction).
+    /// `keep_both` delegates to [`VaultState::conflict_resolve_keep_both`].
+    ///
+    /// Single implementation shared by the daemon's `sync.conflict.resolve`
+    /// route and the mobile FFI (one implementation, two hosts, zero drift).
+    pub async fn conflict_resolve_verdict(&self, verdict: &str) -> Result<String, String> {
+        use baluard_core::sync::engine::SyncEngine;
+
+        if verdict == "keep_both" {
+            return self.conflict_resolve_keep_both().await;
+        }
+
+        // Serialize against cycle_lock: two overlapping resolve calls could
+        // race finalize_conflicts' HEAD-tip guard (2b review fix #2).
+        let _cycle_guard = self.autosync.cycle_lock_guard().await;
+
+        let pending = self
+            .autosync
+            .peek_pending_conflict()
+            .await
+            .ok_or_else(|| "no pending conflict to resolve".to_string())?;
+
+        let src_oid = match verdict {
+            "keep_local" => pending.local_oid,
+            "keep_remote" => pending.remote_oid,
+            other => return Err(format!("unknown verdict: {other}")),
+        };
+
+        let vault_path = self.vault_path.clone();
+        let device = registry_device_name(&vault_path);
+        let pending_clone = pending.clone();
+        let join_result = tokio::time::timeout(
+            crate::autosync::SYNC_OP_TIMEOUT,
+            tokio::task::spawn_blocking(move || -> (bool, Option<String>) {
+                let engine = SyncEngine::new(&vault_path, &device);
+                let repo = match engine.open_repo() {
+                    Ok(r) => r,
+                    Err(e) => return (false, Some(format!("open repo: {e}"))),
+                };
+                // Read each conflicting file's bytes from the chosen side.
+                let mut resolved: Vec<(String, Vec<u8>)> =
+                    Vec::with_capacity(pending_clone.files.len());
+                for f in &pending_clone.files {
+                    let bytes = match SyncEngine::read_blob_from_commit(&repo, src_oid, f) {
+                        Ok(b) => b,
+                        Err(e) => return (false, Some(format!("read {f}: {e}"))),
+                    };
+                    resolved.push((f.clone(), bytes));
+                }
+                match engine.finalize_conflicts(&repo, &pending_clone, &resolved) {
+                    Ok(_) => (true, None),
+                    // Push network failure still leaves the merge commit
+                    // written locally; treat as success for queue-draining
+                    // (the coordinator retries the push on the next cycle).
+                    Err(e) if baluard_core::sync::engine::is_network_error(&e) => (true, None),
+                    Err(e) => (false, Some(format!("finalize: {e}"))),
+                }
+            }),
+        )
+        .await;
+        let (merge_ok, err) = match join_result {
+            Ok(Ok(inner)) => inner,
+            Ok(Err(join_e)) => (false, Some(format!("finalize task join: {join_e}"))),
+            Err(_) => (false, Some("conflict finalize timed out".to_string())),
+        };
+        if !merge_ok {
+            return Err(err.unwrap_or_else(|| "finalize failed".to_string()));
+        }
+
+        // Drain the head. note_resolved transitions to Dirty (re-sync) when
+        // the queue empties.
+        self.autosync.note_resolved().await;
+        // The resolution wrote cipher files via SyncEngine, bypassing
+        // VaultHandle's index-rebuild hooks. Rebuild (best-effort).
+        self.rebuild_cipher_index().await;
+
+        Ok(serde_json::json!({
+            "resolved": true,
+            "remaining": self.autosync.pending_conflict_count().await,
         })
         .to_string())
     }
@@ -3419,4 +3504,21 @@ fn generate_session_token() -> String {
     let mut buf = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut buf);
     hex::encode(buf)
+}
+
+/// Commit-author label for sync writes that may run while the handle is
+/// absent (conflict verdicts): first device name from the on-disk registry.
+/// Mirrors the daemon's `device_name` helper; "baluard" is the fallback.
+fn registry_device_name(vault_path: &std::path::Path) -> String {
+    let reg_path = vault_path.join("meta/devices.json");
+    if let Ok(data) = std::fs::read_to_string(&reg_path) {
+        if let Ok(reg) =
+            serde_json::from_str::<baluard_core::devices::DeviceRegistry>(&data)
+        {
+            if let Some(entry) = reg.devices.values().next() {
+                return entry.name.clone();
+            }
+        }
+    }
+    "baluard".to_string()
 }

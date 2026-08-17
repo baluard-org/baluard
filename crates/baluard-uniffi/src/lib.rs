@@ -240,6 +240,9 @@ pub struct MobileCipherMeta {
     pub username: Option<String>,
     /// Tags for filtering (sidebar pills on desktop).
     pub tags: Vec<String>,
+    /// Folder id (if any) for folder filtering; resolved to a name via
+    /// `list_folders` on the Kotlin side.
+    pub folder_id: Option<String>,
     /// Archived entries are hidden from the mobile list.
     pub archived: bool,
 }
@@ -253,6 +256,7 @@ impl From<baluard_core::types::CipherMeta> for MobileCipherMeta {
             favorite: m.favorite,
             username: m.username,
             tags: m.tags,
+            folder_id: m.folder_id.map(|u| u.to_string()),
             archived: m.archived,
         }
     }
@@ -427,6 +431,28 @@ impl MobileVault {
     /// Resolve a pending conflict by cloning the remote entry with a new UUID (keep both).
     pub async fn resolve_conflict_keep_both(&self) -> Result<String, BaluardError> {
         Ok(self.state.conflict_resolve_keep_both().await?)
+    }
+
+    /// Apply a conflict verdict: "keep_local" | "keep_remote" | "keep_both".
+    /// keep_local/keep_remote are raw-blob picks (cross-epoch safe, no decrypt);
+    /// keep_both decrypts + clones the remote side under a new UUID. Returns
+    /// JSON `{resolved, remaining}`.
+    pub async fn resolve_conflict(&self, verdict: String) -> Result<String, BaluardError> {
+        Ok(self.state.conflict_resolve_verdict(&verdict).await?)
+    }
+
+    /// Whether the vault should auto-lock NOW (idle >= the vault's
+    /// `vault_timeout` policy). Side-effect free; the host calls `lock()` on
+    /// true. Foreground-lifecycle driven on mobile (no background walker).
+    pub async fn should_auto_lock(&self) -> bool {
+        self.state.should_auto_lock().await
+    }
+
+    /// Deterministic vault UUID (derived from the KDF salt, stable across
+    /// renames + git sync). Scopes platform keychain entries (e.g. the
+    /// biometric-gated KEK) per vault.
+    pub async fn vault_id(&self) -> Result<String, BaluardError> {
+        Ok(self.state.vault_id_str().await?)
     }
 
     // ── Folders & Tags ────────────────────────────────────────────────────
