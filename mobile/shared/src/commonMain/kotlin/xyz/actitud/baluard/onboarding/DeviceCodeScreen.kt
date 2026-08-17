@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import xyz.actitud.baluard.MobileDeviceFlowStatus
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.platform.copyToClipboard
 import xyz.actitud.baluard.platform.openUrl
 
 /**
@@ -89,6 +91,11 @@ fun DeviceCodeScreen(
                 onClick = { openUrl(flow.verificationUri()) },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(t("deviceCode.openBrowser")) }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { copyToClipboard(flow.userCode()) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(t("deviceCode.copy")) }
             Spacer(Modifier.height(16.dp))
             CircularProgressIndicator()
             Spacer(Modifier.height(8.dp))

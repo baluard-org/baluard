@@ -67,6 +67,7 @@ internal val EN: Map<String, String> = mapOf(
         "Sign in to your account in the browser, then enter this code and approve. " +
             "This screen waits by itself.",
     "deviceCode.openBrowser" to "Open browser",
+    "deviceCode.copy" to "Copy code",
     "deviceCode.waiting" to "Waiting for approval…",
     "deviceCode.expired" to "This code expired. Go back and start again.",
 
