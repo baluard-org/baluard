@@ -67,6 +67,7 @@ internal val ES: Map<String, String> = mapOf(
         "Inicia sesión en tu cuenta en el navegador, luego introduce este código y apruébalo. " +
             "Esta pantalla espera por sí sola.",
     "deviceCode.openBrowser" to "Abrir navegador",
+    "deviceCode.copy" to "Copiar código",
     "deviceCode.waiting" to "Esperando aprobación…",
     "deviceCode.expired" to "Este código caducó. Vuelve atrás y empieza de nuevo.",
 
