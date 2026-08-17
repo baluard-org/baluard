@@ -20,7 +20,7 @@ object I18n {
     var language by mutableStateOf(platformLanguage())
         private set
 
-    fun setLanguage(code: String) {
+    fun switchTo(code: String) {
         if (code in DICTS) language = code
     }
 
