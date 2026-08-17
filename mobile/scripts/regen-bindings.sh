@@ -21,6 +21,38 @@ OUT_DIR="$MOBILE_DIR/shared/src/commonMain/kotlin"
 
 [[ -f "$UNIFFI_TOML" ]] || { echo "ERROR: $UNIFFI_TOML missing" >&2; exit 1; }
 
+# Self-heal stale sys-crate link paths before the host build. Homebrew
+# upgrades (e.g. libgit2 1.9.6 -> 1.9.7) delete the Cellar dir that a
+# *-sys build script cached as an -L search path; the next host link then
+# dies with `ld: library 'git2' not found` pointing at the dead path.
+# Scan build outputs for nonexistent link-search paths and clean the
+# offending crate so its build script re-runs against the live prefix.
+clean_stale_sys_crates() {
+  local builds="$REPO_ROOT/target/release/build"
+  [[ -d "$builds" ]] || return 0
+  local out crate name cleaned=0
+  for out in "$builds"/*/output; do
+    [[ -f "$out" ]] || continue
+    crate="$(basename "$(dirname "$out")")"   # e.g. libgit2-sys-8d5f5675
+    [[ "$crate" == *-sys-* ]] || continue
+    name="${crate%-*}"                           # e.g. libgit2-sys
+    while IFS= read -r p; do
+      [[ -n "$p" ]] || continue
+      if [[ ! -e "$p" ]]; then
+        echo "==> Stale link path '$p' in $name build output (brew upgrade?)"
+        echo "    -> cargo clean -p $name"
+        ( cd "$REPO_ROOT" && cargo clean -p "$name" )
+        cleaned=1
+        break
+      fi
+    done < <(grep -oE 'cargo:rustc-link-search=native=[^ ]+' "$out" 2>/dev/null \
+             | sed 's/^cargo:rustc-link-search=native=//' || true)
+  done
+  (( cleaned )) && echo "    (build scripts will re-run on the next build)"
+  return 0
+}
+clean_stale_sys_crates
+
 echo "==> Building host cdylib..."
 ( cd "$REPO_ROOT" && cargo build -p baluard-uniffi --release )
 # Pick the extension matching the host OS. A Linux target dir can carry a
