@@ -1,7 +1,27 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-08-17 (mobile gap waves: Wave A FFI surface — conflict verdicts keep_local/keep_remote/keep_both unified into runtime `conflict_resolve_verdict` (daemon route now delegates, mobile gets `resolveConflict`), `MobileCipherMeta.folder_id`, `shouldAutoLock`, `vaultId` exposed; delete-cipher UI on the detail screen with confirmation dialog (trash semantics); binding-regen script self-heals stale *-sys Cellar link paths after brew upgrades; first host Gradle compile surfaced + fixed 6 Kotlin errors incl. the I18n JVM setter clash. Mobile UI now compiles on host. Folder filtering UI + sync lifecycle wiring + conflict UI + biometric + auto-lock + theme/tests remain, tracked as waves B2-B7)
+> Last updated: 2026-08-17 (Wave B2 folder filter chips: `listFolders` parsed in VaultRepository, `folderFilter`/`allFolders()` in VaultListViewModel, folder-name chips in the vault list filter row. Mobile gradle on this Linux container needs `JAVA_HOME=~/.linuxbrew/opt/openjdk@17` — Gradle 8.10 rejects the default JDK 26; `:shared:compileKotlinMetadata` is the verification gate here. Previous: Wave A FFI surface — conflict verdicts unified into runtime `conflict_resolve_verdict` (daemon route delegates, mobile gets `resolveConflict`), `MobileCipherMeta.folder_id`, `shouldAutoLock`, `vaultId` exposed; delete-cipher UI on the detail screen; first host Gradle compile + 6 Kotlin fixes. Mobile UI compiles on host. B3 sync wiring + conflict UI + biometric + auto-lock + theme/tests remain)
+
+---
+
+## Current Frontier (read this first on session start)
+
+Active work: **mobile app (Android first)**, gap waves B2-B7. Everything before is done.
+
+| Wave | Work | State |
+|------|------|-------|
+| A | FFI surface: conflict verdicts, folder_id, shouldAutoLock, vaultId | ✅ done 2026-08-17 |
+| B2 | Folder filter chip UI | ✅ done 2026-08-17 (metadata-compile green; on-device verify pending APK build) |
+| B3 | Sync lifecycle wiring: pull-on-foreground (`on_foreground`), push-after-CRUD (`on_mutation`) | ⏳ next — runtime events exist, mobile glue pending |
+| B4 | Conflict resolution UI in Compose (`getPendingConflictDetails` + `resolveConflict`) | ⏳ FFI done, UI pending |
+| B5 | Biometric unlock (stubs return false; `unlock_with_kek` path) | ⏳ |
+| B6 | Auto-lock wiring (`shouldAutoLock` exposed) | ⏳ |
+| B7 | Material 3 brand theme + unit/snapshot tests | ⏳ |
+
+Blocked on host (needs macOS + Android SDK/NDK): APK/iOS builds, CI. Rust side compiles on host.
+
+Runtime Phase 0 extraction + Task #2 (event-method surface on `AutoSyncHandle`) are DONE and verified (2026-07-23) — do not re-explore. Docs: `docs/plan-mobile-apps.md` (phases + acceptance checkboxes), `docs/plan-mobile-onboarding.md`.
 
 ---
 

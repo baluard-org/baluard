@@ -61,6 +61,7 @@ fun VaultListScreen(
     val query by listViewModel.query.collectAsState()
     val typeFilter by listViewModel.typeFilter.collectAsState()
     val tagFilter by listViewModel.tagFilter.collectAsState()
+    val folderFilter by listViewModel.folderFilter.collectAsState()
     val favoritesOnly by listViewModel.favoritesOnly.collectAsState()
     val scope = rememberCoroutineScope()
 
@@ -105,11 +106,14 @@ fun VaultListScreen(
             FilterChips(
                 types = listViewModel.allTypes(),
                 tags = listViewModel.allTags(),
+                folders = listViewModel.allFolders(),
                 typeFilter = typeFilter,
                 tagFilter = tagFilter,
+                folderFilter = folderFilter,
                 favoritesOnly = favoritesOnly,
                 onType = { listViewModel.setTypeFilter(if (typeFilter == it) null else it) },
                 onTag = { listViewModel.setTagFilter(if (tagFilter == it) null else it) },
+                onFolder = { listViewModel.setFolderFilter(if (folderFilter == it) null else it) },
                 onFavorites = { listViewModel.setFavoritesOnly(it) },
             )
             val visible = listViewModel.filtered()
@@ -134,11 +138,14 @@ fun VaultListScreen(
 private fun FilterChips(
     types: List<String>,
     tags: List<String>,
+    folders: List<xyz.actitud.baluard.data.MobileFolderInfo>,
     typeFilter: String?,
     tagFilter: String?,
+    folderFilter: String?,
     favoritesOnly: Boolean,
     onType: (String) -> Unit,
     onTag: (String) -> Unit,
+    onFolder: (String) -> Unit,
     onFavorites: (Boolean) -> Unit,
 ) {
     Row(
@@ -158,6 +165,13 @@ private fun FilterChips(
                 selected = typeFilter == wire,
                 onClick = { onType(wire) },
                 label = { Text(t(typeLabelKey(normalizeTypeTag(wire)))) },
+            )
+        }
+        folders.forEach { folder ->
+            FilterChip(
+                selected = folderFilter == folder.id,
+                onClick = { onFolder(folder.id) },
+                label = { Text(folder.name) },
             )
         }
         tags.forEach { tag ->

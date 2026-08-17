@@ -742,7 +742,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 **Acceptance criteria:**
 
 - [x] All 8 cipher types render correctly (Login, Card, Identity, SshKey, SecureNote, BankAccount, DriversLicense, Passport)  ✅ 2026-08-16 (detail screen, shared field schema; structure-verified, host build pending)
-- [ ] Folder/tag filtering works  🟡 tag + type + favorites chips done 2026-08-16; folder FFI unblocked 2026-08-17 (`MobileCipherMeta.folder_id` + existing `list_folders` binding); folder chip UI pending
+- [x] Folder/tag filtering works  ✅ tag + type + favorites chips 2026-08-16; folder chips 2026-08-17 (Wave B2: `VaultRepository.listFolders` parses `list_folders` JSON into `MobileFolderInfo`, ViewModel `folderFilter` state + `allFolders()` shows only non-empty folders, chip row renders folder-name chips keyed by id, `filtered()` matches `MobileCipherMeta.folderId`. Metadata-compile green; on-device verify pending with APK build)
 - [ ] Search returns relevant results within 200ms for 1,000-entry vault  🟡 client-side name/username filter exists; Rust-side full-text search + perf measurement pending
 - [x] en + es translations complete  ✅ 2026-08-16 (i18n layer, both dictionaries, parity script-checked)
 - [ ] Material 3 theme matches desktop brand palette  ⏳ default BaluardTheme only
@@ -754,7 +754,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 
 ### Phase 4: Cipher edit + generator + TOTP
 
-> **Status: EDIT FOR ALL 8 TYPES DONE (2026-08-16), HOST-BUILD PENDING.** GeneratorScreen + TotpWidget scaffolded 2026-07-23; EditCipherScreen generalized 2026-08-16 to all 8 types by reusing the detail field schema (one generic renderer, type picker on new entries, sensitive-input masking). Save is merge-on-save: the loaded `data` object is preserved and only edited keys are overwritten — fixing a latent wipe where the old login-only builder nulled passkeys/URIs/TOTP on every edit. Remaining: delete-from-detail UI, debounced-push-after-save wiring (runtime `on_mutation` exists), pull-to-refresh.
+> **Status: EDIT FOR ALL 8 TYPES DONE (2026-08-16), DELETE DONE (2026-08-17), HOST-BUILD PENDING.** GeneratorScreen + TotpWidget scaffolded 2026-07-23; EditCipherScreen generalized 2026-08-16 to all 8 types by reusing the detail field schema (one generic renderer, type picker on new entries, sensitive-input masking). Save is merge-on-save: the loaded `data` object is preserved and only edited keys are overwritten — fixing a latent wipe where the old login-only builder nulled passkeys/URIs/TOTP on every edit. Remaining: debounced-push-after-save wiring (runtime `on_mutation` exists), pull-to-refresh.
 
 **Goal:** Full CRUD on mobile. Match desktop UX.
 

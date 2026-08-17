@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import xyz.actitud.baluard.MobileCipherMeta
 import xyz.actitud.baluard.MobileVault
+import xyz.actitud.baluard.data.MobileFolderInfo
 import xyz.actitud.baluard.data.VaultRepository
 
 /**
@@ -12,7 +13,7 @@ import xyz.actitud.baluard.data.VaultRepository
  * recomposes on changes.
  *
  * Filtering: text search (name/username) + optional type chip + optional tag
- * chip + favorites-only toggle. Archived entries never render. All filters
+ * chip + optional folder chip + favorites-only toggle. Archived entries never render. All filters
  * are client-side for Phase 3; the plan mentions Rust-side full-text search
  * for large vaults (>1000 entries) — that optimization lands when measured
  * perf demands it.
@@ -30,17 +31,24 @@ class VaultListViewModel(private val repo: VaultRepository) {
     /** Selected tag chip, or null. */
     val tagFilter = MutableStateFlow<String?>(null)
 
+    /** Selected folder chip (folder id), or null. */
+    val folderFilter = MutableStateFlow<String?>(null)
+
+    private val _folders = MutableStateFlow<List<MobileFolderInfo>>(emptyList())
+
     val favoritesOnly = MutableStateFlow(false)
 
     fun setQuery(q: String) { _query.value = q }
 
     fun setTypeFilter(tag: String?) { typeFilter.value = tag }
     fun setTagFilter(tag: String?) { tagFilter.value = tag }
+    fun setFolderFilter(id: String?) { folderFilter.value = id }
     fun setFavoritesOnly(v: Boolean) { favoritesOnly.value = v }
 
     /** Reload the cipher index from the runtime. Call after unlock + after mutations. */
     suspend fun refresh(vault: MobileVault) {
         _ciphers.value = repo.listCiphers(vault)
+        _folders.value = runCatching { repo.listFolders(vault) }.getOrDefault(emptyList())
     }
 
     /** Distinct tags across visible (non-archived) entries, for the chip row. */
@@ -51,16 +59,28 @@ class VaultListViewModel(private val repo: VaultRepository) {
     fun allTypes(): List<String> =
         _ciphers.value.filter { !it.archived }.map { it.cipherType }.distinct().sorted()
 
+    /** Folders that hold at least one visible entry, for the chip row. */
+    fun allFolders(): List<MobileFolderInfo> {
+        val used = _ciphers.value.filter { !it.archived }.mapNotNull { it.folderId }.toSet()
+        return _folders.value.filter { it.id in used }.sortedBy { it.name }
+    }
+
+    /** Folder name lookup for the selected filter (ids are opaque). */
+    fun folderName(id: String?): String? =
+        _folders.value.firstOrNull { it.id == id }?.name
+
     /** Apply the current filters. */
     fun filtered(): List<MobileCipherMeta> {
         val q = _query.value.trim()
         val type = typeFilter.value
         val tag = tagFilter.value
+        val folder = folderFilter.value
         val favOnly = favoritesOnly.value
         return _ciphers.value.filter { m ->
             !m.archived &&
                 (type == null || m.cipherType == type) &&
                 (tag == null || m.tags.contains(tag)) &&
+                (folder == null || m.folderId == folder) &&
                 (!favOnly || m.favorite) &&
                 (q.isEmpty() || m.name.contains(q, ignoreCase = true) ||
                     (m.username?.contains(q, ignoreCase = true) ?: false))
