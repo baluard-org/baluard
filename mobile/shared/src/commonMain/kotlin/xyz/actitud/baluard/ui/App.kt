@@ -95,6 +95,10 @@ fun App(vaultPath: String? = null) {
                         detailViewModel = detailVm,
                         totpViewModel = totpVm,
                         onEdit = { nav = Nav.Edit(n.cipherId) },
+                        onDeleted = {
+                            saveRevision++
+                            nav = Nav.List
+                        },
                         onBack = { nav = Nav.List },
                         revision = saveRevision,
                     )
