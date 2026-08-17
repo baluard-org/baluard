@@ -831,6 +831,12 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -910,9 +916,13 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_rename_folder(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_resolve_conflict(`ptr`: Pointer,`verdict`: RustBuffer.ByValue,
+    ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_resolve_conflict_keep_both(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_set_settings(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_should_auto_lock(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_sync_offline_tick(`ptr`: Pointer,
     ): Long
@@ -935,6 +945,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_unlock_with_kek(`ptr`: Pointer,`kek`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_update_cipher(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_vault_id(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_clone_vault_start(`provider`: RustBuffer.ByValue,`cloneUrl`: RustBuffer.ByValue,`localPath`: RustBuffer.ByValue,
     ): Long
@@ -1160,9 +1172,13 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_rename_folder(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_resolve_conflict(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_resolve_conflict_keep_both(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_set_settings(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_sync_offline_tick(
     ): Short
@@ -1185,6 +1201,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_unlock_with_kek(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_update_cipher(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_vault_id(
     ): Short
     fun ffi_baluard_uniffi_uniffi_contract_version(
     ): Int
@@ -1323,10 +1341,16 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_rename_folder() != 19757.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_resolve_conflict() != 14251.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_resolve_conflict_keep_both() != 19671.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_set_settings() != 36932.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock() != 5891.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_offline_tick() != 35820.toShort()) {
@@ -1360,6 +1384,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_update_cipher() != 61017.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_vault_id() != 48325.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -2381,6 +2408,14 @@ public interface MobileVaultInterface {
     suspend fun `renameFolder`(`payload`: kotlin.String)
     
     /**
+     * Apply a conflict verdict: "keep_local" | "keep_remote" | "keep_both".
+     * keep_local/keep_remote are raw-blob picks (cross-epoch safe, no decrypt);
+     * keep_both decrypts + clones the remote side under a new UUID. Returns
+     * JSON `{resolved, remaining}`.
+     */
+    suspend fun `resolveConflict`(`verdict`: kotlin.String): kotlin.String
+    
+    /**
      * Resolve a pending conflict by cloning the remote entry with a new UUID (keep both).
      */
     suspend fun `resolveConflictKeepBoth`(): kotlin.String
@@ -2389,6 +2424,13 @@ public interface MobileVaultInterface {
      * Update vault settings from JSON string.
      */
     suspend fun `setSettings`(`payload`: kotlin.String)
+    
+    /**
+     * Whether the vault should auto-lock NOW (idle >= the vault's
+     * `vault_timeout` policy). Side-effect free; the host calls `lock()` on
+     * true. Foreground-lifecycle driven on mobile (no background walker).
+     */
+    suspend fun `shouldAutoLock`(): kotlin.Boolean
     
     /**
      * Host-scheduled 30s probe while Offline + foregrounded (the one piece of
@@ -2458,6 +2500,13 @@ public interface MobileVaultInterface {
      * payload (does NOT clone the existing kind).
      */
     suspend fun `updateCipher`(`payload`: kotlin.String)
+    
+    /**
+     * Deterministic vault UUID (derived from the KDF salt, stable across
+     * renames + git sync). Scopes platform keychain entries (e.g. the
+     * biometric-gated KEK) per vault.
+     */
+    suspend fun `vaultId`(): kotlin.String
     
     companion object
 }
@@ -3011,6 +3060,33 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
+     * Apply a conflict verdict: "keep_local" | "keep_remote" | "keep_both".
+     * keep_local/keep_remote are raw-blob picks (cross-epoch safe, no decrypt);
+     * keep_both decrypts + clones the remote side under a new UUID. Returns
+     * JSON `{resolved, remaining}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `resolveConflict`(`verdict`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_resolve_conflict(
+                thisPtr,
+                FfiConverterString.lower(`verdict`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * Resolve a pending conflict by cloning the remote entry with a new UUID (keep both).
      */
     @Throws(BaluardException::class)
@@ -3055,6 +3131,31 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         
         // Error FFI converter
         BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Whether the vault should auto-lock NOW (idle >= the vault's
+     * `vault_timeout` policy). Side-effect free; the host calls `lock()` on
+     * true. Foreground-lifecycle driven on mobile (no background walker).
+     */
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `shouldAutoLock`() : kotlin.Boolean {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_should_auto_lock(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_i8(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_i8(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_i8(future) },
+        // lift function
+        { FfiConverterBoolean.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
     )
     }
 
@@ -3339,6 +3440,32 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
     }
 
     
+    /**
+     * Deterministic vault UUID (derived from the KDF salt, stable across
+     * renames + git sync). Scopes platform keychain entries (e.g. the
+     * biometric-gated KEK) per vault.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `vaultId`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_vault_id(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
 
     
     
@@ -3400,6 +3527,11 @@ data class MobileCipherMeta (
      */
     var `tags`: List<kotlin.String>, 
     /**
+     * Folder id (if any) for folder filtering; resolved to a name via
+     * `list_folders` on the Kotlin side.
+     */
+    var `folderId`: kotlin.String?, 
+    /**
      * Archived entries are hidden from the mobile list.
      */
     var `archived`: kotlin.Boolean
@@ -3420,6 +3552,7 @@ public object FfiConverterTypeMobileCipherMeta: FfiConverterRustBuffer<MobileCip
             FfiConverterBoolean.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
             FfiConverterBoolean.read(buf),
         )
     }
@@ -3431,6 +3564,7 @@ public object FfiConverterTypeMobileCipherMeta: FfiConverterRustBuffer<MobileCip
             FfiConverterBoolean.allocationSize(value.`favorite`) +
             FfiConverterOptionalString.allocationSize(value.`username`) +
             FfiConverterSequenceString.allocationSize(value.`tags`) +
+            FfiConverterOptionalString.allocationSize(value.`folderId`) +
             FfiConverterBoolean.allocationSize(value.`archived`)
     )
 
@@ -3441,6 +3575,7 @@ public object FfiConverterTypeMobileCipherMeta: FfiConverterRustBuffer<MobileCip
             FfiConverterBoolean.write(value.`favorite`, buf)
             FfiConverterOptionalString.write(value.`username`, buf)
             FfiConverterSequenceString.write(value.`tags`, buf)
+            FfiConverterOptionalString.write(value.`folderId`, buf)
             FfiConverterBoolean.write(value.`archived`, buf)
     }
 }
