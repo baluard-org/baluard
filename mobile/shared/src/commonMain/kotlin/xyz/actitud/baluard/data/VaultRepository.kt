@@ -32,6 +32,12 @@ import xyz.actitud.baluard.startDeviceFlow as uniffiStartDeviceFlow
  * Argon2id KDF and git ops run on the parked shared tokio Runtime off the UI
  * thread (plan §3.3).
  */
+/** Minimal folder projection for the list filter (from `vault.list_folders` JSON). */
+data class MobileFolderInfo(
+    val id: String,
+    val name: String,
+)
+
 class VaultRepository {
     fun generateRecoveryPhrase(): MobileRecoveryPhrase = generateRecoveryPhrase()
 
@@ -68,20 +74,14 @@ class VaultRepository {
     suspend fun listFolders(vault: MobileVault): List<MobileFolderInfo> {
         val raw = vault.listFolders()
         val arr = kotlinx.serialization.json.Json.parseToJsonElement(raw)
-        return arr.flatMap { el ->
-            val o = el as? kotlinx.serialization.json.JsonObject ?: return@flatMap emptyList()
+            as? kotlinx.serialization.json.JsonArray ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val o = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
             val id = (o["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
             val name = (o["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content
-            if (id != null && name != null) listOf(MobileFolderInfo(id, name)) else emptyList()
+            if (id != null && name != null) MobileFolderInfo(id, name) else null
         }
     }
-
-    /** Minimal folder projection for the list filter (from `vault.list_folders` JSON). */
-data class MobileFolderInfo(
-    val id: String,
-    val name: String,
-)
-
 // ── Slice B: provider onboarding (plan §4) ──
 
     /** Start an RFC 8628 device-flow session; poll via [MobileDeviceFlow.poll]. */

@@ -36,4 +36,23 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    signingConfigs {
+        // Project debug keystore (mobile/keystore/debug.keystore, alias/store/key
+        // password "baluard"). CI restores it from the BALUARD_DEBUG_KEYSTORE_B64
+        // secret; locally it is git-ignored. Stable signature across builds so
+        // `adb install -r` never fails on a changed key.
+        create("baluardDebug") {
+            storeFile = rootProject.file("keystore/debug.keystore")
+            storePassword = "baluard"
+            keyAlias = "baluard"
+            keyPassword = "baluard"
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("baluardDebug")
+        }
+    }
 }
