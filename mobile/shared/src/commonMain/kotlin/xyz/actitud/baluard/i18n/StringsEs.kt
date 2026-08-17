@@ -99,6 +99,9 @@ internal val ES: Map<String, String> = mapOf(
 
     // cipher detail
     "detail.edit" to "Editar",
+    "detail.delete" to "Eliminar",
+    "detail.deleteTitle" to "Eliminar entrada",
+    "detail.deleteBody" to "\"{0}\" pasa a la papelera. Los dispositivos sincronizados la eliminan en la próxima sincronización.",
     "detail.copy" to "Copiar",
     "detail.reveal" to "Mostrar",
     "detail.hide" to "Ocultar",

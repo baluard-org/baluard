@@ -13,28 +13,33 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.i18n.t
@@ -56,13 +61,18 @@ fun CipherDetailScreen(
     detailViewModel: CipherDetailViewModel,
     totpViewModel: TotpViewModel,
     onEdit: () -> Unit,
+    onDeleted: () -> Unit,
     onBack: () -> Unit,
     /** Bumped by the caller after a save so the reload effect re-fires. */
     revision: Int = 0,
 ) {
     LaunchedEffect(cipherId, revision) { detailViewModel.load(vault, cipherId) }
 
+    LaunchedEffect(cipherId, revision) { detailViewModel.load(vault, cipherId) }
+
     val state = detailViewModel.state
+    val scope = rememberCoroutineScope()
+    var confirmDelete by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -96,6 +106,9 @@ fun CipherDetailScreen(
                     }
                     IconButton(onClick = onEdit) {
                         Icon(Icons.Filled.Edit, contentDescription = t("detail.edit"))
+                    }
+                    IconButton(onClick = { confirmDelete = true }, enabled = state != null) {
+                        Icon(Icons.Filled.Delete, contentDescription = t("detail.delete"))
                     }
                 },
             )
@@ -145,6 +158,26 @@ fun CipherDetailScreen(
             }
             Spacer(Modifier.height(32.dp))
         }
+    }
+
+    if (confirmDelete && state != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text(t("detail.deleteTitle")) },
+            text = { Text(t("detail.deleteBody", state.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    scope.launch {
+                        detailViewModel.delete(vault, state.id)
+                        if (detailViewModel.error == null) onDeleted()
+                    }
+                }) { Text(t("detail.delete")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text(t("common.cancel")) }
+            },
+        )
     }
 }
 

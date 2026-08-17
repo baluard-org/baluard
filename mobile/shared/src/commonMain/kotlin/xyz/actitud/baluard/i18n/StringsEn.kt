@@ -99,6 +99,9 @@ internal val EN: Map<String, String> = mapOf(
 
     // cipher detail
     "detail.edit" to "Edit",
+    "detail.delete" to "Delete",
+    "detail.deleteTitle" to "Delete entry",
+    "detail.deleteBody" to "\"{0}\" moves to the trash. Synced devices delete it on next sync.",
     "detail.copy" to "Copy",
     "detail.reveal" to "Show",
     "detail.hide" to "Hide",

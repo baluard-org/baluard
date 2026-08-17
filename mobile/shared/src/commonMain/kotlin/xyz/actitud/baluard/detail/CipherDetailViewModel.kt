@@ -51,6 +51,18 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
         }
     }
 
+    /** Delete the loaded cipher (trash semantics — the runtime soft-deletes).
+     * The caller navigates back and bumps its reload revision. */
+    suspend fun delete(vault: MobileVault, id: String) {
+        error = null
+        try {
+            repo.deleteCipher(vault, id)
+            state = null
+        } catch (e: Exception) {
+            error = e.message
+        }
+    }
+
     /** Login URIs live under uris: [{uri, matchStrategy}]. */
     private fun parseUris(data: JsonObject?): List<String> =
         (data?.get("uris") as? kotlinx.serialization.json.JsonArray)
