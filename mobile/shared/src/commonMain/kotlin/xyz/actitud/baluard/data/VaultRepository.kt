@@ -64,7 +64,25 @@ class VaultRepository {
     suspend fun deleteCipher(vault: MobileVault, id: String): Unit = vault.deleteCipher(id)
     suspend fun totpCode(vault: MobileVault, id: String): String = vault.totpCode(id)
 
-    // ── Slice B: provider onboarding (plan §4) ──
+    /** Folders as [{id, name}] for the list filter. Empty when the vault has none. */
+    suspend fun listFolders(vault: MobileVault): List<MobileFolderInfo> {
+        val raw = vault.listFolders()
+        val arr = kotlinx.serialization.json.Json.parseToJsonElement(raw)
+        return arr.flatMap { el ->
+            val o = el as? kotlinx.serialization.json.JsonObject ?: return@flatMap emptyList()
+            val id = (o["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val name = (o["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            if (id != null && name != null) listOf(MobileFolderInfo(id, name)) else emptyList()
+        }
+    }
+
+    /** Minimal folder projection for the list filter (from `vault.list_folders` JSON). */
+data class MobileFolderInfo(
+    val id: String,
+    val name: String,
+)
+
+// ── Slice B: provider onboarding (plan §4) ──
 
     /** Start an RFC 8628 device-flow session; poll via [MobileDeviceFlow.poll]. */
     suspend fun startDeviceFlow(
