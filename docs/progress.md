@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-08-16 (mobile UI sprint: onboarding root + create-vault/recovery-phrase flow, provider onboarding UI (connect/device-code/clone/enroll), cipher detail for all 8 types, generic edit form for all 8 types (merge-on-save preserves passkeys/URIs/TOTP), vault-list filtering (type/tag/favorites), full app navigation, i18n EN/ES across all screens with both dictionaries key-for-key in sync; MobileCipherMeta now carries tags+archived; bindings regenerated. All structure-verified; on-device run pending the macOS host build per docs/mobile-dev-setup.md. Earlier: Phase 2 mobile onboarding runtime & UniFFI surface complete; provider orchestration extracted; core multi-device fixes F1/F2/F3/F4/F6 shipped)
+> Last updated: 2026-08-17 (mobile gap waves: Wave A FFI surface — conflict verdicts keep_local/keep_remote/keep_both unified into runtime `conflict_resolve_verdict` (daemon route now delegates, mobile gets `resolveConflict`), `MobileCipherMeta.folder_id`, `shouldAutoLock`, `vaultId` exposed; delete-cipher UI on the detail screen with confirmation dialog (trash semantics); binding-regen script self-heals stale *-sys Cellar link paths after brew upgrades; first host Gradle compile surfaced + fixed 6 Kotlin errors incl. the I18n JVM setter clash. Mobile UI now compiles on host. Folder filtering UI + sync lifecycle wiring + conflict UI + biometric + auto-lock + theme/tests remain, tracked as waves B2-B7)
 
 ---
 

@@ -742,7 +742,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 **Acceptance criteria:**
 
 - [x] All 8 cipher types render correctly (Login, Card, Identity, SshKey, SecureNote, BankAccount, DriversLicense, Passport)  ✅ 2026-08-16 (detail screen, shared field schema; structure-verified, host build pending)
-- [ ] Folder/tag filtering works  🟡 tag + type + favorites chips done 2026-08-16; folder filtering blocked on a folder-list FFI (mobile has no folder read route yet)
+- [ ] Folder/tag filtering works  🟡 tag + type + favorites chips done 2026-08-16; folder FFI unblocked 2026-08-17 (`MobileCipherMeta.folder_id` + existing `list_folders` binding); folder chip UI pending
 - [ ] Search returns relevant results within 200ms for 1,000-entry vault  🟡 client-side name/username filter exists; Rust-side full-text search + perf measurement pending
 - [x] en + es translations complete  ✅ 2026-08-16 (i18n layer, both dictionaries, parity script-checked)
 - [ ] Material 3 theme matches desktop brand palette  ⏳ default BaluardTheme only
@@ -770,7 +770,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 
 **Acceptance criteria:**
 
-- [ ] User can create / edit / delete any cipher type  🟡 create + edit for all 8 types done 2026-08-16 (merge-on-save preserves unmodeled fields); delete UI pending
+- [x] User can create / edit / delete any cipher type  ✅ create + edit for all 8 types done 2026-08-16 (merge-on-save preserves unmodeled fields); delete done 2026-08-17 (detail-screen action + confirmation dialog, trash semantics via existing `deleteCipher` FFI, list reloads through the save-revision bump). Structure-verified; host compile green
 - [x] Generator produces passwords matching desktop output (same `crypto.getRandomValues` path)  ✅ single Rust source (`baluard-core::generator`) drives both; UI scaffolded
 - [x] TOTP codes match desktop's (same Rust logic)  ✅ `totp_code`, seed never crosses FFI; live widget scaffolded
 - [ ] Save triggers sync within 10 seconds (5s debounce + push time)  ⏳ runtime `on_mutation` event exists; mobile lifecycle wiring pending
@@ -805,7 +805,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 - [ ] Pull-to-refresh works
 - [ ] "Sync now" button works
 - [ ] Background sync toggle: when ON, sync runs every 15-30 min (platform-dependent)
-- [ ] Conflict resolution UI surfaces F2/F3/F4 conflicts and resolves correctly
+- [ ] Conflict resolution UI surfaces F2/F3/F4 conflicts and resolves correctly  🟡 FFI surface complete 2026-08-17: `getPendingConflictDetails` + `resolveConflict(verdict)` over the runtime's now-unified `conflict_resolve_verdict` (keep_local/keep_remote raw-blob, keep_both clone; daemon route delegates to the same impl). UI pending
 - [ ] Wi-Fi-only toggle works (first sync always Wi-Fi)
 - [ ] Battery usage <1%/day with background sync OFF, <3%/day with ON (Android measurement)
 
