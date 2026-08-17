@@ -60,11 +60,21 @@ jobs:
           ./gradlew :androidApp:assembleDebug
 
       - name: Stage APK
-        run: cp mobile/androidApp/build/outputs/apk/debug/androidApp-debug.apk /tmp/baluard-alpha.apk
+        run: |
+          STAMP=$(date -u +%Y-%m-%d)
+          cp mobile/androidApp/build/outputs/apk/debug/androidApp-debug.apk \
+            "/tmp/baluard-alpha-${STAMP}-${GITHUB_SHA::7}.apk"
+          echo "APK_NAME=baluard-alpha-${STAMP}-${GITHUB_SHA::7}.apk" >> "$GITHUB_ENV"
 
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete-asset alpha-debug baluard-alpha.apk -y -R "$GITHUB_REPOSITORY" || true
-          gh release upload alpha-debug /tmp/baluard-alpha.apk --clobber -R "$GITHUB_REPOSITORY"
+          # Add today's build (clobber if re-run same day/commit).
+          gh release upload alpha-debug "/tmp/${APK_NAME}" --clobber -R "$GITHUB_REPOSITORY"
+          # Prune: keep the newest 10 date-stamped APKs.
+          gh release view alpha-debug -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' \
+            | grep '^baluard-alpha-2' | sort | head -n -10 \
+            | while read -r old; do
+                gh release delete-asset alpha-debug "$old" -y -R "$GITHUB_REPOSITORY" || true
+              done
