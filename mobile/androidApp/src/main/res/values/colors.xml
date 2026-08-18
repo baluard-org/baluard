@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Light mode splash window background (before Compose draws).
+     Brand light: Clean White / Slate (#F4F6F6). -->
+<resources>
+    <color name="splash_bg">#F4F6F6</color>
+</resources>

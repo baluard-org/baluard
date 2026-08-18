@@ -1,7 +1,6 @@
 package xyz.actitud.baluard.settings
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -111,8 +110,7 @@ private fun ToggleRow(label: String, checked: Boolean, onChecked: (Boolean) -> U
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
     ) {
+        Text(label, modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChecked)
-        Spacer(Modifier.height(0.dp))
-        Text(label, modifier = Modifier.padding(start = 12.dp))
     }
 }

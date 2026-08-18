@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark mode splash window background (before Compose draws).
+     Brand dark: Deep Forest Teal (#091315). -->
+<resources>
+    <color name="splash_bg">#091315</color>
+</resources>

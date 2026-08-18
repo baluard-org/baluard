@@ -30,6 +30,16 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        // Package only ABIs we ship a cdylib for. Alpha default: arm64-v8a
+        // (every test phone since ~2016). Also strips the JNA aar's other-ABI
+        // .so, which would otherwise let a 32-bit device load libjnidispatch
+        // and then fail on the missing libbaluard_uniffi.
+        // Multi-ABI build: ./gradlew -Pbaluard.abis=arm64-v8a,x86_64 :androidApp:assembleDebug
+        ndk {
+            abiFilters += (findProperty("baluard.abis") as String? ?: "arm64-v8a")
+                .split(",").map(String::trim)
+        }
     }
 
     compileOptions {
