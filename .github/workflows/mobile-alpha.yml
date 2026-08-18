@@ -1,28 +1,33 @@
 name: mobile-alpha-apk
 
-# Builds the debug-signed Android APK and attaches it to the "alpha-debug"
-# GitHub release. Triggered manually (or via `gh workflow run`).
+# Builds the debug-signed Android APK (release-profile Rust cdylib, arm64-v8a
+# only) and attaches it to the "alpha-debug" GitHub release.
 #
-# Fast path: uses the committed jniLibs .so (Kotlin/UI changes only).
-# Check "rebuild-native" when Rust code changed to rebuild all 4 ABIs.
+# The Rust cdylib is NOT committed (.gitignore ships `*.so`), so every run
+# builds it. Single ABI + rust-cache + gradle-cache keep that cheap.
 #
 # Keystore: BALUARD_DEBUG_KEYSTORE_B64 secret = base64 of
 # mobile/keystore/debug.keystore (store/key password + alias "baluard").
 
 on:
   workflow_dispatch:
-    inputs:
-      rebuild-native:
-        description: "Rebuild the Rust cdylib (slow)"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
 
+# A double-dispatch cancels the older run instead of paying for both.
+concurrency:
+  group: mobile-alpha
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Hard ceiling vs the 360-min default: a hung run costs 30 min, not 6 h.
+    timeout-minutes: 30
+    env:
+      APK_ABI: arm64-v8a
+      CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
 
@@ -33,37 +38,58 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platforms;android-35 build-tools;35.0.0
 
-      - name: Install SDK pieces
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" > /dev/null
+      # Caches ~/.gradle deps + build cache + config cache; stops daemon post-step.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          build-scan-publish: false
 
-      - name: Rebuild Rust native libs (optional)
-        if: ${{ inputs.rebuild-native }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      # Caches ~/.cargo and ./target; cargo install cargo-ndk becomes a no-op
+      # restore after the first run.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-${{ env.APK_ABI }}
+          cache-all-crates: true
+
+      - name: Build Rust cdylib (release, ${{ env.APK_ABI }} only)
+        timeout-minutes: 20
+        working-directory: mobile
         run: |
-          rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
-          cargo install cargo-ndk
-          cd mobile && cargo ndk -t arm64-v8a -t armeabi-v7a -t x86 -t x86_64 \
-            -o androidApp/src/main/jniLibs -- build -p baluard-uniffi
+          cargo install --locked cargo-ndk
+          cargo ndk -t "$APK_ABI" -o androidApp/src/main/jniLibs \
+            -- build -p baluard-uniffi --release
+          # Fail loud: a missing cdylib used to ship as a crash-on-launch APK.
+          test -s "androidApp/src/main/jniLibs/$APK_ABI/libbaluard_uniffi.so"
 
       - name: Restore keystore
         run: |
           mkdir -p mobile/keystore
           echo "${{ secrets.BALUARD_DEBUG_KEYSTORE_B64 }}" | base64 -d > mobile/keystore/debug.keystore
 
-      - name: Write local.properties
-        run: echo "sdk.dir=$ANDROID_HOME" > mobile/local.properties
-
       - name: Build APK
         working-directory: mobile
+        timeout-minutes: 20
         run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
-          ./gradlew :androidApp:assembleDebug
+          ./gradlew -Pbaluard.abis="$APK_ABI" :androidApp:assembleDebug
+          # Stop the daemon inside the step: a daemon holding the step stdio
+          # is the known cause of the next step appearing hung for 15+ min.
+          ./gradlew --stop
 
       - name: Stage APK
+        timeout-minutes: 2
         run: |
           STAMP=$(date -u +%Y-%m-%d)
-          cp mobile/androidApp/build/outputs/apk/debug/androidApp-debug.apk \
+          mv mobile/androidApp/build/outputs/apk/debug/androidApp-debug.apk \
             "/tmp/baluard-alpha-${STAMP}-${GITHUB_SHA::7}.apk"
+          ls -l "/tmp/baluard-alpha-${STAMP}-${GITHUB_SHA::7}.apk"
           echo "APK_NAME=baluard-alpha-${STAMP}-${GITHUB_SHA::7}.apk" >> "$GITHUB_ENV"
 
       - name: Upload to release
@@ -71,7 +97,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Add today's build (clobber if re-run same day/commit). GitHub
-          # uploads of a ~57MB asset have stalled whole runs before; hard
+          # uploads of large assets have stalled whole runs before; hard
           # 5-minute timeout + retries so a flaky runner fails fast instead
           # of hanging the workflow.
           ok=1

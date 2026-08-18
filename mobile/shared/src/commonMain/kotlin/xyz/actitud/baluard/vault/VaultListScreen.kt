@@ -128,6 +128,10 @@ fun VaultListScreen(
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(visible, key = { it.id }) { meta ->
                     CipherRow(meta, onClick = { onCipherClick(meta.id) })
+                    androidx.compose.material3.HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                    )
                 }
             }
         }

@@ -1,5 +1,11 @@
 package xyz.actitud.baluard.ui
 
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -7,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.auth.UnlockScreen
 import xyz.actitud.baluard.data.VaultRepository
@@ -55,7 +62,11 @@ private sealed interface Nav {
 @Composable
 fun App(vaultPath: String? = null) {
     BaluardTheme {
-        val path = remember(vaultPath) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+        ) {
+            val path = remember(vaultPath) {
             vaultPath?.takeIf { it.isNotBlank() } ?: AppPaths.defaultVaultPath()
         }
         var hasVault by remember { mutableStateOf(AppPaths.vaultExists(path)) }
@@ -218,5 +229,7 @@ fun App(vaultPath: String? = null) {
                 onUnlocked = { unlocked = true },
             )
         }
-    }
-}
+        } // Surface
+    } // BaluardTheme
+} // App
+
