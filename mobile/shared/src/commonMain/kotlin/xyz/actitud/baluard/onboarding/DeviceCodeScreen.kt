@@ -46,6 +46,10 @@ fun DeviceCodeScreen(
 ) {
     var expired by remember { mutableStateOf(false) }
 
+    // Auto-copy the code on entry: the user's next action is pasting it into
+    // the browser (or it is pre-filled via verification_uri_complete).
+    LaunchedEffect(flow) { copyToClipboard(flow.userCode()) }
+
     // Poll loop. Runs while this screen is composed; cancelled on leave.
     LaunchedEffect(flow) {
         while (!expired) {

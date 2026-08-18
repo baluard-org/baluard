@@ -150,8 +150,11 @@ impl ForgeProvider for GitHubProvider {
                 .as_str()
                 .ok_or_else(|| ProviderError::Api("missing user_code".into()))?
                 .to_string(),
-            verification_uri: data["verification_uri"]
+            // verification_uri_complete pre-fills the code (GitHub sends it for
+            // the device flow); fall back to the bare page otherwise.
+            verification_uri: data["verification_uri_complete"]
                 .as_str()
+                .or_else(|| data["verification_uri"].as_str())
                 .ok_or_else(|| ProviderError::Api("missing verification_uri".into()))?
                 .to_string(),
             device_code: data["device_code"]
