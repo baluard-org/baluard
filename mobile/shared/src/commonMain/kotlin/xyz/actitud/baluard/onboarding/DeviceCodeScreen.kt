@@ -45,10 +45,16 @@ fun DeviceCodeScreen(
     onCancelled: () -> Unit,
 ) {
     var expired by remember { mutableStateOf(false) }
+    // Two-step UX: step 1 explains what is coming ("Continue"); step 2 reveals
+    // the code + copy + open-browser, so the browser can never steal the
+    // screen before the user has read/copied the pairing code.
+    var revealed by remember { mutableStateOf(false) }
 
-    // Auto-copy the code on entry: the user's next action is pasting it into
-    // the browser (or it is pre-filled via verification_uri_complete).
-    LaunchedEffect(flow) { copyToClipboard(flow.userCode()) }
+    // Auto-copy on reveal (not on entry): the clipboard should hold the code
+    // right when the user switches to the browser.
+    LaunchedEffect(revealed) {
+        if (revealed) copyToClipboard(flow.userCode())
+    }
 
     // Poll loop. Runs while this screen is composed; cancelled on leave.
     LaunchedEffect(flow) {
@@ -77,6 +83,15 @@ fun DeviceCodeScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(24.dp))
+        if (!revealed && !expired) {
+            Button(
+                onClick = { revealed = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(t("common.continue")) }
+            Spacer(Modifier.height(16.dp))
+            TextButton(onClick = onCancelled) { Text(t("common.cancel")) }
+            return@Column
+        }
         Text(
             flow.userCode(),
             style = MaterialTheme.typography.displaySmall,
@@ -91,15 +106,21 @@ fun DeviceCodeScreen(
                 Text(t("common.back"))
             }
         } else {
-            Button(
-                onClick = { openUrl(flow.verificationUri()) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(t("deviceCode.openBrowser")) }
+            Text(
+                t("deviceCode.hint"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(Modifier.height(8.dp))
             OutlinedButton(
                 onClick = { copyToClipboard(flow.userCode()) },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(t("deviceCode.copy")) }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { openUrl(flow.verificationUri()) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(t("deviceCode.openBrowser")) }
             Spacer(Modifier.height(16.dp))
             CircularProgressIndicator()
             Spacer(Modifier.height(8.dp))
