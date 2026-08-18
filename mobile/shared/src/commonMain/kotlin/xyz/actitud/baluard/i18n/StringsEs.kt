@@ -68,6 +68,7 @@ internal val ES: Map<String, String> = mapOf(
             "Esta pantalla espera por sí sola.",
     "deviceCode.openBrowser" to "Abrir navegador",
     "deviceCode.copy" to "Copiar código",
+    "deviceCode.hint" to "Copia primero el código, abre el navegador e introdúcelo para aprobar.",
     "deviceCode.waiting" to "Esperando aprobación…",
     "deviceCode.expired" to "Este código caducó. Vuelve atrás y empieza de nuevo.",
 
