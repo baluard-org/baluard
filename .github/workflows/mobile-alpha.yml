@@ -70,11 +70,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Add today's build (clobber if re-run same day/commit).
-          gh release upload alpha-debug "/tmp/${APK_NAME}" --clobber -R "$GITHUB_REPOSITORY"
+          # Add today's build (clobber if re-run same day/commit). GitHub
+          # uploads of a ~57MB asset have stalled whole runs before; hard
+          # 5-minute timeout + retries so a flaky runner fails fast instead
+          # of hanging the workflow.
+          ok=1
+          for i in 1 2 3; do
+            if timeout 300 gh release upload alpha-debug "/tmp/${APK_NAME}" --clobber -R "$GITHUB_REPOSITORY"; then ok=0; break; fi
+            echo "upload attempt $i failed/timed out; retrying"; sleep 10
+          done
+          [ "$ok" = 0 ] || { echo "upload failed after 3 attempts"; exit 1; }
           # Prune: keep the newest 3 date-stamped APKs (alpha policy).
           gh release view alpha-debug -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' \
             | grep '^baluard-alpha-2' | sort | head -n -3 \
             | while read -r old; do
-                gh release delete-asset alpha-debug "$old" -y -R "$GITHUB_REPOSITORY" || true
+                timeout 120 gh release delete-asset alpha-debug "$old" -y -R "$GITHUB_REPOSITORY" || true
               done
