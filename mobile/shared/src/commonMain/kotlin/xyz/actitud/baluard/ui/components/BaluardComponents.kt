@@ -261,9 +261,9 @@ fun BaluardLogoBadge(
             Spacer(Modifier.height(14.dp))
             Text(
                 text = "Baluard",
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = (-0.5).sp,
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    fontFamily = xyz.actitud.baluard.ui.theme.brandFontFamily(),
+                    letterSpacing = 0.5.sp,
                 ),
                 color = MaterialTheme.colorScheme.onBackground,
             )
