@@ -107,9 +107,9 @@ export function ConflictResolutionProvider(props) {
   };
 
   return (
-    <ConflictResolutionContext.Provider value={value}>
+    <ConflictResolutionContext value={value}>
       {props.children}
-    </ConflictResolutionContext.Provider>
+    </ConflictResolutionContext>
   );
 }
 

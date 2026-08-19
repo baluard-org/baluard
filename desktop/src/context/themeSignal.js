@@ -37,10 +37,13 @@ function applyTheme() {
 // freshly-mounted component), causing the Show conditions in that
 // component to never re-evaluate. createRoot fixes both.
 createRoot(() => {
-  createEffect(() => {
-    applyTheme();
-    try { localStorage.setItem("baluard-theme", theme()); } catch { /* noop */ }
-  });
+  createEffect(
+    () => theme(),
+    (t) => {
+      applyTheme();
+      try { localStorage.setItem("baluard-theme", t); } catch { /* noop */ }
+    },
+  );
 });
 
 if (mql) {

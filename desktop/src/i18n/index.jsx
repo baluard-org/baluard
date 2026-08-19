@@ -8,7 +8,7 @@
  * - Persists choice to localStorage
  */
 
-import { createSignal, createContext, useContext, batch } from "solid-js";
+import { createSignal, createContext, useContext } from "solid-js";
 
 import en from "./locales/en.json";
 
@@ -69,10 +69,8 @@ export function I18nProvider(props) {
     if (l === locale()) return;
 
     if (l === "en") {
-      batch(() => {
-        setDict(enDict);
-        setLocaleSignal("en");
-      });
+      setDict(enDict);
+      setLocaleSignal("en");
       try { localStorage.setItem(STORAGE_KEY, "en"); } catch { /* noop */ }
       return;
     }
@@ -84,19 +82,15 @@ export function I18nProvider(props) {
         loaded.set(l, flat);
         // Guard: if locale changed again while we were loading, bail
         if (locale() !== l) return;
-        batch(() => {
-          setDict(flat);
-          setLocaleSignal(l);
-        });
+        setDict(flat);
+        setLocaleSignal(l);
       } catch {
         console.warn(`Locale "${l}" not found, keeping current`);
         return;
       }
     } else {
-      batch(() => {
-        setDict(loaded.get(l));
-        setLocaleSignal(l);
-      });
+      setDict(loaded.get(l));
+      setLocaleSignal(l);
     }
     try { localStorage.setItem(STORAGE_KEY, l); } catch { /* noop */ }
   }
@@ -108,9 +102,9 @@ export function I18nProvider(props) {
   }
 
   return (
-    <I18nContext.Provider value={{ t, locale, setLocale }}>
+    <I18nContext value={{ t, locale, setLocale }}>
       {props.children}
-    </I18nContext.Provider>
+    </I18nContext>
   );
 }
 

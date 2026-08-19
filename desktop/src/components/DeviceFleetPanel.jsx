@@ -1,5 +1,5 @@
 import { IconMonitor } from "./Icon.jsx";
-import { onMount, Show, For } from "solid-js";
+import { onSettled, Show, For } from "solid-js";
 import { useVault } from "../context/VaultContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
@@ -8,7 +8,7 @@ export default function DeviceFleetPanel() {
   const vault = useVault();
   const { t } = useI18n();
 
-  onMount(() => {
+  onSettled(() => {
     vault.refreshDeviceFleet?.();
   });
 

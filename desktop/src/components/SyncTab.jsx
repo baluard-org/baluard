@@ -1,4 +1,4 @@
-import { createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js";
+import { createSignal, Show, For, onSettled, onCleanup, createEffect } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { daemon } from "../lib/daemon.js";
@@ -81,8 +81,9 @@ export default function SyncTab() {
   // sync.disconnect firing on the wrong remote). Mirrors VaultView's pattern.
   // Lives after `conn` + all signals so every referenced binding is in scope.
   let lastSlug = switcher.activeSlug();
-  createEffect(() => {
-    const slug = switcher.activeSlug();
+  createEffect(
+    () => switcher.activeSlug(),
+    (slug) => {
     if (slug === lastSlug) return;
     lastSlug = slug;
     // Abort any in-flight auth flow so its poll can't resolve into the new vault.
@@ -108,9 +109,10 @@ export default function SyncTab() {
     // Refresh from the now-active vault so the tab doesn't show stale remote
     // URL / status / sync badge from the previous vault.
     loadState();
-  });
+    },
+  );
 
-  onMount(loadState);
+  onSettled(loadState);
 
   // ── State Detection ──
 

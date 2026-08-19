@@ -1,4 +1,4 @@
-import { render } from "solid-js/web";
+import { render } from "@solidjs/web";
 import { I18nProvider } from "./i18n/index.jsx";
 import { AuthProvider } from "./context/AuthContext.jsx";
 import App from "./App";

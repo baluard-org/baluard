@@ -1,5 +1,5 @@
 import { createSignal, Show } from "solid-js";
-import { Transition } from "solid-transition-group";
+import { Transition } from "../lib/transition";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import ConsolePanel from "./ConsolePanel.jsx";

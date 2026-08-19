@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createSignal, createRoot } from "solid-js";
-import { render } from "solid-js/web";
+import { createSignal, createRoot, flush } from "solid-js";
+import { render } from "@solidjs/web";
 
 // Mock daemon so the autosync poll (every 10s) + the needsdecision fetch don't
 // hit real IPC. Default: nothing active, idle.
@@ -40,13 +40,13 @@ function mount() {
   const dispose = createRoot((disposeFn) => {
     render(
       () => (
-        <VaultSwitcherContext.Provider value={switcher}>
+        <VaultSwitcherContext value={switcher}>
           <ConflictResolutionProvider>
             <AutoSyncProvider>
               <Capture />
             </AutoSyncProvider>
           </ConflictResolutionProvider>
-        </VaultSwitcherContext.Provider>
+        </VaultSwitcherContext>
       ),
       wrap,
     );
@@ -73,11 +73,14 @@ describe("AutoSyncContext vault-switch conflict clear (Phase 4)", () => {
 
     // Enqueue a conflict for vault A.
     conflicts.enqueue(mockSampleConflict({ cipherId: "a-conflict" }));
+    flush();
     expect(conflicts.hasPending()).toBe(true);
 
     // Switch to vault B. AutoSyncContext's createEffect on activeSlug fires
     // conflicts.clear() so vault A's conflict doesn't bleed into vault B.
     setActiveSlug("vault-b");
+    flush();
+    flush();
     expect(conflicts.hasPending()).toBe(false);
     expect(conflicts.count()).toBe(0);
 
@@ -87,10 +90,13 @@ describe("AutoSyncContext vault-switch conflict clear (Phase 4)", () => {
   it("does NOT clear the queue when the slug stays the same (no spurious clear)", () => {
     const { conflicts, setActiveSlug, cleanup } = mount();
     conflicts.enqueue(mockSampleConflict({ cipherId: "a-conflict" }));
+    flush();
     expect(conflicts.hasPending()).toBe(true);
 
     // Setting the same slug is a no-op for the clear effect.
     setActiveSlug("vault-a");
+    flush();
+    flush();
     expect(conflicts.hasPending()).toBe(true);
 
     cleanup();

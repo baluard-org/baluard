@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, fireEvent, waitFor, cleanup } from "@solidjs/testing-library";
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, For, Show, flush } from "solid-js";
 
 // ── Mocks (hoisted) ───────────────────────────────────────────
 
@@ -102,6 +102,7 @@ describe("VaultSwitcher", () => {
     expect(queryByText("Work")).toBeNull();
     // Open the dropdown.
     fireEvent.click(getByText("Personal"));
+    flush();
     expect(getByText("Work")).toBeTruthy();
     expect(getByText("Old")).toBeTruthy();
   });
@@ -109,6 +110,7 @@ describe("VaultSwitcher", () => {
   it("clicking an unlocked vault calls switchTo + refreshCiphers", async () => {
     const { getByText } = render(() => <VaultSwitcher />);
     fireEvent.click(getByText("Personal")); // open
+    flush();
     // Now click the "Work" row (but Work is locked — only Personal is
     // unlocked; clicking Personal again short-circuits because row.active).
     // The only truly-unlocked, non-active row would be one we set up.
@@ -121,8 +123,10 @@ describe("VaultSwitcher", () => {
     const onLocked = vi.fn();
     const { getByText } = render(() => <VaultSwitcher onLockedTarget={onLocked} />);
     fireEvent.click(getByText("Personal")); // open
+    flush();
     // "Work" is locked -> onLockedTarget fires.
     fireEvent.click(getByText("Work"));
+    flush();
     expect(onLocked).toHaveBeenCalledTimes(1);
     expect(onLocked.mock.calls[0][0].slug).toBe("work");
   });
@@ -130,12 +134,14 @@ describe("VaultSwitcher", () => {
   it("clicking the detach trash icon opens the DetachVaultModal with the row", () => {
     const { getByText, getByLabelText } = render(() => <VaultSwitcher />);
     fireEvent.click(getByText("Personal")); // open
+    flush();
     // Each row has a detach button with aria-label "vault.vaultSwitcher.detachVault".
     // Find by title attribute (rendered on the button) — the aria-label
     // uses the same t() interpolation.
     const detachBtns = document.querySelectorAll('[title*="detachVault"]');
     expect(detachBtns.length).toBeGreaterThan(0);
     fireEvent.click(detachBtns[0]); // click Personal's detach (first row)
+    flush();
     // The mock modal exposes data-show + the slug:
     const modal = document.querySelector('[data-testid="detach-modal"]');
     expect(modal).toBeTruthy();
@@ -146,10 +152,12 @@ describe("VaultSwitcher", () => {
   it("close button on a non-active, non-closed vault calls switcher.close", async () => {
     const { getByText, container } = render(() => <VaultSwitcher />);
     fireEvent.click(getByText("Personal")); // open
+    flush();
     // The "Work" row is locked, so it gets a close button (presence !== closed).
     const closeBtns = container.querySelectorAll('[title*="closeVault"]');
     expect(closeBtns.length).toBe(1, "only the locked Work vault has a close button");
     fireEvent.click(closeBtns[0]);
+    flush();
     await waitFor(() => expect(switcherMock.close).toHaveBeenCalledWith("work"));
     expect(toastSuccess).toHaveBeenCalled();
   });
@@ -165,7 +173,9 @@ describe("VaultSwitcher", () => {
     ]);
     const { getByText } = render(() => <VaultSwitcher />);
     fireEvent.click(getByText("Personal"));
+    flush();
     fireEvent.click(getByText("Extra"));
+    flush();
     await waitFor(() => expect(toastError).toHaveBeenCalled());
   });
 });

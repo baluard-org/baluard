@@ -1,4 +1,4 @@
-import { onMount, onCleanup } from "solid-js";
+import { onSettled, onCleanup } from "solid-js";
 
 /**
  * Trap keyboard focus inside a modal dialog.
@@ -54,7 +54,7 @@ export default function FocusTrap(props) {
     }
   }
 
-  onMount(() => {
+  onSettled(() => {
     previouslyFocused = document.activeElement;
     const container = props.containerRef;
     if (!container) return;
