@@ -35,6 +35,26 @@ class AuthViewModel(private val repo: VaultRepository) {
         }
     }
 
+    /**
+     * Biometric quick-unlock (B5, plan §3.7): skip the Argon2id KDF, feed
+     * the keychain-retrieved [kek] straight into the shared unlock tail
+     * (still verifies keywrap + canaries, so a stale KEK fails closed).
+     */
+    suspend fun openAndUnlockWithKek(path: String, kek: ByteArray): UnlockResult {
+        return try {
+            val v = repo.openVault(path)
+            v.unlockWithKek(kek)
+            vault = v
+            UnlockResult.Success
+        } catch (e: Exception) {
+            UnlockResult.Failure(e.message ?: "unlock failed")
+        }
+    }
+
+    /** Argon2id KEK for biometric enroll (main-app only; see repository). */
+    suspend fun deriveKek(path: String, password: String): ByteArray =
+        repo.deriveKek(path, password)
+
     /** Lock the currently-open vault (zeroizes in-memory keys). */
     suspend fun lock(): Boolean {
         val v = vault ?: return false

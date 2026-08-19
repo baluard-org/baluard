@@ -8,9 +8,12 @@ package xyz.actitud.baluard.i18n
 internal val ES: Map<String, String> = mapOf(
     // common
     "common.back" to "Atrás",
+    "vault.favorite" to "Favorito",
+    "vault.noMatch" to "Ningún elemento coincide con los criterios",
     "common.cancel" to "Cancelar",
     "common.continue" to "Continuar",
     "common.search" to "Buscar",
+    "common.clear" to "Limpiar",
     "common.save" to "Guardar",
     "common.saving" to "Guardando…",
 
@@ -20,6 +23,11 @@ internal val ES: Map<String, String> = mapOf(
     "login.unlock" to "Desbloquear",
     "login.biometricTitle" to "Desbloquear Baluard",
     "login.unlockBiometric" to "Desbloquear con biometría",
+    "login.biometricStale" to "El desbloqueo rápido quedó desactualizado. Usa tu contraseña maestra.",
+    "login.enableBiometricTitle" to "¿Activar desbloqueo rápido?",
+    "login.enableBiometricBody" to "Usa tu huella o rostro en lugar de la contraseña maestra en este dispositivo. La contraseña maestra sigue funcionando siempre.",
+    "login.enableBiometric" to "Activar desbloqueo rápido",
+    "login.notNow" to "Ahora no",
 
     // onboarding root
     "onboarding.subtitle" to "Tus contraseñas, guardadas solo para ti",
@@ -198,4 +206,21 @@ internal val ES: Map<String, String> = mapOf(
     "settings.inactiveSuffix" to " (inactiva)",
     "settings.pending" to "Pendientes: {0}",
     "settings.syncNow" to "Sincronizar ahora",
+    "settings.syncStatusTitle" to "Estado de sincronización",
+    "settings.active" to "Activa",
+    "settings.idle" to "Inactiva",
+    "settings.aboutTitle" to "Acerca de Baluard",
+    "settings.version" to "Baluard Mobile v0.1.0",
+    "settings.aboutSubtitle" to "Gestor de contraseñas nativo git • GPL-3.0",
+    "conflict.title" to "Conflicto de sincronización",
+    "conflict.body" to "\"{0}\" cambió en dos dispositivos. Elige la versión a conservar.",
+    "conflict.fieldsHeader" to "Cambiado en ambos dispositivos",
+    "conflict.sensitiveField" to "Secreto — no se muestra",
+    "conflict.keepLocal" to "Conservar la versión de este dispositivo",
+    "conflict.keepRemote" to "Conservar la versión del otro dispositivo",
+    "conflict.keepBoth" to "Conservar ambas como entradas separadas",
+    "conflict.moreQueued" to "{0} más en espera",
+    "conflict.crossEpochTitle" to "Desajuste de versión",
+    "conflict.crossEpochBody" to "Una copia de \"{0}\" quedó cifrada con claves antiguas. Conserva una versión ahora; ábrela después en el dispositivo que tiene esas claves.",
+    "conflict.error" to "No se pudo aplicar tu elección. Inténtalo de nuevo.",
 )

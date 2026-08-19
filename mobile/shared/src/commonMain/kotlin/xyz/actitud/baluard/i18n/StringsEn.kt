@@ -7,10 +7,13 @@ package xyz.actitud.baluard.i18n
  */
 internal val EN: Map<String, String> = mapOf(
     // common
+    "vault.favorite" to "Favorite",
+    "vault.noMatch" to "No items matching your criteria",
     "common.back" to "Back",
     "common.cancel" to "Cancel",
     "common.continue" to "Continue",
     "common.search" to "Search",
+    "common.clear" to "Clear",
     "common.save" to "Save",
     "common.saving" to "Saving…",
 
@@ -20,6 +23,11 @@ internal val EN: Map<String, String> = mapOf(
     "login.unlock" to "Unlock",
     "login.biometricTitle" to "Unlock Baluard",
     "login.unlockBiometric" to "Unlock with biometrics",
+    "login.biometricStale" to "Quick unlock is out of date. Use your master password.",
+    "login.enableBiometricTitle" to "Enable quick unlock?",
+    "login.enableBiometricBody" to "Use your fingerprint or face instead of the master password on this device. Your master password still works anytime.",
+    "login.enableBiometric" to "Enable quick unlock",
+    "login.notNow" to "Not now",
 
     // onboarding root
     "onboarding.subtitle" to "Your passwords, stored only for you",
@@ -198,4 +206,21 @@ internal val EN: Map<String, String> = mapOf(
     "settings.inactiveSuffix" to " (inactive)",
     "settings.pending" to "Pending: {0}",
     "settings.syncNow" to "Sync now",
+    "settings.syncStatusTitle" to "Sync status",
+    "settings.active" to "Active",
+    "settings.idle" to "Idle",
+    "settings.aboutTitle" to "About Baluard",
+    "settings.version" to "Baluard Mobile v0.1.0",
+    "settings.aboutSubtitle" to "Git-native password manager • GPL-3.0",
+    "conflict.title" to "Sync conflict",
+    "conflict.body" to "\"{0}\" was changed on two devices. Choose the version to keep.",
+    "conflict.fieldsHeader" to "Changed on both devices",
+    "conflict.sensitiveField" to "Secret — not shown",
+    "conflict.keepLocal" to "Keep this device's version",
+    "conflict.keepRemote" to "Keep the other device's version",
+    "conflict.keepBoth" to "Keep both as separate entries",
+    "conflict.moreQueued" to "{0} more waiting",
+    "conflict.crossEpochTitle" to "Version mismatch",
+    "conflict.crossEpochBody" to "One copy of \"{0}\" is locked with older keys. Keep one version now; open it later on the device that has those keys.",
+    "conflict.error" to "Could not apply your choice. Try again.",
 )

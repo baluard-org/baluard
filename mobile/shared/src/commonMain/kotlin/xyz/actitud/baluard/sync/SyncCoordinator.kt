@@ -1,7 +1,8 @@
 package xyz.actitud.baluard.sync
 
-import xyz.actitud.baluard.MobileVault
+import xyz.actitud.baluard.MobileVaultInterface
 import xyz.actitud.baluard.MobileSyncStatus
+import xyz.actitud.baluard.platform.isMeteredNetwork
 
 /**
  * Maps OS lifecycle hooks to the runtime's sync event surface (plan §3.2/§3.5).
@@ -19,39 +20,62 @@ import xyz.actitud.baluard.MobileSyncStatus
  *    vault is Offline AND foregrounded (the 30min idle pull is NOT reproduced;
  *    plan §3.5 accepts foreground-as-heartbeat instead).
  */
-class SyncCoordinator(private val config: SyncConfig = SyncConfig()) {
+class SyncCoordinator(
+    private var config: SyncConfig = SyncConfig(),
+    /** Injectable for tests; default = platform check. */
+    private val isMeteredNetwork: () -> Boolean = ::isMeteredNetwork,
+) {
+
+    /** Settings changes land here (SettingsScreen toggles). */
+    fun updateConfig(new: SyncConfig) {
+        config = new
+    }
+
+    /**
+     * Wi-Fi-only gate (plan §3.5, advisory): the host skips AUTOMATIC sync
+     * triggers on metered networks. Explicit user gestures (`pullNow`) and
+     * the mandatory background flush always run.
+     */
+    private fun blockedByNetwork(): Boolean =
+        config.wifiOnly && isMeteredNetwork()
 
     /** Vault unlock → immediate pull (if enabled). */
-    suspend fun onUnlock(vault: MobileVault) {
-        if (config.syncOnUnlock) vault.syncOnUnlock()
+    suspend fun onUnlock(vault: MobileVaultInterface) {
+        if (!config.syncOnUnlock || blockedByNetwork()) return
+        vault.syncOnUnlock()
     }
 
     /** CRUD mutation → arm the 5s debounced push (if enabled). */
-    suspend fun onMutation(vault: MobileVault) {
-        if (config.syncAfterChange) vault.syncOnMutation()
+    suspend fun onMutation(vault: MobileVaultInterface) {
+        if (!config.syncAfterChange || blockedByNetwork()) return
+        vault.syncOnMutation()
     }
 
     /** App foreground → pull with the runtime's 10-min guard (if enabled). */
-    suspend fun onForeground(vault: MobileVault) {
-        if (config.syncOnForeground) vault.syncOnForeground()
+    suspend fun onForeground(vault: MobileVaultInterface) {
+        if (!config.syncOnForeground || blockedByNetwork()) return
+        vault.syncOnForeground()
     }
 
     /**
      * App background → FLUSH any pending debounce immediately (mandatory; the OS
      * suspends the process within seconds and would drop the 5s timer).
      */
-    suspend fun onBackground(vault: MobileVault) {
+    suspend fun onBackground(vault: MobileVaultInterface) {
         vault.syncOnBackground()
     }
 
     /** User pull-to-refresh / "Sync now". */
-    suspend fun pullNow(vault: MobileVault) = vault.syncPullNow()
+    suspend fun pullNow(vault: MobileVaultInterface) = vault.syncPullNow()
 
     /** Host-scheduled 30s probe while Offline + foregrounded. */
-    suspend fun offlineTick(vault: MobileVault) = vault.syncOfflineTick()
+    suspend fun offlineTick(vault: MobileVaultInterface) {
+        if (blockedByNetwork()) return
+        vault.syncOfflineTick()
+    }
 
     /** Coordinator status for the sync indicator. */
-    suspend fun status(vault: MobileVault): MobileSyncStatus = vault.syncStatus()
+    suspend fun status(vault: MobileVaultInterface): MobileSyncStatus = vault.syncStatus()
 }
 
 /**

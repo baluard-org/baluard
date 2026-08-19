@@ -1,15 +1,19 @@
 package xyz.actitud.baluard.auth
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -19,25 +23,30 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.data.AuthState
 import xyz.actitud.baluard.data.UnlockResult
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.Biometric
+import xyz.actitud.baluard.ui.components.BaluardAmbientBackground
+import xyz.actitud.baluard.ui.components.BaluardCard
+import xyz.actitud.baluard.ui.components.BaluardLogoBadge
+import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
+import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
+import xyz.actitud.baluard.ui.components.BaluardTextField
+
+/** Local UI states layered over [AuthState]: enroll offer after unlock. */
+private enum class UnlockPhase { Input, EnrollOffer, Enrolling }
 
 /**
- * Master-password unlock screen.
+ * Master-password unlock screen styled after Baluard design guidelines.
  *
- * On submit: opens the vault at [vaultPath] and runs the Argon2id KDF. The
- * spinner shows during [AuthState.Unlocking]. A biometric button appears only
- * when a biometric authenticator is available (the actual KEK-retrieval path
- * is wired when the platform `actual` impls land).
- *
- * Per plan §3.7, biometric quick-unlock MUST use the KEK path (never the
- * master-password KDF) — the memory-capped KDF would OOM an autofill/extension
- * process. The main app can run the full KDF, but biometric is the fast path.
+ * Quick unlock (B5): when a KEK is enrolled behind biometrics, the biometric
+ * button opens the vault via `unlockWithKek` (no Argon2id). After a
+ * master-password unlock on a device WITHOUT enrollment, the screen offers a
+ * one-time enroll (runs the KDF once, explicitly, in the main app — plan §3.7).
  */
 @Composable
 fun UnlockScreen(
@@ -47,81 +56,169 @@ fun UnlockScreen(
 ) {
     var password by remember { mutableStateOf("") }
     var state by remember { mutableStateOf<AuthState>(AuthState.Init) }
+    var phase by remember { mutableStateOf(UnlockPhase.Input) }
     val scope = rememberCoroutineScope()
     val biometric = remember { Biometric() }
+    val biometricEnrolled by remember { mutableStateOf(biometric.isEnrolled(vaultPath)) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("Baluard", style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(32.dp))
+    fun finishUnlock() = onUnlocked()
 
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text(t("login.passwordPlaceholder")) },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            enabled = state !is AuthState.Unlocking,
-        )
-        Spacer(Modifier.height(16.dp))
-
-        Button(
-            onClick = {
-                state = AuthState.Unlocking
-                scope.launch {
-                    when (authViewModel.openAndUnlock(vaultPath, password)) {
-                        is UnlockResult.Success -> {
-                            state = AuthState.Unlocked
-                            onUnlocked()
-                        }
-                        is UnlockResult.Failure -> {
-                            state = AuthState.Error(t("login.wrongPassword"))
-                        }
-                    }
-                }
-            },
-            enabled = password.isNotEmpty() && state !is AuthState.Unlocking,
+    BaluardAmbientBackground {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(t("login.unlock"))
-        }
+            BaluardLogoBadge(
+                size = 72.dp,
+                showTitle = true,
+                subtitle = t("onboarding.subtitle"),
+            )
 
-        if (state is AuthState.Unlocking) {
-            Spacer(Modifier.height(16.dp))
-            CircularProgressIndicator()
-        }
+            Spacer(Modifier.height(32.dp))
 
-        if (biometric.isAvailable()) {
-            Spacer(Modifier.height(24.dp))
-            Button(onClick = {
-                biometric.prompt(
-                    title = t("login.biometricTitle"),
-                    onSuccess = {
-                        // TODO Phase 2 biometric: retrieve KEK from keychain,
-                        // call repo.unlockWithKek (skips Argon2id KDF).
+            BaluardCard(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                BaluardTextField(
+                    value = password,
+                    onValueChange = {
+                        password = it
+                        if (state is AuthState.Error) state = AuthState.Init
+                    },
+                    label = t("login.passwordPlaceholder"),
+                    placeholder = t("login.passwordPlaceholder"),
+                    leadingIcon = Icons.Default.Lock,
+                    isPassword = true,
+                    enabled = state !is AuthState.Unlocking,
+                    isError = state is AuthState.Error,
+                    supportingText = (state as? AuthState.Error)?.message,
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                BaluardPrimaryButton(
+                    text = t("login.unlock"),
+                    onClick = {
+                        state = AuthState.Unlocking
                         scope.launch {
-                            // Placeholder: real path retrieves the wrapped KEK
-                            // and calls the runtime's unlock_with_kek.
+                            when (authViewModel.openAndUnlock(vaultPath, password)) {
+                                is UnlockResult.Success -> {
+                                    state = AuthState.Unlocked
+                                    // Offer quick-unlock enrollment once, right
+                                    // after the user proved the master password.
+                                    if (biometric.isAvailable() && !biometricEnrolled) {
+                                        phase = UnlockPhase.EnrollOffer
+                                    } else {
+                                        finishUnlock()
+                                    }
+                                }
+                                is UnlockResult.Failure -> {
+                                    state = AuthState.Error(t("login.wrongPassword"))
+                                }
+                            }
                         }
                     },
-                    onError = { state = AuthState.Error(it) },
+                    enabled = password.isNotEmpty(),
+                    loading = state is AuthState.Unlocking,
+                    leadingIcon = Icons.Default.Lock,
                 )
-            }) {
-                Text(t("login.unlockBiometric"))
-            }
-        }
 
-        (state as? AuthState.Error)?.let {
-            Spacer(Modifier.height(16.dp))
-            Text(
-                it.message,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-            )
+                if (biometric.isAvailable() && biometricEnrolled) {
+                    Spacer(Modifier.height(12.dp))
+                    BaluardOutlinedButton(
+                        text = t("login.unlockBiometric"),
+                        onClick = {
+                            biometric.unlock(
+                                vaultKey = vaultPath,
+                                title = t("login.biometricTitle"),
+                                onSuccess = { kek ->
+                                    state = AuthState.Unlocking
+                                    scope.launch {
+                                        when (authViewModel.openAndUnlockWithKek(vaultPath, kek)) {
+                                            is UnlockResult.Success -> {
+                                                state = AuthState.Unlocked
+                                                finishUnlock()
+                                            }
+                                            is UnlockResult.Failure -> {
+                                                // Stale KEK (password changed
+                                                // elsewhere) fails closed here.
+                                                state = AuthState.Error(t("login.biometricStale"))
+                                            }
+                                        }
+                                    }
+                                },
+                                onError = { state = AuthState.Error(it) },
+                            )
+                        },
+                        enabled = state !is AuthState.Unlocking,
+                        leadingIcon = Icons.Default.Fingerprint,
+                    )
+                }
+            }
+
+            // One-time quick-unlock enrollment offer (B5). The KDF runs once
+            // here, in the main app, as an explicit user action.
+            AnimatedVisibility(visible = phase != UnlockPhase.Input) {
+                Column {
+                    Spacer(Modifier.height(16.dp))
+                    BaluardCard(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = t("login.enableBiometricTitle"),
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = t("login.enableBiometricBody"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        BaluardPrimaryButton(
+                            text = t("login.enableBiometric"),
+                            loading = phase == UnlockPhase.Enrolling,
+                            leadingIcon = Icons.Default.Fingerprint,
+                            onClick = {
+                                phase = UnlockPhase.Enrolling
+                                scope.launch {
+                                    val kek = runCatching {
+                                        authViewModel.deriveKek(vaultPath, password)
+                                    }.getOrNull()
+                                    if (kek == null) {
+                                        phase = UnlockPhase.Input
+                                        finishUnlock()
+                                        return@launch
+                                    }
+                                    biometric.enroll(
+                                        vaultKey = vaultPath,
+                                        kek = kek,
+                                        onSuccess = {
+                                            phase = UnlockPhase.Input
+                                            finishUnlock()
+                                        },
+                                        onError = {
+                                            // Enrollment failed: quick unlock
+                                            // stays off; the vault IS unlocked.
+                                            phase = UnlockPhase.Input
+                                            finishUnlock()
+                                        },
+                                    )
+                                }
+                            },
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        BaluardOutlinedButton(
+                            text = t("login.notNow"),
+                            onClick = { phase = UnlockPhase.Input; finishUnlock() },
+                        )
+                    }
+                }
+            }
         }
     }
 }

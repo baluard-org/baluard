@@ -34,5 +34,5 @@ pub use autosync::{AutoSyncHandle, AutoSyncState, AutoSyncStatus};
 pub use bridge::SharedBridgeRegistry;
 pub use host::{SharedVaultHost, SnapshotError, VaultHost, VaultPresence};
 pub use pin::PinEscrow;
-pub use state::{SharedVaultState, VaultState};
 pub use providers::ProviderManager;
+pub use state::{SharedVaultState, VaultState};

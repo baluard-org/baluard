@@ -16,6 +16,8 @@ kotlin {
         androidMain.dependencies {
             implementation(project(":shared"))
             implementation(libs.androidx.activity.compose)
+            // MainActivity is a FragmentActivity host for BiometricPrompt (B5).
+            implementation("androidx.fragment:fragment-ktx:1.6.2")
         }
     }
 }

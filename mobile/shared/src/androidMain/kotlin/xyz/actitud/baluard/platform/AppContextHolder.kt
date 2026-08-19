@@ -1,6 +1,7 @@
 package xyz.actitud.baluard.platform
 
 import android.content.Context
+import androidx.fragment.app.FragmentActivity
 
 /**
  * Process-wide Android [Context] holder. Compose Multiplatform commonMain code
@@ -11,6 +12,10 @@ object AppContextHolder {
     @Volatile
     private var context: Context? = null
 
+    /** The unlock-screen host activity (BiometricPrompt needs an Activity). */
+    @Volatile
+    private var hostActivity: FragmentActivity? = null
+
     fun set(context: Context) {
         this.context = context.applicationContext
     }
@@ -20,4 +25,17 @@ object AppContextHolder {
 
     fun require(): Context =
         requireNotNull(context) { "AppContextHolder not initialized (MainActivity.onCreate)" }
+
+    /** Set from MainActivity (a FragmentActivity, so BiometricPrompt can host). */
+    fun setActivity(activity: FragmentActivity) {
+        hostActivity = activity
+    }
+
+    /** The current host activity, or null when the app is backgrounded/destroyed. */
+    fun activity(): FragmentActivity? = hostActivity
+
+    /** Clear on destroy, but only if the holder still points at [activity]. */
+    fun clearActivity(activity: FragmentActivity) {
+        if (hostActivity === activity) hostActivity = null
+    }
 }
