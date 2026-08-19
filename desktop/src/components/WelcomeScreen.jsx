@@ -6,8 +6,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { registerLocalVault } from "../lib/cloneFlow.js";
 import { sanitizeError } from "../lib/utils.js";
 import CloneFromProviderScreen from "./CloneFromProviderScreen.jsx";
-import { IconDownload, IconFolder, IconLock, IconPlus } from "./Icon.jsx";
-import logoImg from "../assets/logo.png";
+import { IconDownload, IconFolder, IconLock, IconPlus, IconBaluardLogo } from "./Icon.jsx";
 
 // Phase 4 wizard first screen: three entry points.
 //   New vault            -> existing create flow (status "init")
@@ -42,7 +41,7 @@ export default function WelcomeScreen() {
 					<div class="welcome-screen__card w-full max-w-md p-8 rounded-2xl bg-[var(--color-sidebar)] border border-[var(--color-border)] shadow-2xl animate-fade-in-up">
 						<div class="welcome-screen__header text-center mb-8">
 							<div class="w-24 h-24 mx-auto mb-4 flex items-center justify-center">
-								<img src={logoImg} alt="Baluard" class="w-24 h-24 object-contain logo-shadow" />
+								<IconBaluardLogo class="w-24 h-24 object-contain logo-shadow" />
 							</div>
 							<h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)]">
 								{t("welcome.title").replace("Baluard", "")}<span class="font-logo">Baluard</span>

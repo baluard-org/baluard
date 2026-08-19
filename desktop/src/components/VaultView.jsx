@@ -9,7 +9,7 @@ import { buildFolderCreatePayload } from "../lib/payload.js";
 import { selectSource, filterByCategory, filterByFolder, filterByTag, searchCiphers } from "../lib/filters.js";
 import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
-import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox } from "./Icon.jsx";
+import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox, IconSwitch, IconBaluardLogo } from "./Icon.jsx";
 import ConflictBanner from "./ConflictBanner.jsx";
 import CipherRow from "./CipherRow.jsx";
 import CipherDetail from "./CipherDetail.jsx";
@@ -17,7 +17,6 @@ import AddEditCipherForm from "./AddEditCipherForm.jsx";
 import DeleteConfirmModal from "./DeleteConfirmModal.jsx";
 import ArchiveConfirmModal from "./ArchiveConfirmModal.jsx";
 import FocusTrap from "./FocusTrap.jsx";
-import logoImg from "../assets/logo.png";
 import GeneratorModal from "./GeneratorModal.jsx";
 import RepromptModal from "./RepromptModal.jsx";
 import SettingsModal from "./SettingsModal.jsx";
@@ -25,7 +24,6 @@ import { FolderTree } from "./FolderTree.jsx";
 import VaultSwitcher from "./VaultSwitcher.jsx";
 import SwitchUnlockModal from "./SwitchUnlockModal.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
-import { IconSwitch } from "./Icon.jsx";
 
 export default function VaultView() {
   const auth = useAuth();
@@ -208,7 +206,7 @@ export default function VaultView() {
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
               <div class="w-6 h-6 flex items-center justify-center">
-                <img src={logoImg} alt="Baluard" class="w-6 h-6 object-contain -mt-[6px] logo-shadow" />
+                <IconBaluardLogo class="w-6 h-6 object-contain -mt-[4px] logo-shadow" />
               </div>
               <span class="text-3xl font-extrabold tracking-tight text-[var(--color-text)] font-logo">{t("app.name")}</span>
             </div>

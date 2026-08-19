@@ -121,8 +121,16 @@ fun BaluardAmbientBackground(
 }
 
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.Stroke
+
 /**
- * Polished Baluard lock emblem badge with gradient border.
+ * Polished Baluard lock emblem badge rendering the authentic fortress lock and B.
  */
 @Composable
 fun BaluardLogoBadge(
@@ -135,42 +143,123 @@ fun BaluardLogoBadge(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(
-            modifier = Modifier
-                .size(size)
-                .shadow(12.dp, RoundedCornerShape(20.dp), spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
-                .clip(RoundedCornerShape(20.dp))
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surface,
-                            MaterialTheme.colorScheme.surfaceContainerHigh,
-                        ),
-                    ),
-                )
-                .border(
-                    width = 1.dp,
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f),
-                        ),
-                    ),
-                    shape = RoundedCornerShape(20.dp),
-                ),
-            contentAlignment = Alignment.Center,
+        Canvas(
+            modifier = Modifier.size(size),
         ) {
-            Icon(
-                imageVector = Icons.Default.Shield,
-                contentDescription = "Baluard Shield",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(size * 0.55f),
+            val w = this.size.width
+            val h = this.size.height
+            val scale = w / 512f
+
+            // 1. Shackle: lavender gradient arc
+            val shacklePath = Path().apply {
+                moveTo(172f * scale, 205f * scale)
+                lineTo(172f * scale, 150f * scale)
+                cubicTo(172f * scale, 103f * scale, 209f * scale, 66f * scale, 256f * scale, 66f * scale)
+                cubicTo(303f * scale, 66f * scale, 340f * scale, 103f * scale, 340f * scale, 150f * scale)
+                lineTo(340f * scale, 205f * scale)
+                lineTo(294f * scale, 205f * scale)
+                lineTo(294f * scale, 150f * scale)
+                cubicTo(294f * scale, 128f * scale, 277f * scale, 111f * scale, 256f * scale, 111f * scale)
+                cubicTo(235f * scale, 111f * scale, 218f * scale, 128f * scale, 218f * scale, 150f * scale)
+                lineTo(218f * scale, 205f * scale)
+                close()
+            }
+            drawPath(
+                path = shacklePath,
+                brush = Brush.linearGradient(
+                    colors = listOf(Color(0xFFDED8FC), Color(0xFFCFC6F9)),
+                    start = Offset.Zero,
+                    end = Offset(w, h),
+                ),
             )
-            Icon(
-                imageVector = Icons.Default.Lock,
-                contentDescription = "Baluard Lock",
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.size(size * 0.32f),
+
+            // 2. Lock Body with Fortress Crenellations: vibrant lime gradient
+            val bodyPath = Path().apply {
+                moveTo(136f * scale, 205f * scale)
+                lineTo(184f * scale, 205f * scale)
+                lineTo(184f * scale, 228f * scale)
+                lineTo(228f * scale, 228f * scale)
+                lineTo(228f * scale, 205f * scale)
+                lineTo(284f * scale, 205f * scale)
+                lineTo(284f * scale, 228f * scale)
+                lineTo(328f * scale, 228f * scale)
+                lineTo(328f * scale, 205f * scale)
+                lineTo(376f * scale, 205f * scale)
+                cubicTo(384f * scale, 205f * scale, 388f * scale, 209f * scale, 388f * scale, 217f * scale)
+                lineTo(388f * scale, 405f * scale)
+                cubicTo(388f * scale, 424f * scale, 374f * scale, 438f * scale, 355f * scale, 438f * scale)
+                lineTo(157f * scale, 438f * scale)
+                cubicTo(138f * scale, 438f * scale, 124f * scale, 424f * scale, 124f * scale, 405f * scale)
+                lineTo(124f * scale, 217f * scale)
+                cubicTo(124f * scale, 209f * scale, 128f * scale, 205f * scale, 136f * scale, 205f * scale)
+                close()
+            }
+            drawPath(
+                path = bodyPath,
+                brush = Brush.linearGradient(
+                    colors = listOf(Color(0xFFC5F279), Color(0xFFB3E55C), Color(0xFF9DCE47)),
+                    start = Offset(w * 0.2f, 0f),
+                    end = Offset(w * 0.8f, h),
+                ),
+            )
+
+            // 3. Exact Authentic Morris Roman Blackletter B: dark contrast cutout
+            val bPath = Path().apply {
+                moveTo(317.84f * scale, 361.56f * scale)
+                quadraticTo(317.84f * scale, 347.19f * scale, 304.99f * scale, 337.61f * scale)
+                lineTo(281.69f * scale, 320.41f * scale)
+                lineTo(295.63f * scale, 309.53f * scale)
+                quadraticTo(303.03f * scale, 303.65f * scale, 303.03f * scale, 294.50f * scale)
+                quadraticTo(303.03f * scale, 280.57f * scale, 288.88f * scale, 272.08f * scale)
+                quadraticTo(276.68f * scale, 264.89f * scale, 262.10f * scale, 264.89f * scale)
+                quadraticTo(248.60f * scale, 264.89f * scale, 226.82f * scale, 273.38f * scale)
+                quadraticTo(211.80f * scale, 279.04f * scale, 203.09f * scale, 282.31f * scale)
+                quadraticTo(194.38f * scale, 285.58f * scale, 191.99f * scale, 286.01f * scale)
+                lineTo(191.99f * scale, 291.02f * scale)
+                quadraticTo(205.05f * scale, 296.90f * scale, 205.05f * scale, 315.62f * scale)
+                lineTo(205.05f * scale, 377.46f * scale)
+                quadraticTo(205.05f * scale, 383.99f * scale, 199.17f * scale, 394.00f * scale)
+                lineTo(193.51f * scale, 403.80f * scale)
+                lineTo(193.51f * scale, 408.37f * scale)
+                quadraticTo(202.00f * scale, 404.67f * scale, 204.18f * scale, 404.02f * scale)
+                quadraticTo(208.10f * scale, 402.28f * scale, 216.37f * scale, 402.28f * scale)
+                quadraticTo(223.12f * scale, 402.28f * scale, 237.71f * scale, 405.33f * scale)
+                quadraticTo(252.30f * scale, 408.37f * scale, 259.05f * scale, 408.37f * scale)
+                quadraticTo(276.25f * scale, 408.37f * scale, 296.28f * scale, 393.79f * scale)
+                quadraticTo(317.84f * scale, 377.89f * scale, 317.84f * scale, 361.56f * scale)
+                close()
+
+                moveTo(278.64f * scale, 294.50f * scale)
+                quadraticTo(278.64f * scale, 302.99f * scale, 269.72f * scale, 311.92f * scale)
+                quadraticTo(264.71f * scale, 316.93f * scale, 250.34f * scale, 325.20f * scale)
+                quadraticTo(244.68f * scale, 328.47f * scale, 240.32f * scale, 331.41f * scale)
+                quadraticTo(235.97f * scale, 334.35f * scale, 232.92f * scale, 336.74f * scale)
+                lineTo(231.61f * scale, 336.31f * scale)
+                lineTo(229.44f * scale, 336.74f * scale)
+                lineTo(229.00f * scale, 319.54f * scale)
+                lineTo(228.78f * scale, 302.12f * scale)
+                quadraticTo(228.35f * scale, 290.58f * scale, 238.15f * scale, 282.31f * scale)
+                quadraticTo(247.51f * scale, 274.69f * scale, 259.05f * scale, 274.69f * scale)
+                quadraticTo(262.97f * scale, 274.69f * scale, 266.56f * scale, 276.32f * scale)
+                quadraticTo(270.15f * scale, 277.95f * scale, 272.77f * scale, 280.68f * scale)
+                quadraticTo(275.38f * scale, 283.40f * scale, 277.01f * scale, 286.99f * scale)
+                quadraticTo(278.64f * scale, 290.58f * scale, 278.64f * scale, 294.50f * scale)
+                close()
+
+                moveTo(288.44f * scale, 372.88f * scale)
+                quadraticTo(288.44f * scale, 382.47f * scale, 279.30f * scale, 389.87f * scale)
+                quadraticTo(269.93f * scale, 397.49f * scale, 260.57f * scale, 397.49f * scale)
+                quadraticTo(244.24f * scale, 397.49f * scale, 236.19f * scale, 383.55f * scale)
+                quadraticTo(229.44f * scale, 372.23f * scale, 229.44f * scale, 354.81f * scale)
+                quadraticTo(229.44f * scale, 351.77f * scale, 240.54f * scale, 344.14f * scale)
+                quadraticTo(251.86f * scale, 336.74f * scale, 255.78f * scale, 336.74f * scale)
+                quadraticTo(262.75f * scale, 336.74f * scale, 275.60f * scale, 351.11f * scale)
+                quadraticTo(288.44f * scale, 365.70f * scale, 288.44f * scale, 372.88f * scale)
+                close()
+            }
+            drawPath(
+                path = bPath,
+                color = Color(0xFF091315),
             )
         }
 
