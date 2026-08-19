@@ -2,9 +2,8 @@ import { createSignal, createMemo, Show, onMount } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { suggestSlug, cleanSlug, validateSlug } from "../lib/slug.js";
-import { IconPencil, IconCheck } from "./Icon.jsx";
+import { IconPencil, IconCheck, IconBaluardLogo } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
-import logoImg from "../assets/logo.png";
 
 const AVAILABLE_LOCALES = [
   { code: "en", label: "English" },
@@ -78,7 +77,7 @@ export default function CreateVaultScreen() {
 
         <div class="create-vault-screen__header text-center mb-8">
           <div class="create-vault-screen__logo-container w-24 h-24 mx-auto mb-4 flex items-center justify-center">
-            <img src={logoImg} alt="Baluard" class="w-24 h-24 object-contain logo-shadow" />
+            <IconBaluardLogo class="w-24 h-24 object-contain logo-shadow" />
           </div>
           <h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)]">{t("create.title")}</h1>
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("create.subtitle")}</p>

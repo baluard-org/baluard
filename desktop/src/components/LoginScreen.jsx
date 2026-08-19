@@ -6,10 +6,9 @@ import { daemon } from "../lib/daemon.js";
 import { biometryPrompt } from "../lib/biometry.js";
 import { toastError } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
-import { IconLock, IconFingerprint, IconSpinner } from "./Icon.jsx";
+import { IconLock, IconFingerprint, IconSpinner, IconBaluardLogo } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 import VaultSwitcher from "./VaultSwitcher.jsx";
-import logoImg from "../assets/logo.png";
 
 export default function LoginScreen() {
   const auth = useAuth();
@@ -68,7 +67,7 @@ export default function LoginScreen() {
 
         <div class="login-screen__header text-center mb-8">
           <div class="login-screen__logo-container w-24 h-24 mx-auto mb-4 flex items-center justify-center">
-            <img src={logoImg} alt="Baluard" class="w-24 h-24 object-contain logo-shadow" />
+            <IconBaluardLogo class="w-24 h-24 object-contain logo-shadow" />
           </div>
           <h1 class="text-2xl font-bold tracking-tight text-[var(--color-text)] font-logo">{t("login.title")}</h1>
           <p class="text-sm text-[var(--color-muted)] mt-1">{t("login.subtitle")}</p>

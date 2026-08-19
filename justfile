@@ -312,31 +312,15 @@ desktop-build: _sidecar desktop-deps
 # proper app-icon form (dark bg + padlock). Override with `just app-icons assets/<file>`.
 # Source is auto-squared (alpha-trim + center-pad) since the logo is portrait and icon-gen
 # requires square input.
-APP_ICON_SOURCE := "assets/baluard-logo-grad.png"
+APP_ICON_SOURCE := "assets/baluard-lock-l4-svg-1024.png"
 APP_ICON_OUT    := "assets/app-icons"
 
 app-icons SOURCE=APP_ICON_SOURCE OUT=APP_ICON_OUT:
 	#!/usr/bin/env bash
 	set -euo pipefail
 	SRC="{{SOURCE}}"; OUT="{{OUT}}"
-	command -v icon-gen >/dev/null || { echo "icon-gen not installed. Run: cargo install --git https://github.com/Hkmu/icon-generator.git"; exit 1; }
 	[[ -f "$SRC" ]] || { echo "Source not found: $SRC"; exit 1; }
-	mkdir -p "$OUT"
-	SQ="$OUT/_source-1024.png"
-	# Auto-square: trim alpha, center-pad to square, resize to 1024. (ImageMagick, no Python deps)
-	command -v magick >/dev/null || { echo "ImageMagick not installed. macOS: brew install imagemagick"; exit 1; }
-	magick "$SRC" -trim +repage -background none -gravity center \
-		-extent "%[fx:max(w,h)]x%[fx:max(w,h)]" -resize 1024x1024 "$SQ"
-	icon-gen "$SQ" -o "$OUT"
-	rm -f "$SQ"
-	echo ""
-	echo "Done. All platform icons in: $OUT/"
-	echo "  windows/        icon.ico"
-	echo "  macos/          icon.icns + Contents.json"
-	echo "  linux/          32-512px PNGs"
-	echo "  tauri-desktop/  -> copy to desktop/src-tauri/icons/"
-	echo "  android/        -> copy mipmap-*/ to desktop/src-tauri/gen/android/app/src/main/res/"
-	echo "  ios/            -> copy to desktop/src-tauri/gen/ios/Assets.xcassets/AppIcon.appiconset/"
+	./scripts/generate-all-icons.sh "$SRC"
 
 # ── E2E Smoke Test ─────────────────────────────────────────────────────────
 
