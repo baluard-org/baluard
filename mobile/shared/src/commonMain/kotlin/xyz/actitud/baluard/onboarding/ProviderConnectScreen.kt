@@ -1,37 +1,56 @@
 package xyz.actitud.baluard.onboarding
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileProvider
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.ui.components.BaluardAmbientBackground
+import xyz.actitud.baluard.ui.components.BaluardCard
+import xyz.actitud.baluard.ui.components.BaluardLogoBadge
+import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
+import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
+import xyz.actitud.baluard.ui.components.BaluardTextField
 
 /**
- * Provider picker + PAT entry (plan §5.2). GitHub and GitLab connect with
- * the browser device flow; Codeberg has no device flow, so it goes straight
- * to token entry. Every provider also accepts a personal access token.
+ * Provider picker styled after Baluard design language.
  */
 @Composable
 fun ProviderConnectScreen(
@@ -44,86 +63,207 @@ fun ProviderConnectScreen(
     var token by rememberSaveable { mutableStateOf("") }
     var showPat by rememberSaveable { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(t("provider.title"), style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            t("provider.subtitle"),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(32.dp))
-
-        ProviderRow(t("provider.github"), MobileProvider.GIT_HUB, vm)
-        Spacer(Modifier.height(8.dp))
-        ProviderRow(t("provider.gitlab"), MobileProvider.GIT_LAB, vm)
-        Spacer(Modifier.height(8.dp))
-        ProviderRow(t("provider.codeberg"), MobileProvider.CODEBERG, vm)
-
-        vm.error?.let {
-            Spacer(Modifier.height(12.dp))
-            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-        }
-
-        if (vm.busy) {
-            Spacer(Modifier.height(16.dp))
-            CircularProgressIndicator()
-        } else if (showPat) {
-            Spacer(Modifier.height(24.dp))
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                label = { Text(t("provider.patLabel")) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+    BaluardAmbientBackground {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            BaluardLogoBadge(
+                size = 64.dp,
+                showTitle = true,
+                subtitle = t("provider.subtitle"),
             )
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = { scope.launch { vm.connectPat(token); if (vm.stage is ProviderFlowViewModel.Stage.Repos) onPatConnected() } },
-                enabled = token.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(t("provider.patConnect")) }
-            TextButton(onClick = { showPat = false }) { Text(t("common.back")) }
-        } else {
-            Spacer(Modifier.height(16.dp))
-            when (vm.provider) {
-                MobileProvider.CODEBERG -> Button(
-                    onClick = { showPat = true },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(t("provider.continuePat")) }
-                else -> {
-                    Button(
+
+            Spacer(Modifier.height(28.dp))
+
+            BaluardCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ProviderSelectCard(
+                        title = t("provider.github"),
+                        subtitle = "Fast device-code login",
+                        provider = MobileProvider.GIT_HUB,
+                        icon = Icons.Default.Public,
+                        selected = vm.provider == MobileProvider.GIT_HUB,
+                        enabled = !vm.busy,
+                        onSelect = { vm.selectProvider(MobileProvider.GIT_HUB) },
+                    )
+                    ProviderSelectCard(
+                        title = t("provider.gitlab"),
+                        subtitle = "Cloud or self-hosted GitLab",
+                        provider = MobileProvider.GIT_LAB,
+                        icon = Icons.Default.Code,
+                        selected = vm.provider == MobileProvider.GIT_LAB,
+                        enabled = !vm.busy,
+                        onSelect = { vm.selectProvider(MobileProvider.GIT_LAB) },
+                    )
+                    ProviderSelectCard(
+                        title = t("provider.codeberg"),
+                        subtitle = "Personal access token",
+                        provider = MobileProvider.CODEBERG,
+                        icon = Icons.Default.Key,
+                        selected = vm.provider == MobileProvider.CODEBERG,
+                        enabled = !vm.busy,
+                        onSelect = { vm.selectProvider(MobileProvider.CODEBERG) },
+                    )
+                }
+
+                vm.error?.let {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
+                Spacer(Modifier.height(18.dp))
+
+                if (vm.busy) {
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                    }
+                } else if (showPat) {
+                    BaluardTextField(
+                        value = token,
+                        onValueChange = { token = it },
+                        label = t("provider.patLabel"),
+                        placeholder = "ghp_... / glpat-... / token",
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    BaluardPrimaryButton(
+                        text = t("provider.patConnect"),
                         onClick = {
                             scope.launch {
-                                vm.startDeviceFlow()
-                                if (vm.stage is ProviderFlowViewModel.Stage.DeviceCode) onDeviceCodeStarted()
+                                vm.connectPat(token)
+                                if (vm.stage is ProviderFlowViewModel.Stage.Repos) onPatConnected()
                             }
                         },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text(t("provider.continueBrowser")) }
-                    TextButton(onClick = { showPat = true }) { Text(t("provider.usePatInstead")) }
+                        enabled = token.isNotBlank(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    BaluardOutlinedButton(
+                        text = t("common.back"),
+                        onClick = { showPat = false },
+                    )
+                } else {
+                    when (vm.provider) {
+                        MobileProvider.CODEBERG -> {
+                            BaluardPrimaryButton(
+                                text = t("provider.continuePat"),
+                                onClick = { showPat = true },
+                            )
+                        }
+                        else -> {
+                            BaluardPrimaryButton(
+                                text = t("provider.continueBrowser"),
+                                onClick = {
+                                    scope.launch {
+                                        vm.startDeviceFlow()
+                                        if (vm.stage is ProviderFlowViewModel.Stage.DeviceCode) onDeviceCodeStarted()
+                                    }
+                                },
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            BaluardOutlinedButton(
+                                text = t("provider.usePatInstead"),
+                                onClick = { showPat = true },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    BaluardOutlinedButton(
+                        text = t("common.back"),
+                        onClick = onCancelled,
+                    )
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onCancelled) { Text(t("common.back")) }
         }
     }
 }
 
 @Composable
-private fun ProviderRow(label: String, p: MobileProvider, vm: ProviderFlowViewModel) {
-    val selected = vm.provider == p
-    OutlinedButton(
-        onClick = { vm.selectProvider(p) },
-        modifier = Modifier.fillMaxWidth(),
-        enabled = !vm.busy,
+private fun ProviderSelectCard(
+    title: String,
+    subtitle: String,
+    provider: MobileProvider,
+    icon: ImageVector,
+    selected: Boolean,
+    enabled: Boolean,
+    onSelect: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(
+                width = if (selected) 1.5.dp else 1.dp,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(12.dp),
+            )
+            .clickable(enabled = enabled, onClick = onSelect),
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface,
     ) {
-        Text(if (selected) t("provider.selected", label) else label)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                        else MaterialTheme.colorScheme.surfaceContainer,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Selected",
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+            }
+        }
     }
 }

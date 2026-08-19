@@ -635,6 +635,57 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// True when the on-disk sync state machine is not Idle (a cycle is
+    /// mid-flight from a previous process, or a conflict is paused).
+    pub fn sync_state_busy(&self) -> bool {
+        self.state_machine.borrow().current != SyncState::Idle
+    }
+
+    /// Locked background pull (mobile background sync, plan-mobile §3.5):
+    /// fetch remote objects ONLY — no checkout, no merge, no commit, no state
+    /// transition, no decryption. Safe with a locked vault: nothing decrypts
+    /// or moves HEAD/worktree. The next unlock's pull (commit→pull→push cycle)
+    /// finds the fetched objects locally and completes fast; conflicts are
+    /// resolved by the normal foreground flow. Refuses when the state machine
+    /// is not Idle (a paused conflict or mid-cycle state must not race a fetch).
+    pub fn fetch_locked(&self, repo: &Repository, remote_name: &str) -> Result<bool, BaluardError> {
+        if self.sync_state_busy() {
+            return Err(BaluardError::Sync(SyncError::Git(
+                "locked fetch refused: sync state machine not idle".into(),
+            )));
+        }
+        let mut remote = repo
+            .find_remote(remote_name)
+            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        let mut fetch_opts = FetchOptions::new();
+        let callbacks = crate::sync::credentials::build_callbacks(&self.credential_config);
+        fetch_opts.remote_callbacks(callbacks);
+        let refspec = format!("refs/heads/*:refs/remotes/{remote_name}/*");
+        remote
+            .fetch(&[&refspec], Some(&mut fetch_opts), None)
+            .map_err(|e| classify_remote_err("fetch", &e))?;
+
+        // Up-to-date check on refs only (no graph walk of the worktree).
+        let remote_branch = Self::resolve_remote_branch(repo, remote_name);
+        let remote_head = repo
+            .find_reference(&format!("refs/remotes/{remote_name}/HEAD"))
+            .or_else(|_| {
+                repo.find_reference(&format!("refs/remotes/{remote_name}/{remote_branch}"))
+            })
+            .map_err(|e| SyncError::Git(format!("find remote HEAD: {e}")))?;
+        let r_oid = remote_head
+            .peel_to_commit()
+            .map_err(|e| SyncError::Git(format!("peel remote: {e}")))?
+            .id();
+        let l_oid = repo
+            .head()
+            .map_err(|e| SyncError::Git(format!("head: {e}")))?
+            .peel_to_commit()
+            .map_err(|e| SyncError::Git(format!("peel local: {e}")))?
+            .id();
+        Ok(r_oid != l_oid)
+    }
+
     /// Push to remote. Uses "origin" by default.
     pub fn push(&self, repo: &Repository, remote_name: &str) -> Result<(), BaluardError> {
         let mut remote = repo
@@ -1779,6 +1830,61 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let engine = SyncEngine::new(dir.path(), "test-device");
         (dir, engine)
+    }
+
+    /// fetch_locked (mobile background sync): fetches objects but never moves
+    /// HEAD or the worktree, reports remote-ahead correctly, and refuses when
+    /// the sync state machine is busy.
+    #[test]
+    fn fetch_locked_is_fetch_only() {
+        // Source repo = the "remote".
+        let (dir, engine) = make_test_repo();
+        std::fs::write(dir.path().join("cipher.enc"), b"v1").unwrap();
+        let _ = engine.init_repo().unwrap();
+
+        // Clone it (file:// stands in for the provider remote).
+        let clone_dir = tempfile::tempdir().unwrap();
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(CloneProgress::default()));
+        SyncEngine::clone_remote(
+            &format!("file://{}", dir.path().display()),
+            clone_dir.path(),
+            crate::providers::types::Provider::GitHub,
+            progress,
+        )
+        .unwrap();
+        let clone_engine = SyncEngine::new(clone_dir.path(), "clone-device");
+
+        // No remote change yet -> up to date (false).
+        {
+            let repo = clone_engine.open_repo().unwrap();
+            assert!(!clone_engine.fetch_locked(&repo, "origin").unwrap());
+        }
+
+        // Advance the remote.
+        std::fs::write(dir.path().join("cipher.enc"), b"v2").unwrap();
+        engine
+            .commit_all(&engine.open_repo().unwrap(), "advance")
+            .unwrap();
+
+        // fetch_locked reports remote-ahead WITHOUT moving HEAD or worktree.
+        {
+            let repo = clone_engine.open_repo().unwrap();
+            assert!(clone_engine.fetch_locked(&repo, "origin").unwrap());
+            let head = repo.head().unwrap().peel_to_commit().unwrap().id();
+            std::fs::read(clone_dir.path().join("cipher.enc"))
+                .expect("worktree file must still exist");
+            // Same HEAD as before the fetch: objects only.
+            let repo2 = clone_engine.open_repo().unwrap();
+            assert_eq!(head, repo2.head().unwrap().peel_to_commit().unwrap().id());
+        }
+
+        // Busy state machine -> refused.
+        {
+            let mut sm = clone_engine.state_machine.borrow_mut();
+            sm.current = SyncState::Merging;
+        }
+        let repo = clone_engine.open_repo().unwrap();
+        assert!(clone_engine.fetch_locked(&repo, "origin").is_err());
     }
 
     /// Phase 4: clone_remote must surface fetch progress via the

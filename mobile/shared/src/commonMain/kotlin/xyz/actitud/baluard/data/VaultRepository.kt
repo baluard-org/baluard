@@ -15,6 +15,7 @@ import xyz.actitud.baluard.MobileProviderConfig
 import xyz.actitud.baluard.MobileRepo
 import xyz.actitud.baluard.cloneVaultStart as uniffiCloneVaultStart
 import xyz.actitud.baluard.connectPat as uniffiConnectPat
+import xyz.actitud.baluard.deriveKekForVault as uniffiDeriveKekForVault
 import xyz.actitud.baluard.enrollDeviceWithPhrase as uniffiEnrollDeviceWithPhrase
 import xyz.actitud.baluard.listVaultRepos as uniffiListVaultRepos
 import xyz.actitud.baluard.startDeviceFlow as uniffiStartDeviceFlow
@@ -48,6 +49,14 @@ class VaultRepository {
         runCatching { xyz.actitud.baluard.generatePassphrase(config) }
 
     suspend fun openVault(path: String): MobileVault = uniffiOpenVault(path)
+
+    /**
+     * Argon2id KEK over [password] for the vault at [path] (B5 biometric
+     * enroll). Runs the FULL KDF — main-app enroll flow only, never the
+     * quick-unlock path (plan §3.7 OOM guard).
+     */
+    suspend fun deriveKek(path: String, password: String): ByteArray =
+        uniffiDeriveKekForVault(path, password)
     suspend fun createVault(path: String, password: String, deviceName: String): MobileVault =
         uniffiCreateVault(path, password, deviceName)
 

@@ -12,14 +12,14 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use baluard_core::device_manager::{DeviceManager, EnrollmentPayload};
 use baluard_core::error::{BaluardError, VaultError};
+use baluard_core::providers::types::VaultRepo;
 use baluard_core::providers::{
-    provider_for, revoke_and_disconnect, token, DeviceFlowSession, Provider,
-    ProviderConfig, ProviderInfo, ProviderToken,
+    DeviceFlowSession, Provider, ProviderConfig, ProviderInfo, ProviderToken, provider_for,
+    revoke_and_disconnect, token,
 };
 use baluard_core::sync::engine::{CloneProgress, SyncEngine};
-use baluard_core::providers::types::VaultRepo;
-use baluard_core::vault::manifest::EnrollmentPolicy;
 use baluard_core::vault::handle::VaultHandle;
+use baluard_core::vault::manifest::EnrollmentPolicy;
 use zeroize::Zeroize;
 
 /// Process-global lock map for per-provider token refresh.
@@ -93,8 +93,8 @@ pub async fn connect_pat(
     token::store_token(provider, &info.username, &pat_token)
         .map_err(|e| VaultError::Metadata(format!("storing token: {e}")))?;
 
-    let mut state =
-        token::ProvidersState::load().map_err(|e| VaultError::Metadata(format!("loading state: {e}")))?;
+    let mut state = token::ProvidersState::load()
+        .map_err(|e| VaultError::Metadata(format!("loading state: {e}")))?;
     state.set(info.clone());
     state
         .save()
@@ -104,16 +104,19 @@ pub async fn connect_pat(
 }
 
 /// Ensure a valid token exists for the given provider, performing refresh under a per-provider lock if needed.
-pub async fn ensure_valid_token(provider: Provider) -> Result<(ProviderInfo, ProviderToken), BaluardError> {
+pub async fn ensure_valid_token(
+    provider: Provider,
+) -> Result<(ProviderInfo, ProviderToken), BaluardError> {
     let lock = global_provider_manager().lock_for(provider);
     let _guard = lock.lock().await;
 
     let state = token::ProvidersState::load()
         .map_err(|e| VaultError::Metadata(format!("loading providers state: {e}")))?;
-    let info = state
-        .get(provider)
-        .cloned()
-        .ok_or_else(|| BaluardError::from(VaultError::NotFound(format!("provider {provider:?} not connected"))))?;
+    let info = state.get(provider).cloned().ok_or_else(|| {
+        BaluardError::from(VaultError::NotFound(format!(
+            "provider {provider:?} not connected"
+        )))
+    })?;
 
     let tok = token::load_token(provider, &info.username)
         .map_err(|e| VaultError::Metadata(format!("loading token: {e}")))?;
@@ -139,7 +142,10 @@ pub async fn ensure_valid_token(provider: Provider) -> Result<(ProviderInfo, Pro
 
                 return Ok((info, refreshed));
             } else {
-                return Err(VaultError::Metadata(format!("provider {provider:?} token refresh returned no token")).into());
+                return Err(VaultError::Metadata(format!(
+                    "provider {provider:?} token refresh returned no token"
+                ))
+                .into());
             }
         }
     }
@@ -278,7 +284,13 @@ pub fn enroll_device_pre_unlock(
         .map_err(|e| VaultError::Metadata(format!("load device manager: {e}")))?;
 
     let result = dm
-        .enroll_with_recovery_phrase(&payload, recovery_phrase, x25519_secret, ed25519_signing, policy)
+        .enroll_with_recovery_phrase(
+            &payload,
+            recovery_phrase,
+            x25519_secret,
+            ed25519_signing,
+            policy,
+        )
         .map_err(|e| VaultError::Metadata(format!("enroll failed: {e}")))?;
 
     let privkey_data = serde_json::json!({

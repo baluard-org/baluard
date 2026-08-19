@@ -3512,9 +3512,7 @@ fn generate_session_token() -> String {
 fn registry_device_name(vault_path: &std::path::Path) -> String {
     let reg_path = vault_path.join("meta/devices.json");
     if let Ok(data) = std::fs::read_to_string(&reg_path) {
-        if let Ok(reg) =
-            serde_json::from_str::<baluard_core::devices::DeviceRegistry>(&data)
-        {
+        if let Ok(reg) = serde_json::from_str::<baluard_core::devices::DeviceRegistry>(&data) {
             if let Some(entry) = reg.devices.values().next() {
                 return entry.name.clone();
             }

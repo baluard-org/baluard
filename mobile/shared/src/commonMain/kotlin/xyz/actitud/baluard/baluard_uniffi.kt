@@ -837,6 +837,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -947,6 +949,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_update_cipher(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_vault_id(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_func_background_fetch(`path`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_clone_vault_start(`provider`: RustBuffer.ByValue,`cloneUrl`: RustBuffer.ByValue,`localPath`: RustBuffer.ByValue,
     ): Long
@@ -1092,6 +1096,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_baluard_uniffi_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    fun uniffi_baluard_uniffi_checksum_func_background_fetch(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_func_clone_vault_start(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_connect_pat(
@@ -1221,6 +1227,9 @@ private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
 
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: UniffiLib) {
+    if (lib.uniffi_baluard_uniffi_checksum_func_background_fetch() != 49205.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_func_clone_vault_start() != 40767.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -4353,6 +4362,29 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
 
 
 
+
+        /**
+         * Locked background pull (mobile background sync, plan-mobile §3.5):
+         * fetch remote git objects WITHOUT unlocking. No decryption, no checkout,
+         * no state transition — the next unlock's pull consumes the fetched
+         * objects. Called by the Android WorkManager job (opt-in background sync)
+         * with the vault path; works on a locked vault by design. Returns true when
+         * the remote moved ahead of the local HEAD (objects fetched for later).
+         */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `backgroundFetch`(`path`: kotlin.String) : kotlin.Boolean {
+        return uniffiRustCallAsync(
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_background_fetch(FfiConverterString.lower(`path`),),
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_i8(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_i8(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_i8(future) },
+        // lift function
+        { FfiConverterBoolean.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
 
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")

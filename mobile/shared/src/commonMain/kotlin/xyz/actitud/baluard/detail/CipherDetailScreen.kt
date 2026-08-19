@@ -1,6 +1,10 @@
 package xyz.actitud.baluard.detail
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,26 +12,30 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,21 +45,24 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
-import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.i18n.t
-import xyz.actitud.baluard.platform.copyToClipboard
+import xyz.actitud.baluard.platform.openUrl
 import xyz.actitud.baluard.totp.TotpViewModel
 import xyz.actitud.baluard.totp.TotpWidget
+import xyz.actitud.baluard.ui.components.BaluardCard
+import xyz.actitud.baluard.ui.components.CategoryBadge
+import xyz.actitud.baluard.ui.components.CipherAvatar
+import xyz.actitud.baluard.ui.components.CopyableFieldRow
+import xyz.actitud.baluard.ui.components.SectionCard
 
 /**
- * Decrypted cipher detail (plan §3 remaining UI: all 8 types). Field rows
- * come from [fieldsFor]; sensitive values are masked until revealed, every
- * row copies on tap. Logins with a TOTP seed show the live code widget (the
- * seed itself never crosses the FFI).
+ * Decrypted cipher detail styled after Baluard design language.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,11 +74,8 @@ fun CipherDetailScreen(
     onEdit: () -> Unit,
     onDeleted: () -> Unit,
     onBack: () -> Unit,
-    /** Bumped by the caller after a save so the reload effect re-fires. */
     revision: Int = 0,
 ) {
-    LaunchedEffect(cipherId, revision) { detailViewModel.load(vault, cipherId) }
-
     LaunchedEffect(cipherId, revision) { detailViewModel.load(vault, cipherId) }
 
     val state = detailViewModel.state
@@ -75,40 +83,29 @@ fun CipherDetailScreen(
     var confirmDelete by remember { mutableStateOf(false) }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = {
-                    Column {
-                        Text(state?.name ?: "", style = MaterialTheme.typography.titleLarge)
-                        state?.let {
-                            Text(
-                                t(typeLabelKey(it.typeTag)),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                },
+                title = { Text(state?.name ?: "") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = t("common.back"))
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                ),
                 actions = {
-                    state?.let { s ->
-                        if (s.favorite) {
-                            Icon(
-                                Icons.Filled.Star,
-                                contentDescription = t("edit.favorite"),
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    }
                     IconButton(onClick = onEdit) {
-                        Icon(Icons.Filled.Edit, contentDescription = t("detail.edit"))
+                        Icon(Icons.Default.Edit, contentDescription = t("detail.edit"))
                     }
                     IconButton(onClick = { confirmDelete = true }, enabled = state != null) {
-                        Icon(Icons.Filled.Delete, contentDescription = t("detail.delete"))
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = t("detail.delete"),
+                            tint = MaterialTheme.colorScheme.error,
+                        )
                     }
                 },
             )
@@ -116,12 +113,16 @@ fun CipherDetailScreen(
     ) { padding ->
         val s = state
         if (s == null) {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center,
             ) {
-                detailViewModel.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                detailViewModel.error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                }
             }
             return@Scaffold
         }
@@ -131,32 +132,144 @@ fun CipherDetailScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            // Header Overview Card
+            BaluardCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CipherAvatar(
+                        name = s.name,
+                        typeTag = s.typeTag,
+                        size = 52.dp,
+                    )
+
+                    Spacer(Modifier.width(14.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = s.name,
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            if (s.favorite) {
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = "Favorite",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(4.dp))
+
+                        CategoryBadge(
+                            label = t(typeLabelKey(s.typeTag)),
+                            typeTag = s.typeTag,
+                        )
+                    }
+                }
+            }
+
+            // TOTP Live Code Card if applicable
             if (s.hasTotp) {
                 TotpWidget(vault = vault, cipherId = s.id, viewModel = totpViewModel)
-                Spacer(Modifier.height(8.dp))
             }
 
-            s.uris.forEach { uri -> FieldRow(label = t("detail.f.uri"), value = uri, mono = true, onCopy = { copyToClipboard(uri) }) }
-
-            s.fields.forEach { row ->
-                FieldRow(
-                    label = t(row.spec.labelKey),
-                    value = row.value,
-                    mono = row.spec.mono,
-                    sensitive = row.spec.sensitive,
-                    onCopy = { copyToClipboard(row.value) },
-                )
+            // Credentials / Key Details Section
+            if (s.fields.isNotEmpty()) {
+                SectionCard(title = "Credentials & Details") {
+                    s.fields.forEachIndexed { index, row ->
+                        CopyableFieldRow(
+                            label = t(row.spec.labelKey),
+                            value = row.value,
+                            mono = row.spec.mono,
+                            sensitive = row.spec.sensitive,
+                        )
+                        if (index < s.fields.size - 1) {
+                            androidx.compose.material3.HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            )
+                        }
+                    }
+                }
             }
 
+            // Websites & URIs Section
+            if (s.uris.isNotEmpty()) {
+                SectionCard(title = "Websites") {
+                    s.uris.forEachIndexed { index, uri ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = t("detail.f.uri"),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    text = uri,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                            IconButton(
+                                onClick = { openUrl(uri) },
+                                modifier = Modifier.size(36.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                    contentDescription = "Open in browser",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                        if (index < s.uris.size - 1) {
+                            androidx.compose.material3.HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Notes Section
             s.notes?.let { notes ->
-                Spacer(Modifier.height(16.dp))
-                Text(t("edit.notes"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(4.dp))
-                Text(notes, style = MaterialTheme.typography.bodyMedium)
+                if (notes.isNotBlank()) {
+                    SectionCard(title = t("edit.notes")) {
+                        Text(
+                            text = notes,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.height(32.dp))
+
+            Spacer(Modifier.height(24.dp))
         }
     }
 
@@ -166,60 +279,23 @@ fun CipherDetailScreen(
             title = { Text(t("detail.deleteTitle")) },
             text = { Text(t("detail.deleteBody", state.name)) },
             confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    scope.launch {
-                        detailViewModel.delete(vault, state.id)
-                        if (detailViewModel.error == null) onDeleted()
-                    }
-                }) { Text(t("detail.delete")) }
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        scope.launch {
+                            detailViewModel.delete(vault, state.id)
+                            if (detailViewModel.error == null) onDeleted()
+                        }
+                    },
+                ) {
+                    Text(t("detail.delete"), color = MaterialTheme.colorScheme.error)
+                }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text(t("common.cancel")) }
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text(t("common.cancel"))
+                }
             },
         )
-    }
-}
-
-/** One label + value row; sensitive values mask until revealed. */
-@Composable
-private fun FieldRow(
-    label: String,
-    value: String,
-    mono: Boolean = false,
-    sensitive: Boolean = false,
-    onCopy: () -> Unit,
-) {
-    var revealed by remember(label) { mutableStateOf(!sensitive) }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                if (revealed) value else "••••••••",
-                style = MaterialTheme.typography.bodyLarge,
-                fontFamily = if (mono) FontFamily.Monospace else null,
-            )
-        }
-        if (sensitive) {
-            IconButton(onClick = { revealed = !revealed }) {
-                Icon(
-                    if (revealed) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                    contentDescription = if (revealed) t("detail.hide") else t("detail.reveal"),
-                )
-            }
-        }
-        IconButton(onClick = onCopy) {
-            Icon(Icons.Filled.ContentCopy, contentDescription = t("detail.copy"))
-        }
     }
 }

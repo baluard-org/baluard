@@ -9,12 +9,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,20 +24,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.ui.components.BaluardAmbientBackground
+import xyz.actitud.baluard.ui.components.BaluardCard
+import xyz.actitud.baluard.ui.components.BaluardLogoBadge
+import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
+import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
+import xyz.actitud.baluard.ui.components.BaluardTextField
 
 /**
- * Vault-creation form (plan §5.5): master password x2 + device name ->
- * create -> RecoveryPhraseScreen -> ack -> vault list.
- *
- * The Argon2id KDF (MobileLow profile) runs on the shared tokio Runtime via
- * the async FFI, never on the UI thread (plan §2.1). The minimum password
- * length matches the desktop wizard (8).
+ * Vault-creation form styled after Baluard design guidelines.
  */
 @Composable
 fun CreateVaultScreen(
@@ -65,104 +65,122 @@ fun CreateVaultScreen(
         return
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(t("onboarding.createVault"), style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            t("onboarding.createSubtitle"),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(32.dp))
+    BaluardAmbientBackground {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            BaluardLogoBadge(
+                size = 64.dp,
+                showTitle = true,
+                subtitle = t("onboarding.createSubtitle"),
+            )
 
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text(t("login.passwordPlaceholder")) },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            isError = password.isNotEmpty() && password.length < MIN_PASSWORD_LEN,
-            supportingText = if (password.isNotEmpty() && password.length < MIN_PASSWORD_LEN) {
-                { Text(t("onboarding.errorMinLength")) }
-            } else {
-                null
-            },
-            enabled = !creating,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = confirm,
-            onValueChange = { confirm = it },
-            label = { Text(t("onboarding.confirmPassword")) },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            isError = confirm.isNotEmpty() && confirm != password,
-            supportingText = if (confirm.isNotEmpty() && confirm != password) {
-                { Text(t("onboarding.errorMismatch")) }
-            } else {
-                null
-            },
-            enabled = !creating,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = deviceName,
-            onValueChange = { deviceName = it },
-            label = { Text(t("onboarding.deviceName")) },
-            singleLine = true,
-            enabled = !creating,
-            modifier = Modifier.fillMaxWidth(),
-        )
+            Spacer(Modifier.height(28.dp))
 
-        error?.let {
-            Spacer(Modifier.height(12.dp))
-            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-        }
-
-        Spacer(Modifier.height(24.dp))
-        if (creating) {
-            CircularProgressIndicator()
-        } else {
-            Button(
-                onClick = {
-                    if (password.length < MIN_PASSWORD_LEN) {
-                        error = t("onboarding.errorMinLength")
-                        return@Button
-                    }
-                    if (password != confirm) {
-                        error = t("onboarding.errorMismatch")
-                        return@Button
-                    }
-                    creating = true
-                    error = null
-                    scope.launch {
-                        val ok = vm.create(vaultPath, password, deviceName)
-                        creating = false
-                        if (ok) {
-                            phraseShown = true
-                        } else {
-                            error = t("onboarding.errorCreateFailed")
-                        }
-                    }
-                },
-                enabled = password.length >= MIN_PASSWORD_LEN && confirm == password && deviceName.isNotBlank(),
+            BaluardCard(
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(t("onboarding.createButton"))
+                BaluardTextField(
+                    value = password,
+                    onValueChange = {
+                        password = it
+                        error = null
+                    },
+                    label = t("login.passwordPlaceholder"),
+                    placeholder = t("login.passwordPlaceholder"),
+                    leadingIcon = Icons.Default.Lock,
+                    isPassword = true,
+                    enabled = !creating,
+                    isError = password.isNotEmpty() && password.length < MIN_PASSWORD_LEN,
+                    supportingText = if (password.isNotEmpty() && password.length < MIN_PASSWORD_LEN) {
+                        t("onboarding.errorMinLength")
+                    } else null,
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                BaluardTextField(
+                    value = confirm,
+                    onValueChange = {
+                        confirm = it
+                        error = null
+                    },
+                    label = t("onboarding.confirmPassword"),
+                    placeholder = t("onboarding.confirmPassword"),
+                    leadingIcon = Icons.Default.Lock,
+                    isPassword = true,
+                    enabled = !creating,
+                    isError = confirm.isNotEmpty() && confirm != password,
+                    supportingText = if (confirm.isNotEmpty() && confirm != password) {
+                        t("onboarding.errorMismatch")
+                    } else null,
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                BaluardTextField(
+                    value = deviceName,
+                    onValueChange = {
+                        deviceName = it
+                        error = null
+                    },
+                    label = t("onboarding.deviceName"),
+                    leadingIcon = Icons.Default.PhoneAndroid,
+                    enabled = !creating,
+                )
+
+                error?.let {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                BaluardPrimaryButton(
+                    text = t("onboarding.createButton"),
+                    onClick = {
+                        if (password.length < MIN_PASSWORD_LEN) {
+                            error = t("onboarding.errorMinLength")
+                            return@BaluardPrimaryButton
+                        }
+                        if (password != confirm) {
+                            error = t("onboarding.errorMismatch")
+                            return@BaluardPrimaryButton
+                        }
+                        creating = true
+                        error = null
+                        scope.launch {
+                            val ok = vm.create(vaultPath, password, deviceName)
+                            creating = false
+                            if (ok) {
+                                phraseShown = true
+                            } else {
+                                error = t("onboarding.errorCreateFailed")
+                            }
+                        }
+                    },
+                    enabled = password.length >= MIN_PASSWORD_LEN && confirm == password && deviceName.isNotBlank(),
+                    loading = creating,
+                    leadingIcon = Icons.Default.Add,
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                BaluardOutlinedButton(
+                    text = t("common.back"),
+                    onClick = onCancelled,
+                    enabled = !creating,
+                )
             }
-        }
-        Spacer(Modifier.height(8.dp))
-        TextButton(onClick = onCancelled, enabled = !creating) {
-            Text(t("common.back"))
         }
     }
 }

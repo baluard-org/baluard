@@ -904,6 +904,28 @@ pub async fn provider_disconnect(provider: MobileProvider) -> Result<(), Baluard
     Ok(())
 }
 
+/// Locked background pull (mobile background sync, plan-mobile §3.5):
+/// fetch remote git objects WITHOUT unlocking. No decryption, no checkout,
+/// no state transition — the next unlock's pull consumes the fetched
+/// objects. Called by the Android WorkManager job (opt-in background sync)
+/// with the vault path; works on a locked vault by design. Returns true when
+/// the remote moved ahead of the local HEAD (objects fetched for later).
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn background_fetch(path: String) -> Result<bool, BaluardError> {
+    let vault_path = std::path::PathBuf::from(path);
+    tokio::task::spawn_blocking(move || {
+        let engine = baluard_core::sync::engine::SyncEngine::new(&vault_path, "background");
+        let repo = engine.open_repo()?;
+        engine
+            .fetch_locked(&repo, "origin")
+            .map_err(BaluardError::from)
+    })
+    .await
+    .map_err(|e| BaluardError::Network {
+        detail: format!("join: {e}"),
+    })?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

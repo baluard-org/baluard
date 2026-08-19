@@ -9,30 +9,32 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.ui.components.BaluardAmbientBackground
+import xyz.actitud.baluard.ui.components.BaluardCard
+import xyz.actitud.baluard.ui.components.BaluardLogoBadge
+import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
+import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
+import xyz.actitud.baluard.ui.components.BaluardTextField
 
 /**
- * Device enrollment (plan §5.4): the clone has no device key (gitignored),
- * so this device must be trusted by the vault. Enter the 24-word recovery
- * phrase + master password -> enroll -> unlocked vault.
+ * Device enrollment styled after Baluard design language.
  */
 @Composable
 fun EnrollDeviceScreen(
@@ -52,81 +54,105 @@ fun EnrollDeviceScreen(
     val wordCount = phrase.trim().split(Regex("\\s+")).count { it.isNotBlank() }
     val phraseValid = wordCount == 24
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(t("enroll.title"), style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            t("enroll.subtitle"),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(24.dp))
+    BaluardAmbientBackground {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            BaluardLogoBadge(
+                size = 64.dp,
+                showTitle = true,
+                subtitle = t("enroll.subtitle"),
+            )
 
-        OutlinedTextField(
-            value = phrase,
-            onValueChange = { phrase = it },
-            label = { Text(t("enroll.phraseLabel", wordCount)) },
-            isError = phrase.isNotBlank() && !phraseValid,
-            supportingText = if (phrase.isNotBlank() && !phraseValid) {
-                { Text(t("enroll.phraseHint")) }
-            } else {
-                null
-            },
-            enabled = !enrolling,
-            minLines = 2,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text(t("login.passwordPlaceholder")) },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            enabled = !enrolling,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = deviceName,
-            onValueChange = { deviceName = it },
-            label = { Text(t("onboarding.deviceName")) },
-            singleLine = true,
-            enabled = !enrolling,
-            modifier = Modifier.fillMaxWidth(),
-        )
+            Spacer(Modifier.height(28.dp))
 
-        (error ?: vm.error)?.let {
-            Spacer(Modifier.height(12.dp))
-            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            BaluardCard(modifier = Modifier.fillMaxWidth()) {
+                BaluardTextField(
+                    value = phrase,
+                    onValueChange = {
+                        phrase = it
+                        error = null
+                    },
+                    label = t("enroll.phraseLabel", wordCount),
+                    placeholder = "Enter the 24 recovery words...",
+                    leadingIcon = Icons.Default.Key,
+                    singleLine = false,
+                    minLines = 3,
+                    isError = phrase.isNotBlank() && !phraseValid,
+                    supportingText = if (phrase.isNotBlank() && !phraseValid) {
+                        t("enroll.phraseHint")
+                    } else null,
+                    enabled = !enrolling,
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                BaluardTextField(
+                    value = password,
+                    onValueChange = {
+                        password = it
+                        error = null
+                    },
+                    label = t("login.passwordPlaceholder"),
+                    placeholder = t("login.passwordPlaceholder"),
+                    leadingIcon = Icons.Default.Lock,
+                    isPassword = true,
+                    enabled = !enrolling,
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                BaluardTextField(
+                    value = deviceName,
+                    onValueChange = {
+                        deviceName = it
+                        error = null
+                    },
+                    label = t("onboarding.deviceName"),
+                    leadingIcon = Icons.Default.PhoneAndroid,
+                    enabled = !enrolling,
+                )
+
+                (error ?: vm.error)?.let {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                BaluardPrimaryButton(
+                    text = t("enroll.button"),
+                    onClick = {
+                        enrolling = true
+                        error = null
+                        scope.launch {
+                            val ok = vm.enroll(vaultPath, password, phrase.trim(), deviceName)
+                            enrolling = false
+                            if (ok) onEnrolled() else error = vm.error
+                        }
+                    },
+                    enabled = phraseValid && password.isNotEmpty() && deviceName.isNotBlank(),
+                    loading = enrolling,
+                    leadingIcon = Icons.Default.Key,
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                BaluardOutlinedButton(
+                    text = t("common.back"),
+                    onClick = onCancelled,
+                    enabled = !enrolling,
+                )
+            }
         }
-
-        Spacer(Modifier.height(24.dp))
-        if (enrolling) {
-            CircularProgressIndicator()
-        } else {
-            Button(
-                onClick = {
-                    enrolling = true
-                    error = null
-                    scope.launch {
-                        val ok = vm.enroll(vaultPath, password, phrase.trim(), deviceName)
-                        enrolling = false
-                        if (ok) onEnrolled() else error = vm.error
-                    }
-                },
-                enabled = phraseValid && password.isNotEmpty() && deviceName.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(t("enroll.button")) }
-        }
-        Spacer(Modifier.height(8.dp))
-        TextButton(onClick = onCancelled, enabled = !enrolling) { Text(t("common.back")) }
     }
 }
