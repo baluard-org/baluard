@@ -6,6 +6,10 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import baluard_mobile.shared.generated.resources.Res
+import baluard_mobile.shared.generated.resources.morris_roman
+import org.jetbrains.compose.resources.Font
 
 // ── Baluard brand palette ────────────────────────────────────────────────────
 // Source of truth: docs/brand-guidelines.md + docs/design-language-tokens.json
@@ -110,5 +114,16 @@ fun BaluardTheme(
     MaterialTheme(
         colorScheme = if (darkTheme) BaluardDark else BaluardLight,
         content = content,
+    )
+}
+
+/**
+ * Baluard brand typeface (Morris Roman Blackletter).
+ * Used when mentioning "Baluard" alone in headings/brand headers.
+ */
+@Composable
+fun brandFontFamily(): FontFamily {
+    return FontFamily(
+        Font(Res.font.morris_roman),
     )
 }
