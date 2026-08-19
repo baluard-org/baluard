@@ -1,4 +1,4 @@
-import { createSignal, createMemo, Show, onMount } from "solid-js";
+import { createSignal, createMemo, Show, onSettled } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { suggestSlug, cleanSlug, validateSlug } from "../lib/slug.js";
@@ -27,7 +27,7 @@ export default function CreateVaultScreen() {
   const [editingSlug, setEditingSlug] = createSignal(false);
 
   // Auto-detect OS locale on first mount (before user has a saved preference)
-  onMount(() => {
+  onSettled(() => {
     const stored = localStorage.getItem("baluard-locale");
     if (!stored) {
       const detected = detectOsLocale();

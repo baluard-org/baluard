@@ -5,6 +5,7 @@
 // value (it's random; we just confirm SOMETHING is rendered).
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { flush } from "solid-js";
 import { render, fireEvent, waitFor, cleanup } from "@solidjs/testing-library";
 
 // ── Mocks (hoisted) ───────────────────────────────────────────
@@ -77,6 +78,7 @@ describe("GeneratorModal", () => {
       <GeneratorModal showGenerator={true} setShowGenerator={vi.fn()} />
     ));
     fireEvent.click(getByText("generator.passphraseTab"));
+    flush();
     expect(getByText("generator.words", { exact: false })).toBeTruthy();
   });
 
@@ -91,6 +93,7 @@ describe("GeneratorModal", () => {
     );
     expect(closeBtn).toBeTruthy();
     fireEvent.click(closeBtn);
+    flush();
     expect(setShow).toHaveBeenCalledWith(false);
   });
 
@@ -102,6 +105,7 @@ describe("GeneratorModal", () => {
     // aria/title. It uses t("generator.regenerate") as label.
     const regenBtn = getByText("generator.regenerate");
     fireEvent.click(regenBtn);
+    flush();
     await waitFor(() => expect(daemonMock).toHaveBeenCalledWith("generator.history_add", expect.any(String)));
   });
 
@@ -120,6 +124,7 @@ describe("GeneratorModal", () => {
     // The history toggle is t("generator.history") — find it.
     const historyBtn = getByText("generator.history");
     fireEvent.click(historyBtn);
+    flush();
     await waitFor(() => expect(daemonMock).toHaveBeenCalledWith("generator.history_list"));
   });
 });

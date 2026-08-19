@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Show, For } from "solid-js";
-import { Transition } from "solid-transition-group";
+import { Transition } from "../lib/transition";
 import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword, generatePassphrase } from "../lib/utils.js";
 import { IconCopy, IconCheck, IconRefresh } from "./Icon.jsx";
@@ -96,17 +96,25 @@ export default function GeneratorModal(props) {
     persistToHistory(val, mode() === MODE_PASSWORD ? "password" : "passphrase", params);
   }
 
-  createEffect(() => {
-    mode(); len(); useUpper(); useNums(); useSyms();
-    wordCount(); separator(); ppUpper(); ppNumber(); ppSymbol();
-    // Pure generation only, no persistence on param changes
-    setResult(generate());
-  });
+  createEffect(
+    () => {
+      mode(); len(); useUpper(); useNums(); useSyms();
+      wordCount(); separator(); ppUpper(); ppNumber(); ppSymbol();
+      // Pure generation only, no persistence on param changes
+      return generate();
+    },
+    (value) => {
+      setResult(value);
+    },
+  );
 
   // Load history when panel opens
-  createEffect(() => {
-    if (showHistory()) fetchHistory();
-  });
+  createEffect(
+    () => showHistory(),
+    (show) => {
+      if (show) fetchHistory();
+    },
+  );
 
   async function handleCopy() {
     const val = result();

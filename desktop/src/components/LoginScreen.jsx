@@ -29,13 +29,15 @@ export default function LoginScreen() {
   // resolves and activeSlug populates, the effect re-fires and probes the
   // right slug. Skip entirely when there is no target yet so we never fire a
   // no-slug probe that errors and logs at WARN.
-  createEffect(() => {
-    const target = auth.switchTarget() ?? switcher.activeSlug();
-    if (!target) return;
-    auth.refreshBiometric(target);
-    // Session PIN escrow is also per-vault (in-memory). Re-query alongside.
-    auth.refreshPin(target);
-  });
+  createEffect(
+    () => auth.switchTarget() ?? switcher.activeSlug(),
+    (target) => {
+      if (!target) return;
+      auth.refreshBiometric(target);
+      // Session PIN escrow is also per-vault (in-memory). Re-query alongside.
+      auth.refreshPin(target);
+    },
+  );
   const [bruteLock, setBruteLock] = createSignal(false);
   const [pinValue, setPinValue] = createSignal("");
   const [pinBusy, setPinBusy] = createSignal(false);

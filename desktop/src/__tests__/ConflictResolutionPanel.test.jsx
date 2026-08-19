@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRoot } from "solid-js";
-import { render } from "solid-js/web";
+import { createRoot, flush } from "solid-js";
+import { render } from "@solidjs/web";
 
 // Mock the IPC layer so clicks don't hit the daemon. The panel's default
 // resolver calls resolveConflict; we spy on it to assert the verdict wiring.
@@ -79,6 +79,7 @@ describe("ConflictResolutionPanel", () => {
   it("renders the modal with role/aria + 3 decision buttons when a conflict is enqueued", () => {
     const conflicts = mountPanel();
     conflicts.enqueue(mockSampleConflict({ name: "GitHub" }));
+    flush();
 
     const dialog = document.querySelector('[role="alertdialog"]');
     expect(dialog).not.toBeNull();
@@ -106,6 +107,7 @@ describe("ConflictResolutionPanel", () => {
   it("clicking 'keep local' calls the resolver with keep_local and clears the queue", async () => {
     const conflicts = mountPanel();
     conflicts.enqueue(mockSampleConflict({ cipherId: "c1" }));
+    flush();
 
     findButton("Keep this device's version").click();
     // Flush the async resolver + queue update. vi.waitFor is robust to the
@@ -118,6 +120,7 @@ describe("ConflictResolutionPanel", () => {
   it("routes keep_remote and keep_both verdicts to the resolver correctly", async () => {
     const conflicts = mountPanel();
     conflicts.enqueue(mockSampleConflict({ cipherId: "c1" }));
+    flush();
 
     findButton("Keep the other device's version").click();
     await vi.waitFor(() =>
@@ -128,6 +131,7 @@ describe("ConflictResolutionPanel", () => {
     // Second conflict -> keep_both. The panel unmounted on the drain; wait for
     // the c2 buttons to re-mount before clicking.
     conflicts.enqueue(mockSampleConflict({ cipherId: "c2" }));
+    flush();
     await vi.waitFor(() =>
       expect(findButton("Keep both as separate items")).toBeTruthy(),
     );
@@ -140,6 +144,7 @@ describe("ConflictResolutionPanel", () => {
   it("shows the type-changed block (not the field chips) when typeChanged is true", () => {
     const conflicts = mountPanel();
     conflicts.enqueue(mockSampleTypeChange());
+    flush();
 
     const bodyText = document.querySelector('[role="alertdialog"]').textContent;
     expect(bodyText).toContain("different type");
@@ -160,6 +165,7 @@ describe("ConflictResolutionPanel", () => {
         ],
       }),
     );
+    flush();
 
     const chips = [...document.querySelectorAll("li")];
     const labels = chips.map((c) => c.textContent);
@@ -176,6 +182,7 @@ describe("ConflictResolutionPanel", () => {
   it("isResolving guards against double-click + disables buttons during in-flight resolve", async () => {
     const conflicts = mountPanel();
     conflicts.enqueue(mockSampleConflict({ cipherId: "c1" }));
+    flush();
 
     // Resolver that stays pending until we resolve it — simulates an IPC in
     // flight long enough for a second click to land.
@@ -204,6 +211,7 @@ describe("ConflictResolutionPanel", () => {
   it("on resolver error: keeps the conflict in the queue + surfaces a toast (retry-friendly)", async () => {
     const conflicts = mountPanel();
     conflicts.enqueue(mockSampleConflict({ cipherId: "c1" }));
+    flush();
 
     resolveConflictMock.mockRejectedValueOnce(new Error("IPC down"));
     findButton("Keep this device's version").click();
@@ -226,6 +234,7 @@ describe("ConflictResolutionPanel", () => {
     // The __mock flag on the item swaps in a no-op resolver so clicks drain
     // the queue locally.
     conflicts.enqueue(mockSampleConflict({ cipherId: "mock-1" }), { mock: true });
+    flush();
 
     findButton("Keep this device's version").click();
     await vi.waitFor(() => expect(conflicts.hasPending()).toBe(false));
@@ -238,12 +247,15 @@ describe("ConflictResolutionPanel", () => {
     // Mock first, then a REAL conflict enqueued without { mock }. The mock is
     // head; resolving it must not leak its no-op resolver onto the real one.
     conflicts.enqueue(mockSampleConflict({ cipherId: "mock-1" }), { mock: true });
+    flush();
     conflicts.enqueue(mockSampleConflict({ cipherId: "real-1" }));
+    flush();
     expect(conflicts.headIsMock()).toBe(true);
 
     // Resolve the mock head -> no IPC call.
     findButton("Keep this device's version").click();
     await vi.waitFor(() => expect(conflicts.hasPending()).toBe(true));
+    flush();
     expect(resolveConflictMock).not.toHaveBeenCalled();
 
     // Now the real conflict is head -> IPC resolver fires. Re-query the
@@ -253,6 +265,7 @@ describe("ConflictResolutionPanel", () => {
     await vi.waitFor(() =>
       expect(findButton("Keep this device's version")).toBeTruthy(),
     );
+    flush();
     findButton("Keep this device's version").click();
     await vi.waitFor(() =>
       expect(resolveConflictMock).toHaveBeenCalledWith("keep_local"),

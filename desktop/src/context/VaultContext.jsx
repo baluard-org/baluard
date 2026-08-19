@@ -247,9 +247,9 @@ function VaultProvider(props) {
   };
 
   return (
-    <VaultContext.Provider value={store}>
+    <VaultContext value={store}>
       {props.children}
-    </VaultContext.Provider>
+    </VaultContext>
   );
 }
 

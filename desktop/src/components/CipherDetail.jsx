@@ -66,15 +66,15 @@ export default function CipherDetail(props) {
   const cipher = () => props.cipher;
 
   // TOTP code auto-refresh timer (boundary-aligned)
-  createEffect(() => {
-    const c = cipher();
-    if (!c) return;
-    const totpUri = c.totp_uri;
-    if (!totpUri || !c.id) {
-      setTotpCode(null);
-      return;
-    }
-    let active = true;
+  createEffect(
+    () => cipher()?.totp_uri && cipher()?.id,
+    (hasTotp) => {
+      if (!hasTotp) {
+        setTotpCode(null);
+        return;
+      }
+      const c = cipher();
+      let active = true;
     let timer = null;
     const fetchCode = async () => {
       if (!active) return;
@@ -95,8 +95,12 @@ export default function CipherDetail(props) {
       }
     };
     fetchCode();
-    onCleanup(() => { active = false; if (timer) clearTimeout(timer); });
-  });
+      return () => {
+        active = false;
+        if (timer) clearTimeout(timer);
+      };
+    },
+  );
 
   function startEdit() {
     const c = cipher();

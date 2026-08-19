@@ -36,7 +36,7 @@ const authMock = { signOut: vi.fn() };
 
 import { useVault as realUseVault } from "../context/VaultContext.jsx";
 import { useAuth as realUseAuth } from "../context/AuthContext.jsx";
-import { createSignal as realCreateSignal } from "solid-js";
+import { createSignal as realCreateSignal, flush } from "solid-js";
 
 vi.mock("../context/VaultContext.jsx", () => ({
   useVault: () => vaultMock,
@@ -135,6 +135,7 @@ describe("SettingsModal", () => {
     // Set the value to "30m" and dispatch a change event.
     sel.value = "30m";
     fireEvent.change(sel);
+    flush();
     await waitFor(() =>
       expect(daemonMock).toHaveBeenCalledWith(
         "settings.set",
@@ -147,6 +148,7 @@ describe("SettingsModal", () => {
     const { getByText } = render(() => <SettingsModal />);
     await waitFor(() => expect(getByText("settings.lightMode", { exact: false })).toBeTruthy());
     fireEvent.click(getByText("settings.lightMode", { exact: false }));
+    flush();
     expect(themeMock.set).toHaveBeenCalledWith("light");
     await waitFor(() =>
       expect(daemonMock).toHaveBeenCalledWith(
@@ -160,6 +162,7 @@ describe("SettingsModal", () => {
     const { getByText } = render(() => <SettingsModal />);
     await waitFor(() => expect(getByText("settings.tabData", { exact: false })).toBeTruthy());
     fireEvent.click(getByText("settings.tabData", { exact: false }));
+    flush();
     // The data tab reveals the import/export headings.
     expect(getByText("settings.importTitle", { exact: false })).toBeTruthy();
   });

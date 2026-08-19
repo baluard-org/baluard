@@ -11,7 +11,7 @@
 //     (AuthContext re-uses the existing unlock screen)
 //   - clicking a CLOSED vault = same as locked (unlock opens + inserts)
 
-import { createSignal, createContext, useContext, onMount, onCleanup } from "solid-js";
+import { createSignal, createContext, useContext, onSettled, onCleanup } from "solid-js";
 import { daemon } from "../lib/daemon.js";
 
 const VaultSwitcherContext = createContext();
@@ -42,7 +42,7 @@ function VaultSwitcherProvider(props) {
   // states will have changed. Refreshing here picks up the locked states.
   let heartbeat;
   function onFocusRegain() { refresh(); }
-  onMount(() => {
+  onSettled(() => {
     refresh();
     heartbeat = setInterval(refresh, 30_000);
     window.addEventListener("focus", onFocusRegain);
@@ -104,9 +104,9 @@ function VaultSwitcherProvider(props) {
   };
 
   return (
-    <VaultSwitcherContext.Provider value={store}>
+    <VaultSwitcherContext value={store}>
       {props.children}
-    </VaultSwitcherContext.Provider>
+    </VaultSwitcherContext>
   );
 }
 

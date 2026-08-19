@@ -1,4 +1,4 @@
-import { createSignal, createContext, useContext, onMount } from "solid-js";
+import { createSignal, createContext, useContext, onSettled } from "solid-js";
 // Note: per-vault Quick Unlock status is reactive. The login/switcher UIs
 // call refreshBiometric(slug) when the selected vault changes so the button
 // reflects THAT vault's keychain entry, not a stale global value.
@@ -53,7 +53,7 @@ function AuthProvider(props) {
     }
   }
 
-  onMount(async () => {
+  onSettled(async () => {
     // Resolve the active vault (plaintext registry read, pre-unlock).
     // The daemon startup opens + activates the resolved default vault
     // before listening on the socket, so once the daemon is reachable this
@@ -163,9 +163,9 @@ function AuthProvider(props) {
   };
 
   return (
-    <AuthContext.Provider value={store}>
+    <AuthContext value={store}>
       {props.children}
-    </AuthContext.Provider>
+    </AuthContext>
   );
 }
 

@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Show, For } from "solid-js";
-import { Transition } from "solid-transition-group";
+import { Transition } from "../lib/transition";
 import { useVault } from "../context/VaultContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { theme, setTheme } from "../context/themeSignal.js";
@@ -63,14 +63,16 @@ export default function SettingsModal() {
 
   // Sync profile to VaultContext when settings modal closes
   let wasSettingsOpen = false;
-  createEffect(() => {
-    const isOpen = vault.showSettingsModal();
-    if (isOpen) wasSettingsOpen = true;
-    if (wasSettingsOpen && !isOpen) {
-      wasSettingsOpen = false;
-      vault.refreshProfile();
-    }
-  });
+  createEffect(
+    () => vault.showSettingsModal(),
+    (isOpen) => {
+      if (isOpen) wasSettingsOpen = true;
+      if (wasSettingsOpen && !isOpen) {
+        wasSettingsOpen = false;
+        vault.refreshProfile();
+      }
+    },
+  );
 
   // Profile state
   const [displayName, setDisplayName] = createSignal("");
@@ -88,12 +90,15 @@ export default function SettingsModal() {
     { id: "keepass-xml", label: t("settings.formatKeePassXml") },
   ];
 
-  createEffect(() => {
-    if (vault.showSettingsModal()) {
-      loadSettings();
-      setImportSource("");
-    }
-  });
+  createEffect(
+    () => vault.showSettingsModal(),
+    (isOpen) => {
+      if (isOpen) {
+        loadSettings();
+        setImportSource("");
+      }
+    },
+  );
 
   async function loadSettings() {
     try {

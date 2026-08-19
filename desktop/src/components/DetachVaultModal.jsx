@@ -20,7 +20,7 @@
 // Uses FocusTrap per the project's modal accessibility standards.
 
 import { Show } from "solid-js";
-import { Transition } from "solid-transition-group";
+import { Transition } from "../lib/transition";
 import { useI18n } from "../i18n/index.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import { Button } from "./Primitives.jsx";

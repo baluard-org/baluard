@@ -1,5 +1,5 @@
-import { createSignal, createMemo, createEffect, onMount, onCleanup, Show, For, Switch, Match } from "solid-js";
-import { Transition } from "solid-transition-group";
+import { createSignal, createMemo, createEffect, onSettled, onCleanup, Show, For, Switch, Match } from "solid-js";
+import { Transition } from "../lib/transition";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useVault } from "../context/VaultContext.jsx";
 import { toastError } from "../context/toastSignal.js";
@@ -48,29 +48,31 @@ export default function VaultView() {
   const [switchUnlockTarget, setSwitchUnlockTarget] = createSignal(null);
 
   // Init: load ciphers on first mount
-  onMount(async () => {
+  onSettled(async () => {
     await vault.refreshCiphers(t);
   });
 
   const [switching, setSwitching] = createSignal(false);
   let lastSwitchSlug = switcher.activeSlug();
-  createEffect(() => {
-    const slug = switcher.activeSlug();
-    if (slug === lastSwitchSlug) return;
-    lastSwitchSlug = slug;
-    setViewCipher(null);
-    setNewCipher({ ...EMPTY_CIPHER });
-    vault.resetNavigation();
-    
-    // Trigger vault switching transition animation
-    setSwitching(true);
-    const timer = setTimeout(() => setSwitching(false), 200);
-    onCleanup(() => clearTimeout(timer));
-  });
+  createEffect(
+    () => switcher.activeSlug(),
+    (slug) => {
+      if (slug === lastSwitchSlug) return;
+      lastSwitchSlug = slug;
+      setViewCipher(null);
+      setNewCipher({ ...EMPTY_CIPHER });
+      vault.resetNavigation();
+
+      // Trigger vault switching transition animation
+      setSwitching(true);
+      const timer = setTimeout(() => setSwitching(false), 200);
+      return () => clearTimeout(timer);
+    },
+  );
 
   // Close add menu on outside click
   let addMenuRef;
-  onMount(() => {
+  onSettled(() => {
     const handler = (e) => {
       if (addMenuRef && !addMenuRef.contains(e.target)) setShowAddMenu(false);
     };

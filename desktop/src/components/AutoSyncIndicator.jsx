@@ -1,5 +1,5 @@
-import { Show, createSignal, createEffect, onMount, onCleanup } from "solid-js";
-import { Transition } from "solid-transition-group";
+import { Show, createSignal, createEffect, onSettled, onCleanup } from "solid-js";
+import { Transition } from "../lib/transition";
 import { useAutoSync } from "../context/AutoSyncContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 
@@ -59,11 +59,11 @@ export default function AutoSyncIndicator() {
 
   // Polled state reconciles the armed cycle forward. Non-armed background
   // activity (initial pull, periodic pull) is ignored.
-  createEffect(() => {
-    const state = autosync.state();
-
-    // Vault locked / inactive: reset everything.
-    if (!autosync.active()) {
+  createEffect(
+    () => [autosync.active(), autosync.state()],
+    ([active, state]) => {
+      // Vault locked / inactive: reset everything.
+      if (!active) {
       armed = false;
       clearHide();
       setLocalPhase(null);
@@ -90,11 +90,12 @@ export default function AutoSyncIndicator() {
       setLocalPhase("synced");
       clearHide();
       hideTimer = setTimeout(() => setLocalPhase(null), 10_000);
-    }
-    // dirty while armed: keep showing "waiting" (already set on mutation).
-  });
+      }
+      // dirty while armed: keep showing "waiting" (already set on mutation).
+    },
+  );
 
-  onMount(() => window.addEventListener("baluard:local-mutation", onMutation));
+  onSettled(() => window.addEventListener("baluard:local-mutation", onMutation));
   onCleanup(() => {
     window.removeEventListener("baluard:local-mutation", onMutation);
     clearHide();

@@ -1,4 +1,4 @@
-import { createSignal, createContext, useContext, onMount, onCleanup, createEffect } from "solid-js";
+import { createSignal, createContext, useContext, onSettled, onCleanup, createEffect } from "solid-js";
 import { daemon } from "../lib/daemon.js";
 import { fetchPendingConflict, toPendingConflict } from "../lib/conflictFlow.js";
 import { useConflictResolution } from "./ConflictResolutionContext.jsx";
@@ -53,16 +53,18 @@ export function AutoSyncProvider(props) {
   // would persist in the queue while viewing vault B. The queue re-populates
   // from the real sync.conflict poll if B has its own pending conflict.
   const switcher = useVaultSwitcher();
-  createEffect(() => {
-    const slug = switcher.activeSlug();
-    if (lastSeenActive !== null && slug !== lastSeenActive) {
-      lastSeenConflicts = 0;
-      setConflictsResolved(0);
-      setBannerDismissed(true);
-      conflicts.clear();
-    }
-    lastSeenActive = slug;
-  });
+  createEffect(
+    () => switcher.activeSlug(),
+    (slug) => {
+      if (lastSeenActive !== null && slug !== lastSeenActive) {
+        lastSeenConflicts = 0;
+        setConflictsResolved(0);
+        setBannerDismissed(true);
+        conflicts.clear();
+      }
+      lastSeenActive = slug;
+    },
+  );
 
   async function refresh() {
     try {
@@ -124,7 +126,7 @@ export function AutoSyncProvider(props) {
     refresh();
   }
 
-  onMount(() => {
+  onSettled(() => {
     refresh();
     poll = setInterval(refresh, POLL_MS);
     window.addEventListener("focus", nudgePull);
@@ -148,9 +150,9 @@ export function AutoSyncProvider(props) {
   };
 
   return (
-    <AutoSyncContext.Provider value={value}>
+    <AutoSyncContext value={value}>
       {props.children}
-    </AutoSyncContext.Provider>
+    </AutoSyncContext>
   );
 }
 

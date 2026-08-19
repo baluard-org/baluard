@@ -208,11 +208,10 @@ export default function RecoveryScreen() {
           <button
             type="submit"
             disabled={!allVerified()}
-            classList={{
-              "w-full py-3.5 rounded-xl font-semibold transition-all shadow-lg": true,
+            class={["w-full py-3.5 rounded-xl font-semibold transition-all shadow-lg", {
               "bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] cursor-pointer": allVerified(),
               "bg-[var(--color-border)] text-[var(--color-muted)] cursor-not-allowed": !allVerified(),
-            }}
+            }]}
           >
             {allVerified() ? t("recovery.confirm") : t("recovery.confirmDisabled")}
           </button>

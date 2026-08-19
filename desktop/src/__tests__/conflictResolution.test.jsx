@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRoot } from "solid-js";
-import { render } from "solid-js/web";
+import { createRoot, flush } from "solid-js";
+import { render } from "@solidjs/web";
 import {
   ConflictResolutionProvider,
   mockSampleConflict,
@@ -52,6 +52,8 @@ describe("ConflictResolutionContext", () => {
   it("enqueue adds a single conflict", async () => {
     await withProvider((ctx) => {
       ctx.enqueue(mockSampleConflict({ cipherId: "a", name: "GitHub" }));
+      flush();
+      flush();
       expect(ctx.hasPending()).toBe(true);
       expect(ctx.count()).toBe(1);
       expect(ctx.current().cipherId).toBe("a");
@@ -66,6 +68,7 @@ describe("ConflictResolutionContext", () => {
         mockSampleConflict({ cipherId: "b" }),
         mockSampleConflict({ cipherId: "a" }), // duplicate
       ]);
+      flush();
       expect(ctx.count()).toBe(2);
       expect(ctx.current().cipherId).toBe("a");
     });
@@ -78,6 +81,7 @@ describe("ConflictResolutionContext", () => {
         mockSampleConflict({ cipherId: "a" }),
         mockSampleConflict({ cipherId: "b" }),
       ]);
+      flush();
       const resolver = vi.fn(async (conflict, verdict) => {
         expect(conflict.cipherId).toBe("a");
         expect(verdict).toBe("keep_local");
@@ -94,6 +98,8 @@ describe("ConflictResolutionContext", () => {
   it("resolve re-throws resolver errors and keeps the head in the queue (retry-friendly)", async () => {
     await withProvider(async (ctx) => {
       ctx.enqueue(mockSampleConflict({ cipherId: "a" }));
+      flush();
+      flush();
       const resolver = vi.fn(() => {
         throw new Error("boom");
       });
@@ -113,8 +119,11 @@ describe("ConflictResolutionContext", () => {
         mockSampleConflict({ cipherId: "a" }),
         mockSampleConflict({ cipherId: "b" }),
       ]);
+      flush();
       expect(ctx.count()).toBe(2);
       ctx.clear();
+      flush();
+      flush();
       expect(ctx.hasPending()).toBe(false);
       expect(ctx.count()).toBe(0);
       expect(ctx.current()).toBeNull();

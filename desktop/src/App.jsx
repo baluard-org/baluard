@@ -1,4 +1,4 @@
-import { onMount, Show } from "solid-js";
+import { onSettled, Show } from "solid-js";
 import { useI18n } from "./i18n/index.jsx";
 import { daemon, showWindow } from "./lib/daemon.js";
 import { disableAutofill } from "./lib/disableAutofill.js";
@@ -23,7 +23,7 @@ export default function App() {
   const auth = useAuth();
   const { t } = useI18n();
 
-  onMount(async () => {
+  onSettled(async () => {
     try {
       // Detect macOS to apply titlebar adjustments
       if (navigator.userAgent.includes("Mac")) {

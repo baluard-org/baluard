@@ -3,6 +3,7 @@
 // fingerprint/public/private key blocks based on props.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { flush } from "solid-js";
 
 // vi.mock is hoisted to the top of the file, so it must be declared before
 // the import bindings that depend on it. Declare all mocks here.
@@ -53,7 +54,9 @@ describe("SshKeyGenerator", () => {
     const { getByText } = render(() => <SshKeyGenerator onGenerated={onGenerated} />);
 
     fireEvent.click(getByText("entry.sshKeyEcdsa256"));
+    flush();
     fireEvent.click(getByText("entry.sshGenerateKey"));
+    flush();
 
     await waitFor(() => expect(daemon).toHaveBeenCalledTimes(1));
     expect(daemon).toHaveBeenCalledWith(
@@ -73,6 +76,7 @@ describe("SshKeyGenerator", () => {
     const { getByText } = render(() => <SshKeyGenerator />);
 
     fireEvent.click(getByText("entry.sshGenerateKey"));
+    flush();
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
   });
@@ -83,6 +87,7 @@ describe("SshKeyGenerator", () => {
     const { getByText } = render(() => <SshKeyGenerator onGenerated={onGenerated} />);
 
     fireEvent.click(getByText("entry.sshGenerateKey"));
+    flush();
     await waitFor(() => expect(toastError).toHaveBeenCalled());
     expect(onGenerated).not.toHaveBeenCalled();
   });

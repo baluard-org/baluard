@@ -9,7 +9,7 @@
 // target first, then it becomes active. Cancelling leaves the user on the
 // currently-displayed vault with its active pointer untouched.
 
-import { createSignal, Show, onMount } from "solid-js";
+import { createSignal, Show, onSettled } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { daemon } from "../lib/daemon.js";
@@ -44,7 +44,7 @@ export default function SwitchUnlockModal(props) {
 
   // Query the target vault's Quick Unlock status on open. The target is
   // open-but-locked by the time this modal appears (the switcher opens it).
-  onMount(() => {
+  onSettled(() => {
     const slug = props.target?.slug;
     if (!slug) return;
     daemon("vault.biometric_status", "", slug)

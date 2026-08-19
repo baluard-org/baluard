@@ -1,4 +1,4 @@
-import { createSignal, Show, For, onMount } from "solid-js";
+import { createSignal, Show, For, onSettled } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword, formatCardNumber } from "../lib/utils.js";
 import { FIELD_LABEL, handleCardInput } from "../lib/helpers.js";
@@ -54,7 +54,7 @@ export default function AddEditCipherForm(props) {
   // then persisted on the Login cipher so list/detail render from storage
   // instead of making network calls while browsing.
   let faviconsEnabled = false;
-  onMount(async () => {
+  onSettled(async () => {
     try {
       const data = JSON.parse(await daemon("settings.get"));
       faviconsEnabled = data.fetch_favicons === true;

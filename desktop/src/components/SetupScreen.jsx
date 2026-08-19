@@ -1,4 +1,4 @@
-import { createSignal, Show, For, onMount, onCleanup } from "solid-js";
+import { createSignal, Show, For, onSettled, onCleanup } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
@@ -63,7 +63,7 @@ export default function SetupScreen() {
     } catch { /* non-fatal */ }
     prepared = true;
   }
-  onMount(prepare);
+  onSettled(prepare);
 
   const conn = createProviderConnect({
     t,
