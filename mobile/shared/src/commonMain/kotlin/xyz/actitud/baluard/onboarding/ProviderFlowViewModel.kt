@@ -95,7 +95,7 @@ class ProviderFlowViewModel(
             }
         } catch (e: Exception) {
             error = e.message
-            MobileDeviceFlowStatus.PENDING
+            MobileDeviceFlowStatus.EXPIRED
         }
     }
 

@@ -839,6 +839,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -972,6 +974,8 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_baluard_uniffi_fn_func_generate_recovery_phrase(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_baluard_uniffi_fn_func_init_data_dir(`dataDir`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     fun uniffi_baluard_uniffi_fn_func_list_vault_repos(`provider`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_func_mobile_version(uniffi_out_err: UniffiRustCallStatus, 
@@ -1118,6 +1122,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_generate_recovery_phrase(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_func_init_data_dir(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_func_list_vault_repos(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_mobile_version(
@@ -1258,6 +1264,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_generate_recovery_phrase() != 12798.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_func_init_data_dir() != 61336.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_list_vault_repos() != 52494.toShort()) {
@@ -4546,6 +4555,17 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
 }
     )
     }
+    
+
+        /**
+         * Set the platform-specific data directory (used by Android/iOS to point at app storage).
+         */ fun `initDataDir`(`dataDir`: kotlin.String)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_init_data_dir(
+        FfiConverterString.lower(`dataDir`),_status)
+}
+    
     
 
     @Throws(BaluardException::class)

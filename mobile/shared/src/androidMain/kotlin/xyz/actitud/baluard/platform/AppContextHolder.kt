@@ -18,6 +18,9 @@ object AppContextHolder {
 
     fun set(context: Context) {
         this.context = context.applicationContext
+        try {
+            xyz.actitud.baluard.initDataDir(context.applicationContext.filesDir.absolutePath)
+        } catch (_: Throwable) {}
     }
 
     /** The application context, or null before MainActivity initialized it. */
