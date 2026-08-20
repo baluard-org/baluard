@@ -112,7 +112,9 @@ export default function SyncTab() {
     },
   );
 
-  onSettled(loadState);
+  onSettled(() => {
+    void loadState();
+  });
 
   // ── State Detection ──
 

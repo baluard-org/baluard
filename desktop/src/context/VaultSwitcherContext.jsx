@@ -11,10 +11,10 @@
 //     (AuthContext re-uses the existing unlock screen)
 //   - clicking a CLOSED vault = same as locked (unlock opens + inserts)
 
-import { createSignal, createContext, useContext, onSettled, onCleanup } from "solid-js";
+import { createSignal, createContext, useContext, onSettled } from "solid-js";
 import { daemon } from "../lib/daemon.js";
 
-const VaultSwitcherContext = createContext();
+const VaultSwitcherContext = createContext(null);
 
 function VaultSwitcherProvider(props) {
   const [vaults, setVaults] = createSignal([]);
@@ -47,11 +47,11 @@ function VaultSwitcherProvider(props) {
     heartbeat = setInterval(refresh, 30_000);
     window.addEventListener("focus", onFocusRegain);
     document.addEventListener("visibilitychange", onFocusRegain);
-  });
-  onCleanup(() => {
-    clearInterval(heartbeat);
-    window.removeEventListener("focus", onFocusRegain);
-    document.removeEventListener("visibilitychange", onFocusRegain);
+    return () => {
+      clearInterval(heartbeat);
+      window.removeEventListener("focus", onFocusRegain);
+      document.removeEventListener("visibilitychange", onFocusRegain);
+    };
   });
 
   // Switch the live focus to a slug. Returns the outcome so the caller

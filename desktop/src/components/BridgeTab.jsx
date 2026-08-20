@@ -13,7 +13,7 @@
 // No codes to type. The trust anchor is the desktop
 // session token (all routes here are desktop-token-gated).
 
-import { createSignal, Show, For, onSettled, onCleanup } from "solid-js";
+import { createSignal, Show, For, onSettled } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -144,8 +144,10 @@ export default function BridgeTab() {
     }
   }
 
-  onSettled(loadPairings);
-  onCleanup(stopPoll);
+  onSettled(() => {
+    void loadPairings();
+    return stopPoll;
+  });
 
   return (
     <div class="space-y-5">

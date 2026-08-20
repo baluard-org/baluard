@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
+import { createSignal, createEffect, Show, For } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { cipherToFlat } from "../lib/cipherSchema.js";
 import { useVault } from "../context/VaultContext.jsx";
@@ -67,34 +67,36 @@ export default function CipherDetail(props) {
 
   // TOTP code auto-refresh timer (boundary-aligned)
   createEffect(
-    () => cipher()?.totp_uri && cipher()?.id,
-    (hasTotp) => {
-      if (!hasTotp) {
+    () => {
+      const c = cipher();
+      return (c?.totp_uri && c?.id) ? { id: c.id, totp_uri: c.totp_uri } : null;
+    },
+    (target) => {
+      if (!target) {
         setTotpCode(null);
         return;
       }
-      const c = cipher();
       let active = true;
-    let timer = null;
-    const fetchCode = async () => {
-      if (!active) return;
-      try {
-        const data = JSON.parse(await daemon("cipher.totp_code", c.id));
-        if (active) {
-          setTotpCode(data);
-          if (data.expires_at) {
-            const msLeft = data.expires_at * 1000 - Date.now();
-            const delay = Math.max(200, msLeft + 200);
-            timer = setTimeout(fetchCode, delay);
-          } else {
-            timer = setTimeout(fetchCode, 5000);
+      let timer = null;
+      const fetchCode = async () => {
+        if (!active) return;
+        try {
+          const data = JSON.parse(await daemon("cipher.totp_code", target.id));
+          if (active) {
+            setTotpCode(data);
+            if (data.expires_at) {
+              const msLeft = data.expires_at * 1000 - Date.now();
+              const delay = Math.max(200, msLeft + 200);
+              timer = setTimeout(fetchCode, delay);
+            } else {
+              timer = setTimeout(fetchCode, 5000);
+            }
           }
+        } catch (e) {
+          setTotpCode(null);
         }
-      } catch (e) {
-        setTotpCode(null);
-      }
-    };
-    fetchCode();
+      };
+      fetchCode();
       return () => {
         active = false;
         if (timer) clearTimeout(timer);

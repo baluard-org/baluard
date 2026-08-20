@@ -23,50 +23,52 @@ export default function App() {
   const auth = useAuth();
   const { t } = useI18n();
 
-  onSettled(async () => {
-    try {
-      // Detect macOS to apply titlebar adjustments
-      if (navigator.userAgent.includes("Mac")) {
-        document.documentElement.classList.add("platform-mac");
-      }
-
-      // Autofill is off app-wide by default; inputs opt in with data-autofill="on".
-      disableAutofill();
-
-      // Try to open + probe the active vault. Best-effort: if the daemon is
-      // reachable and a vault is already unlocked (e.g. resumed session),
-      // jump straight in. Failures here are NOT proof that no vault exists.
-      let daemonUp = true;
+  onSettled(() => {
+    (async () => {
       try {
-        await daemon("vault.open");
-        const info = JSON.parse(await daemon("vault.info"));
-        if (info.unlocked) {
-          auth.setStatus("unlocked");
-          auth.setVaultInfo(info);
-          return;
+        // Detect macOS to apply titlebar adjustments
+        if (navigator.userAgent.includes("Mac")) {
+          document.documentElement.classList.add("platform-mac");
         }
-      } catch (e) {
-        if (/Cannot connect/i.test(e.message)) daemonUp = false;
-        // Any other error (e.g. "Vault not opened", stale active) just means
-        // the user must pick/unlock a vault — handled by the login screen.
-      }
 
-      if (!daemonUp) return; // daemon down: stay on default (locked) screen
+        // Autofill is off app-wide by default; inputs opt in with data-autofill="on".
+        disableAutofill();
 
-      // Decide create-vs-login by whether ANY vault is registered. The create
-      // screen is only for a genuinely empty install.
-      try {
-        const data = JSON.parse(await daemon("vaults.list"));
-        const count = Array.isArray(data.vaults) ? data.vaults.length : 0;
-        if (count === 0) auth.setStatus("init");
-      } catch {
-        // Could not read the registry — stay on the login screen rather than
-        // risk clobbering an existing install with the create flow.
+        // Try to open + probe the active vault. Best-effort: if the daemon is
+        // reachable and a vault is already unlocked (e.g. resumed session),
+        // jump straight in. Failures here are NOT proof that no vault exists.
+        let daemonUp = true;
+        try {
+          await daemon("vault.open");
+          const info = JSON.parse(await daemon("vault.info"));
+          if (info.unlocked) {
+            auth.setStatus("unlocked");
+            auth.setVaultInfo(info);
+            return;
+          }
+        } catch (e) {
+          if (/Cannot connect/i.test(e.message)) daemonUp = false;
+          // Any other error (e.g. "Vault not opened", stale active) just means
+          // the user must pick/unlock a vault — handled by the login screen.
+        }
+
+        if (!daemonUp) return; // daemon down: stay on default (locked) screen
+
+        // Decide create-vs-login by whether ANY vault is registered. The create
+        // screen is only for a genuinely empty install.
+        try {
+          const data = JSON.parse(await daemon("vaults.list"));
+          const count = Array.isArray(data.vaults) ? data.vaults.length : 0;
+          if (count === 0) auth.setStatus("init");
+        } catch {
+          // Could not read the registry — stay on the login screen rather than
+          // risk clobbering an existing install with the create flow.
+        }
+      } finally {
+        // Show window once initialization and initial state checks finish.
+        await showWindow();
       }
-    } finally {
-      // Show window once initialization and initial state checks finish.
-      await showWindow();
-    }
+    })();
   });
 
   return (

@@ -20,8 +20,8 @@ export const [theme, setTheme] = createSignal(
   })()
 );
 
-function applyTheme() {
-  const isLight = resolveEffective(theme()) === "light";
+function applyTheme(themeValue = theme()) {
+  const isLight = resolveEffective(themeValue) === "light";
   document.body.classList.toggle("light-theme", isLight);
   try {
     invoke("update_tray_icon", { isDark: !isLight }).catch(() => {});
@@ -40,7 +40,7 @@ createRoot(() => {
   createEffect(
     () => theme(),
     (t) => {
-      applyTheme();
+      applyTheme(t);
       try { localStorage.setItem("baluard-theme", t); } catch { /* noop */ }
     },
   );

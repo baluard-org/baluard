@@ -6,7 +6,7 @@ import { consumeVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { toastError, toastWarning } from "./toastSignal.js";
 import { setTheme as setAppTheme } from "./themeSignal.js";
 
-const VaultContext = createContext();
+const VaultContext = createContext(null);
 
 // Valid pane transitions. Dev-only guard.
 const VALID_PANE_TRANSITIONS = {

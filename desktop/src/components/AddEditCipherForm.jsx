@@ -54,11 +54,13 @@ export default function AddEditCipherForm(props) {
   // then persisted on the Login cipher so list/detail render from storage
   // instead of making network calls while browsing.
   let faviconsEnabled = false;
-  onSettled(async () => {
-    try {
-      const data = JSON.parse(await daemon("settings.get"));
-      faviconsEnabled = data.fetch_favicons === true;
-    } catch { /* default off */ }
+  onSettled(() => {
+    (async () => {
+      try {
+        const data = JSON.parse(await daemon("settings.get"));
+        faviconsEnabled = data.fetch_favicons === true;
+      } catch { /* default off */ }
+    })();
   });
 
   // Generator states
