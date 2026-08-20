@@ -57,7 +57,7 @@ function getStoredLocale() {
 
 // ── Public API ──
 
-const I18nContext = createContext();
+const I18nContext = createContext(null);
 
 export function I18nProvider(props) {
   const [locale, setLocaleSignal] = createSignal(getStoredLocale());

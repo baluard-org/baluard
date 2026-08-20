@@ -8,7 +8,7 @@ import { buildCreatePayload } from "../lib/payload.js";
 import { startVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { toastError, toastWarning } from "./toastSignal.js";
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
 // Valid auth state transitions. Dev-only guard.
 const VALID_AUTH_TRANSITIONS = {
@@ -53,7 +53,7 @@ function AuthProvider(props) {
     }
   }
 
-  onSettled(async () => {
+  onSettled(() => {
     // Resolve the active vault (plaintext registry read, pre-unlock).
     // The daemon startup opens + activates the resolved default vault
     // before listening on the socket, so once the daemon is reachable this
@@ -61,7 +61,7 @@ function AuthProvider(props) {
     // shows the buttons (LoginScreen effect), which tracks the resolved
     // slug so it re-fires once the daemon is ready instead of racing it
     // with a no-slug probe that logs at WARN on cold start.
-    await refreshActiveVault();
+    void refreshActiveVault();
   });
 
   // Query Quick Unlock availability for a specific vault (slug). When slug

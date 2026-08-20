@@ -1,4 +1,4 @@
-import { onSettled, onCleanup } from "solid-js";
+import { onSettled } from "solid-js";
 
 /**
  * Trap keyboard focus inside a modal dialog.
@@ -19,23 +19,26 @@ export default function FocusTrap(props) {
 
   function getFocusable(container) {
     if (!container) return [];
-    const sel = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-    return [...container.querySelectorAll(sel)].filter(el => el.offsetParent !== null);
+    return Array.from(
+      container.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((el) => !el.disabled && el.offsetParent !== null);
   }
 
   function handleKeyDown(e) {
-    const container = e.currentTarget;
-
     if (e.key === "Escape") {
-      e.preventDefault();
       e.stopPropagation();
       props.onEscape?.();
       return;
     }
 
     if (e.key === "Tab") {
+      const container = props.containerRef;
+      if (!container) return;
+
       const focusable = getFocusable(container);
-      if (!focusable.length) { e.preventDefault(); return; }
+      if (!focusable.length) return;
 
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -68,15 +71,14 @@ export default function FocusTrap(props) {
       // Otherwise focus the first focusable element
       focusable[0].focus();
     }
-  });
 
-  onCleanup(() => {
-    const container = props.containerRef;
-    if (container) container.removeEventListener("keydown", handleKeyDown);
-    // Restore focus to whatever had it before the modal opened
-    if (previouslyFocused && typeof previouslyFocused.focus === "function") {
-      previouslyFocused.focus();
-    }
+    return () => {
+      container.removeEventListener("keydown", handleKeyDown);
+      // Restore focus to whatever had it before the modal opened
+      if (previouslyFocused && typeof previouslyFocused.focus === "function") {
+        previouslyFocused.focus();
+      }
+    };
   });
 
   return null;

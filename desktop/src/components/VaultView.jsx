@@ -1,4 +1,4 @@
-import { createSignal, createMemo, createEffect, onSettled, onCleanup, Show, For, Switch, Match } from "solid-js";
+import { createSignal, createMemo, createEffect, onSettled, Show, For, Switch, Match } from "solid-js";
 import { Transition } from "../lib/transition";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useVault } from "../context/VaultContext.jsx";
@@ -48,8 +48,8 @@ export default function VaultView() {
   const [switchUnlockTarget, setSwitchUnlockTarget] = createSignal(null);
 
   // Init: load ciphers on first mount
-  onSettled(async () => {
-    await vault.refreshCiphers(t);
+  onSettled(() => {
+    void vault.refreshCiphers(t);
   });
 
   const [switching, setSwitching] = createSignal(false);
@@ -77,7 +77,7 @@ export default function VaultView() {
       if (addMenuRef && !addMenuRef.contains(e.target)) setShowAddMenu(false);
     };
     document.addEventListener("click", handler);
-    onCleanup(() => document.removeEventListener("click", handler));
+    return () => document.removeEventListener("click", handler);
   });
 
   // Categories

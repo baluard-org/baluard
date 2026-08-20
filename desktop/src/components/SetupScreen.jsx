@@ -63,7 +63,9 @@ export default function SetupScreen() {
     } catch { /* non-fatal */ }
     prepared = true;
   }
-  onSettled(prepare);
+  onSettled(() => {
+    void prepare();
+  });
 
   const conn = createProviderConnect({
     t,

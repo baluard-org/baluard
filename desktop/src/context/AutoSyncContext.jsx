@@ -1,4 +1,4 @@
-import { createSignal, createContext, useContext, onSettled, onCleanup, createEffect } from "solid-js";
+import { createSignal, createContext, useContext, onSettled, createEffect } from "solid-js";
 import { daemon } from "../lib/daemon.js";
 import { fetchPendingConflict, toPendingConflict } from "../lib/conflictFlow.js";
 import { useConflictResolution } from "./ConflictResolutionContext.jsx";
@@ -19,7 +19,7 @@ import { useVaultSwitcher } from "./VaultSwitcherContext.jsx";
 
 const POLL_MS = 10_000;
 
-const AutoSyncContext = createContext();
+const AutoSyncContext = createContext(null);
 
 export function AutoSyncProvider(props) {
   // Phase 2b-4: when the daemon enters NeedsDecision, fetch the real conflict
@@ -131,11 +131,11 @@ export function AutoSyncProvider(props) {
     poll = setInterval(refresh, POLL_MS);
     window.addEventListener("focus", nudgePull);
     document.addEventListener("visibilitychange", nudgePull);
-  });
-  onCleanup(() => {
-    clearInterval(poll);
-    window.removeEventListener("focus", nudgePull);
-    document.removeEventListener("visibilitychange", nudgePull);
+    return () => {
+      clearInterval(poll);
+      window.removeEventListener("focus", nudgePull);
+      document.removeEventListener("visibilitychange", nudgePull);
+    };
   });
 
   const value = {

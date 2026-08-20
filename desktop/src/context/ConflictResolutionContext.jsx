@@ -13,7 +13,7 @@ import { createContext, createSignal, useContext } from "solid-js";
 // The shape below is the contract the daemon's future `sync.conflict` route
 // will produce. Until that route exists, use `mockSample()` to review the UX.
 
-const ConflictResolutionContext = createContext();
+const ConflictResolutionContext = createContext(null);
 
 /**
   * @typedef {Object} ConflictField

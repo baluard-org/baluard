@@ -9,7 +9,7 @@ export default function DeviceFleetPanel() {
   const { t } = useI18n();
 
   onSettled(() => {
-    vault.refreshDeviceFleet?.();
+    void vault.refreshDeviceFleet?.();
   });
 
   const fleet = () => vault.deviceFleet() || [];
