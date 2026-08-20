@@ -280,7 +280,7 @@ pub struct MobileSyncStatus {
     pub pending: u32,
 }
 
-#[uniffi::export]
+#[uniffi::export(async_runtime = "tokio")]
 impl MobileVault {
     /// Unlock the vault with the master password. Derives the KEK via Argon2id,
     /// verifies the keywrap + canaries, and activates the auto-sync coordinator
@@ -721,7 +721,7 @@ pub struct MobileDeviceFlow {
     config: baluard_core::providers::ProviderConfig,
 }
 
-#[uniffi::export]
+#[uniffi::export(async_runtime = "tokio")]
 impl MobileDeviceFlow {
     pub fn user_code(&self) -> String {
         self.session.user_code.clone()
