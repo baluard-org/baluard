@@ -94,8 +94,9 @@ class ProviderFlowViewModel(
                 else -> s
             }
         } catch (e: Exception) {
-            error = e.message
-            MobileDeviceFlowStatus.EXPIRED
+            // Transient network error during polling (e.g. app switched to
+            // background while approving in browser); continue polling next tick.
+            MobileDeviceFlowStatus.PENDING
         }
     }
 

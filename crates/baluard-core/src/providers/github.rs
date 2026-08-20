@@ -49,10 +49,11 @@ impl GitHubProvider {
 
     /// New with overrides (Advanced Options: client_id, instance_url).
     pub fn with_config(config: super::types::ProviderConfig) -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            config,
-        }
+        let http = reqwest::Client::builder()
+            .user_agent(format!("Baluard/{}", env!("CARGO_PKG_VERSION")))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self { http, config }
     }
 
     /// Effective client_id for this instance.
@@ -181,7 +182,7 @@ impl ForgeProvider for GitHubProvider {
 
         let client = &self.http;
         let client_id = self.client_id();
-        let resp = client
+        let resp = match client
             .post(ACCESS_TOKEN_URL)
             .header("Accept", "application/json")
             .form(&[
@@ -191,7 +192,15 @@ impl ForgeProvider for GitHubProvider {
             ])
             .send()
             .await
-            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        {
+            Ok(r) => r,
+            Err(_e) => {
+                if now >= session.expires_at {
+                    return Ok(DeviceFlowStatus::Expired);
+                }
+                return Ok(DeviceFlowStatus::Pending);
+            }
+        };
 
         // M11 fix: check HTTP status before parsing JSON body.
         // GitHub returns 400 with an error JSON for authorization_pending /

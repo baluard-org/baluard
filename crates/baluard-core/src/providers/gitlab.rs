@@ -39,10 +39,11 @@ impl GitLabProvider {
     }
 
     pub fn with_config(config: ProviderConfig) -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            config,
-        }
+        let http = reqwest::Client::builder()
+            .user_agent(format!("Baluard/{}", env!("CARGO_PKG_VERSION")))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self { http, config }
     }
 
     fn client_id(&self) -> String {
@@ -195,7 +196,7 @@ impl ForgeProvider for GitLabProvider {
         }
 
         let client_id = self.client_id();
-        let resp = self
+        let resp = match self
             .http
             .post(format!("{}/oauth/token", self.base()))
             .form(&[
@@ -205,7 +206,15 @@ impl ForgeProvider for GitLabProvider {
             ])
             .send()
             .await
-            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        {
+            Ok(r) => r,
+            Err(_e) => {
+                if now_secs() >= session.expires_at {
+                    return Ok(DeviceFlowStatus::Expired);
+                }
+                return Ok(DeviceFlowStatus::Pending);
+            }
+        };
 
         let status = resp.status();
         if status.as_u16() == 429 {

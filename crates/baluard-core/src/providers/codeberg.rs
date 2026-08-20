@@ -30,10 +30,11 @@ impl CodebergProvider {
     }
 
     pub fn with_config(config: ProviderConfig) -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            config,
-        }
+        let http = reqwest::Client::builder()
+            .user_agent(format!("Baluard/{}", env!("CARGO_PKG_VERSION")))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self { http, config }
     }
 
     fn client_id(&self) -> String {
