@@ -129,6 +129,12 @@ pub fn mobile_version() -> u32 {
     baluard_core::BALUARD_VERSION as u32
 }
 
+/// Set the platform-specific data directory (used by Android/iOS to point at app storage).
+#[uniffi::export]
+pub fn init_data_dir(data_dir: String) {
+    unsafe { std::env::set_var("BALUARD_DATA_DIR", data_dir) };
+}
+
 /// A 24-word BIP-39 recovery phrase. Mirrors `baluard_core::recovery::RecoveryPhrase`
 /// but flattened to a plain String for the FFI boundary (the internal type
 /// holds zeroized entropy that UniFFI can't cross with the zeroize guarantee).

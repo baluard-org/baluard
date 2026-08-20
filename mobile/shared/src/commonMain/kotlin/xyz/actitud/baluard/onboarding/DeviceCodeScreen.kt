@@ -64,8 +64,8 @@ fun DeviceCodeScreen(
         if (revealed) copyToClipboard(flow.userCode())
     }
 
-    LaunchedEffect(flow) {
-        while (!expired) {
+    LaunchedEffect(flow, vm.error) {
+        while (!expired && vm.error == null) {
             delay(vm.pollIntervalMs())
             when (vm.pollDeviceFlow(flow)) {
                 MobileDeviceFlowStatus.SUCCESS -> { onAuthorized(); return@LaunchedEffect }
@@ -93,7 +93,7 @@ fun DeviceCodeScreen(
             Spacer(Modifier.height(28.dp))
 
             BaluardCard(modifier = Modifier.fillMaxWidth()) {
-                if (!revealed && !expired) {
+                if (!revealed && !expired && vm.error == null) {
                     Text(
                         text = "Browser Authorization",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
@@ -138,7 +138,18 @@ fun DeviceCodeScreen(
 
                     Spacer(Modifier.height(16.dp))
 
-                    if (expired) {
+                    if (vm.error != null) {
+                        Text(
+                            text = vm.error ?: "Error",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        BaluardOutlinedButton(
+                            text = t("common.back"),
+                            onClick = onCancelled,
+                        )
+                    } else if (expired) {
                         Text(
                             text = t("deviceCode.expired"),
                             color = MaterialTheme.colorScheme.error,

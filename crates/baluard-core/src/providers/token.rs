@@ -102,10 +102,12 @@ fn keyring_error(e: &keyring::Error) -> super::types::ProviderError {
     ))
 }
 
-/// Store a provider token in the OS keyring.
-///
-/// Returns `ProviderError::Keyring` with a hint about headless environments
-/// if the OS keyring is unavailable.
+/// Path for file-based token fallback when OS keyring is unavailable.
+fn token_file_path(key: &str) -> PathBuf {
+    data_dir().join("tokens").join(format!("{key}.json"))
+}
+
+/// Store a provider token in the OS keyring, falling back to a 0600 file if keyring is unavailable.
 pub fn store_token(
     provider: Provider,
     username: &str,
@@ -115,31 +117,79 @@ pub fn store_token(
     let secret = token
         .to_secret()
         .map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
-    let entry = keyring::Entry::new("baluard", &key).map_err(|e| keyring_error(&e))?;
-    entry
-        .set_password(secret.expose_secret())
-        .map_err(|e| keyring_error(&e))?;
+
+    // Try OS keyring first
+    let keyring_result = keyring::Entry::new("baluard", &key)
+        .map_err(|e| keyring_error(&e))
+        .and_then(|entry| {
+            entry
+                .set_password(secret.expose_secret())
+                .map_err(|e| keyring_error(&e))
+        });
+
+    if let Err(_e) = keyring_result {
+        // Fallback: save to app-private token file with 0600 permissions
+        let path = token_file_path(&key);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, secret.expose_secret())
+            .map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
+
+        std::fs::rename(&tmp, &path).map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
+    }
     Ok(())
 }
 
-/// Retrieve a provider token from the OS keyring.
+/// Retrieve a provider token from the OS keyring or fallback file.
 pub fn load_token(
     provider: Provider,
     username: &str,
 ) -> Result<ProviderToken, super::types::ProviderError> {
     let key = keyring_key(provider, username);
-    let entry = keyring::Entry::new("baluard", &key).map_err(|e| keyring_error(&e))?;
-    let secret_str = entry.get_password().map_err(|e| keyring_error(&e))?;
-    let secret = SecretString::new(secret_str.into());
-    ProviderToken::from_secret(&secret)
-        .map_err(|e| super::types::ProviderError::Keyring(e.to_string()))
+
+    // Try OS keyring first
+    if let Ok(entry) = keyring::Entry::new("baluard", &key) {
+        if let Ok(secret_str) = entry.get_password() {
+            let secret = SecretString::new(secret_str.into());
+            if let Ok(tok) = ProviderToken::from_secret(&secret) {
+                return Ok(tok);
+            }
+        }
+    }
+
+    // Fallback: load from token file
+    let path = token_file_path(&key);
+    if path.exists() {
+        let secret_str = std::fs::read_to_string(&path)
+            .map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
+        let secret = SecretString::new(secret_str.trim().to_string().into());
+        return ProviderToken::from_secret(&secret)
+            .map_err(|e| super::types::ProviderError::Keyring(e.to_string()));
+    }
+
+    Err(super::types::ProviderError::Keyring(format!(
+        "Token for provider {provider} (user {username}) not found in keyring or fallback store"
+    )))
 }
 
-/// Delete a provider token from the OS keyring.
+/// Delete a provider token from the OS keyring and fallback file.
 pub fn delete_token(provider: Provider, username: &str) -> Result<(), super::types::ProviderError> {
     let key = keyring_key(provider, username);
-    let entry = keyring::Entry::new("baluard", &key).map_err(|e| keyring_error(&e))?;
-    entry.delete_credential().map_err(|e| keyring_error(&e))?;
+    if let Ok(entry) = keyring::Entry::new("baluard", &key) {
+        let _ = entry.delete_credential();
+    }
+    let path = token_file_path(&key);
+    if path.exists() {
+        let _ = std::fs::remove_file(&path);
+    }
     Ok(())
 }
 
@@ -149,7 +199,7 @@ pub fn disconnect(provider: Provider) -> Result<(), super::types::ProviderError>
         ProvidersState::load().map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
 
     if let Some(info) = state.remove(provider) {
-        // Best-effort keyring deletion
+        // Best-effort keyring / file deletion
         let _ = delete_token(provider, &info.username);
     }
 
