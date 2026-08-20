@@ -61,7 +61,7 @@ fun DeviceCodeScreen(
     var revealed by remember { mutableStateOf(false) }
 
     LaunchedEffect(revealed) {
-        if (revealed) copyToClipboard(flow.userCode())
+        if (revealed) copyToClipboard(flow.userCode().replace("-", ""))
     }
 
     LaunchedEffect(flow, vm.error) {
@@ -171,7 +171,7 @@ fun DeviceCodeScreen(
 
                         BaluardOutlinedButton(
                             text = t("deviceCode.copy"),
-                            onClick = { copyToClipboard(flow.userCode()) },
+                            onClick = { copyToClipboard(flow.userCode().replace("-", "")) },
                             leadingIcon = Icons.Default.ContentCopy,
                         )
 

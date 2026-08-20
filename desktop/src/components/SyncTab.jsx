@@ -594,7 +594,7 @@ export default function SyncTab() {
                   <p class="text-[10px] text-[var(--color-muted)]">{t("sync.deviceFlowInstructions")}</p>
                   <div class="flex items-center justify-center gap-2 py-2">
                     <span class="text-lg font-mono font-bold text-[var(--color-primary)] tracking-widest">{authSession().user_code}</span>
-                    <CopyButton value={authSession().user_code} />
+                    <CopyButton value={authSession().user_code?.replace(/-/g, "")} />
                   </div>
                   <div class="flex justify-center">
                     <ExternalLink

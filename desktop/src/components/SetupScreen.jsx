@@ -190,7 +190,7 @@ export default function SetupScreen() {
               <p class="text-xs text-[var(--color-muted)]">{t("sync.deviceFlowInstructions")}</p>
               <div class="flex items-center justify-center gap-2 py-2">
                 <span class="text-lg font-mono font-bold text-[var(--color-primary)] tracking-widest">{authSession().user_code}</span>
-                <CopyButton value={authSession().user_code} />
+                <CopyButton value={authSession().user_code?.replace(/-/g, "")} />
               </div>
               <div class="flex justify-center">
                 <ExternalLink href={authSession().verification_uri} class="px-4 py-2 rounded-xl bg-[var(--color-primary)] text-[var(--color-primary-text)] text-xs font-bold hover:bg-[var(--color-primary-hover)] transition-all">

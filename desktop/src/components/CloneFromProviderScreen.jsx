@@ -249,7 +249,7 @@ export default function CloneFromProviderScreen(props) {
 										{authInfo().session.user_code}
 									</p>
 									<CopyButton
-										value={authInfo().session.user_code}
+										value={authInfo().session.user_code?.replace(/-/g, "")}
 										title={t("sync.copyCode")}
 									/>
 								</div>
