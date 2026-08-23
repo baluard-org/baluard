@@ -297,7 +297,11 @@ fun VaultListScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(visible, key = { it.id }) { meta ->
-                        CipherRowCard(meta, onClick = { onCipherClick(meta.id) })
+                        CipherRowCard(
+                            meta = meta,
+                            onClick = { onCipherClick(meta.id) },
+                            modifier = Modifier.animateItem(),
+                        )
                     }
                     item {
                         Spacer(Modifier.height(16.dp))
@@ -424,9 +428,10 @@ private fun FilterChipsRow(
 private fun CipherRowCard(
     meta: xyz.actitud.baluard.MobileCipherMeta,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f), RoundedCornerShape(14.dp))

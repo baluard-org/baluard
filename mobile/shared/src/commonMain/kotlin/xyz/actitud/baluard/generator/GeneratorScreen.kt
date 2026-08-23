@@ -1,8 +1,12 @@
 package xyz.actitud.baluard.generator
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -193,15 +197,24 @@ fun GeneratorScreen(viewModel: GeneratorViewModel, onBack: () -> Unit = {}) {
                         }
                         .padding(14.dp),
                 ) {
-                    Text(
-                        text = state.result ?: "—",
-                        fontFamily = FontFamily.Monospace,
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp,
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
+                    AnimatedContent(
+                        targetState = state.result,
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(150, easing = FastOutSlowInEasing))
+                                .togetherWith(fadeOut(animationSpec = tween(100)))
+                        },
+                        label = "GeneratedResultTransition",
+                    ) { res ->
+                        Text(
+                            text = res ?: "—",
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -239,14 +252,23 @@ fun GeneratorScreen(viewModel: GeneratorViewModel, onBack: () -> Unit = {}) {
                 }
             }
 
-            // Controls Section Card
-            if (state.mode == GeneratorMode.PASSWORD) {
-                SectionCard(title = "Password Settings") {
-                    PasswordControls(state, viewModel)
-                }
-            } else {
-                SectionCard(title = "Passphrase Settings") {
-                    PassphraseControls(state, viewModel)
+            // Controls Section Card with smooth AnimatedContent
+            AnimatedContent(
+                targetState = state.mode,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing))
+                        .togetherWith(fadeOut(animationSpec = tween(150)))
+                },
+                label = "GeneratorModeControlsTransition",
+            ) { mode ->
+                if (mode == GeneratorMode.PASSWORD) {
+                    SectionCard(title = "Password Settings") {
+                        PasswordControls(state, viewModel)
+                    }
+                } else {
+                    SectionCard(title = "Passphrase Settings") {
+                        PassphraseControls(state, viewModel)
+                    }
                 }
             }
 

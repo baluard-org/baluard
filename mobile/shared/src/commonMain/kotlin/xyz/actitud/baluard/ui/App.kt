@@ -1,5 +1,16 @@
 package xyz.actitud.baluard.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +63,21 @@ private sealed interface Nav {
     data class Edit(val cipherId: String?) : Nav
     data object Generator : Nav
     data object Settings : Nav
+}
+
+private fun navDepth(nav: Nav): Int = when (nav) {
+    is Nav.List -> 0
+    is Nav.Detail, Nav.Generator, Nav.Settings -> 1
+    is Nav.Edit -> 2
+}
+
+/** Top-level navigation stages. */
+private sealed interface RootStage {
+    data object Onboarding : RootStage
+    data object CreateVault : RootStage
+    data object OpenProvider : RootStage
+    data object Unlock : RootStage
+    data object Unlocked : RootStage
 }
 
 /**
@@ -172,141 +198,208 @@ fun App(vaultPath: String? = null) {
             }
         }
 
+        val currentRoot = when {
+            unlocked -> RootStage.Unlocked
+            showCreate -> RootStage.CreateVault
+            showOpen -> RootStage.OpenProvider
+            !hasVault -> RootStage.Onboarding
+            else -> RootStage.Unlock
+        }
+
         Box(Modifier.fillMaxSize()) {
-        when {
-            unlocked -> auth.vault()?.let { vault ->
-                when (val n = nav) {
-                    is Nav.List -> VaultListScreen(
-                        vault = vault,
-                        listViewModel = listVm,
-                        authViewModel = auth,
-                        onLocked = {
-                            nav = Nav.List
-                            unlocked = false
-                        },
-                        onCipherClick = { nav = Nav.Detail(it) },
-                        onAddEntry = { nav = Nav.Edit(null) },
-                        onOpenGenerator = { nav = Nav.Generator },
-                        onOpenSettings = { nav = Nav.Settings },
-                        revision = saveRevision,
-                        onPullRefresh = {
-                            runCatching { sync.pullNow(vault) }
-                            conflictVm.refresh(vault)
-                            listVm.refresh(vault)
-                            saveRevision++
-                        },
-                    )
-
-                    is Nav.Detail -> CipherDetailScreen(
-                        vault = vault,
-                        cipherId = n.cipherId,
-                        detailViewModel = detailVm,
-                        totpViewModel = totpVm,
-                        onEdit = { nav = Nav.Edit(n.cipherId) },
-                        onDeleted = {
-                            saveRevision++
-                            notifyMutation()
-                            nav = Nav.List
-                        },
-                        onBack = { nav = Nav.List },
-                        revision = saveRevision,
-                    )
-
-                    is Nav.Edit -> EditCipherScreen(
-                        vault = vault,
-                        cipherId = n.cipherId,
-                        viewModel = editVm,
-                        onSaved = {
-                            saveRevision++
-                            notifyMutation()
-                            nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId)
-                        },
-                        onCancelled = { nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId) },
-                    )
-
-                    Nav.Generator -> GeneratorScreen(
-                        viewModel = generatorVm,
-                        onBack = { nav = Nav.List },
-                    )
-
-                    Nav.Settings -> SettingsScreen(
-                        vault = vault,
-                        coordinator = sync,
-                        viewModel = settingsVm,
-                        onBack = { nav = Nav.List },
-                    )
-                }
-            }
-
-            showCreate -> CreateVaultScreen(
-                vaultPath = path,
-                authViewModel = auth,
-                onCreated = {
-                    hasVault = true
-                    showCreate = false
-                    unlocked = true
+            AnimatedContent(
+                targetState = currentRoot,
+                transitionSpec = {
+                    if (targetState is RootStage.Unlocked) {
+                        (fadeIn(animationSpec = tween(280, easing = FastOutSlowInEasing)) +
+                         scaleIn(initialScale = 0.97f, animationSpec = tween(280, easing = FastOutSlowInEasing)))
+                            .togetherWith(fadeOut(animationSpec = tween(180, easing = FastOutLinearInEasing)))
+                    } else if (initialState is RootStage.Unlocked) {
+                        fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing))
+                            .togetherWith(
+                                fadeOut(animationSpec = tween(180, easing = FastOutLinearInEasing)) +
+                                scaleOut(targetScale = 0.97f, animationSpec = tween(180, easing = FastOutLinearInEasing))
+                            )
+                    } else {
+                        (fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)) +
+                         slideInHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { (it * 0.08f).toInt() })
+                            .togetherWith(
+                                fadeOut(animationSpec = tween(180, easing = FastOutLinearInEasing)) +
+                                slideOutHorizontally(animationSpec = tween(180, easing = FastOutLinearInEasing)) { -(it * 0.08f).toInt() }
+                            )
+                    }
                 },
-                onCancelled = { showCreate = false },
-            )
+                label = "RootStageTransition",
+                modifier = Modifier.fillMaxSize(),
+            ) { rootStage ->
+                when (rootStage) {
+                    RootStage.Unlocked -> auth.vault()?.let { vault ->
+                        AnimatedContent(
+                            targetState = nav,
+                            transitionSpec = {
+                                val forward = navDepth(targetState) >= navDepth(initialState)
+                                if (forward) {
+                                    (slideInHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { (it * 0.12f).toInt() } +
+                                     fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)))
+                                        .togetherWith(
+                                            slideOutHorizontally(animationSpec = tween(200, easing = FastOutLinearInEasing)) { -(it * 0.08f).toInt() } +
+                                            fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                        )
+                                } else {
+                                    (slideInHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { -(it * 0.12f).toInt() } +
+                                     fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)))
+                                        .togetherWith(
+                                            slideOutHorizontally(animationSpec = tween(200, easing = FastOutLinearInEasing)) { (it * 0.08f).toInt() } +
+                                            fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                        )
+                                }
+                            },
+                            label = "NavTransition",
+                            modifier = Modifier.fillMaxSize(),
+                        ) { n ->
+                            when (n) {
+                                is Nav.List -> VaultListScreen(
+                                    vault = vault,
+                                    listViewModel = listVm,
+                                    authViewModel = auth,
+                                    onLocked = {
+                                        nav = Nav.List
+                                        unlocked = false
+                                    },
+                                    onCipherClick = { nav = Nav.Detail(it) },
+                                    onAddEntry = { nav = Nav.Edit(null) },
+                                    onOpenGenerator = { nav = Nav.Generator },
+                                    onOpenSettings = { nav = Nav.Settings },
+                                    revision = saveRevision,
+                                    onPullRefresh = {
+                                        runCatching { sync.pullNow(vault) }
+                                        conflictVm.refresh(vault)
+                                        listVm.refresh(vault)
+                                        saveRevision++
+                                    },
+                                )
 
-            showOpen -> {
-                val stage = flowVm.stage
-                val code = stage as? ProviderFlowViewModel.Stage.DeviceCode
-                val repos = stage as? ProviderFlowViewModel.Stage.Repos
-                when {
-                    code != null -> DeviceCodeScreen(
-                        vm = flowVm,
-                        flow = code.flow,
-                        onAuthorized = { }, // stage flipped to Repos by the VM
-                        onCancelled = {
-                            flowVm.backToPickProvider()
-                        },
-                    )
+                                is Nav.Detail -> CipherDetailScreen(
+                                    vault = vault,
+                                    cipherId = n.cipherId,
+                                    detailViewModel = detailVm,
+                                    totpViewModel = totpVm,
+                                    onEdit = { nav = Nav.Edit(n.cipherId) },
+                                    onDeleted = {
+                                        saveRevision++
+                                        notifyMutation()
+                                        nav = Nav.List
+                                    },
+                                    onBack = { nav = Nav.List },
+                                    revision = saveRevision,
+                                )
 
-                    stage is ProviderFlowViewModel.Stage.Enroll -> EnrollDeviceScreen(
-                        vm = flowVm,
+                                is Nav.Edit -> EditCipherScreen(
+                                    vault = vault,
+                                    cipherId = n.cipherId,
+                                    viewModel = editVm,
+                                    onSaved = {
+                                        saveRevision++
+                                        notifyMutation()
+                                        nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId)
+                                    },
+                                    onCancelled = { nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId) },
+                                )
+
+                                Nav.Generator -> GeneratorScreen(
+                                    viewModel = generatorVm,
+                                    onBack = { nav = Nav.List },
+                                )
+
+                                Nav.Settings -> SettingsScreen(
+                                    vault = vault,
+                                    coordinator = sync,
+                                    viewModel = settingsVm,
+                                    onBack = { nav = Nav.List },
+                                )
+                            }
+                        }
+                    }
+
+                    RootStage.CreateVault -> CreateVaultScreen(
                         vaultPath = path,
-                        onEnrolled = {
+                        authViewModel = auth,
+                        onCreated = {
                             hasVault = true
-                            showOpen = false
+                            showCreate = false
                             unlocked = true
                         },
-                        onCancelled = { flowVm.backToRepos() },
+                        onCancelled = { showCreate = false },
                     )
 
-                    repos != null || stage is ProviderFlowViewModel.Stage.Cloning -> RepoPickerScreen(
-                        vm = flowVm,
-                        repos = (repos?.repos ?: flowVm.repos),
+                    RootStage.OpenProvider -> {
+                        AnimatedContent(
+                            targetState = flowVm.stage,
+                            transitionSpec = {
+                                (slideInHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { (it * 0.10f).toInt() } +
+                                 fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)))
+                                    .togetherWith(
+                                        slideOutHorizontally(animationSpec = tween(200, easing = FastOutLinearInEasing)) { -(it * 0.08f).toInt() } +
+                                        fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                    )
+                            },
+                            label = "ProviderStageTransition",
+                            modifier = Modifier.fillMaxSize(),
+                        ) { stage ->
+                            val code = stage as? ProviderFlowViewModel.Stage.DeviceCode
+                            val repos = stage as? ProviderFlowViewModel.Stage.Repos
+                            when {
+                                code != null -> DeviceCodeScreen(
+                                    vm = flowVm,
+                                    flow = code.flow,
+                                    onAuthorized = { },
+                                    onCancelled = { flowVm.backToPickProvider() },
+                                )
+
+                                stage is ProviderFlowViewModel.Stage.Enroll -> EnrollDeviceScreen(
+                                    vm = flowVm,
+                                    vaultPath = path,
+                                    onEnrolled = {
+                                        hasVault = true
+                                        showOpen = false
+                                        unlocked = true
+                                    },
+                                    onCancelled = { flowVm.backToRepos() },
+                                )
+
+                                repos != null || stage is ProviderFlowViewModel.Stage.Cloning -> RepoPickerScreen(
+                                    vm = flowVm,
+                                    repos = (repos?.repos ?: flowVm.repos),
+                                    vaultPath = path,
+                                    onCloneDone = { },
+                                    onCancelled = { flowVm.backToPickProvider() },
+                                )
+
+                                else -> ProviderConnectScreen(
+                                    vm = flowVm,
+                                    onDeviceCodeStarted = { },
+                                    onPatConnected = { },
+                                    onCancelled = {
+                                        hasVault = AppPaths.vaultExists(path)
+                                        showOpen = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    RootStage.Onboarding -> OnboardingScreen(
+                        onCreateVault = { showCreate = true },
+                        onOpenProvider = { showOpen = true },
+                    )
+
+                    RootStage.Unlock -> UnlockScreen(
                         vaultPath = path,
-                        onCloneDone = { }, // stage drives the next screen
-                        onCancelled = { flowVm.backToPickProvider() },
-                    )
-
-                    else -> ProviderConnectScreen(
-                        vm = flowVm,
-                        onDeviceCodeStarted = { }, // stage flipped to DeviceCode
-                        onPatConnected = { }, // stage flipped to Repos
-                        onCancelled = {
-                            // A clone may have landed mid-flow; re-check so a
-                            // vault that exists routes to unlock, not onboarding.
-                            hasVault = AppPaths.vaultExists(path)
-                            showOpen = false
-                        },
+                        authViewModel = auth,
+                        onUnlocked = { unlocked = true },
                     )
                 }
             }
-
-            !hasVault -> OnboardingScreen(
-                onCreateVault = { showCreate = true },
-                onOpenProvider = { showOpen = true },
-            )
-
-            else -> UnlockScreen(
-                vaultPath = path,
-                authViewModel = auth,
-                onUnlocked = { unlocked = true },
-            )
-        }
 
         // B4 overlay: a paused conflict blocks the sync cycle; the decision
         // is unavoidable by design (no dismiss control on the panel).

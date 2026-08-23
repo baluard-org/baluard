@@ -107,6 +107,49 @@ fn token_file_path(key: &str) -> PathBuf {
     data_dir().join("tokens").join(format!("{key}.json"))
 }
 
+/// True when this build has a real, persistent OS keyring backend.
+///
+/// `keyring` 3.x only ships stores for macOS/iOS (apple-native), Windows
+/// (windows-native) and Linux/BSD (secret-service / keyutils). On every other
+/// target (**Android included**) `keyring::default` resolves to
+/// `keyring::mock`, whose `set_password` returns `Ok(())` and writes into an
+/// in-memory cell owned by that one `Entry`. The value is dropped with the
+/// `Entry`, so a mock write is a silent black hole: the store reports success
+/// and the next read returns `NoEntry`. Gate on the target instead of trusting
+/// the `Ok`, so unsupported platforms go straight to the app-private file.
+/// Mirrors the target list in `keyring::lib.rs` that resolves to a real store
+/// (the workspace enables apple-native + windows-native + linux-native-sync-
+/// persistent, so target_os alone decides).
+const fn keyring_is_persistent() -> bool {
+    cfg!(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+    ))
+}
+
+/// Write `secret` to the app-private token file with 0600 permissions.
+fn store_token_file(key: &str, secret: &str) -> Result<(), super::types::ProviderError> {
+    let path = token_file_path(key);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, secret).map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    }
+
+    std::fs::rename(&tmp, &path).map_err(|e| super::types::ProviderError::Io(e.to_string()))
+}
+
 /// Store a provider token in the OS keyring, falling back to a 0600 file if keyring is unavailable.
 pub fn store_token(
     provider: Provider,
@@ -118,7 +161,12 @@ pub fn store_token(
         .to_secret()
         .map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
 
-    // Try OS keyring first
+    // No real keyring on this target (Android, …): the mock store would answer
+    // Ok and drop the token, so go straight to the app-private file.
+    if !keyring_is_persistent() {
+        return store_token_file(&key, secret.expose_secret());
+    }
+
     let keyring_result = keyring::Entry::new("baluard", &key)
         .map_err(|e| keyring_error(&e))
         .and_then(|entry| {
@@ -127,24 +175,13 @@ pub fn store_token(
                 .map_err(|e| keyring_error(&e))
         });
 
-    if let Err(_e) = keyring_result {
-        // Fallback: save to app-private token file with 0600 permissions
-        let path = token_file_path(&key);
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, secret.expose_secret())
-            .map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-        }
-
-        std::fs::rename(&tmp, &path).map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
+    if keyring_result.is_err() {
+        // Keyring present but unusable (headless session, locked collection):
+        // fall back to the app-private token file with 0600 permissions.
+        return store_token_file(&key, secret.expose_secret());
     }
+    // Keyring took it; drop any stale fallback copy so the two can't diverge.
+    let _ = std::fs::remove_file(token_file_path(&key));
     Ok(())
 }
 
@@ -155,12 +192,14 @@ pub fn load_token(
 ) -> Result<ProviderToken, super::types::ProviderError> {
     let key = keyring_key(provider, username);
 
-    // Try OS keyring first
-    if let Ok(entry) = keyring::Entry::new("baluard", &key) {
-        if let Ok(secret_str) = entry.get_password() {
-            let secret = SecretString::new(secret_str.into());
-            if let Ok(tok) = ProviderToken::from_secret(&secret) {
-                return Ok(tok);
+    // Try OS keyring first (skipped where it is a no-op mock store).
+    if keyring_is_persistent() {
+        if let Ok(entry) = keyring::Entry::new("baluard", &key) {
+            if let Ok(secret_str) = entry.get_password() {
+                let secret = SecretString::new(secret_str.into());
+                if let Ok(tok) = ProviderToken::from_secret(&secret) {
+                    return Ok(tok);
+                }
             }
         }
     }

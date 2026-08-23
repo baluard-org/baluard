@@ -202,19 +202,20 @@ impl ForgeProvider for GitHubProvider {
             }
         };
 
-        // M11 fix: check HTTP status before parsing JSON body.
-        // GitHub returns 400 with an error JSON for authorization_pending /
-        // slow_down / expired_token, but 429 (rate limit) or 5xx (server
-        // error) should NOT be parsed as a normal device flow response.
+        // Check HTTP status before parsing JSON body. 429 (rate limit) and 5xx
+        // (server error) are NOT device flow responses. 400 IS one: RFC 8628
+        // §3.5 sends authorization_pending / slow_down / expired_token /
+        // access_denied with HTTP 400, so its body must be parsed like a 200.
+        // Rejecting 400 outright turns every normal pending tick into a hard
+        // error and hides the terminal states behind an opaque "HTTP 400".
         let status = resp.status();
-        if !status.is_success() {
-            // 429: rate limited. Treat as slow_down with +5s (RFC 8628 §3.5).
-            if status.as_u16() == 429 {
-                return Ok(DeviceFlowStatus::SlowDown {
-                    interval_secs: session.interval_secs + 5,
-                });
-            }
-            // Other non-2xx: surface as error.
+        if status.as_u16() == 429 {
+            // Rate limited. Treat as slow_down with +5s (RFC 8628 §3.5).
+            return Ok(DeviceFlowStatus::SlowDown {
+                interval_secs: session.interval_secs + 5,
+            });
+        }
+        if !status.is_success() && status.as_u16() != 400 {
             return Err(ProviderError::Api(format!(
                 "device flow poll HTTP {status}"
             )));
