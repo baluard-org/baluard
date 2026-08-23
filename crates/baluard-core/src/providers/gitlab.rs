@@ -231,7 +231,12 @@ impl ForgeProvider for GitLabProvider {
                 interval_secs: new_interval,
             });
         }
-        if !status.is_success() {
+        // 400 IS a device flow response: RFC 8628 §3.5 sends
+        // authorization_pending / slow_down / expired_token / access_denied
+        // with HTTP 400, so its body must be parsed like a 200. Rejecting it
+        // outright turns every pending tick into a hard error and hides the
+        // terminal states behind an opaque "HTTP 400".
+        if !status.is_success() && status.as_u16() != 400 {
             return Err(ProviderError::Api(format!(
                 "device flow poll HTTP {status}"
             )));

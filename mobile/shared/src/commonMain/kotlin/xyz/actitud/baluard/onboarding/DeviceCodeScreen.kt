@@ -70,6 +70,9 @@ fun DeviceCodeScreen(
             when (vm.pollDeviceFlow(flow)) {
                 MobileDeviceFlowStatus.SUCCESS -> { onAuthorized(); return@LaunchedEffect }
                 MobileDeviceFlowStatus.EXPIRED -> expired = true
+                // null = the flow failed; vm.error holds the reason. Stop:
+                // the device code is spent, more polls cannot recover it.
+                null -> return@LaunchedEffect
                 else -> Unit
             }
         }

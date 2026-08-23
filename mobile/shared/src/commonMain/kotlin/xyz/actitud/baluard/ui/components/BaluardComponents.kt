@@ -1,10 +1,15 @@
 package xyz.actitud.baluard.ui.components
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -289,6 +294,7 @@ fun BaluardCard(
     shape: RoundedCornerShape = RoundedCornerShape(16.dp),
     backgroundColor: Color = MaterialTheme.colorScheme.surfaceContainer,
     borderColor: Color = MaterialTheme.colorScheme.outlineVariant,
+    animateSize: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
@@ -299,7 +305,17 @@ fun BaluardCard(
         color = backgroundColor,
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier
+                .then(
+                    if (animateSize) {
+                        Modifier.animateContentSize(
+                            animationSpec = tween(220, easing = FastOutSlowInEasing)
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
+                .padding(16.dp),
             content = content,
         )
     }
@@ -665,14 +681,23 @@ fun CopyableFieldRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(2.dp))
-            Text(
-                text = if (revealed) value else "••••••••••••",
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontWeight = FontWeight.Medium,
-                ),
-                fontFamily = if (mono || (sensitive && !revealed)) FontFamily.Monospace else null,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            AnimatedContent(
+                targetState = revealed,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing))
+                        .togetherWith(fadeOut(animationSpec = tween(120)))
+                },
+                label = "RevealAnimation",
+            ) { isRevealed ->
+                Text(
+                    text = if (isRevealed) value else "••••••••••••",
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontWeight = FontWeight.Medium,
+                    ),
+                    fontFamily = if (mono || (sensitive && !isRevealed)) FontFamily.Monospace else null,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
         }
 
         Row(

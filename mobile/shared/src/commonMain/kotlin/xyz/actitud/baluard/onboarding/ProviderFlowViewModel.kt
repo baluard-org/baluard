@@ -77,26 +77,33 @@ class ProviderFlowViewModel(
     }
 
     /**
-     * Poll once; caller loops with [pollIntervalMs] between calls. Returns
-     * the status so the screen can react (Success advances to repos).
+     * Poll once; caller loops with [pollIntervalMs] between calls. Returns the
+     * status so the screen can react (Success advances to repos), or `null`
+     * when the flow failed for good. [error] then holds the reason and the
+     * caller MUST stop looping.
+     *
+     * Transient network failures are absorbed on the Rust side (which can tell
+     * a dropped socket from a rejected grant) and arrive here as PENDING. An
+     * exception reaching this catch is therefore terminal: the device code is
+     * single-use, so retrying a consumed or rejected code can only spin
+     * forever. Never translate it back into PENDING.
      */
-    suspend fun pollDeviceFlow(flow: MobileDeviceFlow): MobileDeviceFlowStatus {
+    suspend fun pollDeviceFlow(flow: MobileDeviceFlow): MobileDeviceFlowStatus? {
         return try {
             when (val s = flow.poll()) {
                 MobileDeviceFlowStatus.SLOW_DOWN -> {
-                    pollIntervalMs += 5_000
+                    pollIntervalMs = (pollIntervalMs + 5_000).coerceAtMost(MAX_POLL_INTERVAL_MS)
                     s
                 }
-                MobileDeviceFlowStatus.SUCCESS -> {
-                    loadRepos()
-                    s
-                }
+                // Approval landed. The token is persisted; if the repo listing
+                // that follows fails, the flow is still over (the code is
+                // spent); report it instead of polling a dead code.
+                MobileDeviceFlowStatus.SUCCESS -> if (loadRepos()) s else null
                 else -> s
             }
         } catch (e: Exception) {
-            // Transient network error during polling (e.g. app switched to
-            // background while approving in browser); continue polling next tick.
-            MobileDeviceFlowStatus.PENDING
+            error = e.message ?: "Authorization failed"
+            null
         }
     }
 
@@ -125,15 +132,19 @@ class ProviderFlowViewModel(
         stage = Stage.Repos(repos)
     }
 
-    private suspend fun loadRepos() {
+    /** Load the repo list and advance to the picker. False = [error] is set. */
+    private suspend fun loadRepos(): Boolean {
         busy = true
-        try {
+        return try {
             repos = repo.listVaultRepos(provider)
             stage = Stage.Repos(repos)
+            true
         } catch (e: Exception) {
-            error = e.message
+            error = e.message ?: "Could not list repositories"
+            false
+        } finally {
+            busy = false
         }
-        busy = false
     }
 
     /** Clone [r] to [localPath]; on success advance to enrollment. */
@@ -175,5 +186,10 @@ class ProviderFlowViewModel(
         } finally {
             busy = false
         }
+    }
+
+    private companion object {
+        /** Ceiling for slow_down backoff, so a rate-limited flow still ends. */
+        const val MAX_POLL_INTERVAL_MS = 30_000L
     }
 }
