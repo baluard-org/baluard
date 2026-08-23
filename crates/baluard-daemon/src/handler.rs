@@ -1624,6 +1624,44 @@ async fn route_bridge_request(
         return err_response("locked");
     }
 
+    // 3b. C21: vault.update omission gate. The generic update path replaces
+    //     the whole `kind` when the payload carries one (serde defaults
+    //     absorb absent fields), so a bridge payload omitting
+    //     fido2_credentials/uris on a cipher that HAS them would silently
+    //     delete them. Read-only internal fetch, exempt from the bridge
+    //     read cap (integrity check, not a secret exfil path).
+    if req.action.as_str() == "vault.update" {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.payload) {
+            if let Err(reason) = bridge_update_preserves_protected(&state, &v).await {
+                log::warn!("[daemon] bridge vault.update denied: {reason}");
+                return err_response(format!(
+                    "bridge tokens may not remove fido2_credentials or uris: {reason}"
+                ));
+            }
+        }
+    }
+
+    // 3c. B3: server-side origin binding for bridge secret reads that carry
+    //     a page URL (the inline-fill flow includes it). The hostname
+    //     matcher is the SAME one bridge.match uses, so a credential stored
+    //     for one site cannot be fetched for a lookalike/downgraded page.
+    //     Requests without a URL (popup, extension-owned UI) are allowed;
+    //     URI-less ciphers stay fillable from the popup (user picked them)
+    //     and are logged.
+    if req.action.as_str() == "vault.get" || req.action.as_str() == "cipher.totp_code" {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.payload) {
+            if let Some(url) = v.get("url").and_then(|x| x.as_str()) {
+                if !url.is_empty() {
+                    let action = req.action.clone();
+                    if let Err(reason) = bridge_read_matches_page(&state, &v, url).await {
+                        log::warn!("[daemon] bridge {action} denied: {reason}");
+                        return err_response(format!("bridge read refused: {reason}"));
+                    }
+                }
+            }
+        }
+    }
+
     // Resolve the active vault's display name for the popup header (review I8:
     // silent cross-vault hazard; the extension must show WHERE a capture/fill
     // lands). Best-effort: registry lookup, fall back to the slug.
@@ -1656,6 +1694,110 @@ async fn route_bridge_request(
 /// CipherKind serializes as {"type":"login","data":{...}} (#[serde(tag="type",
 /// content="data")]), so the forbidden fields live under `kind.data`, NOT
 /// `kind` directly. Path verified via serde round-trip.
+/// C21: does the incoming kind omit or shrink a protected list the existing
+/// cipher has? Returns the violation reason, or None when safe.
+fn kind_omits_or_shrinks_protected(
+    existing_kind: Option<&serde_json::Value>,
+    incoming_kind: Option<&serde_json::Value>,
+) -> Option<&'static str> {
+    // No kind in the update payload: the generic PATCH path keeps the
+    // existing kind — nothing protected can change.
+    let incoming = incoming_kind?;
+    let existing = existing_kind?;
+    for field in ["fido2_credentials", "uris"] {
+        let existing_list = existing
+            .get("data")
+            .and_then(|d| d.get(field))
+            .and_then(|v| v.as_array());
+        let Some(existing_list) = existing_list else { continue };
+        if existing_list.is_empty() {
+            continue;
+        }
+        match incoming
+            .get("data")
+            .and_then(|d| d.get(field))
+            .and_then(|v| v.as_array())
+        {
+            None => {
+                return Some(
+                    "omission would delete it (send the full list or omit kind)",
+                )
+            }
+            Some(incoming_list) if incoming_list.len() < existing_list.len() => {
+                return Some("list shrinks (deletion is not a bridge operation)")
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// C21 async wrapper: fetch the existing cipher (read-only, does not charge
+/// the bridge read cap) and compare protected lists against the payload.
+async fn bridge_update_preserves_protected(
+    state: &SharedVaultState,
+    payload: &serde_json::Value,
+) -> Result<(), String> {
+    let Some(id) = payload.get("id").and_then(|v| v.as_str()) else {
+        // No id: the generic handler produces the proper error; nothing to
+        // compare yet.
+        return Ok(());
+    };
+    let existing_json = state.get_cipher(id, true).await?;
+    let existing: serde_json::Value =
+        serde_json::from_str(&existing_json).map_err(|e| format!("existing cipher parse: {e}"))?;
+    let existing_kind = existing.get("kind");
+    let incoming_kind = payload.get("kind");
+    match kind_omits_or_shrinks_protected(existing_kind, incoming_kind) {
+        Some(reason) => Err(format!("{reason} for a cipher that has them")),
+        None => Ok(()),
+    }
+}
+
+/// B3: verify the cipher requested by a bridge read matches the page URL
+/// the client claims, using the same hostname matcher as bridge.match.
+async fn bridge_read_matches_page(
+    state: &SharedVaultState,
+    payload: &serde_json::Value,
+    url: &str,
+) -> Result<(), String> {
+    let Some(id) = payload.get("id").and_then(|v| v.as_str()) else {
+        // Malformed id: the generic handler produces the proper error.
+        return Ok(());
+    };
+    let want = hostname_of(url);
+    if want.is_empty() {
+        return Err("unparseable page URL".to_string());
+    }
+    // Decrypted fetch: URI data lives inside the decrypted kind.
+    let cipher_json = state.get_cipher(id, true).await.map_err(|e| e)?;
+    let c: serde_json::Value = serde_json::from_str(&cipher_json)
+        .map_err(|e| format!("cipher parse: {e}"))?;
+    let uris = c["kind"]["data"]["uris"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if uris.is_empty() {
+        log::info!(
+            "[daemon] bridge read of URI-less cipher {id} from {url} (extension-owned UI policy)"
+        );
+        return Ok(());
+    }
+    let matched = uris.iter().any(|u| {
+        let stored = u["uri"]
+            .as_str()
+            .or_else(|| u.as_str())
+            .map(hostname_of)
+            .unwrap_or_default();
+        !stored.is_empty() && hostname_matches(&stored, &want)
+    });
+    if matched {
+        Ok(())
+    } else {
+        Err(format!("no stored URI matches {want}"))
+    }
+}
+
 fn bridge_update_touches_forbidden(payload: &serde_json::Value) -> bool {
     // Resolve the inner `data` block across the layouts the update handler
     // accepts: {kind:{type,data}}, {kind:{...fields}}, or {data:{...}}.
@@ -1912,7 +2054,7 @@ async fn handle_vault_unlock(mut req: GatewayRequest, host: &SharedVaultHost) ->
 
     // Rate-limit (M4) before KDF.
     let vault_key = state.vault_path.to_string_lossy().into_owned();
-    let permit = match state.rate_limiter.claim_attempt(&vault_key) {
+    let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
         crate::rate_limit::ClaimResult::Allowed(p) => p,
         crate::rate_limit::ClaimResult::Backoff(d) => {
             req.payload.zeroize();
@@ -2105,7 +2247,7 @@ async fn handle_vault_biometric_unlock(
 
     // M4 fix: atomically claim a rate-limit slot before running unlock.
     let vault_key = state.vault_path.to_string_lossy().into_owned();
-    let permit = match state.rate_limiter.claim_attempt(&vault_key) {
+    let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
         crate::rate_limit::ClaimResult::Allowed(p) => p,
         crate::rate_limit::ClaimResult::Backoff(d) => {
             return err_response(format!(
@@ -2171,7 +2313,7 @@ async fn handle_vault_pin_unlock(req: GatewayRequest, host: &SharedVaultHost) ->
     // per-vault limiter as password attempts. The PIN escrow's own counter
     // provides the terminal nuke-at-5 policy on top.
     let vault_key = state.vault_path.to_string_lossy().into_owned();
-    let permit = match state.rate_limiter.claim_attempt(&vault_key) {
+    let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
         crate::rate_limit::ClaimResult::Allowed(p) => p,
         crate::rate_limit::ClaimResult::Backoff(d) => {
             return err_response(format!(
@@ -2234,6 +2376,12 @@ async fn handle_vault_create(mut req: GatewayRequest, host: &SharedVaultHost) ->
         // rename later via the registry.
         format!("vault-{}", &uuid::Uuid::new_v4().to_string()[..8])
     });
+    // C11: the slug reaches a filesystem path join below — reject anything
+    // the slug rules disallow (path traversal, separators, dots) before it
+    // can escape vaults_dir(). The synthesized UUID fallback always passes.
+    if let Err(e) = baluard_core::vault::slug::validate_slug(&slug) {
+        return err_response(format!("Invalid vault slug '{slug}': {e}"));
+    }
     let vault_path = baluard_core::paths::vaults_dir().join(&slug);
 
     let state = Arc::new(VaultState::new(vault_path.clone()));
@@ -2336,6 +2484,8 @@ struct CloneJobState {
 struct CloneJob {
     state: Arc<std::sync::Mutex<CloneJobState>>,
     progress: Arc<std::sync::Mutex<baluard_core::sync::engine::CloneProgress>>,
+    /// C16: when the job started, for stale-job eviction (30-minute TTL).
+    started_at: std::time::Instant,
 }
 
 /// Bundled parameters for a background clone (avoids the clippy
@@ -2391,6 +2541,10 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
         other => return err_response(format!("Unknown provider: {other}")),
     };
 
+    // C11: same gate as vault.create — the slug joins a filesystem path.
+    if let Err(e) = baluard_core::vault::slug::validate_slug(&slug) {
+        return err_response(format!("Invalid vault slug '{slug}': {e}"));
+    }
     let target = baluard_core::paths::vaults_dir().join(&slug);
     if target.exists() {
         return err_response(format!(
@@ -2422,11 +2576,25 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
     ));
     {
         let mut jobs = CLONE_JOBS.lock().await;
+        // C16: bound concurrent jobs. First evict entries older than 30
+        // minutes (wedged clones and finished-but-unpolled jobs), then
+        // refuse the 5th concurrent job so the map cannot grow unbounded.
+        const MAX_CONCURRENT_CLONES: usize = 4;
+        const CLONE_JOB_TTL: std::time::Duration =
+            std::time::Duration::from_secs(30 * 60);
+        jobs.retain(|_, job| job.started_at.elapsed() < CLONE_JOB_TTL);
+        if jobs.len() >= MAX_CONCURRENT_CLONES {
+            return err_response(format!(
+                "Too many concurrent clone jobs ({MAX_CONCURRENT_CLONES}). \
+                 Poll or finalize an existing job first."
+            ));
+        }
         jobs.insert(
             job_id,
             CloneJob {
                 state: state.clone(),
                 progress: progress.clone(),
+                started_at: std::time::Instant::now(),
             },
         );
     }
@@ -3227,17 +3395,40 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
 
         // ── Reprompt verify (token required) ──
+        // C23: rate-limited on the vault's unlock key — the master-password
+        // verify is an Argon2id oracle, and sharing the key means grinding
+        // reprompt locks out vault.unlock as well.
         "vault.reprompt_verify" => {
             // Payload: master password (plaintext)
             if req.payload.is_empty() {
                 return err_response("Missing master password");
             }
+            let vault_key = state.vault_path.to_string_lossy().into_owned();
+            let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
+                crate::rate_limit::ClaimResult::Allowed(p) => p,
+                crate::rate_limit::ClaimResult::Backoff(d) => {
+                    req.payload.zeroize();
+                    return err_response(format!(
+                        "Too many failed attempts. Wait {}s before retrying.",
+                        d.as_secs()
+                    ));
+                }
+                crate::rate_limit::ClaimResult::LockedOut(d) => {
+                    req.payload.zeroize();
+                    return err_response(format!(
+                        "Vault locked due to too many failed attempts. Wait {}s.",
+                        d.as_secs()
+                    ));
+                }
+            };
             match state.reprompt_verify(&req.payload).await {
                 Ok(json) => {
+                    permit.commit_success();
                     req.payload.zeroize();
                     ok_resp(json, token_str)
                 }
                 Err(e) => {
+                    permit.commit_failure();
                     req.payload.zeroize();
                     err_response(e)
                 }
@@ -3259,6 +3450,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         // ── Enroll this device into an existing vault via recovery phrase ──
         // Non-destructive: existing devices remain in the registry.
         // Requires the vault's `enrollment_policy` to be `Personal`.
+        // C22: rate-limited — the phrase verify derives via Argon2id and is
+        // grindable like any other secret verify.
         "vault.enroll_with_phrase" => {
             let v: serde_json::Value = match serde_json::from_str(&req.payload) {
                 Ok(v) => v,
@@ -3271,13 +3464,40 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Some(p) => p.to_string(),
                 None => return err_response("missing phrase".to_string()),
             };
+            let vault_key = state.vault_path.to_string_lossy().into_owned();
+            let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
+                crate::rate_limit::ClaimResult::Allowed(p) => p,
+                crate::rate_limit::ClaimResult::Backoff(d) => {
+                    use zeroize::Zeroize;
+                    phrase.zeroize();
+                    return err_response(format!(
+                        "Too many failed attempts. Wait {}s before retrying.",
+                        d.as_secs()
+                    ));
+                }
+                crate::rate_limit::ClaimResult::LockedOut(d) => {
+                    use zeroize::Zeroize;
+                    phrase.zeroize();
+                    return err_response(format!(
+                        "Vault locked due to too many failed attempts. Wait {}s.",
+                        d.as_secs()
+                    ));
+                }
+            };
             let result = state.enroll_with_recovery_phrase(&phrase).await;
-            // Zeroize phrase bytes before any return path.
-            use zeroize::Zeroize;
-            phrase.zeroize();
             match result {
-                Ok(json) => ok_resp(json, token_str),
-                Err(e) => err_response(e),
+                Ok(json) => {
+                    permit.commit_success();
+                    use zeroize::Zeroize;
+                    phrase.zeroize();
+                    ok_resp(json, token_str)
+                }
+                Err(e) => {
+                    permit.commit_failure();
+                    use zeroize::Zeroize;
+                    phrase.zeroize();
+                    err_response(e)
+                }
             }
         }
 
@@ -4492,6 +4712,29 @@ fn verify_peer_uid(_stream: &UnixStream) -> Result<()> {
 mod tests {
     use super::{parse_repo_owner_name, repo_web_url_from_remote};
 
+    /// C11: the exact attack strings the vault.create / clone slug gates
+    /// must reject before the `vaults_dir().join(&slug)` path join.
+    #[test]
+    fn slug_gate_rejects_traversal_and_separators() {
+        use baluard_core::vault::slug::validate_slug;
+        for attack in [
+            "../../tmp/x",
+            "..",
+            "../escape",
+            "a/b",
+            "a\\b",
+            "../..",
+            ".hidden",
+            "vault/../other",
+            "/etc",
+        ] {
+            assert!(validate_slug(attack).is_err(), "slug gate must reject {attack:?}");
+        }
+        // The synthesized fallback shape and a normal user slug must pass.
+        assert!(validate_slug("vault-1a2b3c4d").is_ok());
+        assert!(validate_slug("my-vault").is_ok());
+    }
+
     /// Covers the URL forms `sync_disconnect` must extract owner/name from.
     /// If this breaks, the destructive delete-remote path silently no-ops
     /// (returns Err on the now-unparseable URL instead of deleting).
@@ -4580,6 +4823,71 @@ mod tests {
             "kind": { "type": "login", "data": { "password": "newpw" } }
         });
         assert!(!bridge_update_touches_forbidden(&benign));
+    }
+
+    /// C21: omitting a protected list the existing cipher HAS must trip the
+    /// omission gate — the generic update replaces the whole kind, so the
+    /// omission would silently delete passkeys/URIs.
+    #[test]
+    fn c21_gate_rejects_omission_of_existing_protected_list() {
+        use super::kind_omits_or_shrinks_protected;
+        let existing = serde_json::json!({
+            "type": "login",
+            "data": {
+                "username": "u", "password": "p",
+                "fido2_credentials": [{ "credential_id": "c1" }],
+                "uris": [{ "uri": "https://a.com" }]
+            }
+        });
+        // Kind present, both protected lists omitted -> both rules fire
+        // (fido2_credentials checked first).
+        let omits_both = serde_json::json!({
+            "type": "login", "data": { "username": "u", "password": "newpw" }
+        });
+        assert!(kind_omits_or_shrinks_protected(Some(&existing), Some(&omits_both)).is_some());
+
+        // Full round-trip (lists preserved at same length) passes.
+        let preserves = serde_json::json!({
+            "type": "login",
+            "data": {
+                "username": "u", "password": "newpw",
+                "fido2_credentials": [{ "credential_id": "c1" }],
+                "uris": [{ "uri": "https://a.com" }]
+            }
+        });
+        assert!(kind_omits_or_shrinks_protected(Some(&existing), Some(&preserves)).is_none());
+    }
+
+    /// C21: shrinking a protected list is deletion by another name.
+    #[test]
+    fn c21_gate_rejects_shrinking_protected_list() {
+        use super::kind_omits_or_shrinks_protected;
+        let existing = serde_json::json!({
+            "type": "login",
+            "data": { "uris": [{ "uri": "https://a.com" }, { "uri": "https://b.com" }] }
+        });
+        let shrunk = serde_json::json!({
+            "type": "login", "data": { "uris": [{ "uri": "https://a.com" }] }
+        });
+        assert!(kind_omits_or_shrinks_protected(Some(&existing), Some(&shrunk)).is_some());
+    }
+
+    /// C21: no kind in the payload = generic PATCH keeps the existing kind;
+    /// URI-less login + omitted uris = nothing to protect.
+    #[test]
+    fn c21_gate_allows_kindless_update_and_uriless_logins() {
+        use super::kind_omits_or_shrinks_protected;
+        let existing = serde_json::json!({
+            "type": "login",
+            "data": { "username": "u", "password": "p", "uris": [{ "uri": "https://a.com" }] }
+        });
+        // No incoming kind: allowed (PATCH keeps existing).
+        assert!(kind_omits_or_shrinks_protected(Some(&existing), None).is_none());
+
+        // Existing login with NO uris: omission is a no-op, allowed.
+        let uriless = serde_json::json!({ "type": "login", "data": { "username": "u" } });
+        let omits = serde_json::json!({ "type": "login", "data": { "password": "x" } });
+        assert!(kind_omits_or_shrinks_protected(Some(&uriless), Some(&omits)).is_none());
     }
 
     /// C3 regression: hostname matching MUST NOT let `evilgithub.com` match

@@ -84,9 +84,6 @@ pub struct VaultState {
     /// Session counter incremented on every lock. Orphaned cover tasks
     /// check this and bail if the session has changed.
     cover_session: AtomicU64,
-    /// M4 fix: Per-vault rate limiter for sensitive operations.
-    /// Keyed by vault_path to isolate multi-vault setups.
-    pub rate_limiter: crate::rate_limit::RateLimiter,
     /// Phase 1: WebAuthn ceremony state cache (300s TTL).
     pub ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache,
     /// Session-bound PIN Quick Unlock escrow. None = PIN not enabled this
@@ -114,7 +111,6 @@ impl VaultState {
             cover_timer: RwLock::new(None),
             cover_pending: std::sync::atomic::AtomicBool::new(false),
             cover_session: AtomicU64::new(0),
-            rate_limiter: crate::rate_limit::RateLimiter::new(),
             ceremony_cache: baluard_core::crypto::webauthn::CeremonyCache::new(),
             pin: tokio::sync::Mutex::new(None),
             pin_failures: std::sync::atomic::AtomicU32::new(0),
@@ -2787,9 +2783,10 @@ impl VaultState {
             .join("attachments");
         std::fs::create_dir_all(&attach_dir).map_err(|e| format!("mkdir: {e}"))?;
 
-        // Write encrypted file
+        // Write encrypted file (owner-only from the first byte; audit C17)
         let attach_path = attach_dir.join(format!("{}.enc", attach_id));
-        std::fs::write(&attach_path, &encrypted).map_err(|e| format!("write: {e}"))?;
+        baluard_core::secret_file::write_secret_file(&attach_path, &encrypted)
+            .map_err(|e| format!("write: {e}"))?;
 
         // Update cipher metadata with new attachment
         let now = std::time::SystemTime::now()
@@ -3070,10 +3067,10 @@ impl VaultState {
             .unlock(master_password)
             .map_err(|_| "Incorrect master password".to_string())?;
 
-        // Password verified. Generate a short-lived grant token.
-        let mut token_bytes = [0u8; 16];
-        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut token_bytes);
-        let grant = hex::encode(token_bytes);
+        // Password verified. The grant is time-window only: `expires_at` is
+        // all the client needs. No grant_token is minted — a returned token
+        // would be a bearer capability for other same-UID processes (audit
+        // C12), and no consumer ever validated it anyway.
         let expires_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -3086,7 +3083,6 @@ impl VaultState {
         Ok(serde_json::json!({
             "granted": true,
             "expires_at": expires_at,
-            "grant_token": grant,
         })
         .to_string())
     }

@@ -1,12 +1,16 @@
-//! M4 fix: Per-vault rate limiting for sensitive operations.
+//! Rate limiting for sensitive authentication operations (audit C10/C22/C23).
 //!
-//! Tracks failed attempts with exponential backoff and lockout. Applied to
-//! unlock, recovery, emergency access approval, biometric unlock, and PIN
-//! unlock paths.
+//! Tracks failed attempts with exponential backoff and lockout, keyed by
+//! vault path. Wired routes: `vault.unlock`, `vault.biometric_unlock`,
+//! `vault.pin_unlock`, `vault.reprompt_verify`, `vault.enroll_with_phrase`.
+//! `reprompt_verify` deliberately shares the vault's unlock key: grinding
+//! the reprompt Argon2id oracle locks out `vault.unlock` too.
 //!
 //! Design:
-//! - In-memory only (resets on daemon restart). Acceptable: Argon2id KDF
-//!   cost is the primary brute-force defense; rate limiting prevents
+//! - Process-global singleton (see [`global`]); counters are keyed by vault
+//!   path, so closing and reopening a vault does NOT reset them. In-memory
+//!   only: a daemon restart resets state (accepted; audit C7). Argon2id KDF
+//!   cost remains the primary brute-force defense; rate limiting prevents
 //!   fast-fail cycling that would otherwise let a same-UID attacker grind
 //!   the KDF at line speed.
 //! - Exponential backoff: min(2^attempts, 60) seconds between attempts.
@@ -173,6 +177,18 @@ impl Default for RateLimiter {
     }
 }
 
+/// Process-global limiter. One per daemon, independent of any `VaultState`
+/// lifetime, so closing and reopening a vault does not reset counters
+/// (audit C10).
+static GLOBAL: std::sync::OnceLock<RateLimiter> = std::sync::OnceLock::new();
+
+/// Access the daemon-process-global rate limiter. Handlers use this
+/// instead of a per-vault field; the vault path remains the map key, so
+/// multi-vault isolation is preserved while counters survive vault close.
+pub fn global() -> &'static RateLimiter {
+    GLOBAL.get_or_init(RateLimiter::new)
+}
+
 /// Exponential backoff: 2^attempt seconds, capped at MAX_BACKOFF.
 fn backoff_for_attempt(attempt: u32) -> Duration {
     if attempt == 0 {
@@ -282,5 +298,26 @@ mod tests {
             ClaimResult::Allowed(p) => p,
             other => panic!("expected allowed, got {other:?}"),
         };
+    }
+
+    #[test]
+    fn global_is_single_instance() {
+        assert!(std::ptr::eq(global(), global()));
+    }
+
+    /// C10: counters survive vault close/reopen — they live on the global
+    /// limiter keyed by vault path, not on the VaultState.
+    #[test]
+    fn global_counters_survive_state_lifetimes() {
+        let key = "/tmp/baluard-c10-test-vault";
+        for _ in 0..MAX_ATTEMPTS_BEFORE_LOCKOUT {
+            global().record_failure(key);
+        }
+        // A "reopened" vault (fresh lookup on the same path) must still be
+        // locked out.
+        match global().claim_attempt(key) {
+            ClaimResult::LockedOut(_) => {}
+            other => panic!("expected lockout on global limiter, got {other:?}"),
+        }
     }
 }
