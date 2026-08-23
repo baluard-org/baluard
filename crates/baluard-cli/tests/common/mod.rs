@@ -31,6 +31,9 @@ pub fn baluard(vault_path: &Path) -> Command {
     let data_dir = vault_path.join(".baluard-data");
     cmd.env("BALUARD_PASSWORD", TEST_PASSWORD)
         .env("BALUARD_DATA_DIR", &data_dir)
+        // Tests must never touch the real keychain (interactive auth prompts
+        // stall the suite; same policy as daemon_spawn).
+        .env("BALUARD_DISABLE_KEYRING", "1")
         // Strip user-level env vars that could leak into tests (e.g. a custom
         // socket path pointing at a running daemon).
         .env_remove("BALUARD_SOCKET")

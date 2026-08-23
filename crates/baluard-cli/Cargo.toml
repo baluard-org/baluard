@@ -25,6 +25,7 @@ zeroize = { workspace = true }
 base64 = { workspace = true }
 getrandom = "0.2"
 dotenvy.workspace = true
+keyring.workspace = true
 
 [build-dependencies]
 prost-build = "0.13"

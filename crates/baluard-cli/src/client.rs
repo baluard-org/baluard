@@ -44,7 +44,7 @@ pub fn set_vault_slug_override(slug: &str) {
 pub fn vault_slug_override() -> Option<&'static str> {
     VAULT_SLUG_OVERRIDE.get().map(|s| s.as_str())
 }
-// Token file lives alongside the socket with 0600 perms.
+// Token file fallback lives alongside the socket with 0600 perms.
 
 /// Get the token file path.
 ///
@@ -92,9 +92,51 @@ fn token_file_path_for(socket_path: Option<&str>, slug: Option<&str>) -> PathBuf
     }
 }
 
-/// Set the session token (persist to file alongside socket).
-/// H6 fix: atomic creation with 0600 permissions (no TOCTOU race).
+// ── Session token storage (C2) ──
+// The session token is a vault capability: whoever holds it can read the
+// unlocked vault through the 0600 socket. It must NOT sit in a file any
+// same-UID process can read (threat-model invariant 1). Primary store:
+// OS keyring, one entry per (socket, vault slug). Fallback: the legacy
+// token file, used only when the keyring is unavailable (headless/CI) or
+// disabled via BALUARD_DISABLE_KEYRING=1 — in fallback mode CLI unlock is
+// documented as trust-equivalent to same-user (see threat-model T2).
+
+const TOKEN_SERVICE: &str = "baluard-cli";
+
+/// Keyring account for a (socket, slug) pair. Human-readable on purpose:
+/// `security find-generic-password -s baluard-cli` names the owner socket.
+fn keyring_account(socket_path: Option<&str>, slug: Option<&str>) -> String {
+    let sock = socket_path
+        .map(str::to_string)
+        .unwrap_or_else(|| default_socket_path().to_string_lossy().into_owned());
+    match slug.filter(|s| !s.is_empty()) {
+        Some(s) => format!("session:{sock}:{s}"),
+        None => format!("session:{sock}"),
+    }
+}
+
+fn token_keyring_entry(socket_path: Option<&str>, slug: Option<&str>) -> Option<keyring::Entry> {
+    if baluard_core::keyring_disabled() {
+        return None;
+    }
+    keyring::Entry::new(TOKEN_SERVICE, &keyring_account(socket_path, slug)).ok()
+}
+
+/// Set the session token (keyring first, file fallback).
+/// The atomic 0600 file write stays as the fallback path (H6: no TOCTOU).
 pub fn set_session_token(token: &str, socket_path: Option<&str>) {
+    if let Some(entry) = token_keyring_entry(socket_path, vault_slug_override()) {
+        if entry.set_password(token).is_ok() {
+            // A stale fallback token from a previous keyring-less run must
+            // not linger on disk now that the keyring holds the capability.
+            let _ = std::fs::remove_file(token_file_path(socket_path));
+            return;
+        }
+    }
+    write_token_file(token, socket_path);
+}
+
+fn write_token_file(token: &str, socket_path: Option<&str>) {
     let path = token_file_path(socket_path);
 
     // Write atomically: tmp file with 0600, then rename
@@ -132,18 +174,28 @@ pub fn set_session_token(token: &str, socket_path: Option<&str>) {
     let _ = std::fs::rename(&tmp, &path);
 }
 
-/// Get the current session token (read from file).
+/// Get the current session token (keyring first, file fallback).
 pub fn get_session_token(socket_path: Option<&str>) -> Option<String> {
+    if let Some(entry) = token_keyring_entry(socket_path, vault_slug_override()) {
+        if let Ok(token) = entry.get_password() {
+            if !token.is_empty() {
+                return Some(token);
+            }
+        }
+    }
     let path = token_file_path(socket_path);
     std::fs::read_to_string(&path)
         .ok()
         .filter(|t| !t.is_empty())
 }
 
-/// Clear the session token (called after lock).
+/// Clear the session token (called after lock). Removes both stores so a
+/// switch between keyring and fallback modes never leaves a stale copy.
 pub fn clear_session_token(socket_path: Option<&str>) {
-    let path = token_file_path(socket_path);
-    let _ = std::fs::remove_file(&path);
+    if let Some(entry) = token_keyring_entry(socket_path, vault_slug_override()) {
+        let _ = entry.delete_credential();
+    }
+    let _ = std::fs::remove_file(token_file_path(socket_path));
 }
 
 /// Send a request to the daemon at a specific socket path.
@@ -240,6 +292,47 @@ fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {
             break;
         }
         buf.push(byte | 0x80);
+    }
+}
+
+#[cfg(test)]
+mod c2_tests {
+    use super::*;
+
+    #[test]
+    fn keyring_account_names_socket_and_slug() {
+        assert!(keyring_account(None, None).starts_with("session:"));
+        assert_eq!(
+            keyring_account(Some("/tmp/s.sock"), None),
+            "session:/tmp/s.sock"
+        );
+        assert_eq!(
+            keyring_account(Some("/tmp/s.sock"), Some("work")),
+            "session:/tmp/s.sock:work"
+        );
+        // Empty slug collapses to the socket-only account (matches
+        // token_file_path_for's filter).
+        assert_eq!(
+            keyring_account(Some("/tmp/s.sock"), Some("")),
+            "session:/tmp/s.sock"
+        );
+    }
+
+    #[test]
+    fn token_file_fallback_roundtrip() {
+        // Under cfg(test) keyring_disabled() is true, so set/get/clear run
+        // the file fallback exactly like headless/CI environments.
+        let dir = tempfile::tempdir().unwrap();
+        let sock = dir.path().join("d.sock");
+        let sp = sock.to_str().map(str::to_string);
+
+        set_session_token("cap-token-123", sp.as_deref());
+        assert_eq!(get_session_token(sp.as_deref()).as_deref(), Some("cap-token-123"));
+
+        clear_session_token(sp.as_deref());
+        assert_eq!(get_session_token(sp.as_deref()), None);
+        // Fallback file must be gone after clear, not just empty.
+        assert!(!token_file_path(sp.as_deref()).exists());
     }
 }
 
