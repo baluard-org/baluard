@@ -23,6 +23,19 @@ struct DaemonHandle {
     _data_dir: tempfile::TempDir,
 }
 
+// Test daemons MUST die with the handle. Without this, a killed or panicked
+// test run orphans `baluard-daemon` children (std does not kill on Child
+// drop); the orphans sit on tempdir sockets, keep vaults mapped, and older
+// binaries even touch the keychain at startup. Found the hard way: leaked
+// daemons from an aborted run were the source of "random" keychain prompts
+// hours later.
+impl Drop for DaemonHandle {
+    fn drop(&mut self) {
+        let _ = self._child.kill();
+        let _ = self._child.wait();
+    }
+}
+
 impl DaemonHandle {
     /// Send a request and read the response. Handles varint-length-prefixed
     /// protobuf framing exactly like the CLI client does.
@@ -90,6 +103,7 @@ fn decode_varint(data: &[u8]) -> Result<(u64, usize), String> {
 
 /// Spawn a fresh daemon, wait for the socket to be ready, return a handle.
 fn spawn_daemon() -> DaemonHandle {
+    disable_keyring_for_test_process();
     let data_dir = tempfile::tempdir().expect("tempdir");
     let socket_path = data_dir.path().join("baluard.sock");
 
@@ -220,6 +234,26 @@ fn vaults_list_route_does_not_require_token() {
 
 /// A daemon handle that ships with a pre-created vault at a known path.
 /// Use this for tests that need to exercise vault-scoped routes.
+/// Gate keyring access for THIS test process (and, via inheritance, every
+/// spawned daemon child). Empirically isolated 2026-08-23: the prompter was
+/// the test binary itself — `baluard-core` links as a dependency here, so
+/// `cfg!(test)` inside `keyring_disabled()` is false in this process, and an
+/// in-process keyring call triggered interactive macOS keychain auth from an
+/// unsigned binary, once per run. Setting the env var closes every gate at
+/// once (child `.env()` calls stay as explicit redundancy).
+///
+/// SAFETY: `set_var` is UB with concurrent env readers. Serialized through
+/// `Once`; the only reader of this variable is `keyring_disabled()`, whose
+/// worst-case racing miss re-opens a gate for one call — risking only the
+/// keychain prompt we are suppressing, never test correctness.
+fn disable_keyring_for_test_process() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        unsafe { std::env::set_var("BALUARD_DISABLE_KEYRING", "1") };
+    });
+}
+
 struct VaultedDaemon {
     daemon: DaemonHandle,
     #[allow(dead_code)]
@@ -231,6 +265,7 @@ struct VaultedDaemon {
 }
 
 fn spawn_with_vault() -> VaultedDaemon {
+    disable_keyring_for_test_process();
     use baluard_core::vault::creation::VaultCreator;
     let vault_dir = tempfile::tempdir().expect("vault tempdir");
     let vault_path = vault_dir.path().to_path_buf();
