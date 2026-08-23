@@ -59,6 +59,79 @@ fn secret_tmp_path(path: &Path) -> io::Result<PathBuf> {
     Ok(path.with_file_name(format!(".{name}.secret.tmp")))
 }
 
+// ── Sealed secret blobs (M3) ──
+// AES-256-GCM envelope around arbitrary secret file content, bound to a
+// purpose string via AAD. Used by callers that hold a process-lifetime
+// encryption key (Android: a Keystore-wrapped random key handed in through
+// UniFFI at app start). File format mirrors the C1 device-privkey seal:
+// `{"type":"<purpose>","envelope":"<base64>"}` — detectable against the
+// legacy plaintext content it replaces.
+
+pub(crate) const SECRET_BLOB_PREFIX: &str = "baluard-secret-";
+
+/// Seal `plaintext` into the envelope file format for `purpose` (e.g.
+/// `"token-file-v1"`; the stored marker is `baluard-secret-<purpose>`).
+pub fn seal_secret_blob(
+    key: &[u8; 32],
+    plaintext: &[u8],
+    purpose: &str,
+) -> Result<Vec<u8>, crate::error::BaluardError> {
+    use crate::types::EnvelopeHeader;
+    let marker = format!("{SECRET_BLOB_PREFIX}{purpose}");
+    let nonce = crate::crypto::aead::build_random_nonce();
+    let header = EnvelopeHeader {
+        version: crate::BALUARD_VERSION,
+        alg_id: crate::ALG_AES_256_GCM,
+        key_epoch: 0,
+        nonce_counter: 0,
+        update_seq: 0,
+        tier: None,
+    };
+    let envelope = crate::crypto::aead::encrypt(key, plaintext, marker.as_bytes(), &nonce, header)?;
+    let serialized = crate::vault::envelope::serialize(&envelope)?;
+    use base64::Engine as _;
+    let doc = serde_json::json!({
+        "type": marker,
+        "envelope": base64::engine::general_purpose::STANDARD.encode(serialized),
+    });
+    Ok(doc.to_string().into_bytes())
+}
+
+/// Open a sealed blob produced by [`seal_secret_blob`]. Fails if `data` is
+/// not the envelope format or the key is wrong (GCM tag binds both).
+pub fn open_secret_blob(
+    key: &[u8; 32],
+    data: &[u8],
+    purpose: &str,
+) -> Result<Vec<u8>, crate::error::BaluardError> {
+    use base64::Engine as _;
+    let marker = format!("{SECRET_BLOB_PREFIX}{purpose}");
+    let v: serde_json::Value = serde_json::from_slice(data)
+        .map_err(|e| crate::error::VaultError::Corrupt(format!("sealed blob json: {e}")))?;
+    if v["type"].as_str() != Some(marker.as_str()) {
+        return Err(crate::error::VaultError::Corrupt("not a sealed blob for this purpose".into()).into());
+    }
+    let enc = v["envelope"]
+        .as_str()
+        .ok_or_else(|| crate::error::VaultError::Corrupt("sealed blob missing envelope".into()))?;
+    let serialized = base64::engine::general_purpose::STANDARD
+        .decode(enc)
+        .map_err(|e| crate::error::VaultError::Corrupt(format!("sealed blob base64: {e}")))?;
+    let envelope = crate::vault::envelope::deserialize(&serialized)?;
+    crate::crypto::aead::decrypt(key, &envelope)
+        .map_err(|_| crate::error::VaultError::Corrupt("sealed blob key mismatch".into()).into())
+}
+
+/// True when the file content is the sealed format for ANY purpose. A false
+/// return means "legacy plaintext or absent" — callers decide policy.
+pub fn is_sealed_secret_blob(data: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(data)
+        .ok()
+        .and_then(|v| v["type"].as_str().map(|t| t.to_string()))
+        .map(|t| t.starts_with(SECRET_BLOB_PREFIX))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -21,6 +21,9 @@ class MainActivity : FragmentActivity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         AppContextHolder.set(this)
         AppContextHolder.setActivity(this)
+        // M3: install the Keystore-wrapped provider-token encryption key
+        // before any provider flow can run.
+        xyz.actitud.baluard.platform.TokenEncryption.install(this)
         enableEdgeToEdge()
         setContent { App() }
     }
