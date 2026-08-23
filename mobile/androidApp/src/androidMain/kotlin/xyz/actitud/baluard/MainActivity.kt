@@ -14,6 +14,11 @@ import xyz.actitud.baluard.platform.AppContextHolder
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // M4: app-wide FLAG_SECURE — screenshots, recents preview, and
+        // unprivileged screen recording stay blank for the whole app, not
+        // per-screen. Compose UIs render before per-screen effects run, so
+        // the flag must be set before first frame.
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         AppContextHolder.set(this)
         AppContextHolder.setActivity(this)
         enableEdgeToEdge()

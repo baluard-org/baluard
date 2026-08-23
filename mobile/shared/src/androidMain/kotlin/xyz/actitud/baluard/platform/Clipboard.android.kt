@@ -7,5 +7,11 @@ import android.content.Context
 actual fun copyToClipboard(text: String) {
     val ctx = AppContextHolder.get() ?: return
     val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-    cm.setPrimaryClip(ClipData.newPlainText("Baluard", text))
+    val clip = android.content.ClipData.newPlainText("Baluard", text)
+    // M2: mark the clip sensitive so Android 13+ hides the plaintext from
+    // the clipboard preview overlay. Older versions ignore the flag.
+    clip.description.extras = android.os.PersistableBundle().apply {
+        putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+    }
+    cm.setPrimaryClip(clip)
 }
