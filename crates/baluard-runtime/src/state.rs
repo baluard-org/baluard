@@ -211,7 +211,7 @@ impl VaultState {
     /// Fire a cover commit (git-sync only).
     #[cfg(feature = "git-sync")]
     async fn fire_cover_commit(&self) {
-        let device_name = {
+        let (device_name, devkey_seal) = {
             let guard = self.inner.read().await;
             let Some(handle) = guard.as_ref() else {
                 return;
@@ -219,18 +219,25 @@ impl VaultState {
             if !handle.is_unlocked() {
                 return;
             }
-            handle
-                .device_manager
-                .registry()
-                .devices
-                .get(&handle.device_id)
-                .map(|d| d.name.clone())
-                .unwrap_or_default()
+            (
+                handle
+                    .device_manager
+                    .registry()
+                    .devices
+                    .get(&handle.device_id)
+                    .map(|d| d.name.clone())
+                    .unwrap_or_default(),
+                handle.devkey_seal(),
+            )
         };
         if device_name.is_empty() {
             return;
         }
-        let engine = baluard_core::sync::engine::SyncEngine::new(&self.vault_path, &device_name);
+        let engine = baluard_core::sync::engine::SyncEngine::new(
+            &self.vault_path,
+            &device_name,
+            devkey_seal.as_ref(),
+        );
         if let Ok(repo) = engine.open_repo() {
             let _ = engine.cover_commit(&repo);
         }
@@ -315,6 +322,15 @@ impl VaultState {
         Ok(())
     }
 
+    /// C1: devkey seal subkey from the unlocked handle; `None` while
+    /// locked. Lets the daemon's sync routes open the sealed
+    /// `meta/device-privkey.json` for commit signing without exposing the
+    /// handle itself.
+    pub async fn devkey_seal(&self) -> Option<[u8; 32]> {
+        let g = self.inner.read().await;
+        g.as_ref().and_then(|h| h.devkey_seal())
+    }
+
     /// Unlock the vault with the master password.
     ///
     /// KDF derivation (Argon2id) runs OUTSIDE the write lock to avoid
@@ -380,14 +396,22 @@ impl VaultState {
                         .map(|d| d.name.clone())
                 })
                 .unwrap_or_default();
+            // C1: seal subkey from the just-unlocked handle (never the KEK).
+            let devkey_seal = guard.as_ref().and_then(|h| h.devkey_seal());
             if !device_name.is_empty() {
                 let has_remote =
-                    baluard_core::sync::engine::SyncEngine::new(&self.vault_path, &device_name)
-                        .open_repo()
-                        .and_then(|repo| baluard_core::sync::engine::SyncEngine::has_remote(&repo))
-                        .unwrap_or(false);
+                    baluard_core::sync::engine::SyncEngine::new(
+                        &self.vault_path,
+                        &device_name,
+                        devkey_seal.as_ref(),
+                    )
+                    .open_repo()
+                    .and_then(|repo| baluard_core::sync::engine::SyncEngine::has_remote(&repo))
+                    .unwrap_or(false);
                 if has_remote {
-                    self.autosync.activate(device_name.clone()).await;
+                    self.autosync
+                        .activate(device_name.clone(), devkey_seal)
+                        .await;
                     // Pull remote changes the moment the vault opens so the UI
                     // reflects other-device edits immediately (event-driven,
                     // not waiting on the 30-min idle cadence). Spawned off the
@@ -2149,12 +2173,18 @@ impl VaultState {
         let local_oid = pending.local_oid;
         let remote_oid = pending.remote_oid;
         let fp_for_read = file_path.clone();
+        // C1: seal subkey for the engine's signing-key load.
+        let devkey_seal = {
+            let g = self.inner.read().await;
+            g.as_ref().and_then(|h| h.devkey_seal())
+        };
         let (base_bytes, local_bytes, remote_bytes) = tokio::time::timeout(
             crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(
                 #[allow(clippy::type_complexity)]
                 move || -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
-                    let engine = SyncEngine::new(&vault_path, "conflict-merge");
+                    let engine =
+                        SyncEngine::new(&vault_path, "conflict-merge", devkey_seal.as_ref());
                     let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                     let merge_base = repo
                         .merge_base(local_oid, remote_oid)
@@ -2246,10 +2276,16 @@ impl VaultState {
                 // would reject all later retries against the now-advanced HEAD).
                 let vault_path = self.vault_path.clone();
                 let pending_for_finalize = pending.clone();
+                // C1: seal subkey for the finalize commit's signing key.
+                let devkey_seal = {
+                    let g = self.inner.read().await;
+                    g.as_ref().and_then(|h| h.devkey_seal())
+                };
                 let push_failed = tokio::time::timeout(
                     crate::autosync::SYNC_OP_TIMEOUT,
                     tokio::task::spawn_blocking(move || -> Result<bool, String> {
-                        let engine = SyncEngine::new(&vault_path, &device_id);
+                        let engine =
+                            SyncEngine::new(&vault_path, &device_id, devkey_seal.as_ref());
                         let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                         match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
                             Ok(_) => Ok(false),
@@ -2358,10 +2394,16 @@ impl VaultState {
         let local_oid = pending.local_oid;
         let remote_oid = pending.remote_oid;
         let fp_for_read = file_path.clone();
+        // C1: seal subkey for the engine's signing-key load.
+        let devkey_seal = {
+            let g = self.inner.read().await;
+            g.as_ref().and_then(|h| h.devkey_seal())
+        };
         let (local_bytes, remote_bytes) = tokio::time::timeout(
             crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, Vec<u8>), String> {
-                let engine = SyncEngine::new(&vault_path, "conflict-keep-both");
+                let engine =
+                    SyncEngine::new(&vault_path, "conflict-keep-both", devkey_seal.as_ref());
                 let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                 let local = SyncEngine::read_blob_from_commit(&repo, local_oid, &fp_for_read)
                     .map_err(|e| format!("read local: {e}"))?;
@@ -2416,10 +2458,16 @@ impl VaultState {
         // conflict doesn't wedge against finalize_conflicts' HEAD guard.
         let vault_path = self.vault_path.clone();
         let pending_for_finalize = pending.clone();
+        // C1: seal subkey for the finalize commit's signing key.
+        let devkey_seal = {
+            let g = self.inner.read().await;
+            g.as_ref().and_then(|h| h.devkey_seal())
+        };
         let push_failed = tokio::time::timeout(
             crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || -> Result<bool, String> {
-                let engine = SyncEngine::new(&vault_path, &device_id_str);
+                let engine =
+                    SyncEngine::new(&vault_path, &device_id_str, devkey_seal.as_ref());
                 let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                 match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
                     Ok(_) => Ok(false),
@@ -2477,10 +2525,15 @@ impl VaultState {
         let vault_path = self.vault_path.clone();
         let device = registry_device_name(&vault_path);
         let pending_clone = pending.clone();
+        // C1: seal subkey for the finalize commit's signing key.
+        let devkey_seal = {
+            let g = self.inner.read().await;
+            g.as_ref().and_then(|h| h.devkey_seal())
+        };
         let join_result = tokio::time::timeout(
             crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || -> (bool, Option<String>) {
-                let engine = SyncEngine::new(&vault_path, &device);
+                let engine = SyncEngine::new(&vault_path, &device, devkey_seal.as_ref());
                 let repo = match engine.open_repo() {
                     Ok(r) => r,
                     Err(e) => return (false, Some(format!("open repo: {e}"))),

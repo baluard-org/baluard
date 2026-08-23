@@ -373,6 +373,7 @@ impl<'a> VaultCreator<'a> {
 
                 let session_key = hkdf_derive::derive_session_key(&kek)?;
                 let sync_key = hkdf_derive::derive_sync_key(&kek)?;
+                let devkey_seal = hkdf_derive::derive_devkey_seal_key(&kek)?;
                 kek.zeroize();
 
                 let recovery_phrase = RecoveryPhrase::generate_with_rng(&mut adapter)?;
@@ -465,9 +466,12 @@ impl<'a> VaultCreator<'a> {
                         "{{\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
                         x25519_hex, ed25519_hex
                     );
-                    super::write_vault_file(
+                    // C1: seal under the KEK-derived subkey; raw hex keys
+                    // never touch disk in new vaults.
+                    super::device_privkey::seal_file(
                         &path.join("meta/device-privkey.json"),
-                        json_str.as_bytes(),
+                        &json_str,
+                        &devkey_seal,
                     )?;
                     x25519_hex.zeroize();
                     ed25519_hex.zeroize();
@@ -497,7 +501,11 @@ impl<'a> VaultCreator<'a> {
                 // Initialize Git Sync Repo if required
                 #[cfg(feature = "git-sync")]
                 if self.initialize_git {
-                    let engine = crate::sync::engine::SyncEngine::new(&path, &self.device_name);
+                    let engine = crate::sync::engine::SyncEngine::new(
+                        &path,
+                        &self.device_name,
+                        Some(&devkey_seal),
+                    );
                     let _ = engine.init_repo()?;
                 }
 
@@ -535,6 +543,7 @@ impl<'a> VaultCreator<'a> {
                             ),
                         session_key,
                         sync_key,
+                        devkey_seal,
                         item_keys: HashMap::new(),
                         current_epoch: 1,
                     }),
@@ -570,6 +579,7 @@ impl<'a> VaultCreator<'a> {
                 let mut kek = kdf::derive_kek(&self.password, &kdf_params)?;
                 let session_key = hkdf_derive::derive_session_key(&kek)?;
                 let sync_key = hkdf_derive::derive_sync_key(&kek)?;
+                let devkey_seal = hkdf_derive::derive_devkey_seal_key(&kek)?;
                 kek.zeroize();
 
                 let kek_canary_path = path.join("meta/kek-canary.enc");
@@ -681,9 +691,12 @@ impl<'a> VaultCreator<'a> {
                         "{{\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
                         x25519_hex, ed25519_hex
                     );
-                    super::write_vault_file(
+                    // C1: seal under the KEK-derived subkey; raw hex keys
+                    // never touch disk in new vaults.
+                    super::device_privkey::seal_file(
                         &path.join("meta/device-privkey.json"),
-                        json_str.as_bytes(),
+                        &json_str,
+                        &devkey_seal,
                     )?;
                     x25519_hex.zeroize();
                     ed25519_hex.zeroize();
@@ -722,6 +735,7 @@ impl<'a> VaultCreator<'a> {
                             ),
                         session_key,
                         sync_key,
+                        devkey_seal,
                         item_keys: HashMap::new(),
                         current_epoch: 1,
                     }),
@@ -834,6 +848,77 @@ mod tests {
         let r2 = create_vault_ceremony("password-2", KdfProfile::MobileLow).unwrap();
         assert_ne!(r1.session_key, r2.session_key);
         assert_ne!(r1.sync_key, r2.sync_key);
+    }
+
+    #[test]
+    fn keystore_less_devkey_file_is_sealed_and_unlock_roundtrips() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("c1_vault");
+
+        let (mut handle, _secrets) = VaultCreator::new(&path, "master-pass", "StandardDevice")
+            .kdf_profile(KdfProfile::MobileLow)
+            .initialize_git(false)
+            .execute()
+            .unwrap();
+        handle.lock();
+        drop(handle);
+
+        // C1: keystore-less vault must hold NO raw hex private keys at rest.
+        let privkey_path = path.join("meta/device-privkey.json");
+        let raw = std::fs::read_to_string(&privkey_path).unwrap();
+        assert!(!raw.contains("x25519_private"), "raw X25519 key on disk");
+        assert!(!raw.contains("ed25519_private"), "raw Ed25519 key on disk");
+        assert_eq!(
+            crate::vault::device_privkey::file_kind(&privkey_path),
+            crate::vault::device_privkey::PrivkeyFileKind::Sealed
+        );
+
+        // Unlock round-trips through the sealed file (seal subkey derives
+        // from the KEK during unlock_with_kek).
+        let mut reopened = VaultHandle::open(&path).unwrap();
+        reopened.unlock("master-pass").unwrap();
+        assert!(reopened.is_unlocked());
+        assert!(reopened.devkey_seal().is_some());
+
+        // Wrong password must still fail closed.
+        reopened.lock();
+        assert!(reopened.unlock("wrong-password").is_err());
+    }
+
+    #[test]
+    fn legacy_plaintext_devkey_reseals_on_unlock() {
+        use crate::vault::device_privkey::{PrivkeyFileKind, file_kind};
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("c1_legacy");
+
+        let (mut handle, _secrets) = VaultCreator::new(&path, "master-pass", "StandardDevice")
+            .kdf_profile(KdfProfile::MobileLow)
+            .initialize_git(false)
+            .execute()
+            .unwrap();
+
+        // Simulate a phrase-flow write / pre-seal vault: overwrite the
+        // sealed file with the legacy plaintext format.
+        let privkey_path = path.join("meta/device-privkey.json");
+        let seal_key = handle.devkey_seal().unwrap();
+        let inner = crate::vault::device_privkey::open_bytes(
+            &seal_key,
+            std::fs::read(&privkey_path).unwrap().as_slice(),
+        )
+        .unwrap();
+        super::super::write_vault_file(&privkey_path, inner.as_bytes()).unwrap();
+        assert_eq!(file_kind(&privkey_path), PrivkeyFileKind::LegacyPlaintext);
+
+        handle.lock();
+        drop(handle);
+
+        // Next successful unlock lazily re-seals it.
+        let mut reopened = VaultHandle::open(&path).unwrap();
+        reopened.unlock("master-pass").unwrap();
+        assert_eq!(file_kind(&privkey_path), PrivkeyFileKind::Sealed);
+        let raw = std::fs::read_to_string(&privkey_path).unwrap();
+        assert!(!raw.contains("x25519_private"));
     }
 
     // ── NEW BULDER TESTS ──

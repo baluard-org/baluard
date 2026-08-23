@@ -101,6 +101,10 @@ struct Inner {
     /// Device name captured at `activate` so `note_resolved` can re-arm the
     /// debounce push after a conflict drains without the route re-passing it.
     device_name: String,
+    /// Device-privkey seal subkey (C1) captured at `activate`, dropped and
+    /// zeroized on `deactivate`. Opens the sealed devkey file for commit
+    /// signing; the subkey, never the KEK, lives here.
+    devkey_seal: Option<[u8; 32]>,
     /// Live debounce task. Replaced on each mutation (timer reset).
     debounce: Option<JoinHandle<()>>,
     /// Live background loop (pull + offline retry). One per coordinator.
@@ -135,6 +139,7 @@ impl AutoSyncHandle {
                 conflicts_resolved: 0,
                 pending_conflicts: Vec::new(),
                 device_name: String::new(),
+                devkey_seal: None,
                 debounce: None,
                 loop_handle: None,
                 generation: 0,
@@ -317,13 +322,14 @@ impl AutoSyncHandle {
     /// `on_background` (lifecycle hooks fire without device context). It is
     /// fixed for the coordinator's lifetime; a host that renames its device
     /// must `deactivate`/`activate` to update it (peer review 2026-07-23).
-    pub async fn activate(&self, device_name: String) {
+    pub async fn activate(&self, device_name: String, devkey_seal: Option<[u8; 32]>) {
         let mut g = self.inner.lock().await;
         if g.active {
             return;
         }
         g.active = true;
         g.device_name = device_name.clone();
+        g.devkey_seal = devkey_seal;
         g.state = AutoSyncState::Idle;
         let me = self.clone();
         let gen_id = g.generation;
@@ -358,6 +364,11 @@ impl AutoSyncHandle {
         g.state = AutoSyncState::Idle;
         g.pending = 0;
         g.pending_conflicts.clear();
+        // C1: drop the devkey seal subkey with the session.
+        if let Some(mut k) = g.devkey_seal.take() {
+            use zeroize::Zeroize;
+            k.zeroize();
+        }
         if let Some(h) = g.debounce.take() {
             h.abort();
         }
@@ -383,7 +394,7 @@ impl AutoSyncHandle {
     /// as the shared body of the focus trigger. Respects the cycle_lock so it
     /// can't race a debounce push. No-op if inactive or a cycle is in flight.
     pub async fn pull_only(&self, device_name: String) {
-        let generation = {
+        let (generation, devkey_seal) = {
             let g = self.inner.lock().await;
             if !g.active {
                 return;
@@ -400,7 +411,7 @@ impl AutoSyncHandle {
                 log::debug!("[autosync] pull_only skipped: conflict paused (NeedsDecision)");
                 return;
             }
-            g.generation
+            (g.generation, g.devkey_seal)
         };
         // Don't race a debounce push or another cycle.
         let lock_guard = match self.cycle_lock.try_lock() {
@@ -413,8 +424,10 @@ impl AutoSyncHandle {
             }
         };
         let vault_path = self.vault_path.clone();
-        let outcome =
-            tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &device_name)).await;
+        let outcome = tokio::task::spawn_blocking(move || {
+            run_pull_only(&vault_path, &device_name, devkey_seal.as_ref())
+        })
+        .await;
         drop(lock_guard);
         let mut g = self.inner.lock().await;
         if !g.active || g.generation != generation {
@@ -495,14 +508,15 @@ impl AutoSyncHandle {
     /// passes a shorter budget ([`BG_FLUSH_TIMEOUT`]) so a mobile OS
     /// background-task kill doesn't leak the pool thread against a 60s wall.
     async fn fire_sync(&self, device_name: String, generation: u64, timeout: std::time::Duration) {
-        {
+        let devkey_seal = {
             let mut g = self.inner.lock().await;
             if !g.active || g.generation != generation {
                 return;
             }
             g.state = AutoSyncState::Syncing;
             g.pending = 0;
-        }
+            g.devkey_seal
+        };
 
         // C3 fix: hold the cycle lock across the blocking work so two cycles
         // never touch the same on-disk repo concurrently. try_lock: if a
@@ -523,7 +537,7 @@ impl AutoSyncHandle {
             timeout,
             tokio::task::spawn_blocking({
                 let vault_path = self.vault_path.clone();
-                move || run_sync_cycle(&vault_path, &device_name)
+                move || run_sync_cycle(&vault_path, &device_name, devkey_seal.as_ref())
             }),
         )
         .await;
@@ -607,11 +621,20 @@ impl AutoSyncHandle {
             };
 
             // Pull-only cycle (no commit/push): just reconcile remote changes.
+            // C1: read the devkey seal under the same lock as the liveness
+            // check above it.
+            let devkey_seal = {
+                let g = self.inner.lock().await;
+                if !g.active || g.generation != generation {
+                    return;
+                }
+                g.devkey_seal
+            };
             let vault_path = self.vault_path.clone();
             let dn = device_name.clone();
             let outcome = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
-                tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &dn)),
+                tokio::task::spawn_blocking(move || run_pull_only(&vault_path, &dn, devkey_seal.as_ref())),
             )
             .await;
             drop(lock_guard);
@@ -652,10 +675,14 @@ enum SyncOutcome {
 /// Network failures map to [`SyncOutcome::Offline`]; everything else is a
 /// regular error.
 #[cfg(feature = "git-sync")]
-fn run_sync_cycle(vault_path: &Path, device_name: &str) -> Result<SyncOutcome, String> {
+fn run_sync_cycle(
+    vault_path: &Path,
+    device_name: &str,
+    devkey_seal: Option<&[u8; 32]>,
+) -> Result<SyncOutcome, String> {
     use baluard_core::sync::engine::{ConflictResolution, SyncCycleOutcome, SyncEngine};
 
-    let engine = SyncEngine::new(vault_path, device_name);
+    let engine = SyncEngine::new(vault_path, device_name, devkey_seal);
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     // Phase 2b: opt in to field-level resolution. On conflict, PAUSE the cycle
     // (no merge commit, no push) and surface the PendingConflictState to the
@@ -673,18 +700,26 @@ fn run_sync_cycle(vault_path: &Path, device_name: &str) -> Result<SyncOutcome, S
 }
 
 #[cfg(not(feature = "git-sync"))]
-fn run_sync_cycle(_vault_path: &Path, _device_name: &str) -> Result<SyncOutcome, String> {
+fn run_sync_cycle(
+    _vault_path: &Path,
+    _device_name: &str,
+    _devkey_seal: Option<&[u8; 32]>,
+) -> Result<SyncOutcome, String> {
     Err("git-sync feature disabled".into())
 }
 
 /// Pull-only (no commit/push). Used by the background loop to catch remote
 /// edits. Returns Ok(true) on success, Ok(false) on network failure (offline).
 #[cfg(feature = "git-sync")]
-fn run_pull_only(vault_path: &Path, device_name: &str) -> Result<bool, String> {
+fn run_pull_only(
+    vault_path: &Path,
+    device_name: &str,
+    devkey_seal: Option<&[u8; 32]>,
+) -> Result<bool, String> {
     use baluard_core::sync::engine::is_network_error;
     use baluard_core::sync::engine::{PullResult, SyncEngine};
 
-    let engine = SyncEngine::new(vault_path, device_name);
+    let engine = SyncEngine::new(vault_path, device_name, devkey_seal);
     let repo = match engine.open_repo() {
         Ok(r) => r,
         Err(ref e) if is_network_error(e) => return Ok(false),
@@ -715,7 +750,11 @@ fn run_pull_only(vault_path: &Path, device_name: &str) -> Result<bool, String> {
 }
 
 #[cfg(not(feature = "git-sync"))]
-fn run_pull_only(_vault_path: &Path, _device_name: &str) -> Result<bool, String> {
+fn run_pull_only(
+    _vault_path: &Path,
+    _device_name: &str,
+    _devkey_seal: Option<&[u8; 32]>,
+) -> Result<bool, String> {
     Ok(true)
 }
 
@@ -753,7 +792,7 @@ mod tests {
 
         // activate is a no-op without a real remote, but should not populate
         // pending_conflicts either.
-        h.activate("test-device".to_string()).await;
+        h.activate("test-device".to_string(), None).await;
         assert_eq!(h.pending_conflict_count().await, 0);
 
         // deactivate must reset to Idle + drain any pending conflicts.
@@ -809,7 +848,7 @@ mod tests {
         // because it only checks `active`, not remote reachability.
         let tmp = tempfile::tempdir().unwrap();
         let h = AutoSyncHandle::new(tmp.path());
-        h.activate("test-device".to_string()).await;
+        h.activate("test-device".to_string(), None).await;
 
         h.on_mutation("test-device".to_string()).await;
         let s = h.status().await;
@@ -839,7 +878,7 @@ mod tests {
         // 5s-wait path would still show pending > 0 and Dirty here.
         let tmp = tempfile::tempdir().unwrap();
         let h = AutoSyncHandle::new(tmp.path());
-        h.activate("test-device".to_string()).await;
+        h.activate("test-device".to_string(), None).await;
         h.on_mutation("test-device".to_string()).await;
         assert_eq!(h.status().await.state, AutoSyncState::Dirty);
 
@@ -864,7 +903,7 @@ mod tests {
         // mobile from firing empty push cycles every time the app backgrounds.
         let tmp = tempfile::tempdir().unwrap();
         let h = AutoSyncHandle::new(tmp.path());
-        h.activate("test-device".to_string()).await;
+        h.activate("test-device".to_string(), None).await;
         assert_eq!(h.status().await.state, AutoSyncState::Idle);
 
         h.on_background().await; // must not panic, must not change state
@@ -882,7 +921,7 @@ mod tests {
         // requires a real two-device git fixture; here we prove the guard.)
         let tmp = tempfile::tempdir().unwrap();
         let h = AutoSyncHandle::new(tmp.path());
-        h.activate("test-device".to_string()).await;
+        h.activate("test-device".to_string(), None).await;
         assert_eq!(h.status().await.state, AutoSyncState::Idle);
 
         // Idle: no-op. We can't observe "did not pull" directly without a
@@ -914,7 +953,7 @@ mod tests {
         // than running and settling to Idle/Offline).
         let tmp = tempfile::tempdir().unwrap();
         let h = AutoSyncHandle::new(tmp.path());
-        h.activate("test-device".to_string()).await;
+        h.activate("test-device".to_string(), None).await;
         h.force_state_for_test(AutoSyncState::NeedsDecision).await;
         assert_eq!(h.status().await.state, AutoSyncState::NeedsDecision);
 

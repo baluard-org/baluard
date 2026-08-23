@@ -3113,10 +3113,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         },
 
         // ── Sync (token required, enforced above) ──
-        "sync.init" => match sync_init(&state.vault_path) {
-            Ok(msg) => ok_resp(msg, token_str),
-            Err(e) => err_response(e),
-        },
+        "sync.init" => {
+            // C1: manual sync routes run token-gated (vault unlocked), so the
+            // seal subkey is available for signed commits.
+            let seal = state.devkey_seal().await;
+            match sync_init(&state.vault_path, seal.as_ref()) {
+                Ok(msg) => ok_resp(msg, token_str),
+                Err(e) => err_response(e),
+            }
+        }
         "sync.remote" => {
             if req.payload.is_empty() {
                 return err_response("Missing remote URL in payload");
@@ -3127,9 +3132,12 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             // other connection (root cause of the EAGAIN storm).
             let vault_path = state.vault_path.clone();
             let payload = req.payload.clone();
+            let seal = state.devkey_seal().await;
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
-                tokio::task::spawn_blocking(move || sync_remote(&vault_path, &payload)),
+                tokio::task::spawn_blocking(move || {
+                    sync_remote(&vault_path, &payload, seal.as_ref())
+                }),
             )
             .await;
             match joined {
@@ -3145,9 +3153,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             // timeout — must run off the async worker pool, bounded by
             // SYNC_OP_TIMEOUT so a hung push can't leak the thread (see sync.remote).
             let vault_path = state.vault_path.clone();
+            let seal = state.devkey_seal().await;
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
-                tokio::task::spawn_blocking(move || sync_push(&vault_path)),
+                tokio::task::spawn_blocking(move || sync_push(&vault_path, seal.as_ref())),
             )
             .await;
             match joined {
@@ -3162,9 +3171,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             // git2 pull does real network I/O — must run off the async worker
             // pool, bounded by SYNC_OP_TIMEOUT (see sync.remote).
             let vault_path = state.vault_path.clone();
+            let seal = state.devkey_seal().await;
             let joined = tokio::time::timeout(
                 SYNC_OP_TIMEOUT,
-                tokio::task::spawn_blocking(move || sync_pull(&vault_path)),
+                tokio::task::spawn_blocking(move || sync_pull(&vault_path, seal.as_ref())),
             )
             .await;
             match joined {
@@ -3214,7 +3224,8 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             if !state.autosync.is_active().await {
                 let vault_path = state.vault_path.clone();
                 let has_remote = tokio::task::spawn_blocking(move || {
-                    baluard_core::sync::engine::SyncEngine::new(&vault_path, "probe")
+                    // Reader-only probe (no commit): seal key not needed.
+                    baluard_core::sync::engine::SyncEngine::new(&vault_path, "probe", None)
                         .open_repo()
                         .and_then(|repo| baluard_core::sync::engine::SyncEngine::has_remote(&repo))
                         .unwrap_or(false)
@@ -3223,7 +3234,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 .unwrap_or(false);
                 if has_remote {
                     let dn = device_name(&state.vault_path);
-                    state.autosync.activate(dn).await;
+                    // C1: seal subkey for the coordinator's signed commits.
+                    let seal = state.devkey_seal().await;
+                    state.autosync.activate(dn, seal).await;
                 }
             }
             let status = state.autosync.status().await;
@@ -3232,10 +3245,13 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(e) => err_response(format!("JSON error: {e}")),
             }
         }
-        "sync.disconnect" => match sync_disconnect(&state.vault_path, &req.payload).await {
-            Ok(json) => ok_resp(json, token_str),
-            Err(e) => err_response(e),
-        },
+        "sync.disconnect" => {
+            let seal = state.devkey_seal().await;
+            match sync_disconnect(&state.vault_path, &req.payload, seal.as_ref()).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
         // Focus-triggered pull. The desktop fires this on window focus /
         // visibilitychange. Server-side 10-min guard (FOCUS_PULL_MIN_GAP_SECS)
         // collapses rapid focus flicker into at most one pull per 10 min.
@@ -4097,9 +4113,13 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                     };
                 let provider_for_reg = provider.clone();
                 let provider_clone = provider.clone();
+                // C1: seal subkey for init/commit signing (vault unlocked at
+                // setup).
+                let devkey_seal = state.devkey_seal().await;
                 let handle = tokio::task::spawn_blocking(move || -> Result<String, String> {
                     use baluard_core::sync::engine::SyncEngine;
-                    let engine = SyncEngine::new(&vault_path, "baluard-daemon");
+                    let engine =
+                        SyncEngine::new(&vault_path, "baluard-daemon", devkey_seal.as_ref());
 
                     // Init repo if not already a git repo
                     let git_repo = match engine.open_repo() {
@@ -4213,8 +4233,11 @@ fn device_name(vault_path: &std::path::Path) -> String {
 }
 
 #[cfg(feature = "git-sync")]
-fn sync_init(vault_path: &std::path::Path) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+fn sync_init(
+    vault_path: &std::path::Path,
+    devkey_seal: Option<&[u8; 32]>,
+) -> Result<String, String> {
+    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), devkey_seal);
     let repo = engine.init_repo().map_err(|e| format!("{e}"))?;
     let log = engine.log(&repo, 1).map_err(|e| format!("{e}"))?;
     let commit_info = log
@@ -4225,8 +4248,12 @@ fn sync_init(vault_path: &std::path::Path) -> Result<String, String> {
 }
 
 #[cfg(feature = "git-sync")]
-fn sync_remote(vault_path: &std::path::Path, url: &str) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+fn sync_remote(
+    vault_path: &std::path::Path,
+    url: &str,
+    devkey_seal: Option<&[u8; 32]>,
+) -> Result<String, String> {
+    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), devkey_seal);
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     engine
         .add_remote(&repo, "origin", url)
@@ -4235,8 +4262,11 @@ fn sync_remote(vault_path: &std::path::Path, url: &str) -> Result<String, String
 }
 
 #[cfg(feature = "git-sync")]
-fn sync_push(vault_path: &std::path::Path) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+fn sync_push(
+    vault_path: &std::path::Path,
+    devkey_seal: Option<&[u8; 32]>,
+) -> Result<String, String> {
+    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), devkey_seal);
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let status = engine.status(&repo).map_err(|e| format!("{e}"))?;
     let mut committed = false;
@@ -4254,8 +4284,11 @@ fn sync_push(vault_path: &std::path::Path) -> Result<String, String> {
 }
 
 #[cfg(feature = "git-sync")]
-fn sync_pull(vault_path: &std::path::Path) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+fn sync_pull(
+    vault_path: &std::path::Path,
+    devkey_seal: Option<&[u8; 32]>,
+) -> Result<String, String> {
+    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), devkey_seal);
     engine.recover_state().map_err(|e| format!("{e}"))?;
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let result = engine.pull(&repo, "origin").map_err(|e| format!("{e}"))?;
@@ -4288,7 +4321,7 @@ fn sync_pull(vault_path: &std::path::Path) -> Result<String, String> {
 
 #[cfg(feature = "git-sync")]
 fn sync_status(vault_path: &std::path::Path) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), None);
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let status = engine.status(&repo).map_err(|e| format!("{e}"))?;
     let work_tree = if status.is_dirty() {
@@ -4320,7 +4353,7 @@ fn sync_status(vault_path: &std::path::Path) -> Result<String, String> {
 
 #[cfg(feature = "git-sync")]
 fn sync_log(vault_path: &std::path::Path, limit: usize) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), None);
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let log = engine.log(&repo, limit).map_err(|e| format!("{e}"))?;
     if log.is_empty() {
@@ -4374,7 +4407,7 @@ fn infer_provider_from_url(url: &str) -> Option<String> {
 
 #[cfg(feature = "git-sync")]
 fn sync_status_json(vault_path: &std::path::Path) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), None);
     let repo = match engine.open_repo() {
         Ok(r) => r,
         Err(_) => {
@@ -4487,6 +4520,7 @@ async fn handle_sync_conflict_resolve(
 async fn sync_disconnect(
     vault_path: &std::path::Path,
     payload_str: &str,
+    devkey_seal: Option<&[u8; 32]>,
 ) -> Result<String, String> {
     let payload: serde_json::Value = if payload_str.is_empty() {
         serde_json::Value::Null
@@ -4495,7 +4529,7 @@ async fn sync_disconnect(
     };
     let delete_remote = payload["delete_remote"].as_bool().unwrap_or(false);
 
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path));
+    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), devkey_seal);
     let repo = engine
         .open_repo()
         .map_err(|e| format!("No git repo: {e}"))?;

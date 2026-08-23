@@ -213,8 +213,12 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
     // written by pre-QU daemon versions (one shared secret for ALL vaults).
     // Per-vault scoping is now keyed by vault_id; this prevents an old
     // per-app secret from lingering in the keychain. Non-fatal.
-    if let Err(e) = baluard_core::biometric::disable_legacy_global() {
-        eprintln!("warning: failed to wipe legacy biometric secret: {e}");
+    // Skipped when keyring access is disabled (tests: an unsigned binary
+    // touching the user's keychain triggers interactive auth prompts).
+    if !baluard_core::keyring_disabled() {
+        if let Err(e) = baluard_core::biometric::disable_legacy_global() {
+            eprintln!("warning: failed to wipe legacy biometric secret: {e}");
+        }
     }
 
     let host: SharedVaultHost = VaultHost::shared();

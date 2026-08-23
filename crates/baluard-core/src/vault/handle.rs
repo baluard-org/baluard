@@ -84,6 +84,10 @@ pub struct UnlockedState {
     /// Cached Item Keys: cipher_id → ItemKey.
     /// Loaded on-demand, cached for performance.
     pub item_keys: HashMap<Uuid, ItemKey>,
+    /// Device-privkey seal subkey (C1): HKDF(KEK, "baluard-devkey-v1").
+    /// Lets post-unlock consumers (sync signing, password change) open the
+    /// sealed `meta/device-privkey.json` without keeping the KEK resident.
+    pub devkey_seal: [u8; 32],
     /// Current key epoch (read from RK canary or envelope).
     pub current_epoch: u64,
 }
@@ -267,9 +271,11 @@ impl VaultHandle {
     ///
     /// No key material crosses IPC. `kek` is zeroized by the caller when done.
     pub fn unlock_with_kek(&mut self, kek: &[u8; 32]) -> Result<(), BaluardError> {
-        // Step 2: Derive session + sync keys
+        // Step 2: Derive session + sync keys, plus the device-privkey seal
+        // subkey (C1). The subkey, never the KEK, is retained post-unlock.
         let session_key = hkdf_derive::derive_session_key(kek)?;
         let sync_key = hkdf_derive::derive_sync_key(kek)?;
+        let devkey_seal = hkdf_derive::derive_devkey_seal_key(kek)?;
 
         // Step 3: Read keywrap file
         let keywrap_path = self
@@ -297,7 +303,7 @@ impl VaultHandle {
         }
 
         // Step 5: HPKE-decapsulate Root Key using device private key (keyring or file)
-        let privkeys = load_device_privkeys(&self.path, self.device_id)?;
+        let privkeys = load_device_privkeys(&self.path, self.device_id, Some(&devkey_seal))?;
         let unwrapped = hpke_wrap::unwrap_key(
             &kw.ephemeral_public,
             &kw.encrypted_key,
@@ -323,9 +329,18 @@ impl VaultHandle {
             ),
             session_key,
             sync_key,
+            devkey_seal,
             item_keys: HashMap::new(),
             current_epoch,
         });
+
+        // C1: lazily re-seal a legacy plaintext device-privkey file now that
+        // the KEK is proven correct. Best-effort — a failure must not fail
+        // the unlock; the next unlock retries.
+        {
+            let path = self.path.join("meta/device-privkey.json");
+            let _ = crate::vault::device_privkey::reseal_if_legacy(&path, &devkey_seal);
+        }
 
         // M6 fix: ensure registries stay in sync after unlock
         self.sync_registry_to_device_manager();
@@ -359,10 +374,23 @@ impl VaultHandle {
         // Step 1: Verify old password
         let old_kek = kdf::derive_kek(old_password, &self.kdf_params)?;
         let old_session_key = hkdf_derive::derive_session_key(&old_kek)?;
+        let old_devkey_seal = hkdf_derive::derive_devkey_seal_key(&old_kek)?;
         if self.path.join("meta/kek-canary.enc").exists() {
             let canary_data = std::fs::read(self.path.join("meta/kek-canary.enc"))?;
             super::canary::verify_kek_canary(&old_session_key, &canary_data)
                 .map_err(|_| VaultError::Corrupt("old master password incorrect".into()))?;
+        }
+
+        // C1 pre-check: a sealed devkey file must open under the OLD seal
+        // key BEFORE we rotate anything, otherwise a later failure would
+        // leave a file the next unlock cannot open (lockout). Fail here,
+        // before any write.
+        let devkey_path = self.path.join("meta/device-privkey.json");
+        if crate::vault::device_privkey::file_kind(&devkey_path)
+            == crate::vault::device_privkey::PrivkeyFileKind::Sealed
+        {
+            let file = std::fs::read_to_string(&devkey_path)?;
+            crate::vault::device_privkey::open_bytes(&old_devkey_seal, file.as_bytes())?;
         }
 
         // Step 2: Derive new KEK with existing KDF params
@@ -377,7 +405,7 @@ impl VaultHandle {
         };
 
         // Step 4: Load device private key for HPKE re-wrap
-        let privkeys = load_device_privkeys(&self.path, self.device_id)?;
+        let privkeys = load_device_privkeys(&self.path, self.device_id, Some(&old_devkey_seal))?;
         let x25519_public = x25519_dalek::PublicKey::from(&privkeys.x25519);
 
         // Step 5: HPKE re-wrap Root Key with new session key
@@ -402,9 +430,19 @@ impl VaultHandle {
             super::write_vault_file(&canary_path, &canary_bytes)?;
         }
 
-        // Step 7: Update in-memory session key
+        // Step 7: Update in-memory session key and rotate the devkey seal
+        // (C1): the KEK changed, so the seal subkey changed with it. The
+        // upfront pre-check validated the old seal opens the file, so this
+        // write cannot strand the vault.
+        let new_devkey_seal = hkdf_derive::derive_devkey_seal_key(&new_kek)?;
+        crate::vault::device_privkey::rotate_seal_key(
+            &devkey_path,
+            &old_devkey_seal,
+            &new_devkey_seal,
+        )?;
         if let VaultState::Unlocked(ref mut u) = self.state {
             u.session_key = new_session_key;
+            u.devkey_seal = new_devkey_seal;
         }
 
         // Step 8: Disable old biometric secret (it stores the old password)
@@ -532,6 +570,17 @@ impl VaultHandle {
     /// Check if vault is unlocked.
     pub fn is_unlocked(&self) -> bool {
         matches!(self.state, VaultState::Unlocked(_))
+    }
+
+    /// Device-privkey seal subkey (C1). `Some` only while unlocked: the
+    /// subkey lives in `UnlockedState` and is dropped on lock, exactly like
+    /// the session key. Consumers: daemon sync signing (autosync), direct
+    /// CLI sync after an in-process unlock.
+    pub fn devkey_seal(&self) -> Option<[u8; 32]> {
+        match &self.state {
+            VaultState::Unlocked(u) => Some(u.devkey_seal),
+            VaultState::Locked => None,
+        }
     }
 
     /// Helper: get vault path as &Path for observer hooks.
@@ -2317,7 +2366,11 @@ impl VaultHandle {
         };
 
         for candidate in &candidates {
-            if let Ok(privkeys) = load_device_privkeys(path, *candidate) {
+            // C1: discovery runs pre-unlock (no seal key); the sealed file
+            // arm fails closed, so only keyring-backed candidates can be
+            // confirmed here. Single-keywrap fallback below still covers
+            // keystore-less vaults.
+            if let Ok(privkeys) = load_device_privkeys(path, *candidate, None) {
                 let pub_key = x25519_dalek::PublicKey::from(&privkeys.x25519);
                 let local_pub_hex = hex::encode(pub_key.as_bytes());
                 if let Some(ref reg) = registry {
@@ -2334,7 +2387,7 @@ impl VaultHandle {
 
         // Fallback: candidate where load_device_privkeys succeeds
         for candidate in &candidates {
-            if load_device_privkeys(path, *candidate).is_ok() {
+            if load_device_privkeys(path, *candidate, None).is_ok() {
                 return Ok(*candidate);
             }
         }
@@ -2600,7 +2653,8 @@ impl VaultHandle {
         let canary_rename = (canary_tmp.clone(), canary_path.clone());
 
         // Phase 3: Write new keywrap file (staged)
-        let privkeys = match load_device_privkeys(&self.path, self.device_id) {
+        let seal_key = self.devkey_seal();
+        let privkeys = match load_device_privkeys(&self.path, self.device_id, seal_key.as_ref()) {
             Ok(k) => k,
             Err(_) => {
                 // Cleanup staged files on error
@@ -2863,7 +2917,8 @@ impl VaultHandle {
         };
 
         // ── Precheck: validate privkey accessible BEFORE any irreversible change ──
-        let privkeys = load_device_privkeys(&self.path, self.device_id)?;
+        let seal_key = self.devkey_seal();
+        let privkeys = load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())?;
 
         // ── Write crash-recovery marker and setup cleanup guard ──
         let pending_marker = self.path.join("meta/.rotation-pending");
@@ -3131,7 +3186,8 @@ impl VaultHandle {
             crate::device_manager::build_ack_sign_input(tx.new_epoch, &self.device_id, &txn_hash);
 
         // Load signing key
-        let privkeys = load_device_privkeys(&self.path, self.device_id)?;
+        let seal_key = self.devkey_seal();
+        let privkeys = load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())?;
 
         use crate::crypto::signature;
         let ack_sig = signature::sign(&privkeys.ed25519, &sign_input)?;
@@ -3266,7 +3322,9 @@ impl VaultHandle {
         let Ok(mut manifest) = crate::integrity::IntegrityManifest::load(&self.path) else {
             return;
         };
-        let Ok(privkeys) = load_device_privkeys(&self.path, self.device_id) else {
+        let seal_key = self.devkey_seal();
+        let Ok(privkeys) = load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())
+        else {
             return;
         };
         let signing_key = privkeys.ed25519;
@@ -3405,6 +3463,7 @@ fn keyring_service(vault_path: &Path) -> String {
 fn load_device_privkeys(
     vault_path: &Path,
     device_id: Uuid,
+    seal_key: Option<&[u8; 32]>,
 ) -> Result<DevicePrivKeys, BaluardError> {
     // 0. Consult SecureKeystore (global or injected)
     if let Some(keystore) = crate::vault::creation::get_global_keystore() {
@@ -3424,25 +3483,33 @@ fn load_device_privkeys(
     let service = keyring_service(vault_path);
     let account = device_id.to_string();
 
-    // 1. Try OS keyring first
-    if let Ok(entry) = keyring::Entry::new(&service, &account) {
-        if let Ok(json) = entry.get_password() {
-            return parse_privkey_json(&json);
+    // 1. Try OS keyring first (skipped in tests: unsigned binaries trigger
+    // interactive keychain prompts on macOS; see `keyring_disabled`).
+    if !crate::keyring_disabled() {
+        if let Ok(entry) = keyring::Entry::new(&service, &account) {
+            if let Ok(json) = entry.get_password() {
+                return parse_privkey_json(&json);
+            }
         }
     }
 
-    // 2. Fall back to plaintext file (backward compat)
+    // 2. Fall back to the device-privkey file. Since the C1 fix the file
+    // is an AES-256-GCM envelope sealed under a KEK-derived subkey;
+    // legacy plaintext (phrase-flow writes, pre-seal vaults) is still
+    // readable here and gets re-sealed lazily on the next successful
+    // unlock.
     let privkey_path = vault_path.join("meta/device-privkey.json");
     if privkey_path.exists() {
-        let json = std::fs::read_to_string(&privkey_path)
-            .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
+        let json = crate::vault::device_privkey::read_privkey_file(&privkey_path, seal_key)?;
         let keys = parse_privkey_json(&json)?;
 
         // Migration attempt: store in keyring for future use
         // Keep the file as fallback -- don't delete it.
         // Keyring may not persist reliably in all environments (CI, headless).
-        if let Ok(entry) = keyring::Entry::new(&service, &account) {
-            let _ = entry.set_password(&json);
+        if !crate::keyring_disabled() {
+            if let Ok(entry) = keyring::Entry::new(&service, &account) {
+                let _ = entry.set_password(&json);
+            }
         }
 
         return Ok(keys);

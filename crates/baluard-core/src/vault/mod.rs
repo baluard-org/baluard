@@ -8,6 +8,7 @@ pub mod avatar;
 pub mod canary;
 pub mod cipher;
 pub mod creation;
+pub mod device_privkey;
 pub mod envelope;
 pub mod handle;
 pub mod index;

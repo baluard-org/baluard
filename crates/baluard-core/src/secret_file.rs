@@ -82,7 +82,8 @@ mod tests {
 
     #[test]
     fn replaces_symlink_instead_of_following() {
-        let dir = std::env::temp_dir().join(format!("baluard-secret-symlink-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("baluard-secret-symlink-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let victim = dir.join("victim.txt");
         fs::write(&victim, b"original").unwrap();

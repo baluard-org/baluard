@@ -63,12 +63,17 @@ pub struct CloneProgress {
 impl SyncEngine {
     /// Create a new SyncEngine for a vault at the given path.
     /// Loads persisted state machine from disk if available.
-    pub fn new(vault_path: &Path, device_name: &str) -> Self {
+    ///
+    /// `devkey_seal` opens the sealed `meta/device-privkey.json` (C1) for
+    /// commit signing. Pass the subkey from the unlocked handle when
+    /// available; `None` falls back to the OS keyring (and legacy plaintext
+    /// files) — a sealed file without a key means unsigned commits.
+    pub fn new(vault_path: &Path, device_name: &str, devkey_seal: Option<&[u8; 32]>) -> Self {
         let last_remote_head = Self::load_last_head(vault_path);
         let credential_config = CredentialConfig::load(vault_path);
         let state_machine = RefCell::new(SyncStateMachine::load_from_file(vault_path));
         // Load signing key — log warning on corrupt file but don't fail
-        let signing_key = match Self::load_signing_key(vault_path) {
+        let signing_key = match Self::load_signing_key(vault_path, devkey_seal) {
             Ok(key) => key,
             Err(e) => {
                 eprintln!("warning: failed to load signing key: {e}");
@@ -1464,25 +1469,34 @@ impl SyncEngine {
     /// Returns None if no key found. Returns error if key is corrupt.
     fn load_signing_key(
         vault_path: &Path,
+        devkey_seal: Option<&[u8; 32]>,
     ) -> Result<Option<ed25519_dalek::SigningKey>, BaluardError> {
         // Try OS keyring: read device IDs from devices.json and try each
-        let service = Self::keyring_service_for_vault(vault_path);
-        if let Ok(devices_data) = std::fs::read_to_string(vault_path.join("meta/devices.json")) {
-            if let Ok(devices) = serde_json::from_str::<serde_json::Value>(&devices_data) {
-                if let Some(device_map) = devices["devices"].as_object() {
-                    for (device_id, _) in device_map {
-                        if let Ok(entry) = keyring::Entry::new(&service, device_id) {
-                            if let Ok(json) = entry.get_password() {
-                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
-                                    if let Some(hex_str) = v["ed25519_private"].as_str() {
-                                        if let Ok(bytes_vec) = hex::decode(hex_str) {
-                                            let bytes: [u8; 32] =
-                                                bytes_vec.try_into().map_err(|_| {
-                                                    SyncError::Git("privkey wrong length".into())
-                                                })?;
-                                            return Ok(Some(
-                                                ed25519_dalek::SigningKey::from_bytes(&bytes),
-                                            ));
+        // (skipped in tests: unsigned binaries trigger keychain prompts; see
+        // `crate::keyring_disabled`).
+        if !crate::keyring_disabled() {
+            let service = Self::keyring_service_for_vault(vault_path);
+            if let Ok(devices_data) = std::fs::read_to_string(vault_path.join("meta/devices.json"))
+            {
+                if let Ok(devices) = serde_json::from_str::<serde_json::Value>(&devices_data) {
+                    if let Some(device_map) = devices["devices"].as_object() {
+                        for (device_id, _) in device_map {
+                            if let Ok(entry) = keyring::Entry::new(&service, device_id) {
+                                if let Ok(json) = entry.get_password() {
+                                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json)
+                                    {
+                                        if let Some(hex_str) = v["ed25519_private"].as_str() {
+                                            if let Ok(bytes_vec) = hex::decode(hex_str) {
+                                                let bytes: [u8; 32] =
+                                                    bytes_vec.try_into().map_err(|_| {
+                                                        SyncError::Git(
+                                                            "privkey wrong length".into(),
+                                                        )
+                                                    })?;
+                                                return Ok(Some(
+                                                    ed25519_dalek::SigningKey::from_bytes(&bytes),
+                                                ));
+                                            }
                                         }
                                     }
                                 }
@@ -1493,12 +1507,13 @@ impl SyncEngine {
             }
         }
 
-        // Fallback: plaintext file
+        // Fallback: sealed-or-legacy device-privkey file (C1). Sealed files
+        // fail closed without the seal subkey.
         let path = vault_path.join("meta/device-privkey.json");
         if !path.exists() {
             return Ok(None);
         }
-        let data = std::fs::read_to_string(&path)
+        let data = crate::vault::device_privkey::read_privkey_file(&path, devkey_seal)
             .map_err(|e| SyncError::Git(format!("read privkey: {e}")))?;
         let v: serde_json::Value = serde_json::from_str(&data)
             .map_err(|e| SyncError::Git(format!("parse privkey: {e}")))?;
@@ -1828,7 +1843,7 @@ mod tests {
 
     fn make_test_repo() -> (tempfile::TempDir, SyncEngine) {
         let dir = tempfile::tempdir().unwrap();
-        let engine = SyncEngine::new(dir.path(), "test-device");
+        let engine = SyncEngine::new(dir.path(), "test-device", None);
         (dir, engine)
     }
 
@@ -1852,7 +1867,7 @@ mod tests {
             progress,
         )
         .unwrap();
-        let clone_engine = SyncEngine::new(clone_dir.path(), "clone-device");
+        let clone_engine = SyncEngine::new(clone_dir.path(), "clone-device", None);
 
         // No remote change yet -> up to date (false).
         {
@@ -2127,7 +2142,7 @@ mod tests {
 
         let (dir, _engine) = make_test_repo();
         setup_signing_keys_with(dir.path(), &signing_key);
-        let engine = SyncEngine::new(dir.path(), "test-device");
+        let engine = SyncEngine::new(dir.path(), "test-device", None);
 
         std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
         let repo = engine.init_repo().unwrap();
@@ -2157,7 +2172,7 @@ mod tests {
         // Clone: init + remote + fetch + checkout
         let clone_dir = tempfile::tempdir().unwrap();
         setup_signing_keys_with(clone_dir.path(), &signing_key);
-        let clone_engine = SyncEngine::new(clone_dir.path(), "clone-device");
+        let clone_engine = SyncEngine::new(clone_dir.path(), "clone-device", None);
         let cloned = Repository::init(clone_dir.path()).unwrap();
         clone_engine
             .add_remote(&cloned, "origin", &remote_url)
@@ -2235,7 +2250,7 @@ mod tests {
         .unwrap();
 
         // Recreate engine so it loads the signing key
-        let engine = SyncEngine::new(dir.path(), "test-device");
+        let engine = SyncEngine::new(dir.path(), "test-device", None);
 
         let repo = engine.init_repo().unwrap();
         std::fs::write(dir.path().join("data.enc"), b"test").unwrap();
@@ -2750,7 +2765,7 @@ mod tests {
         // Two repos sharing one remote, same signing keypair so commits verify.
         let (dir_a, _engine) = make_test_repo();
         setup_signing_keys_with(dir_a.path(), &signing_key);
-        let engine_a = SyncEngine::new(dir_a.path(), "test-device");
+        let engine_a = SyncEngine::new(dir_a.path(), "test-device", None);
         std::fs::create_dir_all(dir_a.path().join("ciphers")).unwrap();
         std::fs::write(
             dir_a
@@ -2776,7 +2791,7 @@ mod tests {
         // Clone B (same shape as the existing clone test).
         let dir_b = tempfile::tempdir().unwrap();
         setup_signing_keys_with(dir_b.path(), &signing_key);
-        let engine_b = SyncEngine::new(dir_b.path(), "clone-device");
+        let engine_b = SyncEngine::new(dir_b.path(), "clone-device", None);
         let repo_b = Repository::init(dir_b.path()).unwrap();
         engine_b.add_remote(&repo_b, "origin", &remote_url).unwrap();
         let mut remote_b = repo_b.find_remote("origin").unwrap();
@@ -2862,7 +2877,7 @@ mod tests {
         // to Idle on conflict) is fixed above — pull now leaves Merging, so
         // resolve_conflicts' final Merging->Idle is valid. Full round-trip
         // exercised here; 2b adds the daemon decrypt/merge layer on top.
-        let engine_b2 = SyncEngine::new(dir_b.path(), "clone-device");
+        let engine_b2 = SyncEngine::new(dir_b.path(), "clone-device", None);
         let repo_b2 = engine_b2.open_repo().unwrap();
         let resolved = paused
             .iter()
@@ -2899,7 +2914,7 @@ mod tests {
 
         let (dir_a, _engine) = make_test_repo();
         setup_signing_keys_with(dir_a.path(), &signing_key);
-        let engine_a = SyncEngine::new(dir_a.path(), "test-device");
+        let engine_a = SyncEngine::new(dir_a.path(), "test-device", None);
         std::fs::create_dir_all(dir_a.path().join("ciphers")).unwrap();
         std::fs::write(
             dir_a
@@ -2924,7 +2939,7 @@ mod tests {
 
         let dir_b = tempfile::tempdir().unwrap();
         setup_signing_keys_with(dir_b.path(), &signing_key);
-        let engine_b = SyncEngine::new(dir_b.path(), "clone-device");
+        let engine_b = SyncEngine::new(dir_b.path(), "clone-device", None);
         let repo_b = Repository::init(dir_b.path()).unwrap();
         engine_b.add_remote(&repo_b, "origin", &remote_url).unwrap();
         let mut remote_b = repo_b.find_remote("origin").unwrap();
@@ -2985,7 +3000,7 @@ mod tests {
         // Rebuild a fresh conflict pair since the Pause test above consumed B.
         let (dir_a2, _engine) = make_test_repo();
         setup_signing_keys_with(dir_a2.path(), &signing_key);
-        let engine_a2 = SyncEngine::new(dir_a2.path(), "test-device");
+        let engine_a2 = SyncEngine::new(dir_a2.path(), "test-device", None);
         std::fs::create_dir_all(dir_a2.path().join("ciphers")).unwrap();
         std::fs::write(
             dir_a2
@@ -3011,7 +3026,7 @@ mod tests {
 
         let dir_c = tempfile::tempdir().unwrap();
         setup_signing_keys_with(dir_c.path(), &signing_key);
-        let engine_c = SyncEngine::new(dir_c.path(), "clone-device");
+        let engine_c = SyncEngine::new(dir_c.path(), "clone-device", None);
         let repo_c = Repository::init(dir_c.path()).unwrap();
         engine_c
             .add_remote(&repo_c, "origin", &remote_url2)
