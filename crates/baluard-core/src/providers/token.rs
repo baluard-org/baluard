@@ -131,23 +131,12 @@ const fn keyring_is_persistent() -> bool {
     ))
 }
 
-/// Write `secret` to the app-private token file with 0600 permissions.
+/// Write `secret` to the app-private token file with owner-only permissions from the
+/// first byte (no world-readable window; audit C25).
 fn store_token_file(key: &str, secret: &str) -> Result<(), super::types::ProviderError> {
     let path = token_file_path(key);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
-    }
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, secret).map_err(|e| super::types::ProviderError::Io(e.to_string()))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-    }
-
-    std::fs::rename(&tmp, &path).map_err(|e| super::types::ProviderError::Io(e.to_string()))
+    crate::secret_file::write_secret_file(&path, secret.as_bytes())
+        .map_err(|e| super::types::ProviderError::Io(e.to_string()))
 }
 
 /// Store a provider token in the OS keyring, falling back to a 0600 file if keyring is unavailable.

@@ -2226,14 +2226,8 @@ pub fn handle_export(
         return Err(resp.error_message.into());
     }
 
-    std::fs::write(path, &resp.payload).map_err(|e| format!("Failed to write {path}: {e}"))?;
-
-    // Set file permissions to 0600 on Unix (owner-only read/write)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    }
+    baluard_core::secret_file::write_secret_file(std::path::Path::new(path), resp.payload.as_bytes())
+        .map_err(|e| format!("Failed to write {path}: {e}"))?;
 
     println!("Export complete: {path}");
     Ok(())
@@ -2376,7 +2370,8 @@ pub fn handle_attach_download(
         .as_str()
         .ok_or_else(|| "daemon response missing data_base64 field".to_string())?;
     let mut data = base64::engine::general_purpose::STANDARD.decode(data_b64)?;
-    std::fs::write(output_path, &data)?;
+    // Owner-only from the first byte; rename replaces any pre-planted symlink (C14)
+    baluard_core::secret_file::write_secret_file(std::path::Path::new(output_path), &data)?;
 
     // Zeroize after writing
     use zeroize::Zeroize;

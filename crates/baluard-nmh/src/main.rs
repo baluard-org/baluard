@@ -21,18 +21,57 @@ use baluard_core::bridge::is_allowed;
 use baluard_core::bridge::pairing::PairingFile;
 
 /// Optional debug log file. Chrome doesn't surface NMH stderr, so during
-/// development we tee our trace to /tmp/baluard-nmh.debug.log. Always-on
-/// while the browser-extension pairing flow is being stabilized.
+/// development we can tee our trace to the platform log dir. Hard-gated
+/// behind `BALUARD_DEBUG=1` (audit C9: never on in user environments),
+/// located via `baluard_core::paths::log_dir()` (honors `BALUARD_LOG_DIR`),
+/// never in world-writable /tmp. Creation uses create_new + 0600; append
+/// fallback runs only when the existing entry is a regular file, so a
+/// pre-planted symlink at the log path is never followed.
 static DEBUG_LOG: std::sync::OnceLock<std::sync::Mutex<std::fs::File>> = std::sync::OnceLock::new();
 
 fn init_debug_log_file() {
-    if let Ok(f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/baluard-nmh.debug.log")
-    {
-        let _ = DEBUG_LOG.set(std::sync::Mutex::new(f));
+    if std::env::var("BALUARD_DEBUG").ok().as_deref() != Some("1") {
+        return;
     }
+    let dir = baluard_core::paths::log_dir();
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join("baluard-nmh.debug.log");
+
+    #[cfg(unix)]
+    let created = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)
+    };
+    #[cfg(not(unix))]
+    let created = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path);
+
+    let file = match created {
+        // Fresh file created owner-only; keep the handle. Single writer
+        // (one Mutex), so writes append in practice.
+        Ok(f) => f,
+        Err(_) => {
+            // Entry exists: append only if it is a regular file. A symlink
+            // at the path is refused — never followed (audit C9).
+            match std::fs::symlink_metadata(&path) {
+                Ok(md) if md.file_type().is_file() => {}
+                _ => return,
+            }
+            match std::fs::OpenOptions::new().append(true).open(&path) {
+                Ok(f) => f,
+                Err(_) => return,
+            }
+        }
+    };
+    let _ = DEBUG_LOG.set(std::sync::Mutex::new(file));
 }
 
 fn dlog(msg: &str) {

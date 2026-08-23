@@ -21,14 +21,9 @@ pub use handle::VaultHandle;
 
 use std::path::Path;
 
-/// Atomic write with 0600 permissions.
-/// Writes to a `.tmp` file, sets owner-only permissions, then renames to final path.
-/// Prevents partial writes and ensures consistent file permissions across the vault.
+/// Atomic write with owner-only permissions. Delegates to the shared secret-file
+/// primitive so vault data, provider tokens, exports, and attachments share one
+/// hardened write path (audit C14/C17/C24/C25).
 pub fn write_vault_file(path: &Path, data: &[u8]) -> Result<(), std::io::Error> {
-    use std::os::unix::fs::PermissionsExt;
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, data)?;
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+    crate::secret_file::write_secret_file(path, data)
 }

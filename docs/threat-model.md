@@ -11,7 +11,7 @@
 |-----------------|-----------------|----------------|-------------------|
 | A — Honest-but-curious Git Provider | Passive read of all repository objects | Metadata inference (bucket distribution), timing analysis | Cannot read entry plaintexts. File names are UUID hashes; entry sizes are uniform buckets (5KB, 30KB, 100KB, 250KB, 2MB). Cover commits obscure push frequency. |
 | B — Malicious Git Provider | Active: can modify refs, inject corrupted index | Rollback attacks, corrupted index injection | index.enc auto-healed locally by baluard-core. Rebuilt from entries if corrupted or conflicted. Unsigned commits rejected. Integrity manifest (Ed25519 checkpoints) detects rollback. |
-| C — Local Process (on same device) | Read IPC socket or pipes | Intercept IPC commands, steal secrets | Mitigated via `0600` socket permissions on Unix and system ACLs on Windows named pipes. Capability-based authorization: a per-vault 256-bit session token is required for all cipher/sync operations (R7-2). SO_PEERCRED peer UID verification on Linux, getpeereid on macOS. |
+| C — Local Process (on same device) | Read IPC socket or pipes | Intercept IPC commands, steal secrets | Unix only today: `0600` socket permissions + SO_PEERCRED (Linux) / getpeereid (macOS). Windows transport is unimplemented; restrictive named-pipe ACLs are a design commitment for when it ships, not a current control. Capability-based authorization: a per-vault 256-bit session token is required for all cipher/sync operations (R7-2). |
 | D — Local Attacker (physical disk access) | Read stored files directly | Offline brute force or cache recovery | Files are AES-256-GCM encrypted. Keys are isolated in host OS Keyring or `zeroize`-protected memory. |
 | E — Malware with OS root privileges | Full process memory interception | Dump memory, steal secrets | `zeroize`-protected memory with `mlock` guards prevents standard paging and core dump leakage. Key material mlock'd to prevent swap persistence (R7-3). Multi-vault (Phase 6) widens the amount of resident key material; bounded by per-vault auto-lock. See T15. |
 | F — Evicted Space Member | Possesses historical local git checkout | Read new entries or make unauthorized commits | Rotated Space Group Key renders future additions unreadable. Root key rotation re-encrypts all entries under new epoch. Git credential rotation is out-of-band (user must rotate deploy keys/PATs manually). |
@@ -42,10 +42,10 @@ The client never holds a vault key. It holds a token that *permits the daemon* t
 
 **Invariants**
 
-1. A same-UID process that did not take part in the unlock exchange holds no capability and is refused (T2, R7-2).
+1. A same-UID process that did not take part in the unlock exchange holds no capability and is refused (T2, R7-2). **Known exception (pre-fix):** when the CLI is the unlocking client, its session token is persisted to `baluard.tok` on disk, readable by any same-UID process (audit finding C2). The invariant holds fully once the CLI moves the token to the OS keyring.
 2. Authority is **per-vault scoped**: a token minted for vault A is rejected for a vault B operation (multi-vault, Phase 6).
 3. Capabilities are **revocable and short-lived**: tokens die on lock, on close, and on daemon shutdown.
-4. The transport is **authenticated**: `0600` socket, peer-credential UID check (SO_PEERCRED on Linux, getpeereid on macOS).
+4. The transport is **authenticated**: `0600` socket, peer-credential UID check (SO_PEERCRED on Linux, getpeereid on macOS). Windows has no transport yet (see T2).
 
 The session token is a capability in the object-capability sense: it is the only authority the client holds, it grants a scoped set of operations, and it does not expose the underlying secrets. This is why "token-gated IPC" and "capability-based authorization" name the same mechanism in Baluard.
 
@@ -56,10 +56,11 @@ The session token is a capability in the object-capability sense: it is the only
 ### T1: Git Provider Observing File Counts and Sizes
 - **Threat**: Attacker infers vault contents based on specific file size signatures.
 - **Control**: All entries under `entries/` are padded to uniform bucket sizes (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB) prior to encryption. Filenames are random UUID hashes. Attacker only observes counts of files per size bucket. `Tier::fit()` auto-selects the smallest bucket that fits the plaintext.
+- **Limit (audit C4, pre-fix)**: attachments are NOT padded to buckets today; their on-disk size reveals the plaintext size. Bucket-padding attachments is scheduled remediation.
 
 ### T2: Local IPC Interception
 - **Threat**: Another application on the same machine connects to the daemon and requests secrets.
-- **Control**: IPC sockets are locked to `0600` permissions, allowing only the current user's process to connect. On Windows, Named Pipes use restrictive security descriptors (ACLs). Peer credential verification (SO_PEERCRED on Linux, getpeereid on macOS) rejects connections from other UIDs.
+- **Control**: IPC sockets are locked to `0600` permissions, allowing only the current user's process to connect. Peer credential verification (SO_PEERCRED on Linux, getpeereid on macOS) rejects connections from other UIDs. The Windows transport is unimplemented; a named-pipe DACL design is committed for that platform before any Windows release.
 - **R7-2 Enhancement**: After unlock, the daemon generates a random 256-bit session token. All subsequent requests for cipher data, sync operations, and device listing must include this token. Without it, the daemon rejects the request. This prevents any same-UID process from extracting secrets after unlock without having participated in the unlock exchange.
 
 ### T3: JIT Autofill Hook Timing Attacks
@@ -101,11 +102,12 @@ The session token is a capability in the object-capability sense: it is the only
 
 ### T11: Reprompt Grant Window Abuse
 - **Threat**: A same-UID process exploits the 30-second reprompt grant window to access a protected cipher after the user authenticates.
-- **Control**: Reprompt opens a temporary vault handle, verifies the master password, and issues a short-lived grant (30s). The grant is scoped to a single cipher. The daemon tracks grant state internally. After 30s, the grant expires and re-authentication is required. Session token (R7-2) is still required on top of the grant.
+- **Control (as implemented)**: Reprompt opens a temporary vault handle, verifies the master password, and issues a short-lived grant (30s). The grant token is returned to the requesting client and enforced by the client UI; the daemon does not track per-cipher grant state internally, and a holder of the vault session token plus the grant token can target any reprompt-protected cipher. Against the same-UID adversary this control is therefore a UX deterrent, not a security boundary. Session token (R7-2) is still required on top of the grant.
+- **Hardening (scheduled)**: daemon-side grant tracking scoped to a single cipher, plus rate limiting of the reprompt verification route (audit C12, C23).
 
 ### T12: Online Brute Force (Master Password)
 - **Threat**: An attacker with local or daemon access attempts rapid password guesses.
-- **Control**: `VaultHandle::check_attempt_rate_limit()` enforces exponential backoff on failed unlock attempts. Failed attempts are recorded in vault metadata. Argon2id KDF (memory-hard) makes each attempt computationally expensive (tunable memory/iterations), further limiting brute-force throughput.
+- **Control (layered, stated honestly)**: Three layers apply, each with a known limit. (1) Argon2id KDF (memory-hard) makes each attempt computationally expensive; this is the layer that dominates attack cost and cannot be reset. (2) An in-memory IPC rate limiter throttles guessable routes (unlock, bridge pairing, bridge reads); its state is volatile, so a daemon restart resets it (audit C7), and it covers only the routes it is wired into (see `rate_limit.rs` for the authoritative list; audit C22). (3) An on-disk attempt counter in vault metadata records exponential backoff, but it is a file the attacker can edit or delete, so it is advisory only against a same-UID adversary (audit C6).
 
 ### T13: Recovery Phrase Exposure
 - **Threat**: The BIP-39 24-word recovery phrase is written down, photographed, or observed during vault creation.
@@ -191,5 +193,6 @@ The session token is a capability in the object-capability sense: it is the only
 4. **Revoked Device Stale Snapshot**: A revoked device retains a readable copy of the vault at the epoch of revocation. Root key rotation ensures the copy becomes stale, but historical data remains readable. Fundamental to serverless model.
 5. **Git Credentials Out-of-Band**: Revoking vault access does NOT revoke git push access. User must manually rotate deploy keys/PATs on GitHub/GitLab. Fleet dashboard shows persistent warning, but no automated enforcement.
 6. **Recovery Phrase is Root of Trust**: If the BIP-39 phrase is compromised, full vault access is possible from any device, bypassing all device enrollment and quorum controls. No mitigating control beyond physical protection.
-7. **Plaintext Metadata Files**: `meta/devices.json` (device names, public keys) and `meta/device_activity.json` (UUIDs, timestamps) are plaintext in the git repo. Acceptable for single-user private repos, but leaks device names and sync patterns to anyone with repo read access.
+7. **Plaintext Metadata Files**: `meta/devices.json` (device names, public keys) and `meta/device_activity.json` (UUIDs, timestamps) are plaintext in the git repo. Acceptable for single-user private repos, but leaks device names and sync patterns to anyone with repo read access, and enables cross-vault correlation when one provider account hosts several vaults (audit C5). User-facing privacy note: device display names are visible to the git provider; renaming devices to generic names reduces exposure. Moving display names into encrypted settings is scheduled remediation.
 8. **Keywrap Gap After Revocation**: After device revocation, the keywrap file for the revoked device is not cleaned up. Recovery phrase is the fallback. (Known gap, tracked in progress doc.)
+9. **Mobile TLS Trust (Android)**: provider API traffic uses the platform TLS stack and the OS trust store, outside the app's network security config; no certificate pinning. Decision: accept OS trust store, skip pinning (rotation outages hurt availability for marginal gain against a device-compromise adversary that already wins otherwise; audit M9).
