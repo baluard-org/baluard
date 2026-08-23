@@ -841,6 +841,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -984,6 +986,8 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_func_provider_disconnect(`provider`: RustBuffer.ByValue,
     ): Long
+    fun uniffi_baluard_uniffi_fn_func_set_token_encryption_key(`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     fun uniffi_baluard_uniffi_fn_func_spike_async_probe(
     ): Long
     fun uniffi_baluard_uniffi_fn_func_start_device_flow(`provider`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,
@@ -1132,6 +1136,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_provider_disconnect(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_func_set_token_encryption_key(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_func_spike_async_probe(
     ): Short
     fun uniffi_baluard_uniffi_checksum_func_start_device_flow(
@@ -1279,6 +1285,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_provider_disconnect() != 36787.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_func_set_token_encryption_key() != 11628.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_func_spike_async_probe() != 15649.toShort()) {
@@ -4631,6 +4640,22 @@ public object FfiConverterSequenceTypeMobileRepo: FfiConverterRustBuffer<List<Mo
         BaluardException.ErrorHandler,
     )
     }
+
+        /**
+         * Install the provider-token encryption key (M3). The mobile app calls
+         * this ONCE at startup, before any provider flow. On Android the key is a
+         * random 32-byte secret unwrapped at runtime by a non-exportable
+         * AndroidKeystore key. Without it, provider tokens fall back to the
+         * plaintext 0600 file (headless/test environments only).
+         */
+    @Throws(BaluardException::class) fun `setTokenEncryptionKey`(`key`: kotlin.ByteArray)
+        = 
+    uniffiRustCallWithError(BaluardException) { _status ->
+    UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_func_set_token_encryption_key(
+        FfiConverterByteArray.lower(`key`),_status)
+}
+    
+    
 
         /**
          * Trivial async fn to validate the UniFFI async -> Kotlin `suspend` bridge

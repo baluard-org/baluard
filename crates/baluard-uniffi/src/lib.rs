@@ -135,6 +135,22 @@ pub fn init_data_dir(data_dir: String) {
     unsafe { std::env::set_var("BALUARD_DATA_DIR", data_dir) };
 }
 
+/// Install the provider-token encryption key (M3). The mobile app calls
+/// this ONCE at startup, before any provider flow. On Android the key is a
+/// random 32-byte secret unwrapped at runtime by a non-exportable
+/// AndroidKeystore key. Without it, provider tokens fall back to the
+/// plaintext 0600 file (headless/test environments only).
+#[uniffi::export]
+pub fn set_token_encryption_key(key: Vec<u8>) -> Result<(), BaluardError> {
+    let k: [u8; 32] = key
+        .try_into()
+        .map_err(|v: Vec<u8>| BaluardError::InvalidInput {
+            detail: format!("token encryption key must be 32 bytes, got {}", v.len()),
+        })?;
+    baluard_core::providers::token::set_token_encryption_key(k);
+    Ok(())
+}
+
 /// A 24-word BIP-39 recovery phrase. Mirrors `baluard_core::recovery::RecoveryPhrase`
 /// but flattened to a plain String for the FFI boundary (the internal type
 /// holds zeroized entropy that UniFFI can't cross with the zeroize guarantee).
@@ -920,7 +936,9 @@ pub async fn provider_disconnect(provider: MobileProvider) -> Result<(), Baluard
 pub async fn background_fetch(path: String) -> Result<bool, BaluardError> {
     let vault_path = std::path::PathBuf::from(path);
     tokio::task::spawn_blocking(move || {
-        let engine = baluard_core::sync::engine::SyncEngine::new(&vault_path, "background");
+        // Fetch-only on a locked vault: no commit signing, so no seal key.
+        let engine =
+            baluard_core::sync::engine::SyncEngine::new(&vault_path, "background", None);
         let repo = engine.open_repo()?;
         engine
             .fetch_locked(&repo, "origin")
