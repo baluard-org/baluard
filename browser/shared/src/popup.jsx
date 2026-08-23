@@ -321,7 +321,9 @@ async function fill(entry) {
       }, () => {
         chrome.tabs.sendMessage(tabId, {
           type: "baluard-fill",
-          expectedOrigin: hostnameOf(tabUrl()),
+          // B1: origin (scheme+host+port), not hostname — blocks the
+          // https -> http downgrade fill. content.js compares location.origin.
+          expectedOrigin: originOf(tabUrl()),
           credential: {
             username: cred.username || "",
             password: cred.password || "",
@@ -360,9 +362,9 @@ async function copyTotp(entry) {
   }
 }
 
-function hostnameOf(url) {
+function originOf(url) {
   try {
-    return new URL(url).hostname.toLowerCase();
+    return new URL(url).origin;
   } catch {
     return "";
   }

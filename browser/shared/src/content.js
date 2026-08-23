@@ -26,10 +26,10 @@ export { fillLoginForm, visibleInputs, isTextLike, isVisible, setNativeValue };
     if (!msg || msg.type !== "baluard-fill") return;
     chrome.runtime.onMessage.removeListener(listener);
 
-    // Fill-time origin re-check. The popup matched the
-    // tab's URL, but the tab may have navigated during the IPC round trip.
-    const currentHost = location.hostname.toLowerCase();
-    if (msg.expectedOrigin && currentHost !== msg.expectedOrigin) {
+    // Fill-time ORIGIN re-check (B1: scheme+host+port, not hostname-only).
+    // The popup matched the tab's URL, but the tab may have navigated during
+    // the IPC round trip — including an https -> http downgrade.
+    if (msg.expectedOrigin && location.origin !== msg.expectedOrigin) {
       // Refuse: the page is no longer the one the user approved. Fail closed.
       console.warn("[baluard] fill refused: origin changed during fill");
       return;

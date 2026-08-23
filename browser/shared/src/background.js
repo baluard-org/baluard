@@ -163,6 +163,18 @@ function hostnameOf(url) {
   }
 }
 
+// B1: fill-time origin (scheme + host + port). A credential saved on
+// https://example.com must NOT fill on http://example.com — a network
+// attacker can serve the plain-HTTP page and read the typed password.
+// Content scripts compare this against location.origin (same definition).
+export function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}
+
 async function handleInlineMatches(sender) {
   const url = senderUrl(sender);
   if (!url) throw err("no matching tab", "no-match");
@@ -175,23 +187,31 @@ async function handleInlineFill(sender, id) {
   if (!url) throw err("no matching tab", "no-match");
   if (typeof id !== "string" || id.length === 0) throw err("missing id", "proto");
   // Fetch the single credential (Decision 7 allowlist: one at a time).
-  const r = await send("vault.get", { id });
+  // B3: the page URL rides along so the DAEMON enforces the URI match
+  // server-side with the same matcher bridge.match uses — a compromised
+  // extension page cannot fetch a credential for an unrelated site.
+  const r = await send("vault.get", { id, url });
   let cred = {};
   try {
     cred = JSON.parse(r.payload || "{}");
   } catch {
     cred = {};
   }
-  // Push the fill to the requesting tab only. Content script re-checks the
-  // origin at fill time (fill-time origin re-check, Decision 9).
-  chrome.tabs.sendMessage(sender.tab.id, {
-    type: "baluard-inline-fill",
-    expectedOrigin: hostnameOf(url),
-    credential: {
-      username: cred.username || "",
-      password: cred.password || "",
+  // Push the fill to the requesting tab only (B5: pinned to the exact
+  // frame the request came from). Content script re-checks the ORIGIN at
+  // fill time (fill-time origin re-check, Decision 9).
+  chrome.tabs.sendMessage(
+    sender.tab.id,
+    {
+      type: "baluard-inline-fill",
+      expectedOrigin: originOf(url),
+      credential: {
+        username: cred.username || "",
+        password: cred.password || "",
+      },
     },
-  });
+    { frameId: sender.frameId ?? 0 }
+  );
   return JSON.stringify({ filled: true });
 }
 
@@ -208,8 +228,37 @@ export function compareVersions(a, b) {
 }
 
 // ── Popup / content-script message routing ──
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.action !== "string") return;
+
+  // B4 privilege split, enforced BEFORE anything else:
+  //   sender.tab present           => content script inside a page
+  //                                  principal. ONLY the two inline routes
+  //                                  are allowed; everything else is dropped
+  //                                  (a page-compromised path must not reach
+  //                                  vault.get/vault.add from a tab).
+  //   sender.id === extension id   => extension-owned page (popup/offscreen).
+  //                                  Full routing.
+  //   anything else                => dropped.
+  const fromContentScript = !!(sender && sender.tab);
+  const fromExtensionPage =
+    !fromContentScript && sender && sender.id === chrome.runtime.id;
+  if (!fromContentScript && !fromExtensionPage) {
+    console.warn("[baluard-sw] dropped message from unknown sender");
+    return false;
+  }
+  if (
+    fromContentScript &&
+    msg.action !== "inline.matches" &&
+    msg.action !== "inline.fill"
+  ) {
+    console.warn(
+      "[baluard-sw] dropped non-inline action from content script:",
+      msg.action
+    );
+    return false;
+  }
+
   // Version-skew gate: refuse everything except ping.
   if (versionSkew && msg.action !== "ping") {
     sendResponse({
@@ -220,7 +269,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return false;
   }
   // Local action: clipboard copy via offscreen document (service worker has
-  // no DOM). Auto-clears after 20s (review M2).
+  // no DOM). Auto-clears after 20s (review M2). Extension pages only — the
+  // B4 split above already dropped any content-script clipboard-copy.
   if (msg.action === "clipboard-copy") {
     clipboardCopy(msg.text)
       .then(() => sendResponse({ ok: true }))
@@ -228,6 +278,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   // Inline autofill routes (sender-gated; see handleInline* above).
+  // B2: `sender` is now actually bound — the parameter used to be named
+  // `_sender`, so these routes threw ReferenceError and never ran.
   if (msg.action === "inline.matches" && sender && sender.tab) {
     handleInlineMatches(sender)
       .then((payload) => sendResponse({ ok: true, payload }))

@@ -213,8 +213,9 @@ import { fillLoginForm, isUsernameField } from "./autofill.js";
   // ── Fill push from the SW ──
   chrome.runtime.onMessage.addListener((msg) => {
     if (!msg || msg.type !== "baluard-inline-fill") return;
-    const currentHost = location.hostname.toLowerCase();
-    if (msg.expectedOrigin && currentHost !== msg.expectedOrigin) {
+    // B1: origin compare (scheme+host+port). A hostname-only check would
+    // still fill after an https -> http downgrade navigation.
+    if (msg.expectedOrigin && location.origin !== msg.expectedOrigin) {
       // Tab navigated between user click and fill. Fail closed.
       console.warn("[baluard] inline fill refused: origin changed during fill");
       return;
