@@ -5,6 +5,7 @@ License: GPL-3.0
 
 Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets.
 Absolute primary focuses: security, privacy, and easy to use for non-technical users.
+**Context**: Baluard is Esteban's first product. First-release quality bar applies: early users judge the product (and its author) on every rough edge. Non-technical users must never need to know what runs underneath: git storage, crypto epochs, key hierarchy, sync, IPC. All of it stays invisible.
 
 **Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell. Browser: Chrome + Firefox (MV3). Mobile: Android, iOS.
 
@@ -15,6 +16,8 @@ Implications for contributors (human + agent):
 * Prefer the cleaner design over the compatible one.
 * Breaking a route, flag, field, or format? Just do it, and update every call site in the same change.
 * No deprecation periods, compat layers, or feature flags to keep old behavior alive (yet).
+* **Breakage is not UX debt.** Wire-format, vault-format, and data breaks (old files undecryptable, size caps changed, storage reshaped) are acceptable any time and need no migration or shim. Do not weigh them as user-experience regressions when evaluating a change. The only evaluation axis is *ongoing ease of use* for non-technical users (flows, friction, confusion in the current experience).
+* **Security can push format breaks.** If a security fix requires breaking a format, route, or storage layout, do it: during alpha/beta, security outranks format stability. It never outranks ease of use: prefer designs that keep flows simple (warn instead of block, confirm instead of deny) and surface the tradeoff when they conflict.
 * **Still load-bearing (NOT "breakage"):** the crypto/security invariants in CODING STANDARDS (AES-256-GCM, Argon2id, X25519/Ed25519, HPKE, zeroize-on-drop, 0600 socket, token-gating). Those must not regress.
 
 ## STRUCTURE
@@ -158,6 +161,7 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 * **Passkey ceremony (WebAuthn)**: `crates/baluard-core/src/crypto/webauthn/`
 * **Passkey data structure**: `crates/baluard-core/src/types.rs` (`PasskeyData`)
 * **Passkey plan**: `docs/plan-passkey-support.md` (authoritative)
+* **Security audit + remediation plan (2026-08-23)**: `docs/SECURITY-AUDIT-20260823.md` (56 findings, validated fix paths, workstreams, waves, release call, sequencing traps: B2 rename must ship atomically with B1/B3/B4; WS2 global limiter before C22/C23 wiring)
 * **Git provider app registration & tokens**: `docs/git-provider-apps-and-tokens.md`
 * **Git provider sync plan**: `docs/plan-git-providers-multi-vault.md`
 * **Post-quantum readiness**: `docs/post-quantum-readiness.md` (PQC status: data-at-rest PQ-safe, identity layer is the gap)
@@ -282,6 +286,8 @@ Passkeys are stored **inside `LoginData::fido2_credentials: Option<Vec<PasskeyDa
 * **Codeberg endpoint**: use `/user/repos` (returns array directly). `/repos/list` does not exist; `/repos/search` wraps in `{ok, data}`.
 
 ## UX PRINCIPLES
+* **Hide the machinery**: the user sees entries, folders, and a sync status dot. Never a git term, a crypto term, an epoch, a token, a socket, or an error code. If a flow cannot be explained without technical vocabulary, redesign the flow.
+* **Ease-of-use is the evaluation axis**: a change "breaks UX" only if it removes working functionality, adds friction, or confuses a non-technical user in the ongoing experience. Format and data incompatibilities during alpha/beta do not count as UX breaks (see STATUS).
 * **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden. Optional visible "advanced" mode for tech-savvy users.
 * **No server backend**: Desktop and mobile apps work standalone/offline. Git sync is optional.
 * **i18n**: All user-facing strings in `desktop/src/i18n/locales/en.json` and `es.json`. Use `t("key")` in components. Both files must stay in sync.
