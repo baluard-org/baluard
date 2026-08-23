@@ -1644,7 +1644,7 @@ pub fn handle_sync_clone(
 #[cfg(feature = "git-sync")]
 fn sync_init_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
     let repo = engine.init_repo()?;
     println!("Git repo initialized at {}", path.display());
     let log = engine.log(&repo, 1)?;
@@ -1657,7 +1657,7 @@ fn sync_init_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
 #[cfg(feature = "git-sync")]
 fn sync_remote_direct(vault_path: &str, url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
     let repo = engine.open_repo()?;
     engine.add_remote(&repo, "origin", url)?;
     println!("Remote 'origin' set to: {url}");
@@ -1667,7 +1667,7 @@ fn sync_remote_direct(vault_path: &str, url: &str) -> Result<(), Box<dyn std::er
 #[cfg(feature = "git-sync")]
 fn sync_push_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
     let repo = engine.open_repo()?;
     let status = engine.status(&repo)?;
     if status.is_dirty() {
@@ -1682,7 +1682,7 @@ fn sync_push_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
 #[cfg(feature = "git-sync")]
 fn sync_pull_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
     engine.recover_state()?;
     let repo = engine.open_repo()?;
     let result = engine.pull(&repo, "origin")?;
@@ -1703,7 +1703,7 @@ fn sync_pull_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
 #[cfg(feature = "git-sync")]
 fn sync_status_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
     let repo = engine.open_repo()?;
     let status = engine.status(&repo)?;
     if status.is_dirty() {
@@ -1735,7 +1735,7 @@ fn sync_status_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>
 #[cfg(feature = "git-sync")]
 fn sync_log_direct(vault_path: &str, limit: usize) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path));
+    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
     let repo = engine.open_repo()?;
     let log = engine.log(&repo, limit)?;
     if log.is_empty() {

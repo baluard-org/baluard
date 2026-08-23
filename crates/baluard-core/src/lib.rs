@@ -30,6 +30,17 @@ pub use error::BaluardError;
 /// Library version, embedded in vault format headers.
 pub const BALUARD_VERSION: u8 = 1;
 
+/// True when OS-keyring access must be skipped: in-process unit tests
+/// (`cfg(test)`) and any process carrying `BALUARD_DISABLE_KEYRING=1`
+/// (integration tests that spawn the real daemon binary). On macOS an
+/// unsigned test binary touching the user keychain triggers interactive
+/// authorization prompts, which stalls tests until a human approves and
+/// pollutes the user's keychain with test items. Keyring-backed paths fail
+/// closed to their file/keystore fallbacks instead.
+pub fn keyring_disabled() -> bool {
+    cfg!(test) || std::env::var_os("BALUARD_DISABLE_KEYRING").is_some()
+}
+
 /// Current AEAD algorithm identifier: AES-256-GCM.
 pub const ALG_AES_256_GCM: u16 = 0x0001;
 

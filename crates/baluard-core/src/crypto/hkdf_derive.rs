@@ -10,6 +10,10 @@ use crate::error::CryptoError;
 
 const SESSION_INFO: &[u8] = b"baluard-session-v1";
 const SYNC_INFO: &[u8] = b"baluard-sync-v1";
+/// Domain separation for the device-privkey seal subkey (C1).
+/// Derives from the KEK so the seal opens exactly when master-password
+/// material is present (creation, unlock, PIN-escrowed KEK).
+const DEVKEY_SEAL_INFO: &[u8] = b"baluard-devkey-v1";
 const SEQUENCE_INFO: &[u8] = b"baluard-sequence-v1";
 const INDEX_INFO: &[u8] = b"baluard-index-v1";
 const FOLDERS_INFO: &[u8] = b"baluard-folders-v1";
@@ -33,6 +37,15 @@ pub fn derive_session_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
 /// Retained through lock for desktop system tray background sync.
 pub fn derive_sync_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
     derive_key(kek, SYNC_INFO)
+}
+
+/// Derive a 32-byte device-privkey seal key from KEK (C1).
+///
+/// Seals `meta/device-privkey.json` for keystore-less vaults. The KEK
+/// itself is never retained post-unlock; the unlocked handle keeps only
+/// this subkey.
+pub fn derive_devkey_seal_key(kek: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
+    derive_key(kek, DEVKEY_SEAL_INFO)
 }
 
 /// Derive a 32-byte Sequence Key from Root Key.

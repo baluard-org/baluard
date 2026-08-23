@@ -99,6 +99,9 @@ fn spawn_daemon() -> DaemonHandle {
         // The daemon doesn't accept --data-dir; instead it honors the
         // BALUARD_DATA_DIR env var (via baluard_core::paths::data_dir).
         .env("BALUARD_DATA_DIR", data_dir.path())
+        // Tests must never touch the real macOS keychain (interactive auth
+        // prompts stall the suite and pollute the user's keychain).
+        .env("BALUARD_DISABLE_KEYRING", "1")
         .env_remove("BALUARD_SOCKET") // don't let a parent process override --socket
         // Quiet stdout/stderr; the daemon logs to env_logger which writes
         // to stderr by default. Tests run with env_logger default so this
@@ -271,6 +274,9 @@ fn spawn_with_vault() -> VaultedDaemon {
         .arg("--socket")
         .arg(&socket_path)
         .env("BALUARD_DATA_DIR", data_dir.path())
+        // Tests must never touch the real macOS keychain (interactive auth
+        // prompts stall the suite and pollute the user's keychain).
+        .env("BALUARD_DISABLE_KEYRING", "1")
         .env_remove("BALUARD_SOCKET")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
