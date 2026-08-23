@@ -27,7 +27,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,7 +42,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.copyToClipboard
-import xyz.actitud.baluard.platform.setSecureFlag
 import xyz.actitud.baluard.ui.components.BaluardAmbientBackground
 import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
@@ -57,11 +55,6 @@ fun RecoveryPhraseScreen(
     words: List<String>,
     onAcknowledged: () -> Unit,
 ) {
-    DisposableEffect(Unit) {
-        setSecureFlag(true)
-        onDispose { setSecureFlag(false) }
-    }
-
     var acknowledged by rememberSaveable { mutableStateOf(false) }
 
     BaluardAmbientBackground {

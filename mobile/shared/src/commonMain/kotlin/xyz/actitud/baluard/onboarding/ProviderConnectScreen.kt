@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -60,7 +61,10 @@ fun ProviderConnectScreen(
     onCancelled: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var token by rememberSaveable { mutableStateOf("") }
+    // M6: the typed PAT is a secret — plain `remember` only. Saved instance
+    // state persists to disk and must never carry it; losing it on rotation
+    // is correct behavior for a secret.
+    var token by remember { mutableStateOf("") }
     var showPat by rememberSaveable { mutableStateOf(false) }
 
     BaluardAmbientBackground {
@@ -133,6 +137,9 @@ fun ProviderConnectScreen(
                         label = t("provider.patLabel"),
                         placeholder = "ghp_... / glpat-... / token",
                         singleLine = true,
+                        // M6: a pasted PAT must not be legible over the
+                        // shoulder or in screenshots.
+                        isPassword = true,
                     )
                     Spacer(Modifier.height(12.dp))
                     BaluardPrimaryButton(
