@@ -12,7 +12,33 @@
 // are the highest-value regression surface.
 
 import { describe, it, expect } from "vitest";
-import { compareVersions, classifyDisconnect, buildError, senderUrl } from "../src/background.js";
+import {
+  compareVersions,
+  classifyDisconnect,
+  buildError,
+  senderUrl,
+  originOf,
+} from "../src/background.js";
+
+describe("originOf (B1: fill-time origin binding)", () => {
+  it("returns scheme+host+port", () => {
+    expect(originOf("https://example.com/login")).toBe("https://example.com");
+    expect(originOf("http://intranet.local:8080/x")).toBe("http://intranet.local:8080");
+  });
+
+  it("keeps scheme in the origin so https never equals http (downgrade fill blocked)", () => {
+    expect(originOf("https://example.com/")).not.toBe(originOf("http://example.com/"));
+  });
+
+  it("keeps port in the origin", () => {
+    expect(originOf("https://example.com/")).not.toBe(originOf("https://example.com:8443/"));
+  });
+
+  it("fails closed on unparseable URLs", () => {
+    expect(originOf("")).toBe("");
+    expect(originOf("not a url")).toBe("");
+  });
+});
 
 describe("senderUrl (inline autofill sender gating)", () => {
   it("uses the privileged sender.tab.url", () => {
