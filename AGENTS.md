@@ -1,12 +1,12 @@
 # OVERVIEW
 Project: **Baluard** (Git-native password manager)
-Stack: Rust (core crypto + CLI + daemon), SolidJS/Tailwind/Tauri v2 (desktop), Protobuf (IPC schema)
+Stack: Rust (core crypto + daemon runtime + CLI + NMH + UniFFI), SolidJS/Tailwind/Tauri v2 (desktop), JS/MV3 (browser extension), Kotlin Multiplatform/Compose (mobile), Protobuf (IPC schema)
 License: GPL-3.0
 
 Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets.
 Absolute primary focuses: security, privacy, and easy to use for non-technical users.
 
-**Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell. Mobile: Android, iOS.
+**Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell. Browser: Chrome + Firefox (MV3). Mobile: Android, iOS.
 
 ## STATUS
 Baluard is pre-1.0 Work In Progress. **Breakage is expected and OK.** Move things forward; do not preserve backwards compatibility at the cost of progress. The vault format, IPC routes/JSON payloads, CLI flags, protobuf schema, and config shapes may all change without notice, deprecation period, shim, or migration path. No stable API/ABI contract exists yet.
@@ -39,14 +39,23 @@ baluard/
 │   │       ├── main.rs         # Command dispatch
 │   │       ├── client.rs       # Protobuf socket client
 │   │       └── commands/       # Dual-mode handlers
-│   └── baluard-daemon/           # Background IPC daemon (lib + bin)
+│   ├── baluard-runtime/          # Shared vault-session runtime (hosted in-process by daemon, NMH, mobile)
+│   │   └── src/
+│   │       ├── host.rs         # VaultHost (Phase 6 multi-vault map + active pointer)
+│   │       ├── state.rs        # VaultState (per-vault handle, session token, cover timer, auto-lock, autosync handle)
+│   │       ├── autosync.rs     # Auto-sync coordinator (debounced push, periodic pull, offline retry)
+│   │       ├── pin.rs          # Session PIN escrow (in-memory KEK, 5-strike nuke)
+│   │       ├── bridge.rs       # Bridge-token registry + mobile pairing ceremony (approve-don't-type)
+│   │       ├── rate_limit.rs   # Per-vault rate limiting: unlock/recovery/emergency/biometric/PIN (M4)
+│   │       ├── providers.rs    # Token refresh serialization, device flow, PAT connect, pre-unlock enrollment
+│   │       └── crypto.rs       # constant_time_eq + crypto helpers for session tokens
+│   ├── baluard-nmh/             # Browser native messaging host: stdio JSON <-> daemon protobuf relay
+│   ├── baluard-uniffi/          # UniFFI bindings consumed by mobile/shared (Kotlin Multiplatform)
+│   └── baluard-daemon/          # Background IPC daemon (lib + bin) — thin shell over baluard-runtime
 │       └── src/
-│           ├── lib.rs          # Library surface (re-exports host/state/handler for tests)
 │           ├── main.rs         # Socket listener, SIGINT/SIGTERM, 0600 perms
-│           ├── host.rs         # VaultHost (Phase 6 multi-vault map + active pointer)
 │           ├── handler.rs      # Protobuf routing, per-vault token-gated IPC
-│           ├── autosync.rs     # Auto-sync coordinator (debounced push, periodic pull, offline retry)
-│           └── state.rs        # VaultState (per-vault handle, session token, cover timer, auto-lock, autosync handle)
+│           └── socket_path.rs  # Socket path discovery
 ├── desktop/                    # Tauri v2 + SolidJS frontend
 │   └── src/
 │       ├── App.jsx             # Root component (thin provider wrapper)
@@ -55,6 +64,16 @@ baluard/
 │       ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, eff-words.js, wordlist-{en,es}.js, disableAutofill.js
 │       ├── __tests__/          # vitest tests (payload, utils, filters, cipherSchema)
 │       └── i18n/locales/       # en.json, es.json (all user-facing strings)
+├── browser/                    # Browser extension (MV3, Chrome + Firefox)
+│   ├── shared/src/             # background.js, content.js, inline.js, offscreen.js, autofill.js, settings.js
+│   ├── shared/manifest.base.json + vite.config.js
+│   ├── chrome/ + firefox/      # Per-store packaging (manifest.extra.json, dist builds)
+│   └── shared/tests/           # vitest (background, content, inline, offscreen, autofill, settings)
+├── mobile/                     # Kotlin Multiplatform app (Compose Multiplatform UI)
+│   ├── shared/src/commonMain/  # App UI + ViewModels (auth, list, detail, edit, sync, generator, settings)
+│   ├── shared/src/androidMain/ # Android platform expect/actual (SecureFlag, Biometric, Clipboard, paths)
+│   ├── shared/src/iosMain/     # iOS platform expect/actual
+│   └── androidApp/             # Android entry point + Gradle build
 ├── proto/                      # Protobuf schemas (compiled via prost)
 │   ├── vault.proto
 │   ├── space.proto
@@ -129,9 +148,11 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 * **Git sync**: `crates/baluard-core/src/sync/`
 * **Git providers (ForgeProvider trait, OAuth/PAT)**: `crates/baluard-core/src/providers/`
 * **CLI commands**: `crates/baluard-cli/src/commands/mod.rs`
-* **Daemon IPC**: `crates/baluard-daemon/src/handler.rs` (host-level dispatcher) + `host.rs` (`VaultHost` multi-vault map)
-* **Daemon vault state**: `crates/baluard-daemon/src/state.rs` (`VaultState`, one per open vault) + `host.rs` (`VaultHost` holds the map + active pointer)
-* **Auto-sync coordinator**: `crates/baluard-daemon/src/autosync.rs` (`AutoSyncHandle` — debounced push after CRUD, periodic pull, offline retry, field-level conflict resolution). Core workflow: `SyncEngine::run_sync_cycle_with_resolver` / `resolve_conflict_keep_local` / `finalize_conflicts` in `sync/engine.rs`. Conflict merge: `conflict_decrypt_and_merge` + `conflict_resolve_keep_both` in `state.rs`. Desktop: `AutoSyncContext`, `AutoSyncIndicator`, `ConflictBanner`, `ConflictResolutionPanel`, `conflictFlow.js`.
+* **Daemon runtime (shared by daemon/NMH/mobile)**: `crates/baluard-runtime/src/` — `host.rs` (`VaultHost` multi-vault map), `state.rs` (`VaultState`, one per open vault), `autosync.rs`, `pin.rs`, `bridge.rs` (mobile pairing + bridge tokens), `rate_limit.rs` (unlock/PIN/biometric/recovery throttling)
+* **Daemon IPC**: `crates/baluard-daemon/src/handler.rs` (protobuf host-level dispatcher) + `main.rs` (Unix socket listener). Thin shell; session logic lives in baluard-runtime
+* **Auto-sync coordinator**: `crates/baluard-runtime/src/autosync.rs` (`AutoSyncHandle` — debounced push after CRUD, periodic pull, offline retry, field-level conflict resolution). Core workflow: `SyncEngine::run_sync_cycle_with_resolver` / `resolve_conflict_keep_local` / `finalize_conflicts` in `sync/engine.rs`. Conflict merge: `conflict_decrypt_and_merge` + `conflict_resolve_keep_both` in `state.rs`. Desktop: `AutoSyncContext`, `AutoSyncIndicator`, `ConflictBanner`, `ConflictResolutionPanel`, `conflictFlow.js`.
+* **Browser extension**: `browser/shared/src/` (background, content, inline, offscreen, autofill, settings). Manifest: `browser/shared/manifest.base.json`. NMH relay: `crates/baluard-nmh/src/main.rs`
+* **Mobile app**: `mobile/shared/src/` (commonMain UI/VMs, androidMain/iosMain platform impls) + `mobile/androidApp/`. Rust bridge: `crates/baluard-uniffi/src/lib.rs` (full vault lifecycle over UniFFI)
 * **Desktop frontend**: `desktop/src/App.jsx`
 * **Device fleet**: `crates/baluard-core/src/device_manager.rs`
 * **Passkey ceremony (WebAuthn)**: `crates/baluard-core/src/crypto/webauthn/`
@@ -165,14 +186,14 @@ Unix domain sockets. 0600 via umask. Peer credential verification (SO_PEERCRED/g
 ### Quick Unlock (per-vault, multi-platform)
 Three unlock-shortcut mechanisms, all **per-vault** (never per-app). The frontend queries both `vault.biometric_status` and `vault.pin_status` (slug-routed, pre-unlock safe) and shows whichever buttons are enabled for the selected vault.
 - **Biometric keychain (macOS Touch ID):** master password stored in the OS keychain under account `quick-unlock:<vault_id>`, gated by `SecAccessControl(BIOMETRY_ANY)` (Touch ID/passcode on read). `vault_id` = deterministic UUID from KDF salt (`VaultHandle::derive_vault_id` / `vault_id_for_path`), stable across renames + git-sync. `biometric.rs` platform modules. A legacy global `quick-unlock` entry (pre-QU, shared across vaults) is wiped once at daemon startup via `disable_legacy_global()`.
-- **Session PIN (Linux + Windows-without-Hello):** in-memory KEK escrow (`daemon/src/pin.rs` `PinEscrow`). After the first master-password unlock the user enables a 6-digit PIN; the daemon retains the Argon2id-derived KEK + an Argon2id verifier over the PIN (both zeroized on drop, never on disk). PIN unlock calls `VaultHandle::unlock_with_kek` (skips the master KDF, still verifies keywrap + canaries). **Session-bound:** dies on daemon restart / vault close; **survives soft-lock** (escrow is a separate `VaultState` field from the handle). **5-strike nuke:** after `pin::MAX_PIN_FAILURES` (=5) wrong PINs the escrow is destroyed and the master password becomes mandatory (Bitwarden-equivalent policy; the 10^6 keyspace cannot be brute-forced through this in-process cap). Routes: `vault.pin_status` (not token-gated), `vault.pin_enable`/`vault.pin_disable` (token-gated), `vault.pin_unlock` (host-level, not token-gated, mirrors `handle_vault_biometric_unlock`).
+- **Session PIN (Linux + Windows-without-Hello):** in-memory KEK escrow (`crates/baluard-runtime/src/pin.rs` `PinEscrow`). After the first master-password unlock the user enables a 6-digit PIN; the daemon retains the Argon2id-derived KEK + an Argon2id verifier over the PIN (both zeroized on drop, never on disk). PIN unlock calls `VaultHandle::unlock_with_kek` (skips the master KDF, still verifies keywrap + canaries). **Session-bound:** dies on daemon restart / vault close; **survives soft-lock** (escrow is a separate `VaultState` field from the handle). **5-strike nuke:** after `pin::MAX_PIN_FAILURES` (=5) wrong PINs the escrow is destroyed and the master password becomes mandatory (Bitwarden-equivalent policy; the 10^6 keyspace cannot be brute-forced through this in-process cap). Routes: `vault.pin_status` (not token-gated), `vault.pin_enable`/`vault.pin_disable` (token-gated), `vault.pin_unlock` (host-level, not token-gated, mirrors `handle_vault_biometric_unlock`).
 - **Windows Hello (future, not yet implemented):** TPM-backed `KeyCredential` API. The current `keyring` `windows-native` backend is NOT biometric-gated per-read (Credential Manager / DPAPI), hence the session-PIN fallback above.
 
 ### Padded Buckets
 5 tiers (Xs:5KB, S:30KB, M:100KB, L:250KB, XL:2MB). Auto-selected via `Tier::fit()`. Prevents metadata leakage.
 
 ### Auto-Sync (Desktop)
-When a vault has a remote + connected provider, the daemon coordinator (`autosync.rs`) syncs automatically. **Debounced push** (5s coalesce) after every CRUD mutation via the `COVER_MUTATION_ACTIONS` hook in `handler.rs` — a burst of edits becomes one commit + one round-trip; the push cycle itself is commit→pull→push so concurrent remote edits land immediately after a local change. **Event-driven pull**: pull immediately on vault unlock (`VaultState::unlock` calls `pull_only` after `activate`), and on window focus (desktop fires `sync.autosync_nudge_pull`; daemon applies a 10-min `FOCUS_PULL_MIN_GAP_SECS` guard so flicker collapses to one pull per 10 min). **Idle fallback pull** every 30 min (`PULL_INTERVAL_SECS`) catches the rare "left open on two machines" case; deliberately quiet (no predictable periodic heartbeat, T14 timing-fingerprint). Serverless architecture (git remote IS the server, no push channel) — unlike Bitwarden's SignalR inbound we must poll, but event triggers do the snappy work and the timer is just a backstop. **Offline handling**: network failures (`SyncError::Network`, classified via `is_network_error` from `git2::Error::class()` Net/Http/Ssh/Ssl) → `Offline` state → 30s retry probe. **Canonical git workflow** (`SyncEngine::run_sync_cycle`): commit local → pull → resolve conflicts → push (committing first keeps the worktree clean so the pull's force-checkout can't discard uncommitted edits). **Conflict policy (Phase 2, 2026-07-02)**: field-level 3-way merge is now wired into the cycle via `run_sync_cycle_with_resolver(..., Pause)`. The daemon decrypts base/local/remote (`VaultHandle::decrypt_cipher_bytes`) and runs `conflict::merge_ciphers` (semantic atomic groups for username/password/TOTP). `MergeResult::Merged` → re-encrypt under `current_epoch` + `max(local_seq,remote_seq)+1` + `finalize_conflicts` (no UI). `MergeResult::Conflict` → pause as `SyncCycleOutcome::NeedsDecision`, surface masked details via `sync.conflict`, resume on `sync.conflict.resolve` (keep_local/keep_remote = raw blob; keep_both = new-uuid clone mirroring `add_cipher`). Cross-epoch decrypt failure (foreign epoch) bails to keep-local raw blob with a `cross_epoch` UI flag. The backward-compat `run_sync_cycle` wrapper still delegates with `ConflictResolution::KeepLocal`. Desktop: `AutoSyncContext` polls `sync.conflict` on `needsdecision` state and feeds the `ConflictResolutionPanel`; sync status dot + transient label top-right (`AutoSyncIndicator`); conflict banner (`ConflictBanner`). Activated in `VaultState::unlock` (immediate, not lazy); deactivated on lock. **C3 mutex**: `cycle_lock` (tokio Mutex) guarantees only one sync cycle touches the on-disk repo at a time. **No daemon-side cache**: `get_cipher`/`list_folders` read from disk every call, so after a pull the handle serves fresh data without a reload (root_key/SGK stay valid). **Index rebuild**: all three verdict paths call `rebuild_cipher_index()` after finalize (they write via `SyncEngine`, bypassing the `VaultHandle` index-rebuild hooks — critical for keep_both's new cipher_id).
+When a vault has a remote + connected provider, the daemon coordinator (`crates/baluard-runtime/src/autosync.rs`) syncs automatically. **Debounced push** (5s coalesce) after every CRUD mutation via the `COVER_MUTATION_ACTIONS` hook in `handler.rs` — a burst of edits becomes one commit + one round-trip; the push cycle itself is commit→pull→push so concurrent remote edits land immediately after a local change. **Event-driven pull**: pull immediately on vault unlock (`VaultState::unlock` calls `pull_only` after `activate`), and on window focus (desktop fires `sync.autosync_nudge_pull`; daemon applies a 10-min `FOCUS_PULL_MIN_GAP_SECS` guard so flicker collapses to one pull per 10 min). **Idle fallback pull** every 30 min (`PULL_INTERVAL_SECS`) catches the rare "left open on two machines" case; deliberately quiet (no predictable periodic heartbeat, T14 timing-fingerprint). Serverless architecture (git remote IS the server, no push channel) — unlike Bitwarden's SignalR inbound we must poll, but event triggers do the snappy work and the timer is just a backstop. **Offline handling**: network failures (`SyncError::Network`, classified via `is_network_error` from `git2::Error::class()` Net/Http/Ssh/Ssl) → `Offline` state → 30s retry probe. **Canonical git workflow** (`SyncEngine::run_sync_cycle`): commit local → pull → resolve conflicts → push (committing first keeps the worktree clean so the pull's force-checkout can't discard uncommitted edits). **Conflict policy (Phase 2, 2026-07-02)**: field-level 3-way merge is now wired into the cycle via `run_sync_cycle_with_resolver(..., Pause)`. The daemon decrypts base/local/remote (`VaultHandle::decrypt_cipher_bytes`) and runs `conflict::merge_ciphers` (semantic atomic groups for username/password/TOTP). `MergeResult::Merged` → re-encrypt under `current_epoch` + `max(local_seq,remote_seq)+1` + `finalize_conflicts` (no UI). `MergeResult::Conflict` → pause as `SyncCycleOutcome::NeedsDecision`, surface masked details via `sync.conflict`, resume on `sync.conflict.resolve` (keep_local/keep_remote = raw blob; keep_both = new-uuid clone mirroring `add_cipher`). Cross-epoch decrypt failure (foreign epoch) bails to keep-local raw blob with a `cross_epoch` UI flag. The backward-compat `run_sync_cycle` wrapper still delegates with `ConflictResolution::KeepLocal`. Desktop: `AutoSyncContext` polls `sync.conflict` on `needsdecision` state and feeds the `ConflictResolutionPanel`; sync status dot + transient label top-right (`AutoSyncIndicator`); conflict banner (`ConflictBanner`). Activated in `VaultState::unlock` (immediate, not lazy); deactivated on lock. **C3 mutex**: `cycle_lock` (tokio Mutex) guarantees only one sync cycle touches the on-disk repo at a time. **No daemon-side cache**: `get_cipher`/`list_folders` read from disk every call, so after a pull the handle serves fresh data without a reload (root_key/SGK stay valid). **Index rebuild**: all three verdict paths call `rebuild_cipher_index()` after finalize (they write via `SyncEngine`, bypassing the `VaultHandle` index-rebuild hooks — critical for keep_both's new cipher_id).
 
 ### Device Lifecycle
 Epoch state machine: CREATED -> ACTIVE -> ROTATING -> RETIRED -> DESTROYED. `revoke_device_and_rekey()` performs full rotation: validates preconditions, writes crash marker, re-encrypts all ciphers + attachments, writes keywrap, updates in-memory state. `rotate_root_key()` for non-revocation rotation. Recovery via BIP-39 phrase.
