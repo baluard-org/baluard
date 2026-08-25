@@ -755,6 +755,7 @@ impl VaultHandle {
                             .ok(),
                         fetch_favicons: v["fetch_favicons"].as_bool(),
                         slug: v["slug"].as_str().map(String::from),
+                        device_names: None,
                         enrollment_policy: serde_json::from_value(v["enrollment_policy"].clone())
                             .unwrap_or(crate::vault::manifest::EnrollmentPolicy::Strict),
                     };
@@ -823,6 +824,12 @@ impl VaultHandle {
             default_uri_match: settings.default_uri_match,
             fetch_favicons: settings.fetch_favicons,
             slug: settings.slug.clone(),
+            // C5: preserve the encrypted device-name map across rewrites —
+            // VaultSettings does not carry it, so carry the stored value.
+            device_names: {
+                let names = self.device_display_names();
+                if names.is_empty() { None } else { Some(names) }
+            },
             enrollment_policy: settings.enrollment_policy,
         };
         let key = hkdf_derive::derive_settings_key(unlocked.root_key.as_bytes())
@@ -838,6 +845,98 @@ impl VaultHandle {
         if legacy.exists() {
             let _ = std::fs::remove_file(&legacy);
         }
+        Ok(())
+    }
+
+    /// Device display names from the encrypted settings map (audit C5).
+    /// Empty map when the vault is locked or the file is absent. The
+    /// registry file may briefly hold names pre-migration; this accessor is
+    /// the post-unlock source of truth.
+    pub fn device_display_names(&self) -> std::collections::HashMap<String, String> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return std::collections::HashMap::new(),
+        };
+        let enc_path = self.path.join("meta/settings.enc");
+        if !enc_path.exists() {
+            return std::collections::HashMap::new();
+        }
+        let Ok(key) = hkdf_derive::derive_settings_key(unlocked.root_key.as_bytes()) else {
+            return std::collections::HashMap::new();
+        };
+        let Ok(data) = std::fs::read(&enc_path) else {
+            return std::collections::HashMap::new();
+        };
+        let Ok(envelope) = crate::vault::envelope::deserialize(&data) else {
+            return std::collections::HashMap::new();
+        };
+        let Ok(decrypted) = crate::crypto::aead::decrypt(&key, &envelope) else {
+            return std::collections::HashMap::new();
+        };
+        serde_json::from_slice::<crate::vault::manifest::EncryptedSettings>(&decrypted)
+            .ok()
+            .and_then(|e| e.device_names)
+            .unwrap_or_default()
+    }
+
+    /// Fold plaintext device display names from meta/devices.json into the
+    /// encrypted settings map and strip them from the registry file
+    /// (audit C5: devices.json is git-tracked; names are PII). Idempotent —
+    /// re-runs re-fold names reintroduced by a legacy remote's registry
+    /// during sync and then no-op. Best-effort callers may log and continue.
+    pub fn migrate_device_names_into_settings(&self) -> Result<(), BaluardError> {
+        // Requires the root key (settings.enc encryption). Pre-unlock is a
+        // no-op; the next unlock retries.
+        if !self.is_unlocked() {
+            return Ok(());
+        }
+        let reg_path = self.path.join("meta/devices.json");
+        let Some(reg_json) = std::fs::read_to_string(&reg_path).ok() else {
+            return Ok(());
+        };
+        let Ok(mut reg) = serde_json::from_str::<crate::devices::DeviceRegistry>(&reg_json) else {
+            // Corrupt registry: leave untouched; sync surfaces it elsewhere.
+            return Ok(());
+        };
+
+        // Fold every non-empty name into the encrypted map and blank it.
+        let mut names = self.device_display_names();
+        let mut folded = false;
+        for (id, entry) in reg.devices.iter_mut() {
+            if !entry.name.is_empty() {
+                names.insert(id.to_string(), std::mem::take(&mut entry.name));
+                folded = true;
+            }
+        }
+        if !folded {
+            return Ok(()); // already clean: the common path after first run
+        }
+
+        // Persist the map first, then the stripped registry. A crash between
+        // the two only causes a redundant re-fold on the next unlock.
+        let settings = self.get_settings()?;
+        let enc = crate::vault::manifest::EncryptedSettings {
+            vault_timeout: settings.vault_timeout,
+            default_uri_match: settings.default_uri_match,
+            fetch_favicons: settings.fetch_favicons,
+            slug: settings.slug.clone(),
+            device_names: Some(names),
+            enrollment_policy: settings.enrollment_policy,
+        };
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Ok(()),
+        };
+        let key = hkdf_derive::derive_settings_key(unlocked.root_key.as_bytes())
+            .map_err(|e| VaultError::Metadata(format!("settings key derivation: {e}")))?;
+        let json = serde_json::to_vec(&enc)
+            .map_err(|e| VaultError::Metadata(format!("settings.enc serialization: {e}")))?;
+        let enc_path = self.path.join("meta/settings.enc");
+        self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
+
+        let stripped = serde_json::to_string_pretty(&reg)
+            .map_err(|e| VaultError::Metadata(format!("devices serialization: {e}")))?;
+        super::write_vault_file(&reg_path, stripped.as_bytes())?;
         Ok(())
     }
 
@@ -2989,13 +3088,25 @@ impl VaultHandle {
                     continue;
                 }
                 let enc_blob = std::fs::read(&attach_path)?;
+                let attach_uuid: Uuid = attach_meta
+                    .id
+                    .parse()
+                    .map_err(|e| VaultError::Corrupt(format!("attachment id not a uuid: {e}")))?;
                 let mut plaintext = crate::vault::attachment::decrypt_attachment(
+                    self.vault_id,
+                    *cipher_id,
+                    attach_uuid,
                     old_item_key.as_bytes(),
                     &enc_blob,
                 )?;
                 let new_enc = crate::vault::attachment::encrypt_attachment(
+                    self.vault_id,
+                    *cipher_id,
+                    attach_uuid,
                     new_item_key.as_bytes(),
                     &plaintext,
+                    new_epoch,
+                    existing.update_seq,
                 )?;
                 plaintext.zeroize();
                 let attach_tmp = attach_path.with_extension("enc.tmp");
@@ -4649,6 +4760,7 @@ mod tests {
         .unwrap();
 
         // Add a cipher with an attachment
+        let attach_id = uuid::Uuid::new_v4();
         let input = CipherInput {
             name: "WithAttachment".into(),
             folder_id: None,
@@ -4663,10 +4775,10 @@ mod tests {
             created_at: None,
             password_history: vec![],
             attachments: vec![crate::vault::attachment::AttachmentMeta {
-                id: "attach-1".into(),
+                id: attach_id.to_string(),
                 filename: "secret.txt".into(),
                 size: 12,
-                encrypted_size: 12 + 12 + 16, // nonce + ciphertext + tag
+                encrypted_size: 0, // informational only (C4: blobs are tier-padded)
                 mime_type: "text/plain".into(),
                 created_at: 1000,
             }],
@@ -4683,11 +4795,19 @@ mod tests {
             .join(id1.to_string())
             .join("attachments");
         std::fs::create_dir_all(&attach_dir).unwrap();
-        let item_key = handle.derive_item_key(id1, handle.unlocked().current_epoch);
-        let enc_blob =
-            crate::vault::attachment::encrypt_attachment(item_key.as_bytes(), b"hello world")
-                .unwrap();
-        std::fs::write(attach_dir.join("attach-1.enc"), &enc_blob).unwrap();
+        let item_key_epoch = handle.unlocked().current_epoch;
+        let item_key = handle.derive_item_key(id1, item_key_epoch);
+        let enc_blob = crate::vault::attachment::encrypt_attachment(
+            handle.vault_id,
+            id1,
+            attach_id,
+            item_key.as_bytes(),
+            b"hello world",
+            item_key_epoch,
+            1,
+        )
+        .unwrap();
+        std::fs::write(attach_dir.join(format!("{attach_id}.enc")), &enc_blob).unwrap();
 
         // Add a cipher, then move it to trash
         let trash_input = CipherInput {
@@ -4716,16 +4836,21 @@ mod tests {
         assert_eq!(result.revoked_device_id, dev2_id);
 
         // Verify attachment was re-encrypted (file still exists and is readable)
-        let attach_path = attach_dir.join("attach-1.enc");
+        let attach_path = attach_dir.join(format!("{attach_id}.enc"));
         assert!(
             attach_path.exists(),
             "attachment file should exist after rekey"
         );
         let new_enc_blob = std::fs::read(&attach_path).unwrap();
         let new_item_key = handle.derive_item_key(id1, handle.unlocked().current_epoch);
-        let decrypted =
-            crate::vault::attachment::decrypt_attachment(new_item_key.as_bytes(), &new_enc_blob)
-                .unwrap();
+        let decrypted = crate::vault::attachment::decrypt_attachment(
+            handle.vault_id,
+            id1,
+            attach_id,
+            new_item_key.as_bytes(),
+            &new_enc_blob,
+        )
+        .unwrap();
         assert_eq!(decrypted, b"hello world");
 
         // Verify trashed cipher still decrypts

@@ -310,7 +310,16 @@ impl VaultHost {
                 active: active.as_deref() == Some(entry.slug.as_str()),
                 provider: entry.provider.clone(),
                 last_opened: entry.last_opened,
-                path: entry.path.to_string_lossy().into_owned(),
+                // Audit C19: withhold the filesystem path while the vault is
+                // not unlocked. Pre-unlock surfaces (login screen, vault
+                // switcher on a locked vault) must not reveal where vaults
+                // live on disk. The CLI never prints this field; the desktop
+                // detach modal shows it only for unlocked vaults.
+                path: if matches!(presence, VaultPresence::Unlocked) {
+                    entry.path.to_string_lossy().into_owned()
+                } else {
+                    String::new()
+                },
             });
         }
 

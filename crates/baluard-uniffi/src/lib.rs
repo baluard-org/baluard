@@ -392,21 +392,27 @@ impl MobileVault {
         self.state.device_name().await
     }
 
+    /// This device's UUID — feeds the autosync coordinator (C5: engine
+    /// identity is the id, never the display name).
+    async fn device_id(&self) -> String {
+        self.state.device_id().await
+    }
+
     /// Pull immediately after unlock so other-device edits land first.
     pub async fn sync_on_unlock(&self) {
-        let dn = self.device_name().await;
+        let dn = self.device_id().await;
         self.state.autosync.on_unlock(dn).await;
     }
 
     /// Arm the 5s debounced push after a CRUD mutation (coalesces bursts).
     pub async fn sync_on_mutation(&self) {
-        let dn = self.device_name().await;
+        let dn = self.device_id().await;
         self.state.autosync.on_mutation(dn).await;
     }
 
     /// Pull on app foreground (10-min guard collapses focus flicker).
     pub async fn sync_on_foreground(&self) {
-        let dn = self.device_name().await;
+        let dn = self.device_id().await;
         self.state.autosync.on_foreground(dn).await;
     }
 
@@ -418,14 +424,14 @@ impl MobileVault {
 
     /// User pull-to-refresh / "Sync now".
     pub async fn sync_pull_now(&self) {
-        let dn = self.device_name().await;
+        let dn = self.device_id().await;
         self.state.autosync.pull_now(dn).await;
     }
 
     /// Host-scheduled 30s probe while Offline + foregrounded (the one piece of
     /// background_loop mobile must reproduce).
     pub async fn sync_offline_tick(&self) {
-        let dn = self.device_name().await;
+        let dn = self.device_id().await;
         self.state.autosync.offline_tick(dn).await;
     }
 
@@ -937,8 +943,7 @@ pub async fn background_fetch(path: String) -> Result<bool, BaluardError> {
     let vault_path = std::path::PathBuf::from(path);
     tokio::task::spawn_blocking(move || {
         // Fetch-only on a locked vault: no commit signing, so no seal key.
-        let engine =
-            baluard_core::sync::engine::SyncEngine::new(&vault_path, "background", None);
+        let engine = baluard_core::sync::engine::SyncEngine::new(&vault_path, "background", None);
         let repo = engine.open_repo()?;
         engine
             .fetch_locked(&repo, "origin")

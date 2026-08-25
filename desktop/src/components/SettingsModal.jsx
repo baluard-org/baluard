@@ -30,6 +30,9 @@ export default function SettingsModal() {
 
   // Biometric state
   const [biometricEnabled, setBiometricEnabled] = createSignal(false);
+  // Audit C3: true when reading the stored password requires a
+  // user-presence prompt (macOS). False on Linux/Windows keyring backends.
+  const [biometricReadGated, setBiometricReadGated] = createSignal(true);
   const [biometricAvailable, setBiometricAvailable] = createSignal(false);
   const [biometricPassword, setBiometricPassword] = createSignal("");
   const [showBiometricInput, setShowBiometricInput] = createSignal(false);
@@ -115,6 +118,7 @@ export default function SettingsModal() {
         try {
           const status = JSON.parse(await daemon("vault.biometric_status"));
           enabled = status.enabled;
+          setBiometricReadGated(status.read_gated !== false);
         } catch {}
       }
       setBiometricAvailable(available);
@@ -266,8 +270,9 @@ export default function SettingsModal() {
     try {
       // Validate password via daemon (temp handle, doesn't affect session)
       // Then store in file-based keychain (biometric read enforced at daemon level)
-      await daemon("vault.biometric_enable", JSON.stringify({ password }));
+      const res = JSON.parse(await daemon("vault.biometric_enable", JSON.stringify({ password })));
       setBiometricEnabled(true);
+      setBiometricReadGated(res.read_gated !== false);
       auth.refreshBiometric();
       setShowBiometricInput(false);
       setBiometricPassword("");
@@ -586,6 +591,13 @@ export default function SettingsModal() {
                       </Show>
                     </Show>
                   </div>
+
+                  {/* Audit C3: platforms without a per-read keychain gate */}
+                  <Show when={biometricEnabled() && !biometricReadGated()}>
+                    <div class="mt-2 p-2.5 rounded-lg border border-[var(--color-danger)] bg-[var(--color-sidebar)] text-[10px] text-[var(--color-danger)] leading-relaxed">
+                      {t("settings.quickUnlockNoReadGate")}
+                    </div>
+                  </Show>
 
                   <Show when={biometricAvailable() && showBiometricInput()}>
                     <div class="mt-3 p-3 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-xl space-y-3">

@@ -57,9 +57,11 @@ export default function DetachVaultModal(props) {
             <p id="detach-vault-desc" class="text-sm text-[var(--color-muted)] mb-1">
               {t("vault.vaultSwitcher.detachBody", { name: props.vault.display_name })}
             </p>
-            <p class="text-[10px] font-mono text-[var(--color-muted)] mb-5 break-all">
-              {props.vault.path}
-            </p>
+            <Show when={props.vault.path}>
+              <p class="text-[10px] font-mono text-[var(--color-muted)] mb-5 break-all">
+                {props.vault.path}
+              </p>
+            </Show>
             <div class="flex gap-3">
               <Button onClick={close} class="flex-1 py-2.5">
                 {t("vault.vaultSwitcher.detachCancel")}

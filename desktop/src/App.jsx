@@ -1,4 +1,4 @@
-import { onSettled, Show } from "solid-js";
+import { onSettled, Show, createSignal } from "solid-js";
 import { useI18n } from "./i18n/index.jsx";
 import { daemon, showWindow } from "./lib/daemon.js";
 import { disableAutofill } from "./lib/disableAutofill.js";
@@ -16,13 +16,29 @@ import WelcomeScreen from "./components/WelcomeScreen.jsx";
 import VaultView from "./components/VaultView.jsx";
 import AutoSyncIndicator from "./components/AutoSyncIndicator.jsx";
 import ConflictResolutionPanel from "./components/ConflictResolutionPanel.jsx";
-import ConflictDevTrigger from "./lib/conflictDevTriggers.jsx";
 import ToastContainer from "./components/ToastContainer.jsx";
 
 export default function App() {
   const auth = useAuth();
   const { t } = useI18n();
 
+  // Audit C8/D9: the dev conflict trigger is dynamically imported and only
+  // in dev builds. Vite drops `if (import.meta.env.DEV)` blocks statically
+  // in `vite build`, so the import() (and the whole trigger + mock chunk,
+  // Math.random included) never lands in a production bundle.
+  const [ConflictDevTrigger, setConflictDevTrigger] = createSignal(null);
+  function DevTriggerSlot() {
+    const Comp = ConflictDevTrigger();
+    return Comp ? <Comp /> : null;
+  }
+
+  onSettled(() => {
+    if (import.meta.env.DEV) {
+      import("./lib/conflictDevTriggers.jsx").then((m) =>
+        setConflictDevTrigger(() => m.default),
+      );
+    }
+  });
   onSettled(() => {
     (async () => {
       try {
@@ -111,7 +127,7 @@ export default function App() {
                   <AutoSyncIndicator />
                   <VaultView />
                   <ConflictResolutionPanel />
-                  <ConflictDevTrigger />
+                  <DevTriggerSlot />
                 </AutoSyncProvider>
               </ConflictResolutionProvider>
             </VaultProvider>

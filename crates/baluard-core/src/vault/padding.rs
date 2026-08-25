@@ -75,9 +75,30 @@ mod tests {
 
     #[test]
     fn tier_fit() {
+        use crate::types::Tier;
         assert_eq!(Tier::fit(100), Some(Tier::Xs));
-        assert_eq!(Tier::fit(5 * 1024), Some(Tier::Xs)); // exactly fits
-        assert_eq!(Tier::fit(5 * 1024 + 1), Some(Tier::S)); // overflow to S
+        // Exactly fits = content + 4-byte length prefix == padded size.
+        assert_eq!(
+            Tier::fit(Tier::Xs.padded_size() - Tier::LENGTH_PREFIX),
+            Some(Tier::Xs)
+        );
+        // One byte over (either content or prefix overflows) spills to S.
+        assert_eq!(
+            Tier::fit(Tier::Xs.padded_size() - Tier::LENGTH_PREFIX + 1),
+            Some(Tier::S)
+        );
+        assert_eq!(Tier::fit(5 * 1024), Some(Tier::S)); // legacy exact-fit now spills
         assert_eq!(Tier::fit(3 * 1024 * 1024), None); // exceeds XL
+    }
+
+    #[test]
+    fn pad_content_exactly_tier_minus_prefix_round_trips() {
+        // C4 boundary: content of padded_size - 4 must pad + unpad cleanly
+        // (the old fit() let content == padded_size truncate silently).
+        let n = Tier::Xs.padded_size() - Tier::LENGTH_PREFIX;
+        let content = vec![0xCDu8; n];
+        let padded = pad(&content, Tier::Xs).unwrap();
+        assert_eq!(padded.len(), Tier::Xs.padded_size());
+        assert_eq!(unpad(&padded).unwrap(), content);
     }
 }

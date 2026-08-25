@@ -6,9 +6,20 @@
 //!
 //! On macOS: Uses Security framework with SecAccessControl (BIOMETRY_ANY).
 //!   Reading triggers Touch ID. Writing does not (enrollment flow).
-//! On other platforms: Uses the `keyring` crate with native backends.
+//! On other platforms: Uses the `keyring` crate with native backends
+//!   (libsecret on Linux, Credential Manager on Windows).
 //! The daemon retrieves the password and performs vault unlock internally.
 //! The master password NEVER leaves the daemon process over IPC.
+//!
+//! Security asymmetry (audit C3) — read gates differ per platform:
+//! - macOS: every read is gated by SecAccessControl(BIOMETRY_ANY), so a
+//!   user-presence event (Touch ID or passcode) is required.
+//! - Linux/Windows: the keyring backends have NO per-read gate. Any
+//!   same-UID process can silently read the stored master password with
+//!   no user-visible prompt. `read_gated()` reports which world we are in;
+//!   callers must surface the asymmetry at enable time when it returns
+//!   false. The real fix (TPM-backed key / Windows Hello KeyCredential)
+//!   is deferred.
 //!
 //! L5 fix documentation:
 //! - macOS: `BIOMETRY_ANY` access control flag allows passcode fallback.
@@ -375,6 +386,16 @@ mod platform {
 /// Check if biometric unlock is available on this platform.
 pub fn is_available() -> bool {
     platform::is_available()
+}
+
+/// Whether reading the stored master password requires a user-presence
+/// event (biometric or passcode prompt). True only on macOS: the
+/// SecAccessControl(BIOMETRY_ANY) gate fires on every read. The plain
+/// keyring backends on Linux/Windows have no per-read gate, so a same-UID
+/// process reads the secret silently (audit C3). UIs must warn at enable
+/// time when this returns false.
+pub fn read_gated() -> bool {
+    cfg!(target_os = "macos")
 }
 
 /// Enable biometric unlock by storing the master password in OS keychain,

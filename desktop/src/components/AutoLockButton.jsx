@@ -3,7 +3,7 @@ import { createSignal, Show, For } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { useAuth } from "../context/AuthContext.jsx";
-import { toastError, toastSuccess } from "../context/toastSignal.js";
+import { toast, toastError, toastSuccess } from "../context/toastSignal.js";
 import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 
 export default function AutoLockButton() {
@@ -75,9 +75,13 @@ export default function AutoLockButton() {
                     } else {
                       const password = prompt(t("settings.promptQuickUnlock"));
                       if (password) {
-                        await daemon("vault.biometric_enable", JSON.stringify({ password }));
+                        const res = JSON.parse(await daemon("vault.biometric_enable", JSON.stringify({ password })));
                         auth.refreshBiometric();
                         toastSuccess(t("settings.quickUnlockEnabled"));
+                        // Audit C3: no per-read keychain gate on this platform
+                        if (res.read_gated === false) {
+                          toast("warning", t("settings.quickUnlockNoReadGate"), { duration: 8000 });
+                        }
                       }
                     }
                   } catch (e) { toastError(e.message); }

@@ -53,6 +53,47 @@ pub fn build_aad(
     hasher.finalize().to_vec()
 }
 
+/// Build AAD for attachment blobs (audit C4). Same length-prefixed scheme
+/// as [`build_aad`] plus the owning cipher UUID, under its own domain
+/// separator: swapping two same-cipher attachment files (or moving a blob
+/// to another cipher/attachment/vault) fails the AAD check before any
+/// decryption is attempted.
+pub fn build_attachment_aad(
+    vault_id: Uuid,
+    cipher_id: Uuid,
+    attachment_id: Uuid,
+    tier: Option<Tier>,
+    alg_id: u16,
+    key_epoch: u64,
+    update_seq: u64,
+) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"baluard-att-aad-v1");
+    let vault_bytes = vault_id.as_bytes();
+    hasher.update((vault_bytes.len() as u64).to_le_bytes());
+    hasher.update(vault_bytes);
+    let ot_bytes = ObjectType::Attachment.as_str().as_bytes();
+    hasher.update((ot_bytes.len() as u64).to_le_bytes());
+    hasher.update(ot_bytes);
+    let oid_bytes = attachment_id.as_bytes();
+    hasher.update((oid_bytes.len() as u64).to_le_bytes());
+    hasher.update(oid_bytes);
+    let cid_bytes = cipher_id.as_bytes();
+    hasher.update((cid_bytes.len() as u64).to_le_bytes());
+    hasher.update(cid_bytes);
+    let tier_str = tier.map(|t| t.code()).unwrap_or("none");
+    let tier_bytes = tier_str.as_bytes();
+    hasher.update((tier_bytes.len() as u64).to_le_bytes());
+    hasher.update(tier_bytes);
+    hasher.update((2u64).to_le_bytes()); // alg_id is u16 = 2 bytes
+    hasher.update(alg_id.to_le_bytes());
+    hasher.update((8u64).to_le_bytes());
+    hasher.update(key_epoch.to_le_bytes());
+    hasher.update((8u64).to_le_bytes());
+    hasher.update(update_seq.to_le_bytes());
+    hasher.finalize().to_vec()
+}
+
 /// Build a 12-byte nonce from a per-object counter and object shard ID.
 ///
 /// **LEGACY for cipher path.** New cipher writes use `build_random_nonce()`.

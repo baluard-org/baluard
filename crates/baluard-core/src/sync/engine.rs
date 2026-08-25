@@ -25,8 +25,13 @@ use base64::Engine;
 pub struct SyncEngine {
     /// Path to the vault directory (= git workdir).
     pub vault_path: PathBuf,
-    /// Device name for commit author.
-    pub device_name: String,
+    /// Local device UUID (string form). Used to find this device's registry
+    /// entry for the pre-stage `last_seen_epoch` bump (C5: entries are keyed
+    /// by id, never by display name — names are stripped from the
+    /// git-tracked devices.json and live encrypted in settings.enc).
+    /// Callers without a device id pass a placeholder; the bump is
+    /// best-effort and silently no-ops on a non-UUID string.
+    pub device_id: String,
     /// Whether this is a shallow clone.
     pub shallow: bool,
     /// Last-known remote HEAD OID (for pull verification).
@@ -68,7 +73,7 @@ impl SyncEngine {
     /// commit signing. Pass the subkey from the unlocked handle when
     /// available; `None` falls back to the OS keyring (and legacy plaintext
     /// files) — a sealed file without a key means unsigned commits.
-    pub fn new(vault_path: &Path, device_name: &str, devkey_seal: Option<&[u8; 32]>) -> Self {
+    pub fn new(vault_path: &Path, device_id: &str, devkey_seal: Option<&[u8; 32]>) -> Self {
         let last_remote_head = Self::load_last_head(vault_path);
         let credential_config = CredentialConfig::load(vault_path);
         let state_machine = RefCell::new(SyncStateMachine::load_from_file(vault_path));
@@ -82,7 +87,7 @@ impl SyncEngine {
         };
         Self {
             vault_path: vault_path.to_path_buf(),
-            device_name: device_name.to_string(),
+            device_id: device_id.to_string(),
             shallow: true,
             last_remote_head,
             credential_config,
@@ -524,16 +529,14 @@ impl SyncEngine {
     /// Resolve this device's id + current epoch from the registry/epoch.json.
     /// Best-effort: returns None if the registry or epoch is unavailable.
     fn device_id_and_epoch(&self) -> Option<(uuid::Uuid, u64)> {
+        let device_id = self.device_id.parse::<uuid::Uuid>().ok()?;
         let reg_path = self.vault_path.join("meta/devices.json");
-        let device_id = std::fs::read_to_string(&reg_path)
+        let reg = std::fs::read_to_string(&reg_path)
             .ok()
-            .and_then(|data| serde_json::from_str::<crate::devices::DeviceRegistry>(&data).ok())
-            .and_then(|reg| {
-                reg.devices
-                    .iter()
-                    .find(|(_, e)| e.name == self.device_name)
-                    .map(|(id, _)| *id)
-            })?;
+            .and_then(|data| serde_json::from_str::<crate::devices::DeviceRegistry>(&data).ok())?;
+        if !reg.devices.contains_key(&device_id) {
+            return None;
+        }
         let epoch_path = self.vault_path.join("meta/epoch.json");
         let epoch = std::fs::read_to_string(&epoch_path)
             .ok()
@@ -2087,6 +2090,60 @@ mod tests {
              post-commit metadata write must not escape the commit",
             status.staged,
             status.unstaged
+        );
+    }
+
+    /// C5: bump_device_epoch finds this device's registry entry by UUID,
+    /// never by display name (names are stripped from devices.json and live
+    /// encrypted in settings.enc).
+    #[test]
+    fn bump_device_epoch_matches_by_id_not_name() {
+        let (dir, _engine) = make_test_repo();
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":7}").unwrap();
+
+        let id = uuid::Uuid::new_v4();
+        let mut reg = crate::devices::DeviceRegistry::new();
+        reg.devices.insert(
+            id,
+            crate::vault::manifest::DeviceEntry {
+                device_id: id,
+                name: String::new(), // C5: stripped at rest
+                encryption_public_key: "aa".into(),
+                signing_public_key: "bb".into(),
+                enrolled_at: 1,
+                enrolled_by: None,
+                last_seen_epoch: 0,
+            },
+        );
+        std::fs::write(
+            dir.path().join("meta/devices.json"),
+            serde_json::to_string(&reg).unwrap(),
+        )
+        .unwrap();
+
+        // Engine carrying the matching id bumps the entry to epoch 7.
+        let engine = SyncEngine::new(dir.path(), &id.to_string(), None);
+        let repo = engine.init_repo().unwrap();
+        engine.commit_all(&repo, "").unwrap();
+        let after: crate::devices::DeviceRegistry = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("meta/devices.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(after.devices[&id].last_seen_epoch, 7);
+
+        // An engine with a different (or placeholder) id leaves it alone.
+        let other = SyncEngine::new(dir.path(), "baluard-daemon", None);
+        let repo2 = other.open_repo().unwrap();
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":9}").unwrap();
+        other.commit_all(&repo2, "").unwrap();
+        let after2: crate::devices::DeviceRegistry = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("meta/devices.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            after2.devices[&id].last_seen_epoch, 7,
+            "placeholder id must not bump"
         );
     }
 

@@ -17,9 +17,8 @@ import { I18nProvider } from "../i18n/index.jsx";
 import {
   ConflictResolutionProvider,
   useConflictResolution,
-  mockSampleConflict,
-  mockSampleTypeChange,
 } from "../context/ConflictResolutionContext.jsx";
+import { mockSampleConflict, mockSampleTypeChange } from "../lib/conflictMocks.js";
 import ConflictResolutionPanel from "../components/ConflictResolutionPanel.jsx";
 
 // Mount the panel (inside its providers) in a fresh DOM node. The panel

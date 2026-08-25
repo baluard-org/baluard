@@ -1362,10 +1362,15 @@ async fn handle_bridge_host_route(
                 .as_str()
                 .unwrap_or("a browser")
                 .to_string();
-            let request_id = host.bridge().write().await.start_pair(browser_hint.clone());
+            let (request_id, pair_code) =
+                host.bridge().write().await.start_pair(browser_hint.clone());
             Some(ok_resp(
                 serde_json::json!({
                     "request_id": request_id,
+                    // Audit C13: one-time code. The desktop displays it; the
+                    // user types it into the extension popup; pair_complete
+                    // verifies it before any waiter registration.
+                    "pair_code": pair_code,
                     "browser_hint": browser_hint,
                     "ttl_seconds": br::PENDING_TTL_SECONDS,
                 })
@@ -1385,6 +1390,18 @@ async fn handle_bridge_host_route(
                 .ok()?;
             let name = payload["name"].as_str().unwrap_or("Browser").to_string();
             let browser = payload["browser"].as_str().unwrap_or("unknown").to_string();
+            let code = payload["code"].as_str().unwrap_or("").to_string();
+
+            // Audit C13: verify the one-time pair code BEFORE touching the
+            // waiter. A wrong-code caller (same-UID process racing the real
+            // extension) fails here and never supersedes the legitimate
+            // waiter, so it cannot harvest the minted pairing.
+            {
+                let mut reg = host.bridge().write().await;
+                if let Err(msg) = reg.verify_pair_code(&code) {
+                    return Some(err_response(msg.to_string()));
+                }
+            }
 
             // Fast path: desktop already approved (pending marked Approved).
             let already_approved = host
@@ -1709,7 +1726,9 @@ fn kind_omits_or_shrinks_protected(
             .get("data")
             .and_then(|d| d.get(field))
             .and_then(|v| v.as_array());
-        let Some(existing_list) = existing_list else { continue };
+        let Some(existing_list) = existing_list else {
+            continue;
+        };
         if existing_list.is_empty() {
             continue;
         }
@@ -1718,13 +1737,9 @@ fn kind_omits_or_shrinks_protected(
             .and_then(|d| d.get(field))
             .and_then(|v| v.as_array())
         {
-            None => {
-                return Some(
-                    "omission would delete it (send the full list or omit kind)",
-                )
-            }
+            None => return Some("omission would delete it (send the full list or omit kind)"),
             Some(incoming_list) if incoming_list.len() < existing_list.len() => {
-                return Some("list shrinks (deletion is not a bridge operation)")
+                return Some("list shrinks (deletion is not a bridge operation)");
             }
             _ => {}
         }
@@ -1771,8 +1786,8 @@ async fn bridge_read_matches_page(
     }
     // Decrypted fetch: URI data lives inside the decrypted kind.
     let cipher_json = state.get_cipher(id, true).await.map_err(|e| e)?;
-    let c: serde_json::Value = serde_json::from_str(&cipher_json)
-        .map_err(|e| format!("cipher parse: {e}"))?;
+    let c: serde_json::Value =
+        serde_json::from_str(&cipher_json).map_err(|e| format!("cipher parse: {e}"))?;
     let uris = c["kind"]["data"]["uris"]
         .as_array()
         .cloned()
@@ -1830,24 +1845,19 @@ async fn finalize_pair(
     browser: String,
 ) -> GatewayResponse {
     match reg.complete_pair(name, browser) {
-        Ok((pairing_id, token_hex)) => {
-            // Return BOTH the pairing secret (for future reauth) and the first
-            // bridge token. The NMH persists the secret.
-            let pf = baluard_core::bridge::pairing::PairingFile::load().unwrap_or_default();
-            let secret_hex = pf
-                .get(&pairing_id)
-                .map(|e| e.secret.clone())
-                .unwrap_or_default();
-            ok_resp(
-                serde_json::json!({
-                    "pairing_id": pairing_id.to_string(),
-                    "secret": secret_hex,
-                    "token": token_hex,
-                })
-                .to_string(),
-                None,
-            )
-        }
+        // Audit C13: the response carries NO secret and NO token. Neither
+        // the NMH (reads the pairing file) nor the extension (refreshes via
+        // reauth) consumes them, and returning the long-lived secret handed
+        // a durable vault-read capability to any process that won the
+        // pair_complete race. The token stays in the daemon's live registry.
+        Ok((pairing_id, _token_hex)) => ok_resp(
+            serde_json::json!({
+                "pairing_id": pairing_id.to_string(),
+                "paired": true,
+            })
+            .to_string(),
+            None,
+        ),
         Err(msg) => err_response(msg.to_string()),
     }
 }
@@ -2580,8 +2590,7 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
         // minutes (wedged clones and finished-but-unpolled jobs), then
         // refuse the 5th concurrent job so the map cannot grow unbounded.
         const MAX_CONCURRENT_CLONES: usize = 4;
-        const CLONE_JOB_TTL: std::time::Duration =
-            std::time::Duration::from_secs(30 * 60);
+        const CLONE_JOB_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
         jobs.retain(|_, job| job.started_at.elapsed() < CLONE_JOB_TTL);
         if jobs.len() >= MAX_CONCURRENT_CLONES {
             return err_response(format!(
@@ -3233,7 +3242,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 .await
                 .unwrap_or(false);
                 if has_remote {
-                    let dn = device_name(&state.vault_path);
+                    let dn = first_device_id(&state.vault_path);
                     // C1: seal subkey for the coordinator's signed commits.
                     let seal = state.devkey_seal().await;
                     state.autosync.activate(dn, seal).await;
@@ -3256,7 +3265,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         // visibilitychange. Server-side 10-min guard (FOCUS_PULL_MIN_GAP_SECS)
         // collapses rapid focus flicker into at most one pull per 10 min.
         "sync.autosync_nudge_pull" => {
-            let dn = device_name(&state.vault_path);
+            let dn = first_device_id(&state.vault_path);
             state.autosync.nudge_focus_pull(dn).await;
             ok_resp("ok".to_string(), token_str)
         }
@@ -4203,7 +4212,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
     // Schedule cover commit + arm auto-sync after successful vault mutations
     if resp.success && COVER_MUTATION_ACTIONS.contains(&req.action.as_str()) {
         state.schedule_cover_after_commit();
-        let dn = device_name(&state.vault_path);
+        let dn = first_device_id(&state.vault_path);
         state.autosync.nudge(dn).await;
     }
 
@@ -4217,19 +4226,21 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 // ── Sync helpers (git2-rs, CPU-bound) ──
 
 #[cfg(feature = "git-sync")]
-fn device_name(vault_path: &std::path::Path) -> String {
+fn first_device_id(vault_path: &std::path::Path) -> String {
     let reg_path = vault_path.join("meta/devices.json");
     if reg_path.exists() {
         if let Ok(data) = std::fs::read_to_string(&reg_path) {
             let reg: Result<baluard_core::devices::DeviceRegistry, _> = serde_json::from_str(&data);
             if let Ok(reg) = reg {
-                if let Some(entry) = reg.devices.values().next() {
-                    return entry.name.clone();
+                // C5: identity is the device UUID (names are encrypted in
+                // settings.enc; single-device vaults are the norm here).
+                if let Some((id, _)) = reg.devices.iter().next() {
+                    return id.to_string();
                 }
             }
         }
     }
-    "baluard-device".into()
+    String::new()
 }
 
 #[cfg(feature = "git-sync")]
@@ -4237,7 +4248,11 @@ fn sync_init(
     vault_path: &std::path::Path,
     devkey_seal: Option<&[u8; 32]>,
 ) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), devkey_seal);
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        vault_path,
+        &first_device_id(vault_path),
+        devkey_seal,
+    );
     let repo = engine.init_repo().map_err(|e| format!("{e}"))?;
     let log = engine.log(&repo, 1).map_err(|e| format!("{e}"))?;
     let commit_info = log
@@ -4253,7 +4268,11 @@ fn sync_remote(
     url: &str,
     devkey_seal: Option<&[u8; 32]>,
 ) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), devkey_seal);
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        vault_path,
+        &first_device_id(vault_path),
+        devkey_seal,
+    );
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     engine
         .add_remote(&repo, "origin", url)
@@ -4266,7 +4285,11 @@ fn sync_push(
     vault_path: &std::path::Path,
     devkey_seal: Option<&[u8; 32]>,
 ) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), devkey_seal);
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        vault_path,
+        &first_device_id(vault_path),
+        devkey_seal,
+    );
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let status = engine.status(&repo).map_err(|e| format!("{e}"))?;
     let mut committed = false;
@@ -4288,7 +4311,11 @@ fn sync_pull(
     vault_path: &std::path::Path,
     devkey_seal: Option<&[u8; 32]>,
 ) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), devkey_seal);
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        vault_path,
+        &first_device_id(vault_path),
+        devkey_seal,
+    );
     engine.recover_state().map_err(|e| format!("{e}"))?;
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let result = engine.pull(&repo, "origin").map_err(|e| format!("{e}"))?;
@@ -4321,7 +4348,8 @@ fn sync_pull(
 
 #[cfg(feature = "git-sync")]
 fn sync_status(vault_path: &std::path::Path) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), None);
+    let engine =
+        baluard_core::sync::engine::SyncEngine::new(vault_path, &first_device_id(vault_path), None);
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let status = engine.status(&repo).map_err(|e| format!("{e}"))?;
     let work_tree = if status.is_dirty() {
@@ -4353,7 +4381,8 @@ fn sync_status(vault_path: &std::path::Path) -> Result<String, String> {
 
 #[cfg(feature = "git-sync")]
 fn sync_log(vault_path: &std::path::Path, limit: usize) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), None);
+    let engine =
+        baluard_core::sync::engine::SyncEngine::new(vault_path, &first_device_id(vault_path), None);
     let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
     let log = engine.log(&repo, limit).map_err(|e| format!("{e}"))?;
     if log.is_empty() {
@@ -4407,7 +4436,8 @@ fn infer_provider_from_url(url: &str) -> Option<String> {
 
 #[cfg(feature = "git-sync")]
 fn sync_status_json(vault_path: &std::path::Path) -> Result<String, String> {
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), None);
+    let engine =
+        baluard_core::sync::engine::SyncEngine::new(vault_path, &first_device_id(vault_path), None);
     let repo = match engine.open_repo() {
         Ok(r) => r,
         Err(_) => {
@@ -4529,7 +4559,11 @@ async fn sync_disconnect(
     };
     let delete_remote = payload["delete_remote"].as_bool().unwrap_or(false);
 
-    let engine = baluard_core::sync::engine::SyncEngine::new(vault_path, &device_name(vault_path), devkey_seal);
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        vault_path,
+        &first_device_id(vault_path),
+        devkey_seal,
+    );
     let repo = engine
         .open_repo()
         .map_err(|e| format!("No git repo: {e}"))?;
@@ -4738,8 +4772,13 @@ fn verify_peer_uid(stream: &UnixStream) -> Result<()> {
 
 #[cfg(not(unix))]
 fn verify_peer_uid(_stream: &UnixStream) -> Result<()> {
-    // Windows Named Pipes have their own ACL-based security
-    Ok(())
+    // Audit C18: fail closed. There is no Windows transport yet; if this
+    // code ever runs, the daemon must refuse connections rather than
+    // accept peers unverified. A real named-pipe DACL check replaces this
+    // when the Windows transport lands.
+    anyhow::bail!(
+        "Peer credential verification is not implemented on this platform; refusing connection"
+    )
 }
 
 #[cfg(test)]
@@ -4762,7 +4801,10 @@ mod tests {
             "vault/../other",
             "/etc",
         ] {
-            assert!(validate_slug(attack).is_err(), "slug gate must reject {attack:?}");
+            assert!(
+                validate_slug(attack).is_err(),
+                "slug gate must reject {attack:?}"
+            );
         }
         // The synthesized fallback shape and a normal user slug must pass.
         assert!(validate_slug("vault-1a2b3c4d").is_ok());

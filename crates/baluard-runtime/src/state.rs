@@ -211,7 +211,7 @@ impl VaultState {
     /// Fire a cover commit (git-sync only).
     #[cfg(feature = "git-sync")]
     async fn fire_cover_commit(&self) {
-        let (device_name, devkey_seal) = {
+        let (device_id, devkey_seal) = {
             let guard = self.inner.read().await;
             let Some(handle) = guard.as_ref() else {
                 return;
@@ -219,23 +219,15 @@ impl VaultState {
             if !handle.is_unlocked() {
                 return;
             }
-            (
-                handle
-                    .device_manager
-                    .registry()
-                    .devices
-                    .get(&handle.device_id)
-                    .map(|d| d.name.clone())
-                    .unwrap_or_default(),
-                handle.devkey_seal(),
-            )
+            // C5: engine identity is the device UUID, not the display name.
+            (handle.device_id.to_string(), handle.devkey_seal())
         };
-        if device_name.is_empty() {
+        if device_id.is_empty() {
             return;
         }
         let engine = baluard_core::sync::engine::SyncEngine::new(
             &self.vault_path,
-            &device_name,
+            &device_id,
             devkey_seal.as_ref(),
         );
         if let Ok(repo) = engine.open_repo() {
@@ -378,40 +370,43 @@ impl VaultState {
         );
         drop(token_guard);
 
+        // C5: fold plaintext device names into settings.enc + strip them from
+        // the git-tracked devices.json. Runs on every unlock (idempotent;
+        // re-folds names reintroduced by a legacy remote's registry). Runs
+        // outside git-sync so non-syncing vaults migrate too. Best-effort:
+        // a failure logs and retries on the next unlock.
+        if let Some(handle) = guard.as_ref() {
+            if let Err(e) = handle.migrate_device_names_into_settings() {
+                log::warn!("[state] device-name migration deferred: {e}");
+            }
+        }
+
         // M2 fix: activate the auto-sync coordinator immediately on unlock if
         // the vault has a remote. Previously activation was lazy (only on the
         // first sync.autosync_status poll, ~10s after unlock), so edits in that
-        // window weren't queued. device_name comes from the registry via the
-        // handle; guard the whole thing behind git-sync since the sync check
-        // needs the engine.
+        // window weren't queued. Device identity comes from the handle; guard
+        // the whole thing behind git-sync since the sync check needs the
+        // engine.
         #[cfg(feature = "git-sync")]
         {
-            let device_name = guard
+            // C5: engine identity is the device UUID, not the display name.
+            let device_id = guard
                 .as_ref()
-                .and_then(|h| {
-                    h.device_manager
-                        .registry()
-                        .devices
-                        .get(&h.device_id)
-                        .map(|d| d.name.clone())
-                })
+                .map(|h| h.device_id.to_string())
                 .unwrap_or_default();
             // C1: seal subkey from the just-unlocked handle (never the KEK).
             let devkey_seal = guard.as_ref().and_then(|h| h.devkey_seal());
-            if !device_name.is_empty() {
-                let has_remote =
-                    baluard_core::sync::engine::SyncEngine::new(
-                        &self.vault_path,
-                        &device_name,
-                        devkey_seal.as_ref(),
-                    )
-                    .open_repo()
-                    .and_then(|repo| baluard_core::sync::engine::SyncEngine::has_remote(&repo))
-                    .unwrap_or(false);
+            if !device_id.is_empty() {
+                let has_remote = baluard_core::sync::engine::SyncEngine::new(
+                    &self.vault_path,
+                    &device_id,
+                    devkey_seal.as_ref(),
+                )
+                .open_repo()
+                .and_then(|repo| baluard_core::sync::engine::SyncEngine::has_remote(&repo))
+                .unwrap_or(false);
                 if has_remote {
-                    self.autosync
-                        .activate(device_name.clone(), devkey_seal)
-                        .await;
+                    self.autosync.activate(device_id.clone(), devkey_seal).await;
                     // Pull remote changes the moment the vault opens so the UI
                     // reflects other-device edits immediately (event-driven,
                     // not waiting on the 30-min idle cadence). Spawned off the
@@ -420,7 +415,7 @@ impl VaultState {
                     // vault is locked before the fetch completes.
                     let handle = self.autosync.clone();
                     tokio::spawn(async move {
-                        handle.pull_only(device_name).await;
+                        handle.pull_only(device_id).await;
                     });
                 }
             }
@@ -473,22 +468,37 @@ impl VaultState {
         guard.as_ref().is_some_and(|h| h.is_unlocked())
     }
 
-    /// This device's display name from the device registry (the name under
-    /// which this device's commits appear in git history). Empty if the vault
-    /// is locked or the device isn't registered. Exposed for the mobile FFI
-    /// layer so the OS lifecycle host doesn't have to thread device_name
-    /// through every sync event callback (plan §3.5).
-    pub async fn device_name(&self) -> String {
+    /// This device's UUID (string form). Empty if the vault is closed.
+    /// Feeds the autosync coordinator and sync engine (C5: identity is the
+    /// id, never the display name).
+    pub async fn device_id(&self) -> String {
         let guard = self.inner.read().await;
         guard
             .as_ref()
-            .and_then(|h| {
-                h.device_manager
-                    .registry()
-                    .devices
-                    .get(&h.device_id)
-                    .map(|d| d.name.clone())
-            })
+            .map(|h| h.device_id.to_string())
+            .unwrap_or_default()
+    }
+
+    /// This device's display name (audit C5: primary source is the encrypted
+    /// settings map; the registry file is the pre-migration fallback). Empty
+    /// if the vault is locked or the device isn't registered. Exposed for the
+    /// mobile FFI layer so the OS lifecycle host doesn't have to thread the
+    /// name through every sync event callback (plan §3.5).
+    pub async fn device_name(&self) -> String {
+        let guard = self.inner.read().await;
+        let Some(h) = guard.as_ref() else {
+            return String::new();
+        };
+        if let Some(name) = h.device_display_names().get(&h.device_id.to_string()) {
+            return name.clone();
+        }
+        // Pre-migration fallback: name still in the registry file.
+        h.device_manager
+            .registry()
+            .devices
+            .get(&h.device_id)
+            .map(|d| d.name.clone())
+            .filter(|n| !n.is_empty())
             .unwrap_or_default()
     }
 
@@ -1572,28 +1582,30 @@ impl VaultState {
             return Ok(String::new());
         }
 
-        // Use Google's favicon service (reliable, no auth needed, returns PNG)
-        let url = format!("https://www.google.com/s2/favicons?domain={domain}&sz=32");
-
-        // Run curl in a blocking thread to avoid stalling the tokio runtime
-        let output = tokio::task::spawn_blocking(move || {
-            std::process::Command::new("curl")
-                .args(["-s", "-L", "--max-time", "5"])
-                .arg(&url)
-                .output()
-        })
-        .await
-        .map_err(|e| format!("curl task failed: {e}"))?
-        .map_err(|e| format!("curl spawn failed: {e}"))?;
-
-        if !output.status.success() || output.stdout.is_empty() {
-            return Ok(String::new());
-        }
+        // C20 fix: fetch via the in-tree reqwest client instead of spawning
+        // `curl` (no argv exposure, no dependency on a system binary, proper
+        // TLS from the same stack the providers use). The domain rides as a
+        // percent-encoded query parameter (see `favicon_url`), so a domain
+        // containing '&' or '=' cannot inject extra query params.
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return Ok(String::new()),
+        };
+        let data = match client.get(Self::favicon_url(&domain)).send().await {
+            Ok(resp) => match resp.bytes().await {
+                Ok(b) => b.to_vec(),
+                Err(_) => return Ok(String::new()),
+            },
+            Err(_) => return Ok(String::new()),
+        };
 
         // Validate it looks like image data (PNG/JPEG/ICO/WEBP magic bytes)
         // and cap the size so a misbehaving endpoint can't push a huge blob
         // into the cipher (which would inflate the envelope toward the XL tier).
-        let data = &output.stdout;
         if data.len() < 4 || data.len() > 16_384 {
             return Ok(String::new());
         }
@@ -1608,7 +1620,7 @@ impl VaultState {
             return Ok(String::new());
         }
 
-        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, data);
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
 
         // Determine mime type from magic bytes
         let mime = if data[0] == 0x89 {
@@ -1622,6 +1634,18 @@ impl VaultState {
         };
 
         Ok(serde_json::json!({"data": b64, "mime": mime}).to_string())
+    }
+
+    /// Build the favicon-service URL with the domain percent-encoded as a
+    /// query value. Audit C20: the previous raw `format!` let a domain
+    /// containing '&' or '=' inject extra query parameters into the request.
+    fn favicon_url(domain: &str) -> String {
+        let mut url = url::Url::parse("https://www.google.com/s2/favicons")
+            .expect("static base URL always parses");
+        url.query_pairs_mut()
+            .append_pair("domain", domain)
+            .append_pair("sz", "32");
+        url.into()
     }
 
     /// Extract domain from a URI or bare string.
@@ -2284,8 +2308,7 @@ impl VaultState {
                 let push_failed = tokio::time::timeout(
                     crate::autosync::SYNC_OP_TIMEOUT,
                     tokio::task::spawn_blocking(move || -> Result<bool, String> {
-                        let engine =
-                            SyncEngine::new(&vault_path, &device_id, devkey_seal.as_ref());
+                        let engine = SyncEngine::new(&vault_path, &device_id, devkey_seal.as_ref());
                         let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                         match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
                             Ok(_) => Ok(false),
@@ -2466,8 +2489,7 @@ impl VaultState {
         let push_failed = tokio::time::timeout(
             crate::autosync::SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || -> Result<bool, String> {
-                let engine =
-                    SyncEngine::new(&vault_path, &device_id_str, devkey_seal.as_ref());
+                let engine = SyncEngine::new(&vault_path, &device_id_str, devkey_seal.as_ref());
                 let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
                 match engine.finalize_conflicts(&repo, &pending_for_finalize, &resolved) {
                     Ok(_) => Ok(false),
@@ -2523,7 +2545,7 @@ impl VaultState {
         };
 
         let vault_path = self.vault_path.clone();
-        let device = registry_device_name(&vault_path);
+        let device = registry_device_id(&vault_path);
         let pending_clone = pending.clone();
         // C1: seal subkey for the finalize commit's signing key.
         let devkey_seal = {
@@ -2594,6 +2616,9 @@ impl VaultState {
         Ok(serde_json::json!({
             "available": available,
             "enabled": enabled,
+            // Audit C3: false means reads have no user-presence gate
+            // (Linux/Windows keyring). UIs surface the asymmetry.
+            "read_gated": baluard_core::biometric::read_gated(),
         })
         .to_string())
     }
@@ -2620,7 +2645,13 @@ impl VaultState {
 
         baluard_core::biometric::enable(&vault_id, password)?;
 
-        Ok(serde_json::json!({"enabled": true}).to_string())
+        Ok(serde_json::json!({
+            "enabled": true,
+            // Audit C3: false means the stored password is silently readable
+            // by any same-UID process (no per-read gate on this platform).
+            "read_gated": baluard_core::biometric::read_gated(),
+        })
+        .to_string())
     }
 
     /// Disable biometric unlock for THIS vault only.
@@ -2792,7 +2823,7 @@ impl VaultState {
 
         if plaintext.len() > baluard_core::vault::attachment::MAX_ATTACHMENT_SIZE {
             return Err(format!(
-                "File too large: {} bytes (max 2MB)",
+                "File too large: {} bytes (max 1.9MB)",
                 plaintext.len()
             ));
         }
@@ -2815,11 +2846,21 @@ impl VaultState {
 
         // Generate attachment ID
         let attach_id = uuid::Uuid::new_v4().to_string();
+        let attach_uuid: uuid::Uuid = attach_id
+            .parse()
+            .map_err(|e| format!("generated id not a uuid: {e}"))?;
 
-        // Encrypt
-        let encrypted =
-            baluard_core::vault::attachment::encrypt_attachment(item_key.as_bytes(), &plaintext)
-                .map_err(|e| format!("{e}"))?;
+        // Encrypt (audit C4: tier-padded + AAD-bound to vault/cipher/attachment)
+        let encrypted = baluard_core::vault::attachment::encrypt_attachment(
+            handle.vault_id,
+            cipher_id,
+            attach_uuid,
+            item_key.as_bytes(),
+            &plaintext,
+            cipher.key_epoch,
+            cipher.update_seq,
+        )
+        .map_err(|e| format!("{e}"))?;
 
         // M8 fix: capture size before zeroize
         let plaintext_size = plaintext.len() as u64;
@@ -2924,9 +2965,17 @@ impl VaultState {
             .join(format!("{}.enc", attach_id));
 
         let encrypted = std::fs::read(&attach_path).map_err(|e| format!("read: {e}"))?;
-        let mut plaintext =
-            baluard_core::vault::attachment::decrypt_attachment(item_key.as_bytes(), &encrypted)
-                .map_err(|e| format!("{e}"))?;
+        let attach_uuid: uuid::Uuid = attach_id
+            .parse()
+            .map_err(|e| format!("invalid attachment_id: {e}"))?;
+        let mut plaintext = baluard_core::vault::attachment::decrypt_attachment(
+            handle.vault_id,
+            cipher_id,
+            attach_uuid,
+            item_key.as_bytes(),
+            &encrypted,
+        )
+        .map_err(|e| format!("{e}"))?;
 
         let result = serde_json::json!({
             "filename": meta.filename,
@@ -3161,9 +3210,18 @@ impl VaultState {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
 
+        // C5: names come from the encrypted settings map (fold-and-strip
+        // migration on unlock); the registry file is the pre-migration
+        // fallback for entries not yet folded.
+        let names = handle.device_display_names();
         let devices: Vec<serde_json::Value> = handle.registry.devices.values().map(|entry| {
+            let name = names
+                .get(&entry.device_id.to_string())
+                .cloned()
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| entry.name.clone());
             serde_json::json!({
-                "name": entry.name,
+                "name": name,
                 "device_id": entry.device_id,
                 "encryption_key": format!("{}...{}",
                     entry.encryption_public_key.get(..8).unwrap_or(&entry.encryption_public_key),
@@ -3555,17 +3613,47 @@ fn generate_session_token() -> String {
     hex::encode(buf)
 }
 
-/// Commit-author label for sync writes that may run while the handle is
-/// absent (conflict verdicts): first device name from the on-disk registry.
-/// Mirrors the daemon's `device_name` helper; "baluard" is the fallback.
-fn registry_device_name(vault_path: &std::path::Path) -> String {
+/// Commit-label identity for sync writes that may run while the handle is
+/// absent (conflict verdicts): first device id from the on-disk registry.
+/// C5: identity is the device UUID — display names are stripped from the
+/// git-tracked devices.json and live encrypted in settings.enc.
+fn registry_device_id(vault_path: &std::path::Path) -> String {
     let reg_path = vault_path.join("meta/devices.json");
     if let Ok(data) = std::fs::read_to_string(&reg_path) {
         if let Ok(reg) = serde_json::from_str::<baluard_core::devices::DeviceRegistry>(&data) {
-            if let Some(entry) = reg.devices.values().next() {
-                return entry.name.clone();
+            if let Some((id, _)) = reg.devices.iter().next() {
+                return id.to_string();
             }
         }
     }
-    "baluard".to_string()
+    String::new()
+}
+
+#[cfg(test)]
+mod favicon_tests {
+    use super::VaultState;
+
+    /// Audit C20: a domain containing '&' must not inject extra query
+    /// parameters into the favicon-service URL.
+    #[test]
+    fn favicon_url_escapes_ampersand_domain() {
+        let url = VaultState::favicon_url("evil.com&sz=64");
+        let parsed = url::Url::parse(&url).expect("built URL parses");
+        let mut pairs = parsed.query_pairs();
+        assert_eq!(
+            pairs.next(),
+            Some(("domain".into(), "evil.com&sz=64".into()))
+        );
+        assert_eq!(pairs.next(), Some(("sz".into(), "32".into())));
+        assert_eq!(pairs.next(), None);
+    }
+
+    #[test]
+    fn favicon_url_plain_domain_unescaped_happy_path() {
+        let url = VaultState::favicon_url("example.com");
+        assert_eq!(
+            url,
+            "https://www.google.com/s2/favicons?domain=example.com&sz=32"
+        );
+    }
 }
