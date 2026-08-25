@@ -306,21 +306,17 @@ desktop-build: _sidecar desktop-deps
 # ── App Icons ──────────────────────────────────────────────────────────────
 
 # Generate app icons for ALL platforms (Windows/macOS/Linux desktop + Android/iOS mobile)
-# from the Baluard logo. Output: assets/app-icons/{windows,macos,linux,tauri-desktop,android,ios}/
-#
-# Default source is the gradient icon-TILE (baluard-logo-grad.png) because that is the
-# proper app-icon form (dark bg + padlock). Override with `just app-icons assets/<file>`.
-# Source is auto-squared (alpha-trim + center-pad) since the logo is portrait and icon-gen
-# requires square input.
-APP_ICON_SOURCE := "assets/baluard-lock-l4-svg-1024.png"
-APP_ICON_OUT    := "assets/app-icons"
-
-app-icons SOURCE=APP_ICON_SOURCE OUT=APP_ICON_OUT:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	SRC="{{SOURCE}}"; OUT="{{OUT}}"
-	[[ -f "$SRC" ]] || { echo "Source not found: $SRC"; exit 1; }
-	./scripts/generate-all-icons.sh "$SRC"
+# from the brand SVGs and deploy them everywhere:
+#   - desktop/src-tauri/icons/     (Tauri bundle icons)
+#   - desktop/src/assets/logo.png  (browser-extension toolbar icon source)
+#   - mobile/androidApp res/       (launcher mipmaps + ADAPTIVE icon layers, so the
+#                                  launcher masks a full tile instead of shrink-
+#                                  wrapping a legacy bitmap on white)
+# Output bundle: assets/app-icons/{windows,macos,linux,tauri-desktop,android,ios}/
+# No arguments; sources are fixed: assets/baluard-lock-l4.svg (tile)
+# + assets/baluard-lock-only.svg (glyph). Tooling: rsvg-convert + magick + python3.
+app-icons:
+	./scripts/generate-all-icons.sh
 
 # ── E2E Smoke Test ─────────────────────────────────────────────────────────
 

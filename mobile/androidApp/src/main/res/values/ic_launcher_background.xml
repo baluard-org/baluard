@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Midpoint of the brand tile gradient (#0e1b1e -> #091315). -->
+<resources>
+    <color name="ic_launcher_background">#0B1719</color>
+</resources>
