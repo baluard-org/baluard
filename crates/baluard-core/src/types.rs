@@ -34,6 +34,12 @@ pub enum Tier {
 }
 
 impl Tier {
+    /// Reserved by the padding layer: a 4-byte LE length prefix ahead of
+    /// the content. Tier selection must account for it or a content that
+    /// is exactly `padded_size()` long silently truncates on pad and fails
+    /// unpad (audit C4 boundary fix; also a latent cipher-path bug).
+    pub const LENGTH_PREFIX: usize = 4;
+
     /// Padded size in bytes for this tier.
     pub const fn padded_size(&self) -> usize {
         match self {
@@ -56,10 +62,13 @@ impl Tier {
         }
     }
 
-    /// Select the smallest tier that fits `content_size` bytes.
+    /// Select the smallest tier that fits `content_size` bytes PLUS the
+    /// padding layer's length prefix (see [`Tier::LENGTH_PREFIX`]).
     pub fn fit(content_size: usize) -> Option<Self> {
         let tiers = [Tier::Xs, Tier::S, Tier::M, Tier::L, Tier::Xl];
-        tiers.into_iter().find(|t| content_size <= t.padded_size())
+        tiers
+            .into_iter()
+            .find(|t| content_size + Self::LENGTH_PREFIX <= t.padded_size())
     }
 }
 
@@ -71,6 +80,10 @@ pub enum ObjectType {
     Cipher,
     Meta,
     Keywrap,
+    /// Attachment blobs (audit C4). Identified by the attachment UUID; the
+    /// owning cipher UUID rides as an extra AAD field (see
+    /// `build_attachment_aad`).
+    Attachment,
 }
 
 impl ObjectType {
@@ -79,6 +92,7 @@ impl ObjectType {
             ObjectType::Cipher => "cipher",
             ObjectType::Meta => "meta",
             ObjectType::Keywrap => "keywrap",
+            ObjectType::Attachment => "attachment",
         }
     }
 }

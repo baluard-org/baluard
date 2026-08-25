@@ -274,6 +274,13 @@ pub struct EncryptedSettings {
     /// authoritative runtime source is the .baluard marker + registry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slug: Option<String>,
+    /// Device display names, keyed by device UUID (audit C5). Names are PII
+    /// ("Esteban's MacBook") and devices.json is git-tracked, so they live
+    /// here, encrypted, instead. Populated by the fold-and-strip migration
+    /// on unlock; entries may briefly remain in devices.json between
+    /// enrollment (pre-unlock) and the first unlock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_names: Option<std::collections::HashMap<String, String>>,
     /// Enrollment policy controls how a new device joins this vault.
     pub enrollment_policy: EnrollmentPolicy,
 }

@@ -740,7 +740,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
         } => {
             let cipher_password = match password {
                 Some(p) => {
-                    eprintln!("warning: --password exposes secret in process list.");
+                    commands::warn_argv_secret("--password");
                     Some(p)
                 }
                 None => {
@@ -748,6 +748,9 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
                     if pw.is_empty() { None } else { Some(pw) }
                 }
             };
+            if totp_uri.is_some() {
+                commands::warn_argv_secret("--totp-uri");
+            }
             Ok(CipherInput {
                 name,
                 folder_id: parse_folder_id(folder.as_ref())?,
@@ -786,27 +789,35 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
             folder,
             tags,
             favorite,
-        } => Ok(CipherInput {
-            name,
-            folder_id: parse_folder_id(folder.as_ref())?,
-            kind: CipherKind::Card(baluard_core::types::CardData {
-                cardholder_name,
-                brand,
-                number,
-                exp_month,
-                exp_year,
-                code,
-            }),
-            favorite,
-            notes,
-            custom_fields: vec![],
-            created_at: None,
-            password_history: vec![],
-            attachments: vec![],
-            archived: false,
-            reprompt: false,
-            tags,
-        }),
+        } => {
+            if number.is_some() {
+                commands::warn_argv_secret("--number");
+            }
+            if code.is_some() {
+                commands::warn_argv_secret("--code");
+            }
+            Ok(CipherInput {
+                name,
+                folder_id: parse_folder_id(folder.as_ref())?,
+                kind: CipherKind::Card(baluard_core::types::CardData {
+                    cardholder_name,
+                    brand,
+                    number,
+                    exp_month,
+                    exp_year,
+                    code,
+                }),
+                favorite,
+                notes,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+                attachments: vec![],
+                archived: false,
+                reprompt: false,
+                tags,
+            })
+        }
         CipherAddCommand::SecureNote {
             name,
             notes,
@@ -888,24 +899,29 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
             folder,
             tags,
             favorite,
-        } => Ok(CipherInput {
-            name,
-            folder_id: parse_folder_id(folder.as_ref())?,
-            kind: CipherKind::SshKey(baluard_core::types::SshKeyData {
-                public_key,
-                private_key,
-                key_fingerprint: fingerprint,
-            }),
-            favorite,
-            notes,
-            custom_fields: vec![],
-            created_at: None,
-            password_history: vec![],
-            attachments: vec![],
-            archived: false,
-            reprompt: false,
-            tags,
-        }),
+        } => {
+            if private_key.is_some() {
+                commands::warn_argv_secret("--private-key");
+            }
+            Ok(CipherInput {
+                name,
+                folder_id: parse_folder_id(folder.as_ref())?,
+                kind: CipherKind::SshKey(baluard_core::types::SshKeyData {
+                    public_key,
+                    private_key,
+                    key_fingerprint: fingerprint,
+                }),
+                favorite,
+                notes,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+                attachments: vec![],
+                archived: false,
+                reprompt: false,
+                tags,
+            })
+        }
         CipherAddCommand::BankAccount {
             name,
             bank_name,
@@ -920,30 +936,47 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
             folder,
             tags,
             favorite,
-        } => Ok(CipherInput {
-            name,
-            folder_id: parse_folder_id(folder.as_ref())?,
-            kind: CipherKind::BankAccount(baluard_core::types::BankAccountData {
-                bank_name,
-                name_on_account,
-                account_type,
-                account_number,
-                routing_number,
-                branch_number,
-                swift_code,
-                iban,
-                ..Default::default()
-            }),
-            favorite,
-            notes,
-            custom_fields: vec![],
-            created_at: None,
-            password_history: vec![],
-            attachments: vec![],
-            archived: false,
-            reprompt: false,
-            tags,
-        }),
+        } => {
+            if account_number.is_some() {
+                commands::warn_argv_secret("--account-number");
+            }
+            if routing_number.is_some() {
+                commands::warn_argv_secret("--routing-number");
+            }
+            if branch_number.is_some() {
+                commands::warn_argv_secret("--branch-number");
+            }
+            if swift_code.is_some() {
+                commands::warn_argv_secret("--swift-code");
+            }
+            if iban.is_some() {
+                commands::warn_argv_secret("--iban");
+            }
+            Ok(CipherInput {
+                name,
+                folder_id: parse_folder_id(folder.as_ref())?,
+                kind: CipherKind::BankAccount(baluard_core::types::BankAccountData {
+                    bank_name,
+                    name_on_account,
+                    account_type,
+                    account_number,
+                    routing_number,
+                    branch_number,
+                    swift_code,
+                    iban,
+                    ..Default::default()
+                }),
+                favorite,
+                notes,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+                attachments: vec![],
+                archived: false,
+                reprompt: false,
+                tags,
+            })
+        }
         CipherAddCommand::DriversLicense {
             name,
             first_name,

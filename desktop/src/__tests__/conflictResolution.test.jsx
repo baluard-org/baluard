@@ -3,9 +3,9 @@ import { createRoot, flush } from "solid-js";
 import { render } from "@solidjs/web";
 import {
   ConflictResolutionProvider,
-  mockSampleConflict,
   useConflictResolution,
 } from "../context/ConflictResolutionContext.jsx";
+import { mockSampleConflict } from "../lib/conflictMocks.js";
 
 // Mount the provider in a fresh DOM node and hand the captured context back
 // to the test. No external testing library; jsdom + solid's createRoot is

@@ -7,11 +7,7 @@ use std::process::{Command, Stdio};
 
 /// Unique dir under the system temp dir for this test run.
 fn fresh_dir(tag: &str) -> std::path::PathBuf {
-    let d = std::env::temp_dir().join(format!(
-        "baluard-nmh-c9-{}-{}",
-        tag,
-        std::process::id()
-    ));
+    let d = std::env::temp_dir().join(format!("baluard-nmh-c9-{}-{}", tag, std::process::id()));
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(&d).unwrap();
     d
@@ -65,7 +61,12 @@ fn debug_tee_disabled_without_env_and_0600_when_enabled() {
         .unwrap();
     let entries: Vec<_> = fs::read_dir(&dir).unwrap().collect();
     assert!(
-        entries.iter().all(|e| !e.as_ref().unwrap().file_name().to_string_lossy().contains("nmh")),
+        entries.iter().all(|e| !e
+            .as_ref()
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("nmh")),
         "no NMH log may exist without BALUARD_DEBUG=1"
     );
     let _ = fs::remove_dir_all(&dir);

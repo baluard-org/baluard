@@ -123,30 +123,7 @@ export function useConflictResolution() {
   return ctx;
 }
 
-// ── Mock for UX review (no backend yet) ──────────────────────────────────
-// Call enqueue(mockSampleConflict()) from a dev trigger to see the panel.
-export function mockSampleConflict(overrides = {}) {
-  return {
-    cipherId: "mock-" + Math.random().toString(36).slice(2, 8),
-    name: "GitHub",
-    cipherType: "login",
-    typeChanged: false,
-    fields: [
-      { key: "password", label: "Password", sensitive: true },
-      { key: "notes", label: "Notes", sensitive: false },
-    ],
-    localDevice: "This Mac",
-    remoteDevice: "iPhone",
-    ...overrides,
-  };
-}
-
-export function mockSampleTypeChange() {
-  return mockSampleConflict({
-    cipherId: "mock-type-" + Math.random().toString(36).slice(2, 8),
-    name: "Bank login",
-    cipherType: "login",
-    typeChanged: true,
-    fields: [],
-  });
-}
+// Dev mocks (mockSampleConflict / mockSampleTypeChange) moved to
+// lib/conflictMocks.js (audit C8/D9): only the dev trigger consumes them,
+// and the trigger is dynamically imported behind import.meta.env.DEV, so
+// the Math.random mock IDs stay out of production bundles.

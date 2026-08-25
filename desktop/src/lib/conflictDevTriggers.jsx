@@ -1,9 +1,6 @@
 import { Show, createSignal } from "solid-js";
-import {
-  useConflictResolution,
-  mockSampleConflict,
-  mockSampleTypeChange,
-} from "../context/ConflictResolutionContext.jsx";
+import { useConflictResolution } from "../context/ConflictResolutionContext.jsx";
+import { mockSampleConflict, mockSampleTypeChange } from "./conflictMocks.js";
 
 // Dev-only floating trigger for the conflict resolution panel. Hidden in
 // production builds (`import.meta.env.DEV` is statically false after

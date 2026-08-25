@@ -75,10 +75,34 @@ pub struct PendingPair {
     pub created_at: u64,
     /// Whether the desktop user has Approve / Deny / neither-yet.
     pub approval: Option<PairApproval>,
+    /// One-time pairing code (audit C13). Displayed by the desktop, typed
+    /// into the extension popup, verified by `verify_pair_code` BEFORE a
+    /// `pair_complete` may register a waiter or finalize. Keeps a
+    /// same-UID process from superseding the real extension's waiter and
+    /// harvesting the freshly minted pairing.
+    pub pair_code: String,
+    /// Wrong-code attempts against `pair_code`. The pending is cancelled
+    /// after [`MAX_PAIR_CODE_ATTEMPTS`].
+    pub code_attempts: u8,
 }
 
 /// How long an unconfirmed pairing request stays valid.
 pub const PENDING_TTL_SECONDS: u64 = 120;
+
+/// Wrong pair-code attempts before the ceremony is cancelled.
+pub const MAX_PAIR_CODE_ATTEMPTS: u8 = 3;
+
+/// No-homoglyph alphabet for pair codes (no I/L/O/0/1).
+const PAIR_CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const PAIR_CODE_LEN: usize = 8;
+
+fn generate_pair_code() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    (0..PAIR_CODE_LEN)
+        .map(|_| PAIR_CODE_ALPHABET[rng.gen_range(0..PAIR_CODE_ALPHABET.len())] as char)
+        .collect()
+}
 
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -93,18 +117,52 @@ impl BridgeRegistry {
     /// DROPPING the sender, which triggers `RecvError` on the held
     /// `pair_complete` so it lands in the timeout/superseded error path
     /// rather than being treated as a successful approval).
-    pub fn start_pair(&mut self, browser_hint: impl Into<String>) -> String {
+    pub fn start_pair(&mut self, browser_hint: impl Into<String>) -> (String, String) {
         // Cancel any in-flight extension waiter by dropping the sender.
         // (Do NOT send an empty payload — the receiver would treat it as success.)
         drop(self.waiter.take());
         let request_id = uuid::Uuid::new_v4().to_string();
+        let pair_code = generate_pair_code();
         self.pending = Some(PendingPair {
             request_id: request_id.clone(),
             browser_hint: browser_hint.into(),
             created_at: now_secs(),
             approval: None,
+            pair_code: pair_code.clone(),
+            code_attempts: 0,
         });
-        request_id
+        (request_id, pair_code)
+    }
+
+    /// Verify the one-time pair code presented by a `bridge.pair_complete`
+    /// caller against the pending ceremony (audit C13). MUST run before the
+    /// caller registers a waiter — a wrong-code caller must never supersede
+    /// the real extension's waiter. Cancels the ceremony (and any waiter)
+    /// after [`MAX_PAIR_CODE_ATTEMPTS`] wrong attempts or on TTL expiry.
+    pub fn verify_pair_code(&mut self, presented: &str) -> Result<(), &'static str> {
+        let expired = self
+            .pending
+            .as_ref()
+            .is_some_and(|p| now_secs().saturating_sub(p.created_at) > PENDING_TTL_SECONDS);
+        if expired {
+            self.pending = None;
+            self.waiter.take();
+            return Err("pending pairing expired");
+        }
+        let p = self.pending.as_mut().ok_or("no pending pairing")?;
+        let a = presented.as_bytes();
+        let b = p.pair_code.as_bytes();
+        let ok = a.len() == b.len() && bool::from(subtle::ConstantTimeEq::ct_eq(a, b));
+        if !ok {
+            p.code_attempts += 1;
+            if p.code_attempts >= MAX_PAIR_CODE_ATTEMPTS {
+                self.pending = None;
+                self.waiter.take();
+                return Err("too many invalid pair codes; start pairing again");
+            }
+            return Err("invalid pair code");
+        }
+        Ok(())
     }
 
     /// Read the current pending (for the desktop UI to surface Approve/Deny).
@@ -492,5 +550,59 @@ mod tests {
         );
         // And the new pending is intact (not consumed).
         assert!(reg.pending().is_some());
+    }
+
+    /// C13: two concurrent pair_complete callers; only the code-holder
+    /// succeeds. A wrong-code caller (same-UID process racing the real
+    /// extension) must be rejected BEFORE registering a waiter, so it can
+    /// never supersede the legitimate waiter and harvest the minted
+    /// pairing. A missing code is just a wrong code.
+    #[tokio::test]
+    async fn wrong_pair_code_does_not_supersede_waiter() {
+        let _sb = sandbox();
+        let mut reg = BridgeRegistry::default();
+        let (_rid, code) = reg.start_pair("chrome-c13");
+
+        // Legit extension verifies its code and registers the waiter.
+        assert!(reg.verify_pair_code(&code).is_ok());
+        let rx_legit = reg.register_waiter("legit".into(), "chrome".into());
+
+        // Attacker calls pair_complete with a wrong code (and, separately,
+        // with no code at all): both are rejected.
+        assert_eq!(reg.verify_pair_code("XXXXXXXX"), Err("invalid pair code"));
+        assert_eq!(reg.verify_pair_code(""), Err("invalid pair code"));
+
+        // The legit waiter survived the attack: approving resolves it and
+        // completes the pairing.
+        reg.approve_pending().unwrap();
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), rx_legit).await;
+        assert!(matches!(outcome, Ok(Ok(_))), "legit waiter must resolve");
+        let (id, _token) = reg.complete_pair("legit", "chrome").unwrap();
+        let pf = PairingFile::load().unwrap_or_default();
+        assert!(pf.get(&id).is_some());
+
+        // A late second caller now finds no ceremony to hijack.
+        assert_eq!(reg.verify_pair_code(&code), Err("no pending pairing"));
+    }
+
+    /// C13: three wrong attempts cancel the ceremony entirely (pending +
+    /// any registered waiter), killing offline brute force of the code.
+    #[tokio::test]
+    async fn three_wrong_pair_codes_cancel_ceremony() {
+        let _sb = sandbox();
+        let mut reg = BridgeRegistry::default();
+        let (_rid, code) = reg.start_pair("chrome-c13b");
+        let _rx = reg.register_waiter("legit".into(), "chrome".into());
+
+        assert_eq!(reg.verify_pair_code("AAAAAAAA"), Err("invalid pair code"));
+        assert_eq!(reg.verify_pair_code("BBBBBBBB"), Err("invalid pair code"));
+        assert_eq!(
+            reg.verify_pair_code("CCCCCCCC"),
+            Err("too many invalid pair codes; start pairing again")
+        );
+
+        // Ceremony is dead: pending gone, even the CORRECT code now fails.
+        assert!(reg.pending().is_none());
+        assert_eq!(reg.verify_pair_code(&code), Err("no pending pairing"));
     }
 }

@@ -982,6 +982,53 @@ mod tests {
         assert_eq!(join_secrets.vault_id, secrets.vault_id); // matches initial vault ID!
     }
 
+    /// C5: device display names must not live in the git-tracked plaintext
+    /// devices.json. The fold-and-strip migration moves them into the
+    /// encrypted settings map and blanks the registry entries.
+    #[test]
+    fn device_names_fold_into_encrypted_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("c5_vault");
+
+        let (handle, secrets) = VaultCreator::new(&path, "master-pass", "Laptop-Name")
+            .kdf_profile(KdfProfile::MobileLow)
+            .initialize_git(false)
+            .entropy(DeterministicEntropy { val: 55 })
+            .execute()
+            .unwrap();
+        let device_id = secrets.device_id.to_string();
+
+        handle.migrate_device_names_into_settings().unwrap();
+
+        // Registry file no longer carries any name.
+        let reg_json = std::fs::read_to_string(path.join("meta/devices.json")).unwrap();
+        assert!(
+            !reg_json.contains("Laptop-Name"),
+            "name leaked in devices.json"
+        );
+        let reg: serde_json::Value = serde_json::from_str(&reg_json).unwrap();
+        for (_id, entry) in reg["devices"].as_object().unwrap() {
+            assert_eq!(entry["name"].as_str().unwrap_or(""), "");
+        }
+
+        // Encrypted map holds it.
+        let names = handle.device_display_names();
+        assert_eq!(
+            names.get(&device_id).map(String::as_str),
+            Some("Laptop-Name")
+        );
+
+        // Idempotent: a second run is a no-op that keeps the name.
+        handle.migrate_device_names_into_settings().unwrap();
+        assert_eq!(
+            handle
+                .device_display_names()
+                .get(&device_id)
+                .map(String::as_str),
+            Some("Laptop-Name")
+        );
+    }
+
     #[test]
     fn test_vault_creator_with_profile_and_prefs() {
         let temp = tempfile::tempdir().unwrap();

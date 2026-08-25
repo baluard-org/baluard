@@ -15,7 +15,8 @@ vi.mock("../lib/conflictFlow.js", () => ({
   resolveConflict: vi.fn(),
 }));
 
-import { ConflictResolutionProvider, useConflictResolution, mockSampleConflict } from "../context/ConflictResolutionContext.jsx";
+import { ConflictResolutionProvider, useConflictResolution } from "../context/ConflictResolutionContext.jsx";
+import { mockSampleConflict } from "../lib/conflictMocks.js";
 import { AutoSyncProvider } from "../context/AutoSyncContext.jsx";
 import { VaultSwitcherContext } from "../context/VaultSwitcherContext.jsx";
 

@@ -1300,9 +1300,15 @@ pub fn handle_enroll_with_phrase(
 
     // Resolve phrase: flag > env var > prompt
     let phrase_str = match phrase {
-        Some(p) => p.to_string(),
+        Some(p) => {
+            warn_argv_secret("--phrase");
+            p.to_string()
+        }
         None => match std::env::var("BALUARD_RECOVERY_PHRASE") {
-            Ok(p) => p,
+            Ok(p) => {
+                warn_argv_secret("BALUARD_RECOVERY_PHRASE");
+                p
+            }
             Err(_) => {
                 eprintln!("Recovery phrase required. Enter 24 words separated by spaces:");
                 let mut input = String::new();
@@ -1644,7 +1650,8 @@ pub fn handle_sync_clone(
 #[cfg(feature = "git-sync")]
 fn sync_init_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
+    let engine =
+        baluard_core::sync::engine::SyncEngine::new(path, &first_device_id(vault_path), None);
     let repo = engine.init_repo()?;
     println!("Git repo initialized at {}", path.display());
     let log = engine.log(&repo, 1)?;
@@ -1657,7 +1664,8 @@ fn sync_init_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
 #[cfg(feature = "git-sync")]
 fn sync_remote_direct(vault_path: &str, url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
+    let engine =
+        baluard_core::sync::engine::SyncEngine::new(path, &first_device_id(vault_path), None);
     let repo = engine.open_repo()?;
     engine.add_remote(&repo, "origin", url)?;
     println!("Remote 'origin' set to: {url}");
@@ -1667,7 +1675,8 @@ fn sync_remote_direct(vault_path: &str, url: &str) -> Result<(), Box<dyn std::er
 #[cfg(feature = "git-sync")]
 fn sync_push_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
+    let engine =
+        baluard_core::sync::engine::SyncEngine::new(path, &first_device_id(vault_path), None);
     let repo = engine.open_repo()?;
     let status = engine.status(&repo)?;
     if status.is_dirty() {
@@ -1682,7 +1691,8 @@ fn sync_push_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
 #[cfg(feature = "git-sync")]
 fn sync_pull_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
+    let engine =
+        baluard_core::sync::engine::SyncEngine::new(path, &first_device_id(vault_path), None);
     engine.recover_state()?;
     let repo = engine.open_repo()?;
     let result = engine.pull(&repo, "origin")?;
@@ -1703,7 +1713,8 @@ fn sync_pull_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
 #[cfg(feature = "git-sync")]
 fn sync_status_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
+    let engine =
+        baluard_core::sync::engine::SyncEngine::new(path, &first_device_id(vault_path), None);
     let repo = engine.open_repo()?;
     let status = engine.status(&repo)?;
     if status.is_dirty() {
@@ -1735,7 +1746,8 @@ fn sync_status_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>
 #[cfg(feature = "git-sync")]
 fn sync_log_direct(vault_path: &str, limit: usize) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine = baluard_core::sync::engine::SyncEngine::new(path, &device_name(vault_path), None);
+    let engine =
+        baluard_core::sync::engine::SyncEngine::new(path, &first_device_id(vault_path), None);
     let repo = engine.open_repo()?;
     let log = engine.log(&repo, limit)?;
     if log.is_empty() {
@@ -1819,7 +1831,7 @@ fn parse_profile(s: &str) -> Result<KdfProfile, Box<dyn std::error::Error>> {
     }
 }
 
-fn device_name(vault_path: &str) -> String {
+fn first_device_id(vault_path: &str) -> String {
     let path = Path::new(vault_path);
     let reg_path = path.join("meta/devices.json");
     if reg_path.exists() {
@@ -1827,13 +1839,15 @@ fn device_name(vault_path: &str) -> String {
             let reg: std::result::Result<baluard_core::devices::DeviceRegistry, _> =
                 serde_json::from_str(&data);
             if let Ok(reg) = reg {
-                if let Some(entry) = reg.devices.values().next() {
-                    return entry.name.clone();
+                // C5: identity is the device UUID (names are encrypted in
+                // settings.enc; single-device vaults are the norm here).
+                if let Some((id, _)) = reg.devices.iter().next() {
+                    return id.to_string();
                 }
             }
         }
     }
-    "baluard-device".into()
+    String::new()
 }
 
 pub fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -1848,6 +1862,16 @@ pub fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error
             Ok(buf.trim().to_string())
         }
     }
+}
+
+/// Warn that a secret arrived via a CLI flag or environment variable and is
+/// therefore readable by any same-user process (`ps` output, `/proc/*/cmdline`,
+/// `/proc/*/environ`). Audit C15: keep the flags (scripted flows need them),
+/// but the interactive prompt must be the advertised path.
+pub fn warn_argv_secret(flag: &str) {
+    eprintln!(
+        "warning: {flag} exposes its secret to other processes on this machine; prefer the interactive prompt."
+    );
 }
 
 // ── Edit cipher ──
@@ -2226,8 +2250,11 @@ pub fn handle_export(
         return Err(resp.error_message.into());
     }
 
-    baluard_core::secret_file::write_secret_file(std::path::Path::new(path), resp.payload.as_bytes())
-        .map_err(|e| format!("Failed to write {path}: {e}"))?;
+    baluard_core::secret_file::write_secret_file(
+        std::path::Path::new(path),
+        resp.payload.as_bytes(),
+    )
+    .map_err(|e| format!("Failed to write {path}: {e}"))?;
 
     println!("Export complete: {path}");
     Ok(())
@@ -2315,7 +2342,7 @@ pub fn handle_attach_upload(
 
     let mut data = std::fs::read(file_path)?;
     if data.len() > baluard_core::vault::attachment::MAX_ATTACHMENT_SIZE {
-        return Err(format!("File too large: {} bytes (max 2MB)", data.len()).into());
+        return Err(format!("File too large: {} bytes (max 1.9MB)", data.len()).into());
     }
 
     let filename = std::path::Path::new(file_path)

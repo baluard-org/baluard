@@ -2,16 +2,20 @@
 //
 // Flow:
 //   1. User clicks "Add browser extension" -> daemon bridge.pair_start (mints
-//      a one-shot pending-approval handle). Returns request_id + browser_hint.
-//   2. The extension (separately) calls bridge.pair_complete; the daemon holds
-//      it pending until this UI Approves.
+//      a one-shot pending-approval handle). Returns request_id + browser_hint
+//      + pair_code (audit C13).
+//   2. The user opens the extension popup and types the displayed pair code;
+//      the extension calls bridge.pair_complete with it. The daemon verifies
+//      the code (wrong-code callers never supersede the real extension's
+//      waiter) and holds the request pending until this UI Approves.
 //   3. User clicks "Approve" -> bridge.pair_approve (consumes the one-shot
 //      flag). The held pair_complete unblocks, mints the token, writes the
-//      pairing file. The extension is now paired.
+//      pairing file. The extension is now paired. The response carries no
+//      secret (audit C13): the NMH reauths via the pairing file.
 //   4. The list below shows all paired browsers; revoke per row.
 //
-// No codes to type. The trust anchor is the desktop
-// session token (all routes here are desktop-token-gated).
+// The trust anchors are the desktop session token (all routes here are
+// desktop-token-gated) and the one-time pair code typed by the user.
 
 import { createSignal, Show, For, onSettled } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
@@ -41,7 +45,7 @@ export default function BridgeTab() {
   const [error, setError] = createSignal(null);
 
   // Pending pairing ceremony state.
-  const [pending, setPending] = createSignal(null); // {request_id, browser_hint, ttl_seconds}
+  const [pending, setPending] = createSignal(null); // {request_id, browser_hint, ttl_seconds, pair_code}
   const [pairBusy, setPairBusy] = createSignal(false);
   // Poll the daemon for the pending request while one is active. The
   // extension's pair_complete arrives asynchronously; we reflect it here.
@@ -164,6 +168,13 @@ export default function BridgeTab() {
           </Show>
           <Show when={!extConnected()}>
             <div class="text-xs text-[var(--color-muted)]">{t("bridge.waitingHint")}</div>
+          </Show>
+          <Show when={pending()?.pair_code}>
+            <div class="flex flex-col items-center gap-1 py-2 px-3 rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-bg)]">
+              <div class="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("bridge.pairCodeLabel")}</div>
+              <div class="font-mono text-xl font-bold tracking-[0.3em] text-[var(--color-text)] select-all">{pending().pair_code}</div>
+              <div class="text-[10px] text-[var(--color-muted)]">{t("bridge.pairCodeHint")}</div>
+            </div>
           </Show>
           <div class="flex gap-2">
             <Button onClick={approve} disabled={pairBusy()}>

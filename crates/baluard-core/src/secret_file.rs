@@ -109,7 +109,9 @@ pub fn open_secret_blob(
     let v: serde_json::Value = serde_json::from_slice(data)
         .map_err(|e| crate::error::VaultError::Corrupt(format!("sealed blob json: {e}")))?;
     if v["type"].as_str() != Some(marker.as_str()) {
-        return Err(crate::error::VaultError::Corrupt("not a sealed blob for this purpose".into()).into());
+        return Err(
+            crate::error::VaultError::Corrupt("not a sealed blob for this purpose".into()).into(),
+        );
     }
     let enc = v["envelope"]
         .as_str()

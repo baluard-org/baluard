@@ -39,7 +39,10 @@ const STRINGS = {
     notPairedIntro: "Link this browser to the Baluard app to autofill your passwords.",
     step1: "Open the Baluard app on this computer",
     step2: "In Settings, add a new browser extension",
-    step3: "Come back here and connect",
+    step3: "Type the pairing code shown in the app, then connect",
+    pairCodeLabel: "Pairing code",
+    pairCodePlaceholder: "8-character code",
+    wrongCode: "That code does not match. Check the Baluard app and try again.",
     connectCta: "Connect to Baluard",
     connect: "Waiting for approval",
     connectDesc: "Tap Approve in the Baluard app.",
@@ -86,7 +89,10 @@ const STRINGS = {
     notPairedIntro: "Vincula este navegador con la app de Baluard para autorrellenar tus contraseñas.",
     step1: "Abre la app de Baluard en este equipo",
     step2: "En Ajustes, añade una nueva extensión del navegador",
-    step3: "Vuelve aquí y conecta",
+    step3: "Escribe el código que muestra la app y conecta",
+    pairCodeLabel: "Código de emparejamiento",
+    pairCodePlaceholder: "Código de 8 caracteres",
+    wrongCode: "El código no coincide. Revisa la app de Baluard e inténtalo de nuevo.",
     connectCta: "Conectar a Baluard",
     connect: "Esperando aprobación",
     connectDesc: "Pulsa Aprobar en la app de Baluard.",
@@ -133,6 +139,9 @@ const [copied, setCopied] = createSignal("");
 // Settings view + inline autofill preference (chrome.storage.local).
 const [settingsOpen, setSettingsOpen] = createSignal(false);
 const [inlineAutofill, setInlineAutofill] = createSignal(true);
+// Pairing code typed by the user (audit C13): proves the pair_complete
+// comes from the person watching the desktop ceremony panel.
+const [pairCode, setPairCode] = createSignal("");
 
 // First-run flag: persisted in chrome.storage.local. Onboarded users skip the
 // welcome screen on subsequent opens.
@@ -277,15 +286,19 @@ async function dismissWelcome() {
 
 async function connect() {
   console.log("[baluard] connect() called");
+  const code = pairCode().trim();
+  if (!code) return;
   setStatePersisted("connecting");
   setError(null);
   try {
-    // pair_complete is held pending on the daemon side until the desktop
-    // user clicks Approve. This await resolves once approved. Race against
-    // the daemon TTL so a never-approved ceremony can't wedge the popup —
-    // the user gets a clear expiry instead of an infinite spinner.
+    // pair_complete carries the pairing code (audit C13). The daemon
+    // verifies it before registering this caller as the ceremony waiter,
+    // so a same-user process cannot silently win the pairing race. The
+    // request is then held pending until the desktop user clicks Approve.
+    // Race against the daemon TTL so a never-approved ceremony can't wedge
+    // the popup — the user gets a clear expiry instead of a spinner.
     await Promise.race([
-      send("bridge.pair_complete", { name: detectBrowser(), browser: detectBrowser() }),
+      send("bridge.pair_complete", { name: detectBrowser(), browser: detectBrowser(), code }),
       timeout(PAIR_TTL_MS, "pair-timeout"),
     ]);
     console.log("[baluard] pair_complete resolved OK -> refresh");
@@ -294,8 +307,10 @@ async function connect() {
     refresh(true);
   } catch (e) {
     console.log("[baluard] connect failed:", e.code, e.message);
-    setError(e.message);
-    if (e.code === "pair-timeout") setError((STRINGS[detectLocale()] || STRINGS.en).pairExpired);
+    const strings = STRINGS[detectLocale()] || STRINGS.en;
+    if (e.code === "pair-timeout") setError(strings.pairExpired);
+    else if (/pair code/i.test(e.message || "")) setError(strings.wrongCode);
+    else setError(e.message);
     setStatePersisted("not-paired");
   }
 }
@@ -727,6 +742,35 @@ function App() {
           }
         }
 
+        /* Pairing code entry (audit C13) */
+        .pair-code-label {
+          display: block;
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--color-muted);
+          margin: 10px 0 4px 0;
+        }
+
+        .pair-code-input {
+          width: 100%;
+          box-sizing: border-box;
+          padding: 10px 12px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 16px;
+          letter-spacing: 3px;
+          text-align: center;
+          text-transform: uppercase;
+          border: 1px solid var(--color-border);
+          border-radius: 8px;
+          background: var(--color-list);
+          color: var(--color-text);
+          outline: none;
+
+          &:focus {
+            border-color: var(--color-border-focus);
+          }
+        }
+
         /* Matching entries list */
         .matches-list {
           display: flex;
@@ -933,8 +977,23 @@ function App() {
             <li>{t("step2")}</li>
             <li>{t("step3")}</li>
           </ol>
+          <label class="pair-code-label" for="pair-code-input">{t("pairCodeLabel")}</label>
+          <input
+            id="pair-code-input"
+            class="pair-code-input"
+            type="text"
+            autocomplete="off"
+            autocorrect="off"
+            spellcheck="false"
+            maxlength="8"
+            placeholder={t("pairCodePlaceholder")}
+            value={pairCode()}
+            onInput={(e) =>
+              setPairCode(e.currentTarget.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
+            }
+          />
         </div>
-        <button onClick={connect} class="btn-primary">{t("connectCta")}</button>
+        <button onClick={connect} class="btn-primary" disabled={!pairCode()}>{t("connectCta")}</button>
       </Show>
 
       <Show when={state() === "connecting"}>

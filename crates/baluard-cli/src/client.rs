@@ -327,7 +327,10 @@ mod c2_tests {
         let sp = sock.to_str().map(str::to_string);
 
         set_session_token("cap-token-123", sp.as_deref());
-        assert_eq!(get_session_token(sp.as_deref()).as_deref(), Some("cap-token-123"));
+        assert_eq!(
+            get_session_token(sp.as_deref()).as_deref(),
+            Some("cap-token-123")
+        );
 
         clear_session_token(sp.as_deref());
         assert_eq!(get_session_token(sp.as_deref()), None);
