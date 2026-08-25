@@ -640,7 +640,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 
 > **Spike status: TOOLCHAIN DE-RISKED (2026-07-23).** The highest-risk piece — whether `baluard-core` + `baluard-runtime` types compile under UniFFI 0.28 proc-macros — is PROVEN. `crates/baluard-uniffi/` exists, builds as a `cdylib` (`libbaluard_uniffi.so`, FFI symbols confirmed via `nm -D`), and the async-runtime bridge (tokio + uniffi + baluard-runtime version matrix) compiles + runs. Full workspace 35 test binaries, 0 failures. Remaining (APK + iOS-sim + ext linking) requires a macOS host with Xcode + Android NDK; this Linux container can't build them. See the spike log at the end of this phase.
 >
-> **Discovery: legacy FFI surface consolidated.** `baluard-core` had a prior UniFFI surface (3 fns from the pre-rebrand `idtty` project). Per the plan's single-boundary design, those were REMOVED from core and re-homed in `baluard-uniffi` (`mobile_version`, `generate_recovery_phrase`, `derive_kek`). Core now stays idiomatic Rust with zero UniFFI annotations.
+> **Discovery: legacy FFI surface consolidated.** `baluard-core` had a prior UniFFI surface (3 legacy fns). Per the plan's single-boundary design, those were REMOVED from core and re-homed in `baluard-uniffi` (`mobile_version`, `generate_recovery_phrase`, `derive_kek`). Core now stays idiomatic Rust with zero UniFFI annotations.
 >
 > **Discovery: no Rust password generator exists.** Plan §3.3's `mobile_generate_password` assumed reuse of existing Rust logic. False — the generator lives in `desktop/src/lib/utils.js` (JS). Phase 4 must port it to Rust (`baluard-core::generator`) or re-implement in Kotlin commonMain.
 
