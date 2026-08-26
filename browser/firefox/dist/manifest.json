@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Baluard",
+  "version": "0.1.0",
+  "description": "Bridge client for the Baluard password manager. Connects to your local Baluard app.",
+  "icons": {
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Baluard",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "permissions": [
+    "nativeMessaging",
+    "storage",
+    "activeTab",
+    "scripting",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "baluard@actitud.xyz",
+      "strict_min_version": "115.0"
+    }
+  }
+}

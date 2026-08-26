@@ -36,6 +36,13 @@ function mergeManifest() {
   // script tag loads cleanly. Chrome keeps service_worker.
   if (target === "firefox") {
     merged.background = { scripts: ["background.js"] };
+    // B8: `offscreen` is Chrome-only. Subtract base-only permissions during
+    // the merge so they never reach the Firefox dist (unknown-permission
+    // warning at AMO review). Firefox falls back to popup-context
+    // navigator.clipboard (see background.js clipboardCopy).
+    merged.permissions = (merged.permissions || []).filter(
+      (p) => p !== "offscreen"
+    );
   }
   return JSON.stringify(merged, null, 2);
 }

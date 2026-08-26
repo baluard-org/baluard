@@ -1,0 +1,42 @@
+name: extension
+
+# B11: dist/src drift check. The packaged dists under browser/<store>/dist are
+# committed artifacts (built from browser/shared). This job rebuilds both
+# targets from the committed sources and fails when the rebuild differs from
+# what is committed, so src and dist can never silently diverge. Vite is
+# pinned exactly in browser/shared/package.json for deterministic bundles.
+
+on:
+  push:
+    branches: [main]
+    paths: ["browser/**", ".github/workflows/extension.yml"]
+  pull_request:
+    paths: ["browser/**", ".github/workflows/extension.yml"]
+
+jobs:
+  dist-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: browser/shared/package-lock.json
+
+      - name: Install
+        run: npm ci
+        working-directory: browser/shared
+
+      - name: Tests
+        run: npm test
+        working-directory: browser/shared
+
+      - name: Rebuild dists
+        run: npm run build
+        working-directory: browser/shared
+
+      - name: Dist drift check (B11)
+        run: |
+          git diff --exit-code -- browser/chrome/dist browser/firefox/dist

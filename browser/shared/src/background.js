@@ -14,7 +14,14 @@ let port = null;
 let pending = new Map(); // id -> {resolve, reject}
 let nextId = 1;
 let versionInfo = null;
-let versionSkew = false; // hard-fail closed on NMH version skew
+// B7: fail closed until the connect-time ping handshake proves the NMH is
+// current. Cleared ONLY in the ping-success branch; a missing, slow, or
+// stale host leaves it true and every non-ping send refuses.
+let versionSkew = true;
+// Settles once per connection when the handshake ping resolves, fails, or
+// times out. Non-ping sends queue on it (see send()).
+let handshake = null;
+const HANDSHAKE_TIMEOUT_MS = 5000;
 
 // Last native-messaging disconnect reason (from chrome.runtime.lastError).
 // Surfaced to the popup so the user isn't staring at a generic failure.
@@ -50,8 +57,11 @@ function connect() {
   // Version handshake immediately on connect. Hard-fail closed on
   // skew: a password manager must never silently run a
   // partially-understood protocol.
-  send("ping", {})
-    .then((r) => {
+  // B7: the handshake promise gates every non-ping send. Until it settles,
+  // actions queue instead of racing an unverified host; if the ping fails
+  // or times out, queued actions reject with the cannot-reach error.
+  handshake = withTimeout(
+    send("ping", {}).then((r) => {
       console.log("[baluard] ping raw resp:", JSON.stringify(r));
       versionInfo = r;
       // ping's payload is a JSON string like {"nmh_version":"0.1.0",...}.
@@ -70,10 +80,9 @@ function connect() {
       } else {
         versionSkew = false;
       }
-    })
-    .catch(() => {
-      // NMH not installed / not reachable — surfaced to the popup on next action.
-    });
+    }),
+    HANDSHAKE_TIMEOUT_MS
+  );
 }
 
 function onMessage(msg) {
@@ -96,7 +105,7 @@ function buildError(msg) {
 }
 
 // Exported for unit tests; not used outside the SW module otherwise.
-export { buildError };
+export { buildError, send };
 
 function send(action, payload) {
   return new Promise((resolve, reject) => {
@@ -108,13 +117,29 @@ function send(action, payload) {
       reject(err("Cannot reach the Baluard app. Is it running?", "no-daemon"));
       return;
     }
-    const id = nextId++;
-    pending.set(String(id), { resolve, reject });
-    port.postMessage({
-      id: String(id),
-      action,
-      payload: typeof payload === "string" ? payload : JSON.stringify(payload),
-    });
+    // B7: single choke point for the version gate — covers direct send()
+    // callers (badge, inline handlers), not just the onMessage route.
+    const dispatch = () => {
+      if (action !== "ping" && versionSkew) {
+        reject(
+          err("Baluard desktop app is out of date. Update it to use the extension.", "version-skew")
+        );
+        return;
+      }
+      const id = nextId++;
+      pending.set(String(id), { resolve, reject });
+      port.postMessage({
+        id: String(id),
+        action,
+        payload: typeof payload === "string" ? payload : JSON.stringify(payload),
+      });
+    };
+    // B7: queue non-ping traffic until the handshake settles.
+    if (action !== "ping" && handshake) {
+      handshake.then(dispatch, reject);
+    } else {
+      dispatch();
+    }
   });
 }
 
@@ -131,6 +156,20 @@ function err(message, code) {
   const e = new Error(message);
   e.code = code;
   return e;
+}
+
+// B7: reject with the cannot-reach error after `ms` unless `promise`
+// settles first. Covers the handshake ping stalling forever against a
+// half-started or hung NMH.
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(err("Cannot reach the Baluard app. Is it running?", "no-daemon")),
+      ms
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 // ── Inline autofill: sender-gated routes ──
@@ -259,21 +298,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
-  // Version-skew gate: refuse everything except ping.
-  if (versionSkew && msg.action !== "ping") {
-    sendResponse({
-      ok: false,
-      error: "Baluard desktop app is out of date. Update it to use the extension.",
-      code: "version-skew",
-    });
-    return false;
-  }
+  // B7: the version-skew gate now lives inside send() (single choke point
+  // covering direct callers too). Non-ping actions route through it and
+  // surface code "version-skew" from there.
   // Local action: clipboard copy via offscreen document (service worker has
   // no DOM). Auto-clears after 20s (review M2). Extension pages only — the
   // B4 split above already dropped any content-script clipboard-copy.
   if (msg.action === "clipboard-copy") {
     clipboardCopy(msg.text)
-      .then(() => sendResponse({ ok: true }))
+      .then((r) =>
+        sendResponse(r === "fallback" ? { ok: true, fallback: true } : { ok: true })
+      )
       .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true;
   }
@@ -305,6 +340,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 const CLIPBOARD_CLEAR_SECONDS = 20;
 
 async function clipboardCopy(text) {
+  // B8: Firefox has no chrome.offscreen. The copy must run in the popup
+  // context (user gesture + document focus satisfy navigator.clipboard);
+  // signal the fallback to the caller instead of throwing.
+  if (!chrome.offscreen || !chrome.offscreen.createDocument) {
+    return "fallback";
+  }
   await ensureOffscreen();
   await chrome.runtime.sendMessage({
     action: "offscreen-copy",

@@ -387,11 +387,23 @@ function originOf(url) {
 
 // Clipboard via an offscreen document (service worker has no DOM). The
 // background.js handles the offscreen lifecycle; here we just post a message.
+// B8: Firefox has no offscreen API — the SW signals {fallback: true} and
+// the copy happens HERE, where the user gesture and document focus satisfy
+// navigator.clipboard. Best-effort 20s auto-clear while the popup is open
+// (mirrors the offscreen clear on Chrome; the timer dies with the popup).
 function clipboardCopy(text) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ action: "clipboard-copy", text }, (resp) => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-      else if (resp && resp.ok) resolve();
+      else if (resp && resp.ok && resp.fallback) {
+        navigator.clipboard
+          .writeText(text)
+          .then(() => {
+            setTimeout(() => navigator.clipboard.writeText("").catch(() => {}), 20000);
+            resolve();
+          })
+          .catch(() => reject(new Error("clipboard failed")));
+      } else if (resp && resp.ok) resolve();
       else reject(new Error("clipboard failed"));
     });
   });
