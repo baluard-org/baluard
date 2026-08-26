@@ -512,28 +512,35 @@ fn show_window(window: tauri::WebviewWindow) {
 /// rename, symlinks replaced not followed.
 ///
 /// Returns `Ok(false)` when the user cancels the dialog (no file written,
-/// not an error).
+/// not an error). Peer-review follow-up: the blocking dialog + write run on
+/// the blocking pool (D5 consistency) so an open dialog parks no async
+/// worker for the full user-hesitation window.
 #[tauri::command]
 async fn save_recovery_phrase(app: AppHandle, contents: String) -> Result<bool, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let picked = app
-        .dialog()
-        .file()
-        .add_filter("Text", &["txt"])
-        .set_file_name("baluard-recovery-phrase.txt")
-        .blocking_save_file();
+    let saved = tauri::async_runtime::spawn_blocking(move || -> Result<bool, String> {
+        let picked = app
+            .dialog()
+            .file()
+            .add_filter("Text", &["txt"])
+            .set_file_name("baluard-recovery-phrase.txt")
+            .blocking_save_file();
 
-    let path = match picked {
-        None => return Ok(false), // user cancelled
-        Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
-        // Non-file URL (e.g. a remote location): refuse rather than guess.
-        Some(_) => return Err("Unsupported save location".into()),
-    };
+        let path = match picked {
+            None => return Ok(false), // user cancelled
+            Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
+            // Non-file URL (e.g. a remote location): refuse rather than guess.
+            Some(_) => return Err("Unsupported save location".into()),
+        };
 
-    baluard_core::secret_file::write_secret_file(&path, contents.as_bytes())
-        .map_err(|e| e.to_string())?;
-    Ok(true)
+        baluard_core::secret_file::write_secret_file(&path, contents.as_bytes())
+            .map_err(|e| e.to_string())?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| format!("save task failed: {e}"))??;
+    Ok(saved)
 }
 
 // ── D4: clipboard concealment marker ──
@@ -597,6 +604,7 @@ mod clipboard_conceal {
             fn GlobalFree(h_mem: *mut c_void) -> *mut c_void;
         }
         const GMEM_MOVEABLE: u32 = 0x0002;
+        const GMEM_ZEROINIT: u32 = 0x0040;
 
         for name in [
             "ExcludeClipboardContentFromMonitorProcessing",
@@ -605,14 +613,18 @@ mod clipboard_conceal {
             let mut wide: Vec<u16> = name.encode_utf16().collect();
             wide.push(0);
             unsafe {
+                // Transient ownership races are not uncommon on Windows: skip
+                // THIS marker, still try the next one.
                 if OpenClipboard(std::ptr::null_mut()) == 0 {
                     log::warn!("[desktop] clipboard concealment: OpenClipboard failed");
-                    return;
+                    continue;
                 }
                 let fmt = RegisterClipboardFormatW(wide.as_ptr());
                 let mut ok = false;
                 if fmt != 0 {
-                    let h = GlobalAlloc(GMEM_MOVEABLE, 4);
+                    // GMEM_ZEROINIT: if GlobalLock ever fails, SetClipboardData
+                    // still sees a zeroed block (the marker payload is DWORD 0).
+                    let h = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, 4);
                     if !h.is_null() {
                         let p = GlobalLock(h);
                         if !p.is_null() {
