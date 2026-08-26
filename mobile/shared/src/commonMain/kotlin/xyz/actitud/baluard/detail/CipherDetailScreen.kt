@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.platform.UriVerdict
+import xyz.actitud.baluard.platform.classifyUri
 import xyz.actitud.baluard.platform.openUrl
 import xyz.actitud.baluard.totp.TotpViewModel
 import xyz.actitud.baluard.totp.TotpWidget
@@ -81,6 +83,8 @@ fun CipherDetailScreen(
     val state = detailViewModel.state
     val scope = rememberCoroutineScope()
     var confirmDelete by remember { mutableStateOf(false) }
+    // M7: a non-browser URI waiting for the user's confirmation to launch.
+    var pendingExternalUri by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -234,7 +238,16 @@ fun CipherDetailScreen(
                                 )
                             }
                             IconButton(
-                                onClick = { openUrl(uri) },
+                                onClick = {
+                                    // M7: vault URIs are untrusted. http/https
+                                    // open directly; other schemes (which may
+                                    // launch another app) are confirmed first.
+                                    when (classifyUri(uri)) {
+                                        UriVerdict.OpenInBrowser -> openUrl(uri)
+                                        is UriVerdict.ConfirmExternal -> pendingExternalUri = uri
+                                        UriVerdict.Refuse -> Unit
+                                    }
+                                },
                                 modifier = Modifier.size(36.dp),
                             ) {
                                 Icon(
@@ -293,6 +306,33 @@ fun CipherDetailScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmDelete = false }) {
+                    Text(t("common.cancel"))
+                }
+            },
+        )
+    }
+
+    // M7: user-confirmed launch of a non-browser scheme (mailto:, ssh:, ...).
+    pendingExternalUri?.let { uri ->
+        val scheme = classifyUri(uri).let {
+            (it as? UriVerdict.ConfirmExternal)?.scheme ?: ""
+        }
+        AlertDialog(
+            onDismissRequest = { pendingExternalUri = null },
+            title = { Text(t("detail.openExternalTitle")) },
+            text = { Text(t("detail.openExternalBody", scheme)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingExternalUri = null
+                        openUrl(uri)
+                    },
+                ) {
+                    Text(t("detail.openExternalConfirm"))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingExternalUri = null }) {
                     Text(t("common.cancel"))
                 }
             },

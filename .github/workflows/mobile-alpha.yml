@@ -79,6 +79,9 @@ jobs:
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
           ./gradlew -Pbaluard.abis="$APK_ABI" :androidApp:assembleDebug
+          # M8: keep the autofill process-isolation assertion honest.
+          ./gradlew :shared:testDebugUnitTest \
+            --tests "xyz.actitud.baluard.platform.AutofillProcessIsolationTest"
           # Stop the daemon inside the step: a daemon holding the step stdio
           # is the known cause of the next step appearing hung for 15+ min.
           ./gradlew --stop
