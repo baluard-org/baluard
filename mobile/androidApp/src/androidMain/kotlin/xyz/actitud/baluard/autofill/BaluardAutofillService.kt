@@ -10,6 +10,7 @@ import android.service.autofill.FillRequest
 import android.service.autofill.FillResponse
 import android.service.autofill.SaveCallback
 import android.service.autofill.SaveRequest
+import android.util.Log
 import android.view.View
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillValue
@@ -35,6 +36,17 @@ class BaluardAutofillService : AutofillService() {
 
     private val executor = Executors.newSingleThreadExecutor()
 
+    companion object {
+        private const val TAG = "BaluardAutofill"
+
+        // M10: onFailure messages can surface in system autofill diagnostics.
+        // Static codes only; the real reason (which may carry Rust paths or
+        // provider detail) goes to logcat, never across the callback.
+        private const val ERR_NO_STRUCTURE = "no_structure"
+        private const val ERR_NO_FIELDS = "no_fields"
+        private const val ERR_FILL_FAILED = "fill_failed"
+    }
+
     override fun onFillRequest(
         request: FillRequest,
         cancellationSignal: CancellationSignal,
@@ -44,7 +56,8 @@ class BaluardAutofillService : AutofillService() {
         // fields + the package domain, then match against the vault index.
         val structure = request.fillContexts.lastOrNull()?.structure
         if (structure == null) {
-            callback.onFailure("no structure")
+            Log.w(TAG, "fill request had no structure")
+            callback.onFailure(ERR_NO_STRUCTURE)
             return
         }
 
@@ -54,7 +67,8 @@ class BaluardAutofillService : AutofillService() {
             try {
                 val parsed = parseAutofillFields(structure)
                 if (parsed.usernameId == null && parsed.passwordId == null) {
-                    callback.onFailure("no autofillable fields")
+                    Log.w(TAG, "no autofillable fields in ${parsed.domain ?: "unknown package"}")
+                    callback.onFailure(ERR_NO_FIELDS)
                     return@execute
                 }
 
@@ -65,7 +79,8 @@ class BaluardAutofillService : AutofillService() {
                 //   gracefully instead of crashing.
                 callback.onSuccess(FillResponse.Builder().build())
             } catch (e: Exception) {
-                callback.onFailure(e.message ?: "fill failed")
+                Log.w(TAG, "autofill fill failed", e)
+                callback.onFailure(ERR_FILL_FAILED)
             }
         }
     }

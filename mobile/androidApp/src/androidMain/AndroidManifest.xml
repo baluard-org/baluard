@@ -20,12 +20,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Phase 6: Baluard autofill service. Runs as a SEPARATE process
-             with strict memory limits; unlocks via unlock_with_kek (KEK from
-             AndroidKeystore gated by BiometricPrompt), NEVER the master KDF.
-             See BaluardAutofillService for the OOM-guard invariant. -->
+        <!-- Phase 6: Baluard autofill service. android:process=":autofill"
+             (M8) makes the separate-process promise REAL: the service runs
+             outside the main process with strict memory limits; unlocks via
+             unlock_with_kek (KEK from AndroidKeystore gated by
+             BiometricPrompt), NEVER the master KDF. See
+             BaluardAutofillService for the OOM-guard invariant and
+             AutofillProcessIsolationTest for the source-level assertion. -->
         <service
             android:name=".autofill.BaluardAutofillService"
+            android:process=":autofill"
             android:exported="true"
             android:permission="android.permission.BIND_AUTOFILL_SERVICE">
             <intent-filter>
