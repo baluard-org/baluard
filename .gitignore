@@ -47,7 +47,9 @@ local.properties
 # ── Browser Extension ──
 /extension/node_modules/
 /extension/dist/
-browser/*/dist/
+# NOTE: browser/<store>/dist IS committed. The dists are reviewable
+# packaging artifacts (manifest permissions are security-relevant, see B8)
+# and the extension CI job fails when a rebuild diverges from them (B11).
 browser/shared/node_modules/
 browser/shared/*.tgz
 

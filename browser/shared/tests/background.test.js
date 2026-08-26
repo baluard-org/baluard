@@ -134,3 +134,94 @@ describe("buildError", () => {
     expect(e.code).toBe("proto");
   });
 });
+// ── B7: version-skew gate (fail closed, queue until handshake) ──
+//
+// The connect() / send() path needs a controllable fake port: we patch
+// chrome.runtime.connectNative, re-import the module fresh (vi.resetModules)
+// so its top-level connect() binds to OUR port, then drive the handshake
+// from the test.
+
+import { vi, beforeEach, afterEach } from "vitest";
+
+function makeFakePort() {
+  const listeners = [];
+  return {
+    posted: [],
+    postMessage(m) {
+      this.posted.push(m);
+    },
+    onMessage: { addListener: (fn) => listeners.push(fn) },
+    onDisconnect: { addListener: () => {} },
+    reply(msg) {
+      listeners.forEach((fn) => fn(msg));
+    },
+  };
+}
+
+async function freshBackground() {
+  const port = makeFakePort();
+  const original = global.chrome.runtime.connectNative;
+  global.chrome.runtime.connectNative = () => port;
+  vi.resetModules();
+  const mod = await import("../src/background.js");
+  global.chrome.runtime.connectNative = original;
+  return { mod, port };
+}
+
+function pingReply(id, nmhVersion) {
+  return {
+    id: String(id),
+    ok: true,
+    payload: JSON.stringify({ nmh_version: nmhVersion }),
+  };
+}
+
+describe("version handshake gate (B7)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("queues non-ping sends until the first ping resolves", async () => {
+    const { mod, port } = await freshBackground();
+    // Only the handshake ping has been posted so far.
+    expect(port.posted.length).toBe(1);
+    expect(port.posted[0].action).toBe("ping");
+
+    const p = mod.send("bridge.match", { url: "https://example.com" });
+    // Still queued: the action must NOT hit the port before the handshake.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(port.posted.length).toBe(1);
+
+    port.reply(pingReply(1, "0.1.0"));
+    await new Promise((r) => setTimeout(r, 10));
+    // Handshake done: the queued action dispatched.
+    expect(port.posted.length).toBe(2);
+    expect(port.posted[1].action).toBe("bridge.match");
+
+    port.reply({ id: port.posted[1].id, ok: true, payload: "{}" });
+    await expect(p).resolves.toBeTruthy();
+  });
+
+  it("rejects non-ping sends with version-skew when the NMH is old", async () => {
+    const { mod, port } = await freshBackground();
+    port.reply(pingReply(1, "0.0.1"));
+    await new Promise((r) => setTimeout(r, 10));
+
+    await expect(mod.send("vault.get", { id: "x" })).rejects.toMatchObject({
+      code: "version-skew",
+    });
+    // Refused before reaching the port.
+    expect(port.posted.filter((m) => m.action === "vault.get")).toHaveLength(0);
+  });
+
+  it("times the handshake out and rejects queued sends (cannot reach)", async () => {
+    vi.useFakeTimers();
+    const { mod } = await freshBackground();
+    const p = mod.send("bridge.match", { url: "https://example.com" });
+    const assertion = expect(p).rejects.toMatchObject({ code: "no-daemon" });
+    await vi.advanceTimersByTimeAsync(5000);
+    await assertion;
+    // Real timers for afterEach restore; flush the rejection chain.
+    await p.catch(() => {});
+  });
+});
