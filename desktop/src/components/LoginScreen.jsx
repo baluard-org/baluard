@@ -155,6 +155,14 @@ export default function LoginScreen() {
             </button>
           </Show>
 
+          {/* Missing system keyring: print the fix, never run it */}
+          <Show when={auth.keyringHint()}>
+            <div class="w-full mt-3 text-center text-[11px] text-[var(--color-muted)] leading-relaxed">
+              {t("common.keyringMissing")}{" "}
+              <code class="font-mono text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">{auth.keyringHint()}</code>
+            </div>
+          </Show>
+
           {/* Quick Unlock (Session PIN) */}
           <Show when={auth.pinAvailable()}>
             <div class="login-screen__pin-wrap w-full mt-2">

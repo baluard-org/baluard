@@ -34,6 +34,9 @@ function AuthProvider(props) {
   const [vaultInfo, setVaultInfo] = createSignal(null);
   const [activeVault, setActiveVault] = createSignal(null);
   const [biometricAvailable, setBiometricAvailable] = createSignal(false);
+  // Distro install command shown when Quick Unlock is unavailable because
+  // the Linux Secret Service is missing ("app prints, user runs").
+  const [keyringHint, setKeyringHint] = createSignal(null);
   // Session PIN Quick Unlock: available THIS session only (in-memory escrow).
   // Independent of biometric; both can be enabled at once (both buttons shown).
   const [pinAvailable, setPinAvailable] = createSignal(false);
@@ -72,9 +75,13 @@ function AuthProvider(props) {
     try {
       const s = JSON.parse(await daemon("vault.biometric_status", "", slug));
       setBiometricAvailable(s.available && s.enabled);
+      // Install command when the system keyring (Linux Secret Service) is
+      // missing: the app prints it, the user runs it.
+      setKeyringHint(s.install_hint || null);
     } catch {
       // Slug not open in the daemon, or keychain unavailable: hide button.
       setBiometricAvailable(false);
+      setKeyringHint(null);
     }
   }
 
@@ -157,6 +164,7 @@ function AuthProvider(props) {
     vaultInfo, setVaultInfo,
     activeVault,
     biometricAvailable, refreshBiometric,
+    keyringHint,
     pinAvailable, refreshPin,
     recoveryPhrase, setRecoveryPhrase,
     createPassword, setCreatePassword,

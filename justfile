@@ -28,14 +28,96 @@ linuxbrew_env := if os == "linux" && path_exists(libgit2_lib) { "PKG_CONFIG_PATH
 default:
 	@just --list --unsorted
 
+# ── System dependency preflight ─────────────────────────────────────────────
+
+# Check Linux build dependencies (protoc for cargo builds, WebKitGTK/GTK for the
+# desktop app) and print the install command for your distro when something is
+# missing. Baluard never installs system packages itself.
+# scope: core = protoc (cargo builds/tests) | desktop = adds WebKitGTK/GTK | all
+sysdeps scope="all":
+	#!/usr/bin/env bash
+	set -euo pipefail
+	if [[ "$(uname -s)" != "Linux" ]]; then
+		echo "Not Linux, skipping system dependency check."
+		exit 0
+	fi
+	# Force system pkg-config dirs: linuxbrew's pkg-config shadows the system one
+	# and never searches /usr/lib64/pkgconfig, which would cause false negatives.
+	pc_libdirs="/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig"
+	if machine="$(gcc -dumpmachine 2>/dev/null)"; then
+		pc_libdirs="$pc_libdirs:/usr/lib/$machine/pkgconfig"
+	fi
+	pc_libdirs="$pc_libdirs:/usr/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
+	export PKG_CONFIG_LIBDIR="$pc_libdirs"
+	want_desktop=1
+	[[ "{{scope}}" == "core" ]] && want_desktop=0
+	miss_protoc=0; miss_webkit=0; miss_gtk=0; miss_tray=0
+	if [[ -z "${PROTOC:-}" ]] && ! command -v protoc >/dev/null 2>&1; then
+		miss_protoc=1
+	fi
+	if (( want_desktop )); then
+		if command -v pkg-config >/dev/null 2>&1; then
+			pkg-config --exists webkit2gtk-4.1 2>/dev/null || miss_webkit=1
+			pkg-config --exists gtk+-3.0 2>/dev/null || miss_gtk=1
+			pkg-config --exists ayatana-appindicator3-0.1 2>/dev/null || miss_tray=1
+		else
+			miss_webkit=1; miss_gtk=1; miss_tray=1
+		fi
+	fi
+	if (( miss_protoc == 0 && miss_webkit == 0 && miss_gtk == 0 && miss_tray == 0 )); then
+		echo "System dependencies OK."
+		exit 0
+	fi
+	missing=""
+	(( miss_protoc )) && missing="protobuf-compiler (protoc)"
+	(( miss_webkit )) && missing="${missing:+$missing }webkit2gtk"
+	(( miss_gtk ))    && missing="${missing:+$missing }gtk3"
+	(( miss_tray ))   && missing="${missing:+$missing }ayatana-appindicator"
+	os_id="$(sed -n 's/^ID=//p' /etc/os-release 2>/dev/null | head -1 | tr -d '"')"
+	os_like="$(sed -n 's/^ID_LIKE=//p' /etc/os-release 2>/dev/null | head -1 | tr -d '"')"
+	distro="unknown"
+	case "$os_id" in
+		ubuntu|debian) distro="apt" ;;
+		fedora|rhel|rocky|almalinux|nobara) distro="dnf" ;;
+		arch|manjaro|endeavouros|garuda|cachyos) distro="pacman" ;;
+		*) case "$os_like" in
+			*debian*) distro="apt" ;;
+			*fedora*|*rhel*) distro="dnf" ;;
+			*arch*) distro="pacman" ;;
+		esac ;;
+	esac
+	echo "ERROR: missing system libraries: $missing"
+	echo "Baluard does not install system packages for you. Run the command below, then retry:"
+	case "$distro:$want_desktop" in
+		apt:0)    echo "  sudo apt install protobuf-compiler" ;;
+		apt:1)    echo "  sudo apt install protobuf-compiler libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev pkg-config" ;;
+		dnf:0)    echo "  sudo dnf install protobuf-compiler" ;;
+		dnf:1)    echo "  sudo dnf install protobuf-compiler webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel pkgconf-pkg-config" ;;
+		pacman:0) echo "  sudo pacman -S protobuf" ;;
+		pacman:1) echo "  sudo pacman -S protobuf webkit2gtk-4.1 gtk3 libayatana-appindicator pkgconf" ;;
+		*) echo "  Debian/Ubuntu: sudo apt install protobuf-compiler libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev pkg-config"
+		   echo "  Fedora:        sudo dnf install protobuf-compiler webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel pkgconf-pkg-config"
+		   echo "  Arch:          sudo pacman -S protobuf webkit2gtk-4.1 gtk3 libayatana-appindicator pkgconf" ;;
+	esac
+	(( miss_protoc )) && echo "(alternatively: brew install protobuf, or export PROTOC=/path/to/protoc)"
+	exit 1
+
+# Internal: core deps gate (protoc, needed by every cargo build/test)
+_sysdeps-core:
+	@just sysdeps core
+
+# Internal: desktop deps gate (adds WebKitGTK + GTK for the Tauri app)
+_sysdeps-desktop:
+	@just sysdeps desktop
+
 # ── Build ───────────────────────────────────────────────────────────────────
 
 # Build all Rust crates (debug)
-build:
+build: _sysdeps-core
 	{{ linuxbrew_env }} cargo build
 
 # Build optimized release binaries
-build-release:
+build-release: _sysdeps-core
 	{{ linuxbrew_env }} cargo build --release
 
 # Build and install CLI + daemon to ~/.local/bin
@@ -64,7 +146,7 @@ uninstall:
 # ── Test ────────────────────────────────────────────────────────────────────
 
 # Run all tests
-test:
+test: _sysdeps-core
 	{{ linuxbrew_env }} cargo test
 
 # Run tests in release mode
@@ -276,7 +358,7 @@ codesign:
 	echo "Signed: $BINARY ($IDENTITY)"
 
 # Run desktop app in dev mode
-desktop-dev: _sidecar-force desktop-deps
+desktop-dev: _sysdeps-desktop _sidecar-force desktop-deps
 	#!/usr/bin/env bash
 	set -euo pipefail
 	just _kill_daemon
@@ -285,7 +367,7 @@ desktop-dev: _sidecar-force desktop-deps
 # Run desktop app with full debug logging (BALUARD_DEBUG=1)
 # Logs go to ./logs/ (daemon.log + desktop.log)
 # Share: zip logs/ or paste the relevant file
-desktop-debug: _sidecar-force desktop-deps
+desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 	#!/usr/bin/env bash
 	set -euo pipefail
 	just _kill_procs
@@ -300,7 +382,7 @@ desktop-debug: _sidecar-force desktop-deps
 	BALUARD_DEBUG=1 BALUARD_LOG_DIR="$LOG_DIR" cd desktop && npm run tauri dev
 
 # Build desktop app (production bundle)
-desktop-build: _sidecar desktop-deps
+desktop-build: _sysdeps-desktop _sidecar desktop-deps
 	cd desktop && npm run tauri build
 
 # ── App Icons ──────────────────────────────────────────────────────────────

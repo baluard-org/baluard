@@ -2606,7 +2606,8 @@ impl VaultState {
 
     /// Get biometric unlock status for THIS vault only.
     pub async fn biometric_status(&self) -> Result<String, String> {
-        let available = baluard_core::biometric::is_available();
+        let availability = baluard_core::biometric::availability();
+        let available = availability == baluard_core::biometric::Availability::Available;
         let enabled = if available {
             let vault_id = self.vault_id_str().await?;
             baluard_core::biometric::is_enabled(&vault_id)
@@ -2619,6 +2620,14 @@ impl VaultState {
             // Audit C3: false means reads have no user-presence gate
             // (Linux/Windows keyring). UIs surface the asymmetry.
             "read_gated": baluard_core::biometric::read_gated(),
+            // Distro install command when the missing Linux Secret Service
+            // is why Quick Unlock is unavailable. The app prints the
+            // command; the user runs it (AGENTS.md UX PRINCIPLES).
+            "install_hint": if !available {
+                baluard_core::biometric::unavailability_hint()
+            } else {
+                None
+            },
         })
         .to_string())
     }

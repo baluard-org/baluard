@@ -45,6 +45,30 @@
     "macOS": {
       "entitlements": "baluard.entitlements"
     },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0t64",
+          "libayatana-appindicator3-1",
+          "libgit2-1.9",
+          "libssl3t64",
+          "libssh2-1"
+        ],
+        "recommends": ["gnome-keyring"]
+      },
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "gtk3",
+          "libayatana-appindicator-gtk3",
+          "libgit2",
+          "openssl-libs",
+          "libssh2"
+        ],
+        "recommends": ["gnome-keyring"]
+      }
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

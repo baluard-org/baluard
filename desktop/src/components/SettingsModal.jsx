@@ -34,6 +34,9 @@ export default function SettingsModal() {
   // user-presence prompt (macOS). False on Linux/Windows keyring backends.
   const [biometricReadGated, setBiometricReadGated] = createSignal(true);
   const [biometricAvailable, setBiometricAvailable] = createSignal(false);
+  // Install command for a missing system keyring (Linux Secret Service):
+  // shown as text next to the "unsupported" badge; the user runs it.
+  const [biometricInstallHint, setBiometricInstallHint] = createSignal(null);
   const [biometricPassword, setBiometricPassword] = createSignal("");
   const [showBiometricInput, setShowBiometricInput] = createSignal(false);
 
@@ -111,16 +114,21 @@ export default function SettingsModal() {
       // Favicon setting (default: disabled — opt-in for privacy)
       setFetchFavicons(data.fetch_favicons === true);
 
-      // Load biometric status
+      // Load biometric status. Single daemon fetch also carries install_hint
+      // when the system keyring is missing (Linux), so the UI can print the fix.
       const available = await biometryAvailable();
       let enabled = false;
-      if (available) {
-        try {
-          const status = JSON.parse(await daemon("vault.biometric_status"));
+      let installHint = null;
+      try {
+        const status = JSON.parse(await daemon("vault.biometric_status"));
+        if (available) {
           enabled = status.enabled;
           setBiometricReadGated(status.read_gated !== false);
-        } catch {}
-      }
+        } else if (!status.available) {
+          installHint = status.install_hint || null;
+        }
+      } catch {}
+      setBiometricInstallHint(installHint);
       setBiometricAvailable(available);
       setBiometricEnabled(enabled);
       await loadPinStatus();
@@ -596,6 +604,14 @@ export default function SettingsModal() {
                   <Show when={biometricEnabled() && !biometricReadGated()}>
                     <div class="mt-2 p-2.5 rounded-lg border border-[var(--color-danger)] bg-[var(--color-sidebar)] text-[10px] text-[var(--color-danger)] leading-relaxed">
                       {t("settings.quickUnlockNoReadGate")}
+                    </div>
+                  </Show>
+
+                  {/* Missing system keyring: print the fix, never run it */}
+                  <Show when={!biometricAvailable() && biometricInstallHint()}>
+                    <div class="mt-2 text-[10px] text-[var(--color-muted)] leading-relaxed">
+                      {t("common.keyringMissing")}{" "}
+                      <code class="font-mono bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">{biometricInstallHint()}</code>
                     </div>
                   </Show>
 

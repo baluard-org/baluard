@@ -615,7 +615,8 @@
     "dismiss": "Cerrar",
     "cancel": "Cancelar",
     "loading": "Cargando...",
-    "processing": "Procesando..."
+    "processing": "Procesando...",
+    "keyringMissing": "El desbloqueo rápido necesita el servicio de llavero del sistema, que no está instalado. Instálalo con:"
   },
   "clone": {
     "title": "Descargar caja fuerte",
