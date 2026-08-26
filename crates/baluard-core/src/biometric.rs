@@ -78,8 +78,8 @@ mod platform {
     /// Check if keychain access is available (always true on macOS).
     /// NOTE: Does not check for Touch ID hardware. Macs without biometrics
     /// will still report available; the keychain will use device passcode fallback.
-    pub fn is_available() -> bool {
-        true
+    pub fn availability() -> super::Availability {
+        super::Availability::Available
     }
 
     /// Store master password with biometric access control.
@@ -340,27 +340,47 @@ mod platform {
     use super::SERVICE_NAME;
     use keyring::Entry;
 
-    /// Check if the OS keyring is accessible.
-    pub fn is_available() -> bool {
-        Entry::new(SERVICE_NAME, "quick-unlock:probe").is_ok()
+    /// Probe the OS keyring with a real read so a missing Secret Service
+    /// provider on Linux is reported distinctly (the UI then shows the
+    /// install command instead of a button that fails on click).
+    pub fn availability() -> super::Availability {
+        let entry = match Entry::new(SERVICE_NAME, "quick-unlock:probe") {
+            Ok(e) => e,
+            Err(_) => return super::Availability::Unavailable,
+        };
+        match entry.get_password() {
+            // Service answered (stale probe entry or cleanly missing).
+            Ok(_) | Err(keyring::Error::NoEntry) => super::Availability::Available,
+            // No Secret Service on the bus: say so, with the reason.
+            Err(e) if crate::sysdeps::secret_service_absent(&e.to_string()) => {
+                super::Availability::SecretServiceMissing
+            }
+            // Anything else (locked collection, declined prompt): let the
+            // OS surface it at use time.
+            Err(_) => super::Availability::Available,
+        }
     }
 
     /// Store master password in OS keyring under the per-vault account.
     pub fn enable(account: &str, master_password: &str) -> Result<(), String> {
-        let entry = Entry::new(SERVICE_NAME, account).map_err(|e| format!("keyring entry: {e}"))?;
+        let entry = Entry::new(SERVICE_NAME, account)
+            .map_err(|e| crate::sysdeps::keyring_error_hint(&format!("keyring entry: {e}")))?;
         entry
             .set_password(master_password)
-            .map_err(|e| format!("keyring store: {e}"))?;
+            .map_err(|e| crate::sysdeps::keyring_error_hint(&format!("keyring store: {e}")))?;
         Ok(())
     }
 
     /// Delete stored master password. Ok if already deleted.
     pub fn disable(account: &str) -> Result<(), String> {
-        let entry = Entry::new(SERVICE_NAME, account).map_err(|e| format!("keyring entry: {e}"))?;
+        let entry = Entry::new(SERVICE_NAME, account)
+            .map_err(|e| crate::sysdeps::keyring_error_hint(&format!("keyring entry: {e}")))?;
         match entry.delete_credential() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(format!("keyring delete: {e}")),
+            Err(e) => Err(crate::sysdeps::keyring_error_hint(&format!(
+                "keyring delete: {e}"
+            ))),
         }
     }
 
@@ -374,18 +394,43 @@ mod platform {
 
     /// Retrieve stored master password. May trigger OS credential prompt.
     pub fn unlock(account: &str) -> Result<String, String> {
-        let entry = Entry::new(SERVICE_NAME, account).map_err(|e| format!("keyring entry: {e}"))?;
-        entry
-            .get_password()
-            .map_err(|e| format!("biometric unlock failed: {e}"))
+        let entry = Entry::new(SERVICE_NAME, account)
+            .map_err(|e| crate::sysdeps::keyring_error_hint(&format!("keyring entry: {e}")))?;
+        entry.get_password().map_err(|e| {
+            crate::sysdeps::keyring_error_hint(&format!("biometric unlock failed: {e}"))
+        })
     }
 }
 
 // ── Public API (platform-delegated, scoped per vault) ────────────────────
 
+/// Why Quick Unlock is (un)available. `SecretServiceMissing` carries the
+/// Linux "no org.freedesktop.secrets on the session bus" case so callers
+/// can surface the install command (the app prints it; the user runs it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Availability {
+    Available,
+    SecretServiceMissing,
+    Unavailable,
+}
+
+/// Availability with reason (single keyring probe per call).
+pub fn availability() -> Availability {
+    platform::availability()
+}
+
+/// Install command for the missing Linux Secret Service provider; `None`
+/// when availability has another cause or the distro is unknown.
+pub fn unavailability_hint() -> Option<&'static str> {
+    match availability() {
+        Availability::SecretServiceMissing => crate::sysdeps::secret_service_install_hint(),
+        _ => None,
+    }
+}
+
 /// Check if biometric unlock is available on this platform.
 pub fn is_available() -> bool {
-    platform::is_available()
+    availability() == Availability::Available
 }
 
 /// Whether reading the stored master password requires a user-presence

@@ -20,14 +20,35 @@ brew install protobuf
 
 No other extras needed. macOS uses system WebKit (WKWebView) and system libgit2/openssl are resolved via Homebrew automatically.
 
-### Linux (Debian/Ubuntu) extras
+### Linux extras
 
-Desktop app requires WebKitGTK dev headers:
+Every cargo build/test needs `protoc` (protobuf compiler):
 
 ```bash
-sudo apt install libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
-  libsoup-3.0-dev libgtk-3-dev libssl-dev pkg-config
+sudo apt install protobuf-compiler        # Debian/Ubuntu
+sudo dnf install protobuf-compiler        # Fedora
+sudo pacman -S protobuf                   # Arch
 ```
+
+The desktop app also requires WebKitGTK dev headers:
+
+```bash
+# Debian/Ubuntu
+sudo apt install libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
+  libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev libssl-dev pkg-config
+```
+
+```bash
+# Fedora (webkit2gtk4.1-devel pulls javascriptcoregtk + libsoup3 on its own)
+sudo dnf install webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel
+```
+
+```bash
+# Arch
+sudo pacman -S webkit2gtk-4.1 gtk3 libayatana-appindicator
+```
+
+Note: the keyring uses a pure-Rust D-Bus Secret Service client (no libsecret build dep). At runtime a Secret Service provider (gnome-keyring, KeePassXC) must be reachable on the session bus. The justfile preflight (`just sysdeps`) prints the right one-liner for your distro when something is missing.
 
 ### Linuxbrew (libgit2/openssl)
 

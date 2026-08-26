@@ -113,13 +113,13 @@ All code must run on these platforms at minimum. No APIs, crates, or features th
 |----------|----------------|-------|
 | macOS | 15 (Sequoia) | Apple Silicon + Intel. Security framework SecAccessControl + Touch ID. |
 | Windows | 11 (2025 update) | Windows Hello (PIN + biometric). Credential Manager via keyring. |
-| Ubuntu | 26.04 | libsecret / Secret Service API for keyring. |
-| Fedora | 43 | libsecret / Secret Service API for keyring. |
+| Ubuntu | 26.04 | Secret Service (gnome-keyring or compatible) at runtime for keyring storage. |
+| Fedora | 43 | Secret Service (gnome-keyring or compatible) at runtime for keyring storage. |
 
 Implications:
 * Rust edition 2024, MSRV 1.85 (ships in all targets above).
 * macOS: `security-framework` v3 + SecAccessControl BIOMETRY_ANY. No APIs deprecated after macOS 15.
-* Linux: `keyring` crate with `linux-native` + `sync-secret-service` + `crypto-rust`. Requires `libsecret` dev packages at build time.
+* Linux: `keyring` crate with `linux-native-sync-persistent` + `crypto-rust` (pure-Rust D-Bus Secret Service client). No libsecret build dep; a Secret Service provider (gnome-keyring, KeePassXC) must be reachable at runtime. Build deps: `protoc` (cargo builds), WebKitGTK/GTK dev headers (desktop app). `just sysdeps` prints the per-distro install line.
 * Windows: `keyring` crate with `windows-native`. Windows Credential Manager via DPAPI.
 * Tauri v2 WebView2: bundled on Windows, WebKit on macOS/Linux (system-provided on these versions).
 
@@ -284,10 +284,13 @@ Passkeys are stored **inside `LoginData::fido2_credentials: Option<Vec<PasskeyDa
 * **GitLab token refresh is rolling**: GitLab invalidates the prior access+refresh pair on refresh. Concurrent refreshes must be serialized (per-provider mutex in `ensure_valid_token`).
 * **Web-OAuth session keyed by provider**: `OAUTH_SESSIONS` is `HashMap<Provider, OAuthSession>`, not a single global Option (B1 fix). Restarting a flow for the same provider aborts the prior callback listener (JoinHandle abort, frees the port).
 * **Codeberg endpoint**: use `/user/repos` (returns array directly). `/repos/list` does not exist; `/repos/search` wraps in `{ok, data}`.
+* **Linux package deps**: `bundle.linux` in `desktop/src-tauri/tauri.conf.json` declares deb/rpm runtime deps (webkit2gtk, gtk3, ayatana-appindicator, libgit2, openssl, libssh2; gnome-keyring as `recommends`). Deb soname package names (`libgtk-3-0t64`, `libgit2-1.9`, `libssl3t64`) drift between distro releases: verify them on the target-release builder before shipping (`apt-cache policy <pkg>`). `just sysdeps` is the build-time preflight; missing runtime services print the install command instead of auto-installing (AGENTS.md UX PRINCIPLES).
+* **Tray icon on Linux** needs `libayatana-appindicator` at build AND runtime (`tray-icon` crate links it via pkg-config `ayatana-appindicator3-0.1`).
 
 ## UX PRINCIPLES
 * **Hide the machinery**: the user sees entries, folders, and a sync status dot. Never a git term, a crypto term, an epoch, a token, a socket, or an error code. If a flow cannot be explained without technical vocabulary, redesign the flow.
 * **Ease-of-use is the evaluation axis**: a change "breaks UX" only if it removes working functionality, adds friction, or confuses a non-technical user in the ongoing experience. Format and data incompatibilities during alpha/beta do not count as UX breaks (see STATUS).
 * **Plain language**: No hard tech terms in user-facing UI. "Cipher" -> "entry", "UUID" -> hidden. Optional visible "advanced" mode for tech-savvy users.
 * **No server backend**: Desktop and mobile apps work standalone/offline. Git sync is optional.
+* **The app prints commands, the user runs them**: dependency automation belongs to the package manager. When a system component is missing (e.g. the Secret Service keyring on Linux), tell the user what is missing and show the exact install command for their distro (never run it, never ask for the sudo password). The app UI collects exactly one credential in its life: the master password. Any second password prompt is phishing-shaped and forbidden.
 * **i18n**: All user-facing strings in `desktop/src/i18n/locales/en.json` and `es.json`. Use `t("key")` in components. Both files must stay in sync.

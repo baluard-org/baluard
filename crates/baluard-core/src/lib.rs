@@ -20,6 +20,7 @@ pub mod providers;
 pub mod recovery;
 pub mod secret_file;
 pub mod sync;
+pub mod sysdeps;
 pub mod vault;
 
 pub mod error;
