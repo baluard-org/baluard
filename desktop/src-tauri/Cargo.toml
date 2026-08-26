@@ -24,12 +24,21 @@ tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
-tauri-plugin-biometry = "0.2"
+# Community plugin (no official Tauri biometry plugin exists). Pinned EXACT
+# per audit D10: a password manager should upgrade this dependency as a
+# conscious decision, not via a caret drift. Review scope on every bump.
+tauri-plugin-biometry = "=0.2.8"
 prost = "0.13"
 anyhow = "1"
 libc = "0.2"
 zeroize = { version = "1", features = ["derive"] }
 baluard-core = { path = "../../crates/baluard-core" }
+
+# D4: pasteboard concealment marker. objc2-app-kit is already in the graph
+# via wry/tao; declaring it direct only adds the NSPasteboard module.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSPasteboard"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSString", "NSData"] }
 
 [profile.release]
 panic = "abort"

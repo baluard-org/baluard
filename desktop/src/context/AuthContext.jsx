@@ -126,6 +126,9 @@ function AuthProvider(props) {
       await daemon("vault.lock");
       guardedSetStatus(setStatus, status(), "locked");
       setVaultInfo(null);
+      // D3: defensive — if onboarding was abandoned mid-setup, the vault
+      // password signal must not survive a lock cycle either.
+      setCreatePassword("");
       // VaultProvider unmounts via <Show>. All vault signals destroyed.
     } catch (e) {
       toastError(sanitizeError(e, t));
