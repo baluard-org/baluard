@@ -161,7 +161,6 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 * **Passkey ceremony (WebAuthn)**: `crates/baluard-core/src/crypto/webauthn/`
 * **Passkey data structure**: `crates/baluard-core/src/types.rs` (`PasskeyData`)
 * **Passkey plan**: `docs/plan-passkey-support.md` (authoritative)
-* **Security audit + remediation plan (2026-08-23)**: `docs/SECURITY-AUDIT-20260823.md` (56 findings, validated fix paths, workstreams, waves, release call, sequencing traps: B2 rename must ship atomically with B1/B3/B4; WS2 global limiter before C22/C23 wiring)
 * **Git provider app registration & tokens**: `docs/git-provider-apps-and-tokens.md`
 * **Git provider sync plan**: `docs/plan-git-providers-multi-vault.md`
 * **Post-quantum readiness**: `docs/post-quantum-readiness.md` (PQC status: data-at-rest PQ-safe, identity layer is the gap)
