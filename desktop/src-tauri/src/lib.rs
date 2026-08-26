@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_shell::ShellExt;
 
 /// Maximum response size (5MB — daemon caps at 4MB, plus headroom)
@@ -176,6 +176,121 @@ fn send_request_with_token(_action: &str, _payload: &str, _token: &str, _slug: &
 
 // ── Tauri commands ──
 
+/// D2: the only daemon actions the desktop UI may issue. Built from the
+/// `daemon("...")` call sites in `desktop/src`. The webview is the least-
+/// trusted component in this architecture: without this gate every
+/// host-level (pre-token) route — including the deliberately CLI-only
+/// destructive arms — is reachable from JS. Adding a new action to the UI
+/// requires extending this list (a debug-build warning names the action on
+/// denial, so a miss is loud in development, not silent in production).
+const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
+    // bridge (browser extension pairing)
+    "bridge.list",
+    "bridge.pair_approve",
+    "bridge.pair_start",
+    "bridge.pending",
+    "bridge.revoke",
+    // ciphers
+    "cipher.totp_code",
+    "vault.active",
+    "vault.add",
+    "vault.archive",
+    "vault.attach_download",
+    "vault.avatar.get",
+    "vault.avatar.set",
+    "vault.delete",
+    "vault.get",
+    "vault.import",
+    "vault.export",
+    "vault.list",
+    "vault.list_full",
+    "vault.trash.purge",
+    "vault.trash.restore",
+    "vault.unarchive",
+    "vault.update",
+    // vault lifecycle / unlock
+    "vault.create",
+    "vault.info",
+    "vault.lock",
+    "vault.open",
+    "vault.unlock",
+    // quick unlock
+    "vault.biometric_disable",
+    "vault.biometric_enable",
+    "vault.biometric_status",
+    "vault.biometric_unlock",
+    "vault.pin_disable",
+    "vault.pin_enable",
+    "vault.pin_status",
+    "vault.pin_unlock",
+    // multi-vault
+    "vaults.close",
+    "vaults.detach",
+    "vaults.list",
+    "vaults.register_local",
+    "vaults.switch",
+    // clone from provider
+    "vault.clone_finalize",
+    "vault.clone_progress",
+    "vault.clone_start",
+    "vault.setup_sync",
+    "vault.device_activity",
+    // device fleet
+    "device.revoke",
+    // folders / tags
+    "folder.create",
+    "folder.delete",
+    "folder.rename",
+    "tag.delete",
+    // passkeys
+    "passkey.delete",
+    // settings
+    "settings.get",
+    "settings.set",
+    "locale.save",
+    // generator / ssh
+    "generator.history_add",
+    "generator.history_clear",
+    "generator.history_list",
+    "ssh.generate_key",
+    "favicon.get",
+    // sync
+    "sync.autosync_nudge_pull",
+    "sync.autosync_status",
+    "sync.conflict",
+    "sync.conflict.resolve",
+    "sync.disconnect",
+    "sync.pull",
+    "sync.push",
+    "sync.status_json",
+    // providers
+    "provider.create_repo",
+    "provider.disconnect",
+    "provider.list",
+    "provider.oauth_status_web",
+    "provider.status",
+];
+
+fn desktop_action_allowed(action: &str) -> bool {
+    DESKTOP_ALLOWED_ACTIONS.contains(&action)
+}
+
+/// D2: destructive daemon params the desktop never sends. Checked against
+/// top-level JSON object keys only — never substrings — so cipher names or
+/// note text containing e.g. "force" cannot trip the gate. Non-JSON payloads
+/// (raw ids) and non-object JSON (strings/numbers) pass: no such action has
+/// these params.
+fn payload_has_desktop_forbidden_keys(payload: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|v| {
+            v.as_object().map(|o| {
+                o.contains_key("delete_from_disk") || o.contains_key("force")
+            })
+        })
+        .unwrap_or(false)
+}
+
 #[derive(Serialize)]
 struct DaemonResponse {
     success: bool,
@@ -190,6 +305,29 @@ async fn daemon_request(
     slug: Option<String>,
     app: AppHandle,
 ) -> DaemonResponse {
+    // D2: the webview gets exactly the action set the UI uses — no more.
+    // Checked before any state access so a denial costs nothing.
+    if !desktop_action_allowed(&action) {
+        #[cfg(debug_assertions)]
+        log::warn!("[desktop] D2 deny: action={action} not in DESKTOP_ALLOWED_ACTIONS");
+        return DaemonResponse {
+            success: false,
+            payload: String::new(),
+            error: format!("Action '{action}' is not available in the desktop app"),
+        };
+    }
+    // D2: the destructive detach params (delete_from_disk/force) are the
+    // CLI's escape hatch, never the webview's.
+    if payload_has_desktop_forbidden_keys(&payload) {
+        #[cfg(debug_assertions)]
+        log::warn!("[desktop] D2 deny: action={action} payload carries a forbidden key");
+        return DaemonResponse {
+            success: false,
+            payload: String::new(),
+            error: "This operation is only available through the command line".into(),
+        };
+    }
+
     let store = app.state::<Mutex<SessionStore>>();
     log::debug!("[desktop] -> action={action} slug={slug:?} payload_len={}", payload.len());
 
@@ -305,10 +443,14 @@ async fn daemon_request(
     }
 }
 
-/// Check if daemon is reachable via ping (avoids phantom connections)
+/// Check if daemon is reachable via ping (avoids phantom connections).
+/// D5: async + spawn_blocking — the sync version did a blocking socket
+/// read (up to the 30s timeout) on the main UI thread.
 #[tauri::command]
-fn daemon_status() -> bool {
-    send_request("ping", "").is_ok()
+async fn daemon_status() -> bool {
+    tauri::async_runtime::spawn_blocking(|| send_request("ping", "").is_ok())
+        .await
+        .unwrap_or(false)
 }
 
 /// Lock every currently-unlocked vault (Phase 6 defensive primitive).
@@ -320,24 +462,34 @@ fn daemon_status() -> bool {
 /// all key material. Non-blocking on daemon errors (a down daemon has no
 /// keys to lock).
 #[tauri::command]
-fn lock_all_vaults(store: State<Mutex<SessionStore>>) -> bool {
+async fn lock_all_vaults(app: AppHandle) -> bool {
     log::info!("[desktop] system event → lock_all_vaults");
+    let store = app.state::<Mutex<SessionStore>>();
     // Clear our token cache first so the frontend treats every vault as
     // locked even if the daemon RPC is slow.
-    let mut st = store.lock().unwrap();
-    st.tokens.clear();
-    st.active_slug = None;
-    drop(st);
-    match send_request("vaults.lock_all", "") {
-        Ok(payload) => {
+    {
+        let mut st = store.lock().unwrap();
+        st.tokens.clear();
+        st.active_slug = None;
+    }
+    // D5: async + spawn_blocking — this fires on the blur path (exactly
+    // when the user switches away); the sync version froze the UI thread
+    // for up to 30s when the daemon hung.
+    let result = tauri::async_runtime::spawn_blocking(|| send_request("vaults.lock_all", "")).await;
+    match result {
+        Ok(Ok(payload)) => {
             log::info!("[desktop] lock_all succeeded: {payload}");
             true
         }
         // Daemon unreachable or returned a daemon-level error string: a
         // down daemon has no keys to lock, and we already cleared the token
         // cache above so the frontend state is consistent.
-        Err(e) => {
+        Ok(Err(e)) => {
             log::warn!("[desktop] lock_all RPC failed: {e}");
+            false
+        }
+        Err(join_err) => {
+            log::warn!("[desktop] lock_all task failed: {join_err}");
             false
         }
     }
@@ -351,14 +503,147 @@ fn show_window(window: tauri::WebviewWindow) {
     let _ = window.set_focus();
 }
 
-/// Write text to a user-chosen path (from a `save()` dialog).
+/// D1: save the recovery phrase to a user-chosen file — dialog AND write
+/// both Rust-side. Replaces `write_text_file(path, contents)`, which
+/// accepted any path from the webview (the "scope" was a comment, not
+/// code). The webview now passes only the contents; it never holds a
+/// filesystem path, and no arbitrary-path write command exists at all.
+/// Written through `write_secret_file`: 0600 from the first byte, atomic
+/// rename, symlinks replaced not followed.
 ///
-/// Scoped write primitive: the path always comes from the native save
-/// dialog, so the user explicitly consents to the destination. No arbitrary
-/// fs capability is exposed. Used by the recovery-phrase download flow.
+/// Returns `Ok(false)` when the user cancels the dialog (no file written,
+/// not an error).
 #[tauri::command]
-fn write_text_file(path: String, contents: String) -> Result<(), String> {
-    std::fs::write(&path, contents).map_err(|e| e.to_string())
+async fn save_recovery_phrase(app: AppHandle, contents: String) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("Text", &["txt"])
+        .set_file_name("baluard-recovery-phrase.txt")
+        .blocking_save_file();
+
+    let path = match picked {
+        None => return Ok(false), // user cancelled
+        Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
+        // Non-file URL (e.g. a remote location): refuse rather than guess.
+        Some(_) => return Err("Unsupported save location".into()),
+    };
+
+    baluard_core::secret_file::write_secret_file(&path, contents.as_bytes())
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+// ── D4: clipboard concealment marker ──
+//
+// Adds the platform's "this clipboard entry is sensitive" marker to the
+// CURRENT clipboard contents, right after the webview's copy lands, so
+// clipboard-history tools and cloud clipboard sync skip the entry:
+//   macOS:   org.nspasteboard.ConcealedType (Paste, Maccy, Alfred, ...)
+//   Windows: ExcludeClipboardContentFromMonitorProcessing (cloud sync)
+//            + CanIncludeInClipboardHistory = 0 (Win10+ clipboard history)
+//   Linux:   no cross-desktop marker exists on X11/Wayland (KDE's
+//            x-kde-passwordManagerHint cannot be attached to a selection
+//            the webview already owns) — the 30s auto-clear is the floor.
+// Best-effort by design: failures log, never surface. Concealment layers
+// on top of the auto-clear, it does not replace it.
+mod clipboard_conceal {
+    pub fn mark_current() {
+        #[cfg(target_os = "macos")]
+        macos_mark();
+        #[cfg(target_os = "windows")]
+        windows_mark();
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        log::debug!("[desktop] clipboard concealment: no platform marker on this OS");
+    }
+
+    #[cfg(target_os = "macos")]
+    fn macos_mark() {
+        use objc2_app_kit::NSPasteboard;
+        use objc2_foundation::{NSData, NSString};
+
+        let pb = NSPasteboard::generalPasteboard();
+        let concealed = NSString::from_str("org.nspasteboard.ConcealedType");
+        let empty = NSData::new();
+        // NSPasteboardType is a NSString alias; adding the type to the
+        // existing pasteboard entry does not clear the copied text.
+        if !pb.setData_forType(Some(&empty), &concealed) {
+            log::warn!("[desktop] pasteboard refused the ConcealedType marker");
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn windows_mark() {
+        // Raw Win32 FFI (stable ABI, immune to windows-crate version churn):
+        // add the two documented marker formats to the CURRENT clipboard.
+        // SetClipboardData without EmptyClipboard adds a format alongside
+        // the webview's text instead of replacing it.
+        use std::ffi::c_void;
+
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn OpenClipboard(hwnd_new_owner: *mut c_void) -> i32;
+            fn CloseClipboard() -> i32;
+            fn RegisterClipboardFormatW(lpsz_format: *const u16) -> u32;
+            fn SetClipboardData(u_format: u32, h_mem: *mut c_void) -> *mut c_void;
+        }
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GlobalAlloc(u_flags: u32, dw_bytes: usize) -> *mut c_void;
+            fn GlobalLock(h_mem: *mut c_void) -> *mut c_void;
+            fn GlobalUnlock(h_mem: *mut c_void) -> i32;
+            fn GlobalFree(h_mem: *mut c_void) -> *mut c_void;
+        }
+        const GMEM_MOVEABLE: u32 = 0x0002;
+
+        for name in [
+            "ExcludeClipboardContentFromMonitorProcessing",
+            "CanIncludeInClipboardHistory",
+        ] {
+            let mut wide: Vec<u16> = name.encode_utf16().collect();
+            wide.push(0);
+            unsafe {
+                if OpenClipboard(std::ptr::null_mut()) == 0 {
+                    log::warn!("[desktop] clipboard concealment: OpenClipboard failed");
+                    return;
+                }
+                let fmt = RegisterClipboardFormatW(wide.as_ptr());
+                let mut ok = false;
+                if fmt != 0 {
+                    let h = GlobalAlloc(GMEM_MOVEABLE, 4);
+                    if !h.is_null() {
+                        let p = GlobalLock(h);
+                        if !p.is_null() {
+                            // DWORD 0 = exclude (CanInclude=0 means excluded;
+                            // for Exclude... presence is what matters)
+                            (p as *mut u32).write_unaligned(0);
+                            GlobalUnlock(h);
+                        }
+                        if SetClipboardData(fmt, h).is_null() {
+                            // Ownership not taken; free to avoid the leak.
+                            GlobalFree(h);
+                        } else {
+                            ok = true;
+                        }
+                    }
+                }
+                if !ok {
+                    log::warn!("[desktop] clipboard concealment: marker {name} not set");
+                }
+                CloseClipboard();
+            }
+        }
+    }
+}
+
+/// D4: mark the current clipboard entry as concealed (see
+/// `clipboard_conceal`). Called from JS right after a secret copy.
+#[tauri::command]
+async fn clipboard_mark_concealed(app: AppHandle) -> Result<(), String> {
+    app.run_on_main_thread(clipboard_conceal::mark_current)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -815,7 +1100,8 @@ pub fn run() {
             lock_all_vaults,
             show_window,
             update_tray_icon,
-            write_text_file,
+            save_recovery_phrase,
+            clipboard_mark_concealed,
             get_desktop_prefs,
             set_tray_only
         ])
@@ -836,4 +1122,57 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // D2: the audit's acceptance test — the deliberately CLI-only destructive
+    // arm must be unreachable from the webview even though `vaults.detach`
+    // itself is allowed (the safe detach is a UI feature).
+    #[test]
+    fn d2_destructive_detach_params_are_denied() {
+        assert!(desktop_action_allowed("vaults.detach"));
+        assert!(payload_has_desktop_forbidden_keys(
+            "{\"slug\":\"a\",\"delete_from_disk\":true}"
+        ));
+        assert!(payload_has_desktop_forbidden_keys(
+            "{\"slug\":\"a\",\"force\":true}"
+        ));
+        // The safe arm the UI actually sends passes.
+        assert!(!payload_has_desktop_forbidden_keys("{\"slug\":\"a\"}"));
+    }
+
+    #[test]
+    fn d2_key_check_is_not_a_substring_match() {
+        // A cipher name containing the word must not trip the gate: the
+        // forbidden string is a nested value, not a top-level key.
+        assert!(!payload_has_desktop_forbidden_keys(
+            "{\"name\":\"force field login\"}"
+        ));
+    }
+
+    #[test]
+    fn d2_non_object_payloads_pass_the_param_gate() {
+        // folder.delete sends a raw id; trash.purge sends a bare number.
+        assert!(!payload_has_desktop_forbidden_keys("abc-123"));
+        assert!(!payload_has_desktop_forbidden_keys("\"0\""));
+        assert!(!payload_has_desktop_forbidden_keys("0"));
+    }
+
+    #[test]
+    fn d2_allowlist_blocks_unlisted_actions() {
+        // Everything the UI calls is allowed…
+        for a in ["vault.unlock", "vaults.detach", "sync.pull", "bridge.pair_start"] {
+            assert!(desktop_action_allowed(a), "{a} should be allowed");
+        }
+        // …and host-level routes the UI never calls are not. `ping` goes
+        // through daemon_status, not daemon_request; passkey ceremony
+        // routes have no desktop caller yet; provider connect PAT flows are
+        // CLI/NMH territory.
+        for a in ["ping", "vaults.set_active", "passkey.finish_register", "provider.connect_pat"] {
+            assert!(!desktop_action_allowed(a), "{a} should be denied");
+        }
+    }
 }

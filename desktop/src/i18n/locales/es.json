@@ -416,7 +416,8 @@
     "corrupted": "Los datos de la bóveda están dañados",
     "invalidPassword": "Contraseña maestra incorrecta",
     "alreadyExists": "Ya existe una bóveda en esta ubicación",
-    "unexpected": "Ocurrió un error inesperado"
+    "unexpected": "Ocurrió un error inesperado",
+    "openFailed": "No se pudo abrir el enlace"
   },
   "categories": {
     "allItems": "Todos los elementos",

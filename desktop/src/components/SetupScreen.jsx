@@ -135,6 +135,10 @@ export default function SetupScreen() {
   }
 
   function finish() {
+    // D3: the password has served its purpose (prepare() unlocked with it at
+    // mount). It must not outlive onboarding in webview heap for the app's
+    // entire uptime.
+    auth.setCreatePassword("");
     startVaultPrefetch();
     auth.setStatus("unlocked");
   }

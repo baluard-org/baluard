@@ -10,13 +10,27 @@ import { getCuratedColor, getDomainInitials } from "../lib/utils.js";
  * (settings.fetch_favicons, default off) and happens only at save time in
  * AddEditCipherForm, so browsing the vault makes zero network calls.
  *
+ * D6: the mime is attacker-influenced when the favicon arrived via git sync
+ * or import (daemon-fetched ones are validated). Only whitelisted image
+ * types reach the data: URI; anything else renders the initials fallback.
+ *
  * Sizes: "sm" (row), "lg" (detail header).
  */
+const FAVICON_MIME_ALLOWLIST = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/x-icon",
+  "image/vnd.microsoft.icon",
+]);
+
 export default function CipherAvatar(props) {
   const size = props.size || "sm";
   const faviconSrc = () => {
     const f = props.favicon;
-    return f && f.data && f.mime ? `data:${f.mime};base64,${f.data}` : null;
+    return f && f.data && f.mime && FAVICON_MIME_ALLOWLIST.has(f.mime)
+      ? `data:${f.mime};base64,${f.data}`
+      : null;
   };
 
   const containerCls = () => {

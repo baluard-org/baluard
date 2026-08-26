@@ -4,7 +4,6 @@ import { useI18n } from "../i18n/index.jsx";
 import { IconNote, IconCopy, IconCheck, IconDownload } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 import { copyToClipboard } from "../lib/clipboard.js";
-import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { toastSuccess, toastError } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -76,13 +75,11 @@ export default function RecoveryScreen() {
 
   const handleDownload = async () => {
     try {
-      const path = await save({
-        defaultPath: "baluard-recovery-phrase.txt",
-        filters: [{ name: "Text", extensions: ["txt"] }],
-      });
-      if (!path) return; // user cancelled
-      await invoke("write_text_file", { path, contents: phrase() });
-      toastSuccess(t("recovery.downloadSuccess"));
+      // D1: save dialog AND file write both run Rust-side. The webview passes
+      // only the phrase contents — it never holds a filesystem path, and no
+      // arbitrary-path write command exists anymore. Returns false on cancel.
+      const saved = await invoke("save_recovery_phrase", { contents: phrase() });
+      if (saved) toastSuccess(t("recovery.downloadSuccess"));
     } catch (e) {
       toastError(sanitizeError(e, t));
     }

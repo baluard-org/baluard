@@ -438,7 +438,8 @@
     "corrupted": "Vault data is corrupted",
     "invalidPassword": "Incorrect master password",
     "alreadyExists": "Vault already exists at this location",
-    "unexpected": "An unexpected error occurred"
+    "unexpected": "An unexpected error occurred",
+    "openFailed": "Could not open the link"
   },
   "categories": {
     "allItems": "All items",
