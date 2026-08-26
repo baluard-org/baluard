@@ -21,7 +21,10 @@ openssl_pkg := absolute_path(join(home_directory(), ".linuxbrew/Cellar/openssl@3
 libgit2_lib := absolute_path(join(home_directory(), ".linuxbrew/Cellar/libgit2/1.9.3/lib"))
 openssl_lib := absolute_path(join(home_directory(), ".linuxbrew/Cellar/openssl@3/3.6.2/lib"))
 zlib_lib    := absolute_path(join(home_directory(), ".linuxbrew/opt/zlib-ng-compat/lib"))
-linuxbrew_env := if os == "linux" && path_exists(libgit2_lib) { "PKG_CONFIG_PATH=" + libgit2_pkg + ":" + openssl_pkg + ":$PKG_CONFIG_PATH LD_LIBRARY_PATH=" + libgit2_lib + ":" + zlib_lib + ":" + openssl_lib + ":$LD_LIBRARY_PATH" } else { "" }
+# System pkg-config dirs must be explicit when linuxbrew exists: brew's
+# pkg-config shadows the system one and never searches /usr/lib64/pkgconfig,
+# which breaks gdk/webkit resolution for the desktop build.
+linuxbrew_env := if os == "linux" && path_exists(libgit2_lib) { "PKG_CONFIG_PATH=" + libgit2_pkg + ":" + openssl_pkg + ":/usr/lib64/pkgconfig:/usr/share/pkgconfig:$PKG_CONFIG_PATH LD_LIBRARY_PATH=" + libgit2_lib + ":" + zlib_lib + ":" + openssl_lib + ":$LD_LIBRARY_PATH" } else { "" }
 
 # ── Default ─────────────────────────────────────────────────────────────────
 
@@ -361,6 +364,11 @@ codesign:
 desktop-dev: _sysdeps-desktop _sidecar-force desktop-deps
 	#!/usr/bin/env bash
 	set -euo pipefail
+	# linuxbrew's pkg-config shadows the system one (brew-only default search
+	# path); put system dirs on PKG_CONFIG_PATH so webkit/gtk/gdk resolve.
+	if [[ "$(uname -s)" == "Linux" ]]; then
+		export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:/usr/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+	fi
 	just _kill_daemon
 	cd desktop && npm run tauri dev
 
@@ -370,6 +378,10 @@ desktop-dev: _sysdeps-desktop _sidecar-force desktop-deps
 desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 	#!/usr/bin/env bash
 	set -euo pipefail
+	# Same pkg-config shadowing guard as desktop-dev.
+	if [[ "$(uname -s)" == "Linux" ]]; then
+		export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:/usr/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+	fi
 	just _kill_procs
 	LOG_DIR="$(pwd)/logs"
 	mkdir -p "$LOG_DIR"
@@ -383,7 +395,7 @@ desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 
 # Build desktop app (production bundle)
 desktop-build: _sysdeps-desktop _sidecar desktop-deps
-	cd desktop && npm run tauri build
+	{{ linuxbrew_env }} cd desktop && npm run tauri build
 
 # ── App Icons ──────────────────────────────────────────────────────────────
 

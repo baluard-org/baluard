@@ -1127,11 +1127,18 @@ pub fn run() {
             // already-visible window is a harmless no-op, so we don't gate on
             // `has_open_windows` (which stays true while the window exists but
             // is hidden, making it an unreliable visibility signal here).
+            // RunEvent::Reopen exists only on macOS (cfg-gated upstream), so
+            // the arm is gated to match; other platforms match nothing here.
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 if let Some(w) = app_handle.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (app_handle, &event);
             }
         });
 }
