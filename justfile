@@ -395,6 +395,16 @@ desktop-debug: _sysdeps-desktop _sidecar-force desktop-deps
 
 # Build desktop app (production bundle)
 desktop-build: _sysdeps-desktop _sidecar desktop-deps
+	#!/usr/bin/env bash
+	set -euo pipefail
+	if [[ "$(uname -s)" == "Linux" ]]; then
+		export PKG_CONFIG_PATH="/usr/lib64/pkgconfig:/usr/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+		# linuxdeploy's bundled strip predates .relr.dyn sections (type 0x13)
+		# in Fedora 44+ system libs and fails every AppImage bundle with
+		# "failed to run linuxdeploy". NO_STRIP skips its strip pass; the
+		# RPM/DEB bundles are unaffected.
+		export NO_STRIP=true
+	fi
 	{{ linuxbrew_env }} cd desktop && npm run tauri build
 
 # ── App Icons ──────────────────────────────────────────────────────────────
