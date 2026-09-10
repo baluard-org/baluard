@@ -28,8 +28,8 @@ const STRINGS = {
     loading: "Loading…",
     activeVault: "Vault",
     retry: "Try again",
-    openApp: "Open Baluard",
-    downloadApp: "Download Baluard",
+    openApp: "Open the Baluard app",
+    downloadApp: "Download the Baluard app",
     // Welcome (first run)
     welcome: "Welcome to Baluard",
     welcomeDesc: "Baluard is a private password manager. This extension fills your saved logins into websites — your passwords never leave your device.",
@@ -53,7 +53,7 @@ const STRINGS = {
     lockedDesc: "Unlock the Baluard app to fill passwords.",
     versionSkew: "Update required",
     versionSkewDesc: "This extension needs a newer Baluard app. Please update.",
-    updateApp: "Update Baluard",
+    updateApp: "Update the Baluard app",
     // Error / timeout
     errorTitle: "Something went wrong",
     errorTimeout: "Couldn't reach the Baluard app. Make sure it's running, then try again.",
@@ -87,8 +87,8 @@ const STRINGS = {
     loading: "Cargando…",
     activeVault: "Caja fuerte",
     retry: "Reintentar",
-    openApp: "Abrir Baluard",
-    downloadApp: "Descargar Baluard",
+    openApp: "Abrir la app de Baluard",
+    downloadApp: "Descargar la app de Baluard",
     // Welcome (first run)
     welcome: "Te damos la bienvenida a Baluard",
     welcomeDesc: "Baluard es un gestor de contraseñas privado. Esta extensión rellena tus inicios de sesión guardados en los sitios web — tus contraseñas nunca salen de tu dispositivo.",
@@ -112,7 +112,7 @@ const STRINGS = {
     lockedDesc: "Desbloquea la app de Baluard para rellenar contraseñas.",
     versionSkew: "Actualización necesaria",
     versionSkewDesc: "Esta extensión necesita una app de Baluard más reciente. Actualiza, por favor.",
-    updateApp: "Actualizar Baluard",
+    updateApp: "Actualizar la app de Baluard",
     // Error / timeout
     errorTitle: "Algo salió mal",
     errorTimeout: "No se pudo contactar con la app de Baluard. Asegúrate de que esté abierta e inténtalo de nuevo.",
