@@ -80,3 +80,74 @@ describe("offscreen message router", () => {
     expect(sendResponse).not.toHaveBeenCalled();
   });
 });
+
+// ── Auto-clear timer (offscreen doc owns it; SW alarms clamp at 30s) ──
+
+describe("offscreen-copy clearSeconds", () => {
+  let writeText;
+
+  beforeEach(() => {
+    writeText = vi.fn().mockResolvedValue(undefined);
+    globalThis.navigator.clipboard.writeText = writeText;
+  });
+
+  it("overwrites with a space after clearSeconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const sendResponse = vi.fn();
+      handleOffscreenMessage(
+        { target: "offscreen", action: "offscreen-copy", text: "secret", clearSeconds: 10 },
+        { id: chrome.runtime.id },
+        sendResponse
+      );
+      await vi.advanceTimersByTimeAsync(0); // settle the write microtask
+      expect(writeText).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(writeText).toHaveBeenCalledTimes(2);
+      expect(writeText).toHaveBeenLastCalledWith(" ");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clearSeconds=0 never schedules a clear", async () => {
+    vi.useFakeTimers();
+    try {
+      handleOffscreenMessage(
+        { target: "offscreen", action: "offscreen-copy", text: "secret", clearSeconds: 0 },
+        { id: chrome.runtime.id },
+        vi.fn()
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(600000);
+      expect(writeText).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a fresh copy cancels the previous pending clear", async () => {
+    vi.useFakeTimers();
+    try {
+      const sender = { id: chrome.runtime.id };
+      handleOffscreenMessage(
+        { target: "offscreen", action: "offscreen-copy", text: "first", clearSeconds: 10 },
+        sender,
+        vi.fn()
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      handleOffscreenMessage(
+        { target: "offscreen", action: "offscreen-copy", text: "second", clearSeconds: 10 },
+        sender,
+        vi.fn()
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(writeText).toHaveBeenCalledTimes(2); // both writes, no clear yet
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(writeText).toHaveBeenCalledTimes(3); // exactly one clear
+      expect(writeText).toHaveBeenLastCalledWith(" ");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

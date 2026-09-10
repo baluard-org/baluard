@@ -29,8 +29,8 @@ export { fillLoginForm, visibleInputs, isTextLike, isVisible, setNativeValue };
     // Fill-time ORIGIN re-check (B1: scheme+host+port, not hostname-only).
     // The popup matched the tab's URL, but the tab may have navigated during
     // the IPC round trip — including an https -> http downgrade.
-    if (msg.expectedOrigin && location.origin !== msg.expectedOrigin) {
-      // Refuse: the page is no longer the one the user approved. Fail closed.
+    if (!msg.expectedOrigin || location.origin !== msg.expectedOrigin) {
+      // Refuse: the page is no longer the one the user approved, or origin missing. Fail closed.
       console.warn("[baluard] fill refused: origin changed during fill");
       return;
     }

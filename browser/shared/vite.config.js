@@ -90,19 +90,44 @@ function extensionPackPlugin() {
         resolve(__dirname, "popup.html"),
         resolve(outDir, "popup.html")
       );
-      // icons: generate 48 + 128 from the brand logo (desktop/src/assets/logo.png).
-      // Skipped only if sharp is unavailable or the source is missing — the
-      // manifest still references the files, so a missing source is a hard error.
+      // icons: the lock GLYPH only (assets/baluard-lock-only.svg), sized
+      // like competitors' toolbar icons (glyph fills ~88% of the canvas).
+      // The desktop app logo's dark tile is designed for in-app use; on the
+      // 16dp Chromium toolbar the tile reads as a dark blob and the lock
+      // inside it looks undersized next to other extensions' glyphs. The
+      // SVG is rasterized once, trimmed to its painted bounds, then placed
+      // centered on a transparent canvas per size (crisp at 16/32 HiDPI).
       const iconsDir = resolve(outDir, "icons");
       mkdirSync(iconsDir, { recursive: true });
-      const logoSrc = resolve(__dirname, "../../desktop/src/assets/logo.png");
-      if (!existsSync(logoSrc)) {
-        throw new Error(`[baluard-extension-pack] icon source not found: ${logoSrc}`);
+      const lockSvgPath = resolve(__dirname, "../../assets/baluard-lock-only.svg");
+      if (!existsSync(lockSvgPath)) {
+        throw new Error(`[baluard-extension-pack] icon source not found: ${lockSvgPath}`);
       }
-      await Promise.all([
-        sharp(logoSrc).resize(48, 48, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toFile(resolve(iconsDir, "icon-48.png")),
-        sharp(logoSrc).resize(128, 128, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toFile(resolve(iconsDir, "icon-128.png")),
-      ]);
+      // viewBox is 512; default 72dpi density renders it at 512px — enough
+      // resolution for the 128px store icon.
+      const glyphPainted = await sharp(readFileSync(lockSvgPath), { density: 72 })
+        .trim({ threshold: 20 })
+        .png()
+        .toBuffer({ resolveWithObject: true });
+      const GLYPH_FILL = 0.88; // painted height per canvas edge
+      const makeIcon = async (size) => {
+        const glyph = await sharp(glyphPainted.data)
+          .resize({ height: Math.round(size * GLYPH_FILL) })
+          .png()
+          .toBuffer();
+        await sharp({
+          create: {
+            width: size,
+            height: size,
+            channels: 4,
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
+          },
+        })
+          .composite([{ input: glyph, gravity: "centre" }])
+          .png()
+          .toFile(resolve(iconsDir, `icon-${size}.png`));
+      };
+      await Promise.all([16, 32, 48, 128].map(makeIcon));
     },
   };
 }

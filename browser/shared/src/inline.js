@@ -16,7 +16,27 @@
 // The icon shows on focus of username/password fields only — no continuous
 // form scanning, no fingerprintable page-load probing.
 
-import { fillLoginForm, isUsernameField } from "./autofill.js";
+import { fillLoginForm, isUsernameField, isTotpField, findTotpFields, setNativeValue } from "./autofill.js";
+import { getSettings, normalizeClearSeconds } from "./settings.js";
+
+// Status mapping for the inline dropdown. Exported for unit tests (the
+// esbuild IIFE bundle strips exports from the classic content script).
+// Daemon/lock states get actionable one-liners; anything else (including a
+// successful but empty match list) stays the plain "no matches" message.
+export function statusKeyFor(code) {
+  switch (code) {
+    case "no-daemon":
+      return "appRequired";
+    case "locked":
+      return "locked";
+    case "version-skew":
+      return "updateApp";
+    case "not-paired":
+      return "notPaired";
+    default:
+      return "noMatches";
+  }
+}
 
 (() => {
   if (window.__baluardInline) return;
@@ -24,8 +44,30 @@ import { fillLoginForm, isUsernameField } from "./autofill.js";
 
   // Minimal user-facing strings (same en/es shape as the popup).
   const STRINGS = {
-    en: { noMatches: "No logins for this site", loading: "Loading…" },
-    es: { noMatches: "No hay inicios de sesión para este sitio", loading: "Cargando…" },
+    en: {
+      noMatches: "No logins for this site",
+      loading: "Loading…",
+      codeCopied: "Code copied",
+      codeCopyFailed: "Copy failed",
+      noCode: "No code available",
+      fillFailed: "Couldn't fill this field",
+      appRequired: "Open Baluard to fill logins",
+      locked: "Unlock Baluard to fill logins",
+      updateApp: "Update Baluard to continue",
+      notPaired: "Connect this browser to Baluard",
+    },
+    es: {
+      noMatches: "No hay inicios de sesión para este sitio",
+      loading: "Cargando…",
+      codeCopied: "Código copiado",
+      codeCopyFailed: "Error al copiar",
+      noCode: "Sin código disponible",
+      fillFailed: "No se pudo rellenar este campo",
+      appRequired: "Abre Baluard para rellenar inicios de sesión",
+      locked: "Desbloquea Baluard para rellenar inicios de sesión",
+      updateApp: "Actualiza Baluard para continuar",
+      notPaired: "Vincula este navegador con Baluard",
+    },
   };
   const t = (k) => {
     const locale = (navigator.language || "en").toLowerCase().startsWith("es") ? "es" : "en";
@@ -85,6 +127,20 @@ import { fillLoginForm, isUsernameField } from "./autofill.js";
       .entry:hover, .entry:focus-visible { background: #14292c; outline: none; }
       .entry-name { font-weight: 600; }
       .entry-user { color: #a2b7ba; font-size: 12px; word-break: break-all; }
+      .status {
+        position: fixed;
+        display: none;
+        padding: 7px 12px;
+        background: #0b1517;
+        border: 1px solid #1d3a3d;
+        border-radius: 8px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+        z-index: 2147483647;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+        font-size: 12px;
+        color: #f3f4f6;
+        pointer-events: none;
+      }
     </style>
     <div class="icon" title="Baluard" part="icon" aria-label="Baluard">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#b3e55c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -92,12 +148,20 @@ import { fillLoginForm, isUsernameField } from "./autofill.js";
       </svg>
     </div>
     <div class="menu" role="listbox" aria-label="Baluard logins"></div>
+    <div class="status" role="status" aria-live="polite"></div>
   `;
   const icon = root.querySelector(".icon");
   const menu = root.querySelector(".menu");
+  const statusEl = root.querySelector(".status");
 
   let targetInput = null;
   let menuOpen = false;
+  // Capture-race guard: the field the menu was opened on, snapshotted at
+  // open time and re-verified at fill time. A hostile page can blur the
+  // original field and focus a different one while the menu is open — the
+  // code (or password) must go to the field the user actually clicked on.
+  let menuField = null;
+  let menuFieldType = "";
 
   // Mount lazily on first qualifying focus so pages without login fields
   // never see the host node at all.
@@ -149,15 +213,28 @@ import { fillLoginForm, isUsernameField } from "./autofill.js";
   async function toggleMenu() {
     if (menuOpen) return closeMenu();
     menuOpen = true;
+    // Snapshot the trigger field NOW; requestFill re-verifies before use.
+    menuField = targetInput;
+    menuFieldType = ((menuField && menuField.type) || "").toLowerCase();
     menu.classList.add("open");
     menu.innerHTML = `<div class="menu-status">${escapeHtml(t("loading"))}</div>`;
     positionMenu();
     try {
       const resp = await chrome.runtime.sendMessage({ action: "inline.matches" });
+      if (resp && !resp.ok) {
+        // App closed, locked, unpaired, or out of date: say WHY. The empty
+        // "no logins" message is only for a real, unlocked, empty match.
+        if (!menuOpen) return; // closed while loading
+        menu.innerHTML = `<div class="menu-status">${escapeHtml(t(statusKeyFor(resp.code)))}</div>`;
+        return;
+      }
       const data = resp && resp.ok ? safeParse(resp.payload) : null;
       const matches = (data && data.matches) || [];
       renderEntries(matches);
     } catch {
+      // Messaging-level failure (SW died mid-flight): same mapping. A code
+      // rarely exists here, so this lands on the plain no-matches message.
+      if (!menuOpen) return;
       menu.innerHTML = `<div class="menu-status">${escapeHtml(t("noMatches"))}</div>`;
     }
   }
@@ -196,17 +273,32 @@ import { fillLoginForm, isUsernameField } from "./autofill.js";
     }
   }
 
-  // Ask the SW for the credential and the fill push. The credential never
-  // comes back through this response — the SW pushes it via
-  // tabs.sendMessage (baluard-inline-fill) with expectedOrigin derived from
-  // the tab's real URL, so a compromised page cannot intercept it here.
+  // Ask the SW for the credential and the fill push. mode tells the SW to
+  // minimize the pushed payload: "totp" pushes the code ONLY (no username,
+  // no password). The SW fetches a code when this page can consume it or
+  // when copyTotp is on for an entry that has TOTP (clipboard for step 2).
   async function requestFill(id) {
+    // The page may have swapped or removed the trigger field between menu
+    // open and entry click. Fail closed.
+    if (
+      !menuField ||
+      !menuField.isConnected ||
+      ((menuField.type || "").toLowerCase() !== menuFieldType)
+    ) {
+      closeMenu();
+      return;
+    }
+    const mode = isTotpField(menuField) ? "totp" : "login";
+    const hasTotpField = findTotpFields().length > 0;
+    const anchor = menuField;
     closeMenu();
     try {
-      await chrome.runtime.sendMessage({ action: "inline.fill", id });
+      const resp = await chrome.runtime.sendMessage({ action: "inline.fill", id, mode, hasTotpField });
+      if (resp && !resp.ok) {
+        showStatus(t(statusKeyFor(resp.code)), anchor);
+      }
     } catch {
-      // SW unreachable (version skew / daemon down): silently drop. The
-      // popup remains the always-works fallback.
+      showStatus(t("fillFailed"), anchor);
     }
   }
 
@@ -214,16 +306,63 @@ import { fillLoginForm, isUsernameField } from "./autofill.js";
   chrome.runtime.onMessage.addListener((msg) => {
     if (!msg || msg.type !== "baluard-inline-fill") return;
     // B1: origin compare (scheme+host+port). A hostname-only check would
-    // still fill after an https -> http downgrade navigation.
-    if (msg.expectedOrigin && location.origin !== msg.expectedOrigin) {
-      // Tab navigated between user click and fill. Fail closed.
+    // still fill after an https -> http downgrade navigation. Fail closed.
+    if (!msg.expectedOrigin || location.origin !== msg.expectedOrigin) {
+      // Tab navigated between user click and fill, or expectedOrigin missing. Fail closed.
       console.warn("[baluard] inline fill refused: origin changed during fill");
       return;
     }
-    fillLoginForm(msg.credential);
+    const anchor = menuField && menuField.isConnected ? menuField : targetInput;
+    if (msg.kind === "totp") {
+      // Code-only fill writes into the EXACT field the menu was opened on —
+      // never a fallback. A page that swapped fields mid-flight (SPA
+      // re-render: no navigation, so the B1 origin check stays silent)
+      // gets an explicit failure, not a code in the wrong box.
+      if (!msg.totpCode) {
+        showStatus(t("noCode"), anchor);
+      } else if (
+        menuField &&
+        menuField.isConnected &&
+        ((menuField.type || "").toLowerCase() === menuFieldType)
+      ) {
+        setNativeValue(menuField, msg.totpCode);
+        reportCopy(msg, menuField, msg.totpCode);
+      } else {
+        showStatus(t("fillFailed"), anchor);
+      }
+    } else {
+      fillLoginForm(msg.credential);
+      if (msg.credential && msg.credential.totpCode) {
+        reportCopy(msg, anchor, msg.credential.totpCode);
+      }
+    }
     closeMenu();
     hideIcon();
   });
+
+  // Copy feedback. The SW already wrote the clipboard via the offscreen doc
+  // when msg.copied. Firefox has no offscreen API (msg.clipboardFallback):
+  // write directly here — the document still holds user activation from the
+  // click a moment ago. copyTotp off => both false => stay quiet.
+  function reportCopy(msg, anchor, code) {
+    if (msg.copied) {
+      showStatus(t("codeCopied"), anchor);
+    } else if (msg.clipboardFallback && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code).then(
+        async () => {
+          // Same auto-clear as the SW offscreen path and the popup fallback
+          // (clipboardClearSeconds setting; 0 = never). Overwrite with a
+          // space so clipboard managers record no captured secret.
+          const seconds = normalizeClearSeconds((await getSettings()).clipboardClearSeconds);
+          if (seconds > 0) {
+            setTimeout(() => navigator.clipboard.writeText(" ").catch(() => {}), seconds * 1000);
+          }
+          showStatus(t("codeCopied"), anchor);
+        },
+        () => showStatus(t("codeCopyFailed"), anchor)
+      );
+    }
+  }
 
   // ── Page events ──
   // focusin bubbles (unlike blur) and sees shadow-piercing composed targets.
@@ -231,9 +370,20 @@ import { fillLoginForm, isUsernameField } from "./autofill.js";
     "focusin",
     (e) => {
       const el = e.target;
-      if (el && el.tagName === "INPUT" && isUsernameField(el) && isVisibleField(el)) {
+      if (
+        el &&
+        el.tagName === "INPUT" &&
+        isVisibleField(el) &&
+        (isUsernameField(el) || isTotpField(el))
+      ) {
         showIcon(el);
-      } else if (menuOpen && el && el.tagName === "INPUT" && !isUsernameField(el)) {
+      } else if (
+        menuOpen &&
+        el &&
+        el.tagName === "INPUT" &&
+        !isUsernameField(el) &&
+        !isTotpField(el)
+      ) {
         closeMenu();
       }
     },
@@ -246,7 +396,14 @@ import { fillLoginForm, isUsernameField } from "./autofill.js";
       // Focus left login fields entirely (and is not our own UI) -> hide.
       if (targetInput && e.target !== targetInput && !host.contains(e.target)) {
         const stillOnField = e.target === targetInput;
-        if (!stillOnField && !(e.target && e.target.tagName === "INPUT" && isUsernameField(e.target))) {
+        if (
+          !stillOnField &&
+          !(
+            e.target &&
+            e.target.tagName === "INPUT" &&
+            (isUsernameField(e.target) || isTotpField(e.target))
+          )
+        ) {
           hideIcon();
         }
       }
@@ -286,6 +443,22 @@ import { fillLoginForm, isUsernameField } from "./autofill.js";
     if (rect.width === 0 || rect.height === 0) return false;
     const style = window.getComputedStyle(el);
     return style.display !== "none" && style.visibility !== "hidden";
+  }
+
+  let statusTimer = null;
+  function showStatus(text, anchorEl) {
+    const anchor = anchorEl || targetInput;
+    if (!anchor || !anchor.getBoundingClientRect) return;
+    ensureMounted();
+    statusEl.textContent = text;
+    const rect = anchor.getBoundingClientRect();
+    statusEl.style.left = `${Math.max(4, Math.round(rect.right - 170))}px`;
+    statusEl.style.top = `${Math.max(4, Math.round(rect.bottom + 6))}px`;
+    statusEl.style.display = "block";
+    if (statusTimer) clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => {
+      statusEl.style.display = "none";
+    }, 2200);
   }
 
   function escapeHtml(s) {

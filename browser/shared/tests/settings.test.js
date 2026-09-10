@@ -5,7 +5,7 @@
 // merge semantics, and write-through.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { getSettings, updateSettings, DEFAULT_SETTINGS } from "../src/settings.js";
+import { getSettings, updateSettings, DEFAULT_SETTINGS, normalizeClearSeconds, CLEAR_SECONDS_CHOICES } from "../src/settings.js";
 
 function installFakeStorage() {
   const store = new Map();
@@ -39,7 +39,21 @@ describe("getSettings", () => {
   it("returns stored values over defaults", async () => {
     const store = installFakeStorage();
     store.set("settings", { inlineAutofill: false });
-    expect(await getSettings()).toEqual({ inlineAutofill: false });
+    expect(await getSettings()).toEqual({
+      inlineAutofill: false,
+      copyTotp: true,
+      clipboardClearSeconds: 60,
+    });
+  });
+
+  it("copyTotp defaults to ON (1Password/Bitwarden parity)", async () => {
+    const s = await getSettings();
+    expect(s.copyTotp).toBe(true);
+  });
+
+  it("clipboard auto-clear defaults to 60 seconds", async () => {
+    const s = await getSettings();
+    expect(s.clipboardClearSeconds).toBe(60);
   });
 });
 
@@ -50,13 +64,41 @@ describe("updateSettings", () => {
     const next = await updateSettings({ inlineAutofill: false });
     expect(next.inlineAutofill).toBe(false);
     const store = globalThis.chrome.storage.local._store;
-    expect(store.get("settings")).toEqual({ inlineAutofill: false });
+    expect(store.get("settings")).toEqual({
+      inlineAutofill: false,
+      copyTotp: true,
+      clipboardClearSeconds: 60,
+    });
   });
 
   it("keeps unrelated future keys when merging", async () => {
     const store = installFakeStorage();
     store.set("settings", { inlineAutofill: false, futureKey: 42 });
     const next = await updateSettings({ inlineAutofill: true });
-    expect(next).toEqual({ inlineAutofill: true, futureKey: 42 });
+    expect(next).toEqual({
+      inlineAutofill: true,
+      copyTotp: true,
+      clipboardClearSeconds: 60,
+      futureKey: 42,
+    });
+  });
+});
+
+describe("normalizeClearSeconds", () => {
+  it("passes through every UI choice (0 = never)", () => {
+    for (const c of CLEAR_SECONDS_CHOICES) expect(normalizeClearSeconds(c)).toBe(c);
+  });
+
+  it("coerces numeric strings from storage round-trips", () => {
+    expect(normalizeClearSeconds("30")).toBe(30);
+    expect(normalizeClearSeconds("0")).toBe(0);
+  });
+
+  it("falls back to 60 on junk", () => {
+    expect(normalizeClearSeconds(undefined)).toBe(60);
+    expect(normalizeClearSeconds(null)).toBe(60);
+    expect(normalizeClearSeconds("banana")).toBe(60);
+    expect(normalizeClearSeconds(45)).toBe(60);
+    expect(normalizeClearSeconds(-10)).toBe(60);
   });
 });
