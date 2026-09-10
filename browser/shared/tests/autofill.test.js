@@ -7,7 +7,12 @@
 // directly before a password field in the same form" pattern.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { isUsernameField } from "../src/autofill.js";
+import {
+  isUsernameField,
+  isTotpField,
+  findTotpFields,
+  fillLoginForm,
+} from "../src/autofill.js";
 
 function makeInput(type, attrs = {}) {
   const el = document.createElement("input");
@@ -85,5 +90,187 @@ describe("isUsernameField", () => {
   it("rejects non-input elements and null", () => {
     expect(isUsernameField(document.createElement("textarea"))).toBe(false);
     expect(isUsernameField(null)).toBe(false);
+  });
+
+  it("never claims a TOTP field (B10)", () => {
+    expect(isUsernameField(makeInput("text", { name: "totp" }))).toBe(false);
+    expect(
+      isUsernameField(makeInput("text", { autocomplete: "one-time-code" }))
+    ).toBe(false);
+  });
+});
+
+// ── TOTP field detection ──
+// Precedence: segmented-box floor (maxlength<=1, before everything) >
+// autocomplete="one-time-code" > ignore tokens > strict name match >
+// ambiguous token + numeric corroboration. The false-positive class
+// (postcode, product_code, discount-code, CVV "security-code") is the
+// KeePassXC #2856 bug list — every member gets a test.
+
+describe("isTotpField", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("trusts autocomplete=one-time-code over every heuristic", () => {
+    expect(isTotpField(makeInput("text", { autocomplete: "one-time-code" }))).toBe(true);
+    // Explicit attribute beats even ignore-token names.
+    expect(
+      isTotpField(makeInput("text", { autocomplete: "one-time-code", name: "postcodex" }))
+    ).toBe(true);
+  });
+
+  it("matches strict names via normalized equality", () => {
+    expect(isTotpField(makeInput("text", { name: "totp" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { name: "TOTP_Code" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { id: "security_code" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { id: "otp-code" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { placeholder: "verification code" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { name: "approvals_code" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { "aria-label": "one-time password" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { name: "mfacode" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { name: "second-factor" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { name: "otc-confirmation" }))).toBe(true);
+  });
+
+  it("requires numeric corroboration for ambiguous names", () => {
+    expect(
+      isTotpField(makeInput("text", { name: "code", inputmode: "numeric" }))
+    ).toBe(true);
+    expect(isTotpField(makeInput("text", { name: "code", maxlength: "6" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { name: "otp", pattern: "\\d{6}" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { name: "2fa", placeholder: "Enter 2FA code", maxlength: "8" }))).toBe(true);
+    // Ambiguous name without corroboration: never a TOTP field.
+    expect(isTotpField(makeInput("text", { name: "code" }))).toBe(false);
+    expect(isTotpField(makeInput("text", { name: "otp", maxlength: "20" }))).toBe(false);
+    expect(isTotpField(makeInput("text", { name: "pin" }))).toBe(false);
+  });
+
+  it("rejects the KeePassXC #2856 false-positive class", () => {
+    expect(isTotpField(makeInput("text", { name: "postcode" }))).toBe(false);
+    expect(isTotpField(makeInput("text", { name: "postal_code", maxlength: "6" }))).toBe(false);
+    expect(isTotpField(makeInput("text", { name: "product_code", maxlength: "6" }))).toBe(false);
+    expect(isTotpField(makeInput("text", { id: "discount-code", maxlength: "6" }))).toBe(false);
+    expect(isTotpField(makeInput("text", { placeholder: "Language code" }))).toBe(false);
+    expect(isTotpField(makeInput("text", { name: "reference_code", maxlength: "8" }))).toBe(false);
+  });
+
+  it("rejects the CVV lookalike (security-code with maxlength=3)", () => {
+    expect(isTotpField(makeInput("text", { name: "security-code", maxlength: "3" }))).toBe(false);
+    expect(isTotpField(makeInput("text", { name: "securitycode", maxlength: "3" }))).toBe(false);
+    // A real OTP field of the same name passes the length gate.
+    expect(isTotpField(makeInput("text", { name: "security-code", maxlength: "6" }))).toBe(true);
+  });
+
+  it("rejects CVV-zone lengths (3-4) for name matches; no upper bound", () => {
+    expect(isTotpField(makeInput("text", { name: "totp", maxlength: "2" }))).toBe(false);
+    // Amex CID: a 4-digit "security-code" is a CVV, not an OTP box.
+    expect(isTotpField(makeInput("text", { name: "security-code", maxlength: "4" }))).toBe(false);
+    // Generous maxlength on an explicit name: still an OTP field.
+    expect(isTotpField(makeInput("text", { name: "totp", maxlength: "12" }))).toBe(true);
+    expect(isTotpField(makeInput("text", { name: "totp", maxlength: "6" }))).toBe(true);
+    // No maxlength at all: unconstrained, still matches.
+    expect(isTotpField(makeInput("text", { name: "totp" }))).toBe(true);
+  });
+
+  it("never targets segmented per-digit boxes", () => {
+    expect(
+      isTotpField(makeInput("text", { autocomplete: "one-time-code", maxlength: "1" }))
+    ).toBe(false);
+    expect(isTotpField(makeInput("text", { name: "digit", maxlength: "1" }))).toBe(false);
+    expect(isTotpField(makeInput("text", { name: "otp", size: "1" }))).toBe(false);
+  });
+
+  it("rejects phone country code and credit card autocomplete fields", () => {
+    expect(isTotpField(makeInput("tel", { name: "phone_code", inputmode: "numeric" }))).toBe(false);
+    expect(isTotpField(makeInput("text", { name: "country_code", inputmode: "numeric" }))).toBe(false);
+    expect(isTotpField(makeInput("text", { name: "security_code", autocomplete: "cc-csc" }))).toBe(false);
+  });
+
+  it("accepts masked (type=password) and numeric OTP boxes", () => {
+    expect(isTotpField(makeInput("password", { name: "totp" }))).toBe(true);
+    expect(isTotpField(makeInput("number", { name: "otp", maxlength: "6" }))).toBe(true);
+    expect(isTotpField(makeInput("tel", { name: "totp" }))).toBe(true);
+  });
+
+  it("rejects non-candidate input types and junk", () => {
+    expect(isTotpField(makeInput("checkbox", { name: "totp" }))).toBe(false);
+    expect(isTotpField(makeInput("hidden", { name: "totp" }))).toBe(false);
+    expect(isTotpField(makeInput("submit", { name: "totp" }))).toBe(false);
+    expect(isTotpField(document.createElement("textarea"))).toBe(false);
+    expect(isTotpField(null)).toBe(false);
+  });
+});
+
+// ── fillLoginForm TOTP integration (B10 exclusion + code fill) ──
+// jsdom lays out nothing, so every attached input gets a fake non-zero rect
+// to pass isVisible().
+
+function attach(input) {
+  document.body.appendChild(input);
+  input.getBoundingClientRect = () => ({
+    width: 100,
+    height: 20,
+    top: 0,
+    left: 0,
+    right: 100,
+    bottom: 20,
+  });
+  return input;
+}
+
+function valueOf(input) {
+  return input.value;
+}
+
+describe("fillLoginForm TOTP integration", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("fills username, password, and the detected TOTP field", () => {
+    const user = attach(makeInput("text", { name: "username" }));
+    const pw = attach(makeInput("password", { name: "password" }));
+    const totp = attach(makeInput("text", { name: "totpcode" }));
+    fillLoginForm({ username: "u", password: "p", totpCode: "123456" });
+    expect(valueOf(user)).toBe("u");
+    expect(valueOf(pw)).toBe("p");
+    expect(valueOf(totp)).toBe("123456");
+  });
+
+  it("never puts the login password in a masked OTP field (B10, Citrix inverse)", () => {
+    attach(makeInput("text", { name: "user" }));
+    const realPw = attach(makeInput("password", { name: "password" }));
+    const maskedOtp = attach(makeInput("password", { name: "totp" }));
+    fillLoginForm({ username: "u", password: "p", totpCode: "123456" });
+    expect(valueOf(realPw)).toBe("p");
+    expect(valueOf(maskedOtp)).toBe("123456");
+  });
+
+  it("never puts the username in a TOTP field preceding the password (B10)", () => {
+    const totp = attach(makeInput("text", { name: "verificationcode" }));
+    const user = attach(makeInput("text", { name: "user" }));
+    attach(makeInput("password", { name: "password" }));
+    fillLoginForm({ username: "u", password: "p", totpCode: "123456" });
+    expect(valueOf(totp)).toBe("123456");
+    expect(valueOf(user)).toBe("u");
+  });
+
+  it("leaves TOTP fields alone when the credential has no code", () => {
+    const totp = attach(makeInput("text", { name: "totpcode" }));
+    attach(makeInput("text", { name: "user" }));
+    attach(makeInput("password", { name: "password" }));
+    fillLoginForm({ username: "u", password: "p" });
+    expect(valueOf(totp)).toBe("");
+  });
+
+  it("findTotpFields returns visible detected fields in DOM order", () => {
+    attach(makeInput("text", { name: "postcode" }));
+    attach(makeInput("text", { name: "totp" }));
+    attach(makeInput("text", { name: "otp", maxlength: "6" }));
+    const found = findTotpFields();
+    expect(found.length).toBe(2);
+    expect(found[0].name).toBe("totp");
+    expect(found[1].name).toBe("otp");
   });
 });

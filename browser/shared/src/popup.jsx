@@ -1,6 +1,6 @@
 import { render } from "solid-js/web";
 import { createSignal, Show, For, onMount } from "solid-js";
-import { getSettings, updateSettings } from "./settings.js";
+import { getSettings, updateSettings, normalizeClearSeconds } from "./settings.js";
 
 // Phase 1 popup: first-run welcome -> pairing ceremony -> URL-filtered login
 // list + autofill/copy.
@@ -72,6 +72,15 @@ const STRINGS = {
     back: "Back",
     inlineAutofillTitle: "Show fill suggestions on login forms",
     inlineAutofillDesc: "Adds a small Baluard button next to login fields. Click it to pick a login and fill the form — no need to open this window. Your passwords still never fill on their own.",
+    copyTotpTitle: "Copy verification codes when filling",
+    copyTotpDesc: "After filling a login that has a verification code, the code is copied too, so you can paste it on the next screen. Cleared shortly after.",
+    clipboardClearTitle: "Clear clipboard after",
+    clipboardClearDesc: "Copied passwords and codes are wiped from the clipboard after this time.",
+    clear10: "10 seconds",
+    clear30: "30 seconds",
+    clear60: "1 minute",
+    clear120: "2 minutes",
+    clearNever: "Never",
   },
   es: {
     title: "Baluard",
@@ -122,6 +131,15 @@ const STRINGS = {
     back: "Volver",
     inlineAutofillTitle: "Mostrar sugerencias en formularios de inicio de sesión",
     inlineAutofillDesc: "Añade un pequeño botón de Baluard junto a los campos de inicio de sesión. Púlsalo para elegir un inicio de sesión y rellenar el formulario — sin abrir esta ventana. Tus contraseñas nunca se rellenan solas.",
+    copyTotpTitle: "Copiar códigos de verificación al rellenar",
+    copyTotpDesc: "Tras rellenar un inicio de sesión con código de verificación, el código se copia también, para pegarlo en la siguiente pantalla. Se borra poco después.",
+    clipboardClearTitle: "Vaciar el portapapeles después de",
+    clipboardClearDesc: "Las contraseñas y códigos copiados se borran del portapapeles después de este tiempo.",
+    clear10: "10 segundos",
+    clear30: "30 segundos",
+    clear60: "1 minuto",
+    clear120: "2 minutos",
+    clearNever: "Nunca",
   },
 };
 
@@ -139,6 +157,8 @@ const [copied, setCopied] = createSignal("");
 // Settings view + inline autofill preference (chrome.storage.local).
 const [settingsOpen, setSettingsOpen] = createSignal(false);
 const [inlineAutofill, setInlineAutofill] = createSignal(true);
+const [copyTotpEnabled, setCopyTotpEnabled] = createSignal(true);
+const [clipboardClear, setClipboardClear] = createSignal(60);
 // Pairing code typed by the user (audit C13): proves the pair_complete
 // comes from the person watching the desktop ceremony panel.
 const [pairCode, setPairCode] = createSignal("");
@@ -327,6 +347,22 @@ async function fill(entry) {
   try {
     const payload = await send("vault.get", { id: entry.id });
     const cred = JSON.parse(payload || "{}");
+    // Fetch the fresh code when the entry has TOTP configured (cred.totp is
+    // only a presence flag here — the seed itself is never read or stored).
+    // content.js fills it only when a TOTP field exists on the page.
+    let totpCode = "";
+    if (cred.totp) {
+      try {
+        const t = await send("cipher.totp_code", { id: entry.id, url: tabUrl() });
+        const raw = typeof t === "string" ? t : (t && t.payload) || "{}";
+        totpCode = JSON.parse(raw).code || "";
+      } catch {
+        totpCode = "";
+      }
+      if (totpCode && copyTotpEnabled()) {
+        clipboardCopy(totpCode).catch(() => {});
+      }
+    }
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tabId = tabs[0]?.id;
       if (tabId == null) return;
@@ -334,16 +370,21 @@ async function fill(entry) {
         target: { tabId, frameIds: [0] }, // top-frame only (Decision 9)
         files: ["content.js"],
       }, () => {
-        chrome.tabs.sendMessage(tabId, {
-          type: "baluard-fill",
-          // B1: origin (scheme+host+port), not hostname — blocks the
-          // https -> http downgrade fill. content.js compares location.origin.
-          expectedOrigin: originOf(tabUrl()),
-          credential: {
-            username: cred.username || "",
-            password: cred.password || "",
+        chrome.tabs.sendMessage(
+          tabId,
+          {
+            type: "baluard-fill",
+            // B1: origin (scheme+host+port), not hostname — blocks the
+            // https -> http downgrade fill. content.js compares location.origin.
+            expectedOrigin: originOf(tabUrl()),
+            credential: {
+              username: cred.username || "",
+              password: cred.password || "",
+              totpCode,
+            },
           },
-        });
+          { frameId: 0 }
+        );
         window.close();
       });
     });
@@ -398,8 +439,16 @@ function clipboardCopy(text) {
       else if (resp && resp.ok && resp.fallback) {
         navigator.clipboard
           .writeText(text)
-          .then(() => {
-            setTimeout(() => navigator.clipboard.writeText("").catch(() => {}), 20000);
+          .then(async () => {
+            const seconds = normalizeClearSeconds((await getSettings()).clipboardClearSeconds);
+            // Overwrite with a space (matches the offscreen clear):
+            // clipboard managers record a space, not a captured secret.
+            if (seconds > 0) {
+              setTimeout(
+                () => navigator.clipboard.writeText(" ").catch(() => {}),
+                seconds * 1000
+              );
+            }
             resolve();
           })
           .catch(() => reject(new Error("clipboard failed")));
@@ -473,6 +522,8 @@ onMount(boot);
 onMount(async () => {
   const s = await getSettings();
   setInlineAutofill(Boolean(s.inlineAutofill));
+  setCopyTotpEnabled(Boolean(s.copyTotp));
+  setClipboardClear(normalizeClearSeconds(s.clipboardClearSeconds));
 });
 
 // Flip the setting. The service worker listens for the storage change and
@@ -481,6 +532,22 @@ onMount(async () => {
 async function toggleInlineAutofill() {
   const next = await updateSettings({ inlineAutofill: !inlineAutofill() });
   setInlineAutofill(Boolean(next.inlineAutofill));
+}
+
+// Flip the clipboard-after-fill preference. Read by the service worker at
+// fill time (background.js settingEnabled("copyTotp")).
+async function toggleCopyTotp() {
+  const next = await updateSettings({ copyTotp: !copyTotpEnabled() });
+  setCopyTotpEnabled(Boolean(next.copyTotp));
+}
+
+// Change the clipboard auto-clear choice (select). Honored by the SW
+// offscreen copy, this popup's Firefox fallback, and the inline fallback.
+function changeClipboardClear(ev) {
+  const seconds = normalizeClearSeconds(ev.currentTarget.value);
+  updateSettings({ clipboardClearSeconds: seconds }).then((next) =>
+    setClipboardClear(normalizeClearSeconds(next.clipboardClearSeconds))
+  );
 }
 
 function App() {
@@ -595,6 +662,16 @@ function App() {
         }
 
         /* Settings view */
+        .setting-select {
+          flex-shrink: 0;
+          padding: 4px 6px;
+          border-radius: 6px;
+          border: 1px solid var(--color-border);
+          background: var(--color-sidebar);
+          color: var(--color-text);
+          font: inherit;
+          font-size: 12px;
+        }
         .setting-row {
           display: flex;
           align-items: flex-start;
@@ -957,6 +1034,39 @@ function App() {
               />
               <span class="toggle-knob" aria-hidden="true"></span>
             </span>
+          </label>
+          <label class="setting-row">
+            <div class="setting-text">
+              <div class="setting-name">{t("copyTotpTitle")}</div>
+              <div class="state-desc">{t("copyTotpDesc")}</div>
+            </div>
+            <span class={`toggle ${copyTotpEnabled() ? "on" : ""}`}>
+              <input
+                type="checkbox"
+                checked={copyTotpEnabled()}
+                onChange={toggleCopyTotp}
+                aria-label={t("copyTotpTitle")}
+              />
+              <span class="toggle-knob" aria-hidden="true"></span>
+            </span>
+          </label>
+          <label class="setting-row">
+            <div class="setting-text">
+              <div class="setting-name">{t("clipboardClearTitle")}</div>
+              <div class="state-desc">{t("clipboardClearDesc")}</div>
+            </div>
+            <select
+              class="setting-select"
+              value={clipboardClear()}
+              onChange={changeClipboardClear}
+              aria-label={t("clipboardClearTitle")}
+            >
+              <option value="10">{t("clear10")}</option>
+              <option value="30">{t("clear30")}</option>
+              <option value="60">{t("clear60")}</option>
+              <option value="120">{t("clear120")}</option>
+              <option value="0">{t("clearNever")}</option>
+            </select>
           </label>
         </div>
         <button class="btn-secondary" onClick={() => setSettingsOpen(false)}>{t("back")}</button>

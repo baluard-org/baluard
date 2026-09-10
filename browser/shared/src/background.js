@@ -221,34 +221,77 @@ async function handleInlineMatches(sender) {
   return r.payload;
 }
 
-async function handleInlineFill(sender, id) {
+async function handleInlineFill(sender, id, mode, hasTotpField) {
   const url = senderUrl(sender);
   if (!url) throw err("no matching tab", "no-match");
   if (typeof id !== "string" || id.length === 0) throw err("missing id", "proto");
-  // Fetch the single credential (Decision 7 allowlist: one at a time).
-  // B3: the page URL rides along so the DAEMON enforces the URI match
-  // server-side with the same matcher bridge.match uses — a compromised
-  // extension page cannot fetch a credential for an unrelated site.
-  const r = await send("vault.get", { id, url });
+  // Code-only mode (2FA page): the push carries NO login secrets. Payload
+  // minimization happens HERE, in the SW — never trusted to the content
+  // script's discretion (B4: gate on what crosses the boundary).
+  const totpOnly = mode === "totp";
   let cred = {};
-  try {
-    cred = JSON.parse(r.payload || "{}");
-  } catch {
-    cred = {};
+  if (!totpOnly) {
+    // Fetch the single credential (Decision 7 allowlist: one at a time).
+    // B3: the page URL rides along so the DAEMON enforces the URI match
+    // server-side with the same matcher bridge.match uses — a compromised
+    // extension page cannot fetch a credential for an unrelated site.
+    const r = await send("vault.get", { id, url });
+    try {
+      cred = JSON.parse(r.payload || "{}");
+    } catch {
+      cred = {};
+    }
   }
+  // Produce a TOTP code when the page can consume it, when the user asked
+  // for code-only fill, or when copyTotp is on AND the entry actually has
+  // TOTP (Bitwarden-style: the code rides the clipboard to step 2 of a
+  // two-step login). Entries without TOTP are never probed.
+  const copyTotp = await settingEnabled("copyTotp");
+  const wantsTotp =
+    totpOnly || hasTotpField === true || (copyTotp && Boolean(cred.totp));
+  let totpCode = "";
+  let copied = false;
+  let clipboardFallback = false;
+  if (wantsTotp) {
+    try {
+      const t = await send("cipher.totp_code", { id, url });
+      totpCode = JSON.parse(t.payload || "{}").code || "";
+    } catch {
+      totpCode = "";
+    }
+    // The SW owns the clipboard write: the code never round-trips through a
+    // content-script message to get copied (B1-B8 pattern). Firefox has no
+    // offscreen doc, so signal the fallback and let inline.js write directly.
+    if (totpCode && copyTotp) {
+      try {
+        const res = await clipboardCopy(totpCode);
+        if (res === "fallback") clipboardFallback = true;
+        else copied = true;
+      } catch {
+        copied = false;
+      }
+    }
+  }
+  const expectedOrigin = originOf(url);
+  const payload = totpOnly
+    ? { kind: "totp", expectedOrigin, totpCode, copied, clipboardFallback }
+    : {
+        kind: "login",
+        expectedOrigin,
+        credential: {
+          username: cred.username || "",
+          password: cred.password || "",
+          totpCode,
+        },
+        copied,
+        clipboardFallback,
+      };
   // Push the fill to the requesting tab only (B5: pinned to the exact
   // frame the request came from). Content script re-checks the ORIGIN at
   // fill time (fill-time origin re-check, Decision 9).
   chrome.tabs.sendMessage(
     sender.tab.id,
-    {
-      type: "baluard-inline-fill",
-      expectedOrigin: originOf(url),
-      credential: {
-        username: cred.username || "",
-        password: cred.password || "",
-      },
-    },
+    { type: "baluard-inline-fill", ...payload },
     { frameId: sender.frameId ?? 0 }
   );
   return JSON.stringify({ filled: true });
@@ -322,7 +365,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.action === "inline.fill" && sender && sender.tab) {
-    handleInlineFill(sender, msg.id)
+    handleInlineFill(sender, msg.id, msg.mode, msg.hasTotpField)
       .then((payload) => sendResponse({ ok: true, payload }))
       .catch((e) => sendResponse({ ok: false, error: e.message, code: e.code }));
     return true;
@@ -335,9 +378,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ── Clipboard via offscreen document (review M2) ──
 // The service worker has no DOM, so navigator.clipboard is unavailable. We
-// create a hidden offscreen document that writes to the clipboard, then
-// schedule a clear-after-20s to avoid leaving secrets in the clipboard.
-const CLIPBOARD_CLEAR_SECONDS = 20;
+// create a hidden offscreen document that writes to the clipboard; the
+// offscreen doc owns the auto-clear timer (configurable, see
+// clipboardClearSeconds) and survives SW restarts.
 
 async function clipboardCopy(text) {
   // B8: Firefox has no chrome.offscreen. The copy must run in the popup
@@ -346,16 +389,13 @@ async function clipboardCopy(text) {
   if (!chrome.offscreen || !chrome.offscreen.createDocument) {
     return "fallback";
   }
+  const clearSeconds = await getClipboardClearSeconds();
   await ensureOffscreen();
   await chrome.runtime.sendMessage({
     action: "offscreen-copy",
     target: "offscreen",
     text,
-  });
-  // Schedule clear. Alarms survive SW termination; the offscreen doc handles
-  // the actual clear on the alarm message.
-  chrome.alarms.create("baluard-clipboard-clear", {
-    delayInMinutes: CLIPBOARD_CLEAR_SECONDS / 60,
+    clearSeconds,
   });
 }
 
@@ -368,19 +408,6 @@ async function ensureOffscreen() {
     justification: "Copy passwords/TOTP from the popup; service worker has no DOM.",
   });
 }
-
-chrome.alarms?.onAlarm?.addListener(async (alarm) => {
-  if (alarm.name === "baluard-clipboard-clear") {
-    // The SW may have been terminated + respawned and the offscreen doc
-    // torn down with it; re-create before clearing.
-    try {
-      await ensureOffscreen();
-      await chrome.runtime.sendMessage({ action: "offscreen-clear", target: "offscreen" });
-    } catch (e) {
-      console.error("[baluard] clipboard clear failed:", e);
-    }
-  }
-});
 
 // ── Toolbar badge: match count for the active tab ──
 // Pure browser-native badge API; zero DOM injection, zero attack surface.
@@ -428,6 +455,36 @@ chrome.tabs?.onUpdated?.addListener((tabId, change, tab) => {
 // Top-frame only (allFrames: false — Decision 9 C3/D1).
 const INLINE_SCRIPT_ID = "baluard-inline";
 const SETTINGS_KEY = "settings";
+
+// Read a boolean setting, default ON (mirrors DEFAULT_SETTINGS in
+// settings.js: absent key means enabled).
+async function settingEnabled(name) {
+  try {
+    const settings = await chrome.storage.local
+      .get([SETTINGS_KEY])
+      .then((r) => r[SETTINGS_KEY] || {});
+    return settings[name] !== false;
+  } catch {
+    return true;
+  }
+}
+
+// Clipboard auto-clear seconds (choices mirror settings.js
+// CLEAR_SECONDS_CHOICES; 0 = never). Self-contained validation on purpose:
+// background.js is copied verbatim into the Chrome dist (module service
+// worker, no bundler step), so it must not import settings.js.
+const CLEAR_CHOICES = [0, 10, 30, 60, 120];
+async function getClipboardClearSeconds() {
+  try {
+    const s = await chrome.storage.local
+      .get([SETTINGS_KEY])
+      .then((r) => r[SETTINGS_KEY] || {});
+    const n = Number(s.clipboardClearSeconds);
+    return CLEAR_CHOICES.includes(n) ? n : 60;
+  } catch {
+    return 60;
+  }
+}
 
 async function syncInlineScript() {
   if (!chrome.scripting?.registerContentScripts) return; // API unavailable

@@ -7,6 +7,23 @@
 
 import { describe, it, expect } from "vitest";
 import "../src/inline.js";
+import { statusKeyFor } from "../src/inline.js";
+
+describe("statusKeyFor (inline dropdown status mapping)", () => {
+  it("maps daemon/lock states to actionable status keys", () => {
+    // Same codes the popup state machine maps (popup.jsx refresh catch).
+    expect(statusKeyFor("no-daemon")).toBe("appRequired");
+    expect(statusKeyFor("locked")).toBe("locked");
+    expect(statusKeyFor("version-skew")).toBe("updateApp");
+    expect(statusKeyFor("not-paired")).toBe("notPaired");
+  });
+
+  it("falls back to noMatches for unknown codes", () => {
+    expect(statusKeyFor(undefined)).toBe("noMatches");
+    expect(statusKeyFor("no-match")).toBe("noMatches");
+    expect(statusKeyFor("proto")).toBe("noMatches");
+  });
+});
 
 describe("inline.js import", () => {
   it("registers without throwing and mounts nothing until focus", () => {

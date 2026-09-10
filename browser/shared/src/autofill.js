@@ -9,19 +9,26 @@
 
 // Fill the best-detected login form with one credential. Fills the first
 // visible password field + the best username field before it (same form).
+// When cred.totpCode is set, also fills the first detected TOTP field.
 export function fillLoginForm(cred) {
   const password = cred.password || "";
   const username = cred.username || "";
+  const totpCode = cred.totpCode || "";
 
-  // Find the best password field, then the username field in the same form.
-  const passwords = visibleInputs("password");
+  // B10: TOTP-detected fields are NEVER password or username candidates,
+  // even when styled type=password (Bitwarden's Citrix bug, inverse form:
+  // the login password must not land in a masked OTP box).
+  const passwords = visibleInputs("password").filter((i) => !isTotpField(i));
   if (passwords.length === 0) {
     // No password field on the page. Some flows (e.g. username-only step)
     // still want the username filled.
-    const userOnly = visibleInputs("text").concat(visibleInputs("email"));
+    const userOnly = visibleInputs("text")
+      .concat(visibleInputs("email"))
+      .filter((i) => !isTotpField(i));
     if (username && userOnly.length > 0) {
       setNativeValue(userOnly[0], username);
     }
+    if (totpCode) fillTotpField(totpCode);
     return;
   }
 
@@ -39,17 +46,19 @@ export function fillLoginForm(cred) {
     const pwIndex = allInputs.indexOf(pwField);
     const candidates = allInputs
       .slice(0, pwIndex)
-      .filter((i) => isTextLike(i) && isVisible(i));
+      .filter((i) => isTextLike(i) && isVisible(i) && !isTotpField(i));
     userField = candidates[candidates.length - 1] || null;
   }
   if (!userField) {
     // Fallback: any visible text-like input preceding the password.
     const all = visibleInputs("text").concat(visibleInputs("email"));
-    userField = all[0] || null;
+    userField = all.find((i) => !isTotpField(i)) || null;
   }
   if (username && userField) {
     setNativeValue(userField, username);
   }
+
+  if (totpCode) fillTotpField(totpCode);
 
   // Best-effort: submit the form if there's a submit button and the page
   // seems to expect it (autofill UX). Defer to the user otherwise — many
@@ -59,6 +68,16 @@ export function fillLoginForm(cred) {
 
 export function visibleInputs(type) {
   return Array.from(document.querySelectorAll(`input[type="${type}"]`)).filter(isVisible);
+}
+
+// Fill the first detected TOTP field with a code. Returns whether a field
+// was found. Segmented boxes (maxlength<=1) are already excluded from
+// detection: writing a full code into one would silently truncate and
+// corrupt whatever the user types next.
+export function fillTotpField(totpCode) {
+  const field = findTotpFields()[0];
+  if (field) setNativeValue(field, totpCode);
+  return Boolean(field);
 }
 
 export function isTextLike(input) {
@@ -88,6 +107,126 @@ export function setNativeValue(el, value) {
   el.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+// ── TOTP field detection ──
+// Precedence (do not reorder — KeePassXC #1785 shipped exactly this class
+// of bug when a heuristic overrode the explicit attribute):
+//   1. hard safety floor: segmented boxes (maxlength<=1) are rejected
+//      BEFORE the explicit attribute. A 6-digit code in a 1-char box
+//      silently truncates and corrupts manual entry. No signal overrides
+//      this — not even autocomplete="one-time-code".
+//   2. autocomplete="one-time-code" — explicit, trusted over all heuristics
+//   3. ignore hints — search boxes, commerce/postal codes
+//   4. strict name match — normalized equality against TOTP_FIELD_NAMES
+//   5. ambiguous token + corroboration — numeric inputmode/pattern/maxlength
+const TOTP_FIELD_NAMES = new Set([
+  "2facode",
+  "approvalscode",
+  "mfacode",
+  "onetimecode",
+  "onetimepassword",
+  "otccode",
+  "otcconfirmation",
+  "otpcode",
+  "secondfactor",
+  "securitycode",
+  "totp",
+  "totpcode",
+  "twofa",
+  "twofactor",
+  "twofactorcode",
+  "verificationcode",
+]);
+
+// Match only as whole tokens, never substrings: "discountcode" must not
+// match "code" (KeePassXC #2856: postcode, product_code, language code...).
+const AMBIGUOUS_TOTP_NAMES = new Set(["code", "otp", "pin", "2fa", "mfa", "otc"]);
+
+const TOTP_IGNORE_TOKENS = new Set([
+  "captcha",
+  "forgot",
+  "search",
+  "query",
+  "find",
+  "go",
+  "zip",
+  "postal",
+  "postcode",
+  "promo",
+  "coupon",
+  "discount",
+  "product",
+  "language",
+  "reference",
+  "redirect",
+  "phone",
+  "country",
+  "dial",
+  "area",
+  "tel",
+  "currency",
+  "tax",
+  "cvv",
+  "cvc",
+  "csc",
+]);
+
+function normalizeHint(s) {
+  return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+// Is this input a one-time-code box? Used by fillLoginForm (B10 exclusion),
+// isUsernameField, and inline.js (icon targeting + code-only fill mode).
+export function isTotpField(input) {
+  if (!input || input.tagName !== "INPUT") return false;
+  const type = (input.type || "text").toLowerCase();
+  const candidateType = isTextLike(input) || type === "number" || type === "password";
+  if (!candidateType) return false;
+  const ml = parseInt(input.getAttribute("maxlength"), 10);
+  const size = parseInt(input.getAttribute("size"), 10);
+  // Segmented per-digit boxes cannot receive a full code.
+  if (Number.isFinite(ml) && ml <= 1) return false;
+  if (Number.isFinite(size) && size === 1 && !Number.isFinite(ml)) return false;
+  // 2. Explicit attribute wins over every heuristic.
+  const ac = (input.getAttribute("autocomplete") || "").trim().toLowerCase();
+  if (ac === "one-time-code") {
+    return true;
+  }
+  if (ac.startsWith("cc-")) return false;
+  const attrs = [
+    input.name,
+    input.id,
+    input.getAttribute("placeholder"),
+    input.getAttribute("aria-label"),
+  ];
+  const raw = attrs.filter(Boolean).join(" ").toLowerCase();
+  const tokens = raw.split(/[^a-z0-9]+/).filter(Boolean);
+  // 3. Ignore hints (search boxes, commerce/postal codes).
+  if (tokens.some((t) => TOTP_IGNORE_TOKENS.has(t))) return false;
+  // 4. Name-based matches only. CVV fields are 3-4 digits ("security-code",
+  // incl. Amex CID maxlength=4); real OTP boxes are 5-10. No upper bound: an
+  // explicit name with a generous maxlength is still an OTP field.
+  if (Number.isFinite(ml) && ml < 5) return false;
+  // 5. Strict: normalized whole-attribute equality ("security_code" ->
+  // "securitycode").
+  if (attrs.some((a) => TOTP_FIELD_NAMES.has(normalizeHint(a)))) return true;
+  // 6. Ambiguous token + numeric corroboration.
+  const patternQuant = /(?:\\d|\[0-9\])\{(\d+)\}/.exec(
+    input.getAttribute("pattern") || ""
+  );
+  const corroborated =
+    (input.getAttribute("inputmode") || "").toLowerCase() === "numeric" ||
+    (!!patternQuant && +patternQuant[1] >= 4 && +patternQuant[1] <= 8) ||
+    (Number.isFinite(ml) && ml >= 5 && ml <= 8);
+  return corroborated && tokens.some((t) => AMBIGUOUS_TOTP_NAMES.has(t));
+}
+
+// All visible TOTP fields on the page, DOM order.
+export function findTotpFields() {
+  return Array.from(document.querySelectorAll("input")).filter(
+    (i) => isVisible(i) && isTotpField(i)
+  );
+}
+
 // Username-ish hints. Word-boundary regex so "mailchimp" does not count as
 // "mail". Applied to name/id/placeholder/autocomplete/aria-label.
 const USERNAME_HINT = /\b(user|username|email|e-mail|login|log-in|signin|sign-in|account|mail)\b/i;
@@ -101,6 +240,9 @@ const USERNAME_HINT = /\b(user|username|email|e-mail|login|log-in|signin|sign-in
 // meaningful.
 export function isUsernameField(input) {
   if (!input || input.tagName !== "INPUT") return false;
+  // B10: an OTP field never counts as a username field (it gets its own
+  // icon path in inline.js) and is never a username fill target.
+  if (isTotpField(input)) return false;
   const type = (input.type || "text").toLowerCase();
   if (type === "password") return true;
   if (!isTextLike(input)) return false;
