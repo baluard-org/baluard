@@ -20,12 +20,49 @@ use super::types::{
 /// name ("GitHub"), dropping `GitHubError.message` and `status_code`. That
 /// turns every API failure into a useless "API error: GitHub" string. This
 /// surfaces the actual server message and HTTP status.
+/// Render an error with its full cause chain as one UI-friendly line.
+///
+/// octocrab derives `Display` with snafu; variants without an explicit
+/// `#[snafu(display(...))]` render as the bare variant name ("Other",
+/// "UriParse"), dropping the wrapped cause. Walking `Error::source()`
+/// restores the real failure: "Other: failed to load certificates" instead
+/// of a useless "Other". Repeated causes (snafu variants that embed their
+/// source in `display`) are skipped, and the trailing "Found at " snafu
+/// backtrace marker is stripped (the backtrace feature renders empty).
+fn error_chain(e: &(dyn std::error::Error + 'static)) -> String {
+    let mut msg = e.to_string();
+    let mut src = e.source();
+    while let Some(err) = src {
+        let cause = err.to_string();
+        if !msg.contains(&cause) {
+            msg.push_str(": ");
+            msg.push_str(&cause);
+        }
+        src = err.source();
+    }
+    // snafu display templates end with "\nFound at <backtrace>"; the
+    // backtrace feature is off, so the tail is empty. Anchoring on the
+    // newline keeps legitimate mid-message text like "no commit Found at
+    // ref main" intact.
+    if let Some(idx) = msg.rfind("\nFound at") {
+        msg.truncate(idx);
+    }
+    msg.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Format an octocrab error with the real GitHub API message.
+///
+/// `octocrab::Error::GitHub`'s default `Display` renders only the variant
+/// name ("GitHub"), dropping `GitHubError.message` and `status_code`. That
+/// turns every API failure into a useless "API error: GitHub" string. This
+/// surfaces the actual server message and HTTP status, and every other
+/// variant through its full source chain.
 fn api_error(e: octocrab::Error) -> ProviderError {
     match e {
         octocrab::Error::GitHub { source, .. } => {
             ProviderError::Api(format!("{} (HTTP {})", source.message, source.status_code))
         }
-        other => ProviderError::Api(other.to_string()),
+        other => ProviderError::Api(error_chain(&other)),
     }
 }
 
@@ -70,15 +107,23 @@ impl GitHubProvider {
     }
 
     /// Convert octocrab Repository to VaultRepo.
+    /// Convert octocrab Repository to VaultRepo. Returns None when the
+    /// payload lacks a clone_url (minimal search-embedded repositories);
+    /// an empty clone_url would only surface later as an obscure scheme
+    /// error at clone time.
     fn repo_to_vault(&self, r: &Repository) -> Option<VaultRepo> {
+        let clone_url = r
+            .clone_url
+            .as_ref()
+            .map(|u| u.to_string())
+            .unwrap_or_default();
+        if clone_url.is_empty() {
+            return None;
+        }
         Some(VaultRepo {
             name: r.name.clone(),
             full_name: r.full_name.clone().unwrap_or_default(),
-            clone_url: r
-                .clone_url
-                .as_ref()
-                .map(|u| u.to_string())
-                .unwrap_or_default(),
+            clone_url,
             private: r.private.unwrap_or(false),
             vault_slug: None,
             vault_id: None,
@@ -263,7 +308,7 @@ impl ForgeProvider for GitHubProvider {
             .current()
             .user()
             .await
-            .map_err(|e| ProviderError::TokenValidation(e.to_string()))?;
+            .map_err(|e| ProviderError::TokenValidation(error_chain(&e)))?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -323,12 +368,35 @@ impl ForgeProvider for GitHubProvider {
             .await
             .map_err(api_error)?;
 
-        Ok(results
-            .into_iter()
-            .filter_map(|item| self.repo_to_vault(&item.repository))
-            .collect())
+        // The code-search item embeds a MINIMAL repository object that omits
+        // clone_url, so mapping it directly yields empty clone URLs that
+        // fail at clone with "unsupported URL scheme: ". Fetch each hit's
+        // full repo record instead.
+        let mut repos = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for item in results {
+            let Some(full_name) = item.repository.full_name else {
+                continue;
+            };
+            // Code search can return multiple hits per repo; fetch each
+            // repo record once.
+            if !seen.insert(full_name.clone()) {
+                continue;
+            }
+            let Some((owner, name)) = full_name.split_once('/') else {
+                continue;
+            };
+            // One dead hit (renamed/deleted repo, or a transient API miss)
+            // must not hide every other vault from the picker.
+            let Ok(repo) = client.repos(owner, name).get().await else {
+                continue;
+            };
+            if let Some(r) = self.repo_to_vault(&repo) {
+                repos.push(r);
+            }
+        }
+        Ok(repos)
     }
-
     async fn create_private_repo(
         &self,
         token: &ProviderToken,
@@ -435,5 +503,50 @@ mod tests {
     #[test]
     fn provider_all() {
         assert_eq!(Provider::all().len(), 3);
+    }
+
+    #[derive(Debug)]
+    struct Root;
+    impl std::fmt::Display for Root {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "Other")
+        }
+    }
+    impl std::error::Error for Root {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&Leaf)
+        }
+    }
+
+    #[derive(Debug)]
+    struct Leaf;
+    impl std::fmt::Display for Leaf {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "failed to load native certificates")
+        }
+    }
+    impl std::error::Error for Leaf {}
+
+    #[test]
+    fn error_chain_includes_causes() {
+        // Mirrors the snafu shape that produced the useless "API error:
+        // Other" on Android: bare variant name Display + a source carrying
+        // the real cause.
+        assert_eq!(error_chain(&Root), "Other: failed to load native certificates");
+    }
+
+    #[test]
+    fn error_chain_keeps_inline_found_at() {
+        #[derive(Debug)]
+        struct Plain;
+        impl std::fmt::Display for Plain {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "no commit Found at ref main")
+            }
+        }
+        impl std::error::Error for Plain {}
+        // Agy review: mid-message "Found at" must survive; only the snafu
+        // newline-anchored backtrace marker is stripped.
+        assert_eq!(error_chain(&Plain), "no commit Found at ref main");
     }
 }
