@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,7 +28,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,7 +51,6 @@ fun RepoPickerScreen(
     onCloneDone: () -> Unit,
     onCancelled: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
 
     BaluardAmbientBackground {
         if (vm.stage is ProviderFlowViewModel.Stage.Cloning) {
@@ -117,7 +116,9 @@ fun RepoPickerScreen(
 
             vm.error?.let {
                 Spacer(Modifier.height(8.dp))
-                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                SelectionContainer {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
             }
 
             Spacer(Modifier.height(16.dp))
@@ -133,10 +134,7 @@ fun RepoPickerScreen(
                             .clip(RoundedCornerShape(12.dp))
                             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
                             .clickable {
-                                scope.launch {
-                                    vm.cloneRepo(repo, vaultPath)
-                                    if (vm.stage is ProviderFlowViewModel.Stage.Enroll) onCloneDone()
-                                }
+                                vm.cloneRepo(repo, vaultPath) { onCloneDone() }
                             },
                         shape = RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.surfaceContainer,

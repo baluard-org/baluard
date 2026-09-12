@@ -3,7 +3,11 @@ package xyz.actitud.baluard.onboarding
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileCloneJob
 import xyz.actitud.baluard.MobileDeviceFlow
 import xyz.actitud.baluard.MobileDeviceFlowStatus
@@ -13,6 +17,7 @@ import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.data.VaultRepository
 
+import xyz.actitud.baluard.platform.platformLogE
 /**
  * Drives the "open an existing vault" onboarding path (plan §5.2-5.4):
  * provider connect -> repo pick -> clone -> enroll this device with the
@@ -26,6 +31,9 @@ class ProviderFlowViewModel(
     private val repo: VaultRepository,
     private val auth: AuthViewModel,
 ) {
+    /// Outlives composition: the clone must survive the repo picker leaving
+    /// composition when the stage flips to Cloning.
+    private val vmScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     /** Flow stages; screens render the stage they own. */
     sealed interface Stage {
         data object PickProvider : Stage
@@ -71,7 +79,7 @@ class ProviderFlowViewModel(
         try {
             stage = Stage.DeviceCode(repo.startDeviceFlow(provider))
         } catch (e: Exception) {
-            error = e.message
+            fail("startDeviceFlow", e, "Connection failed")
         }
         busy = false
     }
@@ -102,7 +110,7 @@ class ProviderFlowViewModel(
                 else -> s
             }
         } catch (e: Exception) {
-            error = e.message ?: "Authorization failed"
+            fail("pollDeviceFlow", e, "Authorization failed")
             null
         }
     }
@@ -116,7 +124,7 @@ class ProviderFlowViewModel(
             repo.connectPat(provider, token)
             loadRepos()
         } catch (e: Exception) {
-            error = e.message
+            fail("connectPat", e, "Connection failed")
         }
         busy = false
     }
@@ -140,27 +148,37 @@ class ProviderFlowViewModel(
             stage = Stage.Repos(repos)
             true
         } catch (e: Exception) {
-            error = e.message ?: "Could not list repositories"
+            fail("loadRepos", e, "Could not list repositories")
             false
         } finally {
             busy = false
         }
     }
 
-    /** Clone [r] to [localPath]; on success advance to enrollment. */
-    suspend fun cloneRepo(r: MobileRepo, localPath: String) {
+    /** Clone [r] to [localPath]; on success advance to enrollment.
+     *
+     * Runs on [vmScope], NOT the caller's composition scope: the stage flip
+     * to Cloning swaps the repo picker out of composition, which cancels a
+     * rememberCoroutineScope-launched clone mid-flight ("The coroutine
+     * scope left the composition").
+     */
+    fun cloneRepo(r: MobileRepo, localPath: String, onCloned: () -> Unit) {
         if (busy) return
         busy = true
         error = null
         stage = Stage.Cloning
-        try {
-            cloneJob = this.repo.cloneVaultStart(provider, r.cloneUrl, localPath)
-            stage = Stage.Enroll
-        } catch (e: Exception) {
-            error = e.message
-            stage = Stage.Repos(repos)
+        vmScope.launch {
+            try {
+                cloneJob = repo.cloneVaultStart(provider, r.cloneUrl, localPath)
+                stage = Stage.Enroll
+                onCloned()
+            } catch (e: Exception) {
+                fail("cloneRepo", e, "Clone failed")
+                stage = Stage.Repos(repos)
+            } finally {
+                busy = false
+            }
         }
-        busy = false
     }
 
     fun cancelClone() {
@@ -181,15 +199,27 @@ class ProviderFlowViewModel(
             auth.adopt(vault)
             return true
         } catch (e: Exception) {
-            error = e.message
+            fail("enroll", e, "Enrollment failed")
             return false
         } finally {
             busy = false
         }
     }
 
+    /**
+     * Record a terminal flow failure: full exception (with stack) to the
+     * platform log, a one-line reason on screen. The generated exception
+     * message is "detail=<text>"; the prefix is display noise.
+     */
+    private fun fail(where: String, e: Exception, fallback: String) {
+        platformLogE(TAG, "$where failed", e)
+        error = e.message?.removePrefix("detail=")?.ifBlank { null } ?: fallback
+    }
+
     private companion object {
         /** Ceiling for slow_down backoff, so a rate-limited flow still ends. */
         const val MAX_POLL_INTERVAL_MS = 30_000L
+        /** Platform log tag for provider flow failures. */
+        const val TAG = "ProviderFlow"
     }
 }

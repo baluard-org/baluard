@@ -17,8 +17,14 @@ class MainActivity : FragmentActivity() {
         // M4: app-wide FLAG_SECURE — screenshots, recents preview, and
         // unprivileged screen recording stay blank for the whole app, not
         // per-screen. Compose UIs render before per-screen effects run, so
-        // the flag must be set before first frame.
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        // the flag must be set before first frame. Debuggable builds skip
+        // the flag so failures can be screenshotted / recorded while
+        // debugging; release builds keep the full blanking.
+        val debuggable = (applicationInfo.flags and
+            android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (!debuggable) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
         AppContextHolder.set(this)
         AppContextHolder.setActivity(this)
         // M3: install the Keystore-wrapped provider-token encryption key
