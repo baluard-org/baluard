@@ -70,7 +70,10 @@ base64 = { version = "0.22", features = ["alloc"] }
 zeroize = { version = "1", features = ["derive"] }
 
 # Git provider clients
-octocrab = "0.44"
+# Webpki bundled roots: rustls-native-certs (the default) cannot probe the
+# Android/iOS trust store, so every octocrab TLS request fails there with a
+# bare snafu variant name. Bundled Mozilla roots work on all platforms.
+octocrab = { version = "0.44", features = ["rustls-webpki-tokio"] }
 
 # Secret types
 secrecy = { version = "0.10", features = ["serde"] }
