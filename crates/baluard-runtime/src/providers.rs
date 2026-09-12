@@ -294,6 +294,7 @@ pub fn enroll_device_pre_unlock(
         .map_err(|e| VaultError::Metadata(format!("enroll failed: {e}")))?;
 
     let privkey_data = serde_json::json!({
+        "device_id": result.device_id.to_string(),
         "x25519_private": hex::encode(result.x25519_secret.to_bytes()),
         "ed25519_private": hex::encode(result.ed25519_signing.to_bytes()),
     });
@@ -314,6 +315,8 @@ pub fn enroll_device_pre_unlock(
         .map_err(|e| VaultError::Metadata(format!("rename privkey: {e}")))?;
 
     privkey_json_str.zeroize();
+
+    let _ = baluard_core::vault::device_privkey::write_device_id(vault_path, result.device_id);
 
     if let Some(keystore) = baluard_core::vault::creation::get_global_keystore() {
         let privkey_bytes = serde_json::to_vec(&privkey_data).unwrap_or_default();

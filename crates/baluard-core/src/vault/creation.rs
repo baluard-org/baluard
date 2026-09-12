@@ -463,8 +463,8 @@ impl<'a> VaultCreator<'a> {
                     let mut x25519_hex = hex::encode(device_x25519_secret.to_bytes());
                     let mut ed25519_hex = hex::encode(device_ed25519_signing.to_bytes());
                     let mut json_str = format!(
-                        "{{\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
-                        x25519_hex, ed25519_hex
+                        "{{\n  \"device_id\": \"{}\",\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
+                        device_id, x25519_hex, ed25519_hex
                     );
                     // C1: seal under the KEK-derived subkey; raw hex keys
                     // never touch disk in new vaults.
@@ -472,7 +472,9 @@ impl<'a> VaultCreator<'a> {
                         &path.join("meta/device-privkey.json"),
                         &json_str,
                         &devkey_seal,
+                        Some(device_id),
                     )?;
+                    let _ = super::device_privkey::write_device_id(&path, device_id);
                     x25519_hex.zeroize();
                     ed25519_hex.zeroize();
                     json_str.zeroize();
@@ -513,7 +515,7 @@ impl<'a> VaultCreator<'a> {
                 {
                     std::fs::write(
                         path.join(".gitignore"),
-                        "# Secrets - never push these\nmeta/device-privkey.json\nmeta/kdf-attempts.json\n",
+                        "# Secrets - never push these\nmeta/device-privkey.json\nmeta/device-id\nmeta/kdf-attempts.json\n",
                     ).map_err(|e| BaluardError::from(VaultError::Corrupt(format!("Write gitignore: {e}"))))?;
                 }
 
@@ -688,8 +690,8 @@ impl<'a> VaultCreator<'a> {
                     let mut x25519_hex = hex::encode(device_x25519_secret.to_bytes());
                     let mut ed25519_hex = hex::encode(device_ed25519_signing.to_bytes());
                     let mut json_str = format!(
-                        "{{\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
-                        x25519_hex, ed25519_hex
+                        "{{\n  \"device_id\": \"{}\",\n  \"x25519_private\": \"{}\",\n  \"ed25519_private\": \"{}\"\n}}",
+                        device_id, x25519_hex, ed25519_hex
                     );
                     // C1: seal under the KEK-derived subkey; raw hex keys
                     // never touch disk in new vaults.
@@ -697,7 +699,9 @@ impl<'a> VaultCreator<'a> {
                         &path.join("meta/device-privkey.json"),
                         &json_str,
                         &devkey_seal,
+                        Some(device_id),
                     )?;
+                    let _ = super::device_privkey::write_device_id(&path, device_id);
                     x25519_hex.zeroize();
                     ed25519_hex.zeroize();
                     json_str.zeroize();

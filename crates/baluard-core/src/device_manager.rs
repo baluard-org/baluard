@@ -1396,6 +1396,7 @@ impl DeviceManager {
         // Step 11: Write device-privkey.json for CLI/rotation use
         let ed_priv_bytes = ed25519_signing.to_bytes();
         let privkey_data = serde_json::json!({
+            "device_id": new_device_id.to_string(),
             "x25519_private": hex::encode(x25519_secret.to_bytes()),
             "ed25519_private": hex::encode(ed_priv_bytes),
         });
@@ -1411,6 +1412,7 @@ impl DeviceManager {
             let _ = std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
         }
         std::fs::rename(&privkey_tmp, &privkey_path)?;
+        let _ = crate::vault::device_privkey::write_device_id(&vault_path, new_device_id);
 
         // Step 12: Persist recovered state
         self.auto_save_result()?;

@@ -1408,6 +1408,7 @@ pub fn handle_enroll_with_phrase(
             // by the method (same keys the registry and keywrap were built
             // with — guarantees consistency).
             let privkey_data = serde_json::json!({
+                "device_id": result.device_id.to_string(),
                 "x25519_private": hex::encode(result.x25519_secret.to_bytes()),
                 "ed25519_private": hex::encode(result.ed25519_signing.to_bytes()),
             });
@@ -1424,6 +1425,7 @@ pub fn handle_enroll_with_phrase(
                     std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
             }
             std::fs::rename(&privkey_tmp, &privkey_path)?;
+            let _ = baluard_core::vault::device_privkey::write_device_id(&path, result.device_id);
 
             println!(
                 "Device enrolled: {} ({})",

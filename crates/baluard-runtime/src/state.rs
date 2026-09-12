@@ -3319,6 +3319,7 @@ impl VaultState {
         // by the method (same keys the registry and keywrap were built
         // with — guarantees consistency).
         let privkey_data = serde_json::json!({
+            "device_id": result.device_id.to_string(),
             "x25519_private": hex::encode(result.x25519_secret.to_bytes()),
             "ed25519_private": hex::encode(result.ed25519_signing.to_bytes()),
         });
@@ -3335,6 +3336,7 @@ impl VaultState {
             let _ = std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
         }
         std::fs::rename(&privkey_tmp, &privkey_path).map_err(|e| format!("rename privkey: {e}"))?;
+        let _ = baluard_core::vault::device_privkey::write_device_id(&vault_path, result.device_id);
 
         // F3 fix: update self.inner under write lock so in-process state holds the new device_id
         {
