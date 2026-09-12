@@ -339,7 +339,8 @@ impl VaultHandle {
         // the unlock; the next unlock retries.
         {
             let path = self.path.join("meta/device-privkey.json");
-            let _ = crate::vault::device_privkey::reseal_if_legacy(&path, &devkey_seal);
+            let _ = crate::vault::device_privkey::reseal_if_legacy(&path, &devkey_seal, Some(self.device_id));
+            let _ = crate::vault::device_privkey::write_device_id(&self.path, self.device_id);
         }
 
         // M6 fix: ensure registries stay in sync after unlock
@@ -439,7 +440,9 @@ impl VaultHandle {
             &devkey_path,
             &old_devkey_seal,
             &new_devkey_seal,
+            Some(self.device_id),
         )?;
+        let _ = crate::vault::device_privkey::write_device_id(&self.path, self.device_id);
         if let VaultState::Unlocked(ref mut u) = self.state {
             u.session_key = new_session_key;
             u.devkey_seal = new_devkey_seal;
@@ -2454,6 +2457,13 @@ impl VaultHandle {
             return Err(VaultError::NotFound("no keywrap files found".into()).into());
         }
 
+        // 1. Direct local device identity from meta/device-id or device-privkey.json
+        if let Some(local_id) = crate::vault::device_privkey::read_device_id(path) {
+            if candidates.contains(&local_id) {
+                return Ok(local_id);
+            }
+        }
+
         // F1 fix: match local device public key against devices.json registry per device
         let registry_path = path.join("meta/devices.json");
         let registry: Option<DeviceRegistry> = if registry_path.exists() {
@@ -2475,10 +2485,12 @@ impl VaultHandle {
                 if let Some(ref reg) = registry {
                     if let Some(device_rec) = reg.devices.get(candidate) {
                         if device_rec.encryption_public_key == local_pub_hex {
+                            let _ = crate::vault::device_privkey::write_device_id(path, *candidate);
                             return Ok(*candidate);
                         }
                     }
                 } else if candidates.len() == 1 {
+                    let _ = crate::vault::device_privkey::write_device_id(path, *candidate);
                     return Ok(*candidate);
                 }
             }
@@ -2487,12 +2499,14 @@ impl VaultHandle {
         // Fallback: candidate where load_device_privkeys succeeds
         for candidate in &candidates {
             if load_device_privkeys(path, *candidate, None).is_ok() {
+                let _ = crate::vault::device_privkey::write_device_id(path, *candidate);
                 return Ok(*candidate);
             }
         }
 
         // Fallback for single keywrap file
         if candidates.len() == 1 {
+            let _ = crate::vault::device_privkey::write_device_id(path, candidates[0]);
             return Ok(candidates[0]);
         }
 
@@ -5225,5 +5239,93 @@ mod tests {
         assert!(dir.path().join("meta/settings-pub.json").exists());
         assert!(dir.path().join("meta/settings.enc").exists());
         assert!(!dir.path().join("meta/settings.json").exists());
+    }
+
+    /// Regression: a keystore-less vault with multiple devices and a sealed
+    /// device-privkey file must open in locked state and resolve the local device_id.
+    #[test]
+    fn multi_device_locked_open_with_sealed_devkey_and_no_keyring() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        let password = "test-password-123!";
+
+        // 1. Create vault (device 1)
+        let (_h, secrets) = creation::VaultCreator::new(path, password, "Desktop")
+            .kdf_profile(crate::types::KdfProfile::MobileLow)
+            .execute()
+            .unwrap();
+
+        // 2. Enroll device 2 with recovery phrase
+        let (x25519_secret, x25519_public) = crate::crypto::hpke_wrap::generate_x25519_keypair();
+        let (ed25519_signing, ed25519_verifying) =
+            crate::crypto::signature::generate_ed25519_keypair();
+        let dev2_id = Uuid::new_v4();
+        let payload = crate::device_manager::EnrollmentPayload {
+            device_id: dev2_id,
+            encryption_public_key: hex::encode(x25519_public.to_bytes()),
+            signing_public_key: hex::encode(crate::crypto::signature::verifying_key_bytes(
+                &ed25519_verifying,
+            )),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            nonce: hex::encode([1u8; 32]),
+            name: "Mobile".into(),
+            vault_id: None,
+            epoch: None,
+            registry_version: None,
+        };
+
+        let mut dm = DeviceManager::load_from_vault(path).unwrap();
+        let res = dm
+            .enroll_with_recovery_phrase(
+                &payload,
+                &secrets.recovery_phrase.phrase(),
+                x25519_secret,
+                ed25519_signing,
+                crate::vault::manifest::EnrollmentPolicy::Personal,
+            )
+            .unwrap();
+
+        // Write device 2's device-privkey.json as sealed file with device 2's keys
+        let kek = crate::crypto::kdf::derive_kek(
+            password,
+            &VaultHandle::open(path).unwrap().kdf_params,
+        )
+        .unwrap();
+        let devkey_seal = crate::crypto::hkdf_derive::derive_devkey_seal_key(&kek).unwrap();
+        let privkey_json = serde_json::json!({
+            "device_id": dev2_id.to_string(),
+            "x25519_private": hex::encode(res.x25519_secret.to_bytes()),
+            "ed25519_private": hex::encode(res.ed25519_signing.to_bytes()),
+        });
+        crate::vault::device_privkey::seal_file(
+            &path.join("meta/device-privkey.json"),
+            &privkey_json.to_string(),
+            &devkey_seal,
+            Some(dev2_id),
+        )
+        .unwrap();
+
+        // Verify meta/keywrap has 2 files
+        let kw_count = std::fs::read_dir(path.join("meta/keywrap"))
+            .unwrap()
+            .count();
+        assert_eq!(kw_count, 2);
+
+        // Verify file is sealed
+        assert_eq!(
+            crate::vault::device_privkey::file_kind(&path.join("meta/device-privkey.json")),
+            crate::vault::device_privkey::PrivkeyFileKind::Sealed
+        );
+
+        // 3. Open locked vault — must find device 2 without password or keyring
+        let mut handle = VaultHandle::open(path).unwrap();
+        assert_eq!(handle.device_id, dev2_id);
+
+        // 4. Unlock vault
+        handle.unlock(password).unwrap();
+        assert!(handle.is_unlocked());
     }
 }

@@ -27,6 +27,7 @@
 use std::path::Path;
 
 use base64::Engine as _;
+use uuid::Uuid;
 use zeroize::Zeroize;
 
 use crate::error::{BaluardError, VaultError};
@@ -37,6 +38,45 @@ use crate::{ALG_AES_256_GCM, BALUARD_VERSION};
 /// a sealed devkey blob cannot be replayed as another meta file (and vice
 /// versa) because GCM authenticates the AAD.
 pub const SEAL_TYPE: &str = "baluard-devkey-seal-v1";
+
+/// Local device ID file name (gitignored).
+pub const DEVICE_ID_FILE: &str = "meta/device-id";
+
+/// Write local device ID to `meta/device-id` file.
+pub fn write_device_id(vault_path: &Path, device_id: Uuid) -> Result<(), BaluardError> {
+    let id_path = vault_path.join(DEVICE_ID_FILE);
+    super::write_vault_file(&id_path, device_id.to_string().as_bytes())
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write device-id: {e}"))))
+}
+
+/// Read local device ID from `meta/device-id` or `meta/device-privkey.json`.
+pub fn read_device_id(vault_path: &Path) -> Option<Uuid> {
+    // 1. Check meta/device-id file
+    let id_path = vault_path.join(DEVICE_ID_FILE);
+    if id_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&id_path) {
+            if let Ok(id) = Uuid::parse_str(content.trim()) {
+                return Some(id);
+            }
+        }
+    }
+
+    // 2. Check meta/device-privkey.json outer JSON
+    let privkey_path = vault_path.join("meta/device-privkey.json");
+    if privkey_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&privkey_path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(s) = v["device_id"].as_str() {
+                    if let Ok(id) = Uuid::parse_str(s) {
+                        return Some(id);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
 
 /// How the file on disk presents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +101,11 @@ pub fn file_kind(path: &Path) -> PrivkeyFileKind {
 }
 
 /// Build the sealed file bytes for an inner privkey JSON payload.
-pub fn seal_bytes(seal_key: &[u8; 32], inner_json: &str) -> Result<Vec<u8>, BaluardError> {
+pub fn seal_bytes(
+    seal_key: &[u8; 32],
+    inner_json: &str,
+    device_id: Option<Uuid>,
+) -> Result<Vec<u8>, BaluardError> {
     let nonce = crate::crypto::aead::build_random_nonce();
     let header = EnvelopeHeader {
         version: BALUARD_VERSION,
@@ -79,10 +123,18 @@ pub fn seal_bytes(seal_key: &[u8; 32], inner_json: &str) -> Result<Vec<u8>, Balu
         header,
     )?;
     let serialized = crate::vault::envelope::serialize(&envelope)?;
-    let doc = serde_json::json!({
+    let mut doc = serde_json::json!({
         "type": SEAL_TYPE,
         "envelope": base64::engine::general_purpose::STANDARD.encode(serialized),
     });
+    let id = device_id.or_else(|| {
+        serde_json::from_str::<serde_json::Value>(inner_json)
+            .ok()
+            .and_then(|v| v["device_id"].as_str().and_then(|s| Uuid::parse_str(s).ok()))
+    });
+    if let Some(id) = id {
+        doc["device_id"] = serde_json::Value::String(id.to_string());
+    }
     Ok(doc.to_string().into_bytes())
 }
 
@@ -109,10 +161,26 @@ pub fn open_bytes(seal_key: &[u8; 32], file: &[u8]) -> Result<String, BaluardErr
 }
 
 /// Atomically write the sealed file (0600 via the WS1-backed writer).
-pub fn seal_file(path: &Path, inner_json: &str, seal_key: &[u8; 32]) -> Result<(), BaluardError> {
-    let bytes = seal_bytes(seal_key, inner_json)?;
+pub fn seal_file(
+    path: &Path,
+    inner_json: &str,
+    seal_key: &[u8; 32],
+    device_id: Option<Uuid>,
+) -> Result<(), BaluardError> {
+    let bytes = seal_bytes(seal_key, inner_json, device_id)?;
     super::write_vault_file(path, &bytes)
-        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write sealed devkey: {e}"))))
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write sealed devkey: {e}"))))?;
+    if let Some(vault_dir) = path.parent().and_then(|p| p.parent()) {
+        let id = device_id.or_else(|| {
+            serde_json::from_str::<serde_json::Value>(inner_json)
+                .ok()
+                .and_then(|v| v["device_id"].as_str().and_then(|s| Uuid::parse_str(s).ok()))
+        });
+        if let Some(id) = id {
+            let _ = write_device_id(vault_dir, id);
+        }
+    }
+    Ok(())
 }
 
 /// Read the privkey JSON from the file, sealed or legacy.
@@ -141,13 +209,17 @@ pub fn read_privkey_file(path: &Path, seal_key: Option<&[u8; 32]>) -> Result<Str
 
 /// Re-seal a legacy plaintext file under `seal_key`. No-op for sealed or
 /// missing files. Returns whether a re-seal happened.
-pub fn reseal_if_legacy(path: &Path, seal_key: &[u8; 32]) -> Result<bool, BaluardError> {
+pub fn reseal_if_legacy(
+    path: &Path,
+    seal_key: &[u8; 32],
+    device_id: Option<Uuid>,
+) -> Result<bool, BaluardError> {
     if file_kind(path) != PrivkeyFileKind::LegacyPlaintext {
         return Ok(false);
     }
     let inner = std::fs::read_to_string(path)
         .map_err(|e| VaultError::Metadata(format!("reading legacy privkey: {e}")))?;
-    seal_file(path, &inner, seal_key)?;
+    seal_file(path, &inner, seal_key, device_id)?;
     Ok(true)
 }
 
@@ -158,20 +230,26 @@ pub fn rotate_seal_key(
     path: &Path,
     old_seal_key: &[u8; 32],
     new_seal_key: &[u8; 32],
+    device_id: Option<Uuid>,
 ) -> Result<bool, BaluardError> {
     match file_kind(path) {
         PrivkeyFileKind::Absent => Ok(false),
         PrivkeyFileKind::LegacyPlaintext => {
             let inner = std::fs::read_to_string(path)
                 .map_err(|e| VaultError::Metadata(format!("reading legacy privkey: {e}")))?;
-            seal_file(path, &inner, new_seal_key)?;
+            seal_file(path, &inner, new_seal_key, device_id)?;
             Ok(true)
         }
         PrivkeyFileKind::Sealed => {
             let file = std::fs::read_to_string(path)
                 .map_err(|e| VaultError::Metadata(format!("reading privkey: {e}")))?;
+            let id = device_id.or_else(|| {
+                serde_json::from_str::<serde_json::Value>(&file)
+                    .ok()
+                    .and_then(|v| v["device_id"].as_str().and_then(|s| Uuid::parse_str(s).ok()))
+            });
             let inner = open_bytes(old_seal_key, file.as_bytes())?;
-            seal_file(path, &inner, new_seal_key)?;
+            seal_file(path, &inner, new_seal_key, id)?;
             Ok(true)
         }
     }
@@ -195,7 +273,7 @@ mod tests {
     #[test]
     fn seal_open_roundtrip() {
         let p = tmp_path("roundtrip");
-        seal_file(&p, INNER, &[7u8; 32]).unwrap();
+        seal_file(&p, INNER, &[7u8; 32], None).unwrap();
         assert_eq!(file_kind(&p), PrivkeyFileKind::Sealed);
         let out = read_privkey_file(&p, Some(&[7u8; 32])).unwrap();
         assert_eq!(out, INNER);
@@ -205,7 +283,7 @@ mod tests {
     #[test]
     fn sealed_file_holds_no_hex_keys() {
         let p = tmp_path("nohex");
-        seal_file(&p, INNER, &[7u8; 32]).unwrap();
+        seal_file(&p, INNER, &[7u8; 32], None).unwrap();
         let raw = std::fs::read_to_string(&p).unwrap();
         assert!(!raw.contains("x25519_private"));
         assert!(!raw.contains("ed25519_private"));
@@ -215,7 +293,7 @@ mod tests {
     #[test]
     fn wrong_seal_key_fails_closed() {
         let p = tmp_path("wrongkey");
-        seal_file(&p, INNER, &[7u8; 32]).unwrap();
+        seal_file(&p, INNER, &[7u8; 32], None).unwrap();
         assert!(read_privkey_file(&p, Some(&[8u8; 32])).is_err());
         // No key at all: still closed.
         assert!(read_privkey_file(&p, None).is_err());
@@ -227,22 +305,33 @@ mod tests {
         let p = tmp_path("reseal");
         super::super::write_vault_file(&p, INNER.as_bytes()).unwrap();
         assert_eq!(file_kind(&p), PrivkeyFileKind::LegacyPlaintext);
-        assert!(reseal_if_legacy(&p, &[7u8; 32]).unwrap());
+        assert!(reseal_if_legacy(&p, &[7u8; 32], None).unwrap());
         assert_eq!(file_kind(&p), PrivkeyFileKind::Sealed);
         let raw = std::fs::read_to_string(&p).unwrap();
         assert!(!raw.contains("x25519_private"));
         // Second call: no-op.
-        assert!(!reseal_if_legacy(&p, &[7u8; 32]).unwrap());
+        assert!(!reseal_if_legacy(&p, &[7u8; 32], None).unwrap());
         std::fs::remove_file(&p).ok();
     }
 
     #[test]
     fn rotate_seal_key_rekeys_sealed_file() {
         let p = tmp_path("rotate");
-        seal_file(&p, INNER, &[1u8; 32]).unwrap();
-        assert!(rotate_seal_key(&p, &[1u8; 32], &[2u8; 32]).unwrap());
+        seal_file(&p, INNER, &[1u8; 32], None).unwrap();
+        assert!(rotate_seal_key(&p, &[1u8; 32], &[2u8; 32], None).unwrap());
         assert_eq!(read_privkey_file(&p, Some(&[2u8; 32])).unwrap(), INNER);
         assert!(read_privkey_file(&p, Some(&[1u8; 32])).is_err());
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn seal_preserves_device_id_in_outer_json() {
+        let p = tmp_path("device-id-test");
+        let id = Uuid::new_v4();
+        seal_file(&p, INNER, &[7u8; 32], Some(id)).unwrap();
+        let raw = std::fs::read_to_string(&p).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["device_id"].as_str(), Some(id.to_string().as_str()));
         std::fs::remove_file(&p).ok();
     }
 }
