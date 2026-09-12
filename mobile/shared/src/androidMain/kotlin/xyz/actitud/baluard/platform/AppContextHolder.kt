@@ -20,7 +20,12 @@ object AppContextHolder {
         this.context = context.applicationContext
         try {
             xyz.actitud.baluard.initDataDir(context.applicationContext.filesDir.absolutePath)
-        } catch (_: Throwable) {}
+        } catch (e: Throwable) {
+            // BALUARD_DATA_DIR unset breaks every data_dir() consumer (CA
+            // bundle, providers.json, token fallback) in ways that surface
+            // only as unrelated downstream errors. Never swallow silently.
+            platformLogE("AppContextHolder", "initDataDir failed", e)
+        }
     }
 
     /** The application context, or null before MainActivity initialized it. */

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -142,11 +143,13 @@ fun DeviceCodeScreen(
                     Spacer(Modifier.height(16.dp))
 
                     if (vm.error != null) {
-                        Text(
-                            text = vm.error ?: "Error",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        SelectionContainer {
+                            Text(
+                                text = vm.error ?: "Error",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
                         Spacer(Modifier.height(16.dp))
                         BaluardOutlinedButton(
                             text = t("common.back"),
