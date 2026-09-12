@@ -136,6 +136,7 @@ impl CredentialConfig {
 /// Build RemoteCallbacks with credential handling for both SSH and HTTPS.
 #[cfg(feature = "git-sync")]
 pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
+    crate::sync::tls::ensure_tls_roots();
     let https_token = config.expose_token();
     let mut callbacks = RemoteCallbacks::new();
 

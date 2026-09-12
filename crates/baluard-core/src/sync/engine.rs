@@ -1258,6 +1258,7 @@ impl SyncEngine {
     /// M5 fix: `pub(crate)` so external callers cannot bypass scheme validation.
     #[doc(hidden)]
     pub(crate) fn clone_unchecked(url: &str, target: &Path) -> Result<Repository, BaluardError> {
+        crate::sync::tls::ensure_tls_roots();
         let mut builder = RepoBuilder::new();
         // Wire credential callbacks for clone operations
         let cred_config = CredentialConfig::load(target);
@@ -1346,6 +1347,7 @@ impl SyncEngine {
         cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Repository, BaluardError> {
         validate_git_url(url)?;
+        crate::sync::tls::ensure_tls_roots();
         let mut builder = RepoBuilder::new();
         let cred_config = CredentialConfig::load_with_hint(target, Some(provider));
         let mut fetch_opts = FetchOptions::new();
@@ -1415,9 +1417,13 @@ impl SyncEngine {
         fetch_opts.remote_callbacks(callbacks);
         builder.fetch_options(fetch_opts);
         let repo = builder.clone(url, target).map_err(|e| {
-            SyncError::Git(crate::sync::credentials::scrub_git_error(&format!(
-                "clone: {e}"
-            )))
+            let mut msg = format!("clone: {e}");
+            // Android TLS setup failures are silent by design; this is the
+            // one place their reason reaches a user-visible surface.
+            if let Some(diag) = crate::sync::tls::take_diag() {
+                msg.push_str(&format!(" [tls: {diag}]"));
+            }
+            SyncError::Git(crate::sync::credentials::scrub_git_error(&msg))
         })?;
         Ok(repo)
     }
@@ -1783,6 +1789,7 @@ pub struct PendingConflictState {
 const GITIGNORE_CONTENT: &str = "\
 # Secrets and private keys (CLI mode)
 meta/device-privkey.json
+meta/device-id
 meta/kdf-attempts.json
 meta/git-credentials.json
 
