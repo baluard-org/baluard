@@ -12,6 +12,8 @@ pub mod credentials;
 pub mod known_hosts;
 pub mod operations;
 pub mod state_machine;
+#[cfg(feature = "git-sync")]
+pub mod tls;
 
 #[cfg(feature = "git-sync")]
 pub mod engine;

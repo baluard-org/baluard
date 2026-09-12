@@ -77,3 +77,14 @@ passkey-ceremony = ["dep:passkey", "dep:url", "dep:public-suffix", "dep:coset", 
 git-sync = ["dep:git2"]
 org = []
 emergency = []
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Same resolved instance libgit2-sys links; gives the error-queue drain
+# (ERR_get_error) for on-device TLS setup diagnostics.
+openssl-sys = "0.9"
+# Direct use: X509::from_pem + raw git_libgit2_opts(GIT_OPT_ADD_SSL_X509_CERT).
+# Both resolve to instances already in the graph (openssl-sys 0.9.117 /
+# libgit2-sys 0.18.5) - single compiled OpenSSL, verified via cargo tree.
+openssl = "0.10"
+libgit2-sys = "0.18"
+foreign-types = "0.3"
