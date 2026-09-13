@@ -66,5 +66,11 @@ android {
         debug {
             signingConfig = signingConfigs.getByName("baluardDebug")
         }
+        release {
+            // Alpha: debug-keystore-signed release so local A/B testing
+            // (debug vs release ART/Compose perf) can adb install -r over
+            // the same applicationId. Store signing lands at store time.
+            signingConfig = signingConfigs.getByName("baluardDebug")
+        }
     }
 }
