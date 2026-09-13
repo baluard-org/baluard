@@ -157,7 +157,7 @@ This means a Codeberg OAuth2 token grants **full account access**, broader than 
 ### 5.4 Token behavior
 
 - **OAuth token (PKCE flow)**: expires in 3600s (1h). A `refresh_token` is returned. Full account access (no scopes).
-- **PAT fallback**: generated at `https://codeberg.org/user/settings/applications` per `https://docs.codeberg.org/advanced/access-token/`. **Scoped** — the Codeberg web UI (running recent Forgejo) offers both scope selection (`write:repository`, `read:repository`, etc., per `https://forgejo.org/docs/latest/user/token-scope/`) and repository access selection (All / Public only / Specific repositories). For vault sync the target scope is `write:repository`; the user can further restrict it to the specific vault repo once created. Sent as `Authorization: token <PAT>` header. No expiry unless user sets one; no refresh. **This scoped PAT is materially more secure than the OAuth2 flow (which has no scopes).**
+- **PAT fallback**: generated at `https://codeberg.org/user/settings/applications` per `https://docs.codeberg.org/advanced/access-token/`. **Scoped**: the Codeberg web UI (running recent Forgejo) offers both scope selection (`write:repository`, `read:repository`, etc., per `https://forgejo.org/docs/latest/user/token-scope/`) and repository access selection (All / Public only / Specific repositories). For vault sync the target scope is `write:repository`; the user can further restrict it to the specific vault repo once created. Sent as `Authorization: token <PAT>` header. No expiry unless user sets one; no refresh. **This scoped PAT is materially more secure than the OAuth2 flow (which has no scopes).**
 - **Self-hosted Forgejo/Gitea**: supported via instance URL override.
 
 ### 5.5 The PAT doc question

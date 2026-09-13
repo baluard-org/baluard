@@ -62,7 +62,7 @@ The protocol is simple on paper. The implementation is intricate because of:
 - AuthenticatorData layout (binary, byte offsets matter)
 - CBOR canonical encoding rules (CTAP2 canonical form)
 - Base64url everywhere (no padding)
-- Attestation statement format parsing (we can skip verification — Baluard attests to itself, `fmt = "none"` is acceptable for self-attested software authenticators)
+- Attestation statement format parsing (we can skip verification, Baluard attests to itself, `fmt = "none"` is acceptable for self-attested software authenticators)
 
 ---
 
@@ -94,12 +94,12 @@ Storage model (decided in [PM-3807](https://github.com/bitwarden/clients/pull/62
 The **private key is not stored** in the cipher. It is generated and held in the platform authenticator (TPM, Secure Enclave, Keychain) during registration and used to sign assertions. The cipher only stores the public key. On assertion, the client asks the platform authenticator to sign, and verifies the signature against the stored public key on the server (or locally).
 
 **Server endpoints** (C# `WebAuthnController.cs`):
-- `GET /webauthn` — list user's WebAuthn login credentials (this is for passkey-as-2FA, not passkey-vault)
-- `POST /webauthn/attestation-options` — generate challenge + RP options
-- `POST /webauthn/assertion-options` — generate challenge + allowCredentials
-- `POST /webauthn` — store registered credential
-- `PUT /webauthn` — update credential (PRF key set)
-- `POST /webauthn/{id}/delete` — remove
+- `GET /webauthn`: list user's WebAuthn login credentials (this is for passkey-as-2FA, not passkey-vault)
+- `POST /webauthn/attestation-options`: generate challenge + RP options
+- `POST /webauthn/assertion-options`: generate challenge + allowCredentials
+- `POST /webauthn`: store registered credential
+- `PUT /webauthn`: update credential (PRF key set)
+- `POST /webauthn/{id}/delete`: remove
 
 Two distinct WebAuthn use cases in Bitwarden:
 1. **Passkey login** (2FA replacement): credentials stored in the user's account, private key in platform authenticator
@@ -123,7 +123,7 @@ native messaging → windows_plugin_authenticator.dll (Chromium subprocess) or
 
 `win_webauthn` is a Rust crate that wraps the Windows WebAuthn API (in `apps/desktop/desktop_native/win_webauthn/`). It produces AuthenticatorData and attestation objects by calling the OS, then ships them back via NAPI to the Electron desktop client.
 
-For **macOS/iOS**, Bitwarden calls the native `LocalAuthentication` framework and `Security.framework` (SecAccessControl with `.biometryAny`) to wrap the private key in the Secure Enclave. There is no separate Linux passkey authenticator — they fall back to the platform's own FIDO2 stack via CTAP2 over USB/BLE/NFC, or use the browser's built-in authenticator.
+For **macOS/iOS**, Bitwarden calls the native `LocalAuthentication` framework and `Security.framework` (SecAccessControl with `.biometryAny`) to wrap the private key in the Secure Enclave. There is no separate Linux passkey authenticator, they fall back to the platform's own FIDO2 stack via CTAP2 over USB/BLE/NFC, or use the browser's built-in authenticator.
 
 For **mobile** (`src/App/Platforms/Android/Autofill/Fido2*UserInterface.cs` and iOS), the OS's own platform authenticator is used; the mobile app is a thin bridge between the Android AutoFill framework or iOS AutoFill credentials provider and the daemon.
 
@@ -147,7 +147,7 @@ Single 518-LOC file `src/api/core/two_factor/webauthn.rs`:
 - `Passkey` stored in `two_factor` table JSON column as `WebauthnRegistration { id, name, migrated, credential: Passkey }`
 - U2F → WebAuthn migration helper (separate path, can ignore for Baluard)
 
-**Important**: Vaultwarden uses webauthn-rs as a **relying party server** — it accepts registrations and verifies assertions. Baluard needs to be the **authenticator**, which is the same library but called from the other side. The `webauthn-rs` API surface is symmetric enough that this is workable, but we need to write (or find) an `Authenticator` trait implementation that:
+**Important**: Vaultwarden uses webauthn-rs as a **relying party server**: it accepts registrations and verifies assertions. Baluard needs to be the **authenticator**, which is the same library but called from the other side. The `webauthn-rs` API surface is symmetric enough that this is workable, but we need to write (or find) an `Authenticator` trait implementation that:
 - Generates credential key pairs (in-process, never leaves memory)
 - Produces `AuthenticatorData` for both registration and assertion
 - Signs `authData || clientDataHash` with the credential private key
@@ -159,7 +159,7 @@ There is **no first-party "webauthn-rs-authenticator"** crate. The standard patt
 3. Use `ed25519-dalek` and `p256` for signing
 4. Implement ceremony logic in ~600 LOC
 
-**Better alternative**: [`passkey-rs`](https://github.com/1Password/passkey-rs) is the **1Password**-maintained Rust crate implementing the authenticator side of the ceremony. Not "small community" — used in 1Password's own product. Includes `passkey-authenticator` (ceremony state machine + credential storage), `passkey-client` (simulated platform client, useful for integration tests), `passkey-types` (wire types), and `public-suffix` (RP ID validation). Evaluate in Phase 0 before any hand-rolling. See §5 Phase 0.
+**Better alternative**: [`passkey-rs`](https://github.com/1Password/passkey-rs) is the **1Password**-maintained Rust crate implementing the authenticator side of the ceremony. Not "small community", used in 1Password's own product. Includes `passkey-authenticator` (ceremony state machine + credential storage), `passkey-client` (simulated platform client, useful for integration tests), `passkey-types` (wire types), and `public-suffix` (RP ID validation). Evaluate in Phase 0 before any hand-rolling. See §5 Phase 0.
 
 ### 3.3 Differences between Vaultwarden model and what Baluard needs
 
@@ -184,25 +184,25 @@ There is **no first-party "webauthn-rs-authenticator"** crate. The standard patt
 
 - `LoginData` gains `fido2_credentials: Option<Vec<PasskeyData>>` (BW-compatible, `#[serde(default, skip_serializing_if = "Option::is_none")]`)
 - `PasskeyData` struct mirroring Bitwarden's fido2 credential fields, plus:
-  - `private_key: Option<Vec<u8>>` — the credential's private key, encrypted under the cipher item key
-  - `aaguid: Uuid` — which Baluard platform produced this
-  - `user_handle: Option<Vec<u8>>` — RP-assigned user handle
-  - `prf_key: Option<Vec<u8>>` — for the PRF extension
-  - `linked_login_id: Option<Uuid>` — points to a `CipherKind::Login` for the same RP, for UX deduplication. Set when the user creates the passkey from inside an existing Login detail view; `None` if created standalone.
-  - `name: Option<String>` — per-credential display name (e.g. "YubiKey 5C", "iPhone 15"). `None` falls back to `rp_name` or `rp_id`.
-- Discoverability is not a field — it's enforced by always sending `residentKey: "required"` in `authenticatorSelection` (see §4.5).
+  - `private_key: Option<Vec<u8>>`: the credential's private key, encrypted under the cipher item key
+  - `aaguid: Uuid`: which Baluard platform produced this
+  - `user_handle: Option<Vec<u8>>`: RP-assigned user handle
+  - `prf_key: Option<Vec<u8>>`: for the PRF extension
+  - `linked_login_id: Option<Uuid>`: points to a `CipherKind::Login` for the same RP, for UX deduplication. Set when the user creates the passkey from inside an existing Login detail view; `None` if created standalone.
+  - `name: Option<String>`: per-credential display name (e.g. "YubiKey 5C", "iPhone 15"). `None` falls back to `rp_name` or `rp_id`.
+- Discoverability is not a field, it's enforced by always sending `residentKey: "required"` in `authenticatorSelection` (see §4.5).
 
-**Rationale for embedded model (Bitwarden-compatible)**: BW stores fido2 credentials inside Login items, not as separate cipher types (PM-3807 merged Sep 2023 removed standalone Fido2Key). This makes multi-credential Logins natural (one Login, two devices, two passkeys), avoids N+1 cipher explosions, and preserves UX grouping (one entry per RP). Baluard is alpha — no migration needed from a prior standalone model.
+**Rationale for embedded model (Bitwarden-compatible)**: BW stores fido2 credentials inside Login items, not as separate cipher types (PM-3807 merged Sep 2023 removed standalone Fido2Key). This makes multi-credential Logins natural (one Login, two devices, two passkeys), avoids N+1 cipher explosions, and preserves UX grouping (one entry per RP). Baluard is alpha, no migration needed from a prior standalone model.
 
 **`LoginData::fido2_credentials` accessor methods** (defined in `types.rs`):
 - Default-empty constructor. `fido2_credentials.is_none()` is the natural "no passkeys" state.
-- `Option::is_none()` after `retain()` if the list goes empty — no zombie empty Vecs.
+- `Option::is_none()` after `retain()` if the list goes empty, no zombie empty Vecs.
 
 **Note on `private_key`**: This is a divergence from Bitwarden. We store the private key encrypted inside the cipher (Bitwarden does not, because it relies on platform authenticators). For a cross-device flow, this is necessary: the same passkey must sign on desktop, mobile, and extension. Storing it encrypted under the item key is consistent with how TOTP secrets and SSH private keys are stored today. Item key never crosses IPC. Private key is decrypted to memory on demand, used to sign, zeroized.
 
-**Epoch rotation**: `revoke_device_and_rekey()` re-encrypts all cipher envelopes under the new epoch. Logins with fido2_credentials participate like all other ciphers — the wrapped `private_key` (per-credential) is re-wrapped under the new item key. No special handling required. The plan must call this out explicitly: do not "optimize" rotation to skip Login ciphers, or you will silently lose every passkey. Add a unit test that asserts fido2_credentials survive `revoke_device_and_rekey()`.
+**Epoch rotation**: `revoke_device_and_rekey()` re-encrypts all cipher envelopes under the new epoch. Logins with fido2_credentials participate like all other ciphers, the wrapped `private_key` (per-credential) is re-wrapped under the new item key. No special handling required. The plan must call this out explicitly: do not "optimize" rotation to skip Login ciphers, or you will silently lose every passkey. Add a unit test that asserts fido2_credentials survive `revoke_device_and_rekey()`.
 
-**Tier**: Login ciphers with passkeys will typically fit in `Xs` (5KB) — the metadata is small, no URIs for passkey-only Logins. A Login with both password and passkey will fit in `S` (30KB). The private key is 32 bytes per passkey, COSE public key ~80 bytes, all metadata < 1KB serialized per credential.
+**Tier**: Login ciphers with passkeys will typically fit in `Xs` (5KB), the metadata is small, no URIs for passkey-only Logins. A Login with both password and passkey will fit in `S` (30KB). The private key is 32 bytes per passkey, COSE public key ~80 bytes, all metadata < 1KB serialized per credential.
 
 ### 4.2 Vault CRUD
 
@@ -211,13 +211,13 @@ There is **no first-party "webauthn-rs-authenticator"** crate. The standard patt
 - `add_cipher` / `update_cipher` already accept `CipherInput` JSON; the new `Passkey` variant flows through with no handle changes
 - `list_cipher_meta` returns `CipherMeta` which already carries `cipher_type`. Add `display_name` extraction (use `rp_id` for passkeys).
 - `delete_cipher` works as-is.
-- Counter updates flow through the existing `update_cipher` route. The counter is inside the encrypted envelope; there is no meaningful optimization in having a separate route — the full cipher must be decrypted, counter incremented, re-encrypted, and written. A dedicated `passkey_counter_increment` route would be a race magnet and an asymmetric API surface. Drop it.
+- Counter updates flow through the existing `update_cipher` route. The counter is inside the encrypted envelope; there is no meaningful optimization in having a separate route, the full cipher must be decrypted, counter incremented, re-encrypted, and written. A dedicated `passkey_counter_increment` route would be a race magnet and an asymmetric API surface. Drop it.
 
 ### 4.3 Import / Export
 
 **File**: `crates/baluard-core/src/import/bw_json.rs`
 
-Currently `fido2_credentials: Option<serde_json::Value>` is captured as raw JSON and dropped. Replace with typed parse: extract Bitwarden's Fido2Credential fields, but **private key is not in BW export** — we'd need to mark these passkeys as `private_key_missing: true` and refuse to serve them for assertion. They are viewable metadata only until the user re-registers.
+Currently `fido2_credentials: Option<serde_json::Value>` is captured as raw JSON and dropped. Replace with typed parse: extract Bitwarden's Fido2Credential fields, but **private key is not in BW export**: we'd need to mark these passkeys as `private_key_missing: true` and refuse to serve them for assertion. They are viewable metadata only until the user re-registers.
 
 **Phase 0 deliverable**: read-only import of BW passkey metadata.
 
@@ -226,11 +226,11 @@ Export: emit `fido2_credentials[]` in BW JSON format. Round-trip with BW. Privat
 ### 4.4 Crypto (no new primitives)
 
 Existing primitives cover everything:
-- `ed25519-dalek` — EdDSA signing
-- `p256` — ES256 signing
-- `coset` (new dep, ~300KB) — COSE key encoding/decoding
-- `cbor4ii` or `ciborium` (new dep) — CBOR for attestation object, AuthenticatorData
-- AES-256-GCM (existing) — wrap the private key under the cipher item key
+- `ed25519-dalek`: EdDSA signing
+- `p256`: ES256 signing
+- `coset` (new dep, ~300KB), COSE key encoding/decoding
+- `cbor4ii` or `ciborium` (new dep), CBOR for attestation object, AuthenticatorData
+- AES-256-GCM (existing), wrap the private key under the cipher item key
 
 WebAuthn ceremony implementation: ~600 LOC, isolated in `crates/baluard-core/src/crypto/webauthn/`. No changes to root key, item key, or epoch system.
 
@@ -246,15 +246,15 @@ Add routes (JSON-in-string `GatewayRequest.payload`):
 | `passkey.finish_register` | desktop → daemon | `{name, attestation_response, state}` → `Passkey cipher` (embedded in LoginData). Phase 1: trust client-supplied `passkey_data` echo. Phase 2 MUST store in `CeremonyState::Registration`. |
 | `passkey.challenge_assert` | desktop → daemon | `{rp_id, allow_credentials?}` → `{publicKey, state}` (PublicKeyCredentialRequestOptions JSON) |
 | `passkey.finish_assert` | desktop → daemon | `{assertion_response, state}` → `{verified: bool, cipher_id, sign_count}`. Updates counter inside Login's `fido2_credentials` (max of local + new). |
-| `passkey.list` | desktop → daemon | `{}` → `[{credential_id, rp_id, rp_name, user_name, name, counter, private_key_missing, login_name, has_password, pk_name, ...}]` — one entry per credential (not per cipher) across all Logins. `login_name` + `has_password` give the desktop UI context for "linked vs standalone". |
+| `passkey.list` | desktop → daemon | `{}` → `[{credential_id, rp_id, rp_name, user_name, name, counter, private_key_missing, login_name, has_password, pk_name, ...}]`, one entry per credential (not per cipher) across all Logins. `login_name` + `has_password` give the desktop UI context for "linked vs standalone". |
 | `passkey.delete` | desktop → daemon | `{cipher_id, credential_id}` → `{}`. Removes the specific `PasskeyData` from `Login.fido2_credentials`. If Login has no other data, deletes the cipher entirely. |
 | `passkey.rename` | desktop → daemon | `{cipher_id, credential_id, name}` → `{}`. Updates `PasskeyData.name`. Does NOT change the Login cipher's display name. |
 
-State management: registration/assertion `state` is a short-lived, in-memory map keyed by `state_id` (random 128-bit). **300-second TTL** (matches Chrome's WebAuthn user-interaction timeout — 60s is too short for users who fail a biometric once and retry). On finish, state is consumed. On timeout, evicted. This matches `webauthn-rs` semantics. `CeremonyCache` enforces **max 64 pending ceremonies** with FIFO eviction (defense against memory exhaustion from authenticated clients).
+State management: registration/assertion `state` is a short-lived, in-memory map keyed by `state_id` (random 128-bit). **300-second TTL** (matches Chrome's WebAuthn user-interaction timeout, 60s is too short for users who fail a biometric once and retry). On finish, state is consumed. On timeout, evicted. This matches `webauthn-rs` semantics. `CeremonyCache` enforces **max 64 pending ceremonies** with FIFO eviction (defense against memory exhaustion from authenticated clients).
 
 **Token-gated**: all routes require session token (existing pattern).
 
-**Private key never serialized over IPC**. The cipher on disk has the encrypted private key; the daemon decrypts it on `finish_register`/`finish_assert` calls, keeps the plaintext in a `Zeroizing<Vec<u8>>` for the duration of the call, zeroizes on drop. No persistent in-memory cache of private keys (defense in depth — if the daemon process is dumped, only the current call's key is exposed, not the entire fleet).
+**Private key never serialized over IPC**. The cipher on disk has the encrypted private key; the daemon decrypts it on `finish_register`/`finish_assert` calls, keeps the plaintext in a `Zeroizing<Vec<u8>>` for the duration of the call, zeroizes on drop. No persistent in-memory cache of private keys (defense in depth, if the daemon process is dumped, only the current call's key is exposed, not the entire fleet).
 
 **Login pre-filter in `passkey.list`**: iterate `cipher_meta` with `cipher_type == CipherType::Login` filter BEFORE decrypting, to avoid a full N-decrypt pass on every list call (5x speedup for a 500-item vault). Phase 1 has a TODO for `list_ciphers_by_type` batch method to eliminate the remaining per-cipher decrypt.
 
@@ -290,10 +290,10 @@ The extension is the WebAuthn entry point for desktop browser autofill. The flow
 
 **Phase 2 deliverable**:
 - `extension/manifest.json` (MV3)
-- `extension/src/page-script.js` — injected into every page, intercepts `navigator.credentials.create` and `.get` by replacing them with proxies that post messages to the content script. **Must use `chrome.scripting.executeScript` with `world: "MAIN"`** in the content script's registration, NOT a `web_accessible_resources` `<script>` tag. CSP-strict sites (GitHub, banking) block the latter. `world: "MAIN"` injects into the page's main JS world but is exempt from page CSP because it is extension-owned.
-- `extension/src/content-script.js` — bridges page-script ↔ background via `chrome.runtime.connect`
-- `extension/src/background.js` — routes to native messaging host
-- `extension/src/popup/` — passkey picker UI (SolidJS)
+- `extension/src/page-script.js`: injected into every page, intercepts `navigator.credentials.create` and `.get` by replacing them with proxies that post messages to the content script. **Must use `chrome.scripting.executeScript` with `world: "MAIN"`** in the content script's registration, NOT a `web_accessible_resources` `<script>` tag. CSP-strict sites (GitHub, banking) block the latter. `world: "MAIN"` injects into the page's main JS world but is exempt from page CSP because it is extension-owned.
+- `extension/src/content-script.js`: bridges page-script ↔ background via `chrome.runtime.connect`
+- `extension/src/background.js`: routes to native messaging host
+- `extension/src/popup/`: passkey picker UI (SolidJS)
 
 **Conditional mediation** is a hard Phase 2 requirement. Modern sites (GitHub, Google) call `navigator.credentials.get({ mediation: "conditional" })` to request passkeys as inline autofill in the username field, not as a popup. The extension's `page-script.js` must detect this mediation mode and surface matching passkeys into the browser's autofill suggestion list, not just the explicit `PasskeyUseModal` path. Without it, Baluard passkeys will feel broken on every site that uses modern passkey UX. The Bitwarden extension's `fido2-autofill-utils.ts` is the reference pattern (it pre-filters by `rpId` and username, and injects `<input>` autocomplete entries).
 
@@ -307,7 +307,7 @@ Native messaging host: small Rust binary in `extension/native-host/` (or a new c
 
 **File**: `mobile/` (currently KMP scaffolding for iOS + Android)
 
-The mobile app is a second WebAuthn entry point. The OS-level integration is what makes this work — the user does not need to open Baluard explicitly:
+The mobile app is a second WebAuthn entry point. The OS-level integration is what makes this work, the user does not need to open Baluard explicitly:
 
 **Android (Credential Provider Service)**:
 - Service registered in `AndroidManifest.xml` as `android.app.role.RoleManager.ROLE_CREDENTIAL_PROVIDER`
@@ -327,7 +327,7 @@ The mobile app is a second WebAuthn entry point. The OS-level integration is wha
 - iOS 17+ supports passkey AutoFill natively
 - Phase 3 deliverable: ~400 LOC Swift + KMP bridge
 
-**Mobile architecture decision**: mobile runs `baluard-core` as a library via Rust FFI (UniFFI), linked into the Kotlin Multiplatform app. There is **no daemon process on mobile** — iOS background-execution constraints make a long-running Unix socket daemon infeasible, and Android equivalents are even worse. The mobile app has its own copy of the vault, synced via git like every other device. AutoFill requests are answered by an in-process FFI call to `baluard-core`, not by a socket roundtrip. This means cross-device (Phase 4) is the only case where mobile needs to talk to desktop, and that uses the QR pairing channel — a one-shot local connection, not a persistent daemon.
+**Mobile architecture decision**: mobile runs `baluard-core` as a library via Rust FFI (UniFFI), linked into the Kotlin Multiplatform app. There is **no daemon process on mobile**: iOS background-execution constraints make a long-running Unix socket daemon infeasible, and Android equivalents are even worse. The mobile app has its own copy of the vault, synced via git like every other device. AutoFill requests are answered by an in-process FFI call to `baluard-core`, not by a socket roundtrip. This means cross-device (Phase 4) is the only case where mobile needs to talk to desktop, and that uses the QR pairing channel, a one-shot local connection, not a persistent daemon.
 
 Kotlin/Swift code is glue only: query the FFI for matching passkeys, format them as `PublicKeyCredentialEntry` (Android) or `ASPasskeyCredential` (iOS), forward the system callback back to the FFI for signing. The cryptographic ceremony never leaves Rust.
 
@@ -342,7 +342,7 @@ The FIDO Alliance's hybrid transport requires a **cloud relay** for the initial 
 
 **(b) is the right MVP.** The phone shows a QR code on request; the desktop scans it with the extension; they establish a local channel; passkey assertion completes. This is what Bitwarden does not do (they punt on cross-device entirely for individual passkeys; they only support same-platform).
 
-**Scope clarification (must be in Phase 4 user-facing docs)**: this cross-device path works **only when the Baluard browser extension is installed and active on the desktop browser**. It does NOT work with native OS passkey dialogs (Chrome's Android passkey sheet, Safari's iOS passkey sheet) — those bypass the extension entirely and require the FIDO Alliance cloud relay we do not implement. Mobile OS users who tap a native passkey prompt will not see Baluard in the system picker. This is an honest scope limit, not a Phase 4+ bug.
+**Scope clarification (must be in Phase 4 user-facing docs)**: this cross-device path works **only when the Baluard browser extension is installed and active on the desktop browser**. It does NOT work with native OS passkey dialogs (Chrome's Android passkey sheet, Safari's iOS passkey sheet), those bypass the extension entirely and require the FIDO Alliance cloud relay we do not implement. Mobile OS users who tap a native passkey prompt will not see Baluard in the system picker. This is an honest scope limit, not a Phase 4+ bug.
 
 ### 4.9 Dependencies (new crates)
 
@@ -353,9 +353,9 @@ The FIDO Alliance's hybrid transport requires a **cloud relay** for the initial 
 | `ed25519-dalek` | already in tree (used by device keys) | EdDSA signing | BSD-3-Clause |
 | `p256` | already in tree (used by SSH) | ES256 signing | MIT/Apache-2.0 |
 | `passkey-rs` (evaluate in Phase 0) | 0.5+ | WebAuthn authenticator ceremony logic | MIT |
-| `uniffi` | latest | Rust ↔ KMP FFI for mobile. **Synchronous interface only** — the signing ceremony is CPU-bound, no blocking I/O. Do not reach for async UniFFI. | MIT/Apache-2.0 |
+| `uniffi` | latest | Rust ↔ KMP FFI for mobile. **Synchronous interface only**: the signing ceremony is CPU-bound, no blocking I/O. Do not reach for async UniFFI. | MIT/Apache-2.0 |
 
-**`passkey-rs` decision is made in Phase 0, not deferred.** The plan originally said "hand-roll, revisit after Phase 1" — that was wrong. `passkey-rs` is 1Password-maintained and used in production. Phase 0 includes a 2-hour evaluation: does its `MemoryStore` trait fit the Baluard vault model? If yes, adopt and delete the ~600 LOC hand-roll plan. If no, document the specific reason, then hand-roll. No "we'll figure it out later."
+**`passkey-rs` decision is made in Phase 0, not deferred.** The plan originally said "hand-roll, revisit after Phase 1", that was wrong. `passkey-rs` is 1Password-maintained and used in production. Phase 0 includes a 2-hour evaluation: does its `MemoryStore` trait fit the Baluard vault model? If yes, adopt and delete the ~600 LOC hand-roll plan. If no, document the specific reason, then hand-roll. No "we'll figure it out later."
 
 ### 4.10 Telemetry / no telemetry
 
@@ -365,14 +365,14 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 
 ## 5. Phased rollout
 
-### Phase 0 — Schema + import + decision gates ✅ COMPLETE
+### Phase 0: Schema + import + decision gates ✅ COMPLETE
 
 **Completed**: 2026-06-12. 342 tests pass at v5. **Reworked to embedded model in commit 823d538 (360 tests pass)**. Peer-reviewed by external peer review (Phase 0 + Phase 1: 3 rounds). Then again after rework: 12 findings, all fixed in commit ad3e1e0.
 
 #### 0.1 Schema (`types.rs`) ✅
 - **`LoginData::fido2_credentials: Option<Vec<PasskeyData>>`** added (Bitwarden-compatible)
 - `PasskeyData` struct: `credential_id`, `key_type`, `key_algorithm`, `key_curve`, `key_value`, `rp_id`, `rp_name`, `user_handle` (Vec<u8>), `user_name`, `user_display_name`, `counter` (u32), `aaguid` (Uuid), `prf_key` (Option<Vec<u8>>), `private_key` (Option<Vec<u8>>), `private_key_missing` (bool), `linked_login_id` (Option<Uuid>), `creation_date` (u64), `name` (Option<String>, per-credential display name added in v6)
-- Manual `Zeroize` + `Drop` impl on `PasskeyData` — only `private_key` and `prf_key` are zeroized on drop (non-sensitive fields are skipped)
+- Manual `Zeroize` + `Drop` impl on `PasskeyData`, only `private_key` and `prf_key` are zeroized on drop (non-sensitive fields are skipped)
 - **No standalone `CipherKind::Passkey` or `CipherType::Passkey` variant** (removed in v6 rework). Passkeys are only stored inside LoginData.
 - Vault handle's cipher zeroize match block zeroizes `Login.d.fido2_credentials[].private_key` and `prf_key` on cipher drop
 - 2 schema tests: LoginData with fido2 round-trip, LoginData without fido2 omits field
@@ -381,7 +381,7 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 - `BwFido2Credential` struct mirrors BW's JSON shape
 - `bw_fido2_to_passkey()` converter (sets `private_key_missing: true`, `aaguid: Uuid::nil()`)
 - `parse_iso8601_to_unix()` using Hinnant's algorithm (no chrono dep)
-- **Import embeds fido2 credentials directly into `LoginData.fido2_credentials`** — no separate Passkey ciphers emitted
+- **Import embeds fido2 credentials directly into `LoginData.fido2_credentials`**: no separate Passkey ciphers emitted
 - Password history dates also parsed via `parse_iso8601_to_unix` (not raw u64 parse)
 - `user_handle` base64 decode tolerant of both URL_SAFE_NO_PAD and STANDARD encoding
 - 3 import tests: single passkey embedded in Login, multiple fido2 in one Login, plain Login (no fido2) is unchanged
@@ -389,10 +389,10 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 #### 0.3 passkey-rs Spike ✅
 - Workspace deps added: `passkey 0.5`, `webauthn-rs 0.5`, `webauthn-rs-proto 0.5`, `webauthn-rs-core 0.5`
 - Spike test in `crates/baluard-core/tests/passkey_spike.rs` (2 tests: registration + assertion round-trip through webauthn-rs)
-- **Verdict: `passkey-rs` 0.5.x adopted** — documented in `docs/plan-passkey-rs-evaluation.md`
+- **Verdict: `passkey-rs` 0.5.x adopted**: documented in `docs/plan-passkey-rs-evaluation.md`
 - ES256 only (passkey-rs limitation; no EdDSA support in v0.5.x)
 - JSON serde bridge between passkey-rs and webauthn-rs types works cleanly
-- `UserValidationMethod` is async trait with `check_user()`, `is_presence_enabled()`, `is_verification_enabled()` — Baluard will implement with OS biometric gates
+- `UserValidationMethod` is async trait with `check_user()`, `is_presence_enabled()`, `is_verification_enabled()`, Baluard will implement with OS biometric gates
 - `danger-allow-state-serialisation` feature on `webauthn-rs` gated to dev-deps only (not workspace level)
 
 #### Decision gates resolved:
@@ -401,17 +401,17 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 - **FIDO Alliance MDS AAGUID registration**: Deferred to Phase 5 polish.
 - **Standalone vs embedded passkey storage**: ✅ Embedded inside `LoginData` (Bitwarden-compatible). Decided after BW import research (PM-3807 removed standalone Fido2Key from BW).
 
-### Phase 1 — Generate + serve on desktop (2-3 weeks) ✅ COMPLETE
+### Phase 1: Generate + serve on desktop (2-3 weeks) ✅ COMPLETE
 
 **Implemented in commits:** b1292e8, 27beb22, 60dc213, ce47f95, 4fabc4e, 60a47e8, 003e3e6, 823d538, ad3e1e0
 
 **What shipped:**
 - **Ceremony module** (`crypto/webauthn/`): `BaluardCredentialStore` (Arc<Mutex> mutation tracking), `PasskeyIndex` (indexes passkeys from `Login.fido2_credentials`), `CeremonyCache` (300s TTL, max 64 pending, FIFO eviction, OsRng challenges), `BaluardUserValidation` (Phase 1: always-allow)
 - **Ceremony runner**: `run_registration()`, `run_assertion()` using passkey-rs Client. ES256 only (coset::iana::Algorithm::ES256). Platform authenticator, resident key required.
-- **Daemon IPC**: 7 routes (list, delete, rename, challenge_register, finish_register, challenge_assert, finish_assert). All token-gated. Cover commit tracking. Type guard on delete. **`passkey.delete` and `passkey.rename` take `credential_id`** (B1+B2 fix) — remove/rename only the specific PasskeyData, not the entire Login cipher.
+- **Daemon IPC**: 7 routes (list, delete, rename, challenge_register, finish_register, challenge_assert, finish_assert). All token-gated. Cover commit tracking. Type guard on delete. **`passkey.delete` and `passkey.rename` take `credential_id`** (B1+B2 fix), remove/rename only the specific PasskeyData, not the entire Login cipher.
 - **CLI commands**: `baluard passkey list [--rp-id]`, `delete --id <login_id> --credential-id <cred_id>`, `rename --id <login_id> --credential-id <cred_id> --name <name>`. Daemon + direct mode.
 - **Test harness**: 8 ceremony tests + 2 Login-fido2 schema tests. 358 total. Registration, assertion, multi-RP, cache TTL, index filtering, store mutation tracking.
-- **Three peer reviews** passed: Phase 0 (1B+1H+2M+5L), Phase 1 mid-point (B1-B4+S1+FG1+M4), Phase 0+1 comprehensive (9 items), plus post-rework review (3B+3H+2M+2L+2FG) — all 30+ findings fixed across all rounds.
+- **Three peer reviews** passed: Phase 0 (1B+1H+2M+5L), Phase 1 mid-point (B1-B4+S1+FG1+M4), Phase 0+1 comprehensive (9 items), plus post-rework review (3B+3H+2M+2L+2FG), all 30+ findings fixed across all rounds.
 
 **Known limitations (documented, Phase 2 tracked):**
 - S1: passkey_data echo-back in finish_register (trust boundary: same-process desktop). See Phase 2 prerequisites.
@@ -421,7 +421,7 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 
 **Fixed in comprehensive review (commit 63bb831):**
 - SEC-2: passkey_rename type guard added
-- BUG-1: counter always `Some(n)` — counter now properly increments on assertion
+- BUG-1: counter always `Some(n)`, counter now properly increments on assertion
 - COVER: finish_assert in COVER_MUTATION_ACTIONS
 - SEC-3: finish_assert echo-back documented
 - RAND: OsRng for ceremony challenges
@@ -452,13 +452,13 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 - Epoch rotation regression test
 - 80%+ coverage gate
 
-### Phase 2 — Browser extension (2-3 weeks)
+### Phase 2: Browser extension (2-3 weeks)
 
 **Mandatory prerequisites (from Phase 0+1 comprehensive review):**
 
 1. **SEC-1 structural fix**: `finish_register` and `finish_assert` MUST NOT trust client-supplied data. CeremonyState must carry the computed results:
-   - `CeremonyState::Registration { passkey_data: PasskeyData, ... }` — finish_register reads from state, not from client payload
-   - `CeremonyState::Assertion { credential_id_b64: String, new_counter: u32, rp_id: String, ... }` — finish_assert reads from state, verifies credential belongs to ceremony's RP
+   - `CeremonyState::Registration { passkey_data: PasskeyData, ... }`: finish_register reads from state, not from client payload
+   - `CeremonyState::Assertion { credential_id_b64: String, new_counter: u32, rp_id: String, ... }`: finish_assert reads from state, verifies credential belongs to ceremony's RP
    - Without this fix: counter forgery (u32::MAX DoS), cross-RP credential update
 
 2. **DESIGN-1 ceremony redesign**: Current `run_registration()`/`run_assertion()` run the full ceremony internally. Browser extension needs:
@@ -469,7 +469,7 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
    - Same pattern for assertion
    - Use passkey-rs `relying_party` verification primitives
 
-3. **passkey_list N+1**: Add `VaultHandle::list_ciphers_by_type(CipherType)` batch method. Browser autofill triggers on every page load — performance critical.
+3. **passkey_list N+1**: Add `VaultHandle::list_ciphers_by_type(CipherType)` batch method. Browser autofill triggers on every page load, performance critical.
 
 4. **key_value field**: Extract public key (x || y coordinates) from COSE key instead of storing full private key. Rename to `public_key_value`.
 
@@ -477,23 +477,23 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 
 **Extension implementation:**
 
-- Extension scaffolding: `manifest.json` (MV3), `page-script.js`, `content-script.js`, `background.js`. **`page-script.js` injected via `chrome.scripting.executeScript({ world: "MAIN" })`** — required for CSP-strict sites.
+- Extension scaffolding: `manifest.json` (MV3), `page-script.js`, `content-script.js`, `background.js`. **`page-script.js` injected via `chrome.scripting.executeScript({ world: "MAIN" })`**: required for CSP-strict sites.
 - Native messaging host: `extension-host` binary (Rust crate)
 - SolidJS popup for passkey selection (`PasskeyUseModal` lives here)
 - **Conditional mediation**: `page-script.js` detects `get({ mediation: "conditional" })` and surfaces matching passkeys into the browser's autofill suggestion list. Reference pattern: Bitwarden's `fido2-autofill-utils.ts` (pre-filters by `rpId` and username, injects `<input>` autocomplete entries). Without this, GitHub, Google, etc. won't show Baluard in their modern passkey UX.
 - Permission model: extension only requests passkey when `enable_passkeys` setting is true (mirrors Bitwarden's `enablePasskeys` state provider)
 - **Deliverable**: WebAuthn flows work in Chrome and Firefox from a Baluard-unlocked desktop, including conditional mediation on sites that use it.
 
-### Phase 3 — Mobile (3-4 weeks)
+### Phase 3: Mobile (3-4 weeks)
 
 - Kotlin Multiplatform `passkey-bridge` library (UniFFI bindings to `baluard-core`)
 - Android `CredentialProviderService` integration. In-process FFI call to `baluard-core` for `sign`; no socket roundtrip.
 - iOS `ASCredentialProviderViewController` extension. In-process FFI call to `baluard-core`; no socket roundtrip.
 - **No daemon process on mobile.** iOS background-execution constraints make a persistent Unix socket daemon infeasible. The mobile app has its own copy of the vault, synced via git like every other device. AutoFill is answered in-process by the FFI.
-- The only mobile↔desktop channel in any phase is the **Phase 4 cross-device** QR pairing — a one-shot local connection for that specific use case, not a persistent daemon.
+- The only mobile↔desktop channel in any phase is the **Phase 4 cross-device** QR pairing, a one-shot local connection for that specific use case, not a persistent daemon.
 - **Deliverable**: WebAuthn flows work in mobile Safari and mobile Chrome, with passkeys stored in the Baluard vault on the mobile device.
 
-### Phase 4 — Cross-device assertion (2-3 weeks)
+### Phase 4: Cross-device assertion (2-3 weeks)
 
 - QR code pairing: phone displays a one-time pairing token, desktop extension scans
 - Local channel over BLE or local network
@@ -501,7 +501,7 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 - Discoverable credential flow: phone returns passkey candidates matching the RP, user picks, signs
 - **Deliverable**: a passkey stored on a phone can be used to authenticate on a desktop that does not have the same passkey.
 
-### Phase 5 — Polish (ongoing)
+### Phase 5: Polish (ongoing)
 
 - PRF extension support (`hmac-secret`)
 - Large blob storage
@@ -509,7 +509,7 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 - AAGUID rotation per platform major version
 - **FIDO Alliance MDS updates**: when AAGUIDs change (e.g. v2 desktop with TPM-backed key), re-submit to the FIDO Alliance Metadata Service
 - iCloud Keychain / Google Password Manager export of passkeys
-- Passkey as 2FA for vault unlock (Tier 2 of `docs/2fa-analysis.md`) — out of scope of this plan, separate plan
+- Passkey as 2FA for vault unlock (Tier 2 of `docs/2fa-analysis.md`), out of scope of this plan, separate plan
 
 ---
 
@@ -519,16 +519,16 @@ These gaps were identified during the Phase 0+1 comprehensive peer review. None 
 
 | Gap | Risk | Phase | Tracking |
 |-----|------|-------|----------|
-| No test: `finish_register` with an Assertion ceremony ID (wrong ceremony type) | Low — type guard in code, but untested | Phase 2 | Must add |
-| No test: `finish_assert` with expired ceremony | Medium — success path tested, expiry not | Phase 2 | Must add |
-| No test: malformed COSE key bytes in `private_key` field | Low — silently skipped, should surface error | Phase 2 | Should add |
-| No test: duplicate registration (same RP + user, two ciphers) | Medium — `exclude_credentials` behavior not verified | Phase 2 | Must add |
-| No test: `new_counter = u32::MAX` in `finish_assert` | High — surfaces SEC-1 counter forgery | Phase 2 | Must add after SEC-1 fix |
-| No test: `passkey_rename` on non-passkey cipher (type guard) | Medium — guard added, untested | Phase 1 | Should add |
-| No test: daemon-level ceremony round-trip (`challenge_register` → `finish_register` via `VaultState`) | Medium — catches is_unlocked gaps, write-lock path | Phase 2 | Must add |
-| No test: counter `max(local, remote)` merge logic in sync | High — spec compliance for git-sync | Phase 2 | Must add |
-| No test: epoch rotation preserves passkey ciphers | High — key rotation must not destroy credentials | Phase 2 | Must add |
-| No isolated unit test for `passkey_data_to_passkey` converter | Low — tested indirectly via ceremony | Done | Added in 63bb831 |
+| No test: `finish_register` with an Assertion ceremony ID (wrong ceremony type) | Low, type guard in code, but untested | Phase 2 | Must add |
+| No test: `finish_assert` with expired ceremony | Medium, success path tested, expiry not | Phase 2 | Must add |
+| No test: malformed COSE key bytes in `private_key` field | Low, silently skipped, should surface error | Phase 2 | Should add |
+| No test: duplicate registration (same RP + user, two ciphers) | Medium, `exclude_credentials` behavior not verified | Phase 2 | Must add |
+| No test: `new_counter = u32::MAX` in `finish_assert` | High, surfaces SEC-1 counter forgery | Phase 2 | Must add after SEC-1 fix |
+| No test: `passkey_rename` on non-passkey cipher (type guard) | Medium, guard added, untested | Phase 1 | Should add |
+| No test: daemon-level ceremony round-trip (`challenge_register` → `finish_register` via `VaultState`) | Medium, catches is_unlocked gaps, write-lock path | Phase 2 | Must add |
+| No test: counter `max(local, remote)` merge logic in sync | High, spec compliance for git-sync | Phase 2 | Must add |
+| No test: epoch rotation preserves passkey ciphers | High, key rotation must not destroy credentials | Phase 2 | Must add |
+| No isolated unit test for `passkey_data_to_passkey` converter | Low, tested indirectly via ceremony | Done | Added in 63bb831 |
 
 ---
 
@@ -541,7 +541,7 @@ These gaps were identified during the Phase 0+1 comprehensive peer review. None 
 4. Counter git-sync conflict: ✅ `merge_counter = max(local, remote)` per-cipher. After sync, stored counter is `max(local, remote)` before the next assertion; authenticator always writes `counter + 1` at assertion time.
 
 **Still open** (carry into Phase 0/1):
-1. **Self-attestation vs none-attestation**: spec allows `fmt: "none"` for software authenticators that don't want to be tracked. We should use `none` and ship our own AAGUID for analytics/reputation, but skip attestation certificate chains entirely. **Recommendation**: use `none`, ship AAGUID. (FIDO Alliance consumer sites — GitHub, Google, Cloudflare — accept `none`. Enterprise RPs with attestation enforcement are not V1 users.)
+1. **Self-attestation vs none-attestation**: spec allows `fmt: "none"` for software authenticators that don't want to be tracked. We should use `none` and ship our own AAGUID for analytics/reputation, but skip attestation certificate chains entirely. **Recommendation**: use `none`, ship AAGUID. (FIDO Alliance consumer sites, GitHub, Google, Cloudflare, accept `none`. Enterprise RPs with attestation enforcement are not V1 users.)
 2. **Storage of `private_key`**: encrypted under item key (current proposal) vs derived deterministically from master password + cipher ID (deterministic, no extra key wrap). **Recommendation**: encrypted under item key, matches SSH/TOTP pattern in current code.
 3. **Counter persistence**: encrypted in cipher envelope (current proposal) vs plaintext in cipher metadata (faster, no decrypt on every assertion). **Recommendation**: encrypted. Counter is part of cipher authenticity, can't be tampered with.
 4. **Touch ID / Windows Hello gating**: every assertion requires user verification. **Recommendation**: yes, `UserVerificationPolicy::Required` always. No UV == no signing. This is the security guarantee. (Linux exception: master-password re-prompt is the substitute; document the difference.)
@@ -559,7 +559,7 @@ These gaps were identified during the Phase 0+1 comprehensive peer review. None 
 | Browser extension fingerprinting / abuse | High | High | Opt-in only, visible indicator, no background WebAuthn interception when disabled |
 | iOS/Android AutoFill framework changes | Medium | High | Abstract daemon IPC behind an interface; mobile code is isolated to ~800 LOC total |
 | Cross-device relay abuse (someone else pairing) | Medium | High | QR code must be scanned within 30s; pair codes are single-use; require biometric on both ends |
-| Counter not atomic across devices (git sync) | Medium | Medium | Sync engine applies `merge_counter = max(local, remote)` per passkey cipher when both sides have advanced. The spec only requires `counter_new > counter_stored` (not `+1`), so `max()` is monotonic. **Residual inherent risk**: two devices both sign before syncing emit assertions with the same counter; one is rejected by the RP. This is not Baluard-specific — Apple, Google, 1Password all have this property with synced passkeys. FIDO Alliance guidance now recommends RPs accept counter=0 and not reject counter-non-monotone assertions without additional cloning evidence; GitHub, Google, Cloudflare all follow this. Regression test in Phase 1: simulate concurrent assertions on two devices, verify vault counter never regresses after merge. |
+| Counter not atomic across devices (git sync) | Medium | Medium | Sync engine applies `merge_counter = max(local, remote)` per passkey cipher when both sides have advanced. The spec only requires `counter_new > counter_stored` (not `+1`), so `max()` is monotonic. **Residual inherent risk**: two devices both sign before syncing emit assertions with the same counter; one is rejected by the RP. This is not Baluard-specific, Apple, Google, 1Password all have this property with synced passkeys. FIDO Alliance guidance now recommends RPs accept counter=0 and not reject counter-non-monotone assertions without additional cloning evidence; GitHub, Google, Cloudflare all follow this. Regression test in Phase 1: simulate concurrent assertions on two devices, verify vault counter never regresses after merge. |
 | WebAuthn ceremony implementation bugs (interop with RPs) | High | High | Hard Phase 1 deliverables: local `webauthn-rs` RP harness as in-process test, FIDO Alliance test vector corpus, `proptest` for COSE/AuthenticatorData, 80%+ coverage. Manual QA on github.com, google.com, cloudflare.com is smoke test only, not acceptance. |
 | **Mobile native OS passkey dialogs are invisible to Baluard** (cross-device scope) | Certain | Medium | Document explicitly in Phase 4 user-facing docs. Chrome Android passkey sheet and Safari iOS passkey sheet bypass the extension; Baluard will not appear. Workaround: use the Baluard browser extension on desktop for cross-device, or rely on synced passkeys on the mobile device itself. |
 | Linux UV has no hardware path (master password re-prompt is the substitute) | Certain | Low | Documented UX downgrade. Re-prompt step is added to the ceremony on Linux. Fixed when platform UV becomes available. |
@@ -568,72 +568,72 @@ These gaps were identified during the Phase 0+1 comprehensive peer review. None 
 | **CeremonyCache unbounded DoS** (no max capacity, authenticated clients can fill memory) | Low (Phase 1) / Medium (Phase 2) | Low | Fixed in 63bb831: max 64 pending ceremonies with FIFO eviction. May need per-client rate limiting in Phase 2. |
 | **Multi-credential Login data loss** (passkey delete accidentally removes Login cipher that has password + TOTP) | High | High | Fixed in ad3e1e0 (B1): `passkey.delete` takes `credential_id` and removes only the matching entry. If Login has no other data, deletes the cipher. If Login has password/URIs/TOTP, preserves the cipher with the remaining credentials. |
 | **Login cipher renamed when user tries to rename a passkey** (passkey.rewrite uses cipher_id + name, corrupts Login display name) | High | High | Fixed in ad3e1e0 (B2): `passkey.rename` takes `credential_id` + new name, updates `PasskeyData.name` field. Login cipher name is preserved. |
-| **CLI `baluard get` shows Login with no passkey visibility** (Passkey display arm removed during rework, not re-added) | Medium | Medium | Fixed in ad3e1e0 (B3): handle_get Login arm now displays `fido2_credentials` in both daemon and direct text modes — shows rp_id, user_name, counter, and import warning per credential. |
+| **CLI `baluard get` shows Login with no passkey visibility** (Passkey display arm removed during rework, not re-added) | Medium | Medium | Fixed in ad3e1e0 (B3): handle_get Login arm now displays `fido2_credentials` in both daemon and direct text modes, shows rp_id, user_name, counter, and import warning per credential. |
 | **BW export round-trip broken** (user_handle uses STANDARD base64, BW expects URL_SAFE_NO_PAD; creation_date emitted as unix integer, BW expects ISO 8601) | Medium | Medium | Fixed in ad3e1e0 (H1+H2): export now uses URL_SAFE_NO_PAD and ISO 8601 (Hinnant civil_from_days, no chrono dep). |
 
 ---
 
 ## 8. Out of scope (explicit non-goals)
 
-- **Passkey as vault unlock 2FA** — separate plan, Tier 2 of `docs/2fa-analysis.md`
-- **Federated passkey storage** (sync between two different Baluard vaults) — git sync already handles this
-- **Passkey server / relying party service** — Baluard is not a server
-- **U2F / FIDO1 migration** — dead protocol
-- **Attestation certificate verification** — we self-attest with `none`
-- **Passkey sharing** between users — same as vault sharing, separate plan
-- **Custom RP ID overrides per passkey** — for advanced users, defer
+- **Passkey as vault unlock 2FA**: separate plan, Tier 2 of `docs/2fa-analysis.md`
+- **Federated passkey storage** (sync between two different Baluard vaults), git sync already handles this
+- **Passkey server / relying party service**: Baluard is not a server
+- **U2F / FIDO1 migration**: dead protocol
+- **Attestation certificate verification**: we self-attest with `none`
+- **Passkey sharing** between users, same as vault sharing, separate plan
+- **Custom RP ID overrides per passkey**: for advanced users, defer
 
 ---
 
 ## 9. Files to be created / modified (summary)
 
 **New**:
-- `docs/plan-passkey-rs-evaluation.md` — Phase 0 decision record ✅
-- `crates/baluard-core/tests/passkey_spike.rs` — Phase 0 spike test ✅
-- `crates/baluard-core/src/crypto/webauthn/mod.rs` — ceremony logic (or thin wrapper if `passkey-rs` adopted)
-- `crates/baluard-core/src/crypto/webauthn/ceremony.rs` — register/assert
-- `crates/baluard-core/src/crypto/webauthn/cose.rs` — COSE key encoding
-- `crates/baluard-core/src/crypto/webauthn/authenticator_data.rs` — AuthenticatorData layout
-- `crates/baluard-core/src/crypto/webauthn/state.rs` — ceremony state cache
-- `crates/baluard-core/src/sync/counter_merge.rs` — `max(local, remote)` per passkey cipher
-- `crates/baluard-core/tests/webauthn_interop.rs` — local `webauthn-rs` RP harness (in-process)
-- `crates/baluard-core/tests/fido_test_vectors/` — FIDO Alliance ceremony test vector corpus
+- `docs/plan-passkey-rs-evaluation.md`: Phase 0 decision record ✅
+- `crates/baluard-core/tests/passkey_spike.rs`: Phase 0 spike test ✅
+- `crates/baluard-core/src/crypto/webauthn/mod.rs`: ceremony logic (or thin wrapper if `passkey-rs` adopted)
+- `crates/baluard-core/src/crypto/webauthn/ceremony.rs`: register/assert
+- `crates/baluard-core/src/crypto/webauthn/cose.rs`: COSE key encoding
+- `crates/baluard-core/src/crypto/webauthn/authenticator_data.rs`: AuthenticatorData layout
+- `crates/baluard-core/src/crypto/webauthn/state.rs`: ceremony state cache
+- `crates/baluard-core/src/sync/counter_merge.rs`: `max(local, remote)` per passkey cipher
+- `crates/baluard-core/tests/webauthn_interop.rs`: local `webauthn-rs` RP harness (in-process)
+- `crates/baluard-core/tests/fido_test_vectors/`: FIDO Alliance ceremony test vector corpus
 - `crates/baluard-core/src/types/passkey.rs` (or inline in `types.rs`)
-- `crates/baluard-daemon/src/passkey.rs` — daemon-side state machine, 300s state TTL
-- `crates/baluard-cli/src/commands/passkey.rs` — `baluard passkey list/create/delete/test-assert`
+- `crates/baluard-daemon/src/passkey.rs`: daemon-side state machine, 300s state TTL
+- `crates/baluard-cli/src/commands/passkey.rs`: `baluard passkey list/create/delete/test-assert`
 - `desktop/src/components/PasskeyDetail.jsx`
 - `desktop/src/components/PasskeyCreateModal.jsx`
-- `desktop/src/lib/passkey.js` — IPC client (Phase 1 has no `PasskeyUseModal`; that lives in the extension in Phase 2)
+- `desktop/src/lib/passkey.js`: IPC client (Phase 1 has no `PasskeyUseModal`; that lives in the extension in Phase 2)
 - `desktop/src/__tests__/passkey.test.js`
-- `extension/manifest.json` — MV3, `world: "MAIN"` page script
-- `extension/src/page-script.js` — `chrome.scripting.executeScript({ world: "MAIN" })` injection; detects `mediation: "conditional"` and surfaces passkeys into autofill
-- `extension/src/content-script.js` — bridges page-script ↔ background
-- `extension/src/background.js` — routes to native messaging host
-- `extension/src/popup/Popup.jsx` — explicit passkey picker
+- `extension/manifest.json`: MV3, `world: "MAIN"` page script
+- `extension/src/page-script.js`: `chrome.scripting.executeScript({ world: "MAIN" })` injection; detects `mediation: "conditional"` and surfaces passkeys into autofill
+- `extension/src/content-script.js`: bridges page-script ↔ background
+- `extension/src/background.js`: routes to native messaging host
+- `extension/src/popup/Popup.jsx`: explicit passkey picker
 - `extension/native-host/Cargo.toml` + `src/main.rs` (separate crate)
-- `mobile/src/commonMain/kotlin/passkey/Bridge.kt` — UniFFI bindings
-- `mobile/src/androidMain/kotlin/passkey/CredentialProvider.kt` — `CredentialProviderService`
-- `mobile/src/iosMain/swift/passkey/AutoFillProvider.swift` + KMP glue — `ASCredentialProviderViewController`
-- `docs/passkey-architecture.md` — public-facing design doc
-- `docs/passkey-user-docs.md` — explicit scope note about cross-device being extension-only
+- `mobile/src/commonMain/kotlin/passkey/Bridge.kt`: UniFFI bindings
+- `mobile/src/androidMain/kotlin/passkey/CredentialProvider.kt`: `CredentialProviderService`
+- `mobile/src/iosMain/swift/passkey/AutoFillProvider.swift` + KMP glue, `ASCredentialProviderViewController`
+- `docs/passkey-architecture.md`: public-facing design doc
+- `docs/passkey-user-docs.md`: explicit scope note about cross-device being extension-only
 
 **Modified**:
-- `crates/baluard-core/src/types.rs` — Passkey variant + PasskeyData + Zeroize/Drop ✅
-- `crates/baluard-core/src/vault/cipher.rs` — handle new variant in CRUD
-- `crates/baluard-core/src/vault/handle.rs` — epoch rotation regression test asserts passkey ciphers survive
-- `crates/baluard-core/src/sync/merge.rs` — counter `max()` strategy for passkey ciphers
-- `crates/baluard-core/src/import/bw_json.rs` — typed passkey parse ✅
-- `crates/baluard-core/src/import/export.rs` — emit passkey in BW JSON ✅
-- `crates/baluard-daemon/src/handler.rs` — add passkey routes (no `passkey_counter_increment`; use `update_cipher`)
-- `crates/baluard-daemon/src/state.rs` — passkey state cache
-- `desktop/src/lib/payload.js` — passkey payload builder
-- `desktop/src/lib/filters.js` — passkey category mapping
-- `desktop/src/i18n/locales/en.json` + `es.json` — new keys (Phase 1 only for create + list; use modal text in Phase 2)
-- `Cargo.toml` — passkey 0.5, webauthn-rs 0.5 workspace deps ✅
-- `crates/baluard-core/Cargo.toml` — dev-deps for spike + async-trait + public-suffix ✅
-- `extension/package.json` — full extension build setup
-- `mobile/build.gradle.kts` — add AutoFill / Credential Provider dependencies, UniFFI
-- `proto/vault.proto` — document new passkey payload (reference only, wire format is JSON)
+- `crates/baluard-core/src/types.rs`: Passkey variant + PasskeyData + Zeroize/Drop ✅
+- `crates/baluard-core/src/vault/cipher.rs`: handle new variant in CRUD
+- `crates/baluard-core/src/vault/handle.rs`: epoch rotation regression test asserts passkey ciphers survive
+- `crates/baluard-core/src/sync/merge.rs`: counter `max()` strategy for passkey ciphers
+- `crates/baluard-core/src/import/bw_json.rs`: typed passkey parse ✅
+- `crates/baluard-core/src/import/export.rs`: emit passkey in BW JSON ✅
+- `crates/baluard-daemon/src/handler.rs`: add passkey routes (no `passkey_counter_increment`; use `update_cipher`)
+- `crates/baluard-daemon/src/state.rs`: passkey state cache
+- `desktop/src/lib/payload.js`: passkey payload builder
+- `desktop/src/lib/filters.js`: passkey category mapping
+- `desktop/src/i18n/locales/en.json` + `es.json`, new keys (Phase 1 only for create + list; use modal text in Phase 2)
+- `Cargo.toml`: passkey 0.5, webauthn-rs 0.5 workspace deps ✅
+- `crates/baluard-core/Cargo.toml`: dev-deps for spike + async-trait + public-suffix ✅
+- `extension/package.json`: full extension build setup
+- `mobile/build.gradle.kts`: add AutoFill / Credential Provider dependencies, UniFFI
+- `proto/vault.proto`: document new passkey payload (reference only, wire format is JSON)
 
 ---
 

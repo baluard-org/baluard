@@ -5,7 +5,7 @@ License: GPL-3.0
 
 Git-native password manager with padded-bucket encrypted storage, device-identity bootstrapping, and multi-platform UI clients. All secrets flow through a Single-String Protobuf Gateway over Unix domain sockets.
 Absolute primary focuses: security, privacy, and easy to use for non-technical users.
-**Context**: Baluard is Esteban's first product. First-release quality bar applies: early users judge the product (and its author) on every rough edge. Non-technical users must never need to know what runs underneath: git storage, crypto epochs, key hierarchy, sync, IPC. All of it stays invisible.
+**Context**: Baluard is my first product. First-release quality bar applies: early users judge the product (and me) on every rough edge. Non-technical users must never need to know what runs underneath: git storage, crypto epochs, key hierarchy, sync, IPC. All of it stays invisible.
 
 **Platforms**: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell. Browser: Chrome + Firefox (MV3). Mobile: Android, iOS.
 

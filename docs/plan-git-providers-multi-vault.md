@@ -12,7 +12,7 @@ Durable decisions that apply across all phases:
 - **Registry**: `<data_dir>/registry.json`. Atomic writes (temp + rename). Cross-process locking via `fd-lock`.
 - **Provider trait**: `ForgeProvider` with native `async fn` methods. Two-phase device flow (`start` + `poll`) for GitHub/GitLab. Web-OAuth (`oauth_start` + `oauth_exchange`, PKCE) for Codeberg. `ProviderToken` wraps `access_token` + `refresh_token` as `SecretString` with `expires_at`.
 - **Keyring**: `baluard-<provider>-<username>`. `providers.json` stores non-sensitive lookup state (username, scopes, connected_at, instance_url, client_id).
-- **Auth strategy**: GitHub gets device flow (octocrab). GitLab gets device flow (reqwest; public client, no `client_secret` — supported since GitLab 17.9). Codeberg gets web-OAuth (auth-code + PKCE, reqwest; Forgejo has no device flow). PAT is an Advanced Options fallback for all three. No `client_secret` in codebase.
+- **Auth strategy**: GitHub gets device flow (octocrab). GitLab gets device flow (reqwest; public client, no `client_secret`, supported since GitLab 17.9). Codeberg gets web-OAuth (auth-code + PKCE, reqwest; Forgejo has no device flow). PAT is an Advanced Options fallback for all three. No `client_secret` in codebase.
 - **ProviderConfig**: `{ client_id, instance_url }` (both `Option`, None = public default). Enables self-hosted instances + user-owned OAuth apps. Persisted on `ProviderInfo` in `providers.json`.
 - **Credential transport**: git2-rs `RemoteCallbacks::credentials()` callback. No external credential helper binary.
 - **CLI cross-vault**: `--vault <slug>` targets a specific vault. Under the Phase 6 keep-unlocked model the daemon holds every opened vault in a map, so a non-active-but-open vault is served by the daemon directly (slug passed per request); `--direct` mode is only the fallback for a vault the daemon has never opened, or when the daemon is not running. See Phase 6.
@@ -141,13 +141,13 @@ Deferred to later phases:
 
 **GitLab** (`crates/baluard-core/src/providers/gitlab.rs`): device flow (RFC 8628) as the PRIMARY auth method (GitLab supports it since 17.9). OAuth tokens expire 2h with a refresh_token; daemon auto-refreshes via `ensure_valid_token()` before any op + before `sync.push`/`sync.pull`. PAT fallback (detected by `glpat-` prefix, sent as `PRIVATE-TOKEN`). Requires the `api` scope (broader scopes are insufficient for `POST /projects`).
 
-**Codeberg** (`crates/baluard-core/src/providers/codeberg.rs`): web-OAuth (auth-code + PKCE) as the primary flow. Forgejo has NO device flow, so the daemon runs a localhost `TcpListener` for the OAuth callback (`OAUTH_SESSIONS` keyed by provider, JoinHandle abort on restart). Forgejo OAuth tokens have no scope support (full account access) — the scoped PAT (`write:repository`) is documented as the more secure fallback, surfaced via Advanced Options.
+**Codeberg** (`crates/baluard-core/src/providers/codeberg.rs`): web-OAuth (auth-code + PKCE) as the primary flow. Forgejo has NO device flow, so the daemon runs a localhost `TcpListener` for the OAuth callback (`OAUTH_SESSIONS` keyed by provider, JoinHandle abort on restart). Forgejo OAuth tokens have no scope support (full account access), the scoped PAT (`write:repository`) is documented as the more secure fallback, surfaced via Advanced Options.
 
-Both providers use **raw reqwest** (not the `gitlab`/`forgejo-api` crates the original plan named) — PAT-only REST is trivial with zero new deps. Same git2-rs credential callback works for all three.
+Both providers use **raw reqwest** (not the `gitlab`/`forgejo-api` crates the original plan named), PAT-only REST is trivial with zero new deps. Same git2-rs credential callback works for all three.
 
 ### Design decisions (diverged from original plan text)
-- Device flow for GitLab (not PAT-only as the plan said) — user-friendly automatic flow.
-- Web-OAuth PKCE for Codeberg (not PAT-only) — only browser-based option (no device flow).
+- Device flow for GitLab (not PAT-only as the plan said), user-friendly automatic flow.
+- Web-OAuth PKCE for Codeberg (not PAT-only), only browser-based option (no device flow).
 - PAT moved into Advanced Options for ALL providers (power-user escape hatch); automatic flows are primary.
 - `ProviderConfig { client_id, instance_url }` enables self-hosted instances + user-owned OAuth apps.
 - One active instance per provider in v1 (switching = disconnect + reconnect).
@@ -198,7 +198,7 @@ Both providers use **raw reqwest** (not the `gitlab`/`forgejo-api` crates the or
   locks all** open vaults.
 - **Batch reads target a specific vault.** `vault.list_full` (and every batch
   read) takes the explicit `slug` (or falls back to `active`). A switch event in
-  the desktop triggers a fresh `vault.list_full` for the new active vault — the
+  the desktop triggers a fresh `vault.list_full` for the new active vault, the
   desktop must not reuse a cached list across a switch, or it will show the old
   vault's entries.
 
@@ -213,7 +213,7 @@ struct VaultHost {
     /// Single lock guards BOTH the map and the active pointer together.
     /// Holding one write lock makes slug-validation + `active` updates atomic,
     /// so `active` can never point at a vault that was just removed by
-    /// `vaults.close`. (Earlier draft had two separate locks — that allowed
+    /// `vaults.close`. (Earlier draft had two separate locks, that allowed
     /// close+switch to interleave and leave `active` dangling.)
     inner: RwLock<VaultHostInner>,
 }
@@ -240,7 +240,7 @@ Consequences:
   rest of the map starts empty and fills as the user switches/unlocks.
 - **`vaults.switch`** becomes a pointer flip. Under the single `VaultHostInner`
   write lock it: (1) validates the target slug is present in the map (adding it
-  first if this is a switch to a not-yet-opened vault — see "locked / never-opened"
+  first if this is a switch to a not-yet-opened vault, see "locked / never-opened"
   below); (2) sets `active = Some(slug)`; (3) releases the lock. Only then,
   **outside** the lock, does it touch the registry's `last_opened` for that slug.
   Keeping the registry I/O (atomic rename) out of the critical section prevents
@@ -248,7 +248,7 @@ Consequences:
   write; `last_opened` is best-effort metadata and need not be atomic with the
   in-memory flip (losing it on a crash is acceptable). It does **not** zeroize
   the previously-active vault and does **not** generate a new session token for
-  the target — the target keeps the session token it already had (or is still
+  the target, the target keeps the session token it already had (or is still
   locked, see below). Because validation and the `active` write share one
   critical section, no concurrent `vaults.close` can leave `active` pointing at
   a removed vault.
@@ -258,7 +258,7 @@ Consequences:
   zeroizing does not touch it. A mutating op that completes via the old Arc
   *after* the re-unlock would therefore write through a handle the map no longer
   knows about. Callers MUST NOT retry an operation after observing a close for
-  its slug — a close observed mid-op is a terminal result for that op, not a
+  its slug, a close observed mid-op is a terminal result for that op, not a
   transient error to retry against the re-opened vault.
 - **Switch to a locked / never-opened vault** does **not** block on the daemon
   side. The route returns a `locked: true` flag (and the slug). The desktop
@@ -268,7 +268,7 @@ Consequences:
 - **Removal (`vaults.close`).** Removing a vault from the map drops the daemon's
   strong reference; its key material is zeroized when the **last** `Arc<VaultState>`
   is dropped. In-flight handlers that already cloned the Arc finish normally and
-  zeroize on their own last drop — so `close` returns success **immediately**
+  zeroize on their own last drop, so `close` returns success **immediately**
   and does NOT track an in-flight counter or block. The vault becomes logically
   closed (no new request can be routed to it from the map) the instant its map
   entry is removed. If the closed vault was `active`, `active` is cleared to
@@ -283,7 +283,7 @@ Consequences:
 | `vaults.switch` | **Pointer flip only.** Validates slug, sets `active`, touches `last_opened`. No zeroization, no token change. Returns `{ active, state }` so the caller knows whether to show the unlock screen. |
 | `vaults.set_active` | Persists `active_vault` in the registry (default vault on next launch). Distinct from `switch`, which is the live focus change. |
 | `vaults.active` | Returns the current `active` slug + state. |
-| `vaults.close` | **New.** Removes a vault from the in-memory map (clears `active` if it was active, same lock). Returns immediately — in-flight handlers holding a cloned `Arc<VaultState>` drain to completion and zeroize on last drop. No busy/retry. |
+| `vaults.close` | **New.** Removes a vault from the in-memory map (clears `active` if it was active, same lock). Returns immediately, in-flight handlers holding a cloned `Arc<VaultState>` drain to completion and zeroize on last drop. No busy/retry. |
 | `vault.unlock` | Returns `{ slug, token }` so the desktop can file the per-vault session token (see "Desktop token contract"). Gains an explicit `slug` argument. |
 | `vault.lock` | Gains an explicit `slug` argument so it targets a specific vault in the map instead of the implicit "current" one. |
 
@@ -296,9 +296,9 @@ request must carry the token matching the **targeted** vault.
 
 `VaultState::spawn_auto_lock_checker` today watches one state. Under the new
 model a **single** checker iterates the map every 30s and applies each vault's
-own `auto_lock_minutes` + `last_activity`. The plumbing is already per-vault —
+own `auto_lock_minutes` + `last_activity`. The plumbing is already per-vault , 
 session token, `last_activity`, cover timer, and `auto_lock_minutes` all live on
-`VaultState` — so each entry auto-locks itself with no shared state. A vault
+`VaultState`, so each entry auto-locks itself with no shared state. A vault
 that auto-locks stays in the map in the `locked` state (handle retained, keys
 zeroized); it can be re-unlocked without re-opening from disk.
 
@@ -315,7 +315,7 @@ acceptance criteria below.
 
 **Cover-commit timers are per-vault, not per-active.** Each `VaultState` starts
 its cover timer on unlock and cancels it on lock, keyed to `locked`/`unlocked`
-state — never to `active`. With N unlocked vaults, N cover timers run
+state, never to `active`. With N unlocked vaults, N cover timers run
 concurrently and `vaults.switch` must NOT touch any of them. Cover commits
 continue to mask activity for non-active unlocked vaults; any code path that
 gates a cover commit on "am I active?" is a privacy bug.
@@ -339,7 +339,7 @@ vault's token only). To support this the desktop keeps a `Map<slug, token>`:
   slug's token from its `Map<slug, token>`. **Fallback:** if the desktop ever
   sends a request whose token is rejected (e.g. the vault auto-locked between a
   poll and the request), the rejection is treated as a signal to refresh vault
-  state immediately — the token-rejection path is the correctness backstop, not
+  state immediately, the token-rejection path is the correctness backstop, not
   the primary mechanism. This keeps the contract unambiguous (no push channel to
   build) and guarantees the desktop never silently treats a locked vault as
   unlocked.
@@ -349,7 +349,7 @@ This is a frontend contract change from today's single `sessionToken` signal.
 ### In-flight requests and concurrency
 
 - A switch never needs to invalidate in-flight requests, because it does not
-  touch any vault's state — it only changes the `active` pointer. In-flight
+  touch any vault's state, it only changes the `active` pointer. In-flight
   requests to the *previously-active* vault keep running against that vault.
 - **Target resolution is mandatory and happens once per request.** The handler
   determines the target slug from the request's explicit `slug`, falling back
@@ -357,7 +357,7 @@ This is a frontend contract change from today's single `sessionToken` signal.
   `Arc<VaultState>` clone** at request start and operates on that clone for the
   whole request. This removes the TOCTOU where a mid-request `switch` would
   re-route an in-flight operation to a different vault, and means a request
-  that omits `slug` is pinned to whatever `active` was at entry — it cannot
+  that omits `slug` is pinned to whatever `active` was at entry, it cannot
   wander. (Implicit-`active` requests are discouraged for mutating ops; the
   desktop always sends an explicit slug.)
 - **`vaults.close` uses Arc-drain, not a busy error.** `close` takes the
@@ -366,22 +366,22 @@ This is a frontend contract change from today's single `sessionToken` signal.
   `Arc<VaultState>` drain to completion naturally and zeroize on last drop;
   there is no in-flight counter and no `busy`/retry. New requests for the
   closed slug are rejected at the map lookup. (`Arc::strong_count` is NOT used
-  as a synchronization primitive — it is unreliable under concurrent cloning.)
+  as a synchronization primitive, it is unreliable under concurrent cloning.)
 
 ### CLI
 
-- `baluard vaults list` — table: slug, display name, provider, state
+- `baluard vaults list`: table: slug, display name, provider, state
   (`unlocked`/`locked`/`closed`), last opened.
-- `baluard vaults switch <slug>` — flips the live active vault via the daemon.
+- `baluard vaults switch <slug>`: flips the live active vault via the daemon.
   If the target is locked/closed, the CLI prompts for the master password and
   runs `vault.unlock` against that slug.
-- `baluard --vault <slug>` — **revisited.** Under the multi-vault daemon, a
+- `baluard --vault <slug>`: **revisited.** Under the multi-vault daemon, a
   non-active slug that is already unlocked in the map can be served by the
   daemon directly (pass `slug` on each request). `--direct` mode is now only
   the fallback for: (a) a vault the daemon has never opened, or (b) daemon not
   running. This is a softening of the earlier "non-active always uses `--direct`"
   rule and keeps single-shot scripting fast while preserving instant switching.
-- `baluard vaults close <slug>` — explicit lock-and-unload of one vault.
+- `baluard vaults close <slug>`: explicit lock-and-unload of one vault.
 
 ### Security note (see `docs/threat-model.md`, new T15)
 
@@ -401,7 +401,7 @@ window. This is a deliberate UX-for-exposure trade:
   Default `auto_lock_minutes` should not be raised for multi-vault setups.
 - **Lock-all on system events.** Screen lock, system sleep / lid-close, and
   app-resign-active (Tauri window blur + OS suspend events) trigger an immediate
-  lock of **every** currently-unlocked vault — not just the active one. This
+  lock of **every** currently-unlocked vault, not just the active one. This
   caps the multi-vault exposure the moment the device becomes unattended,
   instead of waiting for each vault's idle timer. (Explicit per-vault `lock` and
   app quit also lock all on quit.)
@@ -431,7 +431,7 @@ window. This is a deliberate UX-for-exposure trade:
 - [ ] `vaults.close` returns success immediately (Arc-drain); in-flight handlers holding a cloned Arc complete and zeroize on last drop; new requests to the closed slug are rejected
 - [ ] `Arc::strong_count` is NOT used as a synchronization primitive
 - [ ] Cover-commit timers are per-`VaultState`, keyed to `locked`/`unlocked`, never to `active`; a switch does not touch any cover timer
-- [~] Lock-all fires on app-resign-active (Tauri `WindowEvent::Focused(false)` → `vaults.lock_all` route + frontend token-cache clear + focus-regain refresh). OS suspend / screen-lock / lid-close need platform-specific hooks (macOS NSWorkspace, Linux login1 D-Bus PrepareForSleep, Windows WM_POWERBROADCAST/SessionSwitch) — documented as follow-up in `desktop/src-tauri/src/lib.rs`.
+- [~] Lock-all fires on app-resign-active (Tauri `WindowEvent::Focused(false)` → `vaults.lock_all` route + frontend token-cache clear + focus-regain refresh). OS suspend / screen-lock / lid-close need platform-specific hooks (macOS NSWorkspace, Linux login1 D-Bus PrepareForSleep, Windows WM_POWERBROADCAST/SessionSwitch), documented as follow-up in `desktop/src-tauri/src/lib.rs`.
 - [x] Daemon logs total mlocked bytes across all open vaults at unlock time (`VaultHost::log_mlock_budget` after unlock; RLIMIT_MEMLOCK hint + 2x warning on Unix)
 - [ ] Switch to unregistered slug returns a clear error
 - [ ] `baluard vaults list` shows state column (unlocked/locked/closed) + last opened

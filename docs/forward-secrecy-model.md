@@ -9,7 +9,7 @@ Baluard's git-native storage means that historical ciphertext blobs persist
 in the repository's history forever. A device that held the Root Key at any
 point can decrypt every `.enc` blob that was written during that epoch,
 even after the device is revoked. This is inherent to the design and is
-not a bug — it is a tradeoff between forward secrecy (which git cannot
+not a bug, it is a tradeoff between forward secrecy (which git cannot
 provide) and the other properties Baluard guarantees (multi-device sync,
 no central server, user control).
 
@@ -17,9 +17,9 @@ no central server, user control).
 
 - **New writes after revocation** are encrypted with the new Root Key.
   The revoked device cannot decrypt them.
-- **The revoked device cannot write new entries** — its signing key is
+- **The revoked device cannot write new entries**: its signing key is
   removed from the device registry, and other devices reject its commits.
-- **The revoked device cannot trigger further key rotations** — quorum
+- **The revoked device cannot trigger further key rotations**: quorum
   (single-admin) authorization requires the remaining device(s).
 
 ## What revocation does NOT guarantee

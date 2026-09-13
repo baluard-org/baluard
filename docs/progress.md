@@ -55,7 +55,10 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 
 | Module | Status | What's Implemented |
 |--------|--------|--------------------|
-| `workspace` | Done | Rust workspace with baluard-core, baluard-cli, baluard-daemon crates |
+| `workspace` | Done | Rust workspace with baluard-core, baluard-runtime, baluard-uniffi, baluard-cli, baluard-daemon, baluard-nmh crates |
+| `baluard-runtime` | Done | Extracted in-process vault runtime: VaultHost, VaultState, AutoSyncHandle, PinEscrow, ProviderManager, RateLimiter |
+| `baluard-uniffi` | Done | UniFFI C-FFI / Kotlin Multiplatform / Swift bindings over baluard-runtime + baluard-core |
+| `mobile/android` | Done (Phases 0-5) | Compose Multiplatform Android client: onboarding (create + clone + device enrollment), home hub, filtered entry lists, 8 cipher types detail/edit, generator, TOTP, biometric unlock ceremony, auto-lock, sync feedback, conflict resolution panel, multi-vault switcher, R8 release build. Phase 6 (Autofill) next |
 | `proto/schemas` | Done | `vault.proto`, `space.proto`, `auth.proto`. Compiled by prost-build in daemon and CLI |
 | `crypto/aead` | Done | AES-256-GCM with strict AAD binding |
 | `crypto/webauthn` | Done (Phase 0+1) | FIDO2/WebAuthn ceremony via `passkey-rs` 0.5.x. ES256 only. `BaluardCredentialStore` (Arc<Mutex> mutation tracking), `PasskeyIndex` (in-vault passkey lookup), `CeremonyCache` (300s TTL, max 64 pending, FIFO eviction, OsRng challenges). Passkeys embedded in `LoginData::fido2_credentials`. |
@@ -139,9 +142,9 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 
 ---
 
-## Pending Work
+## Completed Features & Subsystems
 
-All items not yet implemented. Focus: core, CLI, daemon, desktop only.
+Completed core, CLI, daemon, and desktop implementations.
 
 ### Resolved Code TODOs (2026-06-08)
 
@@ -190,7 +193,6 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 | Browser autofill suppression | Global `autocomplete=off` via MutationObserver; opt-in `data-autofill="on"`. `desktop/src/lib/disableAutofill.js` | **Done** |
 | UI freeze fix | `daemon_request` async + `spawn_blocking` (sync command was blocking the webview event loop) | **Done** |
 | macOS keychain stable signing | `_sign-sidecar` just recipe signs daemon with Apple Development identity so "Always Allow" persists across rebuilds | **Done** |
-| Additional import formats | Dashlane, Enpass, NordPass, Avast, Avira, Keeper, RoboForm, Myki, mSecure, Blur | Not started |
 
 ### Vault Creation Wizard
 
@@ -224,6 +226,10 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 | Sync header refactor | One-click sync UI replaces git jargon. Sidebar header shows provider + repo link (`cc09c51`). `AutoSyncIndicator` status pill (idle/syncing/dirty/offline). Sync label gated with `Show` inside `Transition` to silence background pulls. Provider state scoped to active vault (`58016d4`). | **Done** |
 | Vault detach | UI: `DetachVaultModal` in `VaultSwitcher` dropdown (safe detach only). Destructive arm (`delete_from_disk`) NOT exposed in UI; CLI-only via `baluard vaults detach <slug> --delete-from-disk`. `vaults.detach` daemon route still supports both | **Done** |
 
+---
+
+## Active Frontiers & Pending Milestones
+
 ### Browser Extension (KeePassXC-Browser-style bridge)
 
 | Item | Description | Status |
@@ -232,6 +238,19 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 | **Phase 1** | Chromium + Firefox MV3 extension builds (`just ext-build`, `ext-build-chrome`, `ext-build-firefox`). SolidJS popup (NO unlock). Top-frame-only content script (no auto-fill on load, popup-driven fill). Scoped `TokenKind::Bridge { pairing_id }` token on host registry. Action allowlist (no `vault.list_full`, no `vault.delete`, no `settings.*`, no `passkey.*`, no `sync.*` mutations). Field-gated `vault.update` (reject `fido2_credentials` + `uris` from bridge). Per-`pairing_id` rate cap on `bridge.match`+`vault.get`. Desktop-initiated approve-don't-type pairing flow (no codes to transcribe) | **Done** |
 | **Phase 2** | Phase 2 deferred: passkey ceremony in the browser, cross-device assertion via QR pairing, mobile (iOS/Android) | **Pending** |
 
+### Mobile Apps (Compose Multiplatform)
+
+| Phase | Description | Status |
+|---|---|---|
+| **Phase 0** | Architecture extraction: `baluard-runtime` + `baluard-uniffi` crates | **Done** |
+| **Phase 1** | UniFFI bindings generation, Android scaffold, SecureFlag, Biometric foundation | **Done** |
+| **Phase 2** | Core UI: Auth, Home Hub, VaultList, Detail + Edit (all 8 types), Generator, TOTP | **Done** |
+| **Phase 3** | Sync lifecycle: on_foreground pull, on_mutation push, sync indicator with feedback phases | **Done** |
+| **Phase 4** | Edge cases: ConflictResolutionPanel, multi-vault switcher, settings (remove-from-device, screenshot toggle) | **Done** |
+| **Phase 5** | Release polish: Material 3 brand theme, R8 shrinker rules, unit tests | **Done** |
+| **Phase 6** | Android Autofill Service (`AutofillService`, dataset provider, manual fallback) | **Next** |
+| **Phase 7** | iOS Autofill Credential Provider extension | **Pending** |
+
 ### Nice to Have / Future
 
 Features parked for the far future. Do not start without explicit confirmation.
@@ -239,6 +258,7 @@ Features parked for the far future. Do not start without explicit confirmation.
 | Item | Description | Blocker |
 |------|-------------|---------|
 | Encrypted JSON export | Baluard-native format (Argon2id + AES-256-GCM). Git clone + recovery phrase already covers disaster recovery | Low priority, needs format documentation |
+| Additional import formats | Dashlane, Enpass, NordPass, Avast, Avira, Keeper, RoboForm, Myki, mSecure, Blur | Low priority parser work |
 | FIDO2 credential storage | **Done (Phase 0+1)**. Embedded in `LoginData::fido2_credentials: Option<Vec<PasskeyData>>`. ES256 only via `passkey-rs` 0.5.x. Daemon IPC: 7 routes. CLI: list/delete/rename. 360 tests pass. See `docs/plan-passkey-support.md`. | Phase 2+ (browser extension, mobile) |
 
 ### Out of Scope (No Server)
@@ -253,14 +273,14 @@ Features parked for the far future. Do not start without explicit confirmation.
 
 ### Security
 
-| Item | Description | Effort |
+| Item | Description | Status |
 |------|-------------|--------|
-| OAuth PAT escrow | PAT stored in OS keyring (never in git config) | Days |
-| 2FA Tier 1 | Document "local-only = 2FA" framing in UX | Hours |
-| 2FA Tier 2 | FIDO2 vault unlock via `libfido2` (hardware second factor) | Weeks |
-| 2FA Tier 3 | OS keychain sync gate (separate auth for git push/pull) | Days |
-| 2FA Tier 4 | TOTP for device enrollment confirmation (ephemeral liveness check) | Days |
-| 2FA Tier 5 | FIDO2-only mode (no master password) | Weeks |
+| OAuth PAT escrow | PAT stored in OS keyring (never in git config), 0600 file fallback | **Done** |
+| 2FA Tier 1 | Document "local-only = 2FA" framing in UX | Planned |
+| 2FA Tier 2 | FIDO2 vault unlock via `libfido2` (hardware second factor) | Planned |
+| 2FA Tier 3 | OS keychain sync gate (separate auth for git push/pull) | Planned |
+| 2FA Tier 4 | TOTP for device enrollment confirmation (ephemeral liveness check) | Planned |
+| 2FA Tier 5 | FIDO2-only mode (no master password) | Planned |
 
 #### 2FA Open Questions
 

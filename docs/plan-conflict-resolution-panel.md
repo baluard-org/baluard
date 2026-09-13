@@ -1,6 +1,6 @@
-# Conflict Resolution Panel — failure modes + design contract
+# Conflict Resolution Panel: failure modes + design contract
 
-Status: **Phase 2 implemented (2026-07-02).** Backend wired: engine seam (`run_sync_cycle_with_resolver`, `ConflictResolution`, `NeedsDecision`, `finalize_conflicts`), daemon decrypt + `merge_ciphers` (`conflict_decrypt_and_merge`), `keep_both` (`conflict_resolve_keep_both`), frontend real IPC (`conflictFlow.js`, AutoSyncContext poll, panel resolver). Open: stuck-queue escape (see below).
+Status: **Phase 2 implemented (2026-07-02).** Backend wired: engine integration (`run_sync_cycle_with_resolver`, `ConflictResolution`, `NeedsDecision`, `finalize_conflicts`), daemon decrypt + `merge_ciphers` (`conflict_decrypt_and_merge`), `keep_both` (`conflict_resolve_keep_both`), frontend real IPC (`conflictFlow.js`, AutoSyncContext poll, panel resolver). Open: stuck-queue escape (see below).
 Related: `crates/baluard-core/src/sync/engine.rs`, `crates/baluard-core/src/sync/conflict.rs`, `crates/baluard-daemon/src/state.rs`, `crates/baluard-daemon/src/autosync.rs`, `desktop/src/components/ConflictResolutionPanel.jsx`, `desktop/src/lib/conflictFlow.js`.
 
 ## Goal
@@ -13,7 +13,7 @@ backstop for the destructive cases the auto path used to resolve silently.
 
 ## Scope (current)
 
-Phase 2 added the engine seam + daemon decrypt/merge + verdicts + frontend
+Phase 2 added the engine integration + daemon decrypt/merge + verdicts + frontend
 wiring on top of the original UI-only panel. The cycle now runs `merge_ciphers`
 on pull conflicts; auto-mergeable cases (F1) resolve with no prompt; same-field
 conflicts (F2/F4) and type-change conflicts (F3) surface this panel. The
@@ -73,20 +73,20 @@ paths, fast-forward cleanly).
 (Pre-Phase-2, ALL of these silently kept local. Now F1 auto-merges; F2/F3/F4
 surface the panel.)
 
-### F1. Same item, non-overlapping fields — NOW auto-merged (was silent field loss)
+### F1. Same item, non-overlapping fields: NOW auto-merged (was silent field loss)
 
 Desktop edits the **password**, mobile edits the **notes** of the same entry.
 `merge_ciphers` merges cleanly (different fields). **No panel fires.** Both
 edits land in the merged cipher.
 
-### F2. Same item, same field, divergent values — true conflict (HIGH severity)
+### F2. Same item, same field, divergent values: true conflict (HIGH severity)
 
 Desktop changes the GitHub password to `A`. Mobile changes the same password to
 `B`. `merge_3way_field` (`conflict.rs:204`) records a `FieldConflict` (both
 sides changed, differ). Today: keep local (`A`), discard `B` silently. The user
 should decide which password wins.
 
-### F3. Entry type changed on one side — structural conflict (MEDIUM severity)
+### F3. Entry type changed on one side: structural conflict (MEDIUM severity)
 
 Desktop keeps "GitHub" as a Login. Mobile converts it to a SecureNote (or a
 different cipher kind). `merge_ciphers` flags a cross-type conflict on `type`.
@@ -127,7 +127,7 @@ diverged in a single sync).
 ## Security: what the panel may show
 
 `FieldConflict` (`conflict.rs:67`) deliberately does **not** derive
-`Serialize`/`Deserialize` and holds plaintext local/remote values — including
+`Serialize`/`Deserialize` and holds plaintext local/remote values, including
 passwords, TOTP URIs, card numbers, private keys. Mirroring the codebase-wide
 invariant ("TOTP seed NEVER crosses IPC", "private key never crosses IPC"), the
 panel shows:
@@ -146,11 +146,11 @@ serialized, transmitted, or rendered.
 
 Per entry. Three options, ordered simplest-first:
 
-1. **Keep this device's version** — local wins (matches current keep-local
+1. **Keep this device's version**: local wins (matches current keep-local
    behavior, but now explicit and user-chosen). Default-safe because it is what
    the device the user is holding just did.
-2. **Keep the other device's version** — remote wins; local change is discarded.
-3. **Keep both as separate entries** — duplicate the entry so neither version is
+2. **Keep the other device's version**: remote wins; local change is discarded.
+3. **Keep both as separate entries**: duplicate the entry so neither version is
    lost. The non-destructive escape hatch for the "I'm not sure / both matter"
    case. Costs a duplicate to reconcile later, but never destroys data.
 
@@ -206,7 +206,7 @@ so the panel explains it at the entry level ("changed from a login to a note").
   mounted across switches). `refresh()` also captures the slug before its
   awaits and re-checks after, so a stale poll for vault A can't re-enqueue
   A's conflict into vault B's view after the clear.
-- **Stuck-queue escape (resolve-failure path) — STILL OPEN.** The panel's
+- **Stuck-queue escape (resolve-failure path), STILL OPEN.** The panel's
   `decide()` keeps the conflict in the queue when the resolver throws
   (retry-friendly), and the panel is non-dismissable. If the real
   `sync.conflict.resolve` IPC permanently fails (daemon down, item key
@@ -216,7 +216,7 @@ so the panel explains it at the entry level ("changed from a login to a note").
   (a) max-retry fallback to a safe non-destructive state, (b) a manual escape
   hatch (close + re-queue via persistent state, or a link to logs), (c) an
   explicit product decision to keep the modal hard-blocking.
-- **Full two-device crypto integration test.** The engine seam has unit tests
+- **Full two-device crypto integration test.** The engine integration has unit tests
   (`run_sync_cycle_with_resolver_pause_and_finalize`,
   `run_sync_cycle_backward_compat_uses_keep_local`) and the cross-epoch guard
   has a unit test (`try_derive_item_key_returns_none_on_epoch_mismatch`). The

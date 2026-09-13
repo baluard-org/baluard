@@ -11,7 +11,7 @@
 
 Do not introduce ad-hoc colors. Extend tokens here first, then reference the CSS variable.
 
-## Dark Mode — Deep Forest Teal / Soft Lavender / Lime Accent
+## Dark Mode: Deep Forest Teal / Soft Lavender / Lime Accent
 
 | Token | Hex | Swatch | Role |
 |---|---|---|---|
@@ -31,7 +31,7 @@ Do not introduce ad-hoc colors. Extend tokens here first, then reference the CSS
 | `--color-danger` | `#ef4444` | 🟥 | Destructive actions |
 | `--color-success` | `#10b981` | 🟩 | Success states |
 
-## Light Mode — Clean White / Slate / Dark Teal Accent
+## Light Mode: Clean White / Slate / Dark Teal Accent
 
 | Token | Hex | Swatch | Role |
 |---|---|---|---|

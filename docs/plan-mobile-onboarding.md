@@ -8,7 +8,7 @@
 > were Request Changes; this version folds all of it in. Owner: Esteban. Builds on
 > `docs/plan-mobile-apps.md` and the desktop provider flow in
 > `docs/plan-git-providers-multi-vault.md`.
-> **UI addendum (2026-08-16):** all five screens (§5) now exist — OnboardingScreen, ProviderConnectScreen, DeviceCodeScreen, RepoPickerScreen, EnrollDeviceScreen, plus CreateVaultScreen + RecoveryPhraseScreen. App.kt routes on the `.baluard` marker. Structure-verified; on-device pass pending the macOS host build.
+> **UI addendum (2026-08-16):** all five screens (§5) now exist, OnboardingScreen, ProviderConnectScreen, DeviceCodeScreen, RepoPickerScreen, EnrollDeviceScreen, plus CreateVaultScreen + RecoveryPhraseScreen. App.kt routes on the `.baluard` marker. Structure-verified; on-device pass pending the macOS host build.
 
 ## 0. Review record (traceability)
 
@@ -23,7 +23,7 @@ three most consequential claims against the code before acting on them:
 | Codeberg has no device flow | YES | `codeberg.rs:122-135` returns `Err` for both device-flow methods. |
 | `SyncEngine::clone` ignores shallow | YES | param is `_shallow` (`engine.rs:1193`), unused; no depth set. |
 
-Two scope decisions locked with Esteban (2026-07-30):
+Two scope decisions locked on 2026-07-30:
 
 1. **Device enrollment is a core fix across all platforms** (not mobile-only). It
    fixes desktop's second-device path too, which is likely broken (its
@@ -203,7 +203,7 @@ mobile there is no daemon process, so the runtime owns it; the daemon keeps usin
 same map for parity.
 `baluard-uniffi` becomes a thin type-mapping layer (Records/Enums that mirror these,
 no policy). The daemon is refactored onto the same functions in the same slice. This
-is the highest-leverage change in the plan and does not increase total work; it moves it.
+is the highest-impact change in the plan and does not increase total work; it moves it.
 
 ### 3.2 OAuth device flow where supported; PAT otherwise (Codeberg has no device flow)
 Device flow works for GitHub and GitLab. Codeberg (Forgejo) returns errors for both
