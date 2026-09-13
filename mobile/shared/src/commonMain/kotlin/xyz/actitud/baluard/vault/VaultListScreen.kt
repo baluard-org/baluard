@@ -89,6 +89,9 @@ fun VaultListScreen(
     revision: Int = 0,
     /** Sync-now button: run a full sync cycle + reload the list (plan §3.5). */
     onSyncNow: suspend () -> Unit = {},
+    /** Runs once when the unlocked stage is entered (after unlock): sync
+     * once + reload, so the list never races the Rust unlock-pull. */
+    onStageEntry: suspend () -> Unit = {},
 ) {
     val query by listViewModel.query.collectAsState()
     val typeFilter by listViewModel.typeFilter.collectAsState()
@@ -99,6 +102,7 @@ fun VaultListScreen(
     var refreshing by remember { mutableStateOf(false) }
 
     LaunchedEffect(vault, revision) { listViewModel.refresh(vault) }
+    LaunchedEffect(vault) { onStageEntry() }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
