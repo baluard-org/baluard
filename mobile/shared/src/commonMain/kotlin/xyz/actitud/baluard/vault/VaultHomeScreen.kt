@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,15 +15,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Search
@@ -35,6 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -42,10 +47,11 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,17 +60,17 @@ import xyz.actitud.baluard.detail.normalizeTypeTag
 import xyz.actitud.baluard.detail.typeLabelKey
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
-import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import xyz.actitud.baluard.ui.components.CipherRowCard
 import xyz.actitud.baluard.ui.components.SectionCard
 import xyz.actitud.baluard.ui.components.SyncIconButton
+import xyz.actitud.baluard.ui.components.cipherTypeTheme
 
 /**
  * Hub screen (Bitwarden-style): instead of a flat entry list, the home page
  * shows sectioned jump-off points — TOTP, Favorites (inline entries), Types,
  * Folders, Tags, and Hidden items (Archive/Trash) — each with live counts.
  * Search overrides the hub with flat results across active entries.
- * Sections use the app's boxed SectionCard language (Settings parity).
+ * Sections use the app's boxed SectionCard language with branded badges.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,14 +114,44 @@ fun VaultHomeScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(t("vault.title")) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainer)
+                                .border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(8.dp),
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = t("vault.title"),
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = (-0.3).sp,
+                            ),
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                 ),
                 actions = {
                     SyncIconButton(phase = syncPhase, onClick = onSyncClick)
-                    TopBarActionIcon(Icons.Default.Add, t("vault.addEntry"), onAddEntry)
+                    TopBarActionIcon(Icons.Default.Add, t("vault.addEntry"), onAddEntry, highlight = true)
                     TopBarActionIcon(Icons.Default.Password, t("generator.title"), onOpenGenerator)
                     TopBarActionIcon(Icons.Default.Settings, t("settings.title"), onOpenSettings)
                     TopBarActionIcon(Icons.Default.Lock, t("vault.lockVault"), onLock)
@@ -158,10 +194,15 @@ fun VaultHomeScreen(
                                     .clickable { listViewModel.setQuery("") },
                             )
                         }
-                    } else {
-                        null
-                    },
+                    } else null,
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                    ),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -190,13 +231,18 @@ fun VaultHomeScreen(
             SectionCard(
                 title = "${t("home.totp")} (${totp.size})",
                 modifier = Modifier.padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
             ) {
                 SectionLinkRow(
                     label = t("home.totpRow"),
                     count = totp.size,
+                    icon = Icons.Default.Timer,
+                    iconColor = MaterialTheme.colorScheme.primary,
                     onClick = { onOpenKind(EntryListKind.Totp) },
                 )
             }
+
+            Spacer(Modifier.height(14.dp))
 
             // ── Favorites (entries inline, capped) ──
             HomeSectionHeader(t("home.favorites"), favorites.size)
@@ -204,8 +250,32 @@ fun VaultHomeScreen(
                 SectionCard(
                     title = "",
                     modifier = Modifier.padding(horizontal = 16.dp),
+                    contentPadding = PaddingValues(14.dp),
                 ) {
-                    HubEmptyText(t("home.noneYet"))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = t("home.noneYet"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             favorites.take(25).forEach { meta ->
@@ -228,30 +298,40 @@ fun VaultHomeScreen(
                 )
             }
 
+            Spacer(Modifier.height(14.dp))
+
             // ── Types ──
             SectionCard(
                 title = "${t("home.types")} (${typeRows.size})",
                 modifier = Modifier.padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
             ) {
                 typeRows.forEachIndexed { index, (raw, count) ->
+                    val (icon, color) = cipherTypeTheme(raw)
                     SectionLinkRow(
                         label = t(typeLabelKey(normalizeTypeTag(raw))),
                         count = count,
+                        icon = icon,
+                        iconColor = color,
                         onClick = { onOpenKind(EntryListKind.Type(raw)) },
                     )
                     if (index < typeRows.size - 1) {
                         HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 14.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.padding(start = 58.dp, end = 14.dp),
+                            thickness = 0.7.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
                         )
                     }
                 }
             }
 
+            Spacer(Modifier.height(14.dp))
+
             // ── Folders ──
             SectionCard(
                 title = "${t("home.folders")} (${folders.size})",
                 modifier = Modifier.padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
             ) {
                 val sorted = folders.sortedBy { it.name.lowercase() }
                 sorted.forEachIndexed { index, folder ->
@@ -259,46 +339,62 @@ fun VaultHomeScreen(
                     SectionLinkRow(
                         label = folder.name,
                         count = count,
+                        icon = Icons.Default.Folder,
+                        iconColor = MaterialTheme.colorScheme.secondary,
                         onClick = { onOpenKind(EntryListKind.Folder(folder.id)) },
                     )
                     if (index < sorted.size - 1) {
                         HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 14.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.padding(start = 58.dp, end = 14.dp),
+                            thickness = 0.7.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
                         )
                     }
                 }
             }
 
+            Spacer(Modifier.height(14.dp))
+
             // ── Tags ── (single row: opens the tag list, like TOTP)
             SectionCard(
                 title = "${t("home.tags")} (${tagCounts.size})",
                 modifier = Modifier.padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
             ) {
                 SectionLinkRow(
                     label = t("home.allTags"),
                     count = tagCounts.size,
+                    icon = Icons.Default.LocalOffer,
+                    iconColor = Color(0xFF8B5CF6),
                     onClick = onOpenTags,
                 )
             }
+
+            Spacer(Modifier.height(14.dp))
 
             // ── Hidden items ──
             SectionCard(
                 title = "${t("home.hidden")} (${archived.size + trash.size})",
                 modifier = Modifier.padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
             ) {
                 SectionLinkRow(
                     label = t("home.archive"),
                     count = archived.size,
+                    icon = Icons.Default.Archive,
+                    iconColor = Color(0xFFD97706),
                     onClick = { onOpenKind(EntryListKind.Archive) },
                 )
                 HorizontalDivider(
-                    modifier = Modifier.padding(horizontal = 14.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    modifier = Modifier.padding(start = 58.dp, end = 14.dp),
+                    thickness = 0.7.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
                 )
                 SectionLinkRow(
                     label = t("home.trash"),
                     count = trash.size,
+                    icon = Icons.Default.DeleteOutline,
+                    iconColor = MaterialTheme.colorScheme.error,
                     onClick = { onOpenKind(EntryListKind.Trash) },
                 )
             }
@@ -308,32 +404,82 @@ fun VaultHomeScreen(
     }
 }
 
-/** Tap-through row inside a SectionCard: label + count + chevron. */
+/** Tap-through row inside a SectionCard: branded icon badge + label + count pill + chevron. */
 @Composable
-private fun SectionLinkRow(label: String, count: Int, onClick: () -> Unit) {
+private fun SectionLinkRow(
+    label: String,
+    count: Int,
+    icon: ImageVector,
+    iconColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Leading rounded icon badge (32x32dp)
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(iconColor.copy(alpha = 0.14f))
+                .border(
+                    width = 1.dp,
+                    color = iconColor.copy(alpha = 0.30f),
+                    shape = RoundedCornerShape(8.dp),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconColor,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+
+        Spacer(Modifier.width(12.dp))
+
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
-        Text(
-            text = count.toString(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.width(6.dp))
+
+        // Count pill badge matching Baluard badge tokens
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                .border(
+                    width = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(6.dp),
+                )
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = count.toString(),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        Spacer(Modifier.width(8.dp))
+
         Icon(
             imageVector = Icons.Default.ChevronRight,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
             modifier = Modifier.size(16.dp),
         )
     }
@@ -341,19 +487,24 @@ private fun SectionLinkRow(label: String, count: Int, onClick: () -> Unit) {
 
 @Composable
 private fun TopBarActionIcon(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
+    highlight: Boolean = false,
 ) {
     Box(
         modifier = Modifier
             .padding(horizontal = 3.dp)
             .size(36.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .background(
+                if (highlight) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                else MaterialTheme.colorScheme.surfaceContainer,
+            )
             .border(
                 width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant,
+                color = if (highlight) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                else MaterialTheme.colorScheme.outlineVariant,
                 shape = RoundedCornerShape(10.dp),
             )
             .clickable(onClick = onClick),
@@ -362,7 +513,7 @@ private fun TopBarActionIcon(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(18.dp),
         )
     }
@@ -437,13 +588,21 @@ fun TagListScreen(
             SectionCard(
                 title = t("home.tags"),
                 modifier = Modifier.padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
             ) {
                 counts.forEachIndexed { index, (tag, count) ->
-                    SectionLinkRow(label = tag, count = count, onClick = { onTag(tag) })
+                    SectionLinkRow(
+                        label = tag,
+                        count = count,
+                        icon = Icons.Default.LocalOffer,
+                        iconColor = Color(0xFF8B5CF6),
+                        onClick = { onTag(tag) },
+                    )
                     if (index < counts.size - 1) {
                         HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 14.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.padding(start = 58.dp, end = 14.dp),
+                            thickness = 0.7.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
                         )
                     }
                 }
