@@ -185,8 +185,11 @@ fun VaultHomeScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // Distinct from both the surface header and the page
+                    // background — same token family as the cards.
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
                     .clickable { switchOpen = true }
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
