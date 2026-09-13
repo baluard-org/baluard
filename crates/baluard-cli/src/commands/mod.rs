@@ -1583,23 +1583,49 @@ pub fn handle_sync_clone(
         .map(str::to_string)
         .unwrap_or_else(|| repo.rsplit('/').next().unwrap_or(repo).to_string());
 
+    let (out_slug, _path) = poll_clone_job(
+        &start_clone_job(&clone_url, Some(provider), &slug, &slug, socket)?,
+        socket,
+    )?;
+    println!("Unlock with: baluard --vault {out_slug} unlock");
+    println!(
+        "If this device was never enrolled, run: baluard enroll-with-phrase --vault {out_slug}"
+    );
+    Ok(())
+}
+
+/// POST `vault.clone_start` for a clone URL. `provider` is an optional
+/// credential hint (stored provider token for https); empty = none.
+fn start_clone_job(
+    clone_url: &str,
+    provider: Option<&str>,
+    slug: &str,
+    display_name: &str,
+    socket: Option<&str>,
+) -> Result<String, Box<dyn std::error::Error>> {
     let start_payload = serde_json::json!({
         "clone_url": clone_url,
-        "provider": provider,
+        "provider": provider.unwrap_or(""),
         "slug": slug,
-        "display_name": slug,
+        "display_name": display_name,
     })
     .to_string();
     let resp = client::request_to("vault.clone_start", &start_payload, socket)?;
     if !resp.success {
         return Err(resp.error_message.into());
     }
-    let job_id = serde_json::from_str::<serde_json::Value>(&resp.payload)?["job_id"]
+    serde_json::from_str::<serde_json::Value>(&resp.payload)?["job_id"]
         .as_str()
-        .ok_or("daemon returned no job_id")?
-        .to_string();
+        .map(str::to_string)
+        .ok_or_else(|| "daemon returned no job_id".into())
+}
 
-    // Poll progress until done/failed (10-minute deadline).
+/// Poll a clone job to completion (10-minute deadline), printing progress,
+/// then finalize it. Returns (slug, path).
+fn poll_clone_job(
+    job_id: &str,
+    socket: Option<&str>,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
     let mut last_pct = u32::MAX;
     loop {
@@ -1638,12 +1664,63 @@ pub fn handle_sync_clone(
         return Err(resp.error_message.into());
     }
     let v: serde_json::Value = serde_json::from_str(&resp.payload)?;
-    let out_slug = v["slug"].as_str().unwrap_or(&slug);
-    let path = v["path"].as_str().unwrap_or("?");
+    let slug = v["slug"].as_str().unwrap_or("?").to_string();
+    let path = v["path"].as_str().unwrap_or("?").to_string();
     let objects = v["objects"].as_u64().unwrap_or(0);
     let bytes = v["bytes"].as_u64().unwrap_or(0);
-    println!("Cloned vault '{out_slug}' to {path} ({objects} objects, {bytes} bytes).");
+    println!("Cloned vault '{slug}' to {path} ({objects} objects, {bytes} bytes).");
+    Ok((slug, path))
+}
+
+/// `baluard sync clone-url <url>`: clone a vault from a plain git URL
+/// (https://, ssh://, git@host:path) via the daemon's job flow. Daemon-only
+/// for the same reason as `sync clone`: cloning registers a new vault.
+/// Authentication comes from the user's own git setup — ssh-agent for ssh
+/// URLs, a connected provider token (or BALUARD_GIT_TOKEN) for https.
+/// Baluard never stores or prompts for credentials here.
+pub fn handle_sync_clone_url(
+    mode: ConnectMode,
+    socket: Option<&str>,
+    url: &str,
+    slug_override: Option<&str>,
+    provider_override: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if matches!(mode, ConnectMode::Direct) {
+        return Err(
+            "Clone requires the daemon (it registers a new vault). Run without --direct.".into(),
+        );
+    }
+    if let Some(p) = provider_override {
+        if !matches!(p, "github" | "gitlab" | "codeberg") {
+            return Err(format!("Unknown provider: {p}").into());
+        }
+    }
+    // Slug default: last URL path segment, minus a .git suffix.
+    let slug = slug_override
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            url.trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("vault")
+                .trim_end_matches("/")
+                .strip_suffix(".git")
+                .unwrap_or_else(|| {
+                    url.trim_end_matches('/')
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or("vault")
+                })
+                .to_string()
+        });
+
+    let job_id = start_clone_job(url, provider_override, &slug, &slug, socket)?;
+    let (out_slug, path) = poll_clone_job(&job_id, socket)?;
     println!("Unlock with: baluard --vault {out_slug} unlock");
+    println!(
+        "If this device was never enrolled, run: baluard enroll-with-phrase --vault {out_slug}"
+    );
+    let _ = path;
     Ok(())
 }
 
@@ -2802,6 +2879,7 @@ pub fn handle_passkey_rename(
 
 pub fn handle_vaults(action: &VaultAction, cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     match action {
+        VaultAction::Add { path, slug } => vaults_add(&path, slug.as_deref()),
         VaultAction::List => vaults_list(cli),
         VaultAction::Switch { slug } => vaults_switch(slug, cli),
         VaultAction::Close { slug } => vaults_close(slug, cli),
@@ -2812,6 +2890,87 @@ pub fn handle_vaults(action: &VaultAction, cli: &Cli) -> Result<(), Box<dyn std:
             delete_from_disk,
         } => vaults_detach(slug, *delete_from_disk, cli),
     }
+}
+
+/// `baluard vaults add <path>`: register an already-existing vault
+/// directory (moved from another machine, restored backup, manual clone)
+/// so it appears in the app again. Non-destructive: nothing is opened,
+/// switched, or unsealed. Fails closed on directories without a
+/// `.baluard` marker — only real Baluard vaults get registered.
+fn vaults_add(path_str: &str, slug_override: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let raw = Path::new(path_str);
+    if !raw.is_dir() {
+        return Err(format!("Not a directory: {path_str}").into());
+    }
+    let path = std::fs::canonicalize(raw)
+        .map_err(|e| format!("Cannot resolve {path_str}: {e}"))?;
+
+    let marker = baluard_core::vault::registry::BaluardMarker::read_from_vault(&path)?
+        .ok_or_else(|| {
+            format!(
+                "Not a Baluard vault: {} has no .baluard marker.",
+                path.display()
+            )
+        })?;
+
+    // Slug: flag > marker slug > directory name. Validated either way —
+    // it keys registry lookups and daemon paths (C11 class).
+    let slug = slug_override
+        .map(str::to_string)
+        .or_else(|| if marker.slug.is_empty() { None } else { Some(marker.slug.clone()) })
+        .unwrap_or_else(|| {
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "vault".to_string())
+        });
+    baluard_core::vault::slug::validate_slug(&slug)
+        .map_err(|e| format!("Invalid vault slug '{slug}': {e}"))?;
+
+    let mut reg = baluard_core::vault::registry::VaultRegistry::load_locked()?;
+    if reg.exists(&slug) {
+        return Err(format!(
+            "A vault '{slug}' is already registered. Pick a different --slug or remove the existing entry first."
+        )
+        .into());
+    }
+    // Same directory under a different slug = double-attach; refuse.
+    if reg.vaults.values().any(|v| v.path == path) {
+        return Err(
+            "This directory is already registered under a different slug. Detach it first: baluard vaults detach <slug>"
+                .into(),
+        );
+    }
+
+    // Best-effort remote URL (nice for `vaults list`; never fatal).
+    let remote_url = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&path)
+        .args(["config", "--get", "remote.origin.url"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|u| !u.is_empty());
+
+    let vault_id = marker.vault_id;
+    reg.add(baluard_core::vault::registry::VaultEntry {
+        slug: slug.clone(),
+        display_name: slug.clone(),
+        path: path.clone(),
+        provider: None,
+        remote_url,
+        last_synced: None,
+        last_opened: None,
+        vault_id,
+    })?;
+    reg.save_locked()?;
+
+    println!("Registered vault '{slug}' at {}.", path.display());
+    println!("Open it with:     baluard vaults switch {slug}");
+    println!(
+        "If this device was never enrolled, run: baluard enroll-with-phrase --vault {slug}"
+    );
+    Ok(())
 }
 
 /// Print every registered vault with its in-daemon state. Prefers the

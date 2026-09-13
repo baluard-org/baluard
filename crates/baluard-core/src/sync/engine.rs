@@ -1325,15 +1325,19 @@ impl SyncEngine {
     /// progress reporting. Used by the daemon's `vault.clone_start` flow.
     ///
     /// Differs from [`clone`]/[`clone_unchecked`] in two ways:
-    /// - uses `load_with_hint(target, Some(provider))` so a multi-provider
+    /// - uses `load_with_hint(target, provider)` so a multi-provider
     ///   install authenticates with the correct token rather than "first
-    ///   connected provider" (avoids wrong-token 401s on clone).
+    ///   connected provider" (avoids wrong-token 401s on clone). `None`
+    ///   skips the provider hint: token fallbacks (any connected provider,
+    ///   `BALUARD_GIT_TOKEN`, vault-stored file) still apply, and SSH
+    ///   agent auth works for ssh:// URLs — private HTTPS repos with no
+    ///   credential source fail closed.
     /// - wires git2's `transfer_progress` callback into `progress` so the
     ///   daemon can poll objects/bytes for a live progress bar.
     pub fn clone_remote(
         url: &str,
         target: &Path,
-        provider: crate::providers::types::Provider,
+        provider: Option<crate::providers::types::Provider>,
         progress: std::sync::Arc<std::sync::Mutex<CloneProgress>>,
     ) -> Result<Repository, BaluardError> {
         Self::clone_remote_cancelable(url, target, provider, progress, None)
@@ -1342,14 +1346,14 @@ impl SyncEngine {
     pub fn clone_remote_cancelable(
         url: &str,
         target: &Path,
-        provider: crate::providers::types::Provider,
+        provider: Option<crate::providers::types::Provider>,
         progress: std::sync::Arc<std::sync::Mutex<CloneProgress>>,
         cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Repository, BaluardError> {
         validate_git_url(url)?;
         crate::sync::tls::ensure_tls_roots();
         let mut builder = RepoBuilder::new();
-        let cred_config = CredentialConfig::load_with_hint(target, Some(provider));
+        let cred_config = CredentialConfig::load_with_hint(target, provider);
         let mut fetch_opts = FetchOptions::new();
         let https_token = cred_config.expose_token();
         let prog = progress.clone();
@@ -1873,7 +1877,7 @@ mod tests {
         SyncEngine::clone_remote(
             &format!("file://{}", dir.path().display()),
             clone_dir.path(),
-            crate::providers::types::Provider::GitHub,
+            Some(crate::providers::types::Provider::GitHub),
             progress,
         )
         .unwrap();
@@ -1927,7 +1931,7 @@ mod tests {
         let cloned = SyncEngine::clone_remote(
             &format!("file://{}", dir.path().display()),
             clone_dir.path(),
-            crate::providers::types::Provider::GitHub,
+            Some(crate::providers::types::Provider::GitHub),
             progress.clone(),
         )
         .expect("clone_remote should succeed for a local file:// source");
@@ -1958,10 +1962,32 @@ mod tests {
         let result = SyncEngine::clone_remote(
             &url,
             clone_dir.path(),
-            crate::providers::types::Provider::GitLab,
+            Some(crate::providers::types::Provider::GitLab),
             progress,
         );
         assert!(result.is_err(), "cloning a non-existent source must fail");
+    }
+
+    /// clone-url support: a provider-less clone must work for sources
+    /// needing no credentials (public repos, file://, ssh-agent), and the
+    /// provider hint stays optional end to end.
+    #[test]
+    fn clone_remote_works_without_provider_hint() {
+        let (dir, engine) = make_test_repo();
+        std::fs::write(dir.path().join("cipher.enc"), b"\x01\x02\x03").unwrap();
+        let _ = engine.init_repo().unwrap();
+
+        let clone_dir = tempfile::tempdir().unwrap();
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(CloneProgress::default()));
+        let cloned = SyncEngine::clone_remote(
+            &format!("file://{}", dir.path().display()),
+            clone_dir.path(),
+            None,
+            progress,
+        )
+        .expect("provider-less clone should succeed for a credential-free source");
+        let _ = cloned;
+        assert!(clone_dir.path().join("cipher.enc").exists());
     }
 
     #[test]

@@ -2508,8 +2508,8 @@ struct CloneParams {
     target: std::path::PathBuf,
     slug: String,
     display_name: String,
-    provider: baluard_core::providers::types::Provider,
-    provider_str: String,
+    provider: Option<baluard_core::providers::types::Provider>,
+    provider_str: Option<String>,
 }
 
 #[cfg(feature = "git-sync")]
@@ -2543,12 +2543,22 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
         .as_str()
         .map(str::to_string)
         .unwrap_or_else(|| slug.clone());
+    // Provider is optional: clone-url callers cloning a plain git URL may
+    // have none. Credential fallbacks then cover ssh-agent / any connected
+    // provider token / BALUARD_GIT_TOKEN; private HTTPS repos with no
+    // credential source fail closed inside the engine.
     let provider_str = v["provider"].as_str().unwrap_or("");
-    let provider: baluard_core::providers::types::Provider = match provider_str {
-        "github" => baluard_core::providers::types::Provider::GitHub,
-        "gitlab" => baluard_core::providers::types::Provider::GitLab,
-        "codeberg" => baluard_core::providers::types::Provider::Codeberg,
+    let provider: Option<baluard_core::providers::types::Provider> = match provider_str {
+        "" => None,
+        "github" => Some(baluard_core::providers::types::Provider::GitHub),
+        "gitlab" => Some(baluard_core::providers::types::Provider::GitLab),
+        "codeberg" => Some(baluard_core::providers::types::Provider::Codeberg),
         other => return err_response(format!("Unknown provider: {other}")),
+    };
+    let provider_str_owned: Option<String> = if provider_str.is_empty() {
+        None
+    } else {
+        Some(provider_str.to_string())
     };
 
     // C11: same gate as vault.create — the slug joins a filesystem path.
@@ -2609,7 +2619,6 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
     }
 
     let state_arc = state.clone();
-    let provider_str_owned = provider_str.to_string();
     tokio::task::spawn_blocking(move || {
         run_clone_to_completion(CloneParams {
             state: state_arc,
@@ -2679,7 +2688,7 @@ fn run_clone_to_completion(params: CloneParams) {
                 slug: slug.clone(),
                 display_name: display_name.clone(),
                 path: target.clone(),
-                provider: Some(provider_str.clone()),
+                provider: provider_str.clone(),
                 remote_url: Some(clone_url.clone()),
                 last_synced: Some(now),
                 last_opened: Some(now),
