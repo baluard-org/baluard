@@ -69,7 +69,7 @@ Decrypts Entries (entries/*.enc)
 - **User-verdict path** (`MergeResult::Conflict`): same-field conflicts surface the top-floating `ConflictResolutionPanel` (D22) with a masked `MaskedConflict`. Verdicts: keep_local / keep_remote (raw blob from the chosen OID, no re-encrypt) or keep_both (new uuid clone under current epoch + seq 1, mirrors `add_cipher`).
 - **Cross-epoch safety**: if any side's envelope is at an epoch the held `SpaceGroupKey` cannot reach (remote pre-rotation with destroyed old RootKey, or local behind post-rotation), `try_derive_item_key` returns `None` and the conflict surfaces with a `cross_epoch` flag; only keep_local/keep_remote (raw blob) remain safe verdicts. `keep_both` is refused (can't clone a side we can't decrypt).
 - **Keep-local fallback** (`SyncEngine::resolve_conflict_keep_local`): the pre-Phase-2 path, still the default when a caller uses `run_sync_cycle` (the backward-compat wrapper delegates with a `ConflictResolution::KeepLocal` closure). The daemon's auto-sync coordinator opts in via `run_sync_cycle_with_resolver(..., Pause)`.
-- **Engine seam** (Phase 2a): `run_sync_cycle_with_resolver` + `ConflictResolution { KeepLocal, Pause }` + `PendingConflictState` + `SyncCycleOutcome::NeedsDecision`. Additive; the cycle still falls back to keep-local when the caller doesn't opt in. `finalize_conflicts` is HEAD-guarded against double-resolve.
+- **Engine integration** (Phase 2a): `run_sync_cycle_with_resolver` + `ConflictResolution { KeepLocal, Pause }` + `PendingConflictState` + `SyncCycleOutcome::NeedsDecision`. Additive; the cycle still falls back to keep-local when the caller doesn't opt in. `finalize_conflicts` is HEAD-guarded against double-resolve.
 - **Index rebuild**: all three verdict paths call `rebuild_cipher_index()` after finalize (they write cipher files via `SyncEngine`, bypassing the `VaultHandle::add/update/delete` hooks that normally rebuild `meta/index.enc`). Critical for keep_both (the new clone cipher_id was never indexed).
 - **Latent bug fixed in 2a**: `pull_inner` pre-transitioned the sync state machine to `Idle` before returning `Conflict`, making the subsequent `resolve_conflicts` final `Idle→Idle` transition invalid on any real conflict. Now leaves the state in `Merging` so the resolution path completes `Merging→Idle` legitimately. Pre-existing, untested before the 2a conflict tests.
 
@@ -96,7 +96,7 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 
 **Decision**:
 - **Debounced push** (5s coalesce) after every CRUD mutation via the `COVER_MUTATION_ACTIONS` hook in `handler.rs`. A burst of edits = one commit + one round-trip.
-- **Periodic pull** every 30 min when idle + online — a quiet fallback, NOT the primary sync path. Event-driven pulls do the real work: pull immediately on vault unlock, on window focus (desktop fires `sync.autosync_nudge_pull`, server-side 10-min guard collapses flicker), and the push cycle itself commits→pulls→pushes so concurrent edits land right after a local mutation. Serverless architecture (git remote IS the server, no push channel), so unlike Bitwarden's SignalR inbound we must poll; 30 min is quiet enough to avoid a predictable periodic heartbeat (T14 timing-fingerprint) while the event triggers cover snappiness.
+- **Periodic pull** every 30 min when idle + online (a quiet fallback, NOT the primary sync path). Event-driven pulls do the real work: pull immediately on vault unlock, on window focus (desktop fires `sync.autosync_nudge_pull`, server-side 10-min guard collapses flicker), and the push cycle itself commits→pulls→pushes so concurrent edits land right after a local mutation. Serverless architecture (git remote IS the server, no push channel), so unlike Bitwarden's SignalR inbound we must poll; 30 min is quiet enough to avoid a predictable periodic heartbeat (T14 timing-fingerprint) while the event triggers cover snappiness.
 - **Offline handling**: network failures (classified from `git2::Error::class()` Net/Http/Ssh/Ssl → `SyncError::Network`) → `Offline` state → 30s retry probe. Offline edits queue locally until reconnect.
 - **Canonical git workflow** (`SyncEngine::run_sync_cycle`): commit local → pull → resolve conflicts → push. Committing first keeps the worktree clean so the pull's force-checkout (C1 fix) cannot discard uncommitted edits (H2 fix).
 - **Conflict policy (Phase 1)**: keep local via `resolve_conflict_keep_local` (2-parent merge commit → next push fast-forwards), surface a non-blocking banner. Field-level 3-way merge (`conflict::merge_ciphers`) is NOT yet wired into the cycle; Phase 2 will run it for silent non-destructive merge and only force-resolve true same-field conflicts.
@@ -182,7 +182,7 @@ To optimize accessibility and eliminate user-facing cryptographic jargon:
 
 ### Activity Index
 
-**File**: `meta/device_activity.json` — Plaintext, UUID-only activity index. Last-writer-wins per UUID key. One file, merged on every push.
+**File**: `meta/device_activity.json`: Plaintext, UUID-only activity index. Last-writer-wins per UUID key. One file, merged on every push.
 
 ```json
 {
@@ -373,7 +373,7 @@ Multiple devices sharing a vault via GitHub/GitLab/self-hosted git.
 **Rotation flow (two-phase commit via git):**
 
 ```
-Phase 1 — PROPOSE (initiating device, online now):
+Phase 1: PROPOSE (initiating device, online now):
   1. Generate RK'
   2. For each enrolled device:
      HPKE(RK', device_x25519_pk) → wrapped_keys[device_id]
@@ -384,7 +384,7 @@ Phase 1 — PROPOSE (initiating device, online now):
   6. Transition epoch → ROTATING
   7. Vault: READS allowed (old epoch), WRITES blocked
 
-Phase 2 — ACKNOWLEDGE (each device, async, on next sync):
+Phase 2: ACKNOWLEDGE (each device, async, on next sync):
   1. Pull from remote
   2. Read meta/rekey/{new_epoch}.txn
   3. Unwrap own HPKE(RK', my_pk) → verify RK' is sane
@@ -393,7 +393,7 @@ Phase 2 — ACKNOWLEDGE (each device, async, on next sync):
   6. Write meta/rekey/{new_epoch}.ack.{device_id}
   7. Git commit + push
 
-Phase 3 — COMMIT (any device observing quorum):
+Phase 3: COMMIT (any device observing quorum):
   1. Pull from remote
   2. Collect all .ack.* files for this epoch
   3. For each ack:
@@ -424,9 +424,9 @@ Phase 3 — COMMIT (any device observing quorum):
 Two devices on the same desk, no cloud.
 
 **Transport options** (priority order):
-1. **QR codes** — small payloads (enrollment, ack bundles)
-2. **File export/import** — larger payloads (pairing bundle, git bundle)
-3. **USB drive** — `git bundle` for full vault sync
+1. **QR codes**: small payloads (enrollment, ack bundles)
+2. **File export/import**: larger payloads (pairing bundle, git bundle)
+3. **USB drive**: `git bundle` for full vault sync
 
 Rotation uses the same two-phase commit as Mode 2, but ack delivery is physical. The `ROTATING` epoch state persists between transfers.
 
@@ -481,55 +481,22 @@ New device                          Existing device
 
 ### Recovery-Phrase Enrollment (D14-bis, 2026-06-11)
 
-**Motivation.** The original D14 design required an enrolled device to
-approve any new device. This is hostile to single-user, serverless
-workflows: a solo user who loses all devices cannot add a new one
-without a pre-existing device to produce the approval signature.
-The product intent (no central server, easy to use, future-proof)
-demands that the recovery phrase — which is already the root
-authority for `recover_from_phrase` — also work for non-destructive
-enrollment.
+**Motivation.** The original D14 design required an enrolled device to approve any new device. This is hostile to single-user, serverless workflows: a solo user who loses all devices cannot add a new one without a pre-existing device to produce the approval signature. The product intent (no central server, easy to use, future-proof) demands that the recovery phrase (which is already the root authority for `recover_from_phrase`) also work for non-destructive enrollment.
 
 **Two-path enrollment controlled by `VaultSettings::enrollment_policy`:**
 
-- `Personal` (default for new vaults): either an enrolled-device
-  signature OR the recovery phrase can authorize enrollment. The
-  recovery phrase is the root authority and can already perform
-  full disaster recovery; non-destructive enrollment via phrase is
-  a strict subset of that authority.
-- `Strict` (default for existing vaults, backward compat): only an
-  enrolled-device signature can authorize enrollment. Recovery
-  phrase only works via destructive `recover_from_phrase`.
+- `Personal` (default for new vaults): either an enrolled-device signature OR the recovery phrase can authorize enrollment. The recovery phrase is the root authority and can already perform full disaster recovery; non-destructive enrollment via phrase is a strict subset of that authority.
+- `Strict` (default for existing vaults, backward compat): only an enrolled-device signature can authorize enrollment. Recovery phrase only works via destructive `recover_from_phrase`.
 
-**New method:** `DeviceManager::enroll_with_recovery_phrase(payload, phrase)`.
-Non-destructive — enrolls into the existing registry without resetting
-devices. Unwraps Root Key from `meta/recovery.json`, writes a new
-keywrap for the new device, persists state. Reuses the same
-timestamp/nonce replay protection as `enroll()`.
+**New method:** `DeviceManager::enroll_with_recovery_phrase(payload, phrase)`. Non-destructive: enrolls into the existing registry without resetting devices. Unwraps Root Key from `meta/recovery.json`, writes a new keywrap for the new device, persists state. Reuses the same timestamp/nonce replay protection as `enroll()`.
 
-**Mandatory write-down verification.** During vault creation, the
-user MUST re-enter 4 random words from the recovery phrase before
-they can proceed. Positions are deterministic (FNV-1a hash of the
-phrase) so the same phrase always asks for the same words. Applied
-in both desktop (`RecoveryScreen.jsx`) and CLI (`init` flow). This
-is not security theater — it's the only defense against permanent
-vault loss when all devices fail.
+**Mandatory write-down verification.** During vault creation, the user MUST re-enter 4 random words from the recovery phrase before they can proceed. Positions are deterministic (FNV-1a hash of the phrase) so the same phrase always asks for the same words. Applied in both desktop (`RecoveryScreen.jsx`) and CLI (`init` flow). This is not security theater: it is the only defense against permanent vault loss when all devices fail.
 
-**CLI surface:** `baluard devices enroll-with-phrase [--phrase <24 words>]`.
-Prompts for phrase if not provided. Requires typed `enroll` confirmation
-(warns user that the phrase is root authority). Enforces policy:
-rejects if `Strict` with a clear error directing to `baluard recover`.
+**CLI surface:** `baluard devices enroll-with-phrase [--phrase <24 words>]`. Prompts for phrase if not provided. Requires typed `enroll` confirmation (warns user that the phrase is root authority). Enforces policy: rejects if `Strict` with a clear error directing to `baluard recover`.
 
-**IPC surface:** `vault.enroll_with_phrase` (daemon route). Validates
-24-word shape, checks `enrollment_policy`, builds `EnrollmentPayload`
-for the current device, calls `enroll_with_recovery_phrase`, writes
-`meta/device-privkey.json`.
+**IPC surface:** `vault.enroll_with_phrase` (daemon route). Validates 24-word shape, checks `enrollment_policy`, builds `EnrollmentPayload` for the current device, calls `enroll_with_recovery_phrase`, writes `meta/device-privkey.json`.
 
-**Threat model.** The recovery phrase is already the root authority:
-`recover_from_phrase` exists for full disaster recovery. Phrase-based
-enrollment is a strict subset of that authority. If the phrase is
-compromised, the vault is already compromised. The master password
-alone remains insufficient to add a device.
+**Threat model.** The recovery phrase is already the root authority: `recover_from_phrase` exists for full disaster recovery. Phrase-based enrollment is a strict subset of that authority. If the phrase is compromised, the vault is already compromised. The master password alone remains insufficient to add a device.
 
 **Files:**
 - `crates/baluard-core/src/vault/manifest.rs`: `EnrollmentPolicy` enum
@@ -607,7 +574,7 @@ meta/
   seen-nonces.json         # Anti-replay enrollment nonces
   keywrap/
     {device_id}.json       # HPKE-wrapped Root Key per device
-  settings-pub.json        # Plaintext display prefs (theme, lang) — pre-unlock readable
+  settings-pub.json        # Plaintext display prefs (theme, lang), pre-unlock readable
   settings.enc             # AES-256-GCM under root key: vault_timeout, default_uri_match,
                           #   fetch_favicons, slug, enrollment_policy (privacy: slug/policy
                           #   must not leak to the git remote in plaintext)
@@ -716,13 +683,13 @@ Created `lib/filters.js` with pure functions: `selectSource`, `filterByCategory`
 
 #### Candidate A: Cipher Schema (Completed)
 
-Created `lib/cipherSchema.js` with schemas for all 8 cipher types. Each schema defines: `fields[]`, `fromKind(structured→flat)`, `toKind(flat→structured)`. Replaced `CipherDetail.startEdit()` 80-line manual field mapping with `cipherToFlat()`. Replaced `payload.buildKind()` 100-line if/else chain with `schema.toKind()`. 14 new vitest tests including roundtrip tests for all 8 types. Single source of truth for field name mappings (was 3-file implicit contract). `AddEditCipherForm.jsx` still uses 8 `<Show>` blocks for field rendering — schema-driven form rendering is future work.
+Created `lib/cipherSchema.js` with schemas for all 8 cipher types. Each schema defines: `fields[]`, `fromKind(structured→flat)`, `toKind(flat→structured)`. Replaced `CipherDetail.startEdit()` 80-line manual field mapping with `cipherToFlat()`. Replaced `payload.buildKind()` 100-line if/else chain with `schema.toKind()`. 14 new vitest tests including roundtrip tests for all 8 types. Single source of truth for field name mappings (was 3-file implicit contract). `AddEditCipherForm.jsx` still uses 8 `<Show>` blocks for field rendering: schema-driven form rendering is future work.
 
 #### Future Work
 
 - Schema-driven form rendering: replace 8 `<Show>` blocks in AddEditCipherForm with schema-driven field iteration (would reduce ~850 lines to ~300)
 - `filteredCiphers` in VaultView could use `createMemo` for caching (called twice per render)
-- Transition guards are advisory-only — raw setters still exported for external navigation
+- Transition guards are advisory-only: raw setters still exported for external navigation
 
 ### Frontend Constraints
 
@@ -771,7 +738,7 @@ All modals use `<FocusTrap containerRef={ref} onEscape={fn} />` providing:
 
 Profile fields (`display_name`, `subtitle`, `avatar_ext`) live in `meta/profile.enc` (AES-256-GCM under the root key via `derive_profile_key`), migrated out of the plaintext `settings.json`. Avatar stored as `meta/avatar.{ext}` in vault directory (unencrypted, synced via git). Rationale: vault is already encrypted at rest; storing base64 avatar data inline bloats diffs.
 
-> **2026-06-26 update:** the rest of `settings.json` was also split for privacy — see D16. Display prefs (`theme`, `lang`) → plaintext `meta/settings-pub.json`; vault identity/policy (`slug`, `enrollment_policy`, `vault_timeout`, `fetch_favicons`, `default_uri_match`) → encrypted `meta/settings.enc`.
+> **2026-06-26 update:** the rest of `settings.json` was also split for privacy (see D16). Display prefs (`theme`, `lang`) → plaintext `meta/settings-pub.json`; vault identity/policy (`slug`, `enrollment_policy`, `vault_timeout`, `fetch_favicons`, `default_uri_match`) → encrypted `meta/settings.enc`.
 
 **Constraints:** Ext validated against whitelist (`png/jpg/jpeg/gif/webp`), size capped at 350KB base64. Path traversal validated. Old avatar file cleaned up on ext change.
 
@@ -838,7 +805,7 @@ CLI chains profile + preferences into `VaultCreator` builder before `execute()`.
 
 **Migration:** on first `save_settings` post-split, the legacy `settings.json` is read via a fallback path, split into the two new files, and deleted. `get_settings` reassembles the full `VaultSettings` struct from both halves (plus legacy fallback) so callers are unchanged.
 
-**Files NOT touched (already safe):** `kdf-params.json` (salt + cost are public by design; encrypting them is circular), `recovery.json` (already an HPKE-wrapped blob; the public keys it contains are public by definition), `keywrap/*.json` (same — wrapped material).
+**Files NOT touched (already safe):** `kdf-params.json` (salt + cost are public by design; encrypting them is circular), `recovery.json` (already an HPKE-wrapped blob; the public keys it contains are public by definition), `keywrap/*.json` (same: wrapped material).
 
 ### D19-bis. Phase 6 Multi-Vault Switching (2026-06-17; DONE)
 
@@ -848,7 +815,7 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 - `vaults.switch` is a pointer flip: validate slug + set `active` under one write lock, touch registry `last_opened` OUTSIDE the lock. No zeroization, no token change.
 - Per-vault session tokens (`vault.unlock` returns `{slug, token}`). Desktop keeps `Map<slug, token>`. Token check is per-vault; vault-A token rejected for vault-B op.
 - Handler snapshots the target `Arc<VaultState>` clone once per request (no TOCTOU from mid-request `switch`).
-- `vaults.close` is Arc-drain — removes the entry, clears `active` if needed, returns immediately. In-flight handlers finish and zeroize on last drop.
+- `vaults.close` is Arc-drain: removes the entry, clears `active` if needed, returns immediately. In-flight handlers finish and zeroize on last drop.
 - Auto-lock walker iterates the map every 30s, applies each vault's own `auto_lock_minutes` + `last_activity`. **Active-pointer-on-autolock policy:** when the active vault auto-locks, `active` is LEFT pointing at it (re-unlock UX, not the picker).
 - Cover-commit timers are per-vault, keyed to locked/unlocked (never to `active`). A switch touches no cover timer.
 - Lock-all on `Tauri WindowEvent::Focused(false)` (desktop clears token cache, refreshes on focus regain). OS suspend / screen-lock / lid-close hooks (macOS NSWorkspace, Linux login1 D-Bus PrepareForSleep, Windows WM_POWERBROADCAST/SessionSwitch) documented as follow-up.
@@ -872,7 +839,7 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 
 **B) Session PIN (Linux + Windows-without-Hello fallback):**
 - **In-memory only.** `PinEscrow` on `VaultState::pin` holds the Argon2id-derived KEK + an Argon2id verifier over the PIN. Both zeroized on drop, NEVER on disk.
-- **Skips Argon2id master KDF.** PIN unlock calls `VaultHandle::unlock_with_kek`, which still verifies keywrap + canaries (a stale KEK — master password changed on another device — fails closed).
+- **Skips Argon2id master KDF.** PIN unlock calls `VaultHandle::unlock_with_kek`, which still verifies keywrap + canaries (a stale KEK, such as master password changed on another device, fails closed).
 - **Session-bound:** dies on daemon restart / vault close. **Survives soft-lock** (escrow is a separate `VaultState` field from the handle).
 - **5-strike nuke:** after `pin::MAX_PIN_FAILURES` (=5) wrong PINs the escrow is destroyed and the master password becomes mandatory. The 10^6 keyspace cannot be brute-forced through this in-process cap.
 - **Routes:** `vault.pin_status` (not token-gated), `vault.pin_enable` / `vault.pin_disable` (token-gated), `vault.pin_unlock` (host-level, not token-gated, mirrors `vault.biometric_unlock`).
@@ -881,17 +848,17 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 
 **Why two mechanisms.** Biometric is the primary UX on macOS (Touch ID). On Linux there's no biometric keychain; the in-memory PIN fills the same role (cheap re-unlock while the daemon is alive) without weakening the master-password-derived KEK chain. Windows-without-Hello gets the same PIN fallback because `keyring` `windows-native` does not gate reads biometrically.
 
-**Vault Detach (asymmetric UI vs CLI):** Detaching a vault (drop registry entry) is exposed in the `VaultSwitcher` dropdown (`DetachVaultModal`). The destructive arm (`delete_from_disk`) is deliberately NOT exposed in the UI — only the safe, reversible detach. The power-user escape hatch is the CLI: `baluard vaults detach <slug> --delete-from-disk` (gated by slug retyping + the daemon-side `.baluard` marker check). A future revision may add a master-password-reprompt gated destructive arm back to the UI; until then the UI is destructive-action-free. The daemon route `vaults.detach` still supports both flags for the CLI caller.
+**Vault Detach (asymmetric UI vs CLI):** Detaching a vault (drop registry entry) is exposed in the `VaultSwitcher` dropdown (`DetachVaultModal`). The destructive arm (`delete_from_disk`) is deliberately NOT exposed in the UI: only the safe, reversible detach. The power-user escape hatch is the CLI: `baluard vaults detach <slug> --delete-from-disk` (gated by slug retyping + the daemon-side `.baluard` marker check). A future revision may add a master-password-reprompt gated destructive arm back to the UI; until then the UI is destructive-action-free. The daemon route `vaults.detach` still supports both flags for the CLI caller.
 
 ### D21. Browser Extension: Paired-Companion Bridge (2026-06-XX; Phases 0+1 DONE)
 
-**Decision: KeePassXC-Browser-style MV3 extensions talk to `baluard-daemon` via a new `baluard-nmh` native messaging host. The extension is a paired companion — it never unlocks, never holds the master password, never holds the vault session token. It rides the desktop's unlock state via a scoped bridge token.**
+**Decision: KeePassXC-Browser-style MV3 extensions talk to `baluard-daemon` via a new `baluard-nmh` native messaging host. The extension is a paired companion: it never unlocks, never holds the master password, never holds the vault session token. It rides the desktop's unlock state via a scoped bridge token.**
 
 **Motivation.** Baluard has no server; Bitwarden/1Password's "extension talks to company API" model does not apply. The correct reference architecture is **KeePassXC-Browser**: extension -> native messaging host (stdio) -> local socket -> app. A 0600 Unix socket cannot be opened by a WebExtension (no raw-socket API in MV3); the only cross-browser escape hatch is `nativeMessaging` (Chrome `runtime.connectNative`/`sendNativeMessage`, Firefox identical).
 
 **Architecture (see `docs/plan-browser-extension.md` for the full design):**
-- **`baluard-nmh`** — standalone Rust binary. stdio-JSON <-> varint-protobuf. Stateless.
-- **`core/bridge/`** (new module: `mod.rs`, `pairing.rs`, `token.rs`) — pairing file format + atomic writes, bridge token mint/verify, action allowlist.
+- **`baluard-nmh`**: standalone Rust binary. stdio-JSON <-> varint-protobuf. Stateless.
+- **`core/bridge/`** (new module: `mod.rs`, `pairing.rs`, `token.rs`): pairing file format + atomic writes, bridge token mint/verify, action allowlist.
 - **Scoped bridge token (`TokenKind::Bridge { pairing_id }`)** lives on a host-level bridge registry (`VaultHost::bridges`, `HashMap<pairing_id, BridgeTokenEntry>`). Vault-agnostic (extension follows the desktop's active pointer per D6-bis Phase 10). TTL parity with the per-vault session token (`SESSION_TOKEN_TTL_SECONDS`, 4h).
 - **Action allowlist** (server-enforced in `verify_session_token` after token verification): `bridge.match`, `vault.get` (single, on fill/copy only), `vault.add`, `vault.update` (field-gated: password/username/notes/totp OK; `fido2_credentials` + `uris` REJECTED for bridge tokens), `cipher.totp_code`, `generator.history_add`, `generator.history_clear`, `sync.autosync_status`, `bridge.config`. **Excluded (rejected even with a valid bridge token):** `vault.list_full`, `vault.delete`, `vault.export`, `vault.change_password`, `device.revoke`, all `sync.*` mutations, all `provider.*`, `vault.attach_*`, `ssh.generate_key`, `passkey.*`, `vault.clone_*`, `folder.*`, `tag.*`, `vault.archive`/`unarchive`, `cipher.clone`, `settings.*`, `vault.trash.*`, `generator.history_list`, `favicon.get`.
 - **Pairing flow:** approve-don't-type. Desktop user clicks "Add browser extension" -> `bridge.pair_start` (desktop-session-token-gated, one-shot pending-approval flag, short TTL). Extension calls `bridge.pair_complete` (held pending). Desktop UI shows "A Baluard extension wants to connect" with Approve/Deny. Approve consumes the flag, writes pairing file, returns pairing secret to the NMH. **No codes to transcribe, no brute-force surface, no vault nuke on ceremony abuse** (the prior 5-strike nuke was a DoS landmine for non-tech users).
@@ -902,20 +869,20 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 
 **Why not a direct `vault.list_full` for the extension?** It returns the entire decrypted vault in one call (a de-facto export, and the real blast radius). Instead the extension sees metadata + one credential at a time.
 
-**Why allowlist not deny-list?** Pre-1.0 WIP (per STATUS), expansion is a deliberate allowlist change + same-change call-site update. The friction is intentional — it forces a conscious security decision per route.
+**Why allowlist not deny-list?** Pre-1.0 WIP (per STATUS), expansion is a deliberate allowlist change + same-change call-site update. The friction is intentional: it forces a conscious security decision per route.
 
 **Files:**
-- `crates/baluard-core/src/bridge/{mod,pairing,token}.rs` — pairing + bridge token
-- `crates/baluard-daemon/src/bridge.rs` — bridge routes + allowlist enforcement
-- `crates/baluard-nmh/` — native messaging host binary
-- `browser/{shared,chrome,firefox}/` — MV3 extension codebases (shared 95%, target wrappers)
-- `desktop/src/components/BridgeTab.jsx` — paired-extension management UI
+- `crates/baluard-core/src/bridge/{mod,pairing,token}.rs`: pairing + bridge token
+- `crates/baluard-daemon/src/bridge.rs`: bridge routes + allowlist enforcement
+- `crates/baluard-nmh/`: native messaging host binary
+- `browser/{shared,chrome,firefox}/`: MV3 extension codebases (shared 95%, target wrappers)
+- `desktop/src/components/BridgeTab.jsx`: paired-extension management UI
 
-### D22. Conflict Resolution Panel (2026-06-XX; UI BUILT, backend wiring DEFERRED)
+### D22. Conflict Resolution Panel (2026-07-02; UI and backend wired)
 
 **Decision: Build the human-in-the-loop UI panel for destructive field-level merge outcomes now; defer the backend wiring (still falls back to `resolve_conflict_keep_local`) until Phase 1 of conflict resolution lands.**
 
-**Motivation.** The auto-sync path today silently keep-locals on any file-level conflict, which can lose non-overlapping field edits from the remote device (F1: same item, non-overlapping fields — HIGH severity). A non-technical user has no way to see this happened. `merge_ciphers` exists and is tested (`sync/conflict.rs`), but is never wired into the cycle. The panel is the user surface for the destructive cases Phase 1 of conflict resolution will eventually surface; it can be built first because it consumes a structured `PendingConflict` queue that's purely frontend-derivable from the current `sync.autosync_status` payload for the mock case.
+**Motivation.** The auto-sync path today silently keep-locals on any file-level conflict, which can lose non-overlapping field edits from the remote device (F1: same item, non-overlapping fields: HIGH severity). A non-technical user has no way to see this happened. `merge_ciphers` exists and is tested (`sync/conflict.rs`), but is never wired into the cycle. The panel is the user surface for the destructive cases Phase 1 of conflict resolution will eventually surface; it can be built first because it consumes a structured `PendingConflict` queue that's purely frontend-derivable from the current `sync.autosync_status` payload for the mock case.
 
 **Decision (UI side):**
 - Top-floating modal-like panel with subtle slide-down animation (`ConflictResolutionPanel.jsx`).
@@ -938,10 +905,10 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 - **Pull immediately on vault unlock.** `VaultState::unlock` calls `pull_only` after `activate`.
 - **Pull on window focus.** Desktop fires `sync.autosync_nudge_pull` on `Tauri WindowEvent::Focused(true)` (after a refocus); daemon applies a 10-min `FOCUS_PULL_MIN_GAP_SECS` guard so flicker collapses to one pull per 10 min.
 - **The push cycle itself commits -> pulls -> pushes.** Concurrent remote edits land right after a local mutation; no separate event needed.
-- **30-min idle fallback** (`PULL_INTERVAL_SECS`) catches the rare "left open on two machines" case. Deliberately quiet — no predictable periodic heartbeat.
+- **30-min idle fallback** (`PULL_INTERVAL_SECS`) catches the rare "left open on two machines" case. Deliberately quiet, with no predictable periodic heartbeat.
 - **`cycle_lock` tokio Mutex** (C3 fix) guarantees only one sync cycle touches the on-disk repo at a time; losers bail cleanly.
 - **Activation in `VaultState::unlock`** (immediate, not lazy); deactivated on lock.
-- **No daemon-side decrypted cache** — `get_cipher` / `list_folders` read from disk every call, so after a pull the handle serves fresh data without a reload (root_key/SGK stay valid).
+- **No daemon-side decrypted cache**: `get_cipher` / `list_folders` read from disk every call, so after a pull the handle serves fresh data without a reload (root_key/SGK stay valid).
 
 **Frontend:** desktop polls `sync.autosync_status` every 10s (`AutoSyncContext`); status pill in sidebar header (`AutoSyncIndicator`); non-blocking conflict banner (`ConflictBanner`). No Tauri event channel (request/response only).
 
@@ -949,7 +916,7 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 
 ### D24. Sync Header Refactor + Favicons (2026-06-XX; DONE)
 
-**Sync header:** replaced git jargon ("push", "pull", "remote", "branch") with a one-click sync UI. Sidebar header shows provider + repo link (`cc09c51`). `AutoSyncIndicator` status pill (idle / syncing / dirty / offline). Sync label gated with `<Show>` inside `<Transition>` to silence background pulls. Provider state scoped to active vault (`58016d4`) — multi-vault provider state was previously leaking across switches.
+**Sync header:** replaced git jargon ("push", "pull", "remote", "branch") with a one-click sync UI. Sidebar header shows provider + repo link (`cc09c51`). `AutoSyncIndicator` status pill (idle / syncing / dirty / offline). Sync label gated with `<Show>` inside `<Transition>` to silence background pulls. Provider state scoped to active vault (`58016d4`); multi-vault provider state was previously leaking across switches.
 
 **Favicons:** opt-in persisted website icons fetched at save time. New `favicon` field on cipher envelope (16KB cap, magic-byte check, default-off). `desktop/src/lib/cipherSchema.js` + `Avatar`/`CipherRow` chip treatment. Solves the "every login in the list looks the same" UX problem without bloating every entry with a base64 payload.
 
@@ -963,7 +930,7 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 - **Phase 2: Git Sync Engine**: git2-rs sync, conflict auto-healing, state machine. DONE.
 - **Phase 3: IPC Daemon & CLI**: baluard-daemon (tokio Unix socket server), baluard-cli (socket client), Protobuf gateway handler. DONE.
 - **Phase 4: Desktop UI & Open-Source Launch**: SolidJS/Tailwind Tauri v2 app, system tray, GPL-3.0 license. DONE.
-- **Phase 5: Browser Extension & Mobile**: MV3 browser extension (Chromium + Firefox) with native messaging (Phases 0+1 DONE, Phase 2 deferred). UniFFI Kotlin/Swift bindings, KMP mobile app — not started.
+- **Phase 5: Browser Extension & Mobile**: MV3 browser extension (Chromium + Firefox) with native messaging (Phases 0+1 DONE, Phase 2 deferred). Mobile: UniFFI Rust bindings (`baluard-uniffi`) and Compose Multiplatform Android app (Phases 0-5 implemented, Phase 6 Autofill next; iOS platform-specific actuals pending).
 
 ---
 

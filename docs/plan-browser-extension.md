@@ -1,6 +1,6 @@
 # Plan: Browser Extension (Chromium + Firefox)
 
-> Status: PLANNING (pre-implementation). Decisions locked via grilling session.
+> Status: Phase 0 and Phase 1 implemented (NMH host binary, bridge module, paired-companion pairing flow, allowlist, MV3 extensions for Chrome and Firefox). Phase 2 (passkeys, inline badges) deferred.
 > Scope: bridge-style MV3 extension that talks to a running `baluard-daemon`, NOT a server-backed client.
 > Owner: Esteban. Dogfooding target.
 

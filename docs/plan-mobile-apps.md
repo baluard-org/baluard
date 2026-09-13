@@ -1,7 +1,7 @@
 # Plan: Mobile Apps (Android + iOS)
 
-> Status: PLANNING (pre-implementation). Decisions locked.
-> Scope: native Android + native iOS apps built on a shared Compose Multiplatform codebase, both consuming `baluard-runtime` + `baluard-core` in-process via UniFFI bindings. **No daemon process on mobile** (see §3.2). The mobile app is a **first-class vault client** — full offline access, full sync, biometric unlock — not a thin viewer.
+> Status: Android Phases 0-5 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build). Phase 6 (Android Autofill Service) next. iOS platform-specific actuals pending.
+> Scope: native Android + native iOS apps built on a shared Compose Multiplatform codebase, both consuming `baluard-runtime` + `baluard-core` in-process via UniFFI bindings. **No daemon process on mobile** (see §3.2). The mobile app is a **first-class vault client** (full offline access, full sync, biometric unlock), not a thin viewer.
 > Owner: Esteban. Builds on top of the desktop client (already shipped) and the browser extension (Phase 0+1 shipped).
 
 ---

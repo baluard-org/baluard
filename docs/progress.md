@@ -1,27 +1,25 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-08-17 (Wave B2 folder filter chips: `listFolders` parsed in VaultRepository, `folderFilter`/`allFolders()` in VaultListViewModel, folder-name chips in the vault list filter row. Mobile gradle on this Linux container needs `JAVA_HOME=~/.linuxbrew/opt/openjdk@17` — Gradle 8.10 rejects the default JDK 26; `:shared:compileKotlinMetadata` is the verification gate here. Previous: Wave A FFI surface — conflict verdicts unified into runtime `conflict_resolve_verdict` (daemon route delegates, mobile gets `resolveConflict`), `MobileCipherMeta.folder_id`, `shouldAutoLock`, `vaultId` exposed; delete-cipher UI on the detail screen; first host Gradle compile + 6 Kotlin fixes. Mobile UI compiles on host. B3 sync wiring + conflict UI + biometric + auto-lock + theme/tests remain)
+> Last updated: 2026-09-13 (Mobile Android Phases 0-5 implemented; Phase 6 Autofill Service next. Rust workspace: 778 tests passing. Desktop: 229 vitest tests passing. Browser: 96 vitest tests passing.)
 
 ---
 
 ## Current Frontier (read this first on session start)
 
-Active work: **mobile app (Android first)**, gap waves B2-B7. Everything before is done.
+Active work: **mobile app (Android first)**, Phase 6 (Android Autofill Service). Phases 0 through 5 are complete.
 
-| Wave | Work | State |
-|------|------|-------|
-| A | FFI surface: conflict verdicts, folder_id, shouldAutoLock, vaultId | ✅ done 2026-08-17 |
-| B2 | Folder filter chip UI | ✅ done 2026-08-17 (metadata-compile green; on-device verify pending APK build) |
-| B3 | Sync lifecycle wiring: pull-on-foreground (`on_foreground`), push-after-CRUD (`on_mutation`) | ⏳ next — runtime events exist, mobile glue pending |
-| B4 | Conflict resolution UI in Compose (`getPendingConflictDetails` + `resolveConflict`) | ⏳ FFI done, UI pending |
-| B5 | Biometric unlock (stubs return false; `unlock_with_kek` path) | ⏳ |
-| B6 | Auto-lock wiring (`shouldAutoLock` exposed) | ⏳ |
-| B7 | Material 3 brand theme + unit/snapshot tests | ⏳ |
+| Wave / Phase | Work | State |
+|---|---|---|
+| Phase 0 | Architecture split: `baluard-runtime` + `baluard-uniffi` extraction | ✅ done |
+| Phase 1 | Foundation: UniFFI bindings, Android scaffold, SecureFlag, Biometric stubs | ✅ done |
+| Phase 2 | Core Flows: Auth, VaultList, Detail, Edit (all 8 types), Generator, TOTP | ✅ done |
+| Phase 3 | Sync Lifecycle: on_foreground pull, on_mutation push, sync indicator | ✅ done |
+| Phase 4 | Edge Cases: ConflictResolutionPanel, multi-vault switcher, settings | ✅ done |
+| Phase 5 | Release Polish: Material 3 brand theme, R8 rules, unit tests | ✅ done |
+| Phase 6 | Android Autofill Service (`AutofillService`, dataset provider, manual fallback) | ⏳ next |
 
-Blocked on host (needs macOS + Android SDK/NDK): APK/iOS builds, CI. Rust side compiles on host.
-
-Runtime Phase 0 extraction + Task #2 (event-method surface on `AutoSyncHandle`) are DONE and verified (2026-07-23) — do not re-explore. Docs: `docs/plan-mobile-apps.md` (phases + acceptance checkboxes), `docs/plan-mobile-onboarding.md`.
+Docs: `docs/plan-mobile-apps.md`, `docs/plan-mobile-onboarding.md`, `mobile/README.md`.
 
 ---
 
@@ -36,7 +34,7 @@ Runtime Phase 0 extraction + Task #2 (event-method surface on `AutoSyncHandle`) 
 
 ## Current Status
 
-Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done**. **Mobile: onboarding (create + provider flows), vault list w/ filters, detail + edit for all 8 cipher types, generator, TOTP, settings — all scaffolded structure-complete, host-build verification pending**.
+Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done**. **Mobile: Android Phases 0-5 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build). Phase 6 Autofill next**.
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
@@ -106,10 +104,10 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | Toast notifications | Done | toastSignal.js standalone signals. All user feedback via toasts |
 | Favicons | Done | Opt-in persisted website icons (`favicon` cipher field). Fetched at save time. 16KB cap + magic-byte check + default-off. `desktop/src/lib/cipherSchema.js` + `Avatar`/`CipherRow` chip treatment |
 | App icons | Done | `just app-icons SOURCE OUT` builds 48/128 PNG variants from brand logo for all platforms (macOS/Windows/Linux/Android/iOS + tray monochrome + system tray). `desktop/src-tauri/icons/` |
-| Vault detach | Done | UI: `DetachVaultModal` in `VaultSwitcher` dropdown (safe detach only — drops registry entry). Destructive arm (`delete_from_disk`) NOT exposed in UI; CLI-only via `baluard vaults detach <slug> --delete-from-disk` (slug retyping + `.baluard` marker check). `vaults.detach` daemon route still supports both for the CLI caller |
+| Vault detach | Done | UI: `DetachVaultModal` in `VaultSwitcher` dropdown (safe detach only: drops registry entry). Destructive arm (`delete_from_disk`) NOT exposed in UI; CLI-only via `baluard vaults detach <slug> --delete-from-disk` (slug retyping + `.baluard` marker check). `vaults.detach` daemon route still supports both for the CLI caller |
 | Browser extension Phase 0+1 | Done | NMH binary + bridge module + paired-companion pairing flow. `bridge.pair_start` (desktop-initiated, token-gated, one-shot pending approval) + `bridge.pair_complete` (held pending Approve click in desktop UI). Scoped bridge token (`TokenKind::Bridge { pairing_id }`) on host registry; allowlist (no `vault.list_full`, no `vault.delete`, no `settings.*`, no `passkey.*`, no `sync.*` mutations). Per-`pairing_id` rate cap on `bridge.match`+`vault.get`. Top-frame-only content script, popup-driven fill (no auto-fill on load). See `docs/plan-browser-extension.md` |
 | Sync header refactor | Done | One-click sync UI replaces git jargon. Sidebar header shows provider + repo link (`cc09c51`). `AutoSyncIndicator` shows status pill (idle/syncing/dirty/offline). Sync label gated with `Show` inside `Transition` to silence background pulls. Provider state scoped to active vault (`58016d4`) |
-| Conflict resolution panel (UI) | Done | Top-floating slide-down panel (`ConflictResolutionPanel.jsx`) driven by `ConflictResolutionContext.jsx`. **Phase 2 backend wired (2026-07-02)**: engine seam (`run_sync_cycle_with_resolver`, `NeedsDecision`, `finalize_conflicts`), daemon decrypt + `merge_ciphers` (`conflict_decrypt_and_merge`), `keep_both` (`conflict_resolve_keep_both`), frontend real IPC (`conflictFlow.js`, AutoSyncContext poll). F1 auto-merges (no prompt); F2/F3/F4 surface the panel. Cross-epoch decrypt failure bails to keep-local raw blob with a UI flag. See `docs/plan-conflict-resolution-panel.md` | |
+| Conflict resolution panel (UI) | Done | Top-floating slide-down panel (`ConflictResolutionPanel.jsx`) driven by `ConflictResolutionContext.jsx`. **Phase 2 backend wired (2026-07-02)**: engine hook (`run_sync_cycle_with_resolver`, `NeedsDecision`, `finalize_conflicts`), daemon decrypt + `merge_ciphers` (`conflict_decrypt_and_merge`), `keep_both` (`conflict_resolve_keep_both`), frontend real IPC (`conflictFlow.js`, AutoSyncContext poll). F1 auto-merges (no prompt); F2/F3/F4 surface the panel. Cross-epoch decrypt failure bails to keep-local raw blob with a UI flag. See `docs/plan-conflict-resolution-panel.md` |
 | Orgs | Done | Team/org sharing. HPKE key wrapping. Auto-rekey on member removal |
 | Emergency access | Done | Break-glass access. Pre-wrapped Root Key. Advisory time gate |
 | Providers | Done | GitHub (device flow) / GitLab (device flow + 2h refresh) / Codeberg (web-OAuth PKCE) adapters. OAuth + PAT fallback. Advanced Options for self-hosted + user-owned apps. Auto-create vault repo |
@@ -219,9 +217,9 @@ All items not yet implemented. Focus: core, CLI, daemon, desktop only.
 | **Phase 1** | Slug + .baluard marker + vault registry + multi-vault CLI | **Done** |
 | **Phase 2** | Provider trait + GitHub auth (device flow + PAT) + keyring + daemon routes | **Done** |
 | **Phase 3** | GitHub repo operations + first sync + credential wiring | **Done** |
-| Phase 4 | Remote vault clone + three-button wizard — **implemented**. `vault.clone_start/progress/finalize` daemon job flow (host-level, pre-unlock, NOT token-gated) + `SyncEngine::clone_remote` (provider-hinted creds + git2 `transfer_progress` -> live `CloneProgress`). CLI `baluard sync clone <provider> <repo>` (daemon-only). Desktop: `WelcomeScreen` (new vault / open local / download from provider) + `CloneFromProviderScreen` (provider pick -> auth -> `provider.vault_repos` list -> clone w/ progress bar -> master-pw unlock). `vaults.register_local` route (open-local, no copy). `provider.repos`/`vault_repos` un-gated (sentinel-safe, pre-unlock). 2FA warning banner (dismissible, per-provider). Orphan-dir cleanup on clone failure. `tauri-plugin-dialog` for the dir picker. Core + JS tests (clone progress, unreachable source, poll/finalize, failure path). | **Done** |
+| Phase 4 | Remote vault clone + three-button wizard: **implemented**. `vault.clone_start/progress/finalize` daemon job flow (host-level, pre-unlock, NOT token-gated) + `SyncEngine::clone_remote` (provider-hinted creds + git2 `transfer_progress` -> live `CloneProgress`). CLI `baluard sync clone <provider> <repo>` (daemon-only). Desktop: `WelcomeScreen` (new vault / open local / download from provider) + `CloneFromProviderScreen` (provider pick -> auth -> `provider.vault_repos` list -> clone w/ progress bar -> master-pw unlock). `vaults.register_local` route (open-local, no copy). `provider.repos`/`vault_repos` un-gated (sentinel-safe, pre-unlock). 2FA warning banner (dismissible, per-provider). Orphan-dir cleanup on clone failure. `tauri-plugin-dialog` for the dir picker. Core + JS tests (clone progress, unreachable source, poll/finalize, failure path). | **Done** |
 | **Phase 5** | GitLab (device flow + PAT + 2h refresh) + Codeberg (web-OAuth PKCE + PAT) providers | **Done** |
-| **Phase 6** | Vault switching + CLI polish — **implemented**. Keep-unlocked/switch-pointer model: daemon holds `RwLock<VaultHostInner>` with `HashMap<String, Arc<VaultState>>` + `active` pointer (one critical section). Switch = pointer flip (no zeroization, no token change). Per-vault session tokens. `vaults.list/switch/active/close/set_active` routes. `vault.unlock` returns `{slug, token}`. Single auto-lock checker walks the map. 11 integration tests pass. Lock-all on `Tauri WindowEvent::Focused(false)` (frontend token cache clear + focus-regain refresh); OS suspend / screen-lock / lid-close hooks documented as follow-up (macOS NSWorkspace, Linux login1 D-Bus PrepareForSleep, Windows WM_POWERBROADCAST/SessionSwitch). | **Done** |
+| **Phase 6** | Vault switching + CLI polish: **implemented**. Keep-unlocked/switch-pointer model: daemon holds `RwLock<VaultHostInner>` with `HashMap<String, Arc<VaultState>>` + `active` pointer (one critical section). Switch = pointer flip (no zeroization, no token change). Per-vault session tokens. `vaults.list/switch/active/close/set_active` routes. `vault.unlock` returns `{slug, token}`. Single auto-lock checker walks the map. 11 integration tests pass. Lock-all on `Tauri WindowEvent::Focused(false)` (frontend token cache clear + focus-regain refresh); OS suspend / screen-lock / lid-close hooks documented as follow-up (macOS NSWorkspace, Linux login1 D-Bus PrepareForSleep, Windows WM_POWERBROADCAST/SessionSwitch). | **Done** |
 | Provider selection UI | Desktop SyncTab: device-flow (GitHub/GitLab) + web-OAuth (Codeberg) + PAT under Advanced Options | **Done** |
 | Sync header refactor | One-click sync UI replaces git jargon. Sidebar header shows provider + repo link (`cc09c51`). `AutoSyncIndicator` status pill (idle/syncing/dirty/offline). Sync label gated with `Show` inside `Transition` to silence background pulls. Provider state scoped to active vault (`58016d4`). | **Done** |
 | Vault detach | UI: `DetachVaultModal` in `VaultSwitcher` dropdown (safe detach only). Destructive arm (`delete_from_disk`) NOT exposed in UI; CLI-only via `baluard vaults detach <slug> --delete-from-disk`. `vaults.detach` daemon route still supports both | **Done** |
@@ -382,7 +380,7 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 | `attach-*` | Daemon | Attachment upload/download/delete/list |
 | `devices {list\|revoke\|info\|rotation-status\|rotation-abort\|enroll-with-phrase}` | Direct/Daemon | Device fleet |
 | `passkey {list\|delete\|rename}` | Daemon | FIDO2 passkey management |
-| `vaults {list\|switch\|close\|set-default\|detach\|prune}` | Daemon | Multi-vault CLI |
+| `vaults {list\|switch\|close\|set-default\|add\|detach\|prune}` | Daemon | Multi-vault CLI |
 | `provider {list\|connect\|disconnect\|repos\|vault-repos\|status}` | Daemon | Git provider ops |
 | `ssh-key` | Daemon | SSH key generation |
 | `biometric {enable\|disable\|status}` | Daemon | Per-vault biometric quick-unlock |
@@ -410,10 +408,14 @@ baluard/
 │   │                                 # import/ + providers/{codeberg,github,gitlab,mod,token,types}.rs
 │   │                                 # bridge/{mod,pairing,token}.rs
 │   │                                 # biometric.rs, device_manager.rs, devices.rs, emergency.rs, health.rs, integrity.rs, orgs.rs, recovery.rs, paths.rs, types.rs, error.rs, lib.rs
+│   ├── baluard-runtime/            # Shared vault-session runtime (hosted in-process by daemon, NMH, mobile)
+│   │   └── src/                    # host.rs, state.rs, autosync.rs, pin.rs, bridge.rs, rate_limit.rs, providers.rs, crypto.rs, lib.rs
+│   ├── baluard-uniffi/             # UniFFI bindings consumed by mobile/shared (Kotlin Multiplatform)
+│   │   └── src/                    # lib.rs, baluard.udl
 │   ├── baluard-cli/                # Terminal CLI (daemon-first + --direct fallback)
 │   │   └── src/                    # main.rs, client.rs, commands/mod.rs (~112K)
-│   ├── baluard-daemon/             # IPC daemon (Unix socket, Protobuf, VaultHost multi-vault, auto-sync, auto-lock, TOTP, attachments, biometric, PIN, bridge, SSH key gen)
-│   │   └── src/                    # main.rs, handler.rs (~72 routes), state.rs, host.rs, autosync.rs, pin.rs, bridge.rs, rate_limit.rs, socket_path.rs, crypto.rs, lib.rs
+│   ├── baluard-daemon/             # IPC daemon shell (Unix socket, Protobuf gateway, 0600 perms)
+│   │   └── src/                    # main.rs, handler.rs, socket_path.rs, lib.rs
 │   └── baluard-nmh/                # Native messaging host (browser extension bridge). stdio-JSON <-> varint-protobuf. Stateless
 ├── desktop/                      # Tauri v2 Desktop (SolidJS/Tailwind)
 │   ├── src-tauri/                  # Rust backend: daemon sidecar, baluard-nmh sidecar, tray, proto codegen
@@ -421,13 +423,15 @@ baluard/
 │   │   ├── components/         # 38 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, WelcomeScreen, CloneFromProviderScreen, BridgeTab, ConflictBanner, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, VaultSwitcher, AutoSyncIndicator, DeviceFleetPanel, SyncTab, SettingsModal, ...)
 │   │   ├── context/             # AuthContext.jsx, VaultContext.jsx, VaultSwitcherContext.jsx, AutoSyncContext.jsx, ConflictResolutionContext.jsx, themeSignal.js, toastSignal.js
 │   │   ├── lib/                 # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
-│   │   ├── __tests__/           # vitest tests (~117 cases: payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
+│   │   ├── __tests__/           # vitest tests (229 cases across 19 test files)
 │   │   └── i18n/locales/        # en.json, es.json (all user-facing strings)
 ├── browser/                      # MV3 Browser extensions (Chromium + Firefox, shared codebase)
-│   ├── shared/                    # 95% of code (popup SolidJS, service worker, content script, nmh wrapper, autofill, pair)
+│   ├── shared/                    # 95% of code (popup SolidJS, service worker, content script, nmh wrapper, autofill, pair, 96 vitest tests)
 │   ├── chrome/                    # Chrome MV3 wrapper
 │   └── firefox/                   # Firefox MV3 wrapper
-├── mobile/                       # Kotlin Multiplatform app (Compose UI, UniFFI bindings, onboarding + list/filter + detail + edit + generator + TOTP + settings screens, i18n EN/ES; debug APK builds on macOS host)
+├── mobile/                       # Kotlin Multiplatform app (Compose Multiplatform UI, baluard-uniffi bindings; Phases 0-5 implemented, Phase 6 Autofill next)
+│   ├── shared/                    # commonMain (UI + ViewModels + VaultRepository), androidMain, iosMain
+│   └── androidApp/                # Android entry point, resources, R8 release build
 ├── docs/                         # Architecture & design docs (index, arch, decisions, plans, PRDs, threat model, 2fa, post-quantum, brand, app icons)
-└── justfile                      # Build system (`just` recipes for build, test, lint, fmt, desktop, ext-*, app-icons, build-nmh, install-nmh-manifest, codesign)
+└── justfile                      # Build system (`just` recipes for build, test, lint, fmt, desktop, ext-*, android-*, app-icons, build-nmh, install-nmh-manifest, codesign)
 ```

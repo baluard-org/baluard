@@ -2,26 +2,41 @@
 
 Compose Multiplatform (Android + iOS) client for Baluard.
 
-**Status: Phase 1 scaffold (UNTESTED).** The Rust FFI surface is proven (see the Phase 1 spike log in `docs/plan-mobile-apps.md`). The Kotlin/Gradle code here is blind scaffold — compile it on a macOS host per `docs/mobile-dev-setup.md`.
+# Baluard mobile
+
+Compose Multiplatform (Android + iOS) client for Baluard.
+
+**Status: Android Phases 0-5 implemented.** The Rust FFI layer, Kotlin ViewModels, and Compose UI are complete and verified. Verification on host builds includes Kotlin metadata compile and Android packaging via `just android-apk`. Phase 6 (Android Autofill Service) and iOS credential extension are next.
 
 ## Structure
 
-- `shared/` — KMP module: Compose UI + `VaultRepository` (wraps UniFFI bindings)
-- `androidApp/` — Android shell (single-Activity Compose host)
-- `iosApp/` — iOS shell (create the Xcode project on-host; sources only in-repo)
+- `shared/`: KMP module with Compose UI, ViewModels, `VaultRepository`, and generated UniFFI bindings
+- `androidApp/`: Android host application (single-Activity Compose host, adaptive icons, Proguard/R8 rules)
+- `scripts/`: Binding generation and helper scripts (`regen-bindings.sh`)
 
 ## Build
 
-See [`docs/mobile-dev-setup.md`](../docs/mobile-dev-setup.md).
+See [`docs/mobile-dev-setup.md`](../docs/mobile-dev-setup.md) for full prerequisites (Android SDK/NDK, OpenJDK 17) and environment setup.
 
-## What works today
+```bash
+just android-apk          # Build release Android APK
+just android-apk-fast     # Build debug Android APK
+just android-bindings     # Regenerate UniFFI bindings
+```
 
-- `crates/baluard-uniffi/` compiles, links `baluard-core` + `baluard-runtime`, exports FFI symbols.
-- `generate_recovery_phrase()`, `derive_kek()`, `mobile_version()` cross the FFI boundary (2 unit tests pass).
-- The async-runtime bridge (tokio + uniffi 0.28 + runtime) compiles and runs.
+## Implemented Features
 
-## What needs the host
+- **Onboarding**: Create new vault with BIP-39 recovery phrase, or connect to Git providers (GitHub, GitLab, Codeberg) to clone and enroll devices.
+- **Home Hub**: Categorized vault hub with lock state badge, cipher type badges, count pills, tags list, and vault switch bar.
+- **Vault Views**: Filtered entry lists (all items, favorites, folders, tags), detail view, and editing for all 8 cipher types.
+- **Tools**: Password and passphrase generator, TOTP generator widget with boundary-aligned refresh.
+- **Security**: Biometric unlock via BiometricPrompt ceremony, auto-lock on timer and backgrounding, screenshot protection toggle, and clipboard auto-clear.
+- **Sync & Conflict**: Manual sync button with explicit progress phases, pull-on-unlock, push-after-mutation, and inline conflict resolution panel.
+- **Multi-Vault**: Owner-prefixed vault slugs, per-vault clone directories, and home switch bar.
+- **i18n**: English and Spanish translations.
 
-- APK build (Android NDK)
-- iOS sim app + credential-extension linking (Xcode)
-- UniFFI Kotlin binding generation (0.28 has no standalone bindgen binary)
+## Pending Work
+
+- Android Autofill Service (Phase 6)
+- iOS AutoFill Credential Provider extension (Phase 7)
+- Play Store and App Store packaging

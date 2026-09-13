@@ -143,12 +143,7 @@ fun VaultHomeScreen(
                                 ),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp),
-                            )
+                            BaluardBrandLock(modifier = Modifier.size(16.dp))
                         }
                         Spacer(Modifier.width(10.dp))
                         Text(
