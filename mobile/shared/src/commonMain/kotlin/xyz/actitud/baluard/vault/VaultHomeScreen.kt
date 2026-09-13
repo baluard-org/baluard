@@ -143,7 +143,7 @@ fun VaultHomeScreen(
                                 ),
                             contentAlignment = Alignment.Center,
                         ) {
-                            BaluardBrandLock(modifier = Modifier.size(16.dp))
+                            BaluardBrandLock(modifier = Modifier.size(18.dp))
                         }
                         Spacer(Modifier.width(10.dp))
                         Text(
@@ -182,7 +182,7 @@ fun VaultHomeScreen(
                     .fillMaxWidth()
                     // Distinct from both the surface header and the page
                     // background — same token family as the cards.
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     .clickable { switchOpen = true }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
