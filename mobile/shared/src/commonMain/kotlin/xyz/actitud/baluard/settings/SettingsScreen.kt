@@ -24,7 +24,10 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -34,8 +37,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +52,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
+import xyz.actitud.baluard.data.VaultRepository
+import xyz.actitud.baluard.data.vaultTimeoutLabel
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.sync.SyncCoordinator
 import xyz.actitud.baluard.ui.components.BaluardCard
@@ -61,6 +69,8 @@ fun SettingsScreen(
     vault: MobileVault,
     coordinator: SyncCoordinator,
     viewModel: SettingsViewModel,
+    vaultTimeoutToken: String,
+    onVaultTimeoutChange: (String) -> Unit,
     onBack: () -> Unit = {},
 ) {
     val config by viewModel.config.collectAsState()
@@ -214,6 +224,45 @@ fun SettingsScreen(
                 ToggleRow(t("settings.wifiOnly"), config.wifiOnly) {
                     viewModel.setWifiOnly(it)
                 }
+            }
+
+            // Security Section
+            SectionCard(title = t("settings.security")) {
+                var autoLockMenu by remember { mutableStateOf(false) }
+                Text(
+                    t("settings.autoLock"),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { autoLockMenu = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(t(vaultTimeoutLabel(vaultTimeoutToken)))
+                    }
+                    DropdownMenu(
+                        expanded = autoLockMenu,
+                        onDismissRequest = { autoLockMenu = false },
+                    ) {
+                        VaultRepository.vaultTimeoutPresets.forEach { preset ->
+                            DropdownMenuItem(
+                                text = { Text(t(preset.labelKey)) },
+                                onClick = {
+                                    autoLockMenu = false
+                                    onVaultTimeoutChange(preset.token)
+                                },
+                            )
+                        }
+                    }
+                }
+                Text(
+                    t("settings.autoLockHint"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
             }
 
             // About & Architecture Section

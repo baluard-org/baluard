@@ -34,6 +34,16 @@ class MainActivity : FragmentActivity() {
         setContent { App() }
     }
 
+    override fun onPause() {
+        super.onPause()
+        xyz.actitud.baluard.platform.AppBackground.pause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        xyz.actitud.baluard.platform.AppBackground.resume()
+    }
+
     override fun onDestroy() {
         AppContextHolder.clearActivity(this)
         super.onDestroy()

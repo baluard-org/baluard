@@ -3,6 +3,9 @@ package xyz.actitud.baluard.data
 import xyz.actitud.baluard.MobileCipherMeta
 import xyz.actitud.baluard.MobileCreateResult
 import xyz.actitud.baluard.MobileVault
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import xyz.actitud.baluard.generateRecoveryPhrase
 import xyz.actitud.baluard.MobileRecoveryPhrase
 import xyz.actitud.baluard.openVault as uniffiOpenVault
@@ -128,4 +131,56 @@ class VaultRepository {
         recoveryPhrase: String,
         deviceName: String,
     ): MobileVault = uniffiEnrollDeviceWithPhrase(vaultPath, masterPassword, recoveryPhrase, deviceName)
+
+    /** Persist the vault auto-lock timeout token. */
+    suspend fun setVaultTimeout(vault: MobileVault, token: String) {
+        vault.setSettings("""{"vault_timeout": "$token"}""")
+    }
+
+    companion object {
+        const val DEFAULT_VAULT_TIMEOUT = "15m"
+
+        /** Auto-lock presets (mirrors baluard-core VaultTimeout wire tokens). */
+        val vaultTimeoutPresets = listOf(
+            VaultTimeoutPreset("immediately", 0L, "settings.autoLock.immediately"),
+            VaultTimeoutPreset("1m", 1L, "settings.autoLock.1m"),
+            VaultTimeoutPreset("5m", 5L, "settings.autoLock.5m"),
+            VaultTimeoutPreset("10m", 10L, "settings.autoLock.10m"),
+            VaultTimeoutPreset("15m", 15L, "settings.autoLock.15m"),
+            VaultTimeoutPreset("30m", 30L, "settings.autoLock.30m"),
+            VaultTimeoutPreset("1h", 60L, "settings.autoLock.1h"),
+            VaultTimeoutPreset("4h", 240L, "settings.autoLock.4h"),
+            VaultTimeoutPreset("on_app_exit", null, "settings.autoLock.onAppExit"),
+        )
+    }
 }
+
+/** Vault auto-lock preset (wire token + minutes + i18n label key). */
+data class VaultTimeoutPreset(
+    val token: String,
+    val minutes: Long?,
+    val labelKey: String,
+)
+
+/** Minutes for a token; null = never auto-lock (on_app_exit). */
+fun vaultTimeoutMinutes(token: String): Long? =
+    VaultRepository.vaultTimeoutPresets.firstOrNull { it.token == token }?.minutes
+
+/** Helper: read + normalize the vault auto-lock timeout token. */
+suspend fun vaultTimeoutToken(vault: MobileVault): String {
+    val json = runCatching { vault.getSettings() }.getOrNull()
+        ?: return VaultRepository.DEFAULT_VAULT_TIMEOUT
+    val raw = runCatching {
+        kotlinx.serialization.json.Json.parseToJsonElement(json)
+            .jsonObject["vault_timeout"]?.jsonPrimitive?.content
+    }.getOrNull()
+    return VaultRepository.vaultTimeoutPresets
+        .firstOrNull { it.token == raw?.trim()?.lowercase() }?.token
+        ?: VaultRepository.DEFAULT_VAULT_TIMEOUT
+}
+
+
+/** i18n label key for a timeout token. */
+fun vaultTimeoutLabel(token: String): String =
+    VaultRepository.vaultTimeoutPresets.firstOrNull { it.token == token }?.labelKey
+        ?: "settings.autoLock.15m"
