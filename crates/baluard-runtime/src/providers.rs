@@ -203,6 +203,16 @@ pub fn clone_and_register(
         .into());
     }
 
+    // Never clobber an existing vault directory: if the target holds a
+    // .baluard marker it is a real vault and a caller bug got us here.
+    if local_path.join(".baluard").exists() {
+        let _ = std::fs::remove_dir_all(&partial_path);
+        return Err(VaultError::Metadata(
+            "clone target already contains a vault; refusing to overwrite".into(),
+        )
+        .into());
+    }
+
     if local_path.exists() {
         let _ = std::fs::remove_dir_all(local_path);
     }

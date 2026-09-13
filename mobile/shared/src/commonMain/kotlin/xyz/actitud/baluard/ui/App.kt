@@ -45,6 +45,7 @@ import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.onboarding.ProviderFlowViewModel
 import xyz.actitud.baluard.onboarding.RepoPickerScreen
 import xyz.actitud.baluard.platform.AppPaths
+import xyz.actitud.baluard.platform.VaultRegistry
 import xyz.actitud.baluard.ui.components.ConflictResolutionPanel
 import xyz.actitud.baluard.ui.theme.BaluardTheme
 import xyz.actitud.baluard.vault.EntryListKind
@@ -121,6 +122,8 @@ fun App(vaultPath: String? = null) {
         var homeSyncPhase by remember { mutableStateOf("idle") }
         var listSyncPhase by remember { mutableStateOf("idle") }
         var detailOrigin by remember { mutableStateOf<Nav?>(null) }
+        // Clone-in-progress target: chosen at repo pick, consumed at enroll.
+        var pendingVaultPath by remember { mutableStateOf<String?>(null) }
 
         var showCreate by remember { mutableStateOf(false) }
         var showOpen by remember { mutableStateOf(false) }
@@ -385,6 +388,14 @@ fun App(vaultPath: String? = null) {
                                     vaultName = vaultDisplayName,
                                     vaultPath = path,
                                     onSwitchVault = switchVault,
+                                    onAddVault = {
+                                        // Stage flip only — the current vault
+                                        // stays unlocked so cancel returns to
+                                        // it without re-auth.
+                                        unlocked = false
+                                        showOpen = true
+                                        nav = Nav.List
+                                    },
                                     revision = saveRevision,
                                 )
 
@@ -449,8 +460,21 @@ fun App(vaultPath: String? = null) {
                                     authViewModel = auth,
                                     onVaultRemoved = {
                                         auth.forget()
+                                        // Prefer another discovered vault over
+                                        // onboarding when one exists on disk.
+                                        val others = runCatching {
+                                            VaultRegistry.listVaults()
+                                        }.getOrDefault(emptyList())
+                                        val next = others.firstOrNull { it.path != path }
+                                        if (next != null) {
+                                            VaultRegistry.saveActiveVault(next.path)
+                                            path = next.path
+                                            hasVault = true
+                                        } else {
+                                            VaultRegistry.saveActiveVault("")
+                                            hasVault = false
+                                        }
                                         unlocked = false
-                                        hasVault = false
                                         nav = Nav.List
                                     },
                                     repo = repo,
@@ -505,11 +529,17 @@ fun App(vaultPath: String? = null) {
 
                                 stage is ProviderFlowViewModel.Stage.Enroll -> EnrollDeviceScreen(
                                     vm = flowVm,
-                                    vaultPath = path,
+                                    vaultPath = pendingVaultPath ?: path,
                                     onEnrolled = {
-                                        hasVault = true
+                                        // Switch to the freshly enrolled vault.
+                                        pendingVaultPath?.let { target ->
+                                            path = target
+                                            VaultRegistry.saveActiveVault(target)
+                                        }
+                                        hasVault = AppPaths.vaultExists(path)
                                         showOpen = false
                                         unlocked = true
+                                        pendingVaultPath = null
                                     },
                                     onCancelled = { flowVm.backToRepos() },
                                 )
@@ -517,7 +547,14 @@ fun App(vaultPath: String? = null) {
                                 repos != null || stage is ProviderFlowViewModel.Stage.Cloning -> RepoPickerScreen(
                                     vm = flowVm,
                                     repos = (repos?.repos ?: flowVm.repos),
-                                    vaultPath = path,
+                                    targetPathFor = { repo ->
+                                        // Fresh directory per vault; remembered
+                                        // so enrollment lands in the same one.
+                                        AppPaths.nextVaultPath(
+                                            repo.fullName.substringBefore('/'),
+                                            repo.name,
+                                        ).also { pendingVaultPath = it }
+                                    },
                                     onCloneDone = { },
                                     onCancelled = { flowVm.backToPickProvider() },
                                 )
