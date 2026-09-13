@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Password
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,8 +53,10 @@ import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.detail.normalizeTypeTag
 import xyz.actitud.baluard.detail.typeLabelKey
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
 import xyz.actitud.baluard.ui.components.CipherRowCard
+import xyz.actitud.baluard.ui.components.SectionCard
 import xyz.actitud.baluard.ui.components.SyncIconButton
 
 /**
@@ -60,6 +64,7 @@ import xyz.actitud.baluard.ui.components.SyncIconButton
  * shows sectioned jump-off points — TOTP, Favorites (inline entries), Types,
  * Folders, Tags, and Hidden items (Archive/Trash) — each with live counts.
  * Search overrides the hub with flat results across active entries.
+ * Sections use the app's boxed SectionCard language (Settings parity).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -182,16 +187,27 @@ fun VaultHomeScreen(
             }
 
             // ── TOTP ──
-            HomeSectionHeader(t("home.totp"), totp.size)
-            HomeRow(
-                label = t("home.totpRow"),
-                count = totp.size,
-                icon = Icons.Default.Timer,
-                onClick = { onOpenKind(EntryListKind.Totp) },
-            )
+            SectionCard(
+                title = "${t("home.totp")} (${totp.size})",
+                modifier = Modifier.padding(horizontal = 16.dp),
+            ) {
+                SectionLinkRow(
+                    label = t("home.totpRow"),
+                    count = totp.size,
+                    onClick = { onOpenKind(EntryListKind.Totp) },
+                )
+            }
 
             // ── Favorites (entries inline, capped) ──
             HomeSectionHeader(t("home.favorites"), favorites.size)
+            if (favorites.isEmpty()) {
+                SectionCard(
+                    title = "",
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                ) {
+                    HubEmptyText(t("home.noneYet"))
+                }
+            }
             favorites.take(25).forEach { meta ->
                 CipherRowCard(
                     meta = meta,
@@ -203,64 +219,123 @@ fun VaultHomeScreen(
                 )
             }
             if (favorites.size > 25) {
-                HomeRow(
-                    label = t("home.viewAll", favorites.size),
-                    count = favorites.size,
-                    icon = null,
+                BaluardOutlinedButton(
+                    text = t("home.viewAll", favorites.size),
                     onClick = { onOpenKind(EntryListKind.Favorites) },
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .fillMaxWidth(),
                 )
             }
-            if (favorites.isEmpty()) HubEmptyText(t("home.noneYet"))
 
             // ── Types ──
-            HomeSectionHeader(t("home.types"), typeRows.size)
-            typeRows.forEach { (raw, count) ->
-                HomeRow(
-                    label = t(typeLabelKey(normalizeTypeTag(raw))),
-                    count = count,
-                    icon = null,
-                    onClick = { onOpenKind(EntryListKind.Type(raw)) },
-                )
+            SectionCard(
+                title = "${t("home.types")} (${typeRows.size})",
+                modifier = Modifier.padding(horizontal = 16.dp),
+            ) {
+                typeRows.forEachIndexed { index, (raw, count) ->
+                    SectionLinkRow(
+                        label = t(typeLabelKey(normalizeTypeTag(raw))),
+                        count = count,
+                        onClick = { onOpenKind(EntryListKind.Type(raw)) },
+                    )
+                    if (index < typeRows.size - 1) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        )
+                    }
+                }
             }
 
             // ── Folders ──
-            HomeSectionHeader(t("home.folders"), folders.size)
-            folders.sortedBy { it.name.lowercase() }.forEach { folder ->
-                val count = ciphers.count { it.folderId == folder.id }
-                HomeRow(
-                    label = folder.name,
-                    count = count,
-                    icon = null,
-                    onClick = { onOpenKind(EntryListKind.Folder(folder.id)) },
-                )
+            SectionCard(
+                title = "${t("home.folders")} (${folders.size})",
+                modifier = Modifier.padding(horizontal = 16.dp),
+            ) {
+                val sorted = folders.sortedBy { it.name.lowercase() }
+                sorted.forEachIndexed { index, folder ->
+                    val count = ciphers.count { it.folderId == folder.id }
+                    SectionLinkRow(
+                        label = folder.name,
+                        count = count,
+                        onClick = { onOpenKind(EntryListKind.Folder(folder.id)) },
+                    )
+                    if (index < sorted.size - 1) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        )
+                    }
+                }
             }
 
             // ── Tags ── (single row: opens the tag list, like TOTP)
-            HomeSectionHeader(t("home.tags"), tagCounts.size)
-            HomeRow(
-                label = t("home.allTags"),
-                count = tagCounts.size,
-                icon = null,
-                onClick = onOpenTags,
-            )
+            SectionCard(
+                title = "${t("home.tags")} (${tagCounts.size})",
+                modifier = Modifier.padding(horizontal = 16.dp),
+            ) {
+                SectionLinkRow(
+                    label = t("home.allTags"),
+                    count = tagCounts.size,
+                    onClick = onOpenTags,
+                )
+            }
 
             // ── Hidden items ──
-            HomeSectionHeader(t("home.hidden"), archived.size + trash.size)
-            HomeRow(
-                label = t("home.archive"),
-                count = archived.size,
-                icon = null,
-                onClick = { onOpenKind(EntryListKind.Archive) },
-            )
-            HomeRow(
-                label = t("home.trash"),
-                count = trash.size,
-                icon = null,
-                onClick = { onOpenKind(EntryListKind.Trash) },
-            )
+            SectionCard(
+                title = "${t("home.hidden")} (${archived.size + trash.size})",
+                modifier = Modifier.padding(horizontal = 16.dp),
+            ) {
+                SectionLinkRow(
+                    label = t("home.archive"),
+                    count = archived.size,
+                    onClick = { onOpenKind(EntryListKind.Archive) },
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                )
+                SectionLinkRow(
+                    label = t("home.trash"),
+                    count = trash.size,
+                    onClick = { onOpenKind(EntryListKind.Trash) },
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+/** Tap-through row inside a SectionCard: label + count + chevron. */
+@Composable
+private fun SectionLinkRow(label: String, count: Int, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(6.dp))
+        Icon(
+            imageVector = Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
@@ -304,49 +379,12 @@ private fun HomeSectionHeader(label: String, count: Int) {
 }
 
 @Composable
-private fun HomeRow(
-    label: String,
-    count: Int,
-    icon: androidx.compose.ui.graphics.vector.ImageVector?,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (icon != null) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(12.dp))
-        }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = count.toString(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
 private fun HubEmptyText(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
     )
 }
 
@@ -396,8 +434,19 @@ fun TagListScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState()),
         ) {
-            counts.forEach { (tag, count) ->
-                HomeRow(label = tag, count = count, icon = null, onClick = { onTag(tag) })
+            SectionCard(
+                title = t("home.tags"),
+                modifier = Modifier.padding(horizontal = 16.dp),
+            ) {
+                counts.forEachIndexed { index, (tag, count) ->
+                    SectionLinkRow(label = tag, count = count, onClick = { onTag(tag) })
+                    if (index < counts.size - 1) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        )
+                    }
+                }
             }
         }
     }
