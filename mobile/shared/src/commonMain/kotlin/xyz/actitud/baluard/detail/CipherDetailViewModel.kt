@@ -193,12 +193,21 @@ internal fun formatEpochDate(epochSeconds: Long): String {
     val d = doy - (153 * mp + 2) / 5 + 1
     val m = if (mp < 10) mp + 3 else mp - 9
     val year = if (m <= 2) y + 1 else y
-    return "%04d-%02d-%02d".format(year, m, d)
+    val yStr = year.toString().padStart(4, '0')
+    val mStr = m.toString().padStart(2, '0')
+    val dStr = d.toString().padStart(2, '0')
+    return "$yStr-$mStr-$dStr"
 }
 
 /** Human byte size (B / KB / MB), one decimal below 10. */
 internal fun formatBytes(bytes: Long): String = when {
-    bytes >= 1_048_576 -> "%.1f MB".format(bytes / 1_048_576.0)
-    bytes >= 1024 -> "%.1f KB".format(bytes / 1024.0)
+    bytes >= 1_048_576 -> {
+        val mb10 = bytes * 10 / 1_048_576
+        "${mb10 / 10}.${mb10 % 10} MB"
+    }
+    bytes >= 1024 -> {
+        val kb10 = bytes * 10 / 1024
+        "${kb10 / 10}.${kb10 % 10} KB"
+    }
     else -> "$bytes B"
 }

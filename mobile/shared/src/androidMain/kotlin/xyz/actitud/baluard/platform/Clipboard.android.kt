@@ -34,8 +34,11 @@ private fun scheduleAutoClear(cm: android.content.ClipboardManager, ctx: Context
     if (seconds <= 0) return
     Handler(Looper.getMainLooper()).postDelayed({
         runCatching {
-            val current = cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString()
-            if (current == text) cm.clearPrimaryClip()
+            val clip = cm.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                val current = clip.getItemAt(0)?.coerceToText(ctx)?.toString()
+                if (current == text) cm.clearPrimaryClip()
+            }
         }.onFailure { platformLogE("Clipboard", "auto-clear failed", it) }
     }, seconds * 1000L)
 }

@@ -287,7 +287,7 @@ fun SettingsScreen(
                 // enable path — never a second password prompt here.
                 val biometric = remember { Biometric() }
                 if (biometric.isAvailable()) {
-                    var biometricEnrolled by remember { mutableStateOf(biometric.isEnrolled(vaultPath)) }
+                    var biometricEnrolled by remember(vaultPath) { mutableStateOf(biometric.isEnrolled(vaultPath)) }
                     var biometricBusy by remember { mutableStateOf(false) }
                     var confirmDisable by remember { mutableStateOf(false) }
 
@@ -312,7 +312,7 @@ fun SettingsScreen(
                         }
                         Switch(
                             checked = biometricEnrolled,
-                            enabled = !biometricBusy,
+                            enabled = !biometricBusy && (biometricEnrolled || authViewModel.sessionKek != null),
                             onCheckedChange = { want ->
                                 when {
                                     !want -> confirmDisable = true
