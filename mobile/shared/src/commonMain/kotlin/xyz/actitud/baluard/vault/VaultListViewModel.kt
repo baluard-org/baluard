@@ -36,6 +36,18 @@ class VaultListViewModel(private val repo: VaultRepository) {
     val folderFilter = MutableStateFlow<String?>(null)
 
     private val _folders = MutableStateFlow<List<MobileFolderInfo>>(emptyList())
+    private val _archived = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
+    private val _trash = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
+    private val _totp = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
+
+    /** Archived entries (Archive card). */
+    val archived: StateFlow<List<MobileCipherMeta>> = _archived.asStateFlow()
+
+    /** Trashed entries (Trash card). */
+    val trash: StateFlow<List<MobileCipherMeta>> = _trash.asStateFlow()
+
+    /** Entries with a TOTP seed (Authenticator card). */
+    val totp: StateFlow<List<MobileCipherMeta>> = _totp.asStateFlow()
     val folders: StateFlow<List<MobileFolderInfo>> = _folders.asStateFlow()
 
     val favoritesOnly = MutableStateFlow(false)
@@ -59,6 +71,49 @@ class VaultListViewModel(private val repo: VaultRepository) {
         }.onFailure {
             platformLogE("VaultList", "refresh failed", it)
         }
+        // Hub card sets. Each is best-effort: a failure leaves the previous
+        // (or empty) list instead of killing the caller.
+        _totp.value = runCatching { repo.listTotp(vault) }.getOrDefault(emptyList())
+        _archived.value = runCatching { repo.listArchived(vault) }.getOrDefault(emptyList())
+        _trash.value = runCatching { repo.listTrash(vault) }.getOrDefault(emptyList())
+    }
+
+    /** The slice for an [kind] entry list (already reactive via the flows). */
+    fun listFor(kind: EntryListKind): List<MobileCipherMeta> = when (kind) {
+        EntryListKind.All -> _ciphers.value
+        EntryListKind.Totp -> _totp.value
+        EntryListKind.Favorites -> _ciphers.value.filter { it.favorite }
+        is EntryListKind.Type -> _ciphers.value.filter { it.cipherType == kind.tag }
+        is EntryListKind.Folder -> _ciphers.value.filter { it.folderId == kind.id }
+        is EntryListKind.Tag -> _ciphers.value.filter { it.tags.contains(kind.tag) }
+        EntryListKind.Archive -> _archived.value
+        EntryListKind.Trash -> _trash.value
+    }
+
+    /** Reload just the TOTP slice. */
+    suspend fun loadTotp(vault: MobileVault) {
+        _totp.value = runCatching { repo.listTotp(vault) }.getOrDefault(emptyList())
+    }
+
+    /** Reload just the archived slice (after unarchive). */
+    suspend fun loadArchived(vault: MobileVault) {
+        _archived.value = runCatching { repo.listArchived(vault) }.getOrDefault(emptyList())
+        _ciphers.value = runCatching { repo.listCiphers(vault) }.getOrDefault(emptyList())
+    }
+
+    /** Reload just the trash slice (after restore). */
+    suspend fun loadTrash(vault: MobileVault) {
+        _trash.value = runCatching { repo.listTrash(vault) }.getOrDefault(emptyList())
+    }
+
+    suspend fun unarchive(vault: MobileVault, id: String) {
+        runCatching { repo.unarchiveCipher(vault, id) }
+        loadArchived(vault)
+    }
+
+    suspend fun restore(vault: MobileVault, id: String) {
+        runCatching { repo.restoreCipher(vault, id) }
+        loadTrash(vault)
     }
 
     /** Distinct tags across visible (non-archived) entries, for the chip row. */

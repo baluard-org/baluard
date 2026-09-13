@@ -33,6 +33,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Description
@@ -41,6 +43,8 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -765,6 +769,144 @@ fun CopyableFieldRow(
                     modifier = Modifier.size(18.dp),
                 )
             }
+        }
+    }
+}
+
+
+/**
+ * Row card for an entry in any list (home search results, filtered lists).
+ * [typeLabel] is the localized category label; [trailing] renders extra row
+ * actions (unarchive/restore) after the chevron.
+ */
+@Composable
+fun CipherRowCard(
+    meta: xyz.actitud.baluard.MobileCipherMeta,
+    typeLabel: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    trailing: @Composable () -> Unit = {},
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            // Surface(shape) clips; an extra Modifier.clip doubles the path work.
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f), RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CipherAvatar(
+                name = meta.name,
+                typeTag = meta.cipherType,
+                size = 42.dp,
+            )
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = meta.name,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
+                    if (meta.favorite) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
+
+                meta.username?.let {
+                    if (it.isNotBlank()) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+
+            CategoryBadge(
+                label = typeLabel,
+                typeTag = meta.cipherType,
+            )
+
+            Spacer(Modifier.width(6.dp))
+
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.size(18.dp),
+            )
+
+            trailing()
+        }
+    }
+}
+
+/**
+ * Sync top-bar button with phase feedback (desktop AutoSyncIndicator
+ * parity): spinner while syncing, check when synced, cloud-off when
+ * offline, resting sync icon otherwise.
+ */
+@Composable
+fun SyncIconButton(phase: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .padding(horizontal = 3.dp)
+            .size(36.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant,
+                shape = RoundedCornerShape(10.dp),
+            )
+            .clickable(enabled = phase == "idle", onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        when (phase) {
+            "syncing" -> CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+            )
+            "synced" -> Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = t("sync.synced"),
+                tint = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.size(18.dp),
+            )
+            "offline" -> Icon(
+                imageVector = Icons.Default.CloudOff,
+                contentDescription = t("sync.offline"),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+            else -> Icon(
+                imageVector = Icons.Default.Sync,
+                contentDescription = t("settings.syncNow"),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }

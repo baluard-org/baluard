@@ -87,6 +87,24 @@ class VaultRepository {
      * remove-from-device guard: removal requires idle + zero pending. */
     suspend fun syncStatus(vault: MobileVault): MobileSyncStatus = vault.syncStatus()
 
+    /** Entries with a TOTP seed (hub Authenticator card). */
+    suspend fun listTotp(vault: MobileVault): List<MobileCipherMeta> = vault.listTotpCiphers()
+
+    /** Archived entries (Archive card). */
+    suspend fun listArchived(vault: MobileVault): List<MobileCipherMeta> = vault.listArchivedCiphers()
+
+    /** Trashed entries (Trash card). */
+    suspend fun listTrash(vault: MobileVault): List<MobileCipherMeta> = vault.listTrashCiphers()
+
+    /** Archive a cipher: hide from main list, search, and suggestions. */
+    suspend fun archiveCipher(vault: MobileVault, id: String) = vault.archiveCipher(id)
+
+    /** Unarchive a cipher: return it to the main list. */
+    suspend fun unarchiveCipher(vault: MobileVault, id: String) = vault.unarchiveCipher(id)
+
+    /** Restore a trashed cipher back to the active vault. */
+    suspend fun restoreCipher(vault: MobileVault, id: String) = vault.restoreCipher(id)
+
     /** Folders as [{id, name}] for the list filter. Empty when the vault has none. */
     suspend fun listFolders(vault: MobileVault): List<MobileFolderInfo> {
         val raw = vault.listFolders()

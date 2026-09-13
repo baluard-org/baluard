@@ -446,6 +446,39 @@ impl MobileVault {
         }
     }
 
+    /// List cipher metadata for entries that have a TOTP seed (hub card).
+    pub async fn list_totp_ciphers(&self) -> Result<Vec<MobileCipherMeta>, BaluardError> {
+        let metas = self.state.list_totp_meta().await?;
+        Ok(metas.into_iter().map(MobileCipherMeta::from).collect())
+    }
+
+    /// List archived cipher metadata (Archive view).
+    pub async fn list_archived_ciphers(&self) -> Result<Vec<MobileCipherMeta>, BaluardError> {
+        let metas = self.state.list_archived_meta().await?;
+        Ok(metas.into_iter().map(MobileCipherMeta::from).collect())
+    }
+
+    /// List trashed cipher metadata (Trash view).
+    pub async fn list_trash_ciphers(&self) -> Result<Vec<MobileCipherMeta>, BaluardError> {
+        let metas = self.state.list_trash_meta().await?;
+        Ok(metas.into_iter().map(MobileCipherMeta::from).collect())
+    }
+
+    /// Archive a cipher: hide from the main list, search, and suggestions.
+    pub async fn archive_cipher(&self, id: String) -> Result<(), BaluardError> {
+        Ok(self.state.archive_cipher(&id).await?)
+    }
+
+    /// Unarchive a cipher: return it to the main list.
+    pub async fn unarchive_cipher(&self, id: String) -> Result<(), BaluardError> {
+        Ok(self.state.unarchive_cipher(&id).await?)
+    }
+
+    /// Restore a cipher from trash back to the active vault.
+    pub async fn restore_cipher(&self, id: String) -> Result<(), BaluardError> {
+        Ok(self.state.restore_cipher(&id).await?)
+    }
+
     /// Check if coordinator state has a pending conflict and return masked details JSON.
     pub async fn get_pending_conflict_details(&self) -> Result<String, BaluardError> {
         if self.state.autosync.pending_conflict_count().await == 0 {
@@ -886,7 +919,7 @@ pub async fn clone_vault_start(
     let flag_clone = cancel_flag.clone();
 
     tokio::task::spawn_blocking(move || {
-        baluard_runtime::providers::clone_and_register(p_enum, &clone_url, &path, Some(flag_clone))
+        baluard_runtime::providers::clone_and_register(Some(p_enum), &clone_url, &path, Some(flag_clone))
     })
     .await
     .map_err(|e| BaluardError::Vault {
