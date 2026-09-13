@@ -235,24 +235,14 @@ fun VaultHomeScreen(
                 )
             }
 
-            // ── Tags ──
+            // ── Tags ── (single row: opens the tag list, like TOTP)
             HomeSectionHeader(t("home.tags"), tagCounts.size)
-            tagCounts.take(10).forEach { (tag, count) ->
-                HomeRow(
-                    label = tag,
-                    count = count,
-                    icon = null,
-                    onClick = { onOpenKind(EntryListKind.Tag(tag)) },
-                )
-            }
-            if (tagCounts.size > 10) {
-                HomeRow(
-                    label = t("home.viewAll", tagCounts.size),
-                    count = tagCounts.size,
-                    icon = null,
-                    onClick = onOpenTags,
-                )
-            }
+            HomeRow(
+                label = t("home.allTags"),
+                count = tagCounts.size,
+                icon = null,
+                onClick = onOpenTags,
+            )
 
             // ── Hidden items ──
             HomeSectionHeader(t("home.hidden"), archived.size + trash.size)

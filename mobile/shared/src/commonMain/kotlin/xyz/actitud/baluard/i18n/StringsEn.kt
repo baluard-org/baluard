@@ -259,6 +259,7 @@ internal val EN: Map<String, String> = mapOf(
     "home.trash" to "Trash",
     "home.allEntries" to "All entries",
     "home.noFolder" to "No Folder",
+    "home.allTags" to "All tags",
     "home.viewAll" to "View all ({0})",
     "home.noneYet" to "Nothing here yet.",
     "list.showing" to "Showing {0} of {1}",
