@@ -180,9 +180,9 @@ fun VaultHomeScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    // Distinct from both the surface header and the page
-                    // background — same token family as the cards.
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    // Unmistakable vault-context strip: brand highlight wash,
+                    // name + swap icon in primary.
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
                     .clickable { switchOpen = true }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -197,13 +197,13 @@ fun VaultHomeScreen(
                 Text(
                     text = vaultName,
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
                 )
                 Icon(
                     imageVector = Icons.Default.SwapHoriz,
                     contentDescription = t("home.switchVault"),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(16.dp),
                 )
             }
