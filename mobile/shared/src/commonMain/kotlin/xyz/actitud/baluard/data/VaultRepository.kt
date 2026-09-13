@@ -1,6 +1,7 @@
 package xyz.actitud.baluard.data
 
 import xyz.actitud.baluard.MobileCipherMeta
+import xyz.actitud.baluard.MobileSyncStatus
 import xyz.actitud.baluard.MobileCreateResult
 import xyz.actitud.baluard.MobileVault
 import kotlinx.serialization.json.Json
@@ -81,6 +82,10 @@ class VaultRepository {
     suspend fun updateCipher(vault: MobileVault, payload: String): Unit = vault.updateCipher(payload)
     suspend fun deleteCipher(vault: MobileVault, id: String): Unit = vault.deleteCipher(id)
     suspend fun totpCode(vault: MobileVault, id: String): String = vault.totpCode(id)
+
+    /** Live auto-sync status (pending changes / state) for the
+     * remove-from-device guard: removal requires idle + zero pending. */
+    suspend fun syncStatus(vault: MobileVault): MobileSyncStatus = vault.syncStatus()
 
     /** Folders as [{id, name}] for the list filter. Empty when the vault has none. */
     suspend fun listFolders(vault: MobileVault): List<MobileFolderInfo> {

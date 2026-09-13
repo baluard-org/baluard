@@ -81,6 +81,12 @@ class AuthViewModel(private val repo: VaultRepository) {
         }
     }
 
+    /** Drop the vault handle + retained KEK (vault removed from device). */
+    fun forget() {
+        vault = null
+        sessionKek = null
+    }
+
     /** The unlocked vault, or null if not yet unlocked. */
     fun vault(): MobileVault? = vault
 

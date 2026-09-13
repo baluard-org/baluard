@@ -1,6 +1,7 @@
 package xyz.actitud.baluard.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -60,6 +61,7 @@ import xyz.actitud.baluard.data.vaultTimeoutLabel
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.Biometric
 import xyz.actitud.baluard.platform.ClipboardPrefs
+import xyz.actitud.baluard.platform.removeVaultDirectory
 import xyz.actitud.baluard.platform.ScreenshotPrefs
 import xyz.actitud.baluard.platform.setSecureFlag
 import xyz.actitud.baluard.platform.clipboardClearLabel
@@ -82,8 +84,11 @@ fun SettingsScreen(
     onVaultTimeoutChange: (String) -> Unit,
     vaultPath: String,
     authViewModel: AuthViewModel,
+    onVaultRemoved: () -> Unit = {},
+    repo: VaultRepository? = null,
     onBack: () -> Unit = {},
 ) {
+    val biometric = remember { Biometric() }
     val config by viewModel.config.collectAsState()
     val status by viewModel.status.collectAsState()
     val scope = rememberCoroutineScope()
@@ -285,7 +290,6 @@ fun SettingsScreen(
                 // a biometric quick-unlock. Without it (password-unlock
                 // session), the unlock screen's post-password offer is the
                 // enable path — never a second password prompt here.
-                val biometric = remember { Biometric() }
                 if (biometric.isAvailable()) {
                     var biometricEnrolled by remember(vaultPath) { mutableStateOf(biometric.isEnrolled(vaultPath)) }
                     var biometricBusy by remember { mutableStateOf(false) }
@@ -433,6 +437,76 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),
                 )
+            }
+
+            // Vault Section: remove this device's copy (remote is kept).
+            SectionCard(title = t("settings.vaultSection")) {
+                var confirmRemove by remember { mutableStateOf(false) }
+                var removeError by remember { mutableStateOf<String?>(null) }
+                Text(
+                    t("settings.removeVaultHint"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = repo != null) { confirmRemove = true },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = t("settings.removeVault"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                removeError?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+
+                if (confirmRemove && repo != null) {
+                    AlertDialog(
+                        onDismissRequest = { confirmRemove = false },
+                        title = { Text(t("settings.removeVaultTitle")) },
+                        text = { Text(t("settings.removeVaultBody")) },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                confirmRemove = false
+                                scope.launch {
+                                    // Guard: only remove a fully synced vault
+                                    // (idle + zero pending). Offline or dirty
+                                    // means the remote may not have everything.
+                                    val st = runCatching { repo.syncStatus(vault) }.getOrNull()
+                                    if (st == null || st.pending > 0u || st.state != "idle") {
+                                        removeError = t("settings.removeVaultPending")
+                                        return@launch
+                                    }
+                                    authViewModel.lock()
+                                    biometric.disenroll(vaultPath)
+                                    if (removeVaultDirectory(vaultPath)) {
+                                        onVaultRemoved()
+                                    } else {
+                                        removeError = t("settings.removeVaultFailed")
+                                    }
+                                }
+                            }) {
+                                Text(t("settings.removeVaultConfirm"), color = MaterialTheme.colorScheme.error)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { confirmRemove = false }) {
+                                Text(t("common.cancel"))
+                            }
+                        },
+                    )
+                }
             }
 
             // About & Architecture Section
