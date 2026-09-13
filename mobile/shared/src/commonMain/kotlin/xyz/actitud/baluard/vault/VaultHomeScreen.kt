@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -32,6 +34,7 @@ import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -47,6 +50,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,6 +67,11 @@ import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.CipherRowCard
 import xyz.actitud.baluard.ui.components.SectionCard
 import xyz.actitud.baluard.ui.components.SyncIconButton
+import xyz.actitud.baluard.platform.DiscoveredVault
+import xyz.actitud.baluard.platform.VaultRegistry
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import xyz.actitud.baluard.ui.components.cipherTypeTheme
 
 /**
@@ -86,6 +95,9 @@ fun VaultHomeScreen(
     onOpenKind: (EntryListKind) -> Unit = {},
     onOpenTags: () -> Unit = {},
     onCipherClick: (String) -> Unit = {},
+    vaultName: String,
+    vaultPath: String,
+    onSwitchVault: (String) -> Unit = {},
     revision: Int = 0,
 ) {
     val ciphers by listViewModel.ciphers.collectAsState()
@@ -94,6 +106,8 @@ fun VaultHomeScreen(
     val archived by listViewModel.archived.collectAsState()
     val trash by listViewModel.trash.collectAsState()
     val query by listViewModel.query.collectAsState()
+
+    var switchOpen by remember { mutableStateOf(false) }
 
     val favorites = ciphers.filter { it.favorite }
 
@@ -165,6 +179,97 @@ fun VaultHomeScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState()),
         ) {
+            // Vault switch bar (desktop VaultSwitcher parity): shows the
+            // vault being viewed; tap to list and switch.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { switchOpen = true }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Folder,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = vaultName,
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    imageVector = Icons.Default.SwapHoriz,
+                    contentDescription = t("home.switchVault"),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+
+            if (switchOpen) {
+                var discovered by remember { mutableStateOf<List<DiscoveredVault>>(emptyList()) }
+                LaunchedEffect(Unit) {
+                    discovered = VaultRegistry.listVaults()
+                }
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { switchOpen = false },
+                    title = { Text(t("home.vaults")) },
+                    text = {
+                        Column {
+                            if (discovered.isEmpty()) {
+                                Text(
+                                    text = t("home.noneYet"),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            discovered.forEach { v ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            switchOpen = false
+                                            if (v.path != vaultPath) onSwitchVault(v.path)
+                                        }
+                                        .padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Folder,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(
+                                        text = v.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    if (v.path == vaultPath) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = t("sync.synced"),
+                                            tint = MaterialTheme.colorScheme.tertiary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = { switchOpen = false }) {
+                            Text(t("common.cancel"))
+                        }
+                    },
+                )
+            }
+
             // Search overrides the hub with flat results while typing.
             Box(
                 modifier = Modifier
@@ -210,7 +315,41 @@ fun VaultHomeScreen(
             if (query.isNotBlank()) {
                 val results = listViewModel.filtered(ciphers)
                 if (results.isEmpty()) {
-                    HubEmptyText(t("vault.noResults"))
+                    // Centered empty state (same language as the section
+                    // empty states): icon + title + hint.
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 48.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainer),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = t("vault.empty"),
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = t("vault.noMatch"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 } else {
                     results.forEach { meta ->
                         CipherRowCard(

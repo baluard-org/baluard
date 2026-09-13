@@ -107,8 +107,13 @@ fun App(vaultPath: String? = null) {
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
-            val path = remember(vaultPath) {
-            vaultPath?.takeIf { it.isNotBlank() } ?: AppPaths.defaultVaultPath()
+            var path by remember(vaultPath) {
+            mutableStateOf(
+                vaultPath?.takeIf { it.isNotBlank() }
+                    ?: xyz.actitud.baluard.platform.VaultRegistry.loadActiveVault()
+                        ?.takeIf { AppPaths.vaultExists(it) }
+                    ?: AppPaths.defaultVaultPath()
+            )
         }
         var hasVault by remember { mutableStateOf(AppPaths.vaultExists(path)) }
         // Sync feedback phases per screen (idle|syncing|synced|offline) and
@@ -116,6 +121,7 @@ fun App(vaultPath: String? = null) {
         var homeSyncPhase by remember { mutableStateOf("idle") }
         var listSyncPhase by remember { mutableStateOf("idle") }
         var detailOrigin by remember { mutableStateOf<Nav?>(null) }
+
         var showCreate by remember { mutableStateOf(false) }
         var showOpen by remember { mutableStateOf(false) }
         var unlocked by remember { mutableStateOf(false) }
@@ -136,6 +142,21 @@ fun App(vaultPath: String? = null) {
         var nav by remember { mutableStateOf<Nav>(Nav.List) }
         var saveRevision by remember { mutableStateOf(0) }
         val scope = rememberCoroutineScope()
+        // Switch vaults (desktop VaultSwitcher parity): lock + forget the
+        // current handle, persist the new path, reset the UI to Unlock.
+        val switchVault: (String) -> Unit = { target ->
+            scope.launch { runCatching { auth.lock() } }
+            auth.forget()
+            xyz.actitud.baluard.platform.VaultRegistry.saveActiveVault(target)
+            path = target
+            hasVault = AppPaths.vaultExists(target)
+            detailOrigin = null
+            unlocked = false
+            nav = Nav.List
+            homeSyncPhase = "idle"
+            listSyncPhase = "idle"
+        }
+
 
         // Shared sync runner: guarantees a visible spin, then reports the
         // outcome phase. Used by the hub and the filtered entry lists.
@@ -156,6 +177,13 @@ fun App(vaultPath: String? = null) {
                 delay(2500)
                 setPhase("idle")
             }
+        }
+
+        val vaultDisplayName = remember(path, saveRevision) {
+            runCatching { xyz.actitud.baluard.platform.VaultRegistry.listVaults() }
+                .getOrNull()
+                ?.firstOrNull { it.path == path }?.name
+                ?: path.substringAfterLast('/')
         }
 
         // System back: pop in-app navigation when a screen sits above its
@@ -354,6 +382,9 @@ fun App(vaultPath: String? = null) {
                                         detailOrigin = null
                                         nav = Nav.Detail(it)
                                     },
+                                    vaultName = vaultDisplayName,
+                                    vaultPath = path,
+                                    onSwitchVault = switchVault,
                                     revision = saveRevision,
                                 )
 
