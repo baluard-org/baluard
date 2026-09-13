@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileCloneJob
@@ -53,21 +54,48 @@ class ProviderFlowViewModel(
     var error: String? by mutableStateOf(null)
         private set
 
+    /** RFC 8628 poll interval; grows on SlowDown. */
+    private var pollIntervalMs: Long = 5_000
+
+    /** Current poll interval for the device-code screen's loop. */
+    /** Whether the system back gesture has an in-app screen to return to.
+     *  False mid-operation (Cloning/enroll in flight) - interrupting those
+     *  leaves half-written state.
+     */
+    fun canGoBack(): Boolean = !busy && when (stage) {
+        is Stage.DeviceCode, is Stage.Repos, is Stage.Enroll -> true
+        else -> false
+    }
+
+    /** System back: one stage back. Call only when [canGoBack] is true. */
+    fun back() {
+        when (stage) {
+            is Stage.DeviceCode -> backToPickProvider()
+            is Stage.Repos -> backToPickProvider()
+            is Stage.Enroll -> backToRepos()
+            else -> Unit
+        }
+    }
+
+    fun pollIntervalMs(): Long = pollIntervalMs
+
     private var cloneJob: MobileCloneJob? = null
+
+    /** Select the provider for this onboarding run. */
+    fun selectProvider(p: MobileProvider) {
+        provider = p
+        error = null
+    }
+    private var cloneCoroutineJob: kotlinx.coroutines.Job? = null
 
     /** Last loaded repo list, so cancel/error can restore the picker. */
     var repos: List<MobileRepo> by mutableStateOf(emptyList())
         private set
 
-    /** RFC 8628 poll interval; grows on SlowDown. */
-    private var pollIntervalMs: Long = 5_000
-
-    /** Current poll interval for the device-code screen's loop. */
-    fun pollIntervalMs(): Long = pollIntervalMs
-
-    fun selectProvider(p: MobileProvider) {
-        provider = p
-        error = null
+    /** Clean up background resources. */
+    fun clear() {
+        cancelClone()
+        vmScope.cancel()
     }
 
     /** Start the device flow (GitHub/GitLab; Codeberg has none, use PAT). */
@@ -75,7 +103,6 @@ class ProviderFlowViewModel(
         if (busy) return
         busy = true
         error = null
-        pollIntervalMs = 5_000
         try {
             stage = Stage.DeviceCode(repo.startDeviceFlow(provider))
         } catch (e: Exception) {
@@ -167,12 +194,13 @@ class ProviderFlowViewModel(
         busy = true
         error = null
         stage = Stage.Cloning
-        vmScope.launch {
+        cloneCoroutineJob = vmScope.launch {
             try {
                 cloneJob = repo.cloneVaultStart(provider, r.cloneUrl, localPath)
                 stage = Stage.Enroll
                 onCloned()
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 fail("cloneRepo", e, "Clone failed")
                 stage = Stage.Repos(repos)
             } finally {
@@ -182,7 +210,12 @@ class ProviderFlowViewModel(
     }
 
     fun cancelClone() {
+        cloneCoroutineJob?.cancel()
+        cloneCoroutineJob = null
         cloneJob?.cancel()
+        cloneJob = null
+        stage = Stage.Repos(repos)
+        busy = false
     }
 
     /**
@@ -199,6 +232,7 @@ class ProviderFlowViewModel(
             auth.adopt(vault)
             return true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             fail("enroll", e, "Enrollment failed")
             return false
         } finally {
@@ -212,6 +246,7 @@ class ProviderFlowViewModel(
      * message is "detail=<text>"; the prefix is display noise.
      */
     private fun fail(where: String, e: Exception, fallback: String) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
         platformLogE(TAG, "$where failed", e)
         error = e.message?.removePrefix("detail=")?.ifBlank { null } ?: fallback
     }

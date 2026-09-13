@@ -277,23 +277,7 @@ impl VaultHandle {
         let sync_key = hkdf_derive::derive_sync_key(kek)?;
         let devkey_seal = hkdf_derive::derive_devkey_seal_key(kek)?;
 
-        // Step 3: Read keywrap file
-        let keywrap_path = self
-            .path
-            .join(format!("meta/keywrap/{}.json", self.device_id));
-        if !keywrap_path.exists() {
-            return Err(VaultError::NotFound(format!(
-                "keywrap file for device {}",
-                self.device_id
-            ))
-            .into());
-        }
-
-        let keywrap_json = std::fs::read_to_string(&keywrap_path)
-            .map_err(|e| VaultError::Metadata(format!("reading keywrap: {e}")))?;
-        let kw = super::keywrap::parse_keywrap_json(&keywrap_json)?;
-
-        // Step 4: Verify KEK is correct by decrypting the KEK canary
+        // Step 3: Verify KEK is correct by decrypting the KEK canary
         // Canary plaintext MUST equal b"baluard-kek-ok" — this catches wrong passwords
         // even when AES-GCM doesn't fail (cosmically unlikely but defense-in-depth).
         if self.path.join("meta/kek-canary.enc").exists() {
@@ -302,21 +286,67 @@ impl VaultHandle {
             super::canary::verify_kek_canary(&session_key, &canary_data)?;
         }
 
-        // Step 5: HPKE-decapsulate Root Key using device private key (keyring or file)
-        let privkeys = load_device_privkeys(&self.path, self.device_id, Some(&devkey_seal))?;
-        let unwrapped = hpke_wrap::unwrap_key(
-            &kw.ephemeral_public,
-            &kw.encrypted_key,
-            &kw.tag,
-            &privkeys.x25519,
-        )?;
-        let rk_bytes: [u8; 64] = unwrapped
-            .try_into()
-            .map_err(|_| VaultError::Corrupt("unwrapped root key not 64 bytes".into()))?;
-        let root_key = RootKey::from_bytes(rk_bytes);
+        // Step 4: HPKE-decapsulate Root Key using device private key (keyring or file).
+        // If unwrap fails on a fast-path resolved device_id, fall back through other
+        // enrolled candidates to provide self-healing recovery against corrupted or
+        // spoofed meta/device-id entries (F1 self-healing fix).
+        let (root_key, _matched_device_id) = {
+            let attempt_unwrap = |dev_id: Uuid| -> Result<RootKey, BaluardError> {
+                let kw_path = self.path.join(format!("meta/keywrap/{dev_id}.json"));
+                if !kw_path.exists() {
+                    return Err(VaultError::NotFound(format!("keywrap for {dev_id}")).into());
+                }
+                let kw_json = std::fs::read_to_string(&kw_path)
+                    .map_err(|e| VaultError::Metadata(format!("reading keywrap: {e}")))?;
+                let parsed_kw = super::keywrap::parse_keywrap_json(&kw_json)?;
+                let privs = load_device_privkeys(&self.path, dev_id, Some(&devkey_seal))?;
+                let unwrapped = hpke_wrap::unwrap_key(
+                    &parsed_kw.ephemeral_public,
+                    &parsed_kw.encrypted_key,
+                    &parsed_kw.tag,
+                    &privs.x25519,
+                )?;
+                let rk_bytes: [u8; 64] = unwrapped
+                    .try_into()
+                    .map_err(|_| VaultError::Corrupt("unwrapped root key not 64 bytes".into()))?;
+                let rk = RootKey::from_bytes(rk_bytes);
+                self.verify_root_key(&rk)?;
+                Ok(rk)
+            };
 
-        // Step 6: Verify root key with RK canary
-        self.verify_root_key(&root_key)?;
+            match attempt_unwrap(self.device_id) {
+                Ok(rk) => (rk, self.device_id),
+                Err(primary_err) => {
+                    let keywrap_dir = self.path.join("meta/keywrap");
+                    let mut healed = None;
+                    if keywrap_dir.exists() {
+                        if let Ok(entries) = std::fs::read_dir(&keywrap_dir) {
+                            for entry in entries.flatten() {
+                                let name = entry.file_name().to_string_lossy().to_string();
+                                if let Some(id_str) = name.strip_suffix(".json") {
+                                    if let Ok(candidate_id) = Uuid::parse_str(id_str) {
+                                        if candidate_id != self.device_id {
+                                            if let Ok(rk) = attempt_unwrap(candidate_id) {
+                                                healed = Some((rk, candidate_id));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some((rk, healed_id)) = healed {
+                        self.device_id = healed_id;
+                        let _ = crate::vault::device_privkey::write_device_id(&self.path, healed_id);
+                        (rk, healed_id)
+                    } else {
+                        return Err(primary_err);
+                    }
+                }
+            }
+        };
 
         // Step 7: Determine current epoch from any existing cipher or RK canary
         let current_epoch = self.determine_current_epoch();
@@ -5327,5 +5357,25 @@ mod tests {
         // 4. Unlock vault
         handle.unlock(password).unwrap();
         assert!(handle.is_unlocked());
+
+        // 5. Test F1 self-healing: spoof meta/device-id with device 1's ID
+        handle.lock();
+        let dev1_id = secrets.device_id;
+        crate::vault::device_privkey::write_device_id(path, dev1_id).unwrap();
+
+        // Re-open: fast path selects dev1_id initially
+        let mut handle2 = VaultHandle::open(path).unwrap();
+        assert_eq!(handle2.device_id, dev1_id);
+
+        // Unlock should heal and succeed by falling back to dev2_id
+        handle2.unlock(password).unwrap();
+        assert!(handle2.is_unlocked());
+        assert_eq!(handle2.device_id, dev2_id);
+
+        // Verify meta/device-id was corrected
+        assert_eq!(
+            crate::vault::device_privkey::read_device_id(path),
+            Some(dev2_id)
+        );
     }
 }
