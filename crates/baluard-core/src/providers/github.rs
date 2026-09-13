@@ -549,4 +549,50 @@ mod tests {
         // newline-anchored backtrace marker is stripped.
         assert_eq!(error_chain(&Plain), "no commit Found at ref main");
     }
+
+    // Regression for the Android onboarding failure "unsupported URL
+    // scheme: .": code-search hits embed a minimal repository object
+    // WITHOUT clone_url. repo_to_vault must reject it (returning None)
+    // instead of producing an empty clone URL downstream.
+    #[test]
+    fn repo_to_vault_rejects_missing_clone_url() {
+        let gh = GitHubProvider::new();
+        let json = r#"{
+            "id": 1296269,
+            "name": "baluard-personal",
+            "full_name": "EstebanForge/baluard-personal",
+            "private": true,
+            "url": "https://api.github.com/repos/EstebanForge/baluard-personal"
+        }"#;
+        let repo: octocrab::models::Repository = serde_json::from_str(json).unwrap();
+        assert!(gh.repo_to_vault(&repo).is_none());
+    }
+
+    #[test]
+    fn repo_to_vault_maps_full_repo_record() {
+        let gh = GitHubProvider::new();
+        let json = r#"{
+            "id": 1296269,
+            "name": "baluard-personal",
+            "full_name": "EstebanForge/baluard-personal",
+            "private": true,
+            "url": "https://api.github.com/repos/EstebanForge/baluard-personal",
+            "clone_url": "https://github.com/EstebanForge/baluard-personal.git"
+        }"#;
+        let repo: octocrab::models::Repository = serde_json::from_str(json).unwrap();
+        let vault = gh.repo_to_vault(&repo).expect("full record must map");
+        assert_eq!(vault.name, "baluard-personal");
+        assert_eq!(vault.full_name, "EstebanForge/baluard-personal");
+        assert_eq!(vault.clone_url, "https://github.com/EstebanForge/baluard-personal.git");
+        assert!(vault.private);
+        assert_eq!(vault.vault_slug, None);
+    }
+
+    #[test]
+    fn repo_to_vault_null_clone_url_rejected() {
+        let gh = GitHubProvider::new();
+        let json = r#"{ "id": 1, "name": "x", "url": "https://api.github.com/repos/o/x", "clone_url": null }"#;
+        let repo: octocrab::models::Repository = serde_json::from_str(json).unwrap();
+        assert!(gh.repo_to_vault(&repo).is_none());
+    }
 }
