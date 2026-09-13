@@ -361,6 +361,13 @@ fun App(vaultPath: String? = null) {
                                     vaultTimeoutToken = autoLockToken,
                                     vaultPath = path,
                                     authViewModel = auth,
+                                    onVaultRemoved = {
+                                        auth.forget()
+                                        unlocked = false
+                                        hasVault = false
+                                        nav = Nav.List
+                                    },
+                                    repo = repo,
                                     onVaultTimeoutChange = { token ->
                                         autoLockToken = token
                                         scope.launch {
