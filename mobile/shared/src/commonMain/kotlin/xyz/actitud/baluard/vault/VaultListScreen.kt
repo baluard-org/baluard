@@ -30,16 +30,17 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -86,8 +87,8 @@ fun VaultListScreen(
     onOpenGenerator: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     revision: Int = 0,
-    /** Pull-to-refresh: run a full sync cycle + reload the list (plan §3.5). */
-    onPullRefresh: suspend () -> Unit = {},
+    /** Sync-now button: run a full sync cycle + reload the list (plan §3.5). */
+    onSyncNow: suspend () -> Unit = {},
 ) {
     val query by listViewModel.query.collectAsState()
     val typeFilter by listViewModel.typeFilter.collectAsState()
@@ -135,6 +136,37 @@ fun VaultListScreen(
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                 ),
                 actions = {
+                    // Dedicated on-demand sync: a visible button beats the
+                    // undiscoverable pull gesture it replaces. The icon
+                    // swaps to a spinner while the sync runs.
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 3.dp)
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainer)
+                            .border(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(10.dp),
+                            )
+                            .clickable(enabled = !refreshing) { scope.launch { onSyncNow() } },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (refreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Sync,
+                                contentDescription = t("settings.syncNow"),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
                     TopBarActionButton(
                         icon = Icons.Default.Add,
                         contentDescription = t("vault.addEntry"),
@@ -165,24 +197,7 @@ fun VaultListScreen(
             )
         },
     ) { padding ->
-        PullToRefreshBox(
-            isRefreshing = refreshing,
-            onRefresh = {
-                scope.launch {
-                    refreshing = true
-                    try {
-                        onPullRefresh()
-                        // m3 1.3.x: isRefreshing flipping true->false inside
-                        // one frame is collapsed by composition and the
-                        // indicator never shows. Hold it for a beat so a
-                        // fast local pull still spins visibly.
-                        delay(600)
-                    } finally {
-                        refreshing = false
-                    }
-                }
-            },
-        ) {
+        Box {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -315,7 +330,7 @@ fun VaultListScreen(
                 }
             }
         }
-        } // PullToRefreshBox
+        }
     }
 }
 

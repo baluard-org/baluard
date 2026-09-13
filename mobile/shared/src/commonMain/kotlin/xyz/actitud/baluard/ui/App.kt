@@ -314,7 +314,7 @@ fun App(vaultPath: String? = null) {
                                     onOpenGenerator = { nav = Nav.Generator },
                                     onOpenSettings = { nav = Nav.Settings },
                                     revision = saveRevision,
-                                    onPullRefresh = {
+                                    onSyncNow = {
                                         runCatching { sync.pullNow(vault) }
                                         conflictVm.refresh(vault)
                                         listVm.refresh(vault)
