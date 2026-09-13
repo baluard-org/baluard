@@ -39,18 +39,21 @@ expect class Biometric() {
         kek: ByteArray,
         title: String,
         onSuccess: () -> Unit,
-        onError: (String) -> Unit,
+        onError: (code: Int, message: String) -> Unit,
     )
 
     /**
      * Prompt + decrypt: on confirmed identity, [onSuccess] receives the KEK
      * (feed it to `MobileVault.unlockWithKek`). [onError] on failure,
      * cancellation, or invalidated enrollment (new fingerprint enrolled).
+     * [code] mirrors the platform code (androidx BiometricPrompt codes on
+     * Android) so callers can tell user cancellation (5/10) from a real
+     * failure without string matching.
      */
     fun unlock(
         vaultKey: String,
         title: String,
         onSuccess: (kek: ByteArray) -> Unit,
-        onError: (String) -> Unit,
+        onError: (code: Int, message: String) -> Unit,
     )
 }

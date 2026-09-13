@@ -75,15 +75,15 @@ actual class Biometric actual constructor() {
         kek: ByteArray,
         title: String,
         onSuccess: () -> Unit,
-        onError: (String) -> Unit,
+        onError: (code: Int, message: String) -> Unit,
     ) {
         val context = AppContextHolder.get() ?: run {
             platformLogE(TAG, "enroll failed: app context null")
-            return onError("app not initialized")
+            return onError(ERROR_UNKNOWN, "app not initialized")
         }
         val activity = AppContextHolder.activity() ?: run {
             platformLogE(TAG, "enroll failed: host activity null")
-            return onError("enroll host activity missing")
+            return onError(ERROR_UNKNOWN, "enroll host activity missing")
         }
 
         try {
@@ -105,7 +105,7 @@ actual class Biometric actual constructor() {
                     override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                         val okCipher = result.cryptoObject?.cipher ?: run {
                             platformLogE(TAG, "enroll succeeded but crypto object is null")
-                            onError("crypto object missing")
+                            onError(ERROR_UNKNOWN, "crypto object missing")
                             return
                         }
                         try {
@@ -120,13 +120,13 @@ actual class Biometric actual constructor() {
                             onSuccess()
                         } catch (e: Exception) {
                             platformLogE(TAG, "enroll encryption/storage failed", e)
-                            onError(e.message ?: "enroll encrypt failed")
+                            onError(ERROR_UNKNOWN, e.message ?: "enroll encrypt failed")
                         }
                     }
 
                     override fun onAuthenticationError(code: Int, message: CharSequence) {
                         platformLogE(TAG, "enroll auth error: code=$code message=$message")
-                        onError(message.toString())
+                        onError(code, message.toString())
                     }
                 },
             )
@@ -141,7 +141,7 @@ actual class Biometric actual constructor() {
             )
         } catch (e: Exception) {
             platformLogE(TAG, "enroll setup failed", e)
-            onError(e.message ?: "enroll failed")
+            onError(ERROR_UNKNOWN, e.message ?: "enroll failed")
         }
     }
 
@@ -149,21 +149,21 @@ actual class Biometric actual constructor() {
         vaultKey: String,
         title: String,
         onSuccess: (kek: ByteArray) -> Unit,
-        onError: (String) -> Unit,
+        onError: (code: Int, message: String) -> Unit,
     ) {
         val context = AppContextHolder.get() ?: run {
             platformLogE(TAG, "unlock failed: app context null")
-            return onError("app not initialized")
+            return onError(ERROR_UNKNOWN, "app not initialized")
         }
         val activity = AppContextHolder.activity() ?: run {
             platformLogE(TAG, "unlock failed: host activity null")
-            return onError("unlock host activity missing")
+            return onError(ERROR_UNKNOWN, "unlock host activity missing")
         }
 
         val alias = aliasFor(vaultKey)
         val blob = blobFor(alias) ?: run {
             platformLogE(TAG, "unlock failed: not enrolled for $alias")
-            return onError("not enrolled")
+            return onError(ERROR_NOT_ENROLLED, "not enrolled")
         }
 
         // iv = first 12 bytes (GCM default), ct = rest.
@@ -171,7 +171,7 @@ actual class Biometric actual constructor() {
         if (raw.size < GCM_IV_LEN + 1) {
             platformLogE(TAG, "unlock failed: stored key damaged for $alias")
             clearEnrollment(alias)
-            return onError("stored key damaged; unlock with password and re-enable")
+            return onError(ERROR_KEY_DAMAGED, "stored key damaged; unlock with password and re-enable")
         }
         val iv = raw.copyOfRange(0, GCM_IV_LEN)
         val ct = raw.copyOfRange(GCM_IV_LEN, raw.size)
@@ -184,10 +184,10 @@ actual class Biometric actual constructor() {
         } catch (e: KeyPermanentlyInvalidatedException) {
             platformLogE(TAG, "unlock: biometrics changed, key permanently invalidated", e)
             clearEnrollment(alias)
-            return onError("biometrics changed; unlock with password, then re-enable")
+            return onError(ERROR_KEY_INVALIDATED, "biometrics changed; unlock with password, then re-enable")
         } catch (e: Exception) {
             platformLogE(TAG, "unlock: key load or cipher init failed", e)
-            return onError(e.message ?: "key load failed")
+            return onError(ERROR_UNKNOWN, e.message ?: "key load failed")
         }
 
         val prompt = BiometricPrompt(
@@ -197,20 +197,20 @@ actual class Biometric actual constructor() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     val okCipher = result.cryptoObject?.cipher ?: run {
                         platformLogE(TAG, "unlock succeeded but crypto object is null")
-                        onError("crypto object missing")
+                        onError(ERROR_UNKNOWN, "crypto object missing")
                         return
                     }
                     try {
                         onSuccess(okCipher.doFinal(ct))
                     } catch (e: Exception) {
                         platformLogE(TAG, "unlock decryption failed", e)
-                        onError(e.message ?: "decrypt failed")
+                        onError(ERROR_UNKNOWN, e.message ?: "decrypt failed")
                     }
                 }
 
                 override fun onAuthenticationError(code: Int, message: CharSequence) {
                     platformLogE(TAG, "unlock auth error: code=$code message=$message")
-                    onError(message.toString())
+                    onError(code, message.toString())
                 }
             },
         )
@@ -279,6 +279,12 @@ actual class Biometric actual constructor() {
 
     private companion object {
         const val TAG = "Biometric"
+        // Synthetic codes for pre-prompt failures (real prompt errors use
+        // the androidx BiometricPrompt codes, e.g. 5/10 = user cancel).
+        const val ERROR_NOT_ENROLLED = -2
+        const val ERROR_KEY_DAMAGED = -3
+        const val ERROR_KEY_INVALIDATED = -4
+        const val ERROR_UNKNOWN = -1
         const val PREFS = "baluard_biometric_kek"
         const val ALIAS_PREFIX = "baluard_kek_"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"

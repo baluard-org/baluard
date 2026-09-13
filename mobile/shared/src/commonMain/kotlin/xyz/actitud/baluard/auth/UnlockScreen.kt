@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +30,9 @@ import kotlinx.coroutines.launch
 import xyz.actitud.baluard.data.AuthState
 import xyz.actitud.baluard.data.UnlockResult
 import xyz.actitud.baluard.i18n.t
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import xyz.actitud.baluard.platform.Biometric
 import xyz.actitud.baluard.platform.platformLogE
 import xyz.actitud.baluard.ui.components.BaluardAmbientBackground
@@ -63,6 +67,54 @@ fun UnlockScreen(
     var biometricEnrolled by remember(vaultPath) { mutableStateOf(biometric.isEnrolled(vaultPath)) }
 
     fun finishUnlock() = onUnlocked()
+
+    // Auto-prompt (Bitwarden-style): as soon as the app opens on a locked
+    // vault with biometrics enrolled, raise the platform prompt. Runs once
+    // per lock-session: dismissing it must not loop. Two triggers are
+    // needed because composition can land before (cold start) or after
+    // (soft-lock while already resumed) ON_RESUME; the guard dedupes.
+    var autoPrompted by remember(vaultPath) { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    fun launchBiometricUnlock() {
+        biometric.unlock(
+            vaultKey = vaultPath,
+            title = t("login.biometricTitle"),
+            onSuccess = { kek ->
+                state = AuthState.Unlocking
+                scope.launch {
+                    when (authViewModel.openAndUnlockWithKek(vaultPath, kek)) {
+                        is UnlockResult.Success -> {
+                            state = AuthState.Unlocked
+                            finishUnlock()
+                        }
+                        is UnlockResult.Failure -> {
+                            // Stale KEK (password changed elsewhere) fails closed.
+                            state = AuthState.Error(t("login.biometricStale"))
+                        }
+                    }
+                }
+            },
+            onError = { code, message ->
+                // User-dismissed prompts (5 = cancel, 10 = negative button)
+                // fall back to the password form silently; real failures show.
+                if (code != 5 && code != 10) {
+                    state = AuthState.Error(message)
+                }
+            },
+        )
+    }
+
+    fun maybeAutoPrompt() {
+        if (autoPrompted) return
+        if (!biometricEnrolled || !biometric.isAvailable()) return
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        autoPrompted = true
+        launchBiometricUnlock()
+    }
+
+    LaunchedEffect(vaultPath, biometricEnrolled) { maybeAutoPrompt() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { maybeAutoPrompt() }
 
     BaluardAmbientBackground {
         Column(
@@ -131,29 +183,7 @@ fun UnlockScreen(
                     Spacer(Modifier.height(12.dp))
                     BaluardOutlinedButton(
                         text = t("login.unlockBiometric"),
-                        onClick = {
-                            biometric.unlock(
-                                vaultKey = vaultPath,
-                                title = t("login.biometricTitle"),
-                                onSuccess = { kek ->
-                                    state = AuthState.Unlocking
-                                    scope.launch {
-                                        when (authViewModel.openAndUnlockWithKek(vaultPath, kek)) {
-                                             is UnlockResult.Success -> {
-                                                state = AuthState.Unlocked
-                                                finishUnlock()
-                                            }
-                                            is UnlockResult.Failure -> {
-                                                // Stale KEK (password changed
-                                                // elsewhere) fails closed here.
-                                                state = AuthState.Error(t("login.biometricStale"))
-                                            }
-                                        }
-                                    }
-                                },
-                                onError = { state = AuthState.Error(it) },
-                            )
-                        },
+                        onClick = { launchBiometricUnlock() },
                         enabled = state !is AuthState.Unlocking,
                         leadingIcon = Icons.Default.Fingerprint,
                     )
@@ -207,8 +237,8 @@ fun UnlockScreen(
                                             phase = UnlockPhase.Input
                                             finishUnlock()
                                         },
-                                        onError = { err ->
-                                            platformLogE("UnlockScreen", "biometric enroll failed: $err")
+                                        onError = { code, err ->
+                                            platformLogE("UnlockScreen", "biometric enroll failed: code=$code $err")
                                             // Enrollment failed: quick unlock
                                             // stays off; the vault IS unlocked.
                                             phase = UnlockPhase.Input

@@ -328,7 +328,7 @@ fun SettingsScreen(
                                                     biometricBusy = false
                                                     biometricEnrolled = true
                                                 },
-                                                onError = { biometricBusy = false },
+                                                onError = { _, _ -> biometricBusy = false },
                                             )
                                         }
                                     }

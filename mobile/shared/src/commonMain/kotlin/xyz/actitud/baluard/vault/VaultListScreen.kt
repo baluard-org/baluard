@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
@@ -171,6 +172,11 @@ fun VaultListScreen(
                     refreshing = true
                     try {
                         onPullRefresh()
+                        // m3 1.3.x: isRefreshing flipping true->false inside
+                        // one frame is collapsed by composition and the
+                        // indicator never shows. Hold it for a beat so a
+                        // fast local pull still spins visibly.
+                        delay(600)
                     } finally {
                         refreshing = false
                     }

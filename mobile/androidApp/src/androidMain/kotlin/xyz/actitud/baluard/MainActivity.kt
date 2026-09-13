@@ -17,14 +17,11 @@ class MainActivity : FragmentActivity() {
         // M4: app-wide FLAG_SECURE — screenshots, recents preview, and
         // unprivileged screen recording stay blank for the whole app, not
         // per-screen. Compose UIs render before per-screen effects run, so
-        // the flag must be set before first frame. The user can allow
-        // screenshots in Settings (default off, fail secure); debuggable
-        // builds keep the exemption so failures can be recorded while
-        // debugging.
+        // the flag must be set before first frame. Strictly user-setting
+        // driven (default off, fail secure) — no build-type exemption, so
+        // the Settings toggle is fully testable on debug builds too.
         AppContextHolder.set(this)
-        val debuggable = (applicationInfo.flags and
-            android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
-        if (!debuggable && !xyz.actitud.baluard.platform.ScreenshotPrefs().allowScreenshots()) {
+        if (!xyz.actitud.baluard.platform.ScreenshotPrefs().allowScreenshots()) {
             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         }
         AppContextHolder.setActivity(this)
