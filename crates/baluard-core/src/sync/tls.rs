@@ -137,6 +137,7 @@ fn android_tls_roots() {
         let _ = std::fs::remove_file(dir.join("ca-bundle.pem"));
         let _ = std::fs::remove_file(dir.join("ca-bundle.tmp"));
 
+        let mut seen_blocks = std::collections::HashSet::new();
         let mut blocks: Vec<Vec<u8>> = Vec::new();
         for store in CA_DIRS {
             let Ok(entries) = std::fs::read_dir(store) else {
@@ -148,7 +149,11 @@ fn android_tls_roots() {
             files.sort();
             for file in files {
                 if let Ok(raw) = std::fs::read(&file) {
-                    blocks.extend(split_blocks(&raw));
+                    for b in split_blocks(&raw) {
+                        if seen_blocks.insert(b.clone()) {
+                            blocks.push(b);
+                        }
+                    }
                 }
             }
         }
