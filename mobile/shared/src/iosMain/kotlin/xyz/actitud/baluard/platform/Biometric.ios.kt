@@ -19,17 +19,17 @@ actual class Biometric actual constructor() {
         kek: ByteArray,
         title: String,
         onSuccess: () -> Unit,
-        onError: (String) -> Unit,
+        onError: (code: Int, message: String) -> Unit,
     ) {
-        onError("biometric not yet wired on iOS")
+        onError(-1, "biometric not yet wired on iOS")
     }
 
     actual fun unlock(
         vaultKey: String,
         title: String,
         onSuccess: (kek: ByteArray) -> Unit,
-        onError: (String) -> Unit,
+        onError: (code: Int, message: String) -> Unit,
     ) {
-        onError("biometric not yet wired on iOS")
+        onError(-1, "biometric not yet wired on iOS")
     }
 }
