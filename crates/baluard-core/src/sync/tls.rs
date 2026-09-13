@@ -242,8 +242,29 @@ mod split_blocks_tests {
         let raw = b"dump\n-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nBBB\n-----END CERTIFICATE-----\n";
         let blocks = split_blocks(raw);
         assert_eq!(blocks.len(), 2);
-        assert!(blocks[0].windows(3).any(|w| w == b"AAA"));
-        assert!(blocks[1].windows(3).any(|w| w == b"BBB"));
+        assert_eq!(
+            &blocks[0],
+            b"-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----"
+        );
+        assert_eq!(
+            &blocks[1],
+            b"-----BEGIN CERTIFICATE-----\nBBB\n-----END CERTIFICATE-----"
+        );
+    }
+
+    #[test]
+    fn strips_interstitial_text_between_certs() {
+        let raw = b"dump1\n-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\nOpenSSL text dump 2\n-----BEGIN CERTIFICATE-----\nBBB\n-----END CERTIFICATE-----\n";
+        let blocks = split_blocks(raw);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(
+            &blocks[0],
+            b"-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----"
+        );
+        assert_eq!(
+            &blocks[1],
+            b"-----BEGIN CERTIFICATE-----\nBBB\n-----END CERTIFICATE-----"
+        );
     }
 
     // A BEGIN marker without its END must not yield a truncated block that
@@ -265,6 +286,9 @@ mod split_blocks_tests {
         let raw = b"dump\r\n-----BEGIN CERTIFICATE-----\r\nQUJD\r\n-----END CERTIFICATE-----\r\n";
         let blocks = split_blocks(raw);
         assert_eq!(blocks.len(), 1);
-        assert!(blocks[0].starts_with(PEM_BEGIN.as_bytes()));
+        assert_eq!(
+            &blocks[0],
+            b"-----BEGIN CERTIFICATE-----\r\nQUJD\r\n-----END CERTIFICATE-----"
+        );
     }
 }

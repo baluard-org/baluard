@@ -550,6 +550,45 @@ mod tests {
         assert_eq!(error_chain(&Plain), "no commit Found at ref main");
     }
 
+    #[test]
+    fn error_chain_strips_snafu_backtrace_marker() {
+        #[derive(Debug)]
+        struct SnafuErr;
+        impl std::fmt::Display for SnafuErr {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "request failed\nFound at line 42 of file.rs")
+            }
+        }
+        impl std::error::Error for SnafuErr {}
+        assert_eq!(error_chain(&SnafuErr), "request failed");
+    }
+
+    #[test]
+    fn error_chain_deduplicates_repeated_causes() {
+        #[derive(Debug)]
+        struct Child;
+        impl std::fmt::Display for Child {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "connection timeout")
+            }
+        }
+        impl std::error::Error for Child {}
+
+        #[derive(Debug)]
+        struct Parent;
+        impl std::fmt::Display for Parent {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "request error: connection timeout")
+            }
+        }
+        impl std::error::Error for Parent {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&Child)
+            }
+        }
+        assert_eq!(error_chain(&Parent), "request error: connection timeout");
+    }
+
     // Regression for the Android onboarding failure "unsupported URL
     // scheme: .": code-search hits embed a minimal repository object
     // WITHOUT clone_url. repo_to_vault must reject it (returning None)
@@ -586,6 +625,7 @@ mod tests {
         assert_eq!(vault.clone_url, "https://github.com/EstebanForge/baluard-personal.git");
         assert!(vault.private);
         assert_eq!(vault.vault_slug, None);
+        assert_eq!(vault.vault_id, None);
     }
 
     #[test]
