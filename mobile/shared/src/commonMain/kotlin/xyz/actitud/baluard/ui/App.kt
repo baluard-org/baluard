@@ -315,10 +315,13 @@ fun App(vaultPath: String? = null) {
                                     onOpenSettings = { nav = Nav.Settings },
                                     revision = saveRevision,
                                     onSyncNow = {
-                                        runCatching { sync.pullNow(vault) }
-                                        conflictVm.refresh(vault)
-                                        listVm.refresh(vault)
+                                        val ok = runCatching { sync.pullNow(vault) }.isSuccess
+                                        runCatching {
+                                            conflictVm.refresh(vault)
+                                            listVm.refresh(vault)
+                                        }
                                         saveRevision++
+                                        ok
                                     },
                                     onStageEntry = {
                                         // Unlock-pull in Rust is spawned (not
