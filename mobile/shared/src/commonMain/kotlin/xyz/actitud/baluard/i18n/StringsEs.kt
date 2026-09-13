@@ -261,6 +261,8 @@ internal val ES: Map<String, String> = mapOf(
     "settings.removeVaultConfirm" to "Quitar",
     "settings.removeVaultPending" to "Hay cambios sin sincronizar o sin conexión. Usa el botón Sincronizar de la pantalla principal y vuelve a intentarlo.",
     "settings.removeVaultFailed" to "No se pudieron borrar los datos de la bóveda. Inténtalo de nuevo.",
+    "sync.synced" to "Sincronizada",
+    "sync.offline" to "Sin conexión",
     "detail.customFields" to "Campos personalizados",
     "detail.booleanYes" to "Sí",
     "detail.booleanNo" to "No",

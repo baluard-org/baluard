@@ -248,6 +248,8 @@ internal val EN: Map<String, String> = mapOf(
     "settings.removeVaultConfirm" to "Remove",
     "settings.removeVaultPending" to "Unsynced changes or no connection. Use the Sync button on the main screen first, then remove.",
     "settings.removeVaultFailed" to "Could not delete the vault data. Try again.",
+    "sync.synced" to "Synced",
+    "sync.offline" to "Offline",
     "settings.status" to "Status: {0}{1}",
     "settings.inactiveSuffix" to " (inactive)",
     "settings.pending" to "Pending: {0}",

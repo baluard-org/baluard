@@ -1,5 +1,10 @@
 package xyz.actitud.baluard.vault
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,6 +27,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Folder
@@ -62,7 +69,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.detail.normalizeTypeTag
@@ -87,8 +97,9 @@ fun VaultListScreen(
     onOpenGenerator: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     revision: Int = 0,
-    /** Sync-now button: run a full sync cycle + reload the list (plan §3.5). */
-    onSyncNow: suspend () -> Unit = {},
+    /** Sync-now button: run a full sync cycle + reload the list. Returns
+     * false when the pull failed (drives the offline feedback phase). */
+    onSyncNow: suspend () -> Boolean = { true },
     /** Runs once when the unlocked stage is entered (after unlock): sync
      * once + reload, so the list never races the Rust unlock-pull. */
     onStageEntry: suspend () -> Unit = {},
@@ -104,7 +115,10 @@ fun VaultListScreen(
     val folderFilter by listViewModel.folderFilter.collectAsState()
     val favoritesOnly by listViewModel.favoritesOnly.collectAsState()
     val scope = rememberCoroutineScope()
-    var refreshing by remember { mutableStateOf(false) }
+    // Desktop AutoSyncIndicator parity: visible progress during the sync,
+    // then a terminal phase (synced / offline) announced for a beat. Fast
+    // LAN pulls would otherwise flash for a single frame.
+    var syncPhase by remember { mutableStateOf("idle") }  // idle|syncing|synced|offline
 
     LaunchedEffect(vault, revision) { listViewModel.refresh(vault) }
     LaunchedEffect(vault) { onStageEntry() }
@@ -159,25 +173,42 @@ fun VaultListScreen(
                                 color = MaterialTheme.colorScheme.outlineVariant,
                                 shape = RoundedCornerShape(10.dp),
                             )
-                            .clickable(enabled = !refreshing) {
+                            .clickable(enabled = syncPhase == "idle") {
+                                syncPhase = "syncing"
                                 scope.launch {
-                                    refreshing = true
-                                    try {
-                                        onSyncNow()
-                                    } finally {
-                                        refreshing = false
+                                    val mark = TimeSource.Monotonic.markNow()
+                                    val ok = onSyncNow()
+                                    // Hold the spinner: fast LAN syncs would
+                                    // otherwise flash for a single frame.
+                                    val elapsed = mark.elapsedNow()
+                                    if (elapsed < 600.milliseconds) {
+                                        delay(600.milliseconds - elapsed)
                                     }
+                                    syncPhase = if (ok) "synced" else "offline"
+                                    delay(2500)
+                                    if (syncPhase != "syncing") syncPhase = "idle"
                                 }
                             },
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (refreshing) {
-                            CircularProgressIndicator(
+                        when (syncPhase) {
+                            "syncing" -> CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
                                 strokeWidth = 2.dp,
                             )
-                        } else {
-                            Icon(
+                            "synced" -> Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = t("sync.synced"),
+                                tint = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            "offline" -> Icon(
+                                imageVector = Icons.Default.CloudOff,
+                                contentDescription = t("sync.offline"),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            else -> Icon(
                                 imageVector = Icons.Default.Sync,
                                 contentDescription = t("settings.syncNow"),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -222,6 +253,44 @@ fun VaultListScreen(
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.background),
         ) {
+            // Terminal-state chip (desktop AutoSyncIndicator parity):
+            // announces the outcome, then auto-hides.
+            AnimatedVisibility(
+                visible = syncPhase == "synced" || syncPhase == "offline",
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically(),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = if (syncPhase == "synced") MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Icon(
+                                imageVector = if (syncPhase == "synced") Icons.Default.Check else Icons.Default.CloudOff,
+                                contentDescription = null,
+                                tint = if (syncPhase == "synced") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(13.dp),
+                            )
+                            Text(
+                                text = t(if (syncPhase == "synced") "sync.synced" else "sync.offline"),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(16.dp))
+                }
+            }
+
             // Search Input bar matching desktop styling
             Box(
                 modifier = Modifier
