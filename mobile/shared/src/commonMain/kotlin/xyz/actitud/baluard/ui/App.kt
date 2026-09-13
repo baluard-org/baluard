@@ -320,6 +320,15 @@ fun App(vaultPath: String? = null) {
                                         listVm.refresh(vault)
                                         saveRevision++
                                     },
+                                    onStageEntry = {
+                                        // Unlock-pull in Rust is spawned (not
+                                        // awaited), so the first list render can
+                                        // race it. Sync once + reload so the
+                                        // list reflects the synced state.
+                                        runCatching { sync.pullNow(vault) }
+                                        conflictVm.refresh(vault)
+                                        listVm.refresh(vault)
+                                    },
                                 )
 
                                 is Nav.Detail -> CipherDetailScreen(

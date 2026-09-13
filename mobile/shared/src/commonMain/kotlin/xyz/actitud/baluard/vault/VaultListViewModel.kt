@@ -7,6 +7,7 @@ import xyz.actitud.baluard.MobileCipherMeta
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.data.MobileFolderInfo
 import xyz.actitud.baluard.data.VaultRepository
+import xyz.actitud.baluard.platform.platformLogE
 
 /**
  * Drives the vault list (Phase 3). Holds ciphers as a [StateFlow] so Compose
@@ -47,8 +48,16 @@ class VaultListViewModel(private val repo: VaultRepository) {
 
     /** Reload the cipher index from the runtime. Call after unlock + after mutations. */
     suspend fun refresh(vault: MobileVault) {
-        _ciphers.value = repo.listCiphers(vault)
-        _folders.value = runCatching { repo.listFolders(vault) }.getOrDefault(emptyList())
+        // A throw here used to kill the LaunchedEffect silently, leaving an
+        // empty list with no signal (the empty-on-open bug report). Surface it.
+        runCatching {
+            val ciphers = repo.listCiphers(vault)
+            platformLogE("VaultList", "refresh: ${ciphers.size} ciphers")
+            _ciphers.value = ciphers
+            _folders.value = runCatching { repo.listFolders(vault) }.getOrDefault(emptyList())
+        }.onFailure {
+            platformLogE("VaultList", "refresh failed", it)
+        }
     }
 
     /** Distinct tags across visible (non-archived) entries, for the chip row. */
