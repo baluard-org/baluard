@@ -20,9 +20,9 @@ const CA_DIRS: &[&str] = &[
     "/apex/com.android.conscrypt/cacerts", // Android 14+
     "/system/etc/security/cacerts",        // legacy location
 ];
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 const PEM_BEGIN: &str = "-----BEGIN CERTIFICATE-----";
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 const PEM_END: &str = "-----END CERTIFICATE-----";
 
 /// GIT_OPT_ADD_SSL_X509_CERT from libgit2 1.9.4 include/git2/common.h
@@ -206,7 +206,7 @@ fn android_tls_roots() {
 /// Split a store file into individual PEM certificate blocks, dropping any
 /// preamble (Android cacert files embed an OpenSSL text dump before the
 /// PEM data).
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 fn split_blocks(raw: &[u8]) -> Vec<Vec<u8>> {
     let text = String::from_utf8_lossy(raw);
     let mut out = Vec::new();
@@ -220,4 +220,51 @@ fn split_blocks(raw: &[u8]) -> Vec<Vec<u8>> {
         rest = &rest[end..];
     }
     out
+}
+
+#[cfg(test)]
+mod split_blocks_tests {
+    use super::*;
+
+    // Regression: Android cacert `.0` files embed an OpenSSL text dump
+    // before the PEM block. Raw concatenation of that preamble broke
+    // SSL_CTX_load_verify_locations (x509 "BIO lib") on device.
+    #[test]
+    fn strips_text_dump_preamble() {
+        let raw = b"Certificate:\n    Data:\n        Version: 3 (0x2)\n-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n";
+        let blocks = split_blocks(raw);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(&blocks[0], b"-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----");
+    }
+
+    #[test]
+    fn splits_multiple_certs_in_one_file() {
+        let raw = b"dump\n-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nBBB\n-----END CERTIFICATE-----\n";
+        let blocks = split_blocks(raw);
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks[0].windows(3).any(|w| w == b"AAA"));
+        assert!(blocks[1].windows(3).any(|w| w == b"BBB"));
+    }
+
+    // A BEGIN marker without its END must not yield a truncated block that
+    // would fail OpenSSL's parser and (pre-fix) poison the whole bundle.
+    #[test]
+    fn skips_truncated_block_without_end_marker() {
+        let raw = b"dump\n-----BEGIN CERTIFICATE-----\nQUJD\n";
+        assert!(split_blocks(raw).is_empty());
+    }
+
+    #[test]
+    fn no_pem_yields_no_blocks() {
+        assert!(split_blocks(b"just a text dump\nno markers here\n").is_empty());
+        assert!(split_blocks(b"").is_empty());
+    }
+
+    #[test]
+    fn handles_crlf_line_endings() {
+        let raw = b"dump\r\n-----BEGIN CERTIFICATE-----\r\nQUJD\r\n-----END CERTIFICATE-----\r\n";
+        let blocks = split_blocks(raw);
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].starts_with(PEM_BEGIN.as_bytes()));
+    }
 }

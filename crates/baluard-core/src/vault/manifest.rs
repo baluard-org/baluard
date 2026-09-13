@@ -361,6 +361,63 @@ pub struct SequenceEntry {
 mod tests {
     use super::*;
 
+    // The mobile + desktop apps send these wire tokens through
+    // settings.set. A parse regression silently resets the user's
+    // auto-lock choice to the 15-minute default.
+    #[test]
+    fn vault_timeout_parses_wire_tokens() {
+        assert_eq!(VaultTimeout::from_token("immediately"), VaultTimeout::Immediately);
+        assert_eq!(VaultTimeout::from_token("15m"), VaultTimeout::Minutes(15));
+        assert_eq!(VaultTimeout::from_token("2h"), VaultTimeout::Minutes(120));
+        assert_eq!(VaultTimeout::from_token("90"), VaultTimeout::Minutes(90));
+        assert_eq!(VaultTimeout::from_token("on_app_exit"), VaultTimeout::OnAppExit);
+        // Case-insensitive: the frontend lowercases, but belt-and-braces.
+        assert_eq!(VaultTimeout::from_token("NOW"), VaultTimeout::Immediately);
+    }
+
+    #[test]
+    fn vault_timeout_unknown_token_falls_back_to_default() {
+        // Unknown tokens must fall back to the 15-minute default, not
+        // fail the whole settings write or lock the user out instantly.
+        assert_eq!(
+            VaultTimeout::from_token("garbage"),
+            VaultTimeout::default_for_new()
+        );
+        assert_eq!(VaultTimeout::from_token(""), VaultTimeout::default_for_new());
+    }
+
+    #[test]
+    fn vault_timeout_wire_roundtrip() {
+        // serde: the stored settings JSON carries the token, and
+        // settings.set deserializes the same token back into the policy.
+        // "4h" is accepted on input and canonicalizes to "240m" on
+        // write-back; every client parses that form, so assert the
+        // canonical storage token, not the input spelling.
+        let cases = [
+            ("immediately", "immediately"),
+            ("15m", "15m"),
+            ("4h", "240m"),
+            ("on_app_exit", "on_app_exit"),
+        ];
+        for (input, stored) in cases {
+            let json = format!(r#"{{"vault_timeout": "{input}"}}"#);
+            let settings: VaultSettings = serde_json::from_str(&json).unwrap();
+            assert_eq!(settings.vault_timeout.as_token(), stored);
+        }
+    }
+
+    #[test]
+    fn vault_timeout_serializes_as_token() {
+        assert_eq!(
+            serde_json::to_value(VaultTimeout::Minutes(240)).unwrap(),
+            serde_json::json!("240m")
+        );
+        assert_eq!(
+            serde_json::to_value(VaultTimeout::Immediately).unwrap(),
+            serde_json::json!("immediately")
+        );
+    }
+
     #[test]
     fn vault_settings_rejects_unknown_uri_match_strategy() {
         let json = r#"{"vault_timeout": "10m", "default_uri_match": "exakt"}"#;
