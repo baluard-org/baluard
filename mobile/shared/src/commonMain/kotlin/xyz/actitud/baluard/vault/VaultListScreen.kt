@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -17,6 +18,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Inbox
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Unarchive
@@ -184,6 +188,42 @@ fun EntryListScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
+
+            if (visible.isEmpty()) {
+                // Friendly per-section empty state instead of a blank screen.
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        imageVector = when (kind) {
+                            EntryListKind.Trash -> Icons.Default.Delete
+                            EntryListKind.Archive -> Icons.Default.Unarchive
+                            EntryListKind.Totp -> Icons.Default.Timer
+                            else -> Icons.Default.Inbox
+                        },
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.size(44.dp),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = when (kind) {
+                            EntryListKind.Archive -> t("home.emptyArchive")
+                            EntryListKind.Trash -> t("home.emptyTrash")
+                            EntryListKind.Totp -> t("home.emptyTotp")
+                            else -> t("home.emptyGeneric")
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                }
+                return@Column
+            }
 
             LazyColumn(state = listState) {
                 items(
