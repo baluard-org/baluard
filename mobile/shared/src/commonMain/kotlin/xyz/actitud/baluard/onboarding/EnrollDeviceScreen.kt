@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.platform.deviceDisplayName
 import xyz.actitud.baluard.ui.components.BaluardAmbientBackground
 import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardLogoBadge
@@ -48,7 +49,11 @@ fun EnrollDeviceScreen(
 
     var phrase by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
-    var deviceName by rememberSaveable { mutableStateOf(t("onboarding.defaultDeviceName")) }
+    // OS-provided name (Pixel 9 Pro, Esteban's iPhone); localized
+    // "My device" only when the OS gives nothing. Still editable.
+    var deviceName by rememberSaveable {
+        mutableStateOf(deviceDisplayName().ifBlank { t("onboarding.defaultDeviceName") })
+    }
     var enrolling by rememberSaveable { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
 
