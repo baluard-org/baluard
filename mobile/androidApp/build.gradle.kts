@@ -71,6 +71,12 @@ android {
             // (debug vs release ART/Compose perf) can adb install -r over
             // the same applicationId. Store signing lands at store time.
             signingConfig = signingConfigs.getByName("baluardDebug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
