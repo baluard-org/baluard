@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,13 +33,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.FlightTakeoff
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
@@ -299,6 +303,7 @@ fun BaluardCard(
     backgroundColor: Color = MaterialTheme.colorScheme.surfaceContainer,
     borderColor: Color = MaterialTheme.colorScheme.outlineVariant,
     animateSize: Boolean = true,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
@@ -319,7 +324,7 @@ fun BaluardCard(
                         Modifier
                     }
                 )
-                .padding(16.dp),
+                .padding(contentPadding),
             content = content,
         )
     }
@@ -563,6 +568,9 @@ private val typeBrushes = mapOf(
     "securenote" to Brush.linearGradient(listOf(Color(0xFFD97706), Color(0xFFB45309))),
     "sshkey" to Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857))),
     "passkeys" to Brush.linearGradient(listOf(Color(0xFF8B5CF6), Color(0xFF7C3AED))),
+    "bankaccount" to Brush.linearGradient(listOf(Color(0xFF0284C7), Color(0xFF0369A1))),
+    "driverslicense" to Brush.linearGradient(listOf(Color(0xFF4F46E5), Color(0xFF4338CA))),
+    "passport" to Brush.linearGradient(listOf(Color(0xFFE11D48), Color(0xFFBE123C))),
 )
 
 private val defaultBrush = Brush.linearGradient(listOf(Color(0xFF475569), Color(0xFF334155)))
@@ -575,6 +583,9 @@ private val typeAccentColors = mapOf(
     "securenote" to listOf(Color(0xFFD97706), Color(0xFFB45309)),
     "sshkey" to listOf(Color(0xFF059669), Color(0xFF047857)),
     "passkeys" to listOf(Color(0xFF8B5CF6), Color(0xFF7C3AED)),
+    "bankaccount" to listOf(Color(0xFF0284C7), Color(0xFF0369A1)),
+    "driverslicense" to listOf(Color(0xFF4F46E5), Color(0xFF4338CA)),
+    "passport" to listOf(Color(0xFFE11D48), Color(0xFFBE123C)),
 )
 
 private val defaultAccentColors = listOf(Color(0xFF475569), Color(0xFF334155))
@@ -588,8 +599,18 @@ private fun cipherTypeVisuals(typeTag: String): Pair<ImageVector, Brush> {
         "securenote", "note" -> Pair(Icons.Default.Description, typeBrushes.getValue("securenote"))
         "sshkey" -> Pair(Icons.Default.Key, typeBrushes.getValue("sshkey"))
         "passkeys", "passkey" -> Pair(Icons.Default.Fingerprint, typeBrushes.getValue("passkeys"))
+        "bankaccount" -> Pair(Icons.Default.AccountBalance, typeBrushes.getValue("bankaccount"))
+        "driverslicense" -> Pair(Icons.Default.DirectionsCar, typeBrushes.getValue("driverslicense"))
+        "passport" -> Pair(Icons.Default.FlightTakeoff, typeBrushes.getValue("passport"))
         else -> Pair(Icons.Default.Shield, defaultBrush)
     }
+}
+
+/** Visual icon and primary accent color for a cipher type tag. */
+fun cipherTypeTheme(typeTag: String): Pair<ImageVector, Color> {
+    val (icon, _) = cipherTypeVisuals(typeTag)
+    val color = (typeAccentColors[typeTag.lowercase()] ?: defaultAccentColors).first()
+    return Pair(icon, color)
 }
 
 /**
@@ -629,19 +650,23 @@ fun CategoryBadge(
 fun SectionCard(
     title: String,
     modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(
-            text = title.uppercase(),
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 1.sp,
-            ),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
-        )
+        if (title.isNotBlank()) {
+            Text(
+                text = title.uppercase(),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.sp,
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
+            )
+        }
         BaluardCard(
+            contentPadding = contentPadding,
             content = content,
         )
     }
