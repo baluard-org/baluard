@@ -41,12 +41,16 @@ import xyz.actitud.baluard.onboarding.DeviceCodeScreen
 import xyz.actitud.baluard.onboarding.EnrollDeviceScreen
 import xyz.actitud.baluard.onboarding.OnboardingScreen
 import xyz.actitud.baluard.onboarding.ProviderConnectScreen
+import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.onboarding.ProviderFlowViewModel
 import xyz.actitud.baluard.onboarding.RepoPickerScreen
 import xyz.actitud.baluard.platform.AppPaths
 import xyz.actitud.baluard.ui.components.ConflictResolutionPanel
 import xyz.actitud.baluard.ui.theme.BaluardTheme
-import xyz.actitud.baluard.vault.VaultListScreen
+import xyz.actitud.baluard.vault.EntryListKind
+import xyz.actitud.baluard.vault.EntryListScreen
+import xyz.actitud.baluard.vault.TagListScreen
+import xyz.actitud.baluard.vault.VaultHomeScreen
 import xyz.actitud.baluard.vault.VaultListViewModel
 import xyz.actitud.baluard.settings.SettingsScreen
 import xyz.actitud.baluard.settings.SettingsViewModel
@@ -56,6 +60,7 @@ import xyz.actitud.baluard.totp.TotpViewModel
 import xyz.actitud.baluard.sync.ConflictViewModel
 import xyz.actitud.baluard.sync.SyncCoordinator
 import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -66,11 +71,13 @@ private sealed interface Nav {
     data class Edit(val cipherId: String?) : Nav
     data object Generator : Nav
     data object Settings : Nav
+    data class EntryList(val kind: EntryListKind) : Nav
+    data object TagList : Nav
 }
 
 private fun navDepth(nav: Nav): Int = when (nav) {
     is Nav.List -> 0
-    is Nav.Detail, Nav.Generator, Nav.Settings -> 1
+    is Nav.Detail, Nav.Generator, Nav.Settings, is Nav.EntryList, Nav.TagList -> 1
     is Nav.Edit -> 2
 }
 
@@ -104,6 +111,11 @@ fun App(vaultPath: String? = null) {
             vaultPath?.takeIf { it.isNotBlank() } ?: AppPaths.defaultVaultPath()
         }
         var hasVault by remember { mutableStateOf(AppPaths.vaultExists(path)) }
+        // Sync feedback phases per screen (idle|syncing|synced|offline) and
+        // the screen a Detail was opened from (back goes there).
+        var homeSyncPhase by remember { mutableStateOf("idle") }
+        var listSyncPhase by remember { mutableStateOf("idle") }
+        var detailOrigin by remember { mutableStateOf<Nav?>(null) }
         var showCreate by remember { mutableStateOf(false) }
         var showOpen by remember { mutableStateOf(false) }
         var unlocked by remember { mutableStateOf(false) }
@@ -124,6 +136,27 @@ fun App(vaultPath: String? = null) {
         var nav by remember { mutableStateOf<Nav>(Nav.List) }
         var saveRevision by remember { mutableStateOf(0) }
         val scope = rememberCoroutineScope()
+
+        // Shared sync runner: guarantees a visible spin, then reports the
+        // outcome phase. Used by the hub and the filtered entry lists.
+        val startSync: (MobileVault, (String) -> Unit) -> Unit = { vault, setPhase ->
+            setPhase("syncing")
+            scope.launch {
+                val mark = kotlin.time.TimeSource.Monotonic.markNow()
+                val ok = runCatching { sync.pullNow(vault) }.isSuccess
+                runCatching {
+                    conflictVm.refresh(vault)
+                    listVm.refresh(vault)
+                }
+                saveRevision++
+                // Hold the spinner: fast LAN syncs would flash for one frame.
+                val hold = 600.milliseconds - mark.elapsedNow()
+                if (hold.isPositive()) delay(hold)
+                setPhase(if (ok) "synced" else "offline")
+                delay(2500)
+                setPhase("idle")
+            }
+        }
 
         // System back: pop in-app navigation when a screen sits above its
         // parent; at the roots (vault list, unlock, provider picker) let the
@@ -301,37 +334,47 @@ fun App(vaultPath: String? = null) {
                             modifier = Modifier.fillMaxSize(),
                         ) { n ->
                             when (n) {
-                                is Nav.List -> VaultListScreen(
+                                Nav.List -> VaultHomeScreen(
                                     vault = vault,
                                     listViewModel = listVm,
-                                    authViewModel = auth,
-                                    onLocked = {
-                                        nav = Nav.List
-                                        unlocked = false
-                                    },
-                                    onCipherClick = { nav = Nav.Detail(it) },
+                                    syncPhase = homeSyncPhase,
+                                    onSyncClick = { startSync(vault) { homeSyncPhase = it } },
                                     onAddEntry = { nav = Nav.Edit(null) },
                                     onOpenGenerator = { nav = Nav.Generator },
                                     onOpenSettings = { nav = Nav.Settings },
-                                    revision = saveRevision,
-                                    onSyncNow = {
-                                        val ok = runCatching { sync.pullNow(vault) }.isSuccess
-                                        runCatching {
-                                            conflictVm.refresh(vault)
-                                            listVm.refresh(vault)
+                                    onLock = {
+                                        scope.launch {
+                                            auth.lock()
+                                            unlocked = false
                                         }
-                                        saveRevision++
-                                        ok
                                     },
-                                    onStageEntry = {
-                                        // Unlock-pull in Rust is spawned (not
-                                        // awaited), so the first list render can
-                                        // race it. Sync once + reload so the
-                                        // list reflects the synced state.
-                                        runCatching { sync.pullNow(vault) }
-                                        conflictVm.refresh(vault)
-                                        listVm.refresh(vault)
+                                    onOpenKind = { nav = Nav.EntryList(it) },
+                                    onOpenTags = { nav = Nav.TagList },
+                                    onCipherClick = {
+                                        detailOrigin = null
+                                        nav = Nav.Detail(it)
                                     },
+                                    revision = saveRevision,
+                                )
+
+                                is Nav.EntryList -> EntryListScreen(
+                                    kind = n.kind,
+                                    vault = vault,
+                                    listViewModel = listVm,
+                                    syncPhase = listSyncPhase,
+                                    onSyncClick = { startSync(vault) { listSyncPhase = it } },
+                                    onCipherClick = {
+                                        detailOrigin = nav
+                                        nav = Nav.Detail(it)
+                                    },
+                                    onBack = { nav = Nav.List },
+                                    revision = saveRevision,
+                                )
+
+                                Nav.TagList -> TagListScreen(
+                                    listViewModel = listVm,
+                                    onTag = { nav = Nav.EntryList(EntryListKind.Tag(it)) },
+                                    onBack = { nav = Nav.List },
                                 )
 
                                 is Nav.Detail -> CipherDetailScreen(

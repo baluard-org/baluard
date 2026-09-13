@@ -2093,6 +2093,62 @@ impl VaultState {
         Ok(ids.iter().map(|id| id.to_string()).collect())
     }
 
+    /// List cipher metadata for entries that have a TOTP seed (hub card).
+    pub async fn list_totp_meta(&self) -> Result<Vec<baluard_core::types::CipherMeta>, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        let metas = handle.list_cipher_meta_full().map_err(|e| format!("{e}"))?;
+        let mut out = Vec::new();
+        for meta in &metas {
+            match handle.get_cipher(meta.id) {
+                Ok(CipherRead::Decrypted(ref c)) => {
+                    if let baluard_core::types::CipherKind::Login(ref data) = c.kind {
+                        if data.totp_uri.as_deref().map_or(false, |u| !u.is_empty()) {
+                            out.push(meta.clone());
+                        }
+                    }
+                }
+                _ => continue,
+            }
+        }
+        Ok(out)
+    }
+
+    /// List trashed cipher metadata (Trash view).
+    pub async fn list_trash_meta(&self) -> Result<Vec<baluard_core::types::CipherMeta>, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        let ids = handle.list_trash_ids().map_err(|e| format!("{e}"))?;
+        let mut metas = Vec::with_capacity(ids.len());
+        for id in &ids {
+            match handle.get_cipher(*id) {
+                Ok(CipherRead::Decrypted(ref c)) => {
+                    let username = match &c.kind {
+                        baluard_core::types::CipherKind::Login(data) => data.username.clone(),
+                        _ => None,
+                    };
+                    metas.push(baluard_core::types::CipherMeta {
+                        id: c.id,
+                        name: c.name.clone(),
+                        folder_id: c.folder_id,
+                        cipher_type: c.kind.cipher_type(),
+                        favorite: c.favorite,
+                        reprompt: c.reprompt,
+                        username,
+                        tier: c.tier,
+                        key_epoch: c.key_epoch,
+                        update_seq: c.update_seq,
+                        updated_at: c.updated_at,
+                        archived: c.archived,
+                        tags: c.tags.clone(),
+                    });
+                }
+                _ => continue, // undecryptable trash blob: skip
+            }
+        }
+        Ok(metas)
+    }
+
     /// Restore a cipher by ID.
     pub async fn restore_cipher(&self, id_str: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;
