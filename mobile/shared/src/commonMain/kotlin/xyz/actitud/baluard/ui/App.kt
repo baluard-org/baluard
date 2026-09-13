@@ -28,7 +28,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.auth.UnlockScreen
+import xyz.actitud.baluard.platform.AppBackground
 import xyz.actitud.baluard.data.VaultRepository
+import xyz.actitud.baluard.data.vaultTimeoutToken
+import xyz.actitud.baluard.data.vaultTimeoutMinutes
 import xyz.actitud.baluard.detail.CipherDetailScreen
 import xyz.actitud.baluard.detail.CipherDetailViewModel
 import xyz.actitud.baluard.edit.EditCipherScreen
@@ -117,9 +120,49 @@ fun App(vaultPath: String? = null) {
         val editVm = remember { EditCipherViewModel(repo) }
         val totpVm = remember { TotpViewModel(repo) }
         val generatorVm = remember { GeneratorViewModel(repo) }
+        var autoLockToken by remember { mutableStateOf(VaultRepository.DEFAULT_VAULT_TIMEOUT) }
         var nav by remember { mutableStateOf<Nav>(Nav.List) }
         var saveRevision by remember { mutableStateOf(0) }
         val scope = rememberCoroutineScope()
+
+        // System back: pop in-app navigation when a screen sits above its
+        // parent; at the roots (vault list, unlock, provider picker) let the
+        // system do its default (exit/minimize).
+        BackPressHandler(
+            enabled = (unlocked && nav != Nav.List) || (showOpen && flowVm.canGoBack()),
+            onBack = {
+                when {
+                    unlocked && nav != Nav.List -> nav = Nav.List
+                    showOpen -> flowVm.back()
+                }
+            },
+        )
+
+        // Auto-lock on background/return, per the vault's timeout policy.
+        // Reads the policy fresh each time so Settings changes apply live.
+        AppBackground.onPause = {
+            if (unlocked) scope.launch {
+                val vault = auth.vault() ?: return@launch
+                val token = runCatching { vaultTimeoutToken(vault) }.getOrNull() ?: return@launch
+                if (token == "immediately") {
+                    auth.lock()
+                    nav = Nav.List
+                    unlocked = false
+                }
+            }
+        }
+        AppBackground.onResume = { backgroundedMs ->
+            if (unlocked) scope.launch {
+                val vault = auth.vault() ?: return@launch
+                val token = runCatching { vaultTimeoutToken(vault) }.getOrNull() ?: return@launch
+                val mins = vaultTimeoutMinutes(token) ?: return@launch
+                if (backgroundedMs >= mins * 60_000L) {
+                    auth.lock()
+                    nav = Nav.List
+                    unlocked = false
+                }
+            }
+        }
 
         // Persist + apply every settings change (toggles live beyond the
         // Settings screen now; previously each visit reset them).
@@ -315,6 +358,15 @@ fun App(vaultPath: String? = null) {
                                     vault = vault,
                                     coordinator = sync,
                                     viewModel = settingsVm,
+                                    vaultTimeoutToken = autoLockToken,
+                                    onVaultTimeoutChange = { token ->
+                                        autoLockToken = token
+                                        scope.launch {
+                                            auth.vault()?.let { v ->
+                                                runCatching { repo.setVaultTimeout(v, token) }
+                                            }
+                                        }
+                                    },
                                     onBack = { nav = Nav.List },
                                 )
                             }
