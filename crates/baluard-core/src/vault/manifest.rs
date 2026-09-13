@@ -381,9 +381,9 @@ mod tests {
         // fail the whole settings write or lock the user out instantly.
         assert_eq!(
             VaultTimeout::from_token("garbage"),
-            VaultTimeout::default_for_new()
+            VaultTimeout::Minutes(15)
         );
-        assert_eq!(VaultTimeout::from_token(""), VaultTimeout::default_for_new());
+        assert_eq!(VaultTimeout::from_token(""), VaultTimeout::Minutes(15));
     }
 
     #[test]
@@ -403,7 +403,27 @@ mod tests {
             let json = format!(r#"{{"vault_timeout": "{input}"}}"#);
             let settings: VaultSettings = serde_json::from_str(&json).unwrap();
             assert_eq!(settings.vault_timeout.as_token(), stored);
+            let reserialized = serde_json::to_value(&settings.vault_timeout).unwrap();
+            assert_eq!(reserialized, serde_json::json!(stored));
         }
+    }
+
+    #[test]
+    fn vault_timeout_edge_tokens() {
+        // Zero minutes: valid inactivity window
+        assert_eq!(VaultTimeout::from_token("0m"), VaultTimeout::Minutes(0));
+        assert_eq!(VaultTimeout::from_token("0"), VaultTimeout::Minutes(0));
+        // Negative minutes: unparseable -> default fallback (15m)
+        assert_eq!(VaultTimeout::from_token("-15m"), VaultTimeout::Minutes(15));
+        // Hour overflow: saturating_mul to u32::MAX
+        assert_eq!(
+            VaultTimeout::from_token("100000000h"),
+            VaultTimeout::Minutes(u32::MAX)
+        );
+        // Explicit default token
+        assert_eq!(VaultTimeout::from_token("default"), VaultTimeout::Minutes(15));
+        // Surrounding whitespace trimmed
+        assert_eq!(VaultTimeout::from_token("  30m  "), VaultTimeout::Minutes(30));
     }
 
     #[test]
