@@ -9,6 +9,10 @@ plugins {
     kotlin("plugin.serialization") version "2.0.21"
 }
 
+composeCompiler {
+    stabilityConfigurationFiles.add(project.layout.projectDirectory.file("compose_compiler_config.conf"))
+}
+
 kotlin {
     androidTarget {
         compilerOptions {

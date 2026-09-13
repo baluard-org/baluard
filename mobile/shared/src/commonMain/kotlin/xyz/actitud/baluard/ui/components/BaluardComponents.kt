@@ -515,7 +515,7 @@ fun CipherAvatar(
     modifier: Modifier = Modifier,
     size: Dp = 40.dp,
 ) {
-    val (icon, gradientColors) = cipherTypeVisuals(typeTag)
+    val (icon, gradientBrush) = cipherTypeVisuals(typeTag)
 
     val initials = name.trim().take(2).uppercase().ifEmpty { "?" }
 
@@ -523,7 +523,7 @@ fun CipherAvatar(
         modifier = modifier
             .size(size)
             .clip(RoundedCornerShape(12.dp))
-            .background(Brush.linearGradient(colors = gradientColors))
+            .background(gradientBrush)
             .border(
                 width = 1.dp,
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
@@ -551,37 +551,40 @@ fun CipherAvatar(
     }
 }
 
-/** Returns visual icon and gradient pairs for cipher types. */
-private fun cipherTypeVisuals(typeTag: String): Pair<ImageVector, List<Color>> {
+/** Cached gradient brushes: one allocation per type, not per composition. */
+private val typeBrushes = mapOf(
+    "login" to Brush.linearGradient(listOf(Color(0xFF0D9488), Color(0xFF0F766E))),
+    "card" to Brush.linearGradient(listOf(Color(0xFF2563EB), Color(0xFF1D4ED8))),
+    "identity" to Brush.linearGradient(listOf(Color(0xFF7C3AED), Color(0xFF6D28D9))),
+    "securenote" to Brush.linearGradient(listOf(Color(0xFFD97706), Color(0xFFB45309))),
+    "sshkey" to Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857))),
+    "passkeys" to Brush.linearGradient(listOf(Color(0xFF8B5CF6), Color(0xFF7C3AED))),
+)
+
+private val defaultBrush = Brush.linearGradient(listOf(Color(0xFF475569), Color(0xFF334155)))
+
+/** Accent colors for the category badge pill (first color = accent). */
+private val typeAccentColors = mapOf(
+    "login" to listOf(Color(0xFF0D9488), Color(0xFF0F766E)),
+    "card" to listOf(Color(0xFF2563EB), Color(0xFF1D4ED8)),
+    "identity" to listOf(Color(0xFF7C3AED), Color(0xFF6D28D9)),
+    "securenote" to listOf(Color(0xFFD97706), Color(0xFFB45309)),
+    "sshkey" to listOf(Color(0xFF059669), Color(0xFF047857)),
+    "passkeys" to listOf(Color(0xFF8B5CF6), Color(0xFF7C3AED)),
+)
+
+private val defaultAccentColors = listOf(Color(0xFF475569), Color(0xFF334155))
+
+/** Returns visual icon and cached gradient brush for cipher types. */
+private fun cipherTypeVisuals(typeTag: String): Pair<ImageVector, Brush> {
     return when (typeTag.lowercase()) {
-        "login" -> Pair(
-            Icons.Default.Lock,
-            listOf(Color(0xFF0D9488), Color(0xFF0F766E)), // Teal
-        )
-        "card" -> Pair(
-            Icons.Default.CreditCard,
-            listOf(Color(0xFF2563EB), Color(0xFF1D4ED8)), // Blue
-        )
-        "identity" -> Pair(
-            Icons.Default.Person,
-            listOf(Color(0xFF7C3AED), Color(0xFF6D28D9)), // Purple
-        )
-        "securenote", "note" -> Pair(
-            Icons.Default.Description,
-            listOf(Color(0xFFD97706), Color(0xFFB45309)), // Amber
-        )
-        "sshkey" -> Pair(
-            Icons.Default.Key,
-            listOf(Color(0xFF059669), Color(0xFF047857)), // Emerald
-        )
-        "passkeys", "passkey" -> Pair(
-            Icons.Default.Fingerprint,
-            listOf(Color(0xFF8B5CF6), Color(0xFF7C3AED)), // Violet
-        )
-        else -> Pair(
-            Icons.Default.Shield,
-            listOf(Color(0xFF475569), Color(0xFF334155)), // Slate
-        )
+        "login" -> Pair(Icons.Default.Lock, typeBrushes.getValue("login"))
+        "card" -> Pair(Icons.Default.CreditCard, typeBrushes.getValue("card"))
+        "identity" -> Pair(Icons.Default.Person, typeBrushes.getValue("identity"))
+        "securenote", "note" -> Pair(Icons.Default.Description, typeBrushes.getValue("securenote"))
+        "sshkey" -> Pair(Icons.Default.Key, typeBrushes.getValue("sshkey"))
+        "passkeys", "passkey" -> Pair(Icons.Default.Fingerprint, typeBrushes.getValue("passkeys"))
+        else -> Pair(Icons.Default.Shield, defaultBrush)
     }
 }
 
@@ -594,8 +597,8 @@ fun CategoryBadge(
     modifier: Modifier = Modifier,
     typeTag: String = "login",
 ) {
-    val (_, colors) = cipherTypeVisuals(typeTag)
-    val accentColor = colors.firstOrNull() ?: MaterialTheme.colorScheme.primary
+    val accentColor = (typeAccentColors[typeTag.lowercase()] ?: defaultAccentColors)
+        .firstOrNull() ?: MaterialTheme.colorScheme.primary
 
     Box(
         modifier = modifier
