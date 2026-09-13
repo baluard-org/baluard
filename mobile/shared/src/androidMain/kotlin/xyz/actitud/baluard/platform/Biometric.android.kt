@@ -55,32 +55,83 @@ actual class Biometric actual constructor() {
         ) {
             return false
         }
-        return blobFor(aliasFor(vaultKey)) != null
+        val alias = aliasFor(vaultKey)
+        val hasBlob = blobFor(alias) != null
+        val hasKey = runCatching { keyStore().containsAlias(alias) }.getOrDefault(false)
+        return hasBlob && hasKey
     }
 
     actual fun enroll(
         vaultKey: String,
         kek: ByteArray,
+        title: String,
         onSuccess: () -> Unit,
         onError: (String) -> Unit,
     ) {
+        val context = AppContextHolder.get() ?: run {
+            platformLogE(TAG, "enroll failed: app context null")
+            return onError("app not initialized")
+        }
+        val activity = AppContextHolder.activity() ?: run {
+            platformLogE(TAG, "enroll failed: host activity null")
+            return onError("enroll host activity missing")
+        }
+
         try {
             val alias = aliasFor(vaultKey)
             // Fresh wrapping key on every enroll (rotation).
-            deleteKey(alias)
+            clearEnrollment(alias)
             val key = createKey(alias)
+            // The key is auth-per-use: the ENCRYPT cipher goes into a
+            // CryptoObject and the prompt grants the operation, exactly like
+            // unlock's DECRYPT ceremony. Without the ceremony doFinal throws
+            // UserNotAuthenticatedException and enrollment silently fails.
             val cipher = Cipher.getInstance(TRANSFORM)
             cipher.init(Cipher.ENCRYPT_MODE, key)
-            val iv = cipher.iv
-            val ct = cipher.doFinal(kek)
-            val blob = iv + ct
-            AppContextHolder.require()
-                .getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-                .edit()
-                .putString(alias, Base64.encodeToString(blob, Base64.NO_WRAP))
-                .apply()
-            onSuccess()
+
+            val prompt = BiometricPrompt(
+                activity,
+                ContextCompat.getMainExecutor(context),
+                object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        val okCipher = result.cryptoObject?.cipher ?: run {
+                            platformLogE(TAG, "enroll succeeded but crypto object is null")
+                            onError("crypto object missing")
+                            return
+                        }
+                        try {
+                            val iv = okCipher.iv
+                            val ct = okCipher.doFinal(kek)
+                            val blob = iv + ct
+                            AppContextHolder.require()
+                                .getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+                                .edit()
+                                .putString(alias, Base64.encodeToString(blob, Base64.NO_WRAP))
+                                .apply()
+                            onSuccess()
+                        } catch (e: Exception) {
+                            platformLogE(TAG, "enroll encryption/storage failed", e)
+                            onError(e.message ?: "enroll encrypt failed")
+                        }
+                    }
+
+                    override fun onAuthenticationError(code: Int, message: CharSequence) {
+                        platformLogE(TAG, "enroll auth error: code=$code message=$message")
+                        onError(message.toString())
+                    }
+                },
+            )
+
+            prompt.authenticate(
+                BiometricPrompt.PromptInfo.Builder()
+                    .setTitle(title)
+                    .setNegativeButtonText(context.getString(android.R.string.cancel))
+                    .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                    .build(),
+                BiometricPrompt.CryptoObject(cipher),
+            )
         } catch (e: Exception) {
+            platformLogE(TAG, "enroll setup failed", e)
             onError(e.message ?: "enroll failed")
         }
     }
@@ -91,17 +142,25 @@ actual class Biometric actual constructor() {
         onSuccess: (kek: ByteArray) -> Unit,
         onError: (String) -> Unit,
     ) {
-        val context = AppContextHolder.get()
-            ?: return onError("app not initialized")
-        val activity = AppContextHolder.activity()
-            ?: return onError("unlock host activity missing")
+        val context = AppContextHolder.get() ?: run {
+            platformLogE(TAG, "unlock failed: app context null")
+            return onError("app not initialized")
+        }
+        val activity = AppContextHolder.activity() ?: run {
+            platformLogE(TAG, "unlock failed: host activity null")
+            return onError("unlock host activity missing")
+        }
 
         val alias = aliasFor(vaultKey)
-        val blob = blobFor(alias) ?: return onError("not enrolled")
+        val blob = blobFor(alias) ?: run {
+            platformLogE(TAG, "unlock failed: not enrolled for $alias")
+            return onError("not enrolled")
+        }
 
         // iv = first 12 bytes (GCM default), ct = rest.
         val raw = Base64.decode(blob, Base64.NO_WRAP)
         if (raw.size < GCM_IV_LEN + 1) {
+            platformLogE(TAG, "unlock failed: stored key damaged for $alias")
             clearEnrollment(alias)
             return onError("stored key damaged; unlock with password and re-enable")
         }
@@ -113,12 +172,12 @@ actual class Biometric actual constructor() {
             Cipher.getInstance(TRANSFORM).apply {
                 init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
             }
-        } catch (_: KeyPermanentlyInvalidatedException) {
-            // New biometric enrolled since enrollment: fail closed, drop the
-            // stale blob; the user re-enables after a master-password unlock.
+        } catch (e: KeyPermanentlyInvalidatedException) {
+            platformLogE(TAG, "unlock: biometrics changed, key permanently invalidated", e)
             clearEnrollment(alias)
             return onError("biometrics changed; unlock with password, then re-enable")
         } catch (e: Exception) {
+            platformLogE(TAG, "unlock: key load or cipher init failed", e)
             return onError(e.message ?: "key load failed")
         }
 
@@ -128,17 +187,20 @@ actual class Biometric actual constructor() {
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     val okCipher = result.cryptoObject?.cipher ?: run {
+                        platformLogE(TAG, "unlock succeeded but crypto object is null")
                         onError("crypto object missing")
                         return
                     }
                     try {
                         onSuccess(okCipher.doFinal(ct))
                     } catch (e: Exception) {
+                        platformLogE(TAG, "unlock decryption failed", e)
                         onError(e.message ?: "decrypt failed")
                     }
                 }
 
                 override fun onAuthenticationError(code: Int, message: CharSequence) {
+                    platformLogE(TAG, "unlock auth error: code=$code message=$message")
                     onError(message.toString())
                 }
             },
@@ -147,6 +209,7 @@ actual class Biometric actual constructor() {
         prompt.authenticate(
             BiometricPrompt.PromptInfo.Builder()
                 .setTitle(title)
+                .setNegativeButtonText(context.getString(android.R.string.cancel))
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
                 .build(),
             BiometricPrompt.CryptoObject(cipher),
@@ -206,6 +269,7 @@ actual class Biometric actual constructor() {
     }
 
     private companion object {
+        const val TAG = "Biometric"
         const val PREFS = "baluard_biometric_kek"
         const val ALIAS_PREFIX = "baluard_kek_"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"

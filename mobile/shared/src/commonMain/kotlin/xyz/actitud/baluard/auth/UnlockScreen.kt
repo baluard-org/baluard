@@ -30,6 +30,7 @@ import xyz.actitud.baluard.data.AuthState
 import xyz.actitud.baluard.data.UnlockResult
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.Biometric
+import xyz.actitud.baluard.platform.platformLogE
 import xyz.actitud.baluard.ui.components.BaluardAmbientBackground
 import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardLogoBadge
@@ -59,7 +60,7 @@ fun UnlockScreen(
     var phase by remember { mutableStateOf(UnlockPhase.Input) }
     val scope = rememberCoroutineScope()
     val biometric = remember { Biometric() }
-    val biometricEnrolled by remember { mutableStateOf(biometric.isEnrolled(vaultPath)) }
+    var biometricEnrolled by remember(vaultPath) { mutableStateOf(biometric.isEnrolled(vaultPath)) }
 
     fun finishUnlock() = onUnlocked()
 
@@ -138,7 +139,7 @@ fun UnlockScreen(
                                     state = AuthState.Unlocking
                                     scope.launch {
                                         when (authViewModel.openAndUnlockWithKek(vaultPath, kek)) {
-                                            is UnlockResult.Success -> {
+                                             is UnlockResult.Success -> {
                                                 state = AuthState.Unlocked
                                                 finishUnlock()
                                             }
@@ -188,8 +189,11 @@ fun UnlockScreen(
                                 scope.launch {
                                     val kek = runCatching {
                                         authViewModel.deriveKek(vaultPath, password)
+                                    }.onFailure {
+                                        platformLogE("UnlockScreen", "deriveKek failed for vault: $vaultPath", it)
                                     }.getOrNull()
                                     if (kek == null) {
+                                        platformLogE("UnlockScreen", "enroll: KEK derivation returned null, aborting enroll")
                                         phase = UnlockPhase.Input
                                         finishUnlock()
                                         return@launch
@@ -197,11 +201,14 @@ fun UnlockScreen(
                                     biometric.enroll(
                                         vaultKey = vaultPath,
                                         kek = kek,
+                                        title = t("login.biometricTitle"),
                                         onSuccess = {
+                                            biometricEnrolled = true
                                             phase = UnlockPhase.Input
                                             finishUnlock()
                                         },
-                                        onError = {
+                                        onError = { err ->
+                                            platformLogE("UnlockScreen", "biometric enroll failed: $err")
                                             // Enrollment failed: quick unlock
                                             // stays off; the vault IS unlocked.
                                             phase = UnlockPhase.Input

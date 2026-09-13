@@ -22,12 +22,15 @@ expect class Biometric() {
     fun isEnrolled(vaultKey: String): Boolean
 
     /**
-     * Store the Argon2id-derived [kek] behind biometric gating. Runs in the
-     * main app only (post master-password unlock, explicit user action).
+     * Store the Argon2id-derived [kek] behind biometric gating. Runs the
+     * platform biometric prompt (ENCRYPT ceremony) and persists the wrapped
+     * KEK on success. Runs in the main app only (post master-password
+     * unlock, explicit user action).
      */
     fun enroll(
         vaultKey: String,
         kek: ByteArray,
+        title: String,
         onSuccess: () -> Unit,
         onError: (String) -> Unit,
     )

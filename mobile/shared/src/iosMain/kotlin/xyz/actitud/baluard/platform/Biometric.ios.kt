@@ -13,6 +13,7 @@ actual class Biometric actual constructor() {
     actual fun enroll(
         vaultKey: String,
         kek: ByteArray,
+        title: String,
         onSuccess: () -> Unit,
         onError: (String) -> Unit,
     ) {
