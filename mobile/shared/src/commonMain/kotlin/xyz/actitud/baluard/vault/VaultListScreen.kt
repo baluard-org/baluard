@@ -150,7 +150,16 @@ fun VaultListScreen(
                                 color = MaterialTheme.colorScheme.outlineVariant,
                                 shape = RoundedCornerShape(10.dp),
                             )
-                            .clickable(enabled = !refreshing) { scope.launch { onSyncNow() } },
+                            .clickable(enabled = !refreshing) {
+                                scope.launch {
+                                    refreshing = true
+                                    try {
+                                        onSyncNow()
+                                    } finally {
+                                        refreshing = false
+                                    }
+                                }
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         if (refreshing) {

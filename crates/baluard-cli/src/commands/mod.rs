@@ -2933,8 +2933,11 @@ fn vaults_add(path_str: &str, slug_override: Option<&str>) -> Result<(), Box<dyn
         )
         .into());
     }
-    // Same directory under a different slug = double-attach; refuse.
-    if reg.vaults.values().any(|v| v.path == path) {
+    // Same directory under a different slug = double-attach; refuse. Canonicalize
+    // existing registry paths so symlinks and alternate spellings cannot bypass.
+    if reg.vaults.values().any(|v| {
+        std::fs::canonicalize(&v.path).map_or_else(|_| v.path == path, |cp| cp == path)
+    }) {
         return Err(
             "This directory is already registered under a different slug. Detach it first: baluard vaults detach <slug>"
                 .into(),
