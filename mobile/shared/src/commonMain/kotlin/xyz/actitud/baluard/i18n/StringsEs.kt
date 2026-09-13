@@ -55,7 +55,8 @@ internal val ES: Map<String, String> = mapOf(
     "recovery.warning" to "Nunca guardes la frase en este dispositivo ni en la nube.",
     "recovery.ack" to "La escribí en papel",
 
-    // provider connect (open existing vault    "provider.title" to "¿Dónde está tu bóveda?",
+    // provider connect (open existing vault)
+    "provider.title" to "¿Dónde está tu bóveda?",
     "provider.subtitle" to
         "Conecta tu cuenta para abrir una bóveda sincronizada desde otro dispositivo.",
     "provider.github" to "GitHub",

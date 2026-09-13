@@ -34,6 +34,8 @@ class AuthViewModel(private val repo: VaultRepository) {
      * On success, holds the unlocked [MobileVault] for subsequent cipher ops.
      */
     suspend fun openAndUnlock(path: String, password: String): UnlockResult {
+        sessionKek?.fill(0)
+        sessionKek = null
         return try {
             val v = repo.openVault(path)
             v.unlock(password)
@@ -70,10 +72,12 @@ class AuthViewModel(private val repo: VaultRepository) {
         val v = vault ?: return false
         return try {
             v.lock()
-            sessionKek = null
             true
         } catch (e: Exception) {
             false
+        } finally {
+            sessionKek?.fill(0)
+            sessionKek = null
         }
     }
 
