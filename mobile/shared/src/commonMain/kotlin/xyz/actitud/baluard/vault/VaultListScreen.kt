@@ -93,6 +93,11 @@ fun VaultListScreen(
      * once + reload, so the list never races the Rust unlock-pull. */
     onStageEntry: suspend () -> Unit = {},
 ) {
+    // Collected so cipher updates recompose the screen. filtered()/allTags()
+    // take the list as a parameter — reading StateFlow.value inside them is
+    // not observable and left the list stale-empty after unlock (bug report).
+    val ciphers by listViewModel.ciphers.collectAsState()
+    val folders by listViewModel.folders.collectAsState()
     val query by listViewModel.query.collectAsState()
     val typeFilter by listViewModel.typeFilter.collectAsState()
     val tagFilter by listViewModel.tagFilter.collectAsState()
@@ -261,9 +266,9 @@ fun VaultListScreen(
 
             // Filter Chips
             FilterChipsRow(
-                types = listViewModel.allTypes(),
-                tags = listViewModel.allTags(),
-                folders = listViewModel.allFolders(),
+                types = listViewModel.allTypes(ciphers),
+                tags = listViewModel.allTags(ciphers),
+                folders = listViewModel.allFolders(ciphers, folders),
                 typeFilter = typeFilter,
                 tagFilter = tagFilter,
                 folderFilter = folderFilter,
@@ -274,7 +279,7 @@ fun VaultListScreen(
                 onFavorites = { listViewModel.setFavoritesOnly(it) },
             )
 
-            val visible = listViewModel.filtered()
+            val visible = listViewModel.filtered(ciphers)
 
             if (visible.isEmpty()) {
                 Box(
