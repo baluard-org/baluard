@@ -260,6 +260,7 @@ internal val EN: Map<String, String> = mapOf(
     "home.allEntries" to "All entries",
     "home.noFolder" to "No Folder",
     "home.allTags" to "All tags",
+    "home.switchVault" to "Switch vault",
     "home.vaults" to "Vaults",
     "home.addVault" to "Add vault",
     "home.viewAll" to "View all ({0})",

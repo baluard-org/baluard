@@ -274,6 +274,7 @@ internal val ES: Map<String, String> = mapOf(
     "home.noFolder" to "Sin carpeta",
     "home.addVault" to "Añadir bóveda",
     "home.allTags" to "Todas las etiquetas",
+    "home.switchVault" to "Cambiar de bóveda",
     "home.vaults" to "Bóvedas",
     "home.viewAll" to "Ver todas ({0})",
     "home.noneYet" to "Nada por aquí todavía.",
