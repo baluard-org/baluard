@@ -55,8 +55,7 @@ internal val ES: Map<String, String> = mapOf(
     "recovery.warning" to "Nunca guardes la frase en este dispositivo ni en la nube.",
     "recovery.ack" to "La escribí en papel",
 
-    // provider connect (open existing vault)
-    "provider.title" to "¿Dónde está tu bóveda?",
+    // provider connect (open existing vault    "provider.title" to "¿Dónde está tu bóveda?",
     "provider.subtitle" to
         "Conecta tu cuenta para abrir una bóveda sincronizada desde otro dispositivo.",
     "provider.github" to "GitHub",
@@ -238,4 +237,28 @@ internal val ES: Map<String, String> = mapOf(
     "conflict.crossEpochTitle" to "Desajuste de versión",
     "conflict.crossEpochBody" to "Una copia de \"{0}\" quedó cifrada con claves antiguas. Conserva una versión ahora; ábrela después en el dispositivo que tiene esas claves.",
     "conflict.error" to "No se pudo aplicar tu elección. Inténtalo de nuevo.",
+
+    "settings.biometric" to "Desbloqueo biométrico",
+    "settings.biometric.enableHint" to "Bloquea la bóveda y desbloquéala con tu contraseña maestra para activarlo.",
+    "settings.biometric.disableTitle" to "¿Desactivar el desbloqueo biométrico?",
+    "settings.biometric.disableBody" to "Usarás tu contraseña maestra para desbloquear esta bóveda en este dispositivo. Podrás reactivarlo más tarde.",
+    "settings.biometric.disableConfirm" to "Desactivar",
+    "settings.clipboardClear" to "Borrado automático del portapapeles",
+    "settings.clipboardClearHint" to "Los secretos copiados se borran del portapapeles tras este tiempo (salvo que hayas copiado otra cosa).",
+    "settings.clipboardClear.never" to "Nunca",
+    "settings.clipboardClear.10s" to "10 segundos",
+    "settings.clipboardClear.30s" to "30 segundos",
+    "settings.clipboardClear.60s" to "1 minuto",
+    "settings.clipboardClear.120s" to "2 minutos",
+    "settings.allowScreenshots" to "Permitir capturas de pantalla",
+    "settings.allowScreenshotsHint" to "Permite que capturas, grabaciones de pantalla y el multitarea muestren el contenido de la app. Apagado es más seguro.",
+    "detail.customFields" to "Campos personalizados",
+    "detail.booleanYes" to "Sí",
+    "detail.booleanNo" to "No",
+    "detail.passkeys" to "Pases de acceso",
+    "detail.passkey.rp" to "Sitio web",
+    "detail.passkey.user" to "Usuario",
+    "detail.passkey.created" to "Creado",
+    "detail.passkey.missingKey" to "Este pase se importó sin su clave privada. Inicia sesión en el sitio para registrarlo de nuevo.",
+    "detail.attachments" to "Adjuntos",
 )

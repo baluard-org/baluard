@@ -359,6 +359,8 @@ fun App(vaultPath: String? = null) {
                                     coordinator = sync,
                                     viewModel = settingsVm,
                                     vaultTimeoutToken = autoLockToken,
+                                    vaultPath = path,
+                                    authViewModel = auth,
                                     onVaultTimeoutChange = { token ->
                                         autoLockToken = token
                                         scope.launch {
