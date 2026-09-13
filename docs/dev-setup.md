@@ -76,7 +76,7 @@ just test
 # Full CI check (fmt + clippy + test + build)
 just check
 
-# Seed a demo vault (31 entries, password: demo)
+# Seed demo vaults (baluard-personal + baluard-work, password: baluard99)
 just seed-demo
 
 # See all available commands
@@ -97,6 +97,7 @@ All commands run from the project root. `just` reads the `justfile`.
 | `just test-core` | Run `baluard-core` tests only |
 | `just test-release` | Tests in release mode |
 | `just test-verbose` | Tests with `--nocapture` (see println output) |
+| `just test-browser` | Run browser extension vitest tests |
 | `just e2e` | Full smoke test: init -> daemon -> unlock -> add -> get -> delete -> lock |
 | `just check` | CI parity: `fmt-check` + `clippy` + `audit` + `test` + `build` |
 | `just fmt` | Format all Rust code |
@@ -117,8 +118,11 @@ All commands run from the project root. `just` reads the `justfile`.
 | `just ext-build` | Build both Chrome and Firefox extension bundles (Vite) |
 | `just ext-build-chrome` / `just ext-build-firefox` | Build a single target |
 | `just ext-dev-chrome` / `just ext-dev-firefox` | Dev: build + print load-unpacked / about:debugging instructions |
-| `just app-icons SOURCE OUT` | Generate platform icons (macOS/Win/Linux/Android/iOS + tray monochrome) from a source PNG into `OUT` |
-| `just seed-demo` | Seed a 31-entry demo vault (password: `demo`) |
+| `just app-icons` | Generate platform icons (macOS/Win/Linux/Android/iOS + tray monochrome) from brand SVGs |
+| `just seed-demo` | Seed two demo vaults (personal with 100 entries + work, password: `baluard99`) |
+| `just android-apk` | Build release Android APK |
+| `just android-apk-fast` | Build debug Android APK |
+| `just android-bindings` | Regenerate UniFFI Kotlin bindings |
 | `just release` | Build tar.gz + SHA256 checksums in `dist/` |
 | `just cross-compile` | Build for linux/macOS x amd64/arm64 |
 | `just clean` | `cargo clean` + remove `bin/` `dist/` |
@@ -149,25 +153,30 @@ crates/baluard-core/     # All crypto, vault format, key lifecycle, git sync, pr
 crates/baluard-cli/      # Terminal client (clap)
   src/main.rs          # Command dispatch + clap definitions
   src/client.rs        # Protobuf socket client, session tokens
-  src/commands/        # Dual-mode handlers (daemon + --direct) -- single mod.rs file
-crates/baluard-daemon/   # Background IPC daemon
-  src/main.rs          # tokio listener, SIGINT/SIGTERM, 0600 perms
-  src/handler.rs       # Protobuf routing (~72 routes), password zeroize, token-gated, bridge allowlist
-  src/state.rs         # VaultState (Arc<RwLock<Option<VaultHandle>>>) + per-vault PIN escrow
+  src/commands/        # Dual-mode handlers (daemon + --direct) - single mod.rs file
+crates/baluard-runtime/  # Shared in-process orchestration runtime
   src/host.rs          # VaultHost multi-vault: RwLock<VaultHostInner> with HashMap + active pointer
+  src/state.rs         # VaultState (Arc<RwLock<Option<VaultHandle>>>), cover timer, auto-lock
   src/autosync.rs      # Debounced push + event-driven pull + 30-min idle fallback + offline retry
   src/pin.rs           # Session PIN escrow (PinEscrow), 5-strike nuke
   src/bridge.rs        # Bridge token registry + TokenKind::Bridge branch + allowlist enforcement
   src/rate_limit.rs    # Per-action rate limiting
+  src/providers.rs     # Token refresh serialization, device flow, PAT connect, enrollment
+  src/crypto.rs        # constant_time_eq + crypto helpers for session tokens
+  src/lib.rs           # Module exports
+crates/baluard-daemon/   # Background IPC daemon (thin shell over baluard-runtime)
+  src/main.rs          # tokio listener, SIGINT/SIGTERM, 0600 perms
+  src/handler.rs       # Protobuf routing (~72 routes), password zeroize, token-gated, bridge allowlist
   src/socket_path.rs   # Platform socket path resolution
-  src/crypto.rs        # Crypto module glue
-  src/lib.rs           # Test surface (re-exports host/state/handler for integration tests)
+  src/lib.rs           # Test surface
 crates/baluard-nmh/      # Native messaging host (browser extension bridge)
-  src/                 # stdio-JSON <-> varint-protobuf. Stateless. Reads pairing entry on spawn.
+  src/main.rs          # stdio-JSON <-> varint-protobuf. Stateless. Reads pairing entry on spawn.
+crates/baluard-uniffi/   # UniFFI bindings consumed by mobile/shared
+  src/lib.rs           # Full vault lifecycle, auth, sync, and models exposed to Kotlin
 desktop/               # Tauri v2 + SolidJS + Tailwind
   src-tauri/           # Rust backend (daemon sidecar + baluard-nmh sidecar + tray + proto codegen)
   src/                 # SolidJS frontend
-    __tests__/          # Vitest tests (~117 cases: payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
+    __tests__/          # Vitest tests (229 cases: payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
     components/         # 38 components including Icon.jsx (40+ SVG icons), BridgeTab, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, AutoSyncIndicator, CloneFromProviderScreen, WelcomeScreen, VaultSwitcher
     context/            # AuthContext.jsx, VaultContext.jsx, VaultSwitcherContext.jsx, AutoSyncContext.jsx, ConflictResolutionContext.jsx, themeSignal.js, toastSignal.js
     lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
@@ -175,6 +184,9 @@ browser/                # MV3 browser extensions (Chromium + Firefox, shared cod
   shared/               # 95% of code (SolidJS popup, service worker, content script, nmh wrapper, autofill, pair)
   chrome/               # Chrome MV3 wrapper (manifest.extra.json)
   firefox/              # Firefox MV3 wrapper (manifest.extra.json)
+mobile/                 # Kotlin Multiplatform Compose app
+  shared/               # Common UI, ViewModels, repository, and platform expect/actual
+  androidApp/           # Android host application (single-Activity Compose host, adaptive icons, R8 rules)
 proto/                 # Protobuf schemas (compiled via prost)
 docs/                  # Architecture, design, plans, PRDs, threat model, post-quantum, 2fa, brand, app icons
 ```

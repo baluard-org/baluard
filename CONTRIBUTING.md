@@ -10,7 +10,7 @@ git clone https://github.com/baluard-org/baluard.git
 cd Baluard
 just                    # List all targets
 just check              # Full CI parity (fmt + clippy + test + build)
-just seed-demo          # Create demo vault with 31 test entries (password: demo)
+just seed-demo          # Seed demo vaults (baluard-personal + baluard-work, password: baluard99)
 ```
 
 See **[docs/dev-setup.md](docs/dev-setup.md)** for prerequisites, platform-specific setup, and all build commands.
@@ -38,11 +38,11 @@ Behaviour which can be reasonably considered harassment will not be tolerated.
 
 ### Rust
 
-- `just test` — full suite (core + daemon + CLI + desktop-driver bits)
-- `just test-core` — `baluard-core` only (~400 tests, ~5s)
-- `just test-cli` — CLI integration tests (`crates/baluard-cli/tests/`)
-- `just test-nmh` — native messaging host tests (`crates/baluard-nmh/`, ~14 tests)
-- `just test-verbose` — pass `--nocapture` to see stdout
+- `just test`: full suite (core + daemon + CLI + desktop-driver bits)
+- `just test-core`: `baluard-core` only (~400 tests, ~5s)
+- `just test-cli`: CLI integration tests (`crates/baluard-cli/tests/`)
+- `just test-nmh`: native messaging host tests (`crates/baluard-nmh/`, ~14 tests)
+- `just test-verbose`: pass `--nocapture` to see stdout
 
 CLI tests spawn the `baluard` binary via `assert_cmd` against a
 `tempfile::TempDir` vault path and use `BALUARD_PASSWORD` (recognized by
@@ -73,7 +73,7 @@ vitest `setupFiles` so it exists before any source IIFE runs.
 - Feature flags: `git-sync`, `org`, `emergency`
 - `zeroize` crate for all sensitive memory (never `write_bytes`)
 - `proptest` for property-based tests
-- Strict backwards compatibility
+- Pre-1.0 WIP: no backward compatibility guarantees yet; break formats, flags, and routes freely, updating call sites together. Crypto invariants stay load-bearing.
 
 ### JavaScript/SolidJS
 - ES modules, named exports

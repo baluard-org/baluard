@@ -16,3 +16,11 @@ MV3 extension (Chrome + Firefox) that bridges the browser to the Baluard native 
 
 - All privileged operations go through the daemon's bridge routes, gated by a scoped bridge token and an action allowlist (`BRIDGE_ALLOWED_ACTIONS` in `crates/baluard-core/src/bridge/token.rs`). The extension never holds vault keys.
 - Inline content-script messages are accepted only from frames the extension itself injected. Full routing (popup, autofill reads/writes) is available only to extension-owned pages.
+
+## Commands
+
+- `just ext-build`: build both Chrome and Firefox extension bundles
+- `just ext-build-chrome`: build Chrome extension bundle
+- `just ext-build-firefox`: build Firefox extension bundle
+- `just test-browser`: run extension test suite via Vitest
+- `just install-nmh-manifest <browser> <ext_id>`: link native messaging host manifest for the specified browser
