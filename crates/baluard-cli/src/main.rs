@@ -255,6 +255,18 @@ enum DeviceCommands {
 
 #[derive(Subcommand)]
 enum VaultAction {
+    /// Register an already-existing vault directory (e.g. moved from
+    /// another machine or restored from a backup) so it appears in the
+    /// app again. Non-destructive: no key material is touched. If this
+    /// device was never enrolled into the vault, run
+    /// `baluard enroll-with-phrase` afterwards.
+    Add {
+        /// Path to the vault directory (must contain a .baluard marker).
+        path: String,
+        /// Override the registry slug (default: the vault's marker slug).
+        #[arg(long)]
+        slug: Option<String>,
+    },
     /// List all registered vaults with their in-daemon state.
     List,
     /// Switch the active vault (instant if already unlocked;
@@ -416,6 +428,20 @@ enum SyncAction {
         /// Override the local slug (default: repo name).
         #[arg(long)]
         slug: Option<String>,
+    },
+    /// Clone a vault from a plain git URL (daemon only). Auth comes from
+    /// your own git setup (ssh-agent for ssh://, a connected provider
+    /// token or BALUARD_GIT_TOKEN for https) — Baluard stores nothing.
+    CloneUrl {
+        /// Git clone URL (https://, ssh://, or git@host:path).
+        url: String,
+        /// Override the local slug (default: last URL path segment).
+        #[arg(long)]
+        slug: Option<String>,
+        /// Hint the provider whose stored token should authenticate an
+        /// https clone (github, gitlab, or codeberg).
+        #[arg(long)]
+        provider: Option<String>,
     },
 }
 
@@ -1178,6 +1204,17 @@ fn main() {
                 &provider,
                 &repo,
                 slug.as_deref(),
+            ),
+            SyncAction::CloneUrl {
+                url,
+                slug,
+                provider,
+            } => commands::handle_sync_clone_url(
+                mode,
+                cli.socket.as_deref(),
+                &url,
+                slug.as_deref(),
+                provider.as_deref(),
             ),
         },
 

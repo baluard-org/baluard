@@ -166,7 +166,7 @@ pub async fn detect_vault_repos(provider: Provider) -> Result<Vec<VaultRepo>, Ba
 
 /// Clone a remote repository into `local_path` with `.partial` staging and `.baluard` marker verification.
 pub fn clone_and_register(
-    provider: Provider,
+    provider: Option<Provider>,
     clone_url: &str,
     local_path: &Path,
     cancel_flag: Option<Arc<AtomicBool>>,
@@ -375,7 +375,7 @@ mod tests {
             .unwrap();
 
         let source_url = format!("file://{}", source_dir.display());
-        let result = clone_and_register(Provider::GitHub, &source_url, &target_dir, None);
+        let result = clone_and_register(Some(Provider::GitHub), &source_url, &target_dir, None);
 
         assert!(result.is_err());
         assert!(!target_dir.exists());
