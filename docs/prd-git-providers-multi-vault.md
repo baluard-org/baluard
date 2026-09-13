@@ -6,7 +6,7 @@
 
 > **Implementation note (2026-06-15):** Phases 1-3 + 5 + provider selection UI are **Done**. Phase 4 (clone) and Phase 6 (switching) remain. This PRD is the original requirements record; for current implementation reality see `docs/plan-git-providers-multi-vault.md` (Phase 5) and `docs/git-provider-apps-and-tokens.md` (provider app registration + token strategy).
 >
-> **Key divergences from this PRD:** (1) GitLab uses **device flow** as primary auth (it does NOT require `client_secret` — that claim in §5 was incorrect; GitLab supports public-client device flow since 17.9). (2) Codeberg uses **web-OAuth (auth-code + PKCE)** as primary, not PAT-only. (3) Providers use **raw `reqwest`**, not the `gitlab`/`forgejo-api` crates named in §5. (4) PAT is an Advanced Options fallback for all three, not the primary path for GitLab/Codeberg.
+> **Key divergences from this PRD:** (1) GitLab uses **device flow** as primary auth (it does NOT require `client_secret`, that claim in §5 was incorrect; GitLab supports public-client device flow since 17.9). (2) Codeberg uses **web-OAuth (auth-code + PKCE)** as primary, not PAT-only. (3) Providers use **raw `reqwest`**, not the `gitlab`/`forgejo-api` crates named in §5. (4) PAT is an Advanced Options fallback for all three, not the primary path for GitLab/Codeberg.
 
 ---
 
@@ -324,7 +324,7 @@ New daemon routes:
 | `vaults.switch` | Flip the live `active` pointer to another slug (no zeroization, no token change); returns target state |
 | `vaults.set_active` | Persist the default/active vault slug in the registry |
 | `vaults.active` | Return the current active slug + its state |
-| `vaults.close` | Remove one vault from the in-memory map (clears `active` if active); Arc-drain — returns immediately, in-flight handlers finish and zeroize on last drop |
+| `vaults.close` | Remove one vault from the in-memory map (clears `active` if active); Arc-drain, returns immediately, in-flight handlers finish and zeroize on last drop |
 
 ### 11. Git Credential Transport
 

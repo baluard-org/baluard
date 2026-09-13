@@ -1,6 +1,6 @@
 # 2FA / Second Factor Analysis
 
-**Status**: Design exploration — NOT for immediate implementation
+**Status**: Design exploration, NOT for immediate implementation
 **Last updated**: 2026-05-30
 **Reviewers**: Peer review (analysis + synthesis)
 
@@ -18,12 +18,12 @@ The question: **What does 2FA mean when there is no server to enforce it?**
 
 | Attacker has | Can they unlock the vault? | What stops them? |
 |---|---|---|
-| Master password only | No — no vault files | Nothing needed. Files are the second factor. |
-| Disk access only | No — no master password | Encryption. Argon2id KDF. |
+| Master password only | No, no vault files | Nothing needed. Files are the second factor. |
+| Disk access only | No, no master password | Encryption. Argon2id KDF. |
 | Master password + disk access | **Yes** | Nothing. Game over regardless of 2FA. |
-| Running session (unattended machine) | Yes — daemon has keys in memory | Auto-lock timer. Screen lock integration. |
-| GitHub PAT + remote repo access | No — vault contents are encrypted | End-to-end encryption. Git repo is ciphertext. |
-| Master password + GitHub access | No — still no disk access to vault files | Local-only decryption. |
+| Running session (unattended machine) | Yes, daemon has keys in memory | Auto-lock timer. Screen lock integration. |
+| GitHub PAT + remote repo access | No, vault contents are encrypted | End-to-end encryption. Git repo is ciphertext. |
+| Master password + GitHub access | No, still no disk access to vault files | Local-only decryption. |
 
 **Key insight**: In a serverless app, there is no remote attack surface for vault unlock. The "second factor" is the physical device holding the encrypted files.
 
@@ -91,7 +91,7 @@ unlock(vault_path, master_password):
 | iOS | Face ID / Touch ID | UniFFI → Rust `libfido2` |
 | Physical | YubiKey (CTAP2) | `libfido2` |
 
-**Storage**: FIDO2 credential public key in vault header (plaintext is fine — it's public). Private key stays in hardware.
+**Storage**: FIDO2 credential public key in vault header (plaintext is fine, it's public). Private key stays in hardware.
 
 **Registration flow**:
 ```
@@ -213,7 +213,7 @@ Requires hardware token or platform authenticator. No password to remember. No p
 
 ## Open Questions
 
-1. **FIDO2 crate maturity**: `libfido2` bindings in Rust — how stable? Audit status? Need to evaluate before Tier 2 commitment.
+1. **FIDO2 crate maturity**: `libfido2` bindings in Rust, how stable? Audit status? Need to evaluate before Tier 2 commitment.
 
 2. **Android/iOS FIDO2 via UniFFI**: Can `libfido2` build for mobile targets? Or do we need platform-specific FFI (Android SafetyNet, iOS LAContext)? This affects UniFFI API surface.
 
@@ -229,6 +229,6 @@ Requires hardware token or platform authenticator. No password to remember. No p
 
 ## Cross-References
 
-- [architecture-decisions.md](architecture-decisions.md) — device lifecycle, enrollment, epoch rotation (DOMAIN 6)
-- [threat-model.md](threat-model.md) — formal threat model
-- [software-architecture.md](software-architecture.md) — key hierarchy, derivation, and cryptographic ceremonies
+- [architecture-decisions.md](architecture-decisions.md), device lifecycle, enrollment, epoch rotation (DOMAIN 6)
+- [threat-model.md](threat-model.md), formal threat model
+- [software-architecture.md](software-architecture.md), key hierarchy, derivation, and cryptographic ceremonies

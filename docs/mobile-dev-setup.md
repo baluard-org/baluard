@@ -1,8 +1,7 @@
 # Mobile dev setup (macOS host build)
 
-Proven end-to-end on macOS 15 (Apple Silicon) up through the Rust cdylib build.
-The Kotlin/Gradle scaffold under `mobile/` is still **untested blind code** — see
-[Known blockers](#known-blockers) for what stops a full APK build today.
+Proven end-to-end on macOS 15 (Apple Silicon) through Rust cdylib compilation and Android APK generation.
+`just android-apk` produces a functional debug APK for all 4 Android ABIs.
 
 > The earlier "Linux container proved the Rust side" note still holds; this doc
 > replaces the speculative macOS steps with the ones actually run on-host.
@@ -18,18 +17,18 @@ The Kotlin/Gradle scaffold under `mobile/` is still **untested blind code** — 
 | Android platform-tools | 37.0.1 | `brew install --cask android-platform-tools` | Ships `adb`, `fastboot`. |
 | Android SDK platform | android-35 | via `sdkmanager` (matches `compileSdk = 35`) | |
 | Android build-tools | 35.0.0 | via `sdkmanager` | |
-| Android NDK | r27c (`27.2.12479018`) | via `sdkmanager` | No `ndkVersion` pinned in `mobile/androidApp/build.gradle.kts`, so AGP picks a default — pin via `ANDROID_NDK_HOME`. |
+| Android NDK | r27c (`27.2.12479018`) | via `sdkmanager` | No `ndkVersion` pinned in `mobile/androidApp/build.gradle.kts`, so AGP picks a default, pin via `ANDROID_NDK_HOME`. |
 | Rust | 1.85+ (MSRV) via **rustup** | see [The Rust toolchain gotcha](#gotcha-1--use-rustup-not-homebrew-rust) | **Do not rely on the Homebrew `rust` formula.** |
 | Android Rust targets | `aarch64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android`, `x86_64-linux-android` | `rustup target add …` | |
 | `cargo-ndk` | 4.x | `cargo install cargo-ndk` | Builds the cdylib per ABI and ships it into `jniLibs/`. |
 
-No Android Studio install is required — the command-line tools + platform-tools
+No Android Studio install is required, the command-line tools + platform-tools
 are enough for building and debugging on a physical device (via `adb`). Install
 Android Studio only if you want the GUI debugger / emulator manager.
 
 ---
 
-## Step 1 — Install the Android toolchain (Homebrew)
+## Step 1: Install the Android toolchain (Homebrew)
 
 ```sh
 brew install --cask android-commandlinetools android-platform-tools
@@ -59,7 +58,7 @@ sdkmanager --list_installed        # shows the four packages above
 ls "$ANDROID_HOME/ndk"             # -> 27.2.12479018
 ```
 
-## Step 2 — Persist env vars in `~/.zshrc`
+## Step 2: Persist env vars in `~/.zshrc`
 
 ```sh
 cat >> ~/.zshrc <<'EOF'
@@ -75,21 +74,21 @@ EOF
 Open a new shell (or `source ~/.zshrc`) before continuing. `adb` and `sdkmanager`
 must resolve, and `echo $ANDROID_NDK_HOME` must be non-empty.
 
-## Step 3 — Add the Rust Android targets and `cargo-ndk`
+## Step 3: Add the Rust Android targets and `cargo-ndk`
 
 ```sh
 rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
 cargo install cargo-ndk
 ```
 
-### <a id="gotcha-1--use-rustup-not-homebrew-rust"></a>⚠️ Gotcha 1 — Use rustup, not Homebrew `rust`
+### <a id="gotcha-1--use-rustup-not-homebrew-rust"></a>⚠️ Gotcha 1: Use rustup, not Homebrew `rust`
 
 This machine had **two Rust installs shadowing each other**, and it silently broke
 cross-compilation:
 
 - `which cargo` → `/opt/homebrew/bin/cargo` (Homebrew `rust` formula). **No rustup,
   no `rust-std` for foreign targets.**
-- `rustup` manages `~/.rustup/toolchains/stable-…` **with** the android targets — but
+- `rustup` manages `~/.rustup/toolchains/stable-…` **with** the android targets, but
   the `cargo`/`rustc` shims were missing from `~/.cargo/bin`, so `cargo` on `PATH`
   fell through to the Homebrew binary.
 
@@ -120,7 +119,7 @@ rustup run stable cargo ndk …          # use the toolchain cargo, not the Home
 
 ---
 
-## Step 4 — Build the Rust cdylib into `jniLibs`
+## Step 4: Build the Rust cdylib into `jniLibs`
 
 ```sh
 # From repo root
@@ -137,7 +136,7 @@ Output (one `.so` per ABI, ~8–13 MB):
 
 ```
 mobile/androidApp/src/main/jniLibs/
-├── arm64-v8a/libbaluard_uniffi.so      # 64-bit ARM — real devices
+├── arm64-v8a/libbaluard_uniffi.so      # 64-bit ARM, real devices
 ├── armeabi-v7a/libbaluard_uniffi.so    # 32-bit ARM (legacy)
 ├── x86_64/libbaluard_uniffi.so         # 64-bit emulators
 └── x86/libbaluard_uniffi.so            # 32-bit emulators
@@ -150,7 +149,7 @@ are `arm64-v8a`):
 rustup run stable cargo ndk -t arm64-v8a -o mobile/androidApp/src/main/jniLibs build -p baluard-uniffi --release
 ```
 
-### <a id="gotcha-2--openssl-must-be-vendored-for-android"></a>⚠️ Gotcha 2 — OpenSSL must be vendored for Android
+### <a id="gotcha-2--openssl-must-be-vendored-for-android"></a>⚠️ Gotcha 2: OpenSSL must be vendored for Android
 
 `baluard-uniffi` enables `git-sync` on `baluard-core` (the mobile surface uses the
 autosync coordinator: `sync_on_unlock`, `sync_status`, …). That pulls `git2` →
@@ -158,7 +157,7 @@ autosync coordinator: `sync_on_unlock`, `sync_status`, …). That pulls `git2` �
 to Android and fails its build script with *"Could not find directory of OpenSSL
 installation"*.
 
-The fix is already in `crates/baluard-uniffi/Cargo.toml` — an **Android-only**
+The fix is already in `crates/baluard-uniffi/Cargo.toml`, an **Android-only**
 vendored dependency so desktop builds are untouched:
 
 ```toml
@@ -170,7 +169,7 @@ openssl-sys = { version = "0.9", features = ["vendored"] }
 `openssl-src` then builds OpenSSL from source using the NDK (needs `ANDROID_NDK_HOME`).
 The first build is slow (~40 s/ABI); subsequent builds are cached.
 
-### <a id="gotcha-3--32-bit-rlim-cast"></a>⚠️ Gotcha 3 — 32-bit `rlim_t` cast
+### <a id="gotcha-3--32-bit-rlim-cast"></a>⚠️ Gotcha 3: 32-bit `rlim_t` cast
 
 `baluard-runtime/src/host.rs` compared `(baseline as u64) * 2 >= rlim`, but `rlim`
 (`libc::rlimit.rlim_cur`) is `u64` on 64-bit and `u32` on 32-bit, so the build
@@ -180,7 +179,7 @@ failed with `E0308` on `armeabi-v7a` / `x86`. Fixed by casting:
 if (baseline as u64) * 2 >= rlim as u64 {
 ```
 
-### ⚠️ Gotcha 4 — `cdylib_name` must match the artifact
+### ⚠️ Gotcha 4: `cdylib_name` must match the artifact
 
 `crates/baluard-uniffi/src/uniffi.toml` originally had `cdylib_name = "baluard"`,
 but the `[lib] name` is `baluard_uniffi`, so the artifact is `libbaluard_uniffi.so`.
@@ -193,7 +192,7 @@ package_name = "xyz.actitud.baluard"
 cdylib_name  = "baluard_uniffi"
 ```
 
-### ⚠️ Gotcha 5 — also build a host cdylib for bindgen
+### ⚠️ Gotcha 5: also build a host cdylib for bindgen
 
 UniFFI's `library_mode` bindgen dlopens the cdylib to read `uniffi_metadata`
 symbols, so it needs a **host-loadable** library (`.dylib` on macOS):
@@ -205,7 +204,7 @@ rustup run stable cargo build -p baluard-uniffi --release
 
 ---
 
-## Step 5 — Generate the UniFFI Kotlin bindings
+## Step 5: Generate the UniFFI Kotlin bindings
 
 UniFFI 0.28 **ships no standalone `uniffi-bindgen` binary** (`uniffi_bindgen` is a
 library only; `uniffi-bindgen-cli` exists only in later versions). Generate via a
@@ -282,20 +281,20 @@ cd /tmp/uniffi-bindgen-runner && cargo build --release
 
 Expect `mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/baluard.kt`. Commit it.
 
-> The runner uses `uniffi_bindgen::bindings::KotlinBindingGenerator` — note the
+> The runner uses `uniffi_bindgen::bindings::KotlinBindingGenerator`, note the
 > re-export at `bindings::`, **not** `bindings::kotlin::` (the `kotlin` submodule is
 > private even though the struct is public).
 
 ---
 
-## Step 6 — Bootstrap `gradlew` and build the APK
+## Step 6: Bootstrap `gradlew` and build the APK
 
 The repo ships no Gradle wrapper. Two prerequisites first:
 
-### <a id="gotcha-6--jdk-17-not-26"></a>⚠️ Gotcha 6 — JDK 17, not 26
+### <a id="gotcha-6--jdk-17-not-26"></a>⚠️ Gotcha 6: JDK 17, not 26
 
 Gradle 8.10 (the version AGP 8.7 requires) **does not run on JDK 26** (Homebrew's
-default `openjdk`) — it dies with a bare `26.0.1` error. Install Temurin 17 and
+default `openjdk`), it dies with a bare `26.0.1` error. Install Temurin 17 and
 point `JAVA_HOME` at it for every Gradle invocation:
 
 ```sh
@@ -306,7 +305,7 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 (Put these in `~/.zshrc` or a project `direnv` so every shell has them.)
 
-### ⚠️ Gotcha 7 — Homebrew Gradle is 9.x; AGP 8.7 needs 8.x
+### ⚠️ Gotcha 7: Homebrew Gradle is 9.x; AGP 8.7 needs 8.x
 
 `brew install gradle` gives Gradle 9.6.1, which is too new for AGP 8.7 (it fails
 configuring the project). Use a one-shot Gradle 8.10 to bootstrap the pinned
@@ -318,7 +317,7 @@ curl -sSL -o /tmp/gradle-8.10-bin.zip https://services.gradle.org/distributions/
 unzip -q -o /tmp/gradle-8.10-bin.zip -d /tmp
 ```
 
-### ⚠️ Gotcha 8 — `kotlinOptions` is removed in Kotlin 2.4
+### ⚠️ Gotcha 8: `kotlinOptions` is removed in Kotlin 2.4
 
 The scaffold used the deprecated `kotlinOptions { jvmTarget = "17" }` DSL in
 both `androidApp/build.gradle.kts` and `shared/build.gradle.kts`. Kotlin 2.4.10
@@ -334,7 +333,7 @@ kotlin {
 }
 ```
 
-### ⚠️ Gotcha 9 — `local.properties` must pin `sdk.dir`
+### ⚠️ Gotcha 9: `local.properties` must pin `sdk.dir`
 
 The Gradle daemon doesn't inherit `ANDROID_HOME` reliably. Create
 `mobile/local.properties` (gitignored):
@@ -356,7 +355,7 @@ Every `./gradlew` invocation needs `JAVA_HOME` set to JDK 17 (Gotcha 6).
 
 ---
 
-## Step 7 — Install and debug on a physical device
+## Step 7: Install and debug on a physical device
 
 1. On the device: **Settings → About phone → tap Build number 7×** to enable
    Developer options, then **Settings → System → Developer options → enable USB
@@ -408,13 +407,13 @@ The first real `just android-apk` on macOS surfaced four failures. All four are
 fixed in the same change set (verified: `cargo test -p baluard-uniffi` 7/7 green;
 host cdylib + UniFFI binding regenerated and committed):
 
-1. **`processDebugMainManifest` — manifest path.** Kotlin 2.4 KMP enforces the
+1. **`processDebugMainManifest`, manifest path.** Kotlin 2.4 KMP enforces the
    V2 source-set layout: Kotlin sources + manifest must live under `src/androidMain/`,
    not the deprecated `src/main/`. **Fixed:** moved `androidApp/src/main/{AndroidManifest.xml,kotlin}`
    to `src/androidMain/`. (Note: AGP-native assets such as `jniLibs`/`res` are NOT
-   relocated by V2 — they stay at the AGP default `src/main/`. A first attempt wrongly
+   relocated by V2, they stay at the AGP default `src/main/`. A first attempt wrongly
    moved `jniLibs` too and added an explicit `jniLibs.srcDirs`, which made the same
-   `.so` register twice and fail `mergeDebugJniLibFolders`; reverted — the `.so` stays
+   `.so` register twice and fail `mergeDebugJniLibFolders`; reverted, the `.so` stays
    at `src/main/jniLibs`, AGP's default, with no extra config.)
 2. **`Unresolved reference 'jna' / 'Structure' / 'Pointer' / 'Library'`** in the
    generated `baluard_uniffi.kt`. UniFFI 0.28's Kotlin generator emits JNA-backed
@@ -423,7 +422,7 @@ host cdylib + UniFFI binding regenerated and committed):
    `shared/build.gradle.kts` `androidMain.dependencies` (JNA is Android/JVM-only
    by nature, so it belongs there, not in `commonMain`; the iOS Kotlin/Native
    targets are deferred per plan §1.1 and are not compiled by `assembleDebug`).
-3. **`EditCipherViewModel.kt` — `putJsonNull` unresolved + `Any` vs `JsonElement`.**
+3. **`EditCipherViewModel.kt`, `putJsonNull` unresolved + `Any` vs `JsonElement`.**
    `putJsonNull` is **not** a `kotlinx-serialization-json` API (an earlier note
    misjudged this as a non-issue; the build proved otherwise). **Fixed:** replaced
    `putJsonNull("x")` with `put("x", JsonNull)`, and made the `notes` value a
@@ -434,13 +433,13 @@ host cdylib + UniFFI binding regenerated and committed):
    field `message` -> `detail` across `BaluardError` (4 variants, format strings,
    all `From` impls + call sites) and regenerated the binding, which now emits
    `override val message get() = ...` (correct override, no clash).
-5. **`mergeDebugJniLibFolders` — duplicate `.so`.** A first attempt moved
+5. **`mergeDebugJniLibFolders`, duplicate `.so`.** A first attempt moved
    `jniLibs` into `src/androidMain/` and added an explicit `jniLibs.srcDirs`.
    Wrong: KMP's V2 layout relocates only Kotlin sources + manifest, NOT
    AGP-native assets (`jniLibs`/`res` stay at the AGP default `src/main/`).
    **Fixed:** `.so` stays at `src/main/jniLibs` (AGP default, where `cargo-ndk -o`
    already writes), explicit config removed, misplaced copy deleted.
-6. **`BaluardAutofillService.onFillRequest` — wrong callback API.** The scaffold
+6. **`BaluardAutofillService.onFillRequest`, wrong callback API.** The scaffold
    declared the callback as `OutcomeReceiver<FillResponse, Exception>` and called
    `onError`/`onResult`; the real `AutofillService.onFillRequest` takes a
    `FillCallback` with `onSuccess(FillResponse?)` / `onFailure(CharSequence)`.
@@ -450,7 +449,7 @@ host cdylib + UniFFI binding regenerated and committed):
 
 **BUILD SUCCESSFUL (2026-07-30).** `just android-apk` produces
 `mobile/androidApp/build/outputs/apk/debug/androidApp-debug.apk` (~69 MB debug;
-4 ABIs x ~13 MB Rust `.so` + JNA + Compose runtime — release + ABI splits shrink
+4 ABIs x ~13 MB Rust `.so` + JNA + Compose runtime, release + ABI splits shrink
 this in Phase 8).
 
 **Binding freshness is now enforced:** `build-android-apk.sh` regenerates the
@@ -458,7 +457,7 @@ committed `baluard_uniffi.kt` automatically when `lib.rs`/`uniffi.toml` are newe
 than the binding, so an API change can no longer produce a silently stale binding.
 
 The scaffold had never been compiled end-to-end before, so further Kotlin compile
-errors may still surface as the compiler advances past these four — clear them as
+errors may still surface as the compiler advances past these four, clear them as
 they appear. The Gradle 8.10 / Kotlin 2.5.0 deprecation warning is non-blocking.
 
 ## One-command build

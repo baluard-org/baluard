@@ -37,7 +37,7 @@ bridge.
 | **Bitwarden extension** | MV3 structure: service worker + message-passing (`BrowserApi`-style), offscreen docs for clipboard, `action` API, `chrome.storage.session` for state, `scripting` permission. | Its transport (HTTPS to Bitwarden API) and its in-extension crypto/vault. We keep all crypto in the daemon. Its auto-fill-on-page-load default (exfil risk). |
 | **KeePassXC-Browser + keepassxc-proxy-rust** | The bridge topology itself: extension -> native messaging host (stdio) -> local socket -> app. The NMH-as-thin-Rust-proxy idea. Per-OS NMH manifest install locations. The "desktop holds the unlock, extension rides it" auth model. | KeePassXC's wire crypto handshake (we already have token-gating + UID verify on the socket). |
 | **1Password** | Desktop-app/browser-extension connection hardening as a *north star*: verify the calling browser's code signature before trusting the bridge (macOS/Windows). | We cannot realistically match code-signature verification in v1; documented as a hardening gap (section 7). |
-| **MDN + Chrome native-messaging docs** | Exact stdio framing (32-bit native-endian length prefix, JSON, 1MB host->ext cap, 64MB ext->host cap), manifest keys, per-OS manifest paths. | — |
+| **MDN + Chrome native-messaging docs** | Exact stdio framing (32-bit native-endian length prefix, JSON, 1MB host->ext cap, 64MB ext->host cap), manifest keys, per-OS manifest paths. | - |
 
 ### Why native messaging, not loopback HTTP
 
@@ -115,19 +115,19 @@ The extension is NOT a first-class unlock client. It is paired once with an
 already-unlocked daemon and then rides that unlock state. This matches
 KeePassXC-Browser and is strictly safer than an own-unlock extension.
 
-**Decision 1 — Auth model: paired companion (not own-unlock).**
+**Decision 1, Auth model: paired companion (not own-unlock).**
 The extension never sees the master password. You pair it once; afterward it
 works while the desktop daemon is unlocked and is dead when locked. Single
 source of lock truth = the daemon's existing auto-lock walker covers the
 extension for free. No second Argon2id, no master password in browser memory.
 
-**Decision 2 — Token placement: NMH/daemon memory (Option 3).**
+**Decision 2, Token placement: NMH/daemon memory (Option 3).**
 The vault session token is NEVER held by the extension or browser storage. The
 daemon/NMH is the anchor. The extension -> NMH link is authenticated only by
 `allowed_origins`/`allowed_extensions` pinning; the NMH -> daemon link carries
 the real token. Extension JS touches no secrets.
 
-**Decision 3 — NMH lifecycle: stateless + durable pairing file (Option β).**
+**Decision 3, NMH lifecycle: stateless + durable pairing file (Option β).**
 Standard native messaging spawns the NMH fresh per `connectNative` and kills it
 on disconnect. A fresh NMH has no token. Resolution: on pair-complete the
 daemon writes a 0600 **pairing file** (containing a pairing secret + pairing
@@ -139,13 +139,13 @@ voids -> NMH re-pairs cheaply on next spawn, daemon says "locked, open the
 desktop app" if still locked. One binary, standard lifecycle, ephemeral token,
 durable revocable pairing.
 
-**Decision 4 — Pairing ceremony: desktop-initiated approve-don't-type (review; supersedes the typed 6-digit code).**
+**Decision 4, Pairing ceremony: desktop-initiated approve-don't-type (review; supersedes the typed 6-digit code).**
 No digits to transcribe. The user opens the desktop app and clicks "Add
 browser extension" (or the extension triggers a pairing request and the
 desktop surfaces it). The daemon creates a **pending-approval flag**
 (desktop-session-token-gated, one-shot, short TTL). The extension calls
 `bridge.pair_complete`; the daemon holds it pending; the desktop UI shows
-"A Baluard extension wants to connect — Approve / Deny"; the user clicks
+"A Baluard extension wants to connect, Approve / Deny"; the user clicks
 **Approve** (desktop token-gated) -> the daemon unblocks, mints the first
 bridge token, writes the pairing file, returns the pairing secret to the NMH.
 
@@ -169,7 +169,7 @@ the digit-carrying step is simply removed.
 
 **Residual abuse protection:** `bridge.pair_complete` still routes through the
 existing per-vault `RateLimiter` (defense against a flooding attacker), but
-there is **no vault nuke** on abuse — the worst case is the pending-approval is
+there is **no vault nuke** on abuse, the worst case is the pending-approval is
 rejected/dropped, the user re-clicks "Add browser extension." (the prior 5-strike vault-nuke was a DoS landmine for a non-tech user and
 borrowed the PIN nuke for a lower-stakes ceremony where it didn't fit. Removed.)
 
@@ -184,11 +184,11 @@ user can sanity-check it.
 already unlocked (Decision 1-3 require an unlocked daemon). The desktop session
 token already proves the user authenticated to the desktop; Approve is consent,
 not re-authentication. (If a future "confirm destructive bridge op" surface is
-added, that's where step-up belongs — not pairing.)
+added, that's where step-up belongs, not pairing.)
 
 ## 6. Capability model: scoped bridge token (DECISION 5-8)
 
-**Decision 5 — Token model: scoped bridge token, NOT the per-vault session token
+**Decision 5, Token model: scoped bridge token, NOT the per-vault session token
 (Model 2); host-level registry, concurrent-NMH-safe (review C1/C4 + I4).**
 The NMH does NOT hold the real per-vault session token (which gates everything
 including `device.revoke` -> full rekey). Pair-complete mints a distinct
@@ -199,7 +199,7 @@ daemon today holds one `session_token: RwLock<Option<String>>` per `VaultState`;
 - A **host-level bridge-token registry** lives on `VaultHost` (not per-vault,
   since bridge tokens are vault-agnostic per Decision 10): `HashMap<pairing_id,
   BridgeTokenEntry>` where `BridgeTokenEntry { token, last_active }`. This is
-  required for **concurrent NMH instances** — a user running Chrome + Firefox,
+  required for **concurrent NMH instances**: a user running Chrome + Firefox,
   or two profiles, has multiple live bridges; a single-`Option<String>` token
   model would have them clobber each other.
 - **Handler auth flow:** `verify_session_token` is refactored to *branch on token
@@ -210,7 +210,7 @@ daemon today holds one `session_token: RwLock<Option<String>>` per `VaultState`;
   (`TokenKind::Vault`). The bridge token rides the existing `session_token` wire
   field (no proto change); the daemon disambiguates by lookup.
 - **Same-pairing concurrency:** multiple NMH processes for the *same* pairing_id
-  reuse that pairing's single live token (`bridge.reauth` is idempotent — returns
+  reuse that pairing's single live token (`bridge.reauth` is idempotent, returns
   the live token if one exists for the pairing_id, mints only if absent).
 - **Lifetime binding to lock state:** a bridge request fails `locked` when the
   active vault is locked. The daemon need not proactively wipe tokens on lock;
@@ -220,14 +220,14 @@ daemon today holds one `session_token: RwLock<Option<String>>` per `VaultState`;
   token (`SESSION_TOKEN_TTL_SECONDS`, 4h). On expiry the NMH re-runs
   `bridge.reauth` (cheap, idempotent). Prevents a bridge token from quietly
   becoming the least-scrutinized long-lived credential.
-- **Per-`pairing_id` rate cap on credential-read routes (review —
+- **Per-`pairing_id` rate cap on credential-read routes (review , 
   BLOCKER):** without this, the allowlist redesign is theater. The daemon caps
   `bridge.match` + `vault.get` per `pairing_id` via the existing `RateLimiter`
   (~10-20/min; a human fills a handful of logins a minute). Burst abuse escalates
   to `bridge.revoke` for that `pairing_id`. Why load-bearing: a compromised
   browser (§10.2, an accepted gap) can otherwise loop `bridge.match` over a
   hardcoded list of top-N domains (github, gmail, your-bank...), then `vault.get`
-  every hit at sub-millisecond local-socket latency — a chunked `vault.list_full`
+  every hit at sub-millisecond local-socket latency, a chunked `vault.list_full`
   with extra round-trips, undoing the entire point of dropping `list_full`. The
   cap bounds a browser compromise to a handful of credentials, not the whole
   vault.
@@ -238,21 +238,20 @@ Rationale: bounds the pairing-file compromise to the actual extension surface,
 never full vault power. Direct application of "principle least privilege"
 (AGENTS.md security protocol).
 
-**Decision 6 — Code placement: `crates/baluard-core/src/bridge/` (Placement 1).**
+**Decision 6, Code placement: `crates/baluard-core/src/bridge/` (Placement 1).**
 Pairing logic, pairing file format, bridge token mint/verify, and the action
 allowlist live in core (new `bridge/` module: `pairing.rs`, `token.rs`,
 `mod.rs`), matching the established pattern (`crypto/`, `keys/`, `vault/`,
 `sync/`, `providers/`, `device_manager.rs`). The daemon's `bridge.*` routes are
 thin wrappers. The NMH depends on core (which it already does for socket
-framing) and reads its own pairing entry via core types — no NMH -> daemon
+framing) and reads its own pairing entry via core types, no NMH -> daemon
 dependency edge. The pairing file format becomes a first-class, proptest-able,
 auditable artifact.
 
-**Decision 7 — Allowlist: minimal, no bulk-plaintext, one credential at a time
+**Decision 7, Allowlist: minimal, no bulk-plaintext, one credential at a time
 (review-revised Stance A; resolves C2, C4, I1, I2, D3, #4).**
 Bridge tokens permit ONLY these actions (enforced server-side in the daemon's
-handler after token verification). **`vault.list_full` is NOT on the list** —
-it returns the entire decrypted vault in one call (a de-facto export, and the
+handler after token verification). **`vault.list_full` is NOT on the list**: it returns the entire decrypted vault in one call (a de-facto export, and the
 real blast radius, per review). Instead the extension sees metadata + one
 credential at a time:
 
@@ -267,7 +266,7 @@ vault.update            # capture password change. FIELD-GATED for Bridge tokens
                         #   fido2_credentials + uris REJECTED.
 cipher.totp_code        # TOTP copy (derived numeric code only; seed never crosses).
 generator.history_add, generator.history_clear   # generator (record/clear).
-                        #   NOTE: history_list is EXCLUDED — it returns prior
+                        #   NOTE: history_list is EXCLUDED, it returns prior
                         #   generated secrets (plaintext leak, review C2).
 bridge.config           # returns ONLY default_uri_match. NOT settings.get
                         #   (which leaks slug/enrollment_policy/profile PII).
@@ -279,7 +278,7 @@ when `TokenKind::Bridge`, `vault.update` is REJECTED if the payload modifies
 `fido2_credentials` (passkey tamper / data loss, defeats the passkey exclusion)
 OR `uris` (autofill-redirect phishing: rewrite a bank login's URI to an
 attacker domain, then next fill delivers creds there). Password / username /
-notes / totp updates are allowed — that's the common "I changed my password on
+notes / totp updates are allowed, that's the common "I changed my password on
 the site" capture flow, essential for good UX. New URIs only via `vault.add`
 (new entries) or the desktop.
 
@@ -299,12 +298,12 @@ material), `passkey.*` (Phase 2 deferred), `vault.clone_*`, `folder.*`,
 `settings.set`, `vault.trash.*`, `generator.history_list`, `favicon.get`.
 
 Expansion is a deliberate allowlist change + same-change call-site update
-(pre-1.0 WIP per STATUS). The friction is intentional — it forces a conscious
+(pre-1.0 WIP per STATUS). The friction is intentional, it forces a conscious
 security decision per route.
 
-**Decision 8 — Management surface: pair + list + revoke, revocable-grant model
+**Decision 8, Management surface: pair + list + revoke, revocable-grant model
 (Level 2); `bridge.reauth` added; daemon is sole pairing-file writer (review X1, I10, M3).**
-Paired browsers are NOT part of the device-fleet epoch model — they have no
+Paired browsers are NOT part of the device-fleet epoch model, they have no
 device private key, are not in `meta/device-privkey.json`, do not participate
 in the key hierarchy, and revoking them does NOT rotate the root key. A paired
 browser is a revocable auth grant with its own table and cheap revoke. Desktop
@@ -319,22 +318,22 @@ revoking browser 1 while N NMHs read).
 
 Daemon routes (all token-gated with the per-vault token except the pairing
 flow):
-- `bridge.pair_start` — **desktop-initiates** (token-gated; the "Add browser
+- `bridge.pair_start`: **desktop-initiates** (token-gated; the "Add browser
   extension" button). Sets a **one-shot pending-approval flag** (desktop-session
   -token-gated, short TTL) and returns a request handle. No code is minted
   (Decision 4 approve-don't-type).
-- `bridge.pair_complete` — called by the extension/NMH (not token-gated).
+- `bridge.pair_complete`: called by the extension/NMH (not token-gated).
   Held pending until the user clicks **Approve** in the desktop UI (which
   consumes the one-shot flag from `pair_start`). On Approve: writes pairing file,
   mints first bridge token, returns pairing secret to the NMH. Rate-limited via
-  the existing `RateLimiter` (flood defense; **no vault nuke** — Decision 4).
-- `bridge.reauth` — **NEW** (review X1; this is the spawn-time re-mint Decision
+  the existing `RateLimiter` (flood defense; **no vault nuke**: Decision 4).
+- `bridge.reauth`: **NEW** (review X1; this is the spawn-time re-mint Decision
   3 describes, which the original route list omitted). Secret-gated (pairing
   secret, not code, not token); idempotent (returns the live token for the
   pairing_id if one exists, else mints). Called by the NMH on every spawn and
   after any daemon restart. Rate-limited via the existing `RateLimiter`.
-- `bridge.list` — token-gated; lists paired extensions.
-- `bridge.revoke` — token-gated; removes the pairing_id from the host bridge
+- `bridge.list`: token-gated; lists paired extensions.
+- `bridge.revoke`: token-gated; removes the pairing_id from the host bridge
   registry (Decision 5) + deletes the pairing file entry. A live NMH's next
   request is denied immediately (not just file deletion).
 
@@ -345,9 +344,9 @@ distinct operations and now have distinct routes.
 
 ## 7. Fill policy & multi-vault (DECISION 9-10)
 
-**Decision 9 — Fill policy: popup-driven, per-fill user gesture (Trigger 3+4 hybrid);
+**Decision 9, Fill policy: popup-driven, per-fill user gesture (Trigger 3+4 hybrid);
 top-frame-only fill (review C3/D1).**
-No auto-fill ever — no fill on page load, no armed-tab auto-fill. Fill flow:
+No auto-fill ever, no fill on page load, no armed-tab auto-fill. Fill flow:
 open extension -> popup reads current tab URL via `activeTab` -> calls
 `bridge.match` (URL -> matching `CipherMeta`, server-side, Decision 7) -> shows
 matching logins -> user clicks one -> popup calls `vault.get` for that single
@@ -365,7 +364,7 @@ Consequences that REDUCE the plan's complexity vs a naive Trigger 3:
    a page-injected element. A compromised page cannot trick the fill because
    the trigger lives entirely in the popup, which the page can't reach.
 3. **Top-frame-only injection (review C3/D1):** the content script is injected
-   via `chrome.scripting.executeScript({ target: { tabId, frameIds: [0] } })` —
+   via `chrome.scripting.executeScript({ target: { tabId, frameIds: [0] } })` , 
    TOP FRAME ONLY, not `all_frames`. A cross-origin login iframe (the classic
    credential-theft vector) simply doesn't get filled. Trade-off: legit
    embedded third-party logins won't autofill in v1 (acceptable; user can
@@ -377,7 +376,7 @@ Consequences that REDUCE the plan's complexity vs a naive Trigger 3:
    immediately before writing to the DOM, and fails closed on mismatch. Closes
    the narrow race where the popup matched tab A's URL, the user clicked fill,
    and the tab navigated (redirect / slow load) during the ~100ms IPC round
-   trip — so the fill never lands in a now-different page.
+   trip, so the fill never lands in a now-different page.
 
 This is the modern industry-default posture (1Password default, Bitwarden
 "auto-fill on page load = off"). Auto-fill-on-load is a known exfil vector
@@ -407,14 +406,14 @@ posture is unchanged in every load-bearing respect:
 - The icon appears on focus of username/password fields only
   (`isUsernameField` heuristics: autocomplete hints, word-boundary
   name/id/placeholder/aria-label hints, text-before-password structure).
-  No continuous form scanning, no page-load probing — nothing
+  No continuous form scanning, no page-load probing, nothing
   fingerprintable beyond what the badge already queries.
 
-**Decision 10 — Multi-vault: extension follows the daemon's active pointer (Model ii).**
+**Decision 10, Multi-vault: extension follows the daemon's active pointer (Model ii).**
 The bridge token is vault-agnostic: scoped to `TokenKind::Bridge { pairing_id }`
 + the allowlist, NOT to a specific slug. The NMH forwards requests with no slug;
 the daemon routes bridge requests to the active vault (its existing pointer-flip
-semantics). The extension has NO vault selector — the desktop is the switcher,
+semantics). The extension has NO vault selector, the desktop is the switcher,
 the extension inherits. Re-query `bridge.match` on every popup open (cheap,
 single IPC, metadata only) so the list is always fresh to the current active
 vault. The popup header shows the active vault name (read-only, refreshed on
@@ -499,7 +498,7 @@ Locations (user-level):
 
 `allowed_origins`/`allowed_extensions` pins the bridge to our extension ID
 only, so a random extension cannot talk to `baluard-nmh`. Dev (load-unpacked)
-IDs are generated; store IDs are fixed on upload — the host manifest uses the
+IDs are generated; store IDs are fixed on upload, the host manifest uses the
 final published ID; dev flow uses a key-pinned fixed dev ID.
 
 ## 9. Component: the extensions (shared codebase, two targets)
@@ -535,7 +534,7 @@ extension ID. JS is browser-agnostic via the `chrome`/`browser` namespace shim
 
 **MV3 realities (from Bitwarden's migration notes):**
 - Service worker, **not** a persistent background page. Can be killed after
-  ~30s idle. State in `chrome.storage.session` only — and per Decision 2, that
+  ~30s idle. State in `chrome.storage.session` only, and per Decision 2, that
   state is NEVER secrets (no token, no password). Just UI prefs + transient
   request `id`s.
 - No DOM in the service worker -> clipboard copy via an **offscreen document**
@@ -567,25 +566,25 @@ No `<all_urls>`; host_permissions cover http/https. No `webRequestBlocking`.
 
 1. **Malware in the page can read autofilled fields.** Inherent to all
    browser password managers. Mitigations: fill ONLY on explicit user gesture
-   from the popup (Decision 9) — never auto-fill on load, so a hostile page
+   from the popup (Decision 9), never auto-fill on load, so a hostile page
    cannot harvest by merely being visited. No inline-field DOM injection the
    page can tamper with. Top-frame-only fill (Decision 9) closes cross-origin
    iframe theft. Residual (field values readable after fill) is the same
    posture as Bitwarden/1Password; documented.
 2. **Malware controlling the browser can drive the unlocked extension.**
    1Password mitigates by verifying the browser's code signature. We CANNOT do
-   this in v1 — documented hardening gap. Mitigations we DO have: (a) Ceremony
+   this in v1, documented hardening gap. Mitigations we DO have: (a) Ceremony
    3 pairing originates in the trusted desktop, so a drive-by can't pair; (b)
    `allowed_origins`/`allowed_extensions` pins the bridge to our extension ID;
    (c) the scoped bridge token (Decision 5) + allowlist (Decision 7) cap the
    damage: `bridge.match` (metadata) + one-at-a-time `vault.get` + gated
-   `vault.add`/`vault.update` + generate — a compromised browser CANNOT
+   `vault.add`/`vault.update` + generate, a compromised browser CANNOT
    `device.revoke` (rekey), `vault.delete`, `vault.export`, `vault.list_full`,
    or change your master password through the bridge. Residual: a compromised
    browser that can synthesize gestures in our popup can autofill into attacker
    pages. This is what makes the deferred code-signature verification survivable
    rather than reckless.
-3. **Pairing file compromise (`<data_dir>/bridge/pairings.json`, 0600) — HONEST
+3. **Pairing file compromise (`<data_dir>/bridge/pairings.json`, 0600), HONEST
    reclassification (review X2, was under-rated).** A reader gains the pairing
    secret and can mint bridge tokens via `bridge.reauth`. This is a **revocable
    read-capable grant at rest**: while the vault is unlocked, a same-UID
@@ -597,10 +596,10 @@ No `<all_urls>`; host_permissions cover http/https. No `webRequestBlocking`.
    same UID + 0600 socket the attacker already had. We accept this as a
    revocable grant (revocation = desktop `bridge.revoke`, instant) rather than
    pretend it's negligible. It does NOT contradict "keys never at rest
-   unencrypted" — no key material is in `pairings.json`, only a revocable
+   unencrypted", no key material is in `pairings.json`, only a revocable
    capability secret. Documented in the threat-model addendum.
 4. **Bridge token in NMH memory only.** Ephemeral, dies with the process on
-   browser close (SIGKILL gives no zeroize window — review N-b — but the OS
+   browser close (SIGKILL gives no zeroize window, review N-b, but the OS
    reclaims the memory; reworded from "zeroized" to "dies with the process"),
    re-minted on next spawn via the durable pairing secret. Never touches disk,
    never touches browser storage.
@@ -636,7 +635,7 @@ Each phase is independently verifiable end-to-end.
   `bridge.revoke` routes (Decision 8). `TokenKind::Bridge` on auth result +
   allowlist check in `handler.rs` (Decision 5+7).
 - Extension: empty popup + service worker that `connectNative`s and sends a
-  `ping` -> NMH -> daemon `vault.info` (NOT token-gated, side-effect-free —
+  `ping` -> NMH -> daemon `vault.info` (NOT token-gated, side-effect-free , 
   review N-a; isolates the socket+framing path from the token path) ->
   round-trip displayed in popup. A second ping exercises `bridge.reauth` + one
   allowlisted read (`sync.autosync_status`) to prove the token path.
@@ -654,14 +653,14 @@ Each phase is independently verifiable end-to-end.
 - Desktop "Paired browser extensions" settings tab (Decision 8): "Add browser
   extension" button (triggers the approve-don't-type flow), list, revoke.
 - Extension pairing flow (Decision 4): extension calls `bridge.pair_complete` ->
-  daemon holds pending -> desktop shows "A Baluard extension wants to connect —
+  daemon holds pending -> desktop shows "A Baluard extension wants to connect , 
   Approve / Deny" -> user clicks Approve (desktop token-gated, one-shot flag) ->
   daemon unblocks, mints token, writes pairing file. NMH re-mints via
   `bridge.reauth` on spawn.
 - `bridge.match` (current-tab URL -> matching `CipherMeta`) -> popup list.
   Popup header shows active vault name (review I8).
 - **Toolbar badge:** `chrome.action.setBadgeText` shows the
-  match count for the current tab on the toolbar icon — zero-DOM ambient
+  match count for the current tab on the toolbar icon, zero-DOM ambient
   discoverability with no attack surface. The "it just works" feedback the plan
   was missing.
 - Click a login -> `vault.get` (single credential) -> message content script
@@ -669,19 +668,19 @@ Each phase is independently verifiable end-to-end.
   form.
 - Copy-to-clipboard via offscreen doc, auto-clear after ~20s (review M2).
   TOTP copy (`cipher.totp_code`).
-- **Error-state UX — Phase-1 GATE, not Phase-3 polish:**
+- **Error-state UX: Phase-1 GATE, not Phase-3 polish:**
   every NMH error code (`locked|no-daemon|denied|proto|not-paired|version-skew`)
   maps to a friendly, actionable, i18n'd message (en/es, reuse desktop strings).
   Bar = PIN's "Incorrect PIN. N attempts left." e.g. `no-daemon` -> "Open the
   Baluard app to fill passwords" (not "ECONNREFUSED"). No hard tech terms
-  (AGENTS.md UX principle). This ships before anyone but Esteban uses it.
+  (AGENTS.md UX principle). This ships before anyone else uses it.
 - Verify: pair via desktop approve, search a login, autofill a real site, copy a
   password + TOTP. Confirm multi-vault active-pointer routing (Decision 10).
 
 **Phase 2 - Capture + edit + generator**
 - Capture: on form submit in content script, detect new/changed credentials,
-  prompt **"Save to <em>Personal</em> vault?"** — vault name IN the affirmative
-  prompt, not just an ambient header label. Protects against
+  prompt **"Save to <em>Personal</em> vault?"** (vault name IN the affirmative
+  prompt, not just an ambient header label). Protects against
   "I forgot I switched vaults this morning" writing a secret into the wrong
   (possibly shared/work) vault. -> `vault.add` / `vault.update`.
 - Generator in popup (reuse `generator.*`).
@@ -721,7 +720,7 @@ just ext-dev-firefox     # build + print about:debugging load path
 
 Ubuntu ships Firefox as a Snap by default; many Linux users run Firefox or
 Chromium as Flatpaks. A sandboxed browser **cannot reach the host NMH binary or
-the 0600 socket** — native-messaging manifest discovery happens inside the
+the 0600 socket**: native-messaging manifest discovery happens inside the
 sandbox's filesystem view, and the socket path is outside it. This is exactly
 KeePassXC issue #12327. We **mimic KeePassXC-Browser's resolution**, prioritizing
 **Flatpak** (per project decision), Snap secondary.
@@ -736,7 +735,7 @@ Reference: Harald Sitter's KDE blog (the KeePassXC flatpak integration author).
    (Firefox) or `~/.var/app/<chromium-app-id>/config/<browser>/NativeMessagingHosts/`
    (Chromium-family).
 2. **The manifest `path` points to a `flatpak-spawn` wrapper**, NOT the NMH
-   directly — the sandboxed browser cannot exec a host binary by path. The
+   directly, the sandboxed browser cannot exec a host binary by path. The
    wrapper:
    ```sh
    #!/bin/sh
@@ -749,7 +748,7 @@ Reference: Harald Sitter's KDE blog (the KeePassXC flatpak integration author).
    `flatpak override --user --talk-name=org.freedesktop.Flatpak org.mozilla.firefox`
 4. **Socket reachability:** because the NMH runs on the host (via
    `flatpak-spawn`), it connects to the real `$XDG_RUNTIME_DIR/baluard/baluard.sock`
-   normally. No socket proxying needed — the NMH itself escapes the sandbox.
+   normally. No socket proxying needed, the NMH itself escapes the sandbox.
 
 The desktop installer (Phase 1) detects installed flatpak browsers and performs
 steps 1-3 automatically. A systemd path-unit "mangler" (KeePassXC's approach,
@@ -806,7 +805,7 @@ priority and primary test target.
     6-digit-code + 5-strike vault-nuke was a DoS landmine for a non-tech user.
     Replaced by approve-don't-type (no code = nothing to brute-force).
     `bridge.pair_complete` still rate-limited (flood defense), but **no vault
-    nuke** — worst case the pending-approval is dropped and the user re-clicks
+    nuke**: worst case the pending-approval is dropped and the user re-clicks
     "Add browser extension."
 12. **Bridge-token storage:** host-level `HashMap<pairing_id, BridgeTokenEntry>`
     on `VaultHost` (not per-vault); concurrent-NMH-safe; same-pairing NMHs reuse
@@ -830,7 +829,7 @@ priority and primary test target.
     daemon log tags every request `Vault` vs `Bridge{pairing_id}`.
 19. **Overturned review findings (kept for honesty):** `favicon.get` is NOT an
     SSRF (fixed Google endpoint, verified in source); `generator.history_list`
-    leak is real but subordinate to the `vault.list_full` baseline it shares —
+    leak is real but subordinate to the `vault.list_full` baseline it shares , 
     both removed.
 
 ### Resolved via review (security + usability lens)
@@ -838,7 +837,7 @@ priority and primary test target.
 20. **Per-`pairing_id` rate cap on credential reads (BLOCKER):**
     `bridge.match` + `vault.get` capped ~10-20/min via `RateLimiter`, burst ->
     `bridge.revoke`. Without it a compromised browser loops `bridge.match` over a
-    bank/github/gmail domain list then `vault.get`s every hit — a chunked
+    bank/github/gmail domain list then `vault.get`s every hit, a chunked
     `vault.list_full`. This is what makes the allowlist redesign actually bound
     a browser compromise.
 21. **Approve-don't-type pairing:** see Decision 4 + entry 11.
@@ -852,13 +851,13 @@ priority and primary test target.
 24. **Usability gates:** toolbar badge for ambient
     discoverability (no DOM, no attack surface); vault name IN the capture
     prompt ("Save to *Personal* vault?"), not just a header label; error-state
-    UX is a Phase-1 gate — every code -> friendly actionable i18n string, no
+    UX is a Phase-1 gate, every code -> friendly actionable i18n string, no
     hard tech terms (AGENTS.md UX principle).
 25. **macOS keychain for pairing secret:**
     on macOS, store the pairing secret in a `SecAccessControl` keychain entry
     scoped to the NMH code signature (Touch ID/passcode on read), raising the
     bar above a flat 0600 file. Linux/Windows keyring backends are same-UID-
-    readable via D-Bus/Credential Manager, so parity there is weaker —
+    readable via D-Bus/Credential Manager, so parity there is weaker , 
     platform-conditional win, don't oversell as universal. Defer to a hardening
     pass post-v1.
 

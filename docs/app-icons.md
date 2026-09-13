@@ -4,7 +4,7 @@
 
 **Recipe:** `just app-icons` (defined in `justfile`)
 **Tool:** [`icon-gen`](https://github.com/Hkmu/icon-generator) (Rust CLI, MIT)
-**Source:** `assets/baluard-logo-grad.png` (the icon *tile* — dark gradient + padlock + "B")
+**Source:** `assets/baluard-logo-grad.png` (the icon *tile*, dark gradient + padlock + "B")
 
 ---
 
@@ -23,7 +23,7 @@ Baluard ships two logo variants in `assets/`:
 | File | Form | Use as app icon? |
 |---|---|---|
 | `baluard-logo-grad.png` | Icon **tile**: dark gradient background + neon-green padlock + "B", fills the frame | **Yes (default)** |
-| `baluard-logo-grad-lock.png` | Padlock on **white** background, centered with margin | No — produces white-square icons that look broken on dark docks/taskbars |
+| `baluard-logo-grad-lock.png` | Padlock on **white** background, centered with margin | No, produces white-square icons that look broken on dark docks/taskbars |
 
 The recipe defaults to the tile. The logo is portrait (1888×2254); `icon-gen` requires square input, so the recipe auto-squares it (see [Squaring step](#squaring-step)).
 
@@ -149,8 +149,8 @@ cp assets/app-icons/ios/AppIcon-*.png assets/app-icons/ios/Contents.json \
 |---|---|---|---|
 | macOS | `.icns` | 16, 32, 128, 256, 512, 1024 (@1x + @2x retina) | OSTypes `ic07`–`ic14`, `is32/il32` ✅ |
 | Windows | `.ico` | 16, 24, 32, 48, 64, 256 (PNG-compressed 256) | 6 layers ✅ |
-| Linux | PNG | 32, 64, 128, 256, 512 | — |
-| Android | PNG | mdpi 48 → xxxhdpi 192 | — |
+| Linux | PNG | 32, 64, 128, 256, 512 | - |
+| Android | PNG | mdpi 48 → xxxhdpi 192 | - |
 | iOS | PNG | 20→1024px, @1x/@2x/@3x | `Contents.json` ✅ |
 
 ---

@@ -1,7 +1,7 @@
 # ADR 0007: passkey-rs Evaluation (Phase 0.3 Spike)
 
 **Date:** 2026-06-12
-**Status:** Accepted — adopt `passkey-rs` 0.5.x as Baluard's WebAuthn authenticator library
+**Status:** Accepted, adopt `passkey-rs` 0.5.x as Baluard's WebAuthn authenticator library
 
 ## Context
 
@@ -70,7 +70,7 @@ Adopt `passkey` 0.5.x as the authenticator library. Use `webauthn-rs` 0.5.x as t
 ```
 
 Baluard's `CredentialStore` impl will:
-- Look up passkeys from decrypted `CipherKind::Login.fido2_credentials` entries (passkeys are embedded inside LoginData, Bitwarden-compatible model — no standalone Passkey cipher variant)
+- Look up passkeys from decrypted `CipherKind::Login.fido2_credentials` entries (passkeys are embedded inside LoginData, Bitwarden-compatible model, no standalone Passkey cipher variant)
 - Store new passkeys as encrypted cipher envelopes
 - Private key bytes wrapped under the item key (same as all other cipher types)
 
