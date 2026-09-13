@@ -505,6 +505,12 @@ seed-demo: build-release
 		FINANCE=$(map_folder_id "Finance")
 		TRAVEL=$(map_folder_id "Travel")
 		SUBS=$(map_folder_id "Subscriptions")
+	baluard folders create "Health" >/dev/null
+	baluard folders create "Government" >/dev/null
+	baluard folders create "Dev" >/dev/null
+	HEALTH=$(map_folder_id "Health")
+	GOV=$(map_folder_id "Government")
+	DEV=$(map_folder_id "Dev")
 
 		echo ""
 		echo "[personal] Creating tags ==="
@@ -565,6 +571,159 @@ seed-demo: build-release
 		echo ""
 		echo "[personal] Seeding national ID ==="
 		baluard add note --name "Chile Carnet de Identidad" --notes $'RUN/RUT: 16.543.210-4\nTipo: Cédula de Identidad\nNombres: Esteban Andrés\nApellidos: Forge Muñoz\nSexo: M\nFecha de nacimiento: 1990-06-15\nNacionalidad: Chilena\nFecha de emisión: 2021-08-10\nFecha de vencimiento: 2031-08-10\nNúmero de documento: A12345678' --tags personal,important --folder "$PERSONAL"
+	baluard add login --name "YouTube" --username "esteban@gmail.com" --password "Y0uTub3Pl@y!" --uri "https://youtube.com" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "GitHub" --username "estebanforge" --password "GhT0k3n#2026" --uri "https://github.com" --totp-uri "otpauth://totp/BaluardTest:github?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&digits=6&period=30" --tags personal,mfa --folder "$PERSONAL" >/dev/null
+	baluard add login --name "GitLab" --username "estebanforge" --password "GlL@b#2026" --uri "https://gitlab.com" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "X (Twitter)" --username "@estebanforge" --password "XTw1tt3r!" --uri "https://x.com" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "LinkedIn" --username "esteban@gmail.com" --password "L1nk3dIn$" --uri "https://linkedin.com" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "Reddit" --username "u/estebanforge" --password "R3dd1tP@ss" --uri "https://reddit.com" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "Steam" --username "estebanforge" --password "St3@mG@ming" --uri "https://store.steampowered.com" --totp-uri "otpauth://totp/BaluardTest:steam?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Steam&digits=6&period=30" --tags personal,mfa --folder "$PERSONAL" >/dev/null
+	baluard add login --name "Epic Games" --username "estebanforge" --password "Ep1cG@mes!" --uri "https://store.epicgames.com" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "HBO Max" --username "esteban@gmail.com" --password "HB0M@xStr3am" --uri "https://max.com" --tags personal --folder "$SUBS" >/dev/null
+	baluard add login --name "Disney+" --username "esteban@gmail.com" --password "D1sn3y+Plus" --uri "https://disneyplus.com" --tags personal --folder "$SUBS" >/dev/null
+	baluard add login --name "Mercado Libre" --username "esteban@gmail.com" --password "M3rc@d0L1br3" --uri "https://mercadolibre.cl" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "Falabella" --username "esteban@gmail.com" --password "F@l@b3ll@CL" --uri "https://falabella.com" --tags personal --folder "$PERSONAL" >/dev/null
+	cat <<'JSON' | baluard add json - >/dev/null
+	{
+	  "name": "Insurance Portal",
+	  "folder_id": null,
+	  "kind": { "type": "login", "data": {
+	"username": "esteban@gmail.com",
+	"password": "1nsur@nc3P0rtal",
+	"uris": [{ "uri": "https://insurance.example.com", "match_strategy": "domain" }],
+	"custom_fields": [
+	  { "name": "Policy Number", "value": "POL-88431-CL", "field_type": "Text" },
+	  { "name": "Agent Code", "value": "AG-2209", "field_type": "Hidden" },
+	  { "name": "Auto Renew", "value": "true", "field_type": "Boolean" }
+	]
+	  } },
+	  "notes": "Second custom-fields demo entry."
+	}
+	JSON
+	cat <<'JSON' | baluard add json - >/dev/null
+	{
+	  "name": "Cloud Console",
+	  "folder_id": null,
+	  "kind": { "type": "login", "data": {
+	"username": "esteban@actitud.xyz",
+	"password": "Cl0udC0ns0l3!",
+	"uris": [{ "uri": "https://console.example.cloud", "match_strategy": "domain" }],
+	"custom_fields": [
+	  { "name": "Project ID", "value": "actitud-prod-4411", "field_type": "Text" },
+	  { "name": "Billing Alert", "value": "false", "field_type": "Boolean" },
+	  { "name": "Root Token", "value": "tok_9f8e7d6c5b4a", "field_type": "Hidden" }
+	]
+	  } }
+	}
+	JSON
+	baluard add card --name "Mastercard Travel" --cardholder-name "Esteban Forge" --brand "Mastercard" --number "5412751234567890" --exp-month "07" --exp-year "2029" --code "321" --tags personal --folder "$TRAVEL" >/dev/null
+	baluard add card --name "Cencosud" --cardholder-name "Esteban Forge" --brand "Mastercard" --number "5287109988776655" --exp-month "03" --exp-year "2027" --code "654" --tags personal --folder "$FINANCE" >/dev/null
+	baluard add note --name "Router Admin" --notes $'Admin: admin\nPass: R0ut3r$_2026!\nIP: 192.168.10.1' --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add note --name "NAS Recovery" --notes $'Model: Synology DS920+\nAdmin URL: https://nas.home.local:5001\nRecovery key envelope in safety deposit box' --tags personal,backup --folder "$PERSONAL" >/dev/null
+	baluard add note --name "Car Documents" --notes $'Patente: FKXZ-4471\nSeguro: SURA full + asistencia\nVencimiento revisión técnica: 2027-03' --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add bank --name "Banco Estado CuentaRUT" --bank-name "BancoEstado" --name-on-account "Esteban Forge" --account-type "Checking" --account-number "99123456" --routing-number "0009" --tags personal --folder "$FINANCE" >/dev/null
+	baluard add bank --name "Interactive Brokers" --bank-name "IBKR" --name-on-account "Esteban Forge" --account-type "Investment" --account-number "U7788123" --routing-number "021000021" --swift-code "IBKRUS33" --tags personal,important --folder "$FINANCE" >/dev/null
+	baluard add ssh-key --name "Home Server Key" --public-key "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEstebanForgeHomeServer2026" --fingerprint "SHA256:rT5wZ8xK2mN4pQ7vB1cL9dH3jF6gS0aY8uE2iO5pW4qX" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add license --name "CLP Boating License" --first-name "Esteban" --last-name "Forge" --date-of-birth "1990-06-15" --license-number "B9876543" --issuing-country "CL" --issue-date "2021-11-05" --expiration-date "2031-11-04" --tags personal --folder "$TRAVEL" >/dev/null
+	baluard add login --name "ClaveÚnica" --username "estebanforge" --password "Cl@veUn1c@2026" --uri "https://claveunica.gob.cl" --totp-uri "otpauth://totp/BaluardTest:claveunica?secret=JBSWY3DPEHPK3PXP&issuer=ClaveUnica&digits=6&period=30" --tags personal,mfa --folder "$GOV" >/dev/null
+	baluard add login --name "SII" --username "16654321-9" --password "S11@Contribuyente" --uri "https://www.sii.cl" --totp-uri "otpauth://totp/BaluardTest:sii?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=SII&digits=6&period=30" --tags personal,mfa --folder "$GOV" >/dev/null
+	baluard add login --name "Registro Civil" --username "estebanforge" --password "R3g1str0C1v1l" --uri "https://www.registrocivil.cl" --tags personal --folder "$GOV" >/dev/null
+	baluard add login --name "Fonasa" --username "estebanforge" --password "F0n@s@Salud" --uri "https://www.fonasa.cl" --tags personal --folder "$HEALTH" >/dev/null
+	baluard add login --name "Salcobrand" --username "esteban@gmail.com" --password "S@lc0br@nd" --uri "https://www.salcobrand.cl" --tags personal,health --folder "$HEALTH" >/dev/null
+	baluard add login --name "Medical Records Portal" --username "estebanforge" --password "M3d1c@lR3c0rds" --uri "https://health.example.com" --tags personal,health --folder "$HEALTH" >/dev/null
+	baluard add login --name "Enel Distribución" --username "estebanforge" --password "3n3l3n3rg1a" --uri "https://www.eneldistribucion.cl" --totp-uri "otpauth://totp/BaluardTest:enel?secret=MFRGGZDFMZTWQ2LK&issuer=Enel&digits=6&period=30" --tags personal,mfa --folder "$PERSONAL" >/dev/null
+	baluard add login --name "Aguas Andinas" --username "estebanforge" --password "@g0@nd1n@s" --uri "https://www.aguasandinas.cl" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "VTR" --username "esteban@gmail.com" --password "VTR1nt3rn3t" --uri "https://vtr.com" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "Duolingo" --username "esteban@gmail.com" --password "Du0l1ng0+2026" --uri "https://duolingo.com" --totp-uri "otpauth://totp/BaluardTest:duolingo?secret=MZXW6YTBOI======&issuer=Duolingo&digits=6&period=30" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "Coursera" --username "esteban@gmail.com" --password "C0urs3r@Learn" --uri "https://coursera.org" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "Notion" --username "esteban@actitud.xyz" --password "N0t10nW0rks!" --uri "https://notion.so" --tags personal --folder "$DEV" >/dev/null
+	baluard add login --name "Docker Hub" --username "estebanforge" --password "D0ck3rH0b#26" --uri "https://hub.docker.com" --totp-uri "otpauth://totp/BaluardTest:dockerhub?secret=MZXW633PNVWXKzM=&issuer=DockerHub&digits=6&period=30" --tags personal,mfa --folder "$DEV" >/dev/null
+	baluard add login --name "npm" --username "estebanforge" --password "NPMt0k3n#26" --uri "https://npmjs.com" --totp-uri "otpauth://totp/BaluardTest:npm?secret=NBSWY3DP&issuer=npm&digits=6&period=30" --tags personal,mfa --folder "$DEV" >/dev/null
+	baluard add login --name "Hetzner" --username "estebanforge" --password "H3tznerCl0ud" --uri "https://console.hetzner.cloud" --tags personal --folder "$DEV" >/dev/null
+	baluard add login --name "Dropbox" --username "esteban@gmail.com" --password "Dr0pb0xB@ckup" --uri "https://dropbox.com" --tags personal,backup --folder "$DEV" >/dev/null
+	baluard add login --name "Condominio Portal" --username "estebanforge" --password "C0nd0m1n10P0rtal" --uri "https://portal.condominio.cl" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "Gimnasio SmartFit" --username "estebanforge" --password "Sm@rtF1tGym" --uri "https://smartfit.cl" --tags personal,health --folder "$HEALTH" >/dev/null
+	baluard add login --name "Aerolíneas Punta Arenas" --username "estebanforge" --password "Punt@@r3n@s" --uri "https://example.com" --tags personal,travel --folder "$TRAVEL" >/dev/null
+	baluard add login --name "Uber" --username "esteban@gmail.com" --password "Ub3rR1d3s!" --uri "https://uber.com" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add login --name "Spotify Family" --username "familia@gmail.com" --password "Sp0t1fyF@m" --uri "https://spotify.com" --tags personal,shared --folder "$SUBS" >/dev/null
+	baluard add login --name "iCloud Mail Alias" --username "esteban@icloud.com" --password "1Cl0ud@l1@s" --uri "https://icloud.com" --tags personal --folder "$PERSONAL" >/dev/null
+	cat <<'JSON' | baluard add json - >/dev/null
+	{ "name": "Isapre Colmena", "folder_id": null, "kind": { "type": "login", "data": {
+	  "username": "estebanforge", "password": "Is@pr3C0lm3n@",
+	  "uris": [{ "uri": "https://colmena.cl", "match_strategy": "domain" }],
+	  "custom_fields": [
+	{ "name": "N° Contrato", "value": "COL-556677", "field_type": "Text" },
+	{ "name": "Código Agente", "value": "AG-8899", "field_type": "Hidden" },
+	{ "name": "Primas al Día", "value": "true", "field_type": "Boolean" } ] } } }
+	JSON
+	cat <<'JSON' | baluard add json - >/dev/null
+	{ "name": "Portal de Impuestos", "folder_id": null, "kind": { "type": "login", "data": {
+	  "username": "16654321-9", "password": "P0rt@l1mpu3st0s",
+	  "uris": [{ "uri": "https://tax.example.com", "match_strategy": "domain" }],
+	  "custom_fields": [
+	{ "name": "Rol Avalúo", "value": "RO-4471-9", "field_type": "Text" },
+	{ "name": "PIN Caja", "value": "778899", "field_type": "Hidden" },
+	{ "name": "Declaración F22 Enviada", "value": "true", "field_type": "Boolean" } ] } } }
+	JSON
+	cat <<'JSON' | baluard add json - >/dev/null
+	{ "name": "Enel Facturación", "folder_id": null, "kind": { "type": "login", "data": {
+	  "username": "estebanforge", "password": "F@ctur@3n3l",
+	  "uris": [{ "uri": "https://factura.enel.cl", "match_strategy": "domain" }],
+	  "custom_fields": [
+	{ "name": "N° Cliente", "value": "CLI-998877", "field_type": "Text" },
+	{ "name": "NIS", "value": "NIS-331122", "field_type": "Text" },
+	{ "name": "Boleta Digital", "value": "true", "field_type": "Boolean" } ] } } }
+	JSON
+	cat <<'JSON' | baluard add json - >/dev/null
+	{ "name": "Gimnasio Membresía", "folder_id": null, "kind": { "type": "login", "data": {
+	  "username": "estebanforge", "password": "M3mbr3s1@Gym",
+	  "uris": [{ "uri": "https://gym.example.com", "match_strategy": "domain" }],
+	  "custom_fields": [
+	{ "name": "N° Socio", "value": "SOC-77123", "field_type": "Text" },
+	{ "name": "Casillero", "value": "B-42", "field_type": "Text" },
+	{ "name": "Congelada", "value": "false", "field_type": "Boolean" } ] } } }
+	JSON
+	cat <<'JSON' | baluard add json - >/dev/null
+	{ "name": "Garantías Extendidas", "folder_id": null, "kind": { "type": "login", "data": {
+	  "username": "esteban@gmail.com", "password": "G@r@nt1@sP0rtal",
+	  "uris": [{ "uri": "https://warranty.example.com", "match_strategy": "domain" }],
+	  "custom_fields": [
+	{ "name": "TV LG Garantía", "value": "LG-2026-8871", "field_type": "Text" },
+	{ "name": "Lavadora Garantía", "value": "SAM-2027-4412", "field_type": "Text" } ] } } }
+	JSON
+	cat <<'JSON' | baluard add json - >/dev/null
+	{ "name": "Farmacia Salcobrand Club", "folder_id": null, "kind": { "type": "login", "data": {
+	  "username": "esteban@gmail.com", "password": "ClubS@lc0",
+	  "uris": [{ "uri": "https://club.salcobrand.cl", "match_strategy": "domain" }],
+	  "custom_fields": [
+	{ "name": "N° Socio Club", "value": "SB-338812", "field_type": "Text" },
+	{ "name": "Puntos Acumulados", "value": "4820", "field_type": "Text" },
+	{ "name": "Descuento Automático", "value": "true", "field_type": "Boolean" } ] } } }
+	JSON
+	baluard add card --name "Visa Débito BancoEstado" --cardholder-name "Esteban Forge" --brand "Visa" --number "4051888888881234" --exp-month "11" --exp-year "2028" --code "812" --tags personal --folder "$FINANCE" >/dev/null
+	baluard add card --name "Amex CL" --cardholder-name "Esteban Forge" --brand "American Express" --number "374588899900111" --exp-month "09" --exp-year "2029" --code "1234" --tags personal --folder "$FINANCE" >/dev/null
+	baluard add card --name "Virtual Card Dev" --cardholder-name "E. Forge" --brand "Visa" --number "4917661122334455" --exp-month "01" --exp-year "2027" --code "999" --notes "Single-use dev subscriptions card" --tags personal --folder "$FINANCE" >/dev/null
+	baluard add card --name "Copec Card" --cardholder-name "Esteban Forge" --brand "Mastercard" --number "5512340987654321" --exp-month "05" --exp-year "2028" --code "445" --tags personal --folder "$TRAVEL" >/dev/null
+	baluard add note --name "Office WiFi" --notes $'SSID: ACTITUD-WIFI\nPass: 0ff1c3W1F1$_2026' --tags personal,shared --folder "$PERSONAL" >/dev/null
+	baluard add note --name "House Alarm Code" --notes "Alarm: 7788\nPanic: 9900\nCompany: Chile Alarmas +56 600 555 0101" --tags personal,important --folder "$PERSONAL" >/dev/null
+	baluard add note --name "Software License Keys" --notes $'JetBrains: JB-2026-A1B2C3\nWindows 11 Pro: W11P-9988-X7Y6\nSublime: SL-5544-B3B4' --tags personal,backup --folder "$DEV" >/dev/null
+	baluard add note --name "Warranty Records" --notes $'LG TV: vence 2026-12\nSamsung Lavadora: vence 2027-06\nMicroondas: sin garantía' --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add note --name "Subscriptions List" --notes $'Netflix 4K: $19.990/mes\nSpotify Family: $14.990/mes\nHBO Max: $11.990/mes\nDisney+: $11.990/mes\niCloud 2TB: $10.900/mes' --tags personal --folder "$SUBS" >/dev/null
+	baluard add note --name "Emergency Contacts" --notes $'SURA Seguros: +56 600 400 2000\nAsistencia hogar: +56 600 300 1000\nBomberos: 132\nAmbulancia: 131' --tags personal,important --folder "$PERSONAL" >/dev/null
+	baluard add note --name "Passport Renewal Checklist" --notes $'1. Certificado de nacimiento\n2. Foto fondo blanco\n3. Pago $86.800\n4. Agendar en registrocivil.cl' --tags personal,travel --folder "$TRAVEL" >/dev/null
+	baluard add note --name "Seed Backup Locations" --notes $'Copia 1: caja de seguridad Chase\nCopia 2: sobre en casa (librería)\nCopia 3: Drive cifrado' --tags personal,backup,important --folder "$PERSONAL" >/dev/null
+	baluard add note --name "Bike Info" --notes $'Trek Marlin 7\nN° serie: WTU-9912-K888\nCandado: Kryptonite code 4411' --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add note --name "Streaming PINs" --notes $'Netflix perfil E: 4471\nDisney+: 8899\nPrime Video: 2210' --tags personal,shared --folder "$SUBS" >/dev/null
+	baluard add note --name "Red Médica Info" --notes $'Red: Clínica Las Condes\nMédico cabecera: Dra. Soto\nTel. hora: +56 600 500 3000' --tags personal,health --folder "$HEALTH" >/dev/null
+	baluard add bank --name "Santander Cuenta Corriente" --bank-name "Santander" --name-on-account "Esteban Forge" --account-type "Checking" --account-number "77123999" --routing-number "018" --swift-code "BSCHCLRM" --tags personal --folder "$FINANCE" >/dev/null
+	baluard add bank --name "BCI Cuenta Vista" --bank-name "BCI" --name-on-account "Esteban Forge" --account-type "Savings" --account-number "55011223" --routing-number "028" --tags personal --folder "$FINANCE" >/dev/null
+	baluard add bank --name "Tenpo" --bank-name "Tenpo Labs" --name-on-account "Esteban Forge" --account-type "Prepaid" --account-number "TP-99881" --routing-number "0000" --tags personal --folder "$FINANCE" >/dev/null
+	baluard add ssh-key --name "Git Server Key" --public-key "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEstebanForgeGitServer2026" --fingerprint "SHA256:gH1jK2lM3nN4oO5pP6qQ7rR8sS9tT0uU1vV2wW3xX4" --tags personal --folder "$DEV" >/dev/null
+	baluard add ssh-key --name "Raspberry Pi Key" --public-key "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEstebanForgeRasPi2026" --fingerprint "SHA256:yY2zZ3aA4bB5cC6dD7eE8fF9gG0hH1iI2jJ3kK4lL5mM" --tags personal --folder "$DEV" >/dev/null
+	baluard add ssh-key --name "Backup Server Key" --public-key "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEstebanForgeBackup2026" --fingerprint "SHA256:nN6oO7pP8qQ9rR0sS1tT2uU3vV4wW5xX6yY7zZ8aA9" --tags personal,backup --folder "$DEV" >/dev/null
+	baluard add identity --name "Esteban Forge (Work)" --title "Mr" --first-name "Esteban Andrés" --last-name "Forge Muñoz" --username "eforge" --email "e.forge@actitud.xyz" --phone "+56 9 5555 0180" --address1 "Av. Providencia 1234" --city "Santiago" --state "RM" --postal-code "7500000" --country "CL" --tags personal,shared --folder "$PERSONAL" >/dev/null
+	baluard add license --name "CL Motorcycle License" --first-name "Esteban" --last-name "Forge" --date-of-birth "1990-06-15" --license-number "C5588991" --issuing-country "CL" --issue-date "2023-05-12" --expiration-date "2033-05-11" --tags personal --folder "$PERSONAL" >/dev/null
+	baluard add passport --name "US Passport (Expired)" --surname "Forge" --given-name "Esteban" --date-of-birth "1990-06-15" --sex "M" --birth-place "San Francisco" --nationality "US" --passport-number "P09876543" --issuing-country "US" --issue-date "2013-02-10" --expiration-date "2023-02-09" --notes "Expired — kept for records" --tags personal,backup --folder "$TRAVEL" >/dev/null
 	}
 
 	seed_work() {
