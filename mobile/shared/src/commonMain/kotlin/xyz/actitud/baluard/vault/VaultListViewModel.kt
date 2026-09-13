@@ -36,6 +36,7 @@ class VaultListViewModel(private val repo: VaultRepository) {
     val folderFilter = MutableStateFlow<String?>(null)
 
     private val _folders = MutableStateFlow<List<MobileFolderInfo>>(emptyList())
+    val folders: StateFlow<List<MobileFolderInfo>> = _folders.asStateFlow()
 
     val favoritesOnly = MutableStateFlow(false)
 
@@ -61,31 +62,37 @@ class VaultListViewModel(private val repo: VaultRepository) {
     }
 
     /** Distinct tags across visible (non-archived) entries, for the chip row. */
-    fun allTags(): List<String> =
-        _ciphers.value.filter { !it.archived }.flatMap { it.tags }.distinct().sorted()
+    fun allTags(ciphers: List<MobileCipherMeta>): List<String> =
+        ciphers.filter { !it.archived }.flatMap { it.tags }.distinct().sorted()
 
     /** Distinct wire type tags across visible entries, for the chip row. */
-    fun allTypes(): List<String> =
-        _ciphers.value.filter { !it.archived }.map { it.cipherType }.distinct().sorted()
+    fun allTypes(ciphers: List<MobileCipherMeta>): List<String> =
+        ciphers.filter { !it.archived }.map { it.cipherType }.distinct().sorted()
 
     /** Folders that hold at least one visible entry, for the chip row. */
-    fun allFolders(): List<MobileFolderInfo> {
-        val used = _ciphers.value.filter { !it.archived }.mapNotNull { it.folderId }.toSet()
-        return _folders.value.filter { it.id in used }.sortedBy { it.name }
+    fun allFolders(
+        ciphers: List<MobileCipherMeta>,
+        folders: List<MobileFolderInfo> = _folders.value,
+    ): List<MobileFolderInfo> {
+        val used = ciphers.filter { !it.archived }.mapNotNull { it.folderId }.toSet()
+        return folders.filter { it.id in used }.sortedBy { it.name }
     }
 
     /** Folder name lookup for the selected filter (ids are opaque). */
-    fun folderName(id: String?): String? =
-        _folders.value.firstOrNull { it.id == id }?.name
+    fun folderName(
+        id: String?,
+        folders: List<MobileFolderInfo> = _folders.value,
+    ): String? =
+        folders.firstOrNull { it.id == id }?.name
 
-    /** Apply the current filters. */
-    fun filtered(): List<MobileCipherMeta> {
+    /** Apply the current filters to the given (collected) cipher list. */
+    fun filtered(ciphers: List<MobileCipherMeta>): List<MobileCipherMeta> {
         val q = _query.value.trim()
         val type = typeFilter.value
         val tag = tagFilter.value
         val folder = folderFilter.value
         val favOnly = favoritesOnly.value
-        return _ciphers.value.filter { m ->
+        return ciphers.filter { m ->
             !m.archived &&
                 (type == null || m.cipherType == type) &&
                 (tag == null || m.tags.contains(tag)) &&
