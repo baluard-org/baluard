@@ -14,4 +14,11 @@ expect object AppPaths {
 
     /** True when [path] holds a Baluard vault (`.baluard` marker present). */
     fun vaultExists(path: String): Boolean
+
+    /**
+     * Fresh clone target for a repo: a new directory under the vaults root,
+     * named "<owner>-<repo>" (slugified — owner/name is unique per forge),
+     * guaranteed not to collide with an existing directory.
+     */
+    fun nextVaultPath(owner: String, repo: String): String
 }

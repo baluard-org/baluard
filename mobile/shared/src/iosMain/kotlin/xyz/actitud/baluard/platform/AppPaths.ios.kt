@@ -27,4 +27,16 @@ actual object AppPaths {
         NSFileManager.defaultManager.fileExistsAtPath(
             (path as NSString).stringByAppendingPathComponent(".baluard"),
         )
+
+    actual fun nextVaultPath(owner: String, repo: String): String {
+        val docs = NSSearchPathForDirectoriesInDomains(
+            NSDocumentDirectory,
+            NSUserDomainMask,
+            expandTilde = true,
+        ).firstOrNull() as? String ?: ""
+        val slug = ((owner + "-" + repo).lowercase()
+            .map { if (it.isLetterOrDigit()) it else '-' }.joinToString(""))
+            .trim('-').take(48).ifEmpty { "vault" }
+        return docs.stringByAppendingPathComponent("vaults/$slug")
+    }
 }

@@ -98,6 +98,7 @@ fun VaultHomeScreen(
     vaultName: String,
     vaultPath: String,
     onSwitchVault: (String) -> Unit = {},
+    onAddVault: () -> Unit = {},
     revision: Int = 0,
 ) {
     val ciphers by listViewModel.ciphers.collectAsState()
@@ -259,6 +260,33 @@ fun VaultHomeScreen(
                                         )
                                     }
                                 }
+                            }
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 6.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        switchOpen = false
+                                        onAddVault()
+                                    }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    text = t("home.addVault"),
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
                             }
                         }
                     },

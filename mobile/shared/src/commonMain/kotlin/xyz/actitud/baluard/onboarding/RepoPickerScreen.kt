@@ -47,7 +47,7 @@ import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 fun RepoPickerScreen(
     vm: ProviderFlowViewModel,
     repos: List<MobileRepo>,
-    vaultPath: String,
+    targetPathFor: (xyz.actitud.baluard.MobileRepo) -> String,
     onCloneDone: () -> Unit,
     onCancelled: () -> Unit,
 ) {
@@ -134,7 +134,7 @@ fun RepoPickerScreen(
                             .clip(RoundedCornerShape(12.dp))
                             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
                             .clickable {
-                                vm.cloneRepo(repo, vaultPath) { onCloneDone() }
+                                vm.cloneRepo(repo, targetPathFor(repo)) { onCloneDone() }
                             },
                         shape = RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.surfaceContainer,

@@ -228,6 +228,9 @@ class ProviderFlowViewModel(
         busy = true
         error = null
         try {
+            // Zeroize the outgoing vault's keys before adopting the newly
+            // enrolled one — never rely on GC timing to drop the old handle.
+            if (auth.vault() != null) runCatching { auth.lock() }
             val vault: MobileVault = repo.enrollDeviceWithPhrase(vaultPath, masterPassword, recoveryPhrase, deviceName)
             auth.adopt(vault)
             return true
