@@ -61,6 +61,15 @@ actual class Biometric actual constructor() {
         return hasBlob && hasKey
     }
 
+    actual fun disenroll(vaultKey: String) {
+        val alias = aliasFor(vaultKey)
+        val wasEnrolled = blobFor(alias) != null
+        clearEnrollment(alias)
+        if (wasEnrolled) {
+            platformLogE(TAG, "disenrolled quick-unlock for $alias")
+        }
+    }
+
     actual fun enroll(
         vaultKey: String,
         kek: ByteArray,

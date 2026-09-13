@@ -22,6 +22,13 @@ expect class Biometric() {
     fun isEnrolled(vaultKey: String): Boolean
 
     /**
+     * Remove the enrolled KEK for [vaultKey] (quick-unlock off). Deletes the
+     * keystore wrapping key and the stored blob. No-op when not enrolled;
+     * always safe — the master password remains the fallback path.
+     */
+    fun disenroll(vaultKey: String)
+
+    /**
      * Store the Argon2id-derived [kek] behind biometric gating. Runs the
      * platform biometric prompt (ENCRYPT ceremony) and persists the wrapped
      * KEK on success. Runs in the main app only (post master-password

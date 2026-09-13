@@ -23,7 +23,9 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -52,9 +54,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
+import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.data.vaultTimeoutLabel
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.platform.Biometric
+import xyz.actitud.baluard.platform.ClipboardPrefs
+import xyz.actitud.baluard.platform.ScreenshotPrefs
+import xyz.actitud.baluard.platform.setSecureFlag
+import xyz.actitud.baluard.platform.clipboardClearLabel
+import xyz.actitud.baluard.platform.clipboardClearPresets
 import xyz.actitud.baluard.sync.SyncCoordinator
 import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
@@ -71,6 +80,8 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     vaultTimeoutToken: String,
     onVaultTimeoutChange: (String) -> Unit,
+    vaultPath: String,
+    authViewModel: AuthViewModel,
     onBack: () -> Unit = {},
 ) {
     val config by viewModel.config.collectAsState()
@@ -259,6 +270,165 @@ fun SettingsScreen(
                 }
                 Text(
                     t("settings.autoLockHint"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+
+                androidx.compose.material3.HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                )
+
+                // Biometric quick unlock (per-vault). Disable always works;
+                // enable runs the enroll ceremony with the KEK retained from
+                // a biometric quick-unlock. Without it (password-unlock
+                // session), the unlock screen's post-password offer is the
+                // enable path — never a second password prompt here.
+                val biometric = remember { Biometric() }
+                if (biometric.isAvailable()) {
+                    var biometricEnrolled by remember { mutableStateOf(biometric.isEnrolled(vaultPath)) }
+                    var biometricBusy by remember { mutableStateOf(false) }
+                    var confirmDisable by remember { mutableStateOf(false) }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = t("settings.biometric"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            if (!biometricEnrolled && authViewModel.sessionKek == null) {
+                                Text(
+                                    text = t("settings.biometric.enableHint"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = biometricEnrolled,
+                            enabled = !biometricBusy,
+                            onCheckedChange = { want ->
+                                when {
+                                    !want -> confirmDisable = true
+                                    else -> {
+                                        val kek = authViewModel.sessionKek
+                                        if (kek != null) {
+                                            biometricBusy = true
+                                            biometric.enroll(
+                                                vaultKey = vaultPath,
+                                                kek = kek,
+                                                title = t("login.biometricTitle"),
+                                                onSuccess = {
+                                                    biometricBusy = false
+                                                    biometricEnrolled = true
+                                                },
+                                                onError = { biometricBusy = false },
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    }
+
+                    if (confirmDisable) {
+                        AlertDialog(
+                            onDismissRequest = { confirmDisable = false },
+                            title = { Text(t("settings.biometric.disableTitle")) },
+                            text = { Text(t("settings.biometric.disableBody")) },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    confirmDisable = false
+                                    biometric.disenroll(vaultPath)
+                                    biometricEnrolled = false
+                                }) {
+                                    Text(t("settings.biometric.disableConfirm"), color = MaterialTheme.colorScheme.error)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { confirmDisable = false }) {
+                                    Text(t("common.cancel"))
+                                }
+                            },
+                        )
+                    }
+
+                    androidx.compose.material3.HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    )
+                }
+
+                // Clipboard auto-clear (device-local, desktop parity).
+                val clipboardPrefs = remember { ClipboardPrefs() }
+                var clipboardSeconds by remember { mutableStateOf(clipboardPrefs.loadSeconds()) }
+                var clipboardMenu by remember { mutableStateOf(false) }
+                Text(
+                    t("settings.clipboardClear"),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { clipboardMenu = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(t(clipboardClearLabel(clipboardSeconds)))
+                    }
+                    DropdownMenu(
+                        expanded = clipboardMenu,
+                        onDismissRequest = { clipboardMenu = false },
+                    ) {
+                        clipboardClearPresets.forEach { preset ->
+                            DropdownMenuItem(
+                                text = { Text(t(preset.labelKey)) },
+                                onClick = {
+                                    clipboardMenu = false
+                                    clipboardSeconds = preset.seconds
+                                    clipboardPrefs.saveSeconds(preset.seconds)
+                                },
+                            )
+                        }
+                    }
+                }
+                Text(
+                    t("settings.clipboardClearHint"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+
+                androidx.compose.material3.HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                )
+
+                // Allow screenshots (default off, fail secure). Toggling
+                // applies the window flag live; the pref is re-read on the
+                // next app start.
+                val screenshotPrefs = remember { ScreenshotPrefs() }
+                var allowScreenshots by remember { mutableStateOf(screenshotPrefs.allowScreenshots()) }
+                ToggleRow(
+                    t("settings.allowScreenshots"),
+                    allowScreenshots,
+                ) { allow ->
+                    allowScreenshots = allow
+                    screenshotPrefs.setAllowScreenshots(allow)
+                    setSecureFlag(!allow)
+                }
+                Text(
+                    t("settings.allowScreenshotsHint"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),

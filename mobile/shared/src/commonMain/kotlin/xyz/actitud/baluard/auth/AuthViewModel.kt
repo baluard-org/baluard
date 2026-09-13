@@ -21,6 +21,15 @@ class AuthViewModel(private val repo: VaultRepository) {
     private var vault: MobileVault? = null
 
     /**
+     * KEK retained from the most recent biometric quick-unlock. Lets the
+     * Settings screen re-enroll (disable -> re-enable) without ever asking
+     * for the master password again. Null after a password unlock (the KEK
+     * never materializes on that path) and on lock.
+     */
+    var sessionKek: ByteArray? = null
+        private set
+
+    /**
      * Open a local vault directory and attempt to unlock it with [password].
      * On success, holds the unlocked [MobileVault] for subsequent cipher ops.
      */
@@ -45,6 +54,7 @@ class AuthViewModel(private val repo: VaultRepository) {
             val v = repo.openVault(path)
             v.unlockWithKek(kek)
             vault = v
+            sessionKek = kek
             UnlockResult.Success
         } catch (e: Exception) {
             UnlockResult.Failure(e.message ?: "unlock failed")
@@ -60,6 +70,7 @@ class AuthViewModel(private val repo: VaultRepository) {
         val v = vault ?: return false
         return try {
             v.lock()
+            sessionKek = null
             true
         } catch (e: Exception) {
             false

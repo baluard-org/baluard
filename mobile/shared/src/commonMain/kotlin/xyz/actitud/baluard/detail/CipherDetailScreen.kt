@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Star
@@ -207,6 +208,123 @@ fun CipherDetailScreen(
                     }
                 }
             }
+            // Custom Fields Section (desktop parity)
+            if (s.customFields.isNotEmpty()) {
+                SectionCard(title = t("detail.customFields")) {
+                    s.customFields.forEachIndexed { index, field ->
+                        if (field.boolean) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = field.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = if (field.value == "true") MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                ) {
+                                    Text(
+                                        text = t(
+                                            if (field.value == "true") "detail.booleanYes"
+                                            else "detail.booleanNo",
+                                        ),
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    )
+                                }
+                            }
+                        } else {
+                            CopyableFieldRow(
+                                label = field.name,
+                                value = field.value,
+                                sensitive = field.hidden,
+                            )
+                        }
+                        if (index < s.customFields.size - 1) {
+                            androidx.compose.material3.HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Passkeys Section (display-only; delete stays desktop-only)
+            if (s.passkeys.isNotEmpty()) {
+                SectionCard(title = t("detail.passkeys")) {
+                    s.passkeys.forEachIndexed { index, pk ->
+                        Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                            Text(
+                                text = pk.name,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            InfoLine(t("detail.passkey.rp"), pk.rpId)
+                            if (pk.user.isNotBlank()) InfoLine(t("detail.passkey.user"), pk.user)
+                            pk.created?.let { InfoLine(t("detail.passkey.created"), it) }
+                            if (pk.missingKey) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = t("detail.passkey.missingKey"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                        if (index < s.passkeys.size - 1) {
+                            androidx.compose.material3.HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Attachments Section (metadata display; download lands with the
+            // mobile attachment FFI)
+            if (s.attachments.isNotEmpty()) {
+                SectionCard(title = t("detail.attachments")) {
+                    s.attachments.forEachIndexed { index, att ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.InsertDriveFile,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = att.filename,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                text = att.sizeLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (index < s.attachments.size - 1) {
+                            androidx.compose.material3.HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            )
+                        }
+                    }
+                }
+            }
 
             // Websites & URIs Section
             if (s.uris.isNotEmpty()) {
@@ -336,6 +454,27 @@ fun CipherDetailScreen(
                     Text(t("common.cancel"))
                 }
             },
+        )
+    }
+}
+
+/** Small label/value line inside a passkey block. */
+@Composable
+private fun InfoLine(label: String, value: String) {
+    Row(
+        modifier = Modifier.padding(top = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(72.dp),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
         )
     }
 }

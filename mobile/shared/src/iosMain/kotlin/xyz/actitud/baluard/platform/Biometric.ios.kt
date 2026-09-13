@@ -10,6 +10,10 @@ actual class Biometric actual constructor() {
 
     actual fun isEnrolled(vaultKey: String): Boolean = false
 
+    actual fun disenroll(vaultKey: String) {
+        // No-op: enrollment is not wired on iOS yet.
+    }
+
     actual fun enroll(
         vaultKey: String,
         kek: ByteArray,
