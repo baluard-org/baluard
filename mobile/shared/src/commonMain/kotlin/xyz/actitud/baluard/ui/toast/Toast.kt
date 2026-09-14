@@ -10,9 +10,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -63,19 +60,30 @@ data class ToastEntry(
 object Toast {
     private var nextId = 0L
 
+    private var nextId = 0L
+
     var entries by mutableStateOf<List<ToastEntry>>(emptyList())
         private set
 
+    private var exiting by mutableStateOf<Set<Long>>(emptySet())
     /** Push a toast. [durationMs] 0 = manual dismiss only. */
     fun show(type: String, message: String, durationMs: Long = 4000, manual: Boolean = false) {
         val id = ++nextId
         entries = entries + ToastEntry(id, type, message, manual)
     }
 
+    /** Phase 1: flag for the exit animation; the row removes itself after it plays. */
     fun dismiss(id: Long) {
-        entries = entries.filter { it.id != id }
+        exiting = exiting + id
     }
 
+    fun isExiting(id: Long) = id in exiting
+
+    /** Phase 2: drop the entry from the list (called post-animation). */
+    fun remove(id: Long) {
+        entries = entries.filter { it.id != id }
+        exiting = exiting - id
+    }
     fun success(message: String) = show("success", message)
     fun error(message: String) = show("error", message, durationMs = 6000, manual = true)
     fun warning(message: String) = show("warning", message, durationMs = 5000)
@@ -91,11 +99,11 @@ private val typeIcon: Map<String, ImageVector> = mapOf(
 
 @Composable
 private fun toastStyle(type: String): Pair<Color, Color> {
-    // Muted container wash + bright content tone, tuned for the dark theme.
+    // Solid dark shades tuned for the theme, with bright content tones.
     return when (type) {
-        "success" -> Pair(Color(0xFF10B981).copy(alpha = 0.16f), Color(0xFF6EE7B7))
-        "error" -> Pair(Color(0xFFEF4444).copy(alpha = 0.16f), Color(0xFFFCA5A5))
-        "warning" -> Pair(Color(0xFFF59E0B).copy(alpha = 0.16f), Color(0xFFFCD34D))
+        "success" -> Pair(Color(0xFF0F2E22), Color(0xFF6EE7B7))
+        "error" -> Pair(Color(0xFF3A181B), Color(0xFFFCA5A5))
+        "warning" -> Pair(Color(0xFF33260E), Color(0xFFFCD34D))
         else -> Pair(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.colorScheme.onSurface)
     }
 }
@@ -138,10 +146,18 @@ private fun AutoDismissingToast(entry: ToastEntry) {
         }
     }
 
-    // Slides out from under the header: the toast's top edge stays pinned
-    // to the header's bottom line while it expands downward, then retracts
-    // back up on dismiss.
-    val state = remember { MutableTransitionState(false).apply { targetState = true } }
+    val exiting = Toast.isExiting(entry.id)
+    LaunchedEffect(exiting) {
+        if (exiting) {
+            delay(200)
+            Toast.remove(entry.id)
+        }
+    }
+
+    // Emerges from under the header (top edge pinned to the header's bottom
+    // line) and retracts back up into it on dismiss.
+    val state = remember { MutableTransitionState(false) }
+    state.targetState = !exiting
     AnimatedVisibility(
         visibleState = state,
         enter = expandVertically(
@@ -152,12 +168,9 @@ private fun AutoDismissingToast(entry: ToastEntry) {
             initialOffsetY = { -it / 3 },
         ) + fadeIn(tween(220)),
         exit = shrinkVertically(
-            animationSpec = tween(180, easing = FastOutLinearInEasing),
+            animationSpec = tween(200, easing = FastOutLinearInEasing),
             shrinkTowards = Alignment.Top,
-        ) + slideOutVertically(
-            animationSpec = tween(180, easing = FastOutLinearInEasing),
-            targetOffsetY = { -it / 3 },
-        ) + fadeOut(tween(180)),
+        ),
     ) {
         val (container, content) = toastStyle(entry.type)
         Surface(
@@ -188,7 +201,7 @@ private fun AutoDismissingToast(entry: ToastEntry) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = toastStyle(entry.type).second,
                             modifier = Modifier.size(14.dp),
                         )
                     }
