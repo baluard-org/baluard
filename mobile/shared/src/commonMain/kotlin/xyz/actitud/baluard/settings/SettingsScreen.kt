@@ -20,6 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Shield
@@ -53,6 +55,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
@@ -92,6 +96,10 @@ fun SettingsScreen(
     val config by viewModel.config.collectAsState()
     val status by viewModel.status.collectAsState()
     val scope = rememberCoroutineScope()
+
+    // Sync-now feedback (main-screen Sync button parity): spinner while
+    // pulling, terminal "Synced"/"Offline" beat, then back to rest.
+    var syncPhase by remember { mutableStateOf("idle") }  // idle|syncing|synced|offline
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -189,14 +197,34 @@ fun SettingsScreen(
                 Spacer(Modifier.height(12.dp))
 
                 BaluardPrimaryButton(
-                    text = t("settings.syncNow"),
+                    text = when (syncPhase) {
+                        "synced" -> t("sync.synced")
+                        "offline" -> t("sync.offline")
+                        else -> t("settings.syncNow")
+                    },
                     onClick = {
-                        scope.launch {
-                            coordinator.pullNow(vault)
-                            viewModel.refresh(vault, coordinator)
+                        if (syncPhase == "idle") {
+                            syncPhase = "syncing"
+                            scope.launch {
+                                val mark = kotlin.time.TimeSource.Monotonic.markNow()
+                                val ok = runCatching { coordinator.pullNow(vault) }.isSuccess
+                                runCatching { viewModel.refresh(vault, coordinator) }
+                                // Minimum visible spin (fast LAN pulls would flash).
+                                val hold = 600.milliseconds - mark.elapsedNow()
+                                if (hold.isPositive()) delay(hold)
+                                syncPhase = if (ok) "synced" else "offline"
+                                delay(2500)
+                                syncPhase = "idle"
+                            }
                         }
                     },
-                    leadingIcon = Icons.Default.Sync,
+                    enabled = syncPhase != "syncing",
+                    loading = syncPhase == "syncing",
+                    leadingIcon = when (syncPhase) {
+                        "synced" -> Icons.Default.Check
+                        "offline" -> Icons.Default.CloudOff
+                        else -> Icons.Default.Sync
+                    },
                 )
             }
 
