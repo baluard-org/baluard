@@ -183,6 +183,7 @@ fun App(vaultPath: String? = null) {
                 val hold = 600.milliseconds - mark.elapsedNow()
                 if (hold.isPositive()) delay(hold)
                 setPhase(if (ok) "synced" else "offline")
+                if (ok) Toast.success(t("sync.synced")) else Toast.error(t("sync.offline"))
                 delay(2500)
                 setPhase("idle")
             }
