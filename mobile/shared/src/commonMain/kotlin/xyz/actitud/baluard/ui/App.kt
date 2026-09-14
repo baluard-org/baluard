@@ -204,6 +204,12 @@ fun App(vaultPath: String? = null) {
             enabled = (unlocked && nav != Nav.List) || (showOpen && flowVm.canGoBack()),
             onBack = {
                 when {
+                    unlocked && (nav is Nav.Detail || nav is Nav.Edit) -> {
+                        // Back from the detail/edit stack returns to the list
+                        // the entry was opened from (hub when origin is null).
+                        nav = detailOrigin ?: Nav.List
+                        detailOrigin = null
+                    }
                     unlocked && nav != Nav.List -> nav = Nav.List
                     showOpen -> flowVm.back()
                 }
@@ -437,12 +443,16 @@ fun App(vaultPath: String? = null) {
                                         saveRevision++
                                         notifyMutation()
                                         if (permanent) listVm.evictContent(id)
-                                        nav = Nav.List
+                                        nav = detailOrigin ?: Nav.List
+                                        detailOrigin = null
                                         Toast.success(
                                             t(if (permanent) "toast.deleted" else "toast.trashed"),
                                         )
                                     },
-                                    onBack = { nav = Nav.List },
+                                    onBack = {
+                                        nav = detailOrigin ?: Nav.List
+                                        detailOrigin = null
+                                    },
                                     revision = saveRevision,
                                 )
 
