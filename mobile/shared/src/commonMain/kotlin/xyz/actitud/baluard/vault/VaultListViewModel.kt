@@ -106,17 +106,20 @@ class VaultListViewModel(private val repo: VaultRepository) {
     /** Reload just the TOTP slice. */
     suspend fun loadTotp(vault: MobileVault) {
         _totp.value = runCatching { repo.listTotp(vault) }.getOrDefault(emptyList())
+        indexSlice(vault, _totp.value)
     }
 
     /** Reload just the archived slice (after unarchive). */
     suspend fun loadArchived(vault: MobileVault) {
         _archived.value = runCatching { repo.listArchived(vault) }.getOrDefault(emptyList())
+        indexSlice(vault, _archived.value)
         _ciphers.value = runCatching { repo.listCiphers(vault) }.getOrDefault(emptyList())
     }
 
     /** Reload just the trash slice (after restore). */
     suspend fun loadTrash(vault: MobileVault) {
         _trash.value = runCatching { repo.listTrash(vault) }.getOrDefault(emptyList())
+        indexSlice(vault, _trash.value)
     }
 
     suspend fun unarchive(vault: MobileVault, id: String): Boolean {
@@ -131,15 +134,20 @@ class VaultListViewModel(private val repo: VaultRepository) {
         return ok
     }
 
-    /** Permanently delete every trashed entry. True when all deletes succeed. */
-    suspend fun emptyTrash(vault: MobileVault): Boolean {
-        val ids = _trash.value.map { it.id }
-        var allOk = true
-        for (id in ids) {
-            if (runCatching { repo.deleteCipher(vault, id) }.isFailure) allOk = false
+    /** Permanently delete every trashed entry. Returns how many entries
+     * could not be deleted (partial failure keeps them in the list). */
+    suspend fun emptyTrash(vault: MobileVault): Int {
+        var failed = 0
+        for (meta in _trash.value) {
+            if (runCatching { repo.deleteCipher(vault, meta.id) }.isFailure) {
+                failed++
+            } else {
+                // Purged from the vault: purge the deep-search index too.
+                contentIndex.remove(meta.id)
+            }
         }
         loadTrash(vault)
-        return allOk
+        return failed
     }
 
     /** Distinct tags across visible (non-archived) entries, for the chip row. */
@@ -189,7 +197,10 @@ class VaultListViewModel(private val repo: VaultRepository) {
             for (field in data["custom_fields"] as? JsonArray ?: JsonArray(emptyList())) {
                 if (field is JsonObject) {
                     parts += str(field, "name")
-                    parts += str(field, "value")
+                    // Hidden values are secrets; they stay out of the index.
+                    if ((field["field_type"] as? JsonPrimitive)?.content?.lowercase() != "hidden") {
+                        parts += str(field, "value")
+                    }
                 }
             }
         }
@@ -213,5 +224,14 @@ class VaultListViewModel(private val repo: VaultRepository) {
                     (m.username?.contains(q, ignoreCase = true) ?: false) ||
                     contentIndex[m.id]?.contains(q.lowercase()) == true)
         }
+    }
+
+    /** Deep-search match for the entry-list screens' inline filter. */
+    fun contentHit(id: String, query: String): Boolean =
+        contentIndex[id]?.contains(query.trim().lowercase()) == true
+
+    /** Drop one entry from the deep-search index (after permanent delete). */
+    fun evictContent(id: String) {
+        contentIndex.remove(id)
     }
 }

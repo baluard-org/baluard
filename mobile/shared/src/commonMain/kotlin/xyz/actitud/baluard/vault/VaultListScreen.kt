@@ -108,7 +108,8 @@ fun EntryListScreen(
     } else {
         base.filter {
             it.name.contains(q, ignoreCase = true) ||
-                (it.username?.contains(q, ignoreCase = true) ?: false)
+                (it.username?.contains(q, ignoreCase = true) ?: false) ||
+                listViewModel.contentHit(it.id, q)
         }
     }
     val shown = visible.take(loaded)
@@ -336,10 +337,11 @@ fun EntryListScreen(
                 TextButton(onClick = {
                     confirmEmptyTrash = false
                     scope.launch {
-                        if (listViewModel.emptyTrash(vault)) {
+                        val failed = listViewModel.emptyTrash(vault)
+                        if (failed == 0) {
                             Toast.success(t("toast.trashEmptied"))
                         } else {
-                            Toast.error(t("toast.actionFailed"))
+                            Toast.error(t("toast.trashPartial", failed))
                         }
                     }
                 }) {

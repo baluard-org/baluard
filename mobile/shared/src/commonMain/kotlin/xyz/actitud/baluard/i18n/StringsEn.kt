@@ -278,6 +278,7 @@ internal val EN: Map<String, String> = mapOf(
     "toast.trashed" to "Moved to trash",
     "toast.deleted" to "Deleted for good",
     "toast.trashEmptied" to "Trash emptied",
+    "toast.trashPartial" to "Trash emptied, {0} entries could not be deleted",
     "toast.unarchived" to "Back in your vault",
     "toast.restored" to "Restored from trash",
     "toast.vaultRemoved" to "Vault removed from this device. Your synced copy is kept.",

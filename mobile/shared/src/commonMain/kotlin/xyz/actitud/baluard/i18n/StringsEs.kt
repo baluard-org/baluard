@@ -291,6 +291,7 @@ internal val ES: Map<String, String> = mapOf(
     "toast.trashed" to "Movida a la papelera",
     "toast.deleted" to "Eliminada para siempre",
     "toast.trashEmptied" to "Papelera vaciada",
+    "toast.trashPartial" to "Papelera vaciada, no se pudieron eliminar {0} entradas",
     "toast.unarchived" to "De vuelta en tu bóveda",
     "toast.restored" to "Restaurada desde la papelera",
     "toast.vaultRemoved" to "Bóveda eliminada de este dispositivo. Tu copia sincronizada se conserva.",
