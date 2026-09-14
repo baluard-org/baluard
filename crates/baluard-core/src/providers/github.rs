@@ -545,7 +545,7 @@ mod tests {
             }
         }
         impl std::error::Error for Plain {}
-        // Agy review: mid-message "Found at" must survive; only the snafu
+        // Review note: mid-message "Found at" must survive; only the snafu
         // newline-anchored backtrace marker is stripped.
         assert_eq!(error_chain(&Plain), "no commit Found at ref main");
     }
