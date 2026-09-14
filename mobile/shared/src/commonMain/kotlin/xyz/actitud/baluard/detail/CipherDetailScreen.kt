@@ -75,7 +75,7 @@ fun CipherDetailScreen(
     detailViewModel: CipherDetailViewModel,
     totpViewModel: TotpViewModel,
     onEdit: () -> Unit,
-    onDeleted: (permanent: Boolean) -> Unit,
+    onDeleted: (id: String, permanent: Boolean) -> Unit,
     onBack: () -> Unit,
     revision: Int = 0,
 ) {
@@ -415,7 +415,7 @@ fun CipherDetailScreen(
                         confirmDelete = false
                         scope.launch {
                             detailViewModel.delete(vault, state.id)
-                            if (detailViewModel.error == null) onDeleted(detailViewModel.inTrash)
+                            if (detailViewModel.error == null) onDeleted(state.id, detailViewModel.inTrash)
                         }
                     },
                 ) {

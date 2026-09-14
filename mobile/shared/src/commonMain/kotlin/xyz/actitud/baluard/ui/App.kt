@@ -433,9 +433,10 @@ fun App(vaultPath: String? = null) {
                                     detailViewModel = detailVm,
                                     totpViewModel = totpVm,
                                     onEdit = { nav = Nav.Edit(n.cipherId) },
-                                    onDeleted = { permanent ->
+                                    onDeleted = { id, permanent ->
                                         saveRevision++
                                         notifyMutation()
+                                        if (permanent) listVm.evictContent(id)
                                         nav = Nav.List
                                         Toast.success(
                                             t(if (permanent) "toast.deleted" else "toast.trashed"),
