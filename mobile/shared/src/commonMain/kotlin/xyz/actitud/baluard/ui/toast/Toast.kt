@@ -90,12 +90,18 @@ private val typeIcon: Map<String, ImageVector> = mapOf(
 )
 
 @Composable
-private fun typeTint(type: String): Color = when (type) {
-    "success" -> Color(0xFF10B981)
-    "error" -> Color(0xFFEF4444)
-    "warning" -> Color(0xFFF59E0B)
-    else -> MaterialTheme.colorScheme.primary
+private fun toastStyle(type: String): Pair<Color, Color> {
+    // Muted container wash + bright content tone, tuned for the dark theme.
+    return when (type) {
+        "success" -> Pair(Color(0xFF10B981).copy(alpha = 0.16f), Color(0xFF6EE7B7))
+        "error" -> Pair(Color(0xFFEF4444).copy(alpha = 0.16f), Color(0xFFFCA5A5))
+        "warning" -> Pair(Color(0xFFF59E0B).copy(alpha = 0.16f), Color(0xFFFCD34D))
+        else -> Pair(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.colorScheme.onSurface)
+    }
 }
+
+@Composable
+private fun typeTint(type: String): Color = toastStyle(type).second
 
 /**
  * Renders [Toast.entries] stacked at the bottom of the screen. Render once
@@ -153,33 +159,28 @@ private fun AutoDismissingToast(entry: ToastEntry) {
             targetOffsetY = { -it / 3 },
         ) + fadeOut(tween(180)),
     ) {
+        val (container, content) = toastStyle(entry.type)
         Surface(
             shape = RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            border = androidx.compose.foundation.BorderStroke(
-                1.dp,
-                MaterialTheme.colorScheme.outlineVariant,
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
+            color = container,
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
                 modifier = Modifier
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     imageVector = typeIcon[entry.type] ?: Icons.Default.Info,
                     contentDescription = null,
-                    tint = typeTint(entry.type),
+                    tint = content,
                     modifier = Modifier.size(18.dp),
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
                     text = entry.message,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = content,
                     modifier = Modifier.weight(1f),
                 )
                 if (entry.manual) {
