@@ -67,8 +67,9 @@ import xyz.actitud.baluard.generator.GeneratorViewModel
 import xyz.actitud.baluard.totp.TotpViewModel
 import xyz.actitud.baluard.sync.ConflictViewModel
 import xyz.actitud.baluard.sync.SyncCoordinator
+import xyz.actitud.baluard.sync.SyncPhase
+import xyz.actitud.baluard.sync.runSyncCycle
 import kotlinx.coroutines.delay
-import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -124,10 +125,10 @@ fun App(vaultPath: String? = null) {
             )
         }
         var hasVault by remember { mutableStateOf(AppPaths.vaultExists(path)) }
-        // Sync feedback phases per screen (idle|syncing|synced|offline) and
-        // the screen a Detail was opened from (back goes there).
-        var homeSyncPhase by remember { mutableStateOf("idle") }
-        var listSyncPhase by remember { mutableStateOf("idle") }
+        // Sync feedback phases per screen and the screen a Detail was opened
+        // from (back goes there).
+        var homeSyncPhase by remember { mutableStateOf(SyncPhase.Idle) }
+        var listSyncPhase by remember { mutableStateOf(SyncPhase.Idle) }
         var detailOrigin by remember { mutableStateOf<Nav?>(null) }
         // Clone-in-progress target: chosen at repo pick, consumed at enroll.
         var pendingVaultPath by remember { mutableStateOf<String?>(null) }
@@ -163,30 +164,29 @@ fun App(vaultPath: String? = null) {
             detailOrigin = null
             unlocked = false
             nav = Nav.List
-            homeSyncPhase = "idle"
-            listSyncPhase = "idle"
+            homeSyncPhase = SyncPhase.Idle
+            listSyncPhase = SyncPhase.Idle
         }
 
 
         // Shared sync runner: guarantees a visible spin, then reports the
         // outcome phase. Used by the hub and the filtered entry lists.
-        val startSync: (MobileVault, (String) -> Unit) -> Unit = { vault, setPhase ->
-            setPhase("syncing")
+        val startSync: (MobileVault, (SyncPhase) -> Unit) -> Unit = { vault, setPhase ->
             scope.launch {
-                val mark = kotlin.time.TimeSource.Monotonic.markNow()
-                val ok = runCatching { sync.pullNow(vault) }.isSuccess
-                runCatching {
-                    conflictVm.refresh(vault)
-                    listVm.refresh(vault)
-                }
-                saveRevision++
-                // Hold the spinner: fast LAN syncs would flash for one frame.
-                val hold = 600.milliseconds - mark.elapsedNow()
-                if (hold.isPositive()) delay(hold)
-                setPhase(if (ok) "synced" else "offline")
-                if (ok) Toast.success(t("sync.synced")) else Toast.error(t("sync.offline"))
-                delay(2500)
-                setPhase("idle")
+                runSyncCycle(
+                    doPull = { sync.pullNow(vault) },
+                    afterPull = {
+                        runCatching {
+                            conflictVm.refresh(vault)
+                            listVm.refresh(vault)
+                        }
+                        saveRevision++
+                    },
+                    setPhase = setPhase,
+                    onResult = { ok ->
+                        if (ok) Toast.success(t("sync.synced")) else Toast.error(t("sync.offline"))
+                    },
+                )
             }
         }
 
@@ -304,7 +304,12 @@ fun App(vaultPath: String? = null) {
         LaunchedEffect(unlocked) {
             while (unlocked && isActive) {
                 checkAutoLock()
-                if (unlocked) auth.vault()?.let { v -> conflictVm.refresh(v) }
+                if (unlocked) auth.vault()?.let { v ->
+                    conflictVm.refresh(v)
+                    // 30s offline retry probe (plan §3.5): the runtime no-ops
+                    // unless the vault is Offline; the coordinator spaces calls.
+                    runCatching { sync.offlineTick(v) }
+                }
                 delay(15_000)
             }
         }

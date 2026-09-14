@@ -632,5 +632,17 @@
     "webOAuthRelink": "Reabrir página de inicio de sesión",
     "timeout": "La descarga tardó demasiado.",
     "failed": "Error en la descarga."
+  },
+  "gitWhat": {
+    "link": "¿Qué es git?",
+    "title": "¿Qué es git, en palabras sencillas?",
+    "p1": "Baluard guarda tu bóveda en un repositorio git. Git es una herramienta probada (nació en 2005 y mueve millones de proyectos) cuyo trabajo es mantener copias de tus archivos sincronizadas entre dispositivos y recordar cada cambio.",
+    "p2": "Piensa en el historial de versiones de Google Docs, o en los puntos de guardado de un videojuego: cada cambio tiene su propia entrada, nunca se sobrescribe nada en silencio y cualquier dispositivo puede ponerse al día con la última versión en cualquier momento.",
+    "p3": "Las copias viven en una cuenta que es tuya, como GitHub, GitLab o Codeberg. Baluard cifra todo en tu dispositivo antes de salir de él, así que tu cuenta solo guarda datos ilegibles que solo tú puedes abrir.",
+    "p4": "No existen servidores de Baluard. Tu bóveda nunca pasa por equipos nuestros.",
+    "diagramDevice": "Este dispositivo",
+    "diagramAccount": "Tu cuenta de git",
+    "diagramOther": "Tus otros dispositivos",
+    "diagramEncrypted": "cifrado"
   }
 }

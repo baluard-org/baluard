@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.data.VaultRepository
+import xyz.actitud.baluard.platform.Clock
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Live TOTP code display. Refreshes every second to update the countdown ring
@@ -47,13 +49,16 @@ class TotpViewModel(private val repo: VaultRepository) {
                     _state.value = cur.copy(secondsRemaining = next)
                 }
             }
+        } catch (e: CancellationException) {
+            // Leaving the screen cancels the tick loop; that is not an error state.
+            throw e
         } catch (e: Exception) {
             _state.value = TotpState.Error(e.message ?: "TOTP failed")
         }
     }
 
     private fun secondsIntoWindow(): Int {
-        val epochSeconds = System.currentTimeMillis() / 1000
+        val epochSeconds = Clock.currentTimeMillis() / 1000
         return (30 - (epochSeconds % 30)).toInt().coerceIn(1, 30)
     }
 }
@@ -63,6 +68,3 @@ sealed interface TotpState {
     data class Code(val code: String, val secondsRemaining: Int) : TotpState
     data class Error(val message: String) : TotpState
 }
-
-/** Minimal epoch millis accessor (expect/actual could be added for JS targets). */
-expect object Clock { fun currentTimeMillis(): Long }

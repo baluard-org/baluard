@@ -1,5 +1,6 @@
 package xyz.actitud.baluard.ui.components
 
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.foundation.layout.PaddingValues
@@ -51,10 +53,20 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -85,7 +97,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.copyToClipboard
-
+import xyz.actitud.baluard.sync.SyncPhase
 /**
  * Ambient background container reproducing desktop glow gradients.
  */
@@ -560,20 +572,6 @@ fun CipherAvatar(
     }
 }
 
-/** Cached gradient brushes: one allocation per type, not per composition. */
-private val typeBrushes = mapOf(
-    "login" to Brush.linearGradient(listOf(Color(0xFF0D9488), Color(0xFF0F766E))),
-    "card" to Brush.linearGradient(listOf(Color(0xFF2563EB), Color(0xFF1D4ED8))),
-    "identity" to Brush.linearGradient(listOf(Color(0xFF7C3AED), Color(0xFF6D28D9))),
-    "securenote" to Brush.linearGradient(listOf(Color(0xFFD97706), Color(0xFFB45309))),
-    "sshkey" to Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857))),
-    "passkeys" to Brush.linearGradient(listOf(Color(0xFF8B5CF6), Color(0xFF7C3AED))),
-    "bankaccount" to Brush.linearGradient(listOf(Color(0xFF0284C7), Color(0xFF0369A1))),
-    "driverslicense" to Brush.linearGradient(listOf(Color(0xFF4F46E5), Color(0xFF4338CA))),
-    "passport" to Brush.linearGradient(listOf(Color(0xFFE11D48), Color(0xFFBE123C))),
-)
-
-private val defaultBrush = Brush.linearGradient(listOf(Color(0xFF475569), Color(0xFF334155)))
 
 /** Accent colors for the category badge pill (first color = accent). */
 private val typeAccentColors = mapOf(
@@ -590,6 +588,10 @@ private val typeAccentColors = mapOf(
 
 private val defaultAccentColors = listOf(Color(0xFF475569), Color(0xFF334155))
 
+
+/** Gradient brushes derived from the accent pairs (one source of truth for the hex values). */
+private val typeBrushes = typeAccentColors.mapValues { Brush.linearGradient(it.value) }
+private val defaultBrush = Brush.linearGradient(defaultAccentColors)
 /** Returns visual icon and cached gradient brush for cipher types. */
 private fun cipherTypeVisuals(typeTag: String): Pair<ImageVector, Brush> {
     return when (typeTag.lowercase()) {
@@ -685,15 +687,7 @@ fun CopyableFieldRow(
     onCopy: (() -> Unit)? = null,
 ) {
     var revealed by remember(label) { mutableStateOf(!sensitive) }
-    var copied by remember { mutableStateOf(false) }
-
-    LaunchedEffect(copied) {
-        if (copied) {
-            delay(1500)
-            copied = false
-        }
-    }
-
+    val copied = rememberCopied()
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -736,34 +730,7 @@ fun CopyableFieldRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            AnimatedVisibility(
-                visible = copied,
-                enter = fadeIn() + scaleIn(),
-                exit = fadeOut() + scaleOut(),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f))
-                        .border(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.size(12.dp),
-                        )
-                        Spacer(Modifier.width(3.dp))
-                        Text(
-                            text = "Copied",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.tertiary,
-                        )
-                    }
-                }
-            }
+            CopiedBadge(visible = copied.visible)
 
             if (sensitive) {
                 IconButton(
@@ -781,8 +748,7 @@ fun CopyableFieldRow(
 
             IconButton(
                 onClick = {
-                    copyToClipboard(value)
-                    copied = true
+                    copied.copy(value)
                     onCopy?.invoke()
                 },
                 modifier = Modifier.size(36.dp),
@@ -894,7 +860,7 @@ fun CipherRowCard(
  * offline, resting sync icon otherwise.
  */
 @Composable
-fun SyncIconButton(phase: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun SyncIconButton(phase: SyncPhase, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .padding(horizontal = 3.dp)
@@ -906,21 +872,21 @@ fun SyncIconButton(phase: String, onClick: () -> Unit, modifier: Modifier = Modi
                 color = MaterialTheme.colorScheme.outlineVariant,
                 shape = RoundedCornerShape(10.dp),
             )
-            .clickable(enabled = phase == "idle", onClick = onClick),
+            .clickable(enabled = phase == SyncPhase.Idle, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         when (phase) {
-            "syncing" -> CircularProgressIndicator(
+            SyncPhase.Syncing -> CircularProgressIndicator(
                 modifier = Modifier.size(16.dp),
                 strokeWidth = 2.dp,
             )
-            "synced" -> Icon(
+            SyncPhase.Synced -> Icon(
                 imageVector = Icons.Default.Check,
                 contentDescription = t("sync.synced"),
                 tint = MaterialTheme.colorScheme.tertiary,
                 modifier = Modifier.size(18.dp),
             )
-            "offline" -> Icon(
+            SyncPhase.Offline -> Icon(
                 imageVector = Icons.Default.CloudOff,
                 contentDescription = t("sync.offline"),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -934,4 +900,213 @@ fun SyncIconButton(phase: String, onClick: () -> Unit, modifier: Modifier = Modi
             )
         }
     }
+}
+
+/**
+ * Shared top bar: brand surface colors + optional back arrow.
+ * Every screen uses this so the header styling exists once.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BaluardTopBar(
+    title: String = "",
+    onBack: (() -> Unit)? = null,
+    actions: @Composable RowScope.() -> Unit = {},
+    titleContent: (@Composable () -> Unit)? = null,
+) {
+    TopAppBar(
+        title = { titleContent?.invoke() ?: Text(title) },
+        navigationIcon = {
+            if (onBack != null) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = t("common.back"),
+                    )
+                }
+            }
+        },
+        actions = actions,
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+        ),
+    )
+}
+
+/** Shared search input: magnifier + clear button, brand field colors. */
+@Composable
+fun BaluardSearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        placeholder = { Text(t("common.search")) },
+        leadingIcon = {
+            Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        },
+        trailingIcon = if (value.isNotEmpty()) {
+            {
+                Icon(
+                    imageVector = Icons.Default.Clear,
+                    contentDescription = t("common.clear"),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clickable { onValueChange("") },
+                )
+            }
+        } else null,
+        singleLine = true,
+        shape = RoundedCornerShape(12.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+            focusedBorderColor = MaterialTheme.colorScheme.primary,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+        ),
+        modifier = modifier.fillMaxWidth(),
+    )
+}
+
+/** Label + branded switch row (settings, generator). */
+@Composable
+fun ToggleRow(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onChecked,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+            ),
+        )
+    }
+}
+
+/** One option in a [PresetDropdown]; [labelKey] is the i18n key for its display name. */
+data class LabeledPreset<T>(val value: T, val labelKey: String)
+
+/** Outlined-button + dropdown picker for preset lists (auto-lock, clipboard clear). */
+@Composable
+fun <T> PresetDropdown(
+    current: T,
+    presets: List<LabeledPreset<T>>,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(t(presets.firstOrNull { it.value == current }?.labelKey ?: ""))
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            presets.forEach { preset ->
+                DropdownMenuItem(
+                    text = { Text(t(preset.labelKey)) },
+                    onClick = {
+                        expanded = false
+                        onSelect(preset.value)
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** Copy-to-clipboard handle with a transient visible flag (auto-resets after 1.5 s). */
+class CopiedState(internal val visible: Boolean, private val perform: (String) -> Unit) {
+    fun copy(text: String) = perform(text)
+}
+
+/** Pairs with [CopiedBadge]: copy feedback state shared by every copy button. */
+@Composable
+fun rememberCopied(): CopiedState {
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1500)
+            copied = false
+        }
+    }
+    return remember(copied) {
+        CopiedState(copied) { text ->
+            copyToClipboard(text)
+            copied = true
+        }
+    }
+}
+
+/** Small animated "Copied" pill. */
+@Composable
+fun CopiedBadge(visible: Boolean, modifier: Modifier = Modifier) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn() + scaleIn(),
+        exit = fadeOut() + scaleOut(),
+        modifier = modifier,
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f))
+                .border(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.size(12.dp),
+                )
+                Spacer(Modifier.width(3.dp))
+                Text(
+                    text = t("common.copied"),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+            }
+        }
+    }
+}
+
+/** Hairline divider in the brand outline color. */
+@Composable
+fun BaluardDivider(
+    modifier: Modifier = Modifier,
+    thickness: Dp = 1.dp,
+    alpha: Float = 0.4f,
+) {
+    HorizontalDivider(
+        modifier = modifier,
+        thickness = thickness,
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = alpha),
+    )
 }

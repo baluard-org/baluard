@@ -5,6 +5,7 @@ import { daemon } from "../lib/daemon.js";
 import { createProviderConnect } from "../lib/providerConnect.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess, toastWarning } from "../context/toastSignal.js";
+import GitExplainerModal from "./GitExplainerModal.jsx";
 import { IconUpload, IconDownload, IconRefresh, IconAlert, IconSpinner } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import ExternalLink from "./ExternalLink.jsx";
@@ -47,6 +48,7 @@ export default function SyncTab() {
   const [revokeToken, setRevokeToken] = createSignal(false);
   const [deleteRemote, setDeleteRemote] = createSignal(false);
   const [confirmDeleteRemote, setConfirmDeleteRemote] = createSignal(false);
+  const [showGitHelp, setShowGitHelp] = createSignal(false);
   // Advanced Options: power users override the OAuth client_id (independence
   // from Baluard's app) or point at a self-hosted instance. Blank = defaults.
   const [showAdvanced, setShowAdvanced] = createSignal(false);
@@ -485,6 +487,15 @@ export default function SyncTab() {
 
   return (
     <div class="space-y-6">
+      {/* Plain-words explainer for the storage backbone (non-technical users). */}
+      <div class="flex justify-end">
+        <button
+          onClick={() => setShowGitHelp(true)}
+          class="text-[10px] font-semibold text-[var(--color-muted)] hover:text-[var(--color-text)] underline underline-offset-2 cursor-pointer bg-transparent border-0 p-0"
+        >
+          {t("gitWhat.link")}
+        </button>
+      </div>
       {/* Unavailable */}
       <Show when={topState() === "unavailable"}>
         <div class="text-center py-8">
@@ -959,6 +970,7 @@ export default function SyncTab() {
           </Show>
         </Show>
       </Show>
+      <GitExplainerModal open={showGitHelp()} onClose={() => setShowGitHelp(false)} />
     </div>
   );
 }

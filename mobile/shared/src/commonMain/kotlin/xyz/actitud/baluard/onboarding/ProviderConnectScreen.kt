@@ -138,7 +138,7 @@ fun ProviderConnectScreen(
                         value = token,
                         onValueChange = { token = it },
                         label = t("provider.patLabel"),
-                        placeholder = "ghp_... / glpat-... / token",
+                        placeholder = t("provider.patPlaceholder"),
                         singleLine = true,
                         // M6: a pasted PAT must not be legible over the
                         // shoulder or in screenshots.
@@ -268,7 +268,7 @@ private fun ProviderSelectCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Check,
-                        contentDescription = "Selected",
+                        contentDescription = t("common.selected"),
                         tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(14.dp),
                     )

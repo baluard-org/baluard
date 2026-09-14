@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudSync
@@ -29,18 +28,13 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,8 +49,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
-import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
@@ -71,9 +63,16 @@ import xyz.actitud.baluard.platform.setSecureFlag
 import xyz.actitud.baluard.platform.clipboardClearLabel
 import xyz.actitud.baluard.platform.clipboardClearPresets
 import xyz.actitud.baluard.sync.SyncCoordinator
+import xyz.actitud.baluard.sync.SyncPhase
+import xyz.actitud.baluard.sync.runSyncCycle
 import xyz.actitud.baluard.ui.components.BaluardCard
+import xyz.actitud.baluard.ui.components.BaluardDivider
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
+import xyz.actitud.baluard.ui.components.BaluardTopBar
+import xyz.actitud.baluard.ui.components.LabeledPreset
+import xyz.actitud.baluard.ui.components.PresetDropdown
 import xyz.actitud.baluard.ui.components.SectionCard
+import xyz.actitud.baluard.ui.components.ToggleRow
 
 /**
  * Settings screen styled after Baluard design language.
@@ -89,7 +88,7 @@ fun SettingsScreen(
     vaultPath: String,
     authViewModel: AuthViewModel,
     onVaultRemoved: () -> Unit = {},
-    repo: VaultRepository? = null,
+    repo: VaultRepository,
     onBack: () -> Unit = {},
 ) {
     val biometric = remember { Biometric() }
@@ -97,24 +96,15 @@ fun SettingsScreen(
     val status by viewModel.status.collectAsState()
     val scope = rememberCoroutineScope()
 
-    // Sync-now feedback (main-screen Sync button parity): spinner while
-    // pulling, terminal "Synced"/"Offline" beat, then back to rest.
-    var syncPhase by remember { mutableStateOf("idle") }  // idle|syncing|synced|offline
-
+    // Sync-now feedback: shared runner choreography (spinner hold + terminal
+    // beat + settle), same as the hub's sync button.
+    var syncPhase by remember { mutableStateOf(SyncPhase.Idle) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(t("settings.title")) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = t("common.back"))
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                ),
+            BaluardTopBar(
+                title = t("settings.title"),
+                onBack = onBack,
             )
         },
     ) { padding ->
@@ -198,31 +188,26 @@ fun SettingsScreen(
 
                 BaluardPrimaryButton(
                     text = when (syncPhase) {
-                        "synced" -> t("sync.synced")
-                        "offline" -> t("sync.offline")
+                        SyncPhase.Synced -> t("sync.synced")
+                        SyncPhase.Offline -> t("sync.offline")
                         else -> t("settings.syncNow")
                     },
                     onClick = {
-                        if (syncPhase == "idle") {
-                            syncPhase = "syncing"
+                        if (syncPhase == SyncPhase.Idle) {
                             scope.launch {
-                                val mark = kotlin.time.TimeSource.Monotonic.markNow()
-                                val ok = runCatching { coordinator.pullNow(vault) }.isSuccess
-                                runCatching { viewModel.refresh(vault, coordinator) }
-                                // Minimum visible spin (fast LAN pulls would flash).
-                                val hold = 600.milliseconds - mark.elapsedNow()
-                                if (hold.isPositive()) delay(hold)
-                                syncPhase = if (ok) "synced" else "offline"
-                                delay(2500)
-                                syncPhase = "idle"
+                                runSyncCycle(
+                                    doPull = { coordinator.pullNow(vault) },
+                                    afterPull = { runCatching { viewModel.refresh(vault, coordinator) } },
+                                    setPhase = { syncPhase = it },
+                                )
                             }
                         }
                     },
-                    enabled = syncPhase != "syncing",
-                    loading = syncPhase == "syncing",
+                    enabled = syncPhase != SyncPhase.Syncing,
+                    loading = syncPhase == SyncPhase.Syncing,
                     leadingIcon = when (syncPhase) {
-                        "synced" -> Icons.Default.Check
-                        "offline" -> Icons.Default.CloudOff
+                        SyncPhase.Synced -> Icons.Default.Check
+                        SyncPhase.Offline -> Icons.Default.CloudOff
                         else -> Icons.Default.Sync
                     },
                 )
@@ -233,24 +218,15 @@ fun SettingsScreen(
                 ToggleRow(t("settings.syncOnUnlock"), config.syncOnUnlock) {
                     viewModel.setSyncOnUnlock(it)
                 }
-                androidx.compose.material3.HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                )
+                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
                 ToggleRow(t("settings.syncAfterChange"), config.syncAfterChange) {
                     viewModel.setSyncAfterChange(it)
                 }
-                androidx.compose.material3.HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                )
+                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
                 ToggleRow(t("settings.syncOnForeground"), config.syncOnForeground) {
                     viewModel.setSyncOnForeground(it)
                 }
-                androidx.compose.material3.HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                )
+                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
                 ToggleRow(
                     t("settings.backgroundSync", config.backgroundIntervalMinutes),
                     config.backgroundSyncEnabled,
@@ -261,10 +237,7 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 2.dp, bottom = 4.dp),
                 )
-                androidx.compose.material3.HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                )
+                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
                 ToggleRow(t("settings.wifiOnly"), config.wifiOnly) {
                     viewModel.setWifiOnly(it)
                 }
@@ -272,35 +245,17 @@ fun SettingsScreen(
 
             // Security Section
             SectionCard(title = t("settings.security")) {
-                var autoLockMenu by remember { mutableStateOf(false) }
                 Text(
                     t("settings.autoLock"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(bottom = 6.dp),
                 )
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(
-                        onClick = { autoLockMenu = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(t(vaultTimeoutLabel(vaultTimeoutToken)))
-                    }
-                    DropdownMenu(
-                        expanded = autoLockMenu,
-                        onDismissRequest = { autoLockMenu = false },
-                    ) {
-                        VaultRepository.vaultTimeoutPresets.forEach { preset ->
-                            DropdownMenuItem(
-                                text = { Text(t(preset.labelKey)) },
-                                onClick = {
-                                    autoLockMenu = false
-                                    onVaultTimeoutChange(preset.token)
-                                },
-                            )
-                        }
-                    }
-                }
+                PresetDropdown(
+                    current = vaultTimeoutToken,
+                    presets = VaultRepository.vaultTimeoutPresets.map { LabeledPreset(it.token, it.labelKey) },
+                    onSelect = onVaultTimeoutChange,
+                )
                 Text(
                     t("settings.autoLockHint"),
                     style = MaterialTheme.typography.bodySmall,
@@ -308,10 +263,7 @@ fun SettingsScreen(
                     modifier = Modifier.padding(top = 6.dp),
                 )
 
-                androidx.compose.material3.HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                )
+                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                 // Biometric quick unlock (per-vault). Disable always works;
                 // enable runs the enroll ceremony with the KEK retained from
@@ -395,45 +347,26 @@ fun SettingsScreen(
                         )
                     }
 
-                    androidx.compose.material3.HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 4.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                    )
+                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
                 }
 
                 // Clipboard auto-clear (device-local, desktop parity).
                 val clipboardPrefs = remember { ClipboardPrefs() }
                 var clipboardSeconds by remember { mutableStateOf(clipboardPrefs.loadSeconds()) }
-                var clipboardMenu by remember { mutableStateOf(false) }
                 Text(
                     t("settings.clipboardClear"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(bottom = 6.dp),
                 )
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(
-                        onClick = { clipboardMenu = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(t(clipboardClearLabel(clipboardSeconds)))
-                    }
-                    DropdownMenu(
-                        expanded = clipboardMenu,
-                        onDismissRequest = { clipboardMenu = false },
-                    ) {
-                        clipboardClearPresets.forEach { preset ->
-                            DropdownMenuItem(
-                                text = { Text(t(preset.labelKey)) },
-                                onClick = {
-                                    clipboardMenu = false
-                                    clipboardSeconds = preset.seconds
-                                    clipboardPrefs.saveSeconds(preset.seconds)
-                                },
-                            )
-                        }
-                    }
-                }
+                PresetDropdown(
+                    current = clipboardSeconds,
+                    presets = clipboardClearPresets.map { LabeledPreset(it.seconds, it.labelKey) },
+                    onSelect = {
+                        clipboardSeconds = it
+                        clipboardPrefs.saveSeconds(it)
+                    },
+                )
                 Text(
                     t("settings.clipboardClearHint"),
                     style = MaterialTheme.typography.bodySmall,
@@ -441,10 +374,7 @@ fun SettingsScreen(
                     modifier = Modifier.padding(top = 6.dp),
                 )
 
-                androidx.compose.material3.HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                )
+                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                 // Allow screenshots (default off, fail secure). Toggling
                 // applies the window flag live; the pref is re-read on the
@@ -575,31 +505,5 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(24.dp))
         }
-    }
-}
-
-@Composable
-private fun ToggleRow(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp),
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
-        )
-        Switch(
-            checked = checked,
-            onCheckedChange = onChecked,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-            ),
-        )
     }
 }

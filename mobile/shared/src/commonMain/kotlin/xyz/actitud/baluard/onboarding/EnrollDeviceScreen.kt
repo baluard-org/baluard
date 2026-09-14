@@ -85,7 +85,7 @@ fun EnrollDeviceScreen(
                         error = null
                     },
                     label = t("enroll.phraseLabel", wordCount),
-                    placeholder = "Enter the 24 recovery words...",
+                    placeholder = t("enroll.phrasePlaceholder"),
                     leadingIcon = Icons.Default.Key,
                     singleLine = false,
                     minLines = 3,

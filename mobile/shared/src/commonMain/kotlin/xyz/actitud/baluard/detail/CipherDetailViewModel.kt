@@ -1,6 +1,7 @@
 package xyz.actitud.baluard.detail
 
 import androidx.compose.runtime.getValue
+import xyz.actitud.baluard.platform.platformLogE
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.serialization.json.Json
@@ -53,7 +54,10 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
                 passkeys = parsePasskeys(data),
                 attachments = parseAttachments(data),
             )
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
         } catch (e: Exception) {
+            platformLogE("CipherDetail", "load failed for $id", e)
             error = e.message
         }
     }
@@ -65,7 +69,10 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
         try {
             repo.deleteCipher(vault, id)
             state = null
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
         } catch (e: Exception) {
+            platformLogE("CipherDetail", "delete failed for $id", e)
             error = e.message
         }
     }

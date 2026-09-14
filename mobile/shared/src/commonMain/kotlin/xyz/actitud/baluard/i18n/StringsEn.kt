@@ -14,6 +14,8 @@ internal val EN: Map<String, String> = mapOf(
     "common.continue" to "Continue",
     "common.search" to "Search",
     "common.clear" to "Clear",
+    "common.copied" to "Copied",
+    "common.selected" to "Selected",
     "common.save" to "Save",
     "common.saving" to "Saving…",
 
@@ -28,12 +30,43 @@ internal val EN: Map<String, String> = mapOf(
     "login.enableBiometricBody" to "Use your fingerprint or face instead of the master password on this device. Your master password still works anytime.",
     "login.enableBiometric" to "Enable quick unlock",
     "login.notNow" to "Not now",
+    "login.unlockFailed" to "Unlock failed. Try again.",
 
     // onboarding root
     "onboarding.subtitle" to "Your passwords, stored only for you",
     "onboarding.createVault" to "Create new vault",
     "onboarding.openExisting" to "Open an existing vault",
     "onboarding.openExistingHint" to "Opens a vault synced from another device",
+
+    // onboarding feature highlights (human language: no crypto or git vocabulary)
+    "onboarding.featureEncryptTitle" to "Encrypted on your device",
+    "onboarding.featureEncryptDesc" to "Only you can read what's inside. Not us, not anyone else.",
+    "onboarding.featureSyncTitle" to "Sync on your terms",
+    "onboarding.featureSyncDesc" to "Back up through your own account. We keep no copies.",
+    "onboarding.featureKeysTitle" to "Your keys, your data",
+    "onboarding.featureKeysDesc" to "One master password, one recovery phrase. Your vault stays yours.",
+
+    // "what is git?" explainer (shown in onboarding + settings, both platforms)
+    "gitWhat.link" to "What is git?",
+    "gitWhat.title" to "What is git, in plain words?",
+    "gitWhat.p1" to
+        "Baluard keeps your vault in a git repository. Git is a time-tested tool (born in 2005, " +
+            "running millions of projects) whose whole job is keeping copies of your files in sync " +
+            "across devices and remembering every change.",
+    "gitWhat.p2" to
+        "Think of the version history in Google Docs, or save points in a video game: every change " +
+            "gets its own entry, nothing is ever silently overwritten, and any device can catch up " +
+            "with the latest version at any time.",
+    "gitWhat.p3" to
+        "The copies live in an account that you own, like GitHub, GitLab, or Codeberg. Baluard " +
+            "encrypts everything on your device first, so your account only ever stores scrambled " +
+            "data that only you can open.",
+    "gitWhat.p4" to
+        "There is no Baluard server. Your vault never passes through computers we run.",
+    "gitWhat.diagramDevice" to "This device",
+    "gitWhat.diagramAccount" to "Your git account",
+    "gitWhat.diagramOther" to "Your other devices",
+    "gitWhat.diagramEncrypted" to "encrypted",
 
     // create vault
     "onboarding.createButton" to "Create vault",
@@ -54,23 +87,26 @@ internal val EN: Map<String, String> = mapOf(
             "forget the master password. Write them down on paper and keep them safe.",
     "recovery.warning" to "Never store the phrase on this device or in the cloud.",
     "recovery.ack" to "I wrote it down on paper",
-
+    "recovery.copyPhrase" to "Copy recovery phrase",
     // provider connect (open existing vault)
-    "provider.title" to "Where is your vault?",
     "provider.subtitle" to
         "Connect your account to open a vault synced from another device.",
     "provider.github" to "GitHub",
     "provider.gitlab" to "GitLab",
     "provider.codeberg" to "Codeberg",
-    "provider.selected" to "{0} ✓",
     "provider.continueBrowser" to "Continue in browser",
     "provider.usePatInstead" to "Use an access token instead",
     "provider.continuePat" to "Continue with access token",
     "provider.patLabel" to "Access token",
+    "provider.patPlaceholder" to "ghp_... / glpat-... / token",
     "provider.patConnect" to "Connect",
-
+    "provider.errorConnection" to "Connection failed",
+    "provider.errorAuth" to "Authorization failed",
+    "provider.errorListRepos" to "Could not list repositories",
+    "provider.errorClone" to "Clone failed",
+    "provider.errorEnroll" to "Enrollment failed",
     // device code (RFC 8628)
-    "deviceCode.title" to "Enter this code",
+    "deviceCode.title" to "Authorize in your browser",
     "deviceCode.subtitle" to
         "Sign in to your account in the browser, then enter this code and approve. " +
             "This screen waits by itself.",
@@ -89,12 +125,11 @@ internal val EN: Map<String, String> = mapOf(
     "repo.private" to "Private",
 
     // device enrollment
-    "enroll.title" to "Trust this device",
     "enroll.subtitle" to
-        "This device is not trusted by the vault yet. Enter your 24-word recovery " +
             "phrase and master password to add it.",
     "enroll.phraseLabel" to "Recovery phrase ({0}/24 words)",
     "enroll.phraseHint" to "Enter all 24 words, in order.",
+    "enroll.phrasePlaceholder" to "Enter the 24 recovery words...",
     "enroll.button" to "Add this device",
 
     // vault list
@@ -102,11 +137,12 @@ internal val EN: Map<String, String> = mapOf(
     "vault.lockVault" to "Lock vault",
     "vault.empty" to "No entries yet",
     "vault.addEntry" to "Add entry",
-    "vault.favorites" to "Favorites",
 
     // generator screen title
     "generator.title" to "Generator",
-
+    "generator.result" to "Generated result",
+    "generator.passwordSettings" to "Password settings",
+    "generator.passphraseSettings" to "Passphrase settings",
     // cipher detail
     "detail.edit" to "Edit",
     "detail.delete" to "Delete",
@@ -119,6 +155,9 @@ internal val EN: Map<String, String> = mapOf(
     "detail.openExternalTitle" to "Open outside the browser?",
     "detail.openExternalBody" to "This link uses the \"{0}\" scheme and may open another app. Continue?",
     "detail.openExternalConfirm" to "Open",
+    "detail.openInBrowser" to "Open in browser",
+    "detail.sectionCredentials" to "Credentials & details",
+    "detail.sectionWebsites" to "Websites",
     "detail.type.login" to "Login",
     "detail.type.card" to "Card",
     "detail.type.identity" to "Identity",
@@ -189,16 +228,21 @@ internal val EN: Map<String, String> = mapOf(
     "edit.notesPlaceholder" to "Additional private notes...",
     "edit.favorite" to "Favorite",
     "edit.typeLabel" to "Type",
+    "edit.sectionItemDetails" to "Item details",
+    "edit.sectionCredentials" to "Credentials",
+    "edit.namePlaceholder" to "e.g. GitHub, Netflix, Main Card",
 
     // generator
     "generator.password" to "Password",
     "generator.passphrase" to "Passphrase",
     "generator.generate" to "Generate",
-    "generator.length" to "Length: {0}",
+    "generator.length" to "Length",
     "generator.upper" to "Uppercase (A-Z)",
     "generator.numbers" to "Numbers (0-9)",
     "generator.symbols" to "Symbols (!@#…)",
-    "generator.wordCount" to "Word count: {0}",
+    "generator.wordCount" to "Word count",
+    "generator.chars" to "{0} chars",
+    "generator.words" to "{0} words",
     "generator.separator" to "Separator",
     "generator.capitalize" to "Capitalize a word",
     "generator.insertNumber" to "Insert number",
@@ -206,6 +250,8 @@ internal val EN: Map<String, String> = mapOf(
 
     // totp
     "totp.loading" to "loading code…",
+    "totp.oneTimeCode" to "One-time code",
+    "totp.nextCodeIn" to "Next code in",
 
     // settings
     "settings.title" to "Settings",

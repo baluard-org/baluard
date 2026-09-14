@@ -2,6 +2,7 @@ package xyz.actitud.baluard.sync
 
 import xyz.actitud.baluard.MobileVaultInterface
 import xyz.actitud.baluard.MobileSyncStatus
+import xyz.actitud.baluard.platform.Clock
 import xyz.actitud.baluard.platform.isMeteredNetwork
 
 /**
@@ -68,11 +69,19 @@ class SyncCoordinator(
     /** User pull-to-refresh / "Sync now". */
     suspend fun pullNow(vault: MobileVaultInterface) = vault.syncPullNow()
 
-    /** Host-scheduled 30s probe while Offline + foregrounded. */
+    /**
+     * Host-scheduled 30s connectivity probe (plan §3.5). The runtime no-ops
+     * unless the vault is Offline, so the foreground poll can call this every
+     * tick; here we space calls to [SyncConfig.offlineRetryForegroundSecs].
+     */
     suspend fun offlineTick(vault: MobileVaultInterface) {
         if (blockedByNetwork()) return
+        val now = Clock.currentTimeMillis()
+        if (now - lastOfflineProbeMs < config.offlineRetryForegroundSecs * 1000L) return
+        lastOfflineProbeMs = now
         vault.syncOfflineTick()
     }
+    private var lastOfflineProbeMs = 0L
 
     /** Coordinator status for the sync indicator. */
     suspend fun status(vault: MobileVaultInterface): MobileSyncStatus = vault.syncStatus()
@@ -81,7 +90,7 @@ class SyncCoordinator(
 /**
  * Sync settings (plan §3.5). Defaults match the desktop: sync on unlock +
  * after change + on foreground ON, background sync OFF, Wi-Fi-only advisory.
- * Persisted via DataStore on the host; this is the in-memory default.
+ * Persisted by the host's SyncConfigStore (SharedPreferences on Android).
  */
 data class SyncConfig(
     val syncOnUnlock: Boolean = true,

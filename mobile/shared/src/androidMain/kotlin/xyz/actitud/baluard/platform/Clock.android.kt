@@ -1,4 +1,4 @@
-package xyz.actitud.baluard.totp
+package xyz.actitud.baluard.platform
 
 /** Android/JVM epoch millis. */
 actual object Clock {

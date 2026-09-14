@@ -42,10 +42,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.i18n.t
-import xyz.actitud.baluard.platform.copyToClipboard
+import xyz.actitud.baluard.ui.components.CopiedBadge
+import xyz.actitud.baluard.ui.components.rememberCopied
 
 /**
  * Live TOTP widget styled with Baluard card, progress bar, and copy-on-tap.
@@ -57,16 +57,7 @@ fun TotpWidget(
     viewModel: TotpViewModel,
 ) {
     val state by viewModel.state.collectAsState()
-    var copied by remember { mutableStateOf(false) }
-
-    LaunchedEffect(cipherId) { viewModel.start(vault, cipherId) }
-
-    LaunchedEffect(copied) {
-        if (copied) {
-            delay(1500)
-            copied = false
-        }
-    }
+    val copied = rememberCopied()
 
     Surface(
         modifier = Modifier
@@ -111,10 +102,7 @@ fun TotpWidget(
                         Column(
                             modifier = Modifier
                                 .weight(1f)
-                                .clickable {
-                                    copyToClipboard(s.code)
-                                    copied = true
-                                },
+                                .clickable { copied.copy(s.code) },
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
@@ -125,7 +113,7 @@ fun TotpWidget(
                                 )
                                 Spacer(Modifier.width(4.dp))
                                 Text(
-                                    text = "ONE-TIME CODE",
+                                    text = t("totp.oneTimeCode"),
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.ExtraBold,
                                         letterSpacing = 0.5.sp,
@@ -146,29 +134,11 @@ fun TotpWidget(
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            AnimatedVisibility(
-                                visible = copied,
-                                enter = fadeIn(),
-                                exit = fadeOut(),
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                                ) {
-                                    Text(
-                                        text = "Copied",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.tertiary,
-                                    )
-                                }
-                            }
+                            CopiedBadge(visible = copied.visible)
 
                             IconButton(
                                 onClick = {
-                                    copyToClipboard(s.code)
-                                    copied = true
+                                    copied.copy(s.code)
                                 },
                             ) {
                                 Icon(
@@ -200,7 +170,7 @@ fun TotpWidget(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = "Next code in",
+                            text = t("totp.nextCodeIn"),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

@@ -1,7 +1,5 @@
 package xyz.actitud.baluard.platform
 
-import xyz.actitud.baluard.totp.Clock
-
 /**
  * App background/foreground transitions, fed by the host activity
  * (Android onPause/onResume). Carries the paused-at timestamp so callers

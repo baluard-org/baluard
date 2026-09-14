@@ -20,12 +20,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.LocalOffer
@@ -39,14 +37,9 @@ import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -68,6 +61,11 @@ import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.CipherRowCard
 import xyz.actitud.baluard.ui.components.SectionCard
 import xyz.actitud.baluard.ui.components.SyncIconButton
+import xyz.actitud.baluard.sync.SyncPhase
+import xyz.actitud.baluard.ui.components.BaluardDivider
+import xyz.actitud.baluard.ui.components.BaluardSearchField
+import xyz.actitud.baluard.ui.components.BaluardTopBar
+import xyz.actitud.baluard.detail.cipherTypeDebugTags
 import xyz.actitud.baluard.platform.DiscoveredVault
 import xyz.actitud.baluard.platform.VaultRegistry
 import androidx.compose.runtime.LaunchedEffect
@@ -87,7 +85,7 @@ import xyz.actitud.baluard.ui.components.cipherTypeTheme
 fun VaultHomeScreen(
     vault: MobileVault,
     listViewModel: VaultListViewModel,
-    syncPhase: String,
+    syncPhase: SyncPhase,
     onSyncClick: () -> Unit,
     onAddEntry: () -> Unit = {},
     onOpenGenerator: () -> Unit = {},
@@ -114,12 +112,10 @@ fun VaultHomeScreen(
     val favorites = ciphers.filter { it.favorite }
 
     // Type rows: raw cipherType values as stored on the metas.
-    val typeRows = listOf(
-        "login", "card", "identity", "securenote", "sshkey", "bankaccount",
-        "driverslicense", "passport",
-    ).map { raw -> raw to ciphers.count { it.cipherType.lowercase() == raw } }
+    // Type rows: debug-tag form of the cipher types (matches meta.cipherType).
+    val typeRows = cipherTypeDebugTags
+        .map { raw -> raw to ciphers.count { it.cipherType.lowercase() == raw } }
         .filter { (_, n) -> n > 0 }
-
     val tagCounts = ciphers.flatMap { it.tags }
         .groupingBy { it }.eachCount()
         .entries.sortedByDescending { it.value }
@@ -129,8 +125,8 @@ fun VaultHomeScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = {
+            BaluardTopBar(
+                titleContent = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
@@ -156,10 +152,6 @@ fun VaultHomeScreen(
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                ),
                 actions = {
                     SyncIconButton(phase = syncPhase, onClick = onSyncClick)
                     TopBarActionIcon(Icons.Default.Add, t("vault.addEntry"), onAddEntry, highlight = true)
@@ -299,46 +291,13 @@ fun VaultHomeScreen(
             }
 
             // Search overrides the hub with flat results while typing.
-            Box(
+            BaluardSearchField(
+                value = query,
+                onValueChange = { listViewModel.setQuery(it) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-            ) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { listViewModel.setQuery(it) },
-                    placeholder = { Text(t("common.search")) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                    trailingIcon = if (query.isNotEmpty()) {
-                        {
-                            Icon(
-                                imageVector = Icons.Default.Clear,
-                                contentDescription = t("common.clear"),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .clickable { listViewModel.setQuery("") },
-                            )
-                        }
-                    } else null,
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
+            )
 
             if (query.isNotBlank()) {
                 val results = listViewModel.filtered(ciphers)
@@ -483,10 +442,10 @@ fun VaultHomeScreen(
                         onClick = { onOpenKind(EntryListKind.Type(raw)) },
                     )
                     if (index < typeRows.size - 1) {
-                        HorizontalDivider(
+                        BaluardDivider(
                             modifier = Modifier.padding(start = 58.dp, end = 14.dp),
                             thickness = 0.7.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                            alpha = 0.35f,
                         )
                     }
                 }
@@ -511,10 +470,10 @@ fun VaultHomeScreen(
                         onClick = { onOpenKind(EntryListKind.Folder(folder.id)) },
                     )
                     if (index < sorted.size - 1) {
-                        HorizontalDivider(
+                        BaluardDivider(
                             modifier = Modifier.padding(start = 58.dp, end = 14.dp),
                             thickness = 0.7.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                            alpha = 0.35f,
                         )
                     }
                 }
@@ -552,10 +511,10 @@ fun VaultHomeScreen(
                     iconColor = Color(0xFFD97706),
                     onClick = { onOpenKind(EntryListKind.Archive) },
                 )
-                HorizontalDivider(
+                BaluardDivider(
                     modifier = Modifier.padding(start = 58.dp, end = 14.dp),
                     thickness = 0.7.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                    alpha = 0.35f,
                 )
                 SectionLinkRow(
                     label = t("home.trash"),
@@ -728,17 +687,9 @@ fun TagListScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(t("home.tags")) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = t("common.back"))
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                ),
+            BaluardTopBar(
+                title = t("home.tags"),
+                onBack = onBack,
             )
         },
     ) { padding ->
@@ -766,10 +717,10 @@ fun TagListScreen(
                         onClick = { onTag(tag) },
                     )
                     if (index < counts.size - 1) {
-                        HorizontalDivider(
+                        BaluardDivider(
                             modifier = Modifier.padding(start = 58.dp, end = 14.dp),
                             thickness = 0.7.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                            alpha = 0.35f,
                         )
                     }
                 }

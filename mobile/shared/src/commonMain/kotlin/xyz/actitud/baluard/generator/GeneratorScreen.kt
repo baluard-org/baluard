@@ -1,7 +1,6 @@
 package xyz.actitud.baluard.generator
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -25,7 +24,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
@@ -41,19 +39,15 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
+import xyz.actitud.baluard.i18n.t
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,13 +56,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import xyz.actitud.baluard.i18n.t
-import xyz.actitud.baluard.platform.copyToClipboard
 import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
+import xyz.actitud.baluard.ui.components.BaluardTopBar
+import xyz.actitud.baluard.ui.components.CopiedBadge
 import xyz.actitud.baluard.ui.components.SectionCard
+import xyz.actitud.baluard.ui.components.ToggleRow
+import xyz.actitud.baluard.ui.components.rememberCopied
 
 /**
  * Password + passphrase generator styled after Baluard design language.
@@ -78,31 +72,15 @@ import xyz.actitud.baluard.ui.components.SectionCard
 fun GeneratorScreen(viewModel: GeneratorViewModel, onBack: () -> Unit = {}) {
     val state by viewModel.state.collectAsState()
     val scope = rememberCoroutineScope()
-    var copied by remember { mutableStateOf(false) }
-
-    LaunchedEffect(copied) {
-        if (copied) {
-            delay(1500)
-            copied = false
-        }
-    }
-
+    val copied = rememberCopied()
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(t("generator.title")) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = t("common.back"))
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                ),
+            BaluardTopBar(
+                title = t("generator.title"),
+                onBack = onBack,
             )
-        },
+        }
     ) { padding ->
         Column(
             modifier = Modifier
@@ -154,31 +132,14 @@ fun GeneratorScreen(viewModel: GeneratorViewModel, onBack: () -> Unit = {}) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        text = "GENERATED RESULT",
+                        text = t("generator.result").uppercase(),
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = 0.5.sp,
                         ),
                         color = MaterialTheme.colorScheme.primary,
                     )
-                    AnimatedVisibility(
-                        visible = copied,
-                        enter = fadeIn(),
-                        exit = fadeOut(),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f))
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                        ) {
-                            Text(
-                                text = "Copied",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.tertiary,
-                            )
-                        }
-                    }
+                    CopiedBadge(visible = copied.visible)
                 }
 
                 Spacer(Modifier.height(8.dp))
@@ -191,8 +152,7 @@ fun GeneratorScreen(viewModel: GeneratorViewModel, onBack: () -> Unit = {}) {
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
                         .clickable {
                             state.result?.let {
-                                copyToClipboard(it)
-                                copied = true
+                                copied.copy(it)
                             }
                         }
                         .padding(14.dp),
@@ -233,8 +193,7 @@ fun GeneratorScreen(viewModel: GeneratorViewModel, onBack: () -> Unit = {}) {
                     IconButton(
                         onClick = {
                             state.result?.let {
-                                copyToClipboard(it)
-                                copied = true
+                                copied.copy(it)
                             }
                         },
                         modifier = Modifier
@@ -262,11 +221,11 @@ fun GeneratorScreen(viewModel: GeneratorViewModel, onBack: () -> Unit = {}) {
                 label = "GeneratorModeControlsTransition",
             ) { mode ->
                 if (mode == GeneratorMode.PASSWORD) {
-                    SectionCard(title = "Password Settings") {
+                    SectionCard(title = t("generator.passwordSettings")) {
                         PasswordControls(state, viewModel)
                     }
                 } else {
-                    SectionCard(title = "Passphrase Settings") {
+                    SectionCard(title = t("generator.passphraseSettings")) {
                         PassphraseControls(state, viewModel)
                     }
                 }
@@ -285,7 +244,7 @@ private fun PasswordControls(state: GeneratorUiState, viewModel: GeneratorViewMo
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "Length",
+            text = t("generator.length"),
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
         )
         Box(
@@ -295,7 +254,7 @@ private fun PasswordControls(state: GeneratorUiState, viewModel: GeneratorViewMo
                 .padding(horizontal = 8.dp, vertical = 2.dp),
         ) {
             Text(
-                text = "${state.length} chars",
+                text = t("generator.chars", state.length),
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -331,7 +290,7 @@ private fun PassphraseControls(state: GeneratorUiState, viewModel: GeneratorView
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "Word count",
+            text = t("generator.wordCount"),
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
         )
         Box(
@@ -341,7 +300,7 @@ private fun PassphraseControls(state: GeneratorUiState, viewModel: GeneratorView
                 .padding(horizontal = 8.dp, vertical = 2.dp),
         ) {
             Text(
-                text = "${state.wordCount} words",
+                text = t("generator.words", state.wordCount),
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -381,27 +340,3 @@ private fun PassphraseControls(state: GeneratorUiState, viewModel: GeneratorView
     ToggleRow(t("generator.insertSymbol"), state.ppSymbol) { viewModel.setPpSymbol(it) }
 }
 
-@Composable
-private fun ToggleRow(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Switch(
-            checked = checked,
-            onCheckedChange = onChecked,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-            ),
-        )
-    }
-}

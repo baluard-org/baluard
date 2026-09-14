@@ -14,14 +14,14 @@ import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.platform.platformLogE
 
 /**
- * Drives the vault list (Phase 3). Holds ciphers as a [StateFlow] so Compose
- * recomposes on changes.
+ * Drives the vault hub + filtered entry lists. Holds the cipher slices as
+ * [StateFlow]s so Compose recomposes on changes.
  *
- * Filtering: text search (name/username) + optional type chip + optional tag
- * chip + optional folder chip + favorites-only toggle. Archived entries never render. All filters
- * are client-side for Phase 3; the plan mentions Rust-side full-text search
- * for large vaults (>1000 entries) — that optimization lands when measured
- * perf demands it.
+ * Deep-search: matching inside entry content (notes, URIs, custom fields)
+ * needs one decrypted read per entry, so the index is built LAZILY on the
+ * first search (see [ensureContentIndex]) and invalidated on every data
+ * reload. Never index during [refresh]: that decrypted every cipher on
+ * every hub load and sync completion.
  */
 class VaultListViewModel(private val repo: VaultRepository) {
     private val _ciphers = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
@@ -30,19 +30,13 @@ class VaultListViewModel(private val repo: VaultRepository) {
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
 
-    /** Selected type chip (wire tag), or null. */
-    val typeFilter = MutableStateFlow<String?>(null)
-
-    /** Selected tag chip, or null. */
-    val tagFilter = MutableStateFlow<String?>(null)
-
-    /** Selected folder chip (folder id), or null. */
-    val folderFilter = MutableStateFlow<String?>(null)
-
     private val _folders = MutableStateFlow<List<MobileFolderInfo>>(emptyList())
     private val _archived = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
     private val _trash = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
     private val _totp = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
+
+    /** Entries with a TOTP seed (Authenticator card). */
+    val totp: StateFlow<List<MobileCipherMeta>> = _totp.asStateFlow()
 
     /** Archived entries (Archive card). */
     val archived: StateFlow<List<MobileCipherMeta>> = _archived.asStateFlow()
@@ -50,24 +44,21 @@ class VaultListViewModel(private val repo: VaultRepository) {
     /** Trashed entries (Trash card). */
     val trash: StateFlow<List<MobileCipherMeta>> = _trash.asStateFlow()
 
+    val folders: StateFlow<List<MobileFolderInfo>> = _folders.asStateFlow()
+
     /** id -> lowercase haystack over decryptable content (notes, URIs, custom
      * fields) so search matches inside entries, not just their names. */
     private val contentIndex = mutableMapOf<String, String>()
+    private var indexedVault: MobileVault? = null
 
-    /** Entries with a TOTP seed (Authenticator card). */
-    val totp: StateFlow<List<MobileCipherMeta>> = _totp.asStateFlow()
-    val folders: StateFlow<List<MobileFolderInfo>> = _folders.asStateFlow()
+    private val _indexVersion = MutableStateFlow(0)
 
-    val favoritesOnly = MutableStateFlow(false)
+    /** Bumps when the deep-search index rebuilds; screens collect it to re-run search. */
+    val indexVersion: StateFlow<Int> = _indexVersion.asStateFlow()
 
     fun setQuery(q: String) { _query.value = q }
 
-    fun setTypeFilter(tag: String?) { typeFilter.value = tag }
-    fun setTagFilter(tag: String?) { tagFilter.value = tag }
-    fun setFolderFilter(id: String?) { folderFilter.value = id }
-    fun setFavoritesOnly(v: Boolean) { favoritesOnly.value = v }
-
-    /** Reload the cipher index from the runtime. Call after unlock + after mutations. */
+    /** Reload all slices from the runtime. Call after unlock + after mutations. */
     suspend fun refresh(vault: MobileVault) {
         // A throw here used to kill the LaunchedEffect silently, leaving an
         // empty list with no signal (the empty-on-open bug report). Surface it.
@@ -84,16 +75,11 @@ class VaultListViewModel(private val repo: VaultRepository) {
         _totp.value = runCatching { repo.listTotp(vault) }.getOrDefault(emptyList())
         _archived.value = runCatching { repo.listArchived(vault) }.getOrDefault(emptyList())
         _trash.value = runCatching { repo.listTrash(vault) }.getOrDefault(emptyList())
-        // Deep-search index across every slice; best-effort per entry.
-        contentIndex.clear()
-        indexSlice(vault, _ciphers.value)
-        indexSlice(vault, _archived.value)
-        indexSlice(vault, _trash.value)
+        invalidateContentIndex()
     }
 
     /** The slice for an [kind] entry list (already reactive via the flows). */
     fun listFor(kind: EntryListKind): List<MobileCipherMeta> = when (kind) {
-        EntryListKind.All -> _ciphers.value
         EntryListKind.Totp -> _totp.value
         EntryListKind.Favorites -> _ciphers.value.filter { it.favorite }
         is EntryListKind.Type -> _ciphers.value.filter { it.cipherType == kind.tag }
@@ -103,23 +89,44 @@ class VaultListViewModel(private val repo: VaultRepository) {
         EntryListKind.Trash -> _trash.value
     }
 
+    /**
+     * Build the deep-search index once per vault state. Screens call this
+     * from a LaunchedEffect when the search query turns non-empty; the
+     * [indexVersion] bump recomposes the results with content matches.
+     */
+    suspend fun ensureContentIndex(vault: MobileVault) {
+        if (indexedVault === vault) return
+        contentIndex.clear()
+        indexSlice(vault, _ciphers.value)
+        indexSlice(vault, _archived.value)
+        indexSlice(vault, _trash.value)
+        indexedVault = vault
+        _indexVersion.value++
+    }
+
+    /** Drop the deep-search index (data changed underneath it). */
+    private fun invalidateContentIndex() {
+        contentIndex.clear()
+        indexedVault = null
+    }
+
     /** Reload just the TOTP slice. */
     suspend fun loadTotp(vault: MobileVault) {
         _totp.value = runCatching { repo.listTotp(vault) }.getOrDefault(emptyList())
-        indexSlice(vault, _totp.value)
+        invalidateContentIndex()
     }
 
-    /** Reload just the archived slice (after unarchive). */
+    /** Reload the archived slice + active list (after unarchive). */
     suspend fun loadArchived(vault: MobileVault) {
         _archived.value = runCatching { repo.listArchived(vault) }.getOrDefault(emptyList())
-        indexSlice(vault, _archived.value)
         _ciphers.value = runCatching { repo.listCiphers(vault) }.getOrDefault(emptyList())
+        invalidateContentIndex()
     }
 
-    /** Reload just the trash slice (after restore). */
+    /** Reload just the trash slice (after restore / purge). */
     suspend fun loadTrash(vault: MobileVault) {
         _trash.value = runCatching { repo.listTrash(vault) }.getOrDefault(emptyList())
-        indexSlice(vault, _trash.value)
+        invalidateContentIndex()
     }
 
     suspend fun unarchive(vault: MobileVault, id: String): Boolean {
@@ -141,38 +148,12 @@ class VaultListViewModel(private val repo: VaultRepository) {
         for (meta in _trash.value) {
             if (runCatching { repo.deleteCipher(vault, meta.id) }.isFailure) {
                 failed++
-            } else {
-                // Purged from the vault: purge the deep-search index too.
-                contentIndex.remove(meta.id)
             }
         }
         loadTrash(vault)
         return failed
     }
 
-    /** Distinct tags across visible (non-archived) entries, for the chip row. */
-    fun allTags(ciphers: List<MobileCipherMeta>): List<String> =
-        ciphers.filter { !it.archived }.flatMap { it.tags }.distinct().sorted()
-
-    /** Distinct wire type tags across visible entries, for the chip row. */
-    fun allTypes(ciphers: List<MobileCipherMeta>): List<String> =
-        ciphers.filter { !it.archived }.map { it.cipherType }.distinct().sorted()
-
-    /** Folders that hold at least one visible entry, for the chip row. */
-    fun allFolders(
-        ciphers: List<MobileCipherMeta>,
-        folders: List<MobileFolderInfo> = _folders.value,
-    ): List<MobileFolderInfo> {
-        val used = ciphers.filter { !it.archived }.mapNotNull { it.folderId }.toSet()
-        return folders.filter { it.id in used }.sortedBy { it.name }
-    }
-
-    /** Folder name lookup for the selected filter (ids are opaque). */
-    fun folderName(
-        id: String?,
-        folders: List<MobileFolderInfo> = _folders.value,
-    ): String? =
-        folders.firstOrNull { it.id == id }?.name
     /** Index the decryptable content of each entry in the slice. */
     private suspend fun indexSlice(vault: MobileVault, metas: List<MobileCipherMeta>) {
         for (meta in metas) {
@@ -207,22 +188,14 @@ class VaultListViewModel(private val repo: VaultRepository) {
         contentIndex[id] = parts.filter { it.isNotBlank() }.joinToString(" ").lowercase()
     }
 
-    /** Apply the current filters to the given (collected) cipher list. */
+    /** Name/username + deep-content match against the (lazily built) index. */
     fun filtered(ciphers: List<MobileCipherMeta>): List<MobileCipherMeta> {
         val q = _query.value.trim()
-        val type = typeFilter.value
-        val tag = tagFilter.value
-        val folder = folderFilter.value
-        val favOnly = favoritesOnly.value
+        if (q.isEmpty()) return ciphers
         return ciphers.filter { m ->
-            !m.archived &&
-                (type == null || m.cipherType == type) &&
-                (tag == null || m.tags.contains(tag)) &&
-                (folder == null || m.folderId == folder) &&
-                (!favOnly || m.favorite) &&
-                (q.isEmpty() || m.name.contains(q, ignoreCase = true) ||
-                    (m.username?.contains(q, ignoreCase = true) ?: false) ||
-                    contentIndex[m.id]?.contains(q.lowercase()) == true)
+            m.name.contains(q, ignoreCase = true) ||
+                (m.username?.contains(q, ignoreCase = true) ?: false) ||
+                contentIndex[m.id]?.contains(q.lowercase()) == true
         }
     }
 

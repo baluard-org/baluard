@@ -25,6 +25,9 @@ kotlin {
 android {
     namespace = "xyz.actitud.baluard"
     compileSdk = 35
+    // Pinned: AGP 8.7's default (26.0.2.1) is absent on this machine; 27.2 is installed.
+    ndkVersion = "27.2.12479018"
+
 
     defaultConfig {
         applicationId = "xyz.actitud.baluard"

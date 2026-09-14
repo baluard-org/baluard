@@ -41,7 +41,13 @@ open class StubVault(
     override suspend fun syncOnBackground() { calls += "syncOnBackground" }
     override suspend fun syncPullNow() { calls += "syncPullNow" }
     override suspend fun syncOfflineTick() { calls += "syncOfflineTick" }
-
+    override suspend fun archiveCipher(id: String) { calls += "archiveCipher" }
+    override suspend fun unarchiveCipher(id: String) { calls += "unarchiveCipher" }
+    override suspend fun restoreCipher(id: String) { calls += "restoreCipher" }
+    override suspend fun deviceId(): String = "stub-device"
+    override suspend fun listArchivedCiphers(): List<MobileCipherMeta> = err()
+    override suspend fun listTotpCiphers(): List<MobileCipherMeta> = err()
+    override suspend fun listTrashCiphers(): List<MobileCipherMeta> = err()
     override suspend fun syncStatus(): MobileSyncStatus {
         calls += "syncStatus"
         return MobileSyncStatus(active = true, state = "idle", lastSync = null, pending = 0u)

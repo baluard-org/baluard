@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Inbox
@@ -29,11 +28,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,8 +51,11 @@ import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.detail.normalizeTypeTag
 import xyz.actitud.baluard.detail.typeLabelKey
 import xyz.actitud.baluard.i18n.t
-import xyz.actitud.baluard.ui.components.CipherRowCard
+import xyz.actitud.baluard.sync.SyncPhase
+import xyz.actitud.baluard.ui.components.BaluardSearchField
 import xyz.actitud.baluard.ui.toast.Toast
+import xyz.actitud.baluard.ui.components.BaluardTopBar
+import xyz.actitud.baluard.ui.components.CipherRowCard
 import xyz.actitud.baluard.ui.components.SyncIconButton
 
 /**
@@ -71,7 +70,7 @@ fun EntryListScreen(
     kind: EntryListKind,
     vault: MobileVault,
     listViewModel: VaultListViewModel,
-    syncPhase: String,
+    syncPhase: SyncPhase,
     onSyncClick: () -> Unit,
     onCipherClick: (String) -> Unit,
     onBack: () -> Unit = {},
@@ -101,6 +100,12 @@ fun EntryListScreen(
         }
     }
 
+    // Deep-search index is built lazily on the first search; the version
+    // bump recomposes the filter with content matches once it lands.
+    val indexVersion by listViewModel.indexVersion.collectAsState()
+    LaunchedEffect(vault, revision, query) {
+        if (query.isNotBlank()) listViewModel.ensureContentIndex(vault)
+    }
     val base = remember(kind, ciphers, totp, archived, trash) {
         listViewModel.listFor(kind)
     }
@@ -125,7 +130,6 @@ fun EntryListScreen(
     }
 
     val title = when (kind) {
-        EntryListKind.All -> t("home.allEntries")
         EntryListKind.Totp -> t("home.totpRow")
         EntryListKind.Favorites -> t("home.favorites")
         is EntryListKind.Type -> t(typeLabelKey(normalizeTypeTag(kind.tag)))
@@ -139,58 +143,23 @@ fun EntryListScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(title) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = t("common.back"),
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                ),
+            BaluardTopBar(
+                title = title,
+                onBack = onBack,
                 actions = {
                     SyncIconButton(phase = syncPhase, onClick = onSyncClick)
                 },
             )
-        },
+            }
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            OutlinedTextField(
+            BaluardSearchField(
                 value = query,
                 onValueChange = { listViewModel.setQuery(it) },
-                placeholder = { Text(t("common.search")) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
-                    )
-                },
-                trailingIcon = if (query.isNotEmpty()) {
-                    {
-                        Icon(
-                            imageVector = Icons.Default.Clear,
-                            contentDescription = t("common.clear"),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .size(18.dp)
-                                .clickable { listViewModel.setQuery("") },
-                        )
-                    }
-                } else {
-                    null
-                },
-                singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),

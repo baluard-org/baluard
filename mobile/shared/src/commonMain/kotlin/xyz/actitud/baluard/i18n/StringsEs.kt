@@ -14,6 +14,8 @@ internal val ES: Map<String, String> = mapOf(
     "common.continue" to "Continuar",
     "common.search" to "Buscar",
     "common.clear" to "Limpiar",
+    "common.copied" to "Copiado",
+    "common.selected" to "Seleccionado",
     "common.save" to "Guardar",
     "common.saving" to "Guardando…",
 
@@ -28,12 +30,43 @@ internal val ES: Map<String, String> = mapOf(
     "login.enableBiometricBody" to "Usa tu huella o rostro en lugar de la contraseña maestra en este dispositivo. La contraseña maestra sigue funcionando siempre.",
     "login.enableBiometric" to "Activar desbloqueo rápido",
     "login.notNow" to "Ahora no",
+    "login.unlockFailed" to "No se pudo desbloquear. Inténtalo de nuevo.",
 
     // onboarding root
     "onboarding.subtitle" to "Tus contraseñas, guardadas solo para ti",
     "onboarding.createVault" to "Crear una bóveda nueva",
     "onboarding.openExisting" to "Abrir una bóveda existente",
     "onboarding.openExistingHint" to "Abre una bóveda sincronizada desde otro dispositivo",
+
+    // onboarding feature highlights (human language: no crypto vocabulary; git is allowed)
+    "onboarding.featureEncryptTitle" to "Cifrado en tu dispositivo",
+    "onboarding.featureEncryptDesc" to "Solo tú puedes leer lo que hay dentro. Ni nosotros ni nadie más.",
+    "onboarding.featureSyncTitle" to "Sincronizada con git",
+    "onboarding.featureSyncDesc" to "Tu bóveda se respalda en tu propia cuenta de git. Nosotros no guardamos copias.",
+    "onboarding.featureKeysTitle" to "Tus llaves, tus datos",
+    "onboarding.featureKeysDesc" to "Una contraseña maestra, una frase de recuperación. Tu bóveda sigue siendo tuya.",
+
+    // "what is git?" explainer (shown in onboarding + settings, both platforms)
+    "gitWhat.link" to "¿Qué es git?",
+    "gitWhat.title" to "¿Qué es git, en palabras sencillas?",
+    "gitWhat.p1" to
+        "Baluard guarda tu bóveda en un repositorio git. Git es una herramienta probada (nació en " +
+            "2005 y mueve millones de proyectos) cuyo trabajo es mantener copias de tus archivos " +
+            "sincronizadas entre dispositivos y recordar cada cambio.",
+    "gitWhat.p2" to
+        "Piensa en el historial de versiones de Google Docs, o en los puntos de guardado de un " +
+            "videojuego: cada cambio tiene su propia entrada, nunca se sobrescribe nada en silencio " +
+            "y cualquier dispositivo puede ponerse al día con la última versión en cualquier momento.",
+    "gitWhat.p3" to
+        "Las copias viven en una cuenta que es tuya, como GitHub, GitLab o Codeberg. Baluard cifra " +
+            "todo en tu dispositivo antes de salir de él, así que tu cuenta solo guarda datos " +
+            "ilegibles que solo tú puedes abrir.",
+    "gitWhat.p4" to
+        "No existen servidores de Baluard. Tu bóveda nunca pasa por equipos nuestros.",
+    "gitWhat.diagramDevice" to "Este dispositivo",
+    "gitWhat.diagramAccount" to "Tu cuenta de git",
+    "gitWhat.diagramOther" to "Tus otros dispositivos",
+    "gitWhat.diagramEncrypted" to "cifrado",
 
     // create vault
     "onboarding.createButton" to "Crear bóveda",
@@ -54,23 +87,28 @@ internal val ES: Map<String, String> = mapOf(
             "si olvidas la contraseña maestra. Escríbelas en papel y guárdalas en un lugar seguro.",
     "recovery.warning" to "Nunca guardes la frase en este dispositivo ni en la nube.",
     "recovery.ack" to "La escribí en papel",
+    "recovery.copyPhrase" to "Copiar frase de recuperación",
 
     // provider connect (open existing vault)
-    "provider.title" to "¿Dónde está tu bóveda?",
     "provider.subtitle" to
         "Conecta tu cuenta para abrir una bóveda sincronizada desde otro dispositivo.",
     "provider.github" to "GitHub",
     "provider.gitlab" to "GitLab",
     "provider.codeberg" to "Codeberg",
-    "provider.selected" to "{0} ✓",
     "provider.continueBrowser" to "Continuar en el navegador",
     "provider.usePatInstead" to "Usar un token de acceso",
     "provider.continuePat" to "Continuar con token de acceso",
     "provider.patLabel" to "Token de acceso",
+    "provider.patPlaceholder" to "ghp_... / glpat-... / token",
     "provider.patConnect" to "Conectar",
+    "provider.errorConnection" to "Falló la conexión",
+    "provider.errorAuth" to "Falló la autorización",
+    "provider.errorListRepos" to "No se pudieron listar los repositorios",
+    "provider.errorClone" to "Falló la clonación",
+    "provider.errorEnroll" to "Falló la inscripción",
 
     // device code (RFC 8628)
-    "deviceCode.title" to "Introduce este código",
+    "deviceCode.title" to "Autoriza en tu navegador",
     "deviceCode.subtitle" to
         "Inicia sesión en tu cuenta en el navegador, luego introduce este código y apruébalo. " +
             "Esta pantalla espera por sí sola.",
@@ -89,12 +127,12 @@ internal val ES: Map<String, String> = mapOf(
     "repo.private" to "Privado",
 
     // device enrollment
-    "enroll.title" to "Confía en este dispositivo",
     "enroll.subtitle" to
         "Este dispositivo aún no es de confianza para la bóveda. Introduce tu frase de " +
             "recuperación de 24 palabras y la contraseña maestra para añadirlo.",
     "enroll.phraseLabel" to "Frase de recuperación ({0}/24 palabras)",
     "enroll.phraseHint" to "Escribe las 24 palabras, en orden.",
+    "enroll.phrasePlaceholder" to "Escribe las 24 palabras de recuperación...",
     "enroll.button" to "Añadir este dispositivo",
 
     // vault list
@@ -102,10 +140,12 @@ internal val ES: Map<String, String> = mapOf(
     "vault.lockVault" to "Bloquear bóveda",
     "vault.empty" to "Aún no hay entradas",
     "vault.addEntry" to "Añadir entrada",
-    "vault.favorites" to "Favoritos",
 
     // generator screen title
     "generator.title" to "Generador",
+    "generator.result" to "Resultado generado",
+    "generator.passwordSettings" to "Opciones de contraseña",
+    "generator.passphraseSettings" to "Opciones de frase de contraseña",
 
     // cipher detail
     "detail.edit" to "Editar",
@@ -119,6 +159,9 @@ internal val ES: Map<String, String> = mapOf(
     "detail.openExternalTitle" to "¿Abrir fuera del navegador?",
     "detail.openExternalBody" to "Este enlace usa el esquema \"{0}\" y puede abrir otra app. ¿Continuar?",
     "detail.openExternalConfirm" to "Abrir",
+    "detail.openInBrowser" to "Abrir en el navegador",
+    "detail.sectionCredentials" to "Credenciales y datos",
+    "detail.sectionWebsites" to "Sitios web",
     "detail.type.login" to "Inicio de sesión",
     "detail.type.card" to "Tarjeta",
     "detail.type.identity" to "Identidad",
@@ -180,16 +223,21 @@ internal val ES: Map<String, String> = mapOf(
     "edit.notesPlaceholder" to "Notas privadas adicionales...",
     "edit.favorite" to "Favorito",
     "edit.typeLabel" to "Tipo",
+    "edit.sectionItemDetails" to "Datos de la entrada",
+    "edit.sectionCredentials" to "Credenciales",
+    "edit.namePlaceholder" to "p. ej. GitHub, Netflix, Tarjeta principal",
 
     // generator
     "generator.password" to "Contraseña",
     "generator.passphrase" to "Frase de contraseña",
     "generator.generate" to "Generar",
-    "generator.length" to "Longitud: {0}",
+    "generator.length" to "Longitud",
     "generator.upper" to "Mayúsculas (A-Z)",
     "generator.numbers" to "Números (0-9)",
     "generator.symbols" to "Símbolos (!@#…)",
-    "generator.wordCount" to "Palabras: {0}",
+    "generator.wordCount" to "Palabras",
+    "generator.chars" to "{0} caracteres",
+    "generator.words" to "{0} palabras",
     "generator.separator" to "Separador",
     "generator.capitalize" to "Poner una palabra en mayúsculas",
     "generator.insertNumber" to "Insertar número",
@@ -197,6 +245,8 @@ internal val ES: Map<String, String> = mapOf(
 
     // totp
     "totp.loading" to "cargando código…",
+    "totp.oneTimeCode" to "Código de un solo uso",
+    "totp.nextCodeIn" to "Nuevo código en",
 
     // settings
     "settings.title" to "Ajustes",

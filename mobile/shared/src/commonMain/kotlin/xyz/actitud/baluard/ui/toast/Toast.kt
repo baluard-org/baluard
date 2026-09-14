@@ -27,7 +27,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -69,8 +68,8 @@ object Toast {
         private set
 
     private var exiting by mutableStateOf<Set<Long>>(emptySet())
-    /** Push a toast. [durationMs] 0 = manual dismiss only. */
-    fun show(type: String, message: String, durationMs: Long = 4000, manual: Boolean = false) {
+    /** Push a toast. Errors wait for a manual dismiss; the rest auto-dismiss. */
+    fun show(type: String, message: String, manual: Boolean = false) {
         val id = ++nextId
         entries = entries + ToastEntry(id, type, message, manual)
     }
@@ -88,15 +87,13 @@ object Toast {
         exiting = exiting - id
     }
     fun success(message: String) = show("success", message)
-    fun error(message: String) = show("error", message, durationMs = 6000, manual = true)
-    fun warning(message: String) = show("warning", message, durationMs = 5000)
+    fun error(message: String) = show("error", message, manual = true)
     fun info(message: String) = show("info", message)
 }
 
 private val typeIcon: Map<String, ImageVector> = mapOf(
     "success" to Icons.Default.Check,
     "error" to Icons.Default.ErrorOutline,
-    "warning" to Icons.Default.Warning,
     "info" to Icons.Default.Info,
 )
 
@@ -106,29 +103,18 @@ data class ToastColorScheme(
     val stroke: Color,
 )
 
+@Composable
 private fun toastColors(type: String): ToastColorScheme {
-    return when (type) {
-        "success" -> ToastColorScheme(
-            accent = Color(0xFF10B981),
-            iconBg = Color(0x2410B981),
-            stroke = Color(0x5910B981),
-        )
-        "error" -> ToastColorScheme(
-            accent = Color(0xFFEF4444),
-            iconBg = Color(0x29EF4444),
-            stroke = Color(0x73EF4444),
-        )
-        "warning" -> ToastColorScheme(
-            accent = Color(0xFFF59E0B),
-            iconBg = Color(0x24F59E0B),
-            stroke = Color(0x59F59E0B),
-        )
-        else -> ToastColorScheme(
-            accent = Color(0xFFCFC6F9),
-            iconBg = Color(0x24CFC6F9),
-            stroke = Color(0x4DCFC6F9),
-        )
+    val accent = when (type) {
+        "success" -> MaterialTheme.colorScheme.tertiary
+        "error" -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.secondary
     }
+    return ToastColorScheme(
+        accent = accent,
+        iconBg = accent.copy(alpha = 0.14f),
+        stroke = accent.copy(alpha = 0.35f),
+    )
 }
 
 /**
@@ -198,7 +184,7 @@ private fun AutoDismissingToast(entry: ToastEntry) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(toastShape)
-                .background(Color(0xFF193236))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                 .border(1.dp, colors.stroke, toastShape)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -224,7 +210,7 @@ private fun AutoDismissingToast(entry: ToastEntry) {
                     fontWeight = FontWeight.Medium,
                     lineHeight = 20.sp,
                 ),
-                color = Color(0xFFF3F4F6),
+                color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.weight(1f),
             )
             if (entry.manual) {
@@ -235,7 +221,7 @@ private fun AutoDismissingToast(entry: ToastEntry) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = null,
-                        tint = Color(0xFFA2B7BA),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp),
                     )
                 }

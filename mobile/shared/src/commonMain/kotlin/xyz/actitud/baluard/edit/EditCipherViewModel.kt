@@ -3,6 +3,10 @@ package xyz.actitud.baluard.edit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import xyz.actitud.baluard.platform.platformLogE
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -27,6 +31,11 @@ import xyz.actitud.baluard.detail.fieldsFor
 class EditCipherViewModel(private val repo: VaultRepository) {
     private val _form = MutableStateFlow(EditForm())
     val form: StateFlow<EditForm> = _form.asStateFlow()
+
+    /** Non-null when loading an existing cipher failed (corrupt JSON, FFI error). */
+    var loadError: String? by mutableStateOf(null)
+        private set
+
 
     private var existingId: String? = null
 
@@ -57,7 +66,7 @@ class EditCipherViewModel(private val repo: VaultRepository) {
 
     /** Load an existing cipher by id (decrypted) into the form. */
     suspend fun load(vault: MobileVault, id: String) {
-        runCatching {
+        try {
             val raw = repo.getCipher(vault, id, decrypt = true)
             val obj = Json.parseToJsonElement(raw) as JsonObject
             val kind = obj["kind"] as? JsonObject
@@ -76,13 +85,19 @@ class EditCipherViewModel(private val repo: VaultRepository) {
                     if (v.isNullOrBlank()) null else spec.wireKey to v
                 }.toMap(),
             )
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A corrupt cipher must not silently open as a blank new-entry form.
+            platformLogE("EditCipher", "load failed for $id", e)
+            loadError = e.message ?: "load failed"
         }
     }
 
     /** Persist: addCipher if new, updateCipher if editing. Returns the cipher id. */
     suspend fun save(vault: MobileVault): Result<String> {
         val f = _form.value
-        val payload = buildPayload(f, existingId)
+        val payload = buildPayload(f, existingId, originalData)
         return runCatching {
             if (existingId != null) {
                 repo.updateCipher(vault, payload)
@@ -99,7 +114,7 @@ class EditCipherViewModel(private val repo: VaultRepository) {
      * overlays the form values; a cleared field sends null so the stored
      * value is removed. New entries start from an empty object (nulls).
      */
-    private fun buildPayload(f: EditForm, id: String?): String {
+    internal fun buildPayload(f: EditForm, id: String?, originalData: JsonObject?): String {
         val data = buildJsonObject {
             originalData?.forEach { (k, v) -> put(k, v) }
             fieldsFor(f.typeTag).forEach { spec ->

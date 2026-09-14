@@ -135,7 +135,7 @@ fun RecoveryPhraseScreen(
             Spacer(Modifier.height(12.dp))
 
             BaluardOutlinedButton(
-                text = "Copy recovery phrase",
+                text = t("recovery.copyPhrase"),
                 onClick = {
                     copyToClipboard(words.joinToString(" "))
                 },
