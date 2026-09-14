@@ -63,6 +63,7 @@ import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.detail.normalizeTypeTag
 import xyz.actitud.baluard.detail.typeLabelKey
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.platform.BaluardBrandLock
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.CipherRowCard
 import xyz.actitud.baluard.ui.components.SectionCard
