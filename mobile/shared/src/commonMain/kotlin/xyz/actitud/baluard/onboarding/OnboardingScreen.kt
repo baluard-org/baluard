@@ -25,6 +25,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,7 +43,8 @@ import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardLogoBadge
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
-
+import xyz.actitud.baluard.ui.components.GitExplainerDialog
+import xyz.actitud.baluard.ui.components.GitWhatLink
 /**
  * First-launch root styled with Baluard brand cards and feature highlights.
  */
@@ -48,6 +53,7 @@ fun OnboardingScreen(
     onCreateVault: () -> Unit,
     onOpenProvider: () -> Unit = {},
 ) {
+    var gitHelpOpen by remember { mutableStateOf(false) }
     BaluardAmbientBackground {
         Column(
             modifier = Modifier
@@ -69,20 +75,20 @@ fun OnboardingScreen(
             ) {
                 FeatureRow(
                     icon = Icons.Default.Lock,
-                    title = "Zero-Knowledge Encryption",
-                    desc = "AES-256-GCM + Argon2id client-side security",
+                    title = t("onboarding.featureEncryptTitle"),
+                    desc = t("onboarding.featureEncryptDesc"),
                 )
                 Spacer(Modifier.height(12.dp))
                 FeatureRow(
                     icon = Icons.Default.Shield,
-                    title = "Git-Native Sync",
-                    desc = "Host on GitHub, GitLab, Codeberg, or your server",
+                    title = t("onboarding.featureSyncTitle"),
+                    desc = t("onboarding.featureSyncDesc"),
                 )
                 Spacer(Modifier.height(12.dp))
                 FeatureRow(
                     icon = Icons.Default.Key,
-                    title = "Decentralized & Sovereign",
-                    desc = "You hold the master keys, no cloud telemetry",
+                    title = t("onboarding.featureKeysTitle"),
+                    desc = t("onboarding.featureKeysDesc"),
                 )
             }
 
@@ -109,7 +115,11 @@ fun OnboardingScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            GitWhatLink(onOpen = { gitHelpOpen = true })
         }
+    }
+    if (gitHelpOpen) {
+        GitExplainerDialog(onDismiss = { gitHelpOpen = false })
     }
 }
 

@@ -6,9 +6,6 @@ package xyz.actitud.baluard.vault
  * loaded); kinds are pure views over it.
  */
 sealed interface EntryListKind {
-    /** Every active (non-archived) entry. */
-    data object All : EntryListKind
-
     /** Entries with a TOTP seed. */
     data object Totp : EntryListKind
 

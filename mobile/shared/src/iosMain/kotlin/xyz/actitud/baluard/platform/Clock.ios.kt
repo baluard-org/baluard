@@ -1,4 +1,4 @@
-package xyz.actitud.baluard.totp
+package xyz.actitud.baluard.platform
 
 /** iOS/Kotlin-Native epoch millis via kotlin.system. */
 actual object Clock {

@@ -18,7 +18,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Delete
@@ -35,8 +34,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import xyz.actitud.baluard.ui.components.BaluardDivider
+import xyz.actitud.baluard.ui.components.BaluardTopBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -90,17 +89,9 @@ fun CipherDetailScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(state?.name ?: "") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = t("common.back"))
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                ),
+            BaluardTopBar(
+                title = state?.name ?: "",
+                onBack = onBack,
                 actions = {
                     IconButton(onClick = onEdit) {
                         Icon(Icons.Default.Edit, contentDescription = t("detail.edit"))
@@ -167,7 +158,7 @@ fun CipherDetailScreen(
                             if (s.favorite) {
                                 Icon(
                                     imageVector = Icons.Default.Star,
-                                    contentDescription = "Favorite",
+                                    contentDescription = t("vault.favorite"),
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(18.dp),
                                 )
@@ -191,7 +182,7 @@ fun CipherDetailScreen(
 
             // Credentials / Key Details Section
             if (s.fields.isNotEmpty()) {
-                SectionCard(title = "Credentials & Details") {
+                SectionCard(title = t("detail.sectionCredentials")) {
                     s.fields.forEachIndexed { index, row ->
                         CopyableFieldRow(
                             label = t(row.spec.labelKey),
@@ -200,9 +191,9 @@ fun CipherDetailScreen(
                             sensitive = row.spec.sensitive,
                         )
                         if (index < s.fields.size - 1) {
-                            androidx.compose.material3.HorizontalDivider(
+                            BaluardDivider(
                                 modifier = Modifier.padding(vertical = 4.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                alpha = 0.5f,
                             )
                         }
                     }
@@ -247,9 +238,9 @@ fun CipherDetailScreen(
                             )
                         }
                         if (index < s.customFields.size - 1) {
-                            androidx.compose.material3.HorizontalDivider(
+                            BaluardDivider(
                                 modifier = Modifier.padding(vertical = 4.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                alpha = 0.5f,
                             )
                         }
                     }
@@ -279,9 +270,9 @@ fun CipherDetailScreen(
                             }
                         }
                         if (index < s.passkeys.size - 1) {
-                            androidx.compose.material3.HorizontalDivider(
+                            BaluardDivider(
                                 modifier = Modifier.padding(vertical = 4.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                alpha = 0.5f,
                             )
                         }
                     }
@@ -317,9 +308,9 @@ fun CipherDetailScreen(
                             )
                         }
                         if (index < s.attachments.size - 1) {
-                            androidx.compose.material3.HorizontalDivider(
+                            BaluardDivider(
                                 modifier = Modifier.padding(vertical = 4.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                alpha = 0.5f,
                             )
                         }
                     }
@@ -328,7 +319,7 @@ fun CipherDetailScreen(
 
             // Websites & URIs Section
             if (s.uris.isNotEmpty()) {
-                SectionCard(title = "Websites") {
+                SectionCard(title = t("detail.sectionWebsites")) {
                     s.uris.forEachIndexed { index, uri ->
                         Row(
                             modifier = Modifier
@@ -370,16 +361,16 @@ fun CipherDetailScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                                    contentDescription = "Open in browser",
+                                    contentDescription = t("detail.openInBrowser"),
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(18.dp),
                                 )
                             }
                         }
                         if (index < s.uris.size - 1) {
-                            androidx.compose.material3.HorizontalDivider(
+                            BaluardDivider(
                                 modifier = Modifier.padding(vertical = 4.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                alpha = 0.5f,
                             )
                         }
                     }

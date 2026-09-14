@@ -632,5 +632,17 @@
     "copyTotp": "Copy code",
     "activeVault": "Vault",
     "copied": "Copied"
+  },
+  "gitWhat": {
+    "link": "What is git?",
+    "title": "What is git, in plain words?",
+    "p1": "Baluard keeps your vault in a git repository. Git is a time-tested tool (born in 2005, running millions of projects) whose whole job is keeping copies of your files in sync across devices and remembering every change.",
+    "p2": "Think of the version history in Google Docs, or save points in a video game: every change gets its own entry, nothing is ever silently overwritten, and any device can catch up with the latest version at any time.",
+    "p3": "The copies live in an account that you own, like GitHub, GitLab, or Codeberg. Baluard encrypts everything on your device first, so your account only ever stores scrambled data that only you can open.",
+    "p4": "There is no Baluard server. Your vault never passes through computers we run.",
+    "diagramDevice": "This device",
+    "diagramAccount": "Your git account",
+    "diagramOther": "Your other devices",
+    "diagramEncrypted": "encrypted"
   }
 }

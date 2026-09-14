@@ -99,7 +99,7 @@ fun DeviceCodeScreen(
             BaluardCard(modifier = Modifier.fillMaxWidth()) {
                 if (!revealed && !expired && vm.error == null) {
                     Text(
-                        text = "Browser Authorization",
+                        text = t("deviceCode.title"),
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -145,7 +145,7 @@ fun DeviceCodeScreen(
                     if (vm.error != null) {
                         SelectionContainer {
                             Text(
-                                text = vm.error ?: "Error",
+                                text = vm.error ?: "",
                                 color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodyMedium,
                             )

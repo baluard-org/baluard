@@ -14,7 +14,6 @@ import android.util.Log
 import android.view.View
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillValue
-import android.widget.RemoteViews
 import androidx.annotation.RequiresApi
 import java.util.concurrent.Executors
 
@@ -125,9 +124,4 @@ class BaluardAutofillService : AutofillService() {
         val domain: String?,
     )
 
-    @Suppress("unused")
-    private fun presentation(text: String): RemoteViews =
-        RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
-            setTextViewText(android.R.id.text1, text)
-        }
 }

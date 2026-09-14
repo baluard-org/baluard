@@ -169,7 +169,7 @@ fun CreateVaultScreen(
                             if (ok) {
                                 phraseShown = true
                             } else {
-                                error = t("onboarding.errorCreateFailed")
+                                error = vm.error
                             }
                         }
                     },

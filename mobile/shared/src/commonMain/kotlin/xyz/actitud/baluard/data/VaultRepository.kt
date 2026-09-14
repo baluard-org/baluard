@@ -7,10 +7,8 @@ import xyz.actitud.baluard.MobileVault
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import xyz.actitud.baluard.generateRecoveryPhrase
 import xyz.actitud.baluard.MobileRecoveryPhrase
 import xyz.actitud.baluard.openVault as uniffiOpenVault
-import xyz.actitud.baluard.createVault as uniffiCreateVault
 import xyz.actitud.baluard.createVaultWithRecovery as uniffiCreateVaultWithRecovery
 import xyz.actitud.baluard.MobileCloneJob
 import xyz.actitud.baluard.MobileDeviceFlow
@@ -44,8 +42,6 @@ data class MobileFolderInfo(
 )
 
 class VaultRepository {
-    fun generateRecoveryPhrase(): MobileRecoveryPhrase = generateRecoveryPhrase()
-
     suspend fun generatePassword(config: xyz.actitud.baluard.PasswordConfig): Result<String> =
         runCatching { xyz.actitud.baluard.generatePassword(config) }
 
@@ -61,8 +57,6 @@ class VaultRepository {
      */
     suspend fun deriveKek(path: String, password: String): ByteArray =
         uniffiDeriveKekForVault(path, password)
-    suspend fun createVault(path: String, password: String, deviceName: String): MobileVault =
-        uniffiCreateVault(path, password, deviceName)
 
     /**
      * Create a vault AND surface its 24-word recovery phrase (plan §3.5). The

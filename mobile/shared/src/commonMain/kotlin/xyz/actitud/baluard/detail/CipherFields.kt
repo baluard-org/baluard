@@ -95,3 +95,11 @@ internal fun fieldsFor(tag: String): List<FieldSpec> = when (tag) {
     )
     else -> emptyList() // secureNote: notes only
 }
+
+/** The 8 cipher types in UI order, as camelCase wire tags (daemon payload form). */
+val cipherTypeWireTags = listOf(
+    "login", "card", "identity", "secureNote", "sshKey", "bankAccount", "driversLicense", "passport",
+)
+
+/** Debug-tag form (lowercase), as carried by MobileCipherMeta.cipherType on the FFI. */
+val cipherTypeDebugTags = cipherTypeWireTags.map { it.lowercase() }

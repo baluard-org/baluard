@@ -1,17 +1,12 @@
 package xyz.actitud.baluard.auth
 
-import xyz.actitud.baluard.data.AuthState
 import xyz.actitud.baluard.data.UnlockResult
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.MobileVault
-
 /**
- * Drives the unlock flow. Holds the current [AuthState] and exposes
- * [unlock] / [lock] to the UI.
- *
- * Phase 2: master-password unlock only. Biometric quick-unlock (KEK path,
- * plan §3.2) is added when the platform glue lands — it calls a separate
- * repository path that skips the Argon2id KDF.
+ * Drives the unlock flow. Holds the unlocked vault handle and exposes
+ * unlock / lock to the UI. (The unlock screens own the AuthState UI state
+ * machine; this class holds no UI state.)
  *
  * Concurrency: unlock is a suspend fn (UniFFI async -> Kotlin suspend). The
  * caller (UnlockScreen) launches it in a coroutine scope off the UI thread;
@@ -99,6 +94,4 @@ class AuthViewModel(private val repo: VaultRepository) {
         vault = v
     }
 
-    /** Whether the open vault currently holds an unlocked handle. */
-    suspend fun isUnlocked(): Boolean = vault?.isUnlocked() ?: false
 }

@@ -18,7 +18,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Checkbox
@@ -28,15 +27,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import xyz.actitud.baluard.detail.cipherTypeWireTags
+import xyz.actitud.baluard.ui.components.BaluardTopBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -63,10 +61,8 @@ import xyz.actitud.baluard.ui.components.BaluardTextField
 import xyz.actitud.baluard.ui.components.CipherAvatar
 import xyz.actitud.baluard.ui.components.SectionCard
 
-/** Wire tags in UI order; dropdown labels come from i18n. */
-private val TYPE_TAGS = listOf(
-    "login", "card", "identity", "secureNote", "sshKey", "bankAccount", "driversLicense", "passport",
-)
+// Wire tags in UI order come from the shared schema (detail/cipherTypeWireTags);
+// dropdown labels come from i18n.
 
 /**
  * Edit form for all 8 cipher types styled after Baluard design language.
@@ -92,17 +88,9 @@ fun EditCipherScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(if (cipherId == null) t("edit.newEntry") else t("edit.editEntry")) },
-                navigationIcon = {
-                    IconButton(onClick = onCancelled) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = t("common.back"))
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                ),
+            BaluardTopBar(
+                title = if (cipherId == null) t("edit.newEntry") else t("edit.editEntry"),
+                onBack = onCancelled,
             )
         },
     ) { padding ->
@@ -120,12 +108,12 @@ fun EditCipherScreen(
             }
 
             // Basic Information Section
-            SectionCard(title = "Item Details") {
+            SectionCard(title = t("edit.sectionItemDetails")) {
                 BaluardTextField(
                     value = form.name,
                     onValueChange = { viewModel.setName(it) },
                     label = t("edit.name"),
-                    placeholder = "e.g. GitHub, Netflix, Main Card",
+                    placeholder = t("edit.namePlaceholder"),
                     enabled = !saving,
                 )
 
@@ -175,7 +163,7 @@ fun EditCipherScreen(
             // Schema-driven Fields Section
             val fields = fieldsFor(form.typeTag)
             if (fields.isNotEmpty()) {
-                SectionCard(title = "Credentials") {
+                SectionCard(title = t("edit.sectionCredentials")) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         fields.forEach { spec ->
                             BaluardTextField(
@@ -211,7 +199,13 @@ fun EditCipherScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-
+            viewModel.loadError?.let {
+                Text(
+                    text = it,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             Spacer(Modifier.height(8.dp))
 
             BaluardPrimaryButton(
@@ -295,7 +289,7 @@ private fun TypePicker(tag: String, editable: Boolean, onSelected: (String) -> U
             onDismissRequest = { expanded = false },
             modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
         ) {
-            TYPE_TAGS.forEach { candidate ->
+            cipherTypeWireTags.forEach { candidate ->
                 DropdownMenuItem(
                     leadingIcon = {
                         CipherAvatar(name = candidate, typeTag = candidate, size = 24.dp)

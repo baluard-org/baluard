@@ -6,8 +6,6 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import xyz.actitud.baluard.MobileCloneJob
 import xyz.actitud.baluard.MobileDeviceFlow
@@ -17,7 +15,7 @@ import xyz.actitud.baluard.MobileRepo
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.data.VaultRepository
-
+import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.platformLogE
 /**
  * Drives the "open an existing vault" onboarding path (plan §5.2-5.4):
@@ -57,7 +55,6 @@ class ProviderFlowViewModel(
     /** RFC 8628 poll interval; grows on SlowDown. */
     private var pollIntervalMs: Long = 5_000
 
-    /** Current poll interval for the device-code screen's loop. */
     /** Whether the system back gesture has an in-app screen to return to.
      *  False mid-operation (Cloning/enroll in flight) - interrupting those
      *  leaves half-written state.
@@ -93,11 +90,6 @@ class ProviderFlowViewModel(
         private set
 
     /** Clean up background resources. */
-    fun clear() {
-        cancelClone()
-        vmScope.cancel()
-    }
-
     /** Start the device flow (GitHub/GitLab; Codeberg has none, use PAT). */
     suspend fun startDeviceFlow() {
         if (busy) return
@@ -106,7 +98,7 @@ class ProviderFlowViewModel(
         try {
             stage = Stage.DeviceCode(repo.startDeviceFlow(provider))
         } catch (e: Exception) {
-            fail("startDeviceFlow", e, "Connection failed")
+            fail("startDeviceFlow", e, t("provider.errorConnection"))
         }
         busy = false
     }
@@ -137,7 +129,7 @@ class ProviderFlowViewModel(
                 else -> s
             }
         } catch (e: Exception) {
-            fail("pollDeviceFlow", e, "Authorization failed")
+            fail("pollDeviceFlow", e, t("provider.errorAuth"))
             null
         }
     }
@@ -151,7 +143,7 @@ class ProviderFlowViewModel(
             repo.connectPat(provider, token)
             loadRepos()
         } catch (e: Exception) {
-            fail("connectPat", e, "Connection failed")
+            fail("connectPat", e, t("provider.errorConnection"))
         }
         busy = false
     }
@@ -175,7 +167,7 @@ class ProviderFlowViewModel(
             stage = Stage.Repos(repos)
             true
         } catch (e: Exception) {
-            fail("loadRepos", e, "Could not list repositories")
+            fail("loadRepos", e, t("provider.errorListRepos"))
             false
         } finally {
             busy = false
@@ -201,7 +193,7 @@ class ProviderFlowViewModel(
                 onCloned()
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                fail("cloneRepo", e, "Clone failed")
+                fail("cloneRepo", e, t("provider.errorClone"))
                 stage = Stage.Repos(repos)
             } finally {
                 busy = false

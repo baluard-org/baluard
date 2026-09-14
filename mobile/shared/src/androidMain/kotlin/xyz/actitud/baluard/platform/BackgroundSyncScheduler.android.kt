@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import xyz.actitud.baluard.backgroundFetch
+import xyz.actitud.baluard.platform.platformLogE
 
 /**
  * Opt-in background sync (plan §3.5). Runs the Rust LOCKED FETCH: git objects
@@ -52,8 +53,11 @@ class BackgroundFetchWorker(
         try {
             backgroundFetch(AppPaths.defaultVaultPath())
             Result.success() // retry() not used: next foreground pull recovers
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             // Transient (offline/remote down) — the periodic schedule retries.
+            platformLogE("BackgroundSync", "background fetch failed", e)
             Result.retry()
         }
     }
