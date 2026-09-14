@@ -12,6 +12,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -23,7 +24,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import xyz.actitud.baluard.auth.AuthViewModel
@@ -42,12 +45,15 @@ import xyz.actitud.baluard.onboarding.EnrollDeviceScreen
 import xyz.actitud.baluard.onboarding.OnboardingScreen
 import xyz.actitud.baluard.onboarding.ProviderConnectScreen
 import xyz.actitud.baluard.MobileVault
+import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.onboarding.ProviderFlowViewModel
 import xyz.actitud.baluard.onboarding.RepoPickerScreen
 import xyz.actitud.baluard.platform.AppPaths
 import xyz.actitud.baluard.platform.VaultRegistry
 import xyz.actitud.baluard.ui.components.ConflictResolutionPanel
 import xyz.actitud.baluard.ui.theme.BaluardTheme
+import xyz.actitud.baluard.ui.toast.Toast
+import xyz.actitud.baluard.ui.toast.ToastHost
 import xyz.actitud.baluard.vault.EntryListKind
 import xyz.actitud.baluard.vault.EntryListScreen
 import xyz.actitud.baluard.vault.TagListScreen
@@ -429,6 +435,7 @@ fun App(vaultPath: String? = null) {
                                         saveRevision++
                                         notifyMutation()
                                         nav = Nav.List
+                                        Toast.success(t("toast.trashed"))
                                     },
                                     onBack = { nav = Nav.List },
                                     revision = saveRevision,
@@ -442,6 +449,7 @@ fun App(vaultPath: String? = null) {
                                         saveRevision++
                                         notifyMutation()
                                         nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId)
+                                        Toast.success(t("toast.saved"))
                                     },
                                     onCancelled = { nav = if (n.cipherId == null) Nav.List else Nav.Detail(n.cipherId) },
                                 )
@@ -460,6 +468,7 @@ fun App(vaultPath: String? = null) {
                                     authViewModel = auth,
                                     onVaultRemoved = {
                                         auth.forget()
+                                        Toast.success(t("toast.vaultRemoved"))
                                         // Prefer another discovered vault over
                                         // onboarding when one exists on disk.
                                         val others = runCatching {
@@ -470,6 +479,7 @@ fun App(vaultPath: String? = null) {
                                             VaultRegistry.saveActiveVault(next.path)
                                             path = next.path
                                             hasVault = true
+                                            Toast.success(t("toast.vaultSwitched", next.name))
                                         } else {
                                             VaultRegistry.saveActiveVault("")
                                             hasVault = false
@@ -604,6 +614,12 @@ fun App(vaultPath: String? = null) {
                 },
             )
         }
+            // Global toasts (desktop toastSignal parity): stacked bottom-center.
+            ToastHost(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 24.dp),
+            )
         } // Box
         } // Surface
     } // BaluardTheme

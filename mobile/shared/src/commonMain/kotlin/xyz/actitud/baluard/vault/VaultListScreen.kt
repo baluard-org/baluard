@@ -53,6 +53,7 @@ import xyz.actitud.baluard.detail.normalizeTypeTag
 import xyz.actitud.baluard.detail.typeLabelKey
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.ui.components.CipherRowCard
+import xyz.actitud.baluard.ui.toast.Toast
 import xyz.actitud.baluard.ui.components.SyncIconButton
 
 /**
@@ -241,7 +242,13 @@ fun EntryListScreen(
                         trailing = when (kind) {
                             EntryListKind.Archive -> ({
                                 IconButton(onClick = {
-                                    scope.launch { listViewModel.unarchive(vault, meta.id) }
+                                    scope.launch {
+                                        if (listViewModel.unarchive(vault, meta.id)) {
+                                            Toast.success(t("toast.unarchived"))
+                                        } else {
+                                            Toast.error(t("toast.actionFailed"))
+                                        }
+                                    }
                                 }) {
                                     Icon(
                                         imageVector = Icons.Default.Unarchive,
@@ -253,7 +260,13 @@ fun EntryListScreen(
                             })
                             EntryListKind.Trash -> ({
                                 IconButton(onClick = {
-                                    scope.launch { listViewModel.restore(vault, meta.id) }
+                                    scope.launch {
+                                        if (listViewModel.restore(vault, meta.id)) {
+                                            Toast.success(t("toast.restored"))
+                                        } else {
+                                            Toast.error(t("toast.actionFailed"))
+                                        }
+                                    }
                                 }) {
                                     Icon(
                                         imageVector = Icons.Default.Restore,
