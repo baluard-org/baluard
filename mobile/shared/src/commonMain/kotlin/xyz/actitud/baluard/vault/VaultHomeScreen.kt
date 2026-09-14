@@ -181,9 +181,10 @@ fun VaultHomeScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    // Unmistakable vault-context strip: brand highlight wash,
-                    // name + swap icon in primary.
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+                    // Distinct vault-context strip: the detail-panel tone —
+                    // visibly lighter than both the surface header and the
+                    // page background (the 10% lime wash went muddy on dark).
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     .clickable { switchOpen = true }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
