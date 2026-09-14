@@ -106,14 +106,16 @@ class VaultListViewModel(private val repo: VaultRepository) {
         _trash.value = runCatching { repo.listTrash(vault) }.getOrDefault(emptyList())
     }
 
-    suspend fun unarchive(vault: MobileVault, id: String) {
-        runCatching { repo.unarchiveCipher(vault, id) }
+    suspend fun unarchive(vault: MobileVault, id: String): Boolean {
+        val ok = runCatching { repo.unarchiveCipher(vault, id) }.isSuccess
         loadArchived(vault)
+        return ok
     }
 
-    suspend fun restore(vault: MobileVault, id: String) {
-        runCatching { repo.restoreCipher(vault, id) }
+    suspend fun restore(vault: MobileVault, id: String): Boolean {
+        val ok = runCatching { repo.restoreCipher(vault, id) }.isSuccess
         loadTrash(vault)
+        return ok
     }
 
     /** Distinct tags across visible (non-archived) entries, for the chip row. */
