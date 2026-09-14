@@ -13,6 +13,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -618,8 +619,8 @@ fun App(vaultPath: String? = null) {
             // Global toasts (desktop toastSignal parity): stacked bottom-center.
             ToastHost(
                 Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 24.dp),
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding(),
             )
         } // Box
         } // Surface

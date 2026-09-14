@@ -1,16 +1,25 @@
 package xyz.actitud.baluard.ui.toast
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -98,7 +108,7 @@ fun ToastHost(modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp),
+            .statusBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         toasts.forEach { entry ->
@@ -119,13 +129,20 @@ private fun AutoDismissingToast(entry: ToastEntry) {
         }
     }
 
+    // Drops from behind the header and expands downward — reads as the
+    // header extending to show the toast.
+    val state = remember { MutableTransitionState(false).apply { targetState = true } }
     AnimatedVisibility(
-        visible = true,
-        enter = fadeIn() + slideInVertically { it / 2 },
-        exit = fadeOut() + slideOutVertically { it / 2 },
+        visibleState = state,
+        enter = slideInVertically(
+            animationSpec = tween(220, easing = FastOutSlowInEasing),
+        ) { -it } + expandVertically { -it } + fadeIn(tween(220)),
+        exit = slideOutVertically(
+            animationSpec = tween(180, easing = FastOutLinearInEasing),
+        ) { -it } + shrinkVertically { -it } + fadeOut(tween(180)),
     ) {
         Surface(
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             border = androidx.compose.foundation.BorderStroke(
                 1.dp,
