@@ -22,8 +22,12 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
     var error: String? by mutableStateOf(null)
         private set
 
+    /** True when the loaded cipher is already in trash (delete = purge). */
+    var inTrash: Boolean by mutableStateOf(false)
+        private set
     suspend fun load(vault: MobileVault, id: String) {
         error = null
+        inTrash = runCatching { repo.listTrash(vault).any { it.id == id } }.getOrDefault(false)
         try {
             val raw = repo.getCipher(vault, id, decrypt = true)
             val obj = Json.parseToJsonElement(raw) as JsonObject

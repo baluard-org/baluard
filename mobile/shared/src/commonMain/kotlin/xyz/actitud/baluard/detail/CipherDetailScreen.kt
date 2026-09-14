@@ -75,7 +75,7 @@ fun CipherDetailScreen(
     detailViewModel: CipherDetailViewModel,
     totpViewModel: TotpViewModel,
     onEdit: () -> Unit,
-    onDeleted: () -> Unit,
+    onDeleted: (permanent: Boolean) -> Unit,
     onBack: () -> Unit,
     revision: Int = 0,
 ) {
@@ -407,15 +407,15 @@ fun CipherDetailScreen(
     if (confirmDelete && state != null) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text(t("detail.deleteTitle")) },
-            text = { Text(t("detail.deleteBody", state.name)) },
+            title = { Text(t(if (detailViewModel.inTrash) "detail.deletePermanentTitle" else "detail.deleteTitle")) },
+            text = { Text(t(if (detailViewModel.inTrash) "detail.deletePermanentBody" else "detail.deleteBody", state.name)) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         confirmDelete = false
                         scope.launch {
                             detailViewModel.delete(vault, state.id)
-                            if (detailViewModel.error == null) onDeleted()
+                            if (detailViewModel.error == null) onDeleted(detailViewModel.inTrash)
                         }
                     },
                 ) {

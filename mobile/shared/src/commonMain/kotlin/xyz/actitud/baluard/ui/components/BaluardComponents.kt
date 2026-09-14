@@ -447,7 +447,7 @@ fun BaluardOutlinedButton(
 fun BaluardTextField(
     value: String,
     onValueChange: (String) -> Unit,
-    label: String,
+    label: String?,
     modifier: Modifier = Modifier,
     placeholder: String? = null,
     leadingIcon: ImageVector? = null,
@@ -463,7 +463,7 @@ fun BaluardTextField(
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text(label) },
+        label = label?.let { { Text(it) } },
         placeholder = placeholder?.let { { Text(it) } },
         singleLine = singleLine,
         minLines = minLines,

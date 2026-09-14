@@ -195,8 +195,9 @@ fun EditCipherScreen(
                 BaluardTextField(
                     value = form.notes,
                     onValueChange = { viewModel.setNotes(it) },
-                    label = t("edit.notes"),
-                    placeholder = "Additional private notes...",
+                    // The section header names it; a field label would double it.
+                    label = null,
+                    placeholder = t("edit.notesPlaceholder"),
                     singleLine = false,
                     minLines = 3,
                     enabled = !saving,
