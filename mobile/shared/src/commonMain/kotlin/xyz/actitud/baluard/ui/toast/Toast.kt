@@ -10,6 +10,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,7 +30,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
@@ -39,8 +40,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
@@ -170,11 +174,20 @@ private fun AutoDismissingToast(entry: ToastEntry) {
             shrinkTowards = Alignment.Top,
         ),
     ) {
-        val (container, content) = toastStyle(entry.type)
-        Surface(
-            shape = RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp),
-            color = container,
-            modifier = Modifier.fillMaxWidth(),
+        val (base, content) = toastStyle(entry.type)
+        val toastShape = RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
+        // Subtle vertical sheen so the bar does not read as flat.
+        val brush = Brush.verticalGradient(
+            listOf(lerp(base, Color.White, 0.10f), base),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(toastShape)
+                .background(brush)
+                .border(2.dp, Color.Black, toastShape)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(
                 modifier = Modifier
