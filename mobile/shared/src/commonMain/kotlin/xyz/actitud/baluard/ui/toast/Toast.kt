@@ -12,6 +12,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,29 +24,29 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 /**
@@ -99,22 +100,39 @@ private val typeIcon: Map<String, ImageVector> = mapOf(
     "info" to Icons.Default.Info,
 )
 
-@Composable
-private fun toastStyle(type: String): Pair<Color, Color> {
-    // Solid dark shades tuned for the theme, with bright content tones.
+data class ToastColorScheme(
+    val accent: Color,
+    val iconBg: Color,
+    val stroke: Color,
+)
+
+private fun toastColors(type: String): ToastColorScheme {
     return when (type) {
-        "success" -> Pair(Color(0xFF0F2E22), Color(0xFF6EE7B7))
-        "error" -> Pair(Color(0xFF3A181B), Color(0xFFFCA5A5))
-        "warning" -> Pair(Color(0xFF33260E), Color(0xFFFCD34D))
-        else -> Pair(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.colorScheme.onSurface)
+        "success" -> ToastColorScheme(
+            accent = Color(0xFF10B981),
+            iconBg = Color(0x2410B981),
+            stroke = Color(0x5910B981),
+        )
+        "error" -> ToastColorScheme(
+            accent = Color(0xFFEF4444),
+            iconBg = Color(0x29EF4444),
+            stroke = Color(0x73EF4444),
+        )
+        "warning" -> ToastColorScheme(
+            accent = Color(0xFFF59E0B),
+            iconBg = Color(0x24F59E0B),
+            stroke = Color(0x59F59E0B),
+        )
+        else -> ToastColorScheme(
+            accent = Color(0xFFCFC6F9),
+            iconBg = Color(0x24CFC6F9),
+            stroke = Color(0x4DCFC6F9),
+        )
     }
 }
 
-@Composable
-private fun typeTint(type: String): Color = toastStyle(type).second
-
 /**
- * Renders [Toast.entries] stacked at the bottom of the screen. Render once
+ * Renders [Toast.entries] stacked at the top of the screen. Render once
  * at the app root; auto-dismiss timers run per toast (manual toasts wait for
  * their dismiss button).
  */
@@ -174,48 +192,52 @@ private fun AutoDismissingToast(entry: ToastEntry) {
             shrinkTowards = Alignment.Top,
         ),
     ) {
-        val (base, content) = toastStyle(entry.type)
-        val toastShape = RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
-        // Subtle vertical sheen so the bar does not read as flat.
-        val brush = Brush.verticalGradient(
-            listOf(lerp(base, Color.White, 0.10f), base),
-        )
+        val colors = toastColors(entry.type)
+        val toastShape = RoundedCornerShape(bottomStart = 14.dp, bottomEnd = 14.dp)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(toastShape)
-                .background(brush)
-                .border(2.dp, Color.Black, toastShape)
+                .background(Color(0xFF193236))
+                .border(1.dp, colors.stroke, toastShape)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
+            Box(
                 modifier = Modifier
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(colors.iconBg),
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = typeIcon[entry.type] ?: Icons.Default.Info,
                     contentDescription = null,
-                    tint = content,
+                    tint = colors.accent,
                     modifier = Modifier.size(18.dp),
                 )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = entry.message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = content,
-                    modifier = Modifier.weight(1f),
-                )
-                if (entry.manual) {
-                    IconButton(onClick = { Toast.dismiss(entry.id) }, modifier = Modifier.size(24.dp)) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = null,
-                            tint = toastStyle(entry.type).second,
-                            modifier = Modifier.size(14.dp),
-                        )
-                    }
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = entry.message,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 20.sp,
+                ),
+                color = Color(0xFFF3F4F6),
+                modifier = Modifier.weight(1f),
+            )
+            if (entry.manual) {
+                IconButton(
+                    onClick = { Toast.dismiss(entry.id) },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = null,
+                        tint = Color(0xFFA2B7BA),
+                        modifier = Modifier.size(16.dp),
+                    )
                 }
             }
         }
