@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Unarchive
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,6 +34,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -82,6 +84,7 @@ fun EntryListScreen(
     val query by listViewModel.query.collectAsState()
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    var confirmEmptyTrash by remember { mutableStateOf(false) }
 
     // Display chunk: the metadata set is fully in memory; pagination is a
     // rendering courtesy (25 first, +25 as the user approaches the end).
@@ -190,6 +193,27 @@ fun EntryListScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
 
+            if (kind == EntryListKind.Trash && visible.isNotEmpty()) {
+                TextButton(
+                    onClick = { confirmEmptyTrash = true },
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .padding(horizontal = 16.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = t("list.emptyTrash"),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+
             if (visible.isEmpty()) {
                 // Friendly per-section empty state instead of a blank screen.
                 Column(
@@ -294,5 +318,39 @@ fun EntryListScreen(
                 }
             }
         }
+    }
+
+    if (confirmEmptyTrash) {
+        AlertDialog(
+            onDismissRequest = { confirmEmptyTrash = false },
+            title = { Text(t("list.emptyTrashTitle")) },
+            text = {
+                Text(
+                    t(
+                        if (visible.size == 1) "list.emptyTrashBodyOne" else "list.emptyTrashBody",
+                        visible.size,
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmEmptyTrash = false
+                    scope.launch {
+                        if (listViewModel.emptyTrash(vault)) {
+                            Toast.success(t("toast.trashEmptied"))
+                        } else {
+                            Toast.error(t("toast.actionFailed"))
+                        }
+                    }
+                }) {
+                    Text(t("list.emptyTrash"), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmEmptyTrash = false }) {
+                    Text(t("common.cancel"))
+                }
+            },
+        )
     }
 }
