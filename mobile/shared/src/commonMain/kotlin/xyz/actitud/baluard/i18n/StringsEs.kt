@@ -285,6 +285,8 @@ internal val ES: Map<String, String> = mapOf(
     "list.emptyTrashTitle" to "¿Vaciar la papelera?",
     "list.emptyTrashBody" to "Se eliminarán {0} entradas para siempre. No se puede deshacer.",
     "list.emptyTrashBodyOne" to "Se eliminará 1 entrada para siempre. No se puede deshacer.",
+    "list.restoreTitle" to "¿Restaurar de la papelera?",
+    "list.restoreBody" to "\"{0}\" vuelve a tu bóveda.",
     "detail.unarchive" to "Desarchivar",
     "detail.restore" to "Restaurar",
     "toast.saved" to "Entrada guardada",

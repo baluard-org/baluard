@@ -272,6 +272,8 @@ internal val EN: Map<String, String> = mapOf(
     "list.emptyTrashTitle" to "Empty trash?",
     "list.emptyTrashBody" to "{0} entries will be deleted for good. This cannot be undone.",
     "list.emptyTrashBodyOne" to "1 entry will be deleted for good. This cannot be undone.",
+    "list.restoreTitle" to "Restore from trash?",
+    "list.restoreBody" to "\"{0}\" moves back to your vault.",
     "detail.unarchive" to "Unarchive",
     "detail.restore" to "Restore",
     "toast.saved" to "Entry saved",
