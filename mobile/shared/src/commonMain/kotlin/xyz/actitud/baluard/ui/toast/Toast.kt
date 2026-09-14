@@ -60,8 +60,6 @@ data class ToastEntry(
 object Toast {
     private var nextId = 0L
 
-    private var nextId = 0L
-
     var entries by mutableStateOf<List<ToastEntry>>(emptyList())
         private set
 
