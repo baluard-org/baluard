@@ -108,7 +108,10 @@ fun ToastHost(modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .statusBarsPadding(),
+            .statusBarsPadding()
+            // Pinned to the main header's bottom edge: toasts emerge from
+            // under it, never covering it.
+            .padding(top = 64.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         toasts.forEach { entry ->
@@ -129,17 +132,26 @@ private fun AutoDismissingToast(entry: ToastEntry) {
         }
     }
 
-    // Drops from behind the header and expands downward — reads as the
-    // header extending to show the toast.
+    // Slides out from under the header: the toast's top edge stays pinned
+    // to the header's bottom line while it expands downward, then retracts
+    // back up on dismiss.
     val state = remember { MutableTransitionState(false).apply { targetState = true } }
     AnimatedVisibility(
         visibleState = state,
-        enter = slideInVertically(
+        enter = expandVertically(
             animationSpec = tween(220, easing = FastOutSlowInEasing),
-        ) { -it } + expandVertically { -it } + fadeIn(tween(220)),
-        exit = slideOutVertically(
+            expandFrom = Alignment.Top,
+        ) + slideInVertically(
+            animationSpec = tween(220, easing = FastOutSlowInEasing),
+            initialOffsetY = { -it / 3 },
+        ) + fadeIn(tween(220)),
+        exit = shrinkVertically(
             animationSpec = tween(180, easing = FastOutLinearInEasing),
-        ) { -it } + shrinkVertically { -it } + fadeOut(tween(180)),
+            shrinkTowards = Alignment.Top,
+        ) + slideOutVertically(
+            animationSpec = tween(180, easing = FastOutLinearInEasing),
+            targetOffsetY = { -it / 3 },
+        ) + fadeOut(tween(180)),
     ) {
         Surface(
             shape = RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp),
