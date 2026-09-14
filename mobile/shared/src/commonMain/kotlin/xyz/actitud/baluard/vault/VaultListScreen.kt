@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import xyz.actitud.baluard.MobileCipherMeta
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.detail.normalizeTypeTag
 import xyz.actitud.baluard.detail.typeLabelKey
@@ -85,6 +86,7 @@ fun EntryListScreen(
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var confirmEmptyTrash by remember { mutableStateOf(false) }
+    var restoreTarget by remember { mutableStateOf<MobileCipherMeta?>(null) }
 
     // Display chunk: the metadata set is fully in memory; pagination is a
     // rendering courtesy (25 first, +25 as the user approaches the end).
@@ -284,15 +286,7 @@ fun EntryListScreen(
                                 }
                             })
                             EntryListKind.Trash -> ({
-                                IconButton(onClick = {
-                                    scope.launch {
-                                        if (listViewModel.restore(vault, meta.id)) {
-                                            Toast.success(t("toast.restored"))
-                                        } else {
-                                            Toast.error(t("toast.actionFailed"))
-                                        }
-                                    }
-                                }) {
+                                IconButton(onClick = { restoreTarget = meta }) {
                                     Icon(
                                         imageVector = Icons.Default.Restore,
                                         contentDescription = t("detail.restore"),
@@ -350,6 +344,33 @@ fun EntryListScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmEmptyTrash = false }) {
+                    Text(t("common.cancel"))
+                }
+            },
+        )
+    }
+
+    restoreTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { restoreTarget = null },
+            title = { Text(t("list.restoreTitle")) },
+            text = { Text(t("list.restoreBody", target.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    restoreTarget = null
+                    scope.launch {
+                        if (listViewModel.restore(vault, target.id)) {
+                            Toast.success(t("toast.restored"))
+                        } else {
+                            Toast.error(t("toast.actionFailed"))
+                        }
+                    }
+                }) {
+                    Text(t("detail.restore"))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { restoreTarget = null }) {
                     Text(t("common.cancel"))
                 }
             },

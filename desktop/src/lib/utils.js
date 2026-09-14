@@ -24,6 +24,8 @@ export function sanitizeError(raw, t) {
 export const uriStr = (u) => typeof u === "string" ? u : (u?.uri || "");
 
 // Cryptographically secure password generator
+// GENERATED wordlists (see scripts/gen-wordlists.sh) — canonical sources are
+// crates/baluard-core/src/generator/data/*.txt so every platform shares them.
 import { WORDS_EN } from "./wordlist-en.js";
 import { WORDS_ES } from "./wordlist-es.js";
 

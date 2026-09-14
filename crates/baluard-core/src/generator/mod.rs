@@ -17,15 +17,17 @@
 //!
 //! ## Wordlists
 //!
-//! Passphrase pool = EFF Short Wordlist 2.0 EN (1,296 words, CC-BY-3.0) +
-//! BIP-39 Spanish (2,048 words, MIT). Embedded via `include_str!` so the crate
-//! is self-contained; the desktop's `wordlist-en.js` / `wordlist-es.js` are
-//! the historical source. This Rust module is now canonical.
+//! Passphrase pool = merged EFF EN (EFF large 7,776 ∪ EFF short 1,296,
+//! 8,232 unique words, CC-BY-3.0) + BIP-39 Spanish (2,048 words, MIT).
+//! Embedded via `include_str!` from `data/` so the crate is self-contained;
+//! the desktop imports the same two .txt files (`?raw`), making these the
+//! single wordlist sources for every platform.
 
 use rand::Rng;
 use rand::rngs::OsRng;
 
-/// EFF Short Wordlist 2.0 (English). Source: eff.org/files/2016/09/08/eff_short_wordlist_2_0.txt
+/// Merged EFF English wordlist (large ∪ short, deduplicated, sorted).
+/// Sources: eff.org/files/2016/07/25/eff_large_wordlist.txt + eff_short_wordlist_2_0.txt (CC-BY-3.0)
 const EFF_EN: &str = include_str!("data/eff-en.txt");
 /// BIP-39 Spanish (diacritics stripped). Source: github.com/bitcoin/bips bip-0039/spanish.txt
 const BIP39_ES: &str = include_str!("data/bip39-es.txt");
@@ -309,7 +311,8 @@ mod tests {
         let en: usize = EFF_EN.lines().filter(|l| !l.is_empty()).count();
         let es: usize = BIP39_ES.lines().filter(|l| !l.is_empty()).count();
         // EFF short 2.0 is 1296 (1295 unique after dedup); BIP-39 ES is 2048.
-        assert!((1290..=1296).contains(&en), "EFF-EN count {en}");
+        // Merged EFF lists (large + short, deduplicated) are 8,232 unique words.
+        assert!((8200..=8250).contains(&en), "EFF-EN count {en}");
         assert_eq!(es, 2048, "BIP-39 ES count");
     }
 }
