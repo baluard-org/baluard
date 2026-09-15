@@ -2,7 +2,7 @@
 
 Scope: `browser/shared/src` (background service worker, content scripts, popup), `browser/shared/manifest.base.json`, `browser/shared/vite.config.js`, `browser/chrome` + `browser/firefox` packaging. Companion to the desktop and mobile code-health docs; same method.
 
-Baseline at `8474903`: vitest 96/96 green, `npm run build` (chrome + firefox) green, dists rebuilt. The dists are committed per B11 and guarded by the `dist-css.test.js` canary, so the implementation commit must include refreshed dists.
+Baseline at `8474903`: vitest green, `npm run build` (chrome + firefox) green, dists rebuilt. The dists are committed per B11 and guarded by the `dist-css.test.js` canary, so the implementation commit must include refreshed dists.
 
 Method: file-by-file read of all six source modules plus manifests and build config; scripted dead-key sweep over the popup string tables (with a property-access pass — `strings.foo` usage does not show up in a `t("foo")` grep); usage greps for every export.
 

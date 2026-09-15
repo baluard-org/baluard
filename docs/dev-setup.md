@@ -176,7 +176,7 @@ crates/baluard-uniffi/   # UniFFI bindings consumed by mobile/shared
 desktop/               # Tauri v2 + SolidJS + Tailwind
   src-tauri/           # Rust backend (daemon sidecar + baluard-nmh sidecar + tray + proto codegen)
   src/                 # SolidJS frontend
-    __tests__/          # Vitest tests (229 cases: payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
+    __tests__/          # Vitest tests (payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
     components/         # 38 components including Icon.jsx (40+ SVG icons), BridgeTab, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, AutoSyncIndicator, CloneFromProviderScreen, WelcomeScreen, VaultSwitcher
     context/            # AuthContext.jsx, VaultContext.jsx, VaultSwitcherContext.jsx, AutoSyncContext.jsx, ConflictResolutionContext.jsx, themeSignal.js, toastSignal.js
     lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
@@ -249,8 +249,8 @@ baluard init --vault-path ~/.baluard
 
 # Unlock and add a credential
 baluard unlock
-baluard add --name "GitHub" --username "user" --password "secret"
-baluard add --name "Work VPN" --folder <folder-id>
+baluard add login --name "GitHub" --username "user" --password "secret"
+baluard add login --name "Work VPN" --folder <folder-id>
 
 # List and retrieve
 baluard list

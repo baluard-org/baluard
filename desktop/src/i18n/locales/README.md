@@ -13,6 +13,7 @@
 | File | Language |
 |------|----------|
 | `en.json` | English (default) |
+| `es.json` | Spanish |
 
 ## Guidelines
 

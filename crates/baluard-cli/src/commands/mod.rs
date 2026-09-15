@@ -1930,6 +1930,18 @@ fn first_device_id(vault_path: &str) -> String {
 }
 
 pub fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
+    if std::env::var_os("BALUARD_NO_PROMPT").is_some() {
+        return Ok(String::new());
+    }
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        use std::io::{BufRead, Write};
+        eprint!("{prompt}");
+        std::io::stderr().flush()?;
+        let mut buf = String::new();
+        std::io::stdin().lock().read_line(&mut buf)?;
+        return Ok(buf.trim_end_matches(&['\r', '\n'][..]).to_string());
+    }
     match rpassword::prompt_password(prompt) {
         Ok(pw) => Ok(pw),
         Err(_) => {
@@ -1938,7 +1950,7 @@ pub fn prompt_password(prompt: &str) -> Result<String, Box<dyn std::error::Error
             std::io::stderr().flush()?;
             let mut buf = String::new();
             std::io::stdin().lock().read_line(&mut buf)?;
-            Ok(buf.trim().to_string())
+            Ok(buf.trim_end_matches(&['\r', '\n'][..]).to_string())
         }
     }
 }

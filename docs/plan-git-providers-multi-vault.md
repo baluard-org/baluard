@@ -38,7 +38,7 @@ Replace the `subtitle` field with a `slug` field in `VaultSettings` and the crea
 - [x] Registry uses `fd-lock` for cross-process safety
 - [x] `vaults_dir()` returns `<data_dir>/vaults/` platform-correctly
 - [x] New vaults created under `vaults_dir().join(slug)`
-- [ ] Daemon reads `active_vault` from registry on startup
+- [x] Daemon reads `active_vault` from registry on startup
 - [x] `baluard vaults list` prints registered vaults
 - [x] `baluard --vault <slug>` targets a specific vault (uses `--direct` if not active)
 - [x] Slug collision detected and surfaced with clear error before creation
@@ -174,7 +174,7 @@ Both providers use **raw reqwest** (not the `gitlab`/`forgejo-api` crates the or
 
 ## Phase 6: Vault Switching + CLI Polish
 
-**Status**: Implemented 2026-06-17. 11 integration tests pass (`crates/baluard-daemon/tests/phase6_switching.rs`).
+**Status**: Implemented 2026-06-17. Integration tests pass (`crates/baluard-daemon/tests/phase6_switching.rs`).
 
 **User stories**: 23, 24
 
@@ -414,38 +414,38 @@ window. This is a deliberate UX-for-exposure trade:
 
 ### Acceptance criteria
 
-- [ ] Daemon holds a single `RwLock<VaultHostInner>` containing both the `HashMap<String, Arc<VaultState>>` and the `active` pointer (one critical section, no two-lock race)
-- [ ] Invariant: if `active` is `Some(slug)`, that slug exists in the map (provably maintained by the single lock)
-- [ ] `vaults.switch` validates slug + sets `active` under one write lock; no zeroization, no token change
-- [ ] Previously-active vault remains unlocked after a switch (state assertion)
-- [ ] Switching to an unlocked vault requires no master password (instant)
-- [ ] Switching to a locked/closed vault returns `locked: true`; unlock targets that slug
-- [ ] Each vault auto-locks independently on its own `auto_lock_minutes` schedule
-- [ ] **Active-pointer-on-autolock policy:** when the active vault auto-locks, `active` is left pointing at it and implicit-active requests return `locked: true` (desktop shows re-unlock for the same vault)
-- [ ] `vaults.close` on the active vault clears `active` to `None` (desktop falls back to vault picker)
-- [ ] Cipher/settings/batch routes accept a `slug` (or fall back to `active`) and address the correct vault
-- [ ] `vault.list_full` targets the named/active slug; desktop re-fetches it on every switch (no stale cross-vault list)
-- [ ] Session token check is per-vault: request token must match the targeted vault; a vault-A token is rejected for a vault-B operation
-- [ ] `vault.unlock` returns `{ slug, token }`; desktop maintains a `Map<slug, token>` and sends the matching token per request
-- [ ] Handler snapshots the target `Arc<VaultState>` clone once per request (no TOCTOU; implicit-`active` request pinned to entry-time active)
-- [ ] `vaults.close` returns success immediately (Arc-drain); in-flight handlers holding a cloned Arc complete and zeroize on last drop; new requests to the closed slug are rejected
-- [ ] `Arc::strong_count` is NOT used as a synchronization primitive
-- [ ] Cover-commit timers are per-`VaultState`, keyed to `locked`/`unlocked`, never to `active`; a switch does not touch any cover timer
+- [x] Daemon holds a single `RwLock<VaultHostInner>` containing both the `HashMap<String, Arc<VaultState>>` and the `active` pointer (one critical section, no two-lock race)
+- [x] Invariant: if `active` is `Some(slug)`, that slug exists in the map (provably maintained by the single lock)
+- [x] `vaults.switch` validates slug + sets `active` under one write lock; no zeroization, no token change
+- [x] Previously-active vault remains unlocked after a switch (state assertion)
+- [x] Switching to an unlocked vault requires no master password (instant)
+- [x] Switching to a locked/closed vault returns `locked: true`; unlock targets that slug
+- [x] Each vault auto-locks independently on its own `auto_lock_minutes` schedule
+- [x] **Active-pointer-on-autolock policy:** when the active vault auto-locks, `active` is left pointing at it and implicit-active requests return `locked: true` (desktop shows re-unlock for the same vault)
+- [x] `vaults.close` on the active vault clears `active` to `None` (desktop falls back to vault picker)
+- [x] Cipher/settings/batch routes accept a `slug` (or fall back to `active`) and address the correct vault
+- [x] `vault.list_full` targets the named/active slug; desktop re-fetches it on every switch (no stale cross-vault list)
+- [x] Session token check is per-vault: request token must match the targeted vault; a vault-A token is rejected for a vault-B operation
+- [x] `vault.unlock` returns `{ slug, token }`; desktop maintains a `Map<slug, token>` and sends the matching token per request
+- [x] Handler snapshots the target `Arc<VaultState>` clone once per request (no TOCTOU; implicit-`active` request pinned to entry-time active)
+- [x] `vaults.close` returns success immediately (Arc-drain); in-flight handlers holding a cloned Arc complete and zeroize on last drop; new requests to the closed slug are rejected
+- [x] `Arc::strong_count` is NOT used as a synchronization primitive
+- [x] Cover-commit timers are per-`VaultState`, keyed to `locked`/`unlocked`, never to `active`; a switch does not touch any cover timer
 - [~] Lock-all fires on app-resign-active (Tauri `WindowEvent::Focused(false)` → `vaults.lock_all` route + frontend token-cache clear + focus-regain refresh). OS suspend / screen-lock / lid-close need platform-specific hooks (macOS NSWorkspace, Linux login1 D-Bus PrepareForSleep, Windows WM_POWERBROADCAST/SessionSwitch), documented as follow-up in `desktop/src-tauri/src/lib.rs`.
 - [x] Daemon logs total mlocked bytes across all open vaults at unlock time (`VaultHost::log_mlock_budget` after unlock; RLIMIT_MEMLOCK hint + 2x warning on Unix)
-- [ ] Switch to unregistered slug returns a clear error
-- [ ] `baluard vaults list` shows state column (unlocked/locked/closed) + last opened
-- [ ] `baluard vaults switch <slug>` flips active vault; prompts for password if locked
-- [ ] `baluard --vault <slug>` uses the daemon when the vault is open in the map, `--direct` otherwise
-- [ ] `baluard vaults close <slug>` unloads one vault without affecting others
-- [ ] Integration test: two vaults unlocked, switch A→B→A, both stay unlocked (no re-prompt)
-- [ ] Integration test: per-vault auto-lock fires independently (one times out, the other stays unlocked)
-- [ ] Integration test: active vault auto-locks → `active` still points at it → next implicit request returns `locked: true`
-- [ ] Integration test: in-flight request to vault A is unaffected by a concurrent switch to B (request pinned to A)
-- [ ] Integration test: `vaults.close` returns immediately while a long request to that vault is in flight; the in-flight request completes and the vault's keys zeroize after it finishes
-- [ ] Integration test: concurrent `vaults.close("A")` + `vaults.switch("A")` never leaves `active` pointing at a missing entry (single-lock invariant)
-- [ ] Integration test: cover commit still fires for a non-active unlocked vault after a switch
-- [ ] Integration test: registry concurrent access (CLI + daemon writing simultaneously)
-- [ ] `vaults.switch` writes the registry `last_opened` OUTSIDE the `VaultHostInner` write lock (no I/O in the critical section)
-- [ ] Token-rejection on a request is the correctness backstop: desktop treats any token reject as a trigger to refresh vault state (polling is primary: on switch + 30s heartbeat)
-- [ ] Re-open after close: `vault.unlock` of a closed slug creates a fresh independent `VaultState`; a close observed mid-op is terminal for that op (no retry against the re-opened vault)
+- [x] Switch to unregistered slug returns a clear error
+- [x] `baluard vaults list` shows state column (unlocked/locked/closed) + last opened
+- [x] `baluard vaults switch <slug>` flips active vault; prompts for password if locked
+- [x] `baluard --vault <slug>` uses the daemon when the vault is open in the map, `--direct` otherwise
+- [x] `baluard vaults close <slug>` unloads one vault without affecting others
+- [x] Integration test: two vaults unlocked, switch A→B→A, both stay unlocked (no re-prompt)
+- [x] Integration test: per-vault auto-lock fires independently (one times out, the other stays unlocked)
+- [x] Integration test: active vault auto-locks → `active` still points at it → next implicit request returns `locked: true`
+- [x] Integration test: in-flight request to vault A is unaffected by a concurrent switch to B (request pinned to A)
+- [x] Integration test: `vaults.close` returns immediately while a long request to that vault is in flight; the in-flight request completes and the vault's keys zeroize after it finishes
+- [x] Integration test: concurrent `vaults.close("A")` + `vaults.switch("A")` never leaves `active` pointing at a missing entry (single-lock invariant)
+- [x] Integration test: cover commit still fires for a non-active unlocked vault after a switch
+- [x] Integration test: registry concurrent access (CLI + daemon writing simultaneously)
+- [x] `vaults.switch` writes the registry `last_opened` OUTSIDE the `VaultHostInner` write lock (no I/O in the critical section)
+- [x] Token-rejection on a request is the correctness backstop: desktop treats any token reject as a trigger to refresh vault state (polling is primary: on switch + 30s heartbeat)
+- [x] Re-open after close: `vault.unlock` of a closed slug creates a fresh independent `VaultState`; a close observed mid-op is terminal for that op (no retry against the re-opened vault)

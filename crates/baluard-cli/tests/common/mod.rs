@@ -34,6 +34,7 @@ pub fn baluard(vault_path: &Path) -> Command {
         // Tests must never touch the real keychain (interactive auth prompts
         // stall the suite; same policy as daemon_spawn).
         .env("BALUARD_DISABLE_KEYRING", "1")
+        .env("BALUARD_NO_PROMPT", "1")
         // Strip user-level env vars that could leak into tests (e.g. a custom
         // socket path pointing at a running daemon).
         .env_remove("BALUARD_SOCKET")

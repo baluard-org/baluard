@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-09-13 (Mobile Android Phases 0-5 implemented; Phase 6 Autofill Service next. Rust workspace: 778 tests passing. Desktop: 229 vitest tests passing. Browser: 96 vitest tests passing.)
+> Last updated: 2026-09-13 (Mobile Android Phases 0-5 implemented; Phase 6 Autofill Service next.)
 
 ---
 
@@ -70,7 +70,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | `daemon/socket` | Done | Unix socket listener. 0600 via umask. SIGINT/SIGTERM graceful shutdown |
 | `daemon/handler` | Done | Protobuf gateway. Length-delimited wire. Token-gated IPC. Password zeroized. ~72 routes including bridge, vault_host, autosync |
 | `daemon/state` | Done | VaultState with Arc<RwLock>. KDF outside write lock. Double-check unlock pattern |
-| `daemon/host` | Done (Phase 6) | `VaultHost` multi-vault: `RwLock<VaultHostInner>` over `HashMap<String, Arc<VaultState>>` + `active: Option<String>` pointer. Per-vault session tokens. 11 integration tests |
+| `daemon/host` | Done (Phase 6) | `VaultHost` multi-vault: `RwLock<VaultHostInner>` over `HashMap<String, Arc<VaultState>>` + `active: Option<String>` pointer. Per-vault session tokens. Integration tests in phase6_switching |
 | `daemon/autosync` | Done | Event-driven pull (unlock + window focus w/ 10-min guard) + 30-min idle fallback + offline retry (30s probe). `cycle_lock` tokio mutex (C3). Network errors classified via `is_network_error` |
 | `daemon/pin` | Done | Session PIN escrow (`PinEscrow`). In-memory only. Argon2id PIN verifier. 5-strike nuke. Survives soft-lock, dies on close/restart |
 | `daemon/bridge` | Done (Phase 0+1) | Bridge token registry on `VaultHost`. `TokenKind::Bridge { pairing_id }` branches off `TokenKind::Vault` in `verify_session_token`. Allowlist enforcement. Field-gated `vault.update` (reject `fido2_credentials` + `uris` from bridge) |
@@ -156,7 +156,7 @@ Completed core, CLI, daemon, and desktop implementations.
 
 ### Tags
 
-**Storage**: Encrypted `tags: Vec<String>` on cipher envelope + `meta/tag_index.json` plaintext cache. See DOMAIN 8 in `docs/architecture-decisions.md`.
+**Storage**: Encrypted `tags: Vec<String>` on cipher envelope + `meta/tag_index.json` plaintext cache. See DOMAIN 8 in `docs/software-architecture-decisions.md`.
 
 | Component | Description | Status |
 |-----------|-------------|--------|
@@ -175,7 +175,7 @@ Completed core, CLI, daemon, and desktop implementations.
 
 ### Device Fleet Visibility
 
-**Architecture**: See DOMAIN 5 in `docs/architecture-decisions.md`
+**Architecture**: See DOMAIN 5 in `docs/software-architecture-decisions.md`
 
 | Phase | Description | Effort | Status |
 |-------|-------------|--------|--------|
@@ -189,14 +189,14 @@ Completed core, CLI, daemon, and desktop implementations.
 
 | Item | Description | Status |
 |------|-------------|--------|
-| Auto-sync | Debounced push after CRUD (5s), event-driven pull (unlock + window focus with 10-min guard) + 30-min idle fallback, offline retry, conflict auto-resolve (keep-local Phase 1). Daemon coordinator `autosync.rs`, desktop `AutoSyncContext` + status dot + transient label + conflict banner. See D5-bis in `architecture-decisions.md` | **Done** |
+| Auto-sync | Debounced push after CRUD (5s), event-driven pull (unlock + window focus with 10-min guard) + 30-min idle fallback, offline retry, conflict auto-resolve (keep-local Phase 1). Daemon coordinator `autosync.rs`, desktop `AutoSyncContext` + status dot + transient label + conflict banner. See D5-bis in `docs/software-architecture-decisions.md` | **Done** |
 | Browser autofill suppression | Global `autocomplete=off` via MutationObserver; opt-in `data-autofill="on"`. `desktop/src/lib/disableAutofill.js` | **Done** |
 | UI freeze fix | `daemon_request` async + `spawn_blocking` (sync command was blocking the webview event loop) | **Done** |
 | macOS keychain stable signing | `_sign-sidecar` just recipe signs daemon with Apple Development identity so "Always Allow" persists across rebuilds | **Done** |
 
 ### Vault Creation Wizard
 
-**Architecture**: See D18 in `docs/architecture-decisions.md`
+**Architecture**: See D18 in `docs/software-architecture-decisions.md`
 
 | Item | Description | Status |
 |------|-------------|--------|
@@ -221,7 +221,7 @@ Completed core, CLI, daemon, and desktop implementations.
 | **Phase 3** | GitHub repo operations + first sync + credential wiring | **Done** |
 | Phase 4 | Remote vault clone + three-button wizard: **implemented**. `vault.clone_start/progress/finalize` daemon job flow (host-level, pre-unlock, NOT token-gated) + `SyncEngine::clone_remote` (provider-hinted creds + git2 `transfer_progress` -> live `CloneProgress`). CLI `baluard sync clone <provider> <repo>` (daemon-only). Desktop: `WelcomeScreen` (new vault / open local / download from provider) + `CloneFromProviderScreen` (provider pick -> auth -> `provider.vault_repos` list -> clone w/ progress bar -> master-pw unlock). `vaults.register_local` route (open-local, no copy). `provider.repos`/`vault_repos` un-gated (sentinel-safe, pre-unlock). 2FA warning banner (dismissible, per-provider). Orphan-dir cleanup on clone failure. `tauri-plugin-dialog` for the dir picker. Core + JS tests (clone progress, unreachable source, poll/finalize, failure path). | **Done** |
 | **Phase 5** | GitLab (device flow + PAT + 2h refresh) + Codeberg (web-OAuth PKCE + PAT) providers | **Done** |
-| **Phase 6** | Vault switching + CLI polish: **implemented**. Keep-unlocked/switch-pointer model: daemon holds `RwLock<VaultHostInner>` with `HashMap<String, Arc<VaultState>>` + `active` pointer (one critical section). Switch = pointer flip (no zeroization, no token change). Per-vault session tokens. `vaults.list/switch/active/close/set_active` routes. `vault.unlock` returns `{slug, token}`. Single auto-lock checker walks the map. 11 integration tests pass. Lock-all on `Tauri WindowEvent::Focused(false)` (frontend token cache clear + focus-regain refresh); OS suspend / screen-lock / lid-close hooks documented as follow-up (macOS NSWorkspace, Linux login1 D-Bus PrepareForSleep, Windows WM_POWERBROADCAST/SessionSwitch). | **Done** |
+| **Phase 6** | Vault switching + CLI polish: **implemented**. Keep-unlocked/switch-pointer model: daemon holds `RwLock<VaultHostInner>` with `HashMap<String, Arc<VaultState>>` + `active` pointer (one critical section). Switch = pointer flip (no zeroization, no token change). Per-vault session tokens. `vaults.list/switch/active/close/set_active` routes. `vault.unlock` returns `{slug, token}`. Single auto-lock checker walks the map. Integration tests pass. Lock-all on `Tauri WindowEvent::Focused(false)` (frontend token cache clear + focus-regain refresh); OS suspend / screen-lock / lid-close hooks documented as follow-up (macOS NSWorkspace, Linux login1 D-Bus PrepareForSleep, Windows WM_POWERBROADCAST/SessionSwitch). | **Done** |
 | Provider selection UI | Desktop SyncTab: device-flow (GitHub/GitLab) + web-OAuth (Codeberg) + PAT under Advanced Options | **Done** |
 | Sync header refactor | One-click sync UI replaces git jargon. Sidebar header shows provider + repo link (`cc09c51`). `AutoSyncIndicator` status pill (idle/syncing/dirty/offline). Sync label gated with `Show` inside `Transition` to silence background pulls. Provider state scoped to active vault (`58016d4`). | **Done** |
 | Vault detach | UI: `DetachVaultModal` in `VaultSwitcher` dropdown (safe detach only). Destructive arm (`delete_from_disk`) NOT exposed in UI; CLI-only via `baluard vaults detach <slug> --delete-from-disk`. `vaults.detach` daemon route still supports both | **Done** |
@@ -265,7 +265,7 @@ Features parked for the far future. Do not start without explicit confirmation.
 |------|-------------|---------|
 | Encrypted JSON export | Baluard-native format (Argon2id + AES-256-GCM). Git clone + recovery phrase already covers disaster recovery | Low priority, needs format documentation |
 | Additional import formats | Dashlane, Enpass, NordPass, Avast, Avira, Keeper, RoboForm, Myki, mSecure, Blur | Low priority parser work |
-| FIDO2 credential storage | **Done (Phase 0+1)**. Embedded in `LoginData::fido2_credentials: Option<Vec<PasskeyData>>`. ES256 only via `passkey-rs` 0.5.x. Daemon IPC: 7 routes. CLI: list/delete/rename. 360 tests pass. See `docs/plan-passkey-support.md`. | Phase 2+ (browser extension, mobile) |
+| FIDO2 credential storage | **Done (Phase 0+1)**. Embedded in `LoginData::fido2_credentials: Option<Vec<PasskeyData>>`. ES256 only via `passkey-rs` 0.5.x. Daemon IPC: 7 routes. CLI: list/delete/rename. See `docs/plan-passkey-support.md`. | Phase 2+ (browser extension, mobile) |
 
 ### Out of Scope (No Server)
 
@@ -449,10 +449,10 @@ baluard/
 │   │   ├── components/         # 38 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, WelcomeScreen, CloneFromProviderScreen, BridgeTab, ConflictBanner, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, VaultSwitcher, AutoSyncIndicator, DeviceFleetPanel, SyncTab, SettingsModal, ...)
 │   │   ├── context/             # AuthContext.jsx, VaultContext.jsx, VaultSwitcherContext.jsx, AutoSyncContext.jsx, ConflictResolutionContext.jsx, themeSignal.js, toastSignal.js
 │   │   ├── lib/                 # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
-│   │   ├── __tests__/           # vitest tests (229 cases across 19 test files)
+│   │   ├── __tests__/           # vitest tests (payload, utils, filters, cipherSchema, sync)
 │   │   └── i18n/locales/        # en.json, es.json (all user-facing strings)
 ├── browser/                      # MV3 Browser extensions (Chromium + Firefox, shared codebase)
-│   ├── shared/                    # 95% of code (popup SolidJS, service worker, content script, nmh wrapper, autofill, pair, 96 vitest tests)
+│   ├── shared/                    # 95% of code (popup SolidJS, service worker, content script, nmh wrapper, autofill, pair, vitest tests)
 │   ├── chrome/                    # Chrome MV3 wrapper
 │   └── firefox/                   # Firefox MV3 wrapper
 ├── mobile/                       # Kotlin Multiplatform app (Compose Multiplatform UI, baluard-uniffi bindings; Phases 0-5 implemented, Phase 6 Autofill next)

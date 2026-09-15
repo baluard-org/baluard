@@ -133,6 +133,8 @@ fn add_with_invalid_folder_uuid_errors() {
         .arg("X")
         .arg("--username")
         .arg("u")
+        .arg("--password")
+        .arg("p")
         .arg("--folder")
         .arg("not-a-uuid")
         .assert()
@@ -152,6 +154,8 @@ fn add_with_favorite_flag_marks_favorite() {
         .arg("Starred")
         .arg("--username")
         .arg("star")
+        .arg("--password")
+        .arg("starpass")
         .arg("--favorite")
         .assert()
         .success();

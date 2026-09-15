@@ -1,7 +1,7 @@
 # Baluard: Software Architecture
 
 > Monorepo software architecture for the Rust Core Space Manager.
-> Covers: monorepo structure, Single-String Protobuf Gateway, Unix Domain Sockets IPC, Tauri v2 tray integration, UniFFI mobile bindings (planned), Kotlin Multiplatform JIT mobile sync, and Mock Engine.
+> Covers: monorepo structure, Single-String Protobuf Gateway, Unix Domain Sockets IPC, Tauri v2 tray integration, UniFFI mobile bindings (baluard-uniffi), Kotlin Multiplatform JIT mobile sync, and Mock Engine.
 
 ---
 
@@ -61,7 +61,7 @@ baluard/
 │   │   ├── components/         # 38 components (VaultView, CipherDetail, SshKeyGenerator, SetupScreen, FocusTrap, WelcomeScreen, CloneFromProviderScreen, BridgeTab, ConflictBanner, ConflictResolutionPanel, DetachVaultModal, SwitchUnlockModal, VaultSwitcher, AutoSyncIndicator, DeviceFleetPanel, SyncTab, SettingsModal, ...)
 │   │   ├── context/            # AuthContext, VaultContext, VaultSwitcherContext, AutoSyncContext, ConflictResolutionContext, themeSignal, toastSignal
 │   │   ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
-│   │   ├── __tests__/          # vitest tests (229 cases: payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
+│   │   ├── __tests__/          # vitest tests (payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
 │   │   └── i18n/locales/       # en.json, es.json (all user-facing strings)
 │   └── package.json            # SolidJS, Tailwind v4, Tauri API v2
 ├── browser/                    # MV3 Browser Extensions (Chromium + Firefox, shared codebase)
@@ -217,7 +217,7 @@ When a member is removed from a Space:
 ## 5. Security Architecture
 
 - **Single crypto implementation**: All cryptographic operations live in `baluard-core/src/crypto/`. No duplicate implementations across languages.
-- **FFI security boundary (planned)**: UniFFI's serialization approach provides a clean memory boundary. Rust heap allocations for secrets never share pointers with foreign code.
+- **FFI security boundary**: UniFFI's serialization approach provides a clean memory boundary. Rust heap allocations for secrets never share pointers with foreign code.
 - **Socket permissions**: Socket born with 0600 via `umask(0177)` before `bind()` (no TOCTOU race between bind and chmod).
 - **Graceful shutdown**: Daemon handles both SIGINT and SIGTERM for clean socket removal and vault zeroization.
 - **Zeroize**: All passwords zeroized server-side (handler) and client-side (CLI unlock, Tauri proxy). `zeroize` crate with `derive` feature for guaranteed memory scrubbing via `write_volatile` + `compiler_fence`.

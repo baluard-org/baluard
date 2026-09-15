@@ -28,7 +28,7 @@ Adopt `passkey` 0.5.x as the authenticator library. Use `webauthn-rs` 0.5.x as t
 ## Spike Results
 
 **Test file:** `crates/baluard-core/tests/passkey_spike.rs`
-**Outcome:** 2/2 tests pass (registration + assertion round-trip through webauthn-rs)
+**Outcome:** registration and assertion round-trip through webauthn-rs passes
 
 ### What Works
 
@@ -119,4 +119,4 @@ async-trait = "0.1"
 - [ ] Phase 3: Mobile UniFFI bindings + CredentialProviderService / ASCredentialProviderViewController
 - [ ] Phase 4: Cross-device assertion (QR pairing + local channel)
 
-**Status as of 2026-06-12**: Phase 0+1 complete, 358 tests pass. Phase 2+ pending. See `docs/plan-passkey-support.md` for full plan.
+**Status as of 2026-06-12**: Phase 0+1 complete. Phase 2+ pending. See `docs/plan-passkey-support.md` for full plan.

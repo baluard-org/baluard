@@ -85,9 +85,9 @@ local device is trusted for **current** secrecy.
 
 ## References
 
-- Audit finding: `docs/security-audit-2026-06.md` L8
+- Internal security review finding L8 (historical)
 - Root Key rotation: `crates/baluard-core/src/keys/rotation.rs`
 - Recovery re-wrap: `crates/baluard-core/src/vault/handle.rs::rewrap_recovery_key`
 - Emergency access: `crates/baluard-core/src/emergency.rs`
 - Change password: `crates/baluard-core/src/vault/handle.rs::change_master_password`
-- M2 metadata leakage: `docs/vault-metadata-leakage-analysis.md`
+- Metadata leakage: Padded buckets mitigate file sizes; see `docs/software-architecture-decisions.md` (D1)

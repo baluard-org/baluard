@@ -320,8 +320,9 @@ mod c2_tests {
 
     #[test]
     fn token_file_fallback_roundtrip() {
-        // Under cfg(test) keyring_disabled() is true, so set/get/clear run
-        // the file fallback exactly like headless/CI environments.
+        // Under cfg(test) keyring_disabled() is true for core; set the env var
+        // so CLI test runs also skip the OS keyring in headless/CI environments.
+        unsafe { std::env::set_var("BALUARD_DISABLE_KEYRING", "1") };
         let dir = tempfile::tempdir().unwrap();
         let sock = dir.path().join("d.sock");
         let sp = sock.to_str().map(str::to_string);
