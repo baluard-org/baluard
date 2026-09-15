@@ -339,7 +339,8 @@ impl VaultHandle {
 
                     if let Some((rk, healed_id)) = healed {
                         self.device_id = healed_id;
-                        let _ = crate::vault::device_privkey::write_device_id(&self.path, healed_id);
+                        let _ =
+                            crate::vault::device_privkey::write_device_id(&self.path, healed_id);
                         (rk, healed_id)
                     } else {
                         return Err(primary_err);
@@ -369,7 +370,11 @@ impl VaultHandle {
         // the unlock; the next unlock retries.
         {
             let path = self.path.join("meta/device-privkey.json");
-            let _ = crate::vault::device_privkey::reseal_if_legacy(&path, &devkey_seal, Some(self.device_id));
+            let _ = crate::vault::device_privkey::reseal_if_legacy(
+                &path,
+                &devkey_seal,
+                Some(self.device_id),
+            );
             let _ = crate::vault::device_privkey::write_device_id(&self.path, self.device_id);
         }
 
@@ -5319,11 +5324,9 @@ mod tests {
             .unwrap();
 
         // Write device 2's device-privkey.json as sealed file with device 2's keys
-        let kek = crate::crypto::kdf::derive_kek(
-            password,
-            &VaultHandle::open(path).unwrap().kdf_params,
-        )
-        .unwrap();
+        let kek =
+            crate::crypto::kdf::derive_kek(password, &VaultHandle::open(path).unwrap().kdf_params)
+                .unwrap();
         let devkey_seal = crate::crypto::hkdf_derive::derive_devkey_seal_key(&kek).unwrap();
         let privkey_json = serde_json::json!({
             "device_id": dev2_id.to_string(),

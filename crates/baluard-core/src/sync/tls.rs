@@ -11,9 +11,9 @@
 //! Desktop platforms keep their system defaults (no-op).
 
 #[cfg(target_os = "android")]
-use std::sync::Mutex;
-#[cfg(target_os = "android")]
 use foreign_types::ForeignType as _;
+#[cfg(target_os = "android")]
+use std::sync::Mutex;
 
 #[cfg(target_os = "android")]
 const CA_DIRS: &[&str] = &[
@@ -104,14 +104,11 @@ fn register_cert(pem_block: &[u8]) -> Result<(), String> {
     if init_rc < 0 {
         return Err(format!("git_libgit2_init rc={init_rc}"));
     }
-    let cert = openssl::x509::X509::from_pem(pem_block)
-        .map_err(|e| format!("pem parse: {e}"))?;
+    let cert = openssl::x509::X509::from_pem(pem_block).map_err(|e| format!("pem parse: {e}"))?;
     // SAFETY: variadic libgit2 opt; passes one X509* matching the C side's
     // va_arg(ap, X509*). The store uprefs the cert (x509_lu.c X509_OBJECT_up_ref),
     // so the local wrapper may drop right after the call.
-    let rc = unsafe {
-        libgit2_sys::git_libgit2_opts(GIT_OPT_ADD_SSL_X509_CERT, cert.as_ptr())
-    };
+    let rc = unsafe { libgit2_sys::git_libgit2_opts(GIT_OPT_ADD_SSL_X509_CERT, cert.as_ptr()) };
     if rc != 0 {
         Err(format!("store add rc={rc} q: {}", drain_err_queue()))
     } else {
@@ -234,7 +231,10 @@ mod split_blocks_tests {
         let raw = b"Certificate:\n    Data:\n        Version: 3 (0x2)\n-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n";
         let blocks = split_blocks(raw);
         assert_eq!(blocks.len(), 1);
-        assert_eq!(&blocks[0], b"-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----");
+        assert_eq!(
+            &blocks[0],
+            b"-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----"
+        );
     }
 
     #[test]

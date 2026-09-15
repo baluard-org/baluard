@@ -366,11 +366,17 @@ mod tests {
     // auto-lock choice to the 15-minute default.
     #[test]
     fn vault_timeout_parses_wire_tokens() {
-        assert_eq!(VaultTimeout::from_token("immediately"), VaultTimeout::Immediately);
+        assert_eq!(
+            VaultTimeout::from_token("immediately"),
+            VaultTimeout::Immediately
+        );
         assert_eq!(VaultTimeout::from_token("15m"), VaultTimeout::Minutes(15));
         assert_eq!(VaultTimeout::from_token("2h"), VaultTimeout::Minutes(120));
         assert_eq!(VaultTimeout::from_token("90"), VaultTimeout::Minutes(90));
-        assert_eq!(VaultTimeout::from_token("on_app_exit"), VaultTimeout::OnAppExit);
+        assert_eq!(
+            VaultTimeout::from_token("on_app_exit"),
+            VaultTimeout::OnAppExit
+        );
         // Case-insensitive: the frontend lowercases, but belt-and-braces.
         assert_eq!(VaultTimeout::from_token("NOW"), VaultTimeout::Immediately);
     }
@@ -421,9 +427,15 @@ mod tests {
             VaultTimeout::Minutes(u32::MAX)
         );
         // Explicit default token
-        assert_eq!(VaultTimeout::from_token("default"), VaultTimeout::Minutes(15));
+        assert_eq!(
+            VaultTimeout::from_token("default"),
+            VaultTimeout::Minutes(15)
+        );
         // Surrounding whitespace trimmed
-        assert_eq!(VaultTimeout::from_token("  30m  "), VaultTimeout::Minutes(30));
+        assert_eq!(
+            VaultTimeout::from_token("  30m  "),
+            VaultTimeout::Minutes(30)
+        );
     }
 
     #[test]
