@@ -1,7 +1,7 @@
 import { createSignal, createMemo, Show, onSettled } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
-import { suggestSlug, cleanSlug, validateSlug } from "../lib/slug.js";
+import { suggestSlug, normalizeSlug, validateSlug } from "../lib/slug.js";
 import { toastWarning } from "../context/toastSignal.js";
 import { IconPencil, IconCheck, IconBaluardLogo } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
@@ -59,7 +59,7 @@ export default function CreateVaultScreen() {
   };
 
   const handleSlugInput = (e) => {
-    const cleaned = cleanSlug(e.target.value);
+    const cleaned = normalizeSlug(e.target.value);
     setCustomSlug(cleaned);
     e.target.value = cleaned;
   };

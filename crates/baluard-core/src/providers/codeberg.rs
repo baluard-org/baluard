@@ -307,14 +307,15 @@ impl ForgeProvider for CodebergProvider {
         &self,
         token: &ProviderToken,
     ) -> Result<Vec<VaultRepo>, ProviderError> {
-        // Forgejo: paginate /user/repos, probe .baluard per repo. Fetches
+        // Forgejo: paginate /user/repos (type=owner - accessible org/collab
+        // repos must NOT surface in the picker), probe .baluard per repo. Fetches
         // within a page run concurrently (JoinSet) to avoid rate-limit thrash
         // on large accounts.
         let mut found = Vec::new();
         let mut page: u8 = 1;
         loop {
             let url = format!(
-                "{api}/user/repos?limit=50&page={pg}",
+                "{api}/user/repos?limit=50&page={pg}&type=owner",
                 api = self.api_base(),
                 pg = page,
             );

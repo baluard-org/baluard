@@ -5,6 +5,7 @@
 //! Repo creation uses raw POST /user/repos (octocrab doesn't expose it directly).
 
 use async_trait::async_trait;
+use base64::Engine as _;
 use octocrab::Octocrab;
 use octocrab::models::Repository;
 use secrecy::ExposeSecret;
@@ -134,6 +135,135 @@ impl GitHubProvider {
 impl Default for GitHubProvider {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl GitHubProvider {
+    /// Tier 1: paginate the authenticated user's OWNED repos and probe
+    /// .baluard concurrently within each page (mirrors the GitLab and
+    /// Codeberg detection tier).
+    async fn list_and_probe_owned(
+        &self,
+        token: &ProviderToken,
+    ) -> Result<Vec<VaultRepo>, ProviderError> {
+        let client = self.client_from_token(token)?;
+        let mut found: Vec<VaultRepo> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut page: u8 = 1;
+        loop {
+            let page_repos: Vec<octocrab::models::Repository> = client
+                .current()
+                .list_repos_for_authenticated_user()
+                .affiliation("owner")
+                .per_page(100)
+                .page(page)
+                .send()
+                .await
+                .map_err(api_error)?
+                .items;
+            if page_repos.is_empty() {
+                break;
+            }
+            let this = std::sync::Arc::new(Self::with_config(self.config.clone()));
+            let mut tasks = tokio::task::JoinSet::new();
+            for repo in page_repos {
+                let client = client.clone();
+                let this = this.clone();
+                tasks.spawn(async move { this.probe_marker(&client, &repo).await });
+            }
+            while let Some(res) = tasks.join_next().await {
+                if let Ok(Some(r)) = res {
+                    if seen.insert(r.full_name.clone()) {
+                        found.push(r);
+                    }
+                }
+            }
+            page += 1;
+            if page > 20 {
+                break; // safety cap: 1000 repos
+            }
+        }
+        Ok(found)
+    }
+
+    /// Fetch + parse .baluard for one repo. Returns the VaultRepo (built
+    /// from the repo record) with slug/id filled in, or None when the marker
+    /// is absent or unreadable.
+    async fn probe_marker(
+        &self,
+        client: &octocrab::Octocrab,
+        repo: &octocrab::models::Repository,
+    ) -> Option<VaultRepo> {
+        let full_name = repo.full_name.as_deref()?;
+        let (owner, name) = full_name.split_once('/')?;
+        let content = client
+            .repos(owner, name)
+            .get_content()
+            .path(".baluard")
+            .send()
+            .await
+            .ok()?;
+        let encoded = content
+            .items
+            .into_iter()
+            .find(|i| i.name == ".baluard")
+            .and_then(|i| i.content)?;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded.replace('\n', ""))
+            .ok()?;
+        let marker: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+        let mut r = self.repo_to_vault(repo)?;
+        r.vault_slug = marker["slug"].as_str().map(str::to_string);
+        r.vault_id = marker["vault_id"].as_str().map(str::to_string);
+        Some(r)
+    }
+
+    /// Tier 2: code search (filename:.baluard user:login). Supplementary
+    /// only - the search index lags for fresh repos and may skip private
+    /// repos, so tier 1 is the source of record.
+    async fn search_marker_repos(
+        &self,
+        token: &ProviderToken,
+    ) -> Result<Vec<VaultRepo>, ProviderError> {
+        let client = self.client_from_token(token)?;
+        let user = client.current().user().await.map_err(api_error)?;
+
+        let query = format!("filename:.baluard user:{}", user.login);
+        let results: octocrab::Page<octocrab::models::Code> = client
+            .search()
+            .code(&query)
+            .send()
+            .await
+            .map_err(api_error)?;
+
+        // The code-search item embeds a MINIMAL repository object that omits
+        // clone_url, so mapping it directly yields empty clone URLs that
+        // fail at clone with "unsupported URL scheme: ". Fetch each hit's
+        // full repo record instead.
+        let mut repos = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for item in results {
+            let Some(full_name) = item.repository.full_name else {
+                continue;
+            };
+            // Code search can return multiple hits per repo; fetch each
+            // repo record once.
+            if !seen.insert(full_name.clone()) {
+                continue;
+            }
+            let Some((owner, name)) = full_name.split_once('/') else {
+                continue;
+            };
+            // One dead hit (renamed/deleted repo, or a transient API miss)
+            // must not hide every other vault from the picker.
+            let Ok(repo) = client.repos(owner, name).get().await else {
+                continue;
+            };
+            if let Some(r) = self.repo_to_vault(&repo) {
+                repos.push(r);
+            }
+        }
+        Ok(repos)
     }
 }
 
@@ -357,46 +487,22 @@ impl ForgeProvider for GitHubProvider {
         &self,
         token: &ProviderToken,
     ) -> Result<Vec<VaultRepo>, ProviderError> {
-        let client = self.client_from_token(token)?;
-        let user = client.current().user().await.map_err(api_error)?;
+        // Tier 1 (primary): paginate OWNED repos and probe .baluard per repo.
+        // Complete and immune to code-search indexing lag (N4: the search API
+        // can miss private repos entirely and only indexes default branches).
+        let mut found = self.list_and_probe_owned(token).await?;
 
-        let query = format!("filename:.baluard user:{}", user.login);
-        let results: octocrab::Page<octocrab::models::Code> = client
-            .search()
-            .code(&query)
-            .send()
-            .await
-            .map_err(api_error)?;
-
-        // The code-search item embeds a MINIMAL repository object that omits
-        // clone_url, so mapping it directly yields empty clone URLs that
-        // fail at clone with "unsupported URL scheme: ". Fetch each hit's
-        // full repo record instead.
-        let mut repos = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for item in results {
-            let Some(full_name) = item.repository.full_name else {
-                continue;
-            };
-            // Code search can return multiple hits per repo; fetch each
-            // repo record once.
-            if !seen.insert(full_name.clone()) {
-                continue;
-            }
-            let Some((owner, name)) = full_name.split_once('/') else {
-                continue;
-            };
-            // One dead hit (renamed/deleted repo, or a transient API miss)
-            // must not hide every other vault from the picker.
-            let Ok(repo) = client.repos(owner, name).get().await else {
-                continue;
-            };
-            if let Some(r) = self.repo_to_vault(&repo) {
-                repos.push(r);
+        // Tier 2 (supplementary): code search catches vaults outside the
+        // owned list (e.g. org-owned repos the user administers). Deduped.
+        let extra = self.search_marker_repos(token).await?;
+        for r in extra {
+            if !found.iter().any(|f| f.full_name == r.full_name) {
+                found.push(r);
             }
         }
-        Ok(repos)
+        Ok(found)
     }
+
     async fn create_private_repo(
         &self,
         token: &ProviderToken,
@@ -532,7 +638,10 @@ mod tests {
         // Mirrors the snafu shape that produced the useless "API error:
         // Other" on Android: bare variant name Display + a source carrying
         // the real cause.
-        assert_eq!(error_chain(&Root), "Other: failed to load native certificates");
+        assert_eq!(
+            error_chain(&Root),
+            "Other: failed to load native certificates"
+        );
     }
 
     #[test]
@@ -622,7 +731,10 @@ mod tests {
         let vault = gh.repo_to_vault(&repo).expect("full record must map");
         assert_eq!(vault.name, "baluard-personal");
         assert_eq!(vault.full_name, "EstebanForge/baluard-personal");
-        assert_eq!(vault.clone_url, "https://github.com/EstebanForge/baluard-personal.git");
+        assert_eq!(
+            vault.clone_url,
+            "https://github.com/EstebanForge/baluard-personal.git"
+        );
         assert!(vault.private);
         assert_eq!(vault.vault_slug, None);
         assert_eq!(vault.vault_id, None);
