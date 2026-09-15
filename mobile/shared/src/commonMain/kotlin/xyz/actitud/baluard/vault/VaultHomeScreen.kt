@@ -189,7 +189,7 @@ fun VaultHomeScreen(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = vaultName,
+                    text = "$vaultName (${ciphers.size})",
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
