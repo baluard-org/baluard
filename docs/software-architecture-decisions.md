@@ -134,16 +134,16 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 
 ---
 
-### D8. Mobile Tier: UniFFI Bindings (Planned)
+### D8. Mobile Tier: UniFFI Bindings (baluard-uniffi)
 
 **Decision: Mozilla UniFFI for Rust-to-Kotlin/Swift bridge**
 
-Mobile apps will bind directly to baluard-core via UniFFI-generated native bindings:
-- **Kotlin (Android)**: UniFFI generates Kotlin data classes and function bindings from `#[uniffi::export]` proc-macros on baluard-core's public API. Compiled into the KMP project as a static library.
+Mobile apps bind to the vault engine via the `baluard-uniffi` crate over `baluard-runtime` and `baluard-core`:
+- **Kotlin (Android)**: UniFFI generates Kotlin bindings from the UDL interface and library metadata. The native cdylib builds for 4 Android ABIs into `mobile/androidApp/src/main/jniLibs/`.
 - **Swift (iOS)**: UniFFI generates Swift bindings compiled into an xcframework.
-- **No intermediate language**: The Rust core is the single source of truth. No Go, no cgo, no gomobile. UniFFI's serialization-based FFI provides a clean security boundary between Rust memory and foreign memory.
-- **JIT Autofill**: The UniFFI-exposed `sync::fetch_and_decrypt()` method will be called directly from the Kotlin/Swift autofill adapter before biometric prompt.
-- **Current state**: baluard-core has no `#[uniffi::export]` annotations yet. Mobile app is a placeholder scaffold.
+- **No intermediate language**: The Rust core is the single source of truth. No Go, no cgo, no gomobile. UniFFI provides a clean memory boundary between Rust memory and foreign code.
+- **Direct in-process host**: The mobile client hosts `baluard-runtime` in-process directly without a background daemon.
+- **Status**: Implemented in `crates/baluard-uniffi/`. Android Phases 0 through 5 are complete (Compose Multiplatform onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 build). Phase 6 Autofill Service is next. iOS platform-specific actuals are pending.
 
 ---
 
@@ -501,7 +501,7 @@ New device                          Existing device
 **Files:**
 - `crates/baluard-core/src/vault/manifest.rs`: `EnrollmentPolicy` enum
 - `crates/baluard-core/src/device_manager.rs`: `enroll_with_recovery_phrase`
-- `crates/baluard-daemon/src/{state,handler}.rs`: IPC route
+- `crates/baluard-daemon/src/handler.rs`, `crates/baluard-runtime/src/state.rs`: IPC route
 - `crates/baluard-cli/`: subcommand + handler
 - `desktop/src/components/RecoveryScreen.jsx`: verification step
 - `desktop/src/i18n/locales/{en,es}.json`: translations
@@ -675,7 +675,7 @@ Created `components/Icon.jsx` with 40+ named SVG icon exports. Migrated 67/70 in
 
 #### Candidate B: Filter Pipeline (Completed)
 
-Created `lib/filters.js` with pure functions: `selectSource`, `filterByCategory`, `filterByFolder`, `searchCiphers`. `CATEGORY_TYPE_MAP` as single source of truth mapping UI category names to daemon cipher type strings. VaultView inline 45-line filter replaced with 6-line composed pipeline. 18 new vitest tests.
+Created `lib/filters.js` with pure functions: `selectSource`, `filterByCategory`, `filterByFolder`, `searchCiphers`. `CATEGORY_TYPE_MAP` as single source of truth mapping UI category names to daemon cipher type strings. VaultView inline 45-line filter replaced with 6-line composed pipeline. Vitest tests cover all helper functions.
 
 #### Candidate C: State Transition Guards (Completed)
 
@@ -683,7 +683,7 @@ Created `lib/filters.js` with pure functions: `selectSource`, `filterByCategory`
 
 #### Candidate A: Cipher Schema (Completed)
 
-Created `lib/cipherSchema.js` with schemas for all 8 cipher types. Each schema defines: `fields[]`, `fromKind(structured→flat)`, `toKind(flat→structured)`. Replaced `CipherDetail.startEdit()` 80-line manual field mapping with `cipherToFlat()`. Replaced `payload.buildKind()` 100-line if/else chain with `schema.toKind()`. 14 new vitest tests including roundtrip tests for all 8 types. Single source of truth for field name mappings (was 3-file implicit contract). `AddEditCipherForm.jsx` still uses 8 `<Show>` blocks for field rendering: schema-driven form rendering is future work.
+Created `lib/cipherSchema.js` with schemas for all 8 cipher types. Each schema defines: `fields[]`, `fromKind(structured→flat)`, `toKind(flat→structured)`. Replaced `CipherDetail.startEdit()` 80-line manual field mapping with `cipherToFlat()`. Replaced `payload.buildKind()` 100-line if/else chain with `schema.toKind()`. Vitest tests include roundtrip tests for all 8 types. Single source of truth for field name mappings (was 3-file implicit contract). `AddEditCipherForm.jsx` still uses 8 `<Show>` blocks for field rendering: schema-driven form rendering is future work.
 
 #### Future Work
 
@@ -809,7 +809,7 @@ CLI chains profile + preferences into `VaultCreator` builder before `execute()`.
 
 ### D19-bis. Phase 6 Multi-Vault Switching (2026-06-17; DONE)
 
-See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acceptance criteria. Implemented in `crates/baluard-daemon/src/host.rs` + 11 integration tests in `crates/baluard-daemon/tests/phase6_switching.rs`. The keep-unlocked / switch-pointer model replaces the pre-Phase 6 single `Arc<VaultState>`:
+See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acceptance criteria. Implemented in `crates/baluard-runtime/src/host.rs` + integration tests in `crates/baluard-daemon/tests/phase6_switching.rs`. The keep-unlocked / switch-pointer model replaces the pre-Phase 6 single `Arc<VaultState>`:
 
 - `VaultHost` wraps a single `RwLock<VaultHostInner>` over `vaults: HashMap<String, Arc<VaultState>>` + `active: Option<String>`. One lock guards both (no two-lock race; the `active`-is-in-the-map invariant is provable).
 - `vaults.switch` is a pointer flip: validate slug + set `active` under one write lock, touch registry `last_opened` OUTSIDE the lock. No zeroization, no token change.
@@ -873,7 +873,7 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 
 **Files:**
 - `crates/baluard-core/src/bridge/{mod,pairing,token}.rs`: pairing + bridge token
-- `crates/baluard-daemon/src/bridge.rs`: bridge routes + allowlist enforcement
+- `crates/baluard-runtime/src/bridge.rs`: bridge routes + allowlist enforcement
 - `crates/baluard-nmh/`: native messaging host binary
 - `browser/{shared,chrome,firefox}/`: MV3 extension codebases (shared 95%, target wrappers)
 - `desktop/src/components/BridgeTab.jsx`: paired-extension management UI

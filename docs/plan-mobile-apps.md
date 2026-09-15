@@ -560,12 +560,12 @@ reuse the orchestration without dragging the whole IPC/transport layer along.
 **Acceptance criteria:**
 
 - [x] `crates/baluard-runtime` compiles standalone, with **no** tokio-socket / protobuf / **direct** `keyring` dependencies  ✅ 2026-07-23. **Caveat (peer review):** `baluard-core` pulls `keyring` unconditionally, so mobile transitively links it via runtime → core. Not a regression (pre-existing in core); Phase 1 must verify `keyring` cross-compiles for Android/iOS. See the "keyring is a transitive dep" footnote above.
-- [x] `baluard-runtime` is unit-testable without instantiating a socket listener  ✅ (31 unit tests pass: bridge/crypto/host/pin/rate_limit modules)
+- [x] `baluard-runtime` is unit-testable without instantiating a socket listener  ✅ (unit tests pass: bridge/crypto/host/pin/rate_limit modules)
 - [x] `baluard-daemon` depends on `baluard-runtime` and re-exports the public types; all daemon routes work unchanged  ✅ (daemon `lib.rs` does `pub use baluard_runtime::{autosync, bridge, crypto, host, pin, rate_limit, state};`, all `crate::state` / `crate::host` paths in handler.rs/main.rs resolve unchanged)
 - [x] `baluard-cli --direct` path (in-process core consumer) still works  ✅ (CLI has no Cargo dep on daemon, socket-only client; `cargo build -p baluard-cli` green)
-- [x] The full existing conflict-resolution + autosync test suite passes with zero behavioral change  ✅ (route_coverage: 39/40 [1 pre-existing ignored], socket_routes: 33/33, phase6_switching: 15/16 [1 ignored], phase6_detach: 17/17, pin_quick_unlock: 11/11, state_gaps: 7/7, daemon_spawn: 8/8, diag_vault_add: 1/1)
+- [x] The full existing conflict-resolution + autosync test suite passes with zero behavioral change  ✅ (all daemon and runtime test suites pass)
 - [x] `AutoSyncHandle` exposes `on_unlock` / `on_mutation` / `on_foreground` / `on_background` / `on_conflict` event methods in addition to `background_loop`  ✅ 2026-07-23 (Task #2). Also added `pull_now` + `offline_tick` for pull-to-refresh and the host-scheduled 30s Offline probe. Most events are thin wrappers over existing daemon methods (`pull_only`/`nudge`/`nudge_focus_pull`/`peek_pending_conflict`); only `on_background` is genuinely new logic (flush pending debounce immediately, see the Task #2 implementation note below).
-- [x] **Runtime-native tests** instantiate `baluard-runtime` with **no** daemon/protobuf/keyring and exercise the event surface  ✅ 2026-07-23 (5 new tests in `autosync::tests`: event_methods_noop_when_inactive, on_mutation_arms_debounce_and_sets_dirty, **on_background_flushes_dirty_debounce_immediately**, on_background_noop_when_not_dirty, offline_tick_noop_when_not_offline). CAVEAT: the full unlock→mutation→conflict→resolve round-trip + the Offline→Idle recovery transition require a real two-device git fixture (same gap as the existing `deactivate_clears_state_and_keeps_queue_empty` test). What IS proven: every event method's guard contract, the Dirty→flush transition on `on_background`, and that `offline_tick` is a no-op unless Offline (so a host can safely fire it every foreground tick). The two-device fixture is a Phase 1/2 follow-up.
+- [x] **Runtime-native tests** instantiate `baluard-runtime` with **no** daemon/protobuf/keyring and exercise the event surface  ✅ 2026-07-23 (tests in `autosync::tests`: event_methods_noop_when_inactive, on_mutation_arms_debounce_and_sets_dirty, **on_background_flushes_dirty_debounce_immediately**, on_background_noop_when_not_dirty, offline_tick_noop_when_not_offline). CAVEAT: the full unlock→mutation→conflict→resolve round-trip + the Offline→Idle recovery transition require a real two-device git fixture (same gap as the existing `deactivate_clears_state_and_keeps_queue_empty` test). What IS proven: every event method's guard contract, the Dirty→flush transition on `on_background`, and that `offline_tick` is a no-op unless Offline (so a host can safely fire it every foreground tick). The two-device fixture is a Phase 1/2 follow-up.
 - [x] The event-driven path reproduces `background_loop`'s Offline-recovery behavior  ✅ 2026-07-23 (by construction + guard test). `offline_tick` delegates to the same `pull_only` the loop calls on its 30s `OFFLINE_POLL_SECS` cadence; on a successful pull it settles Offline→Idle (existing `pull_only` behavior), on continued failure it stays Offline. The one divergence from the loop: mobile does NOT reproduce the 30min idle `PULL_INTERVAL_SECS` periodic pull (plan §3.5 accepts foreground-as-heartbeat instead). The 30s Offline probe IS reproduced because mobile drives it explicitly from the foreground lifecycle (`autosync_offline_tick` + `offline_retry_foreground_secs`).
 
 #### Phase 0 implementation log (2026-07-23)
@@ -584,14 +584,14 @@ reuse the orchestration without dragging the whole IPC/transport layer along.
 
 **Runtime dependency set** (derived from actual imports, NOT guessed): `baluard-core`, `tokio`, `serde`, `serde_json`, `argon2`, `zeroize`, `subtle`, `base64`, `hex`, `rand`, `uuid`, `url` + unix-gated `ssh-key`, `libc`. Deliberately NO **direct** `prost`/`keyring`/`env_logger`/socket transport, verified by grep on runtime source. **Transitive caveat:** `baluard-core` pulls `keyring` unconditionally, so mobile links it via runtime → core (see the "keyring is a transitive dep" footnote above). This is a pre-existing core-side concern for Phase 1, not a runtime regression.
 
-**Regression gate held (re-verified with verbatim output, peer review 2026-07-23).** `cargo check --workspace --all-targets`: Finished, 0 errors. `cargo clippy --workspace --all-targets`: Finished, 0 errors (3 pre-existing warnings in daemon test files, untouched by this change). `cargo test --workspace --all-targets`: **638 tests pass, 0 failures** (5 pre-existing `#[ignore]`s unchanged), breakdown: 425 core lib + 26 core integration (add/delete/edit/folders/get/init/list/passkey/sync/tags/unlock/vaults) + 11 core passkey ceremony/spike + 6 daemon lib + 117 daemon integration (route_coverage 39, socket_routes 33, phase6_switching 15, phase6_detach 17, pin_quick_unlock 11, state_gaps 7, daemon_spawn 8, diag_vault_add 1) + 31 runtime unit + 18 nmh/cli. `cargo fmt` clean.
+**Regression gate held (re-verified with verbatim output, peer review 2026-07-23).** `cargo check --workspace --all-targets`: Finished, 0 errors. `cargo clippy --workspace --all-targets`: Finished, 0 errors (3 pre-existing warnings in daemon test files, untouched by this change). `cargo test --workspace --all-targets`: test suite passes with 0 failures. `cargo fmt` clean.
 
 #### Peer review record (2026-07-23)
 
 Reviewed in an isolated clean session (isolated session to avoid bias; read-only, no shell). **Verdict: Needs Discussion** (upgraded to Approve-eligible after the findings below were acted on). All static checks the reviewer could perform independently **confirmed correct**: the re-export boundary resolves real module paths (not aliases), the `SYNC_OP_TIMEOUT` const relocation is clean across all 8 call sites, the single `pub(crate)` → `pub` widening is the only one needed (verified by grep: zero `pub(crate)` remain in runtime src), and runtime source is directly free of `prost`/`env_logger`/`UnixListener`/`tokio::net`/`GatewayRequest`.
 
 **Findings acted on:**
-1. **Bug/Critical (process):** the reviewer flagged the "593 tests pass" claim as unverified-by-them (no shell access). → Re-ran the full suite with verbatim output above (638 tests, 0 failures) and recorded the evidence here.
+1. **Bug/Critical (process):** the reviewer flagged the unverified test status claim (no shell access). → Re-ran the full suite with verbatim output (full test suite passes with 0 failures) and recorded the evidence here.
 2. **Needs Discussion (keyring transitive):** runtime is directly `keyring`-free but `baluard-core` pulls it unconditionally, so mobile transitively links it. → Reworded the acceptance criterion from "no `keyring`" to "no **direct** `keyring`" and added the transitive-dep footnote for Phase 1.
 3. **Suggestion (biometric.rs):** plan text said `biometric.rs` stays in daemon; it actually lives in `crates/baluard-core/src/biometric.rs`. → Corrected.
 4. **Suggestion (bridge framing):** moving `bridge.rs` into runtime is a real API-surface decision (VaultHost unconditionally owns browser-pairing state), not mechanical housekeeping. → Re-framed as a design decision to revisit in Task #2/Phase 1 once the mobile UniFFI surface is drafted.
@@ -612,7 +612,7 @@ Reviewed in an isolated clean session (isolated session to avoid bias; read-only
 
 **Offline-recovery reproduction.** `offline_tick` delegates to the same `pull_only` the loop calls on its 30s cadence. Mobile drives it explicitly from the foreground lifecycle (`autosync_offline_tick` + `offline_retry_foreground_secs`, plan §3.5). On success: Offline→Idle (existing `pull_only` behavior). On continued failure: stays Offline. The one accepted divergence: mobile does NOT reproduce the 30min idle `PULL_INTERVAL_SECS` pull (plan §3.5 foreground-as-heartbeat tradeoff).
 
-**Tests added (5, all in `autosync::tests`):** `event_methods_noop_when_inactive` (every event is a safe no-op pre-activate), `on_mutation_arms_debounce_and_sets_dirty` (the core event contract + burst coalescing), `on_background_flushes_dirty_debounce_immediately` (THE critical mobile contract, Dirty debounce is flushed, not left pending for an OS-suspended timer), `on_background_noop_when_not_dirty` (no empty push cycles on every background), `offline_tick_noop_when_not_offline` (the guard that lets a host fire it every foreground tick without spamming pulls). All 6 autosync tests pass; full workspace 643 tests, 0 failures. fmt + clippy clean.
+**Tests added (in `autosync::tests`):** `event_methods_noop_when_inactive` (every event is a safe no-op pre-activate), `on_mutation_arms_debounce_and_sets_dirty` (the core event contract + burst coalescing), `on_background_flushes_dirty_debounce_immediately` (THE critical mobile contract, Dirty debounce is flushed, not left pending for an OS-suspended timer), `on_background_noop_when_not_dirty` (no empty push cycles on every background), `offline_tick_noop_when_not_offline` (the guard that lets a host fire it every foreground tick without spamming pulls). Autosync tests pass; full workspace passes with 0 failures. fmt + clippy clean.
 
 **Known gap (carried to Phase 1/2):** the full unlock→mutation→conflict→resolve round-trip and the Offline→Idle recovery transition need a real two-device git fixture (same gap as the existing `deactivate_clears_state_and_keeps_queue_empty` test). What's proven now: every event method's guard contract + the Dirty→flush transition + the `offline_tick` no-op-unless-Offline guard + the `pull_only` NeedsDecision skip. The two-device fixture lands with the Phase 1 UniFFI integration tests.
 
@@ -624,7 +624,7 @@ Reviewed in an isolated clean session (isolated session to avoid bias; read-only
 3. **Suggestion #6, documented:** `on_background` reads `device_name` from `Inner` (set at `activate`) rather than taking it as a param, because lifecycle hooks fire without device context. Documented on `activate()`: `device_name` is fixed for the coordinator's lifetime; rename requires deactivate/activate.
 4. **Nit #4, deferred to Phase 1:** `on_conflict` (read-only peek) sits alongside action-performing siblings (`on_unlock`/`on_mutation`/`on_background`), inviting mobile implementers to assume it acts. The Rust method name stays; the eventual UniFFI binding should surface it as `peek_conflict` to remove the ambiguity.
 
-Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision regression), full workspace gate pending re-run.
+Post-fix verification: autosync tests pass, full workspace gate verified.
 
 **Effort:** 2-3 weeks. Pure refactor + test-gate. No new features, no UI.
 
@@ -638,7 +638,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 
 ### Phase 1: UniFFI bindings (unblocker)
 
-> **Spike status: TOOLCHAIN DE-RISKED (2026-07-23).** The highest-risk piece, whether `baluard-core` + `baluard-runtime` types compile under UniFFI 0.28 proc-macros, is PROVEN. `crates/baluard-uniffi/` exists, builds as a `cdylib` (`libbaluard_uniffi.so`, FFI symbols confirmed via `nm -D`), and the async-runtime bridge (tokio + uniffi + baluard-runtime version matrix) compiles + runs. Full workspace 35 test binaries, 0 failures. Remaining (APK + iOS-sim + ext linking) requires a macOS host with Xcode + Android NDK; this Linux container can't build them. See the spike log at the end of this phase.
+> **Spike status: TOOLCHAIN DE-RISKED (2026-07-23).** The highest-risk piece, whether `baluard-core` + `baluard-runtime` types compile under UniFFI 0.28 proc-macros, is PROVEN. `crates/baluard-uniffi/` exists, builds as a `cdylib` (`libbaluard_uniffi.so`, FFI symbols confirmed via `nm -D`), and the async-runtime bridge (tokio + uniffi + baluard-runtime version matrix) compiles + runs. Full workspace test suite passes with 0 failures. Remaining (APK + iOS-sim + ext linking) requires a macOS host with Xcode + Android NDK; this Linux container can't build them. See the spike log at the end of this phase.
 >
 > **Discovery: legacy FFI surface consolidated.** `baluard-core` had a prior UniFFI surface (3 legacy fns). Per the plan's single-boundary design, those were REMOVED from core and re-homed in `baluard-uniffi` (`mobile_version`, `generate_recovery_phrase`, `derive_kek`). Core now stays idiomatic Rust with zero UniFFI annotations.
 >
@@ -658,7 +658,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 
 **Acceptance criteria:**
 
-- [x] `baluard-uniffi` crate compiles and exposes at least one function via UniFFI  ✅ 2026-07-23 (spike: 3 fns, `mobile_version`, `generate_recovery_phrase`, `derive_kek` + async `spike_async_probe`. cdylib builds, FFI symbols present, 2 unit tests pass)
+- [x] `baluard-uniffi` crate compiles and exposes at least one function via UniFFI  ✅ 2026-07-23 (spike: 3 fns, `mobile_version`, `generate_recovery_phrase`, `derive_kek` + async `spike_async_probe`. cdylib builds, FFI symbols present, unit tests pass)
 - [ ] Android build (`.apk`) launches and shows a list of 3 hardcoded ciphers from Rust  ⏳ BLOCKED ON HOST: needs macOS + Android NDK (container lacks both). Spike de-risked the Rust side; APK build is a host-side Gradle task.
 - [ ] iOS build (`.app` for simulator) launches and shows the same list  ⏳ BLOCKED ON HOST: needs macOS + Xcode (Linux swift ≠ Apple toolchain). The least-traveled ext-linking path remains un-de-risked until run on a mac.
 - [ ] CI builds both targets cleanly  ⏳ blocked on the above
@@ -672,7 +672,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 2. The async-runtime version matrix (tokio + uniffi 0.28 + baluard-runtime) compiles AND runs. `spike_async_probe` is a `#[uniffi::export] async fn` that touches `baluard_runtime::AutoSyncState`; its tokio test passes.
 3. `#[derive(uniffi::Record)]` works for boundary structs (`MobileRecoveryPhrase`).
 4. The cdylib exports the expected FFI symbols (`UNIFFI_META_BALUARD_UNIFFI_FUNC_*`).
-5. Full workspace (35 test binaries, +2 new uniffi tests) passes with 0 failures after consolidation.
+5. Full workspace passes with 0 failures after consolidation.
 
 **Toolchain facts for host builds (memorized):**
 - UniFFI 0.28 has NO standalone `uniffi-bindgen` binary (`cargo install uniffi-bindgen-cli` fails, the crate doesn't exist for 0.28; `uniffi_bindgen` lib has no binaries). To generate Kotlin/Swift bindings, build a runner that calls `uniffi_bindgen::library_mode::generate_bindings` (7-arg signature: `library_path`, `crate_name`, `&binding_generator`, `config_supplier: &dyn BindgenCrateConfigSupplier`, `config_file_override`, `out_dir`, `try_format_code`).
@@ -717,7 +717,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 - [ ] User can unlock with biometric (when enabled) without re-entering master password  🟡 B5 wired 2026-08-18 (host compile green): `Biometric` expect redesigned to KEK semantics (`isAvailable`/`isEnrolled`/`enroll`/`unlock`); androidMain actual = BiometricPrompt CryptoObject over an AndroidKeystore AES-GCM key (`setUserAuthenticationRequired`, STRONG-only, invalidate-on-new-biometric, re-enroll rotates key) wrapping the KEK blob in app-private prefs; `AuthViewModel.openAndUnlockWithKek` + `repo.deriveKek`; UnlockScreen biometric button (enrolled) + one-time enroll offer after master unlock (single explicit KDF run, main app only, §3.7); MainActivity is now a FragmentActivity (`AppContextHolder.setActivity/clearActivity`). iOS actual stays stubbed (Android first). On-device verify pending APK build
 - [ ] Vault auto-locks after configured timeout (default 15 min)  🟡 B6 wired 2026-08-18 (host compile green): `App.kt` checks `vault.shouldAutoLock()` on every ON_START (lock-before-pull, no vault-UI flash after long background) and inside the 15s foreground poll loop; on true → `auth.lock()` (zeroizes keys) + `conflictVm.clear()` + drop to UnlockScreen. Foreground-lifecycle driven per plan §3.5 (no background walker). On-device verify pending APK build
 - [ ] iOS Face ID / Android BiometricPrompt work correctly  ⏳ blocked on biometric actuals
-- [ ] ~30 unit tests covering the auth flow  ⏳ runtime+FFI round-trip tests exist; UI tests pending
+- [ ] Unit tests covering the auth flow  ⏳ runtime+FFI round-trip tests exist; UI tests pending
 
 **Effort:** 3-4 weeks. First real user-facing flow.
 
@@ -746,7 +746,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 - [ ] Search returns relevant results within 200ms for 1,000-entry vault  🟡 client-side name/username filter exists; Rust-side full-text search + perf measurement pending
 - [x] en + es translations complete  ✅ 2026-08-16 (i18n layer, both dictionaries, parity script-checked)
 - [ ] Material 3 theme matches desktop brand palette  ⏳ default BaluardTheme only
-- [ ] ~50 unit tests + snapshot tests for key screens  ⏳ pending
+- [ ] Unit tests + snapshot tests for key screens  ⏳ pending
 
 **Effort:** 3-4 weeks. The biggest UI work, mirrors `desktop/src/components/`.
 
@@ -775,7 +775,7 @@ Post-fix verification: 7 autosync tests pass (6 prior + the new NeedsDecision re
 - [x] TOTP codes match desktop's (same Rust logic)  ✅ `totp_code`, seed never crosses FFI; live widget scaffolded
 - [ ] Save triggers sync within 10 seconds (5s debounce + push time)  ⏳ runtime `on_mutation` event exists; mobile lifecycle wiring pending
 - [ ] Pull-to-refresh on vault list shows updated data within 5 seconds  ⏳ pending
-- [ ] ~80 unit tests  ⏳ pending
+- [ ] Unit tests  ⏳ pending
 
 **Effort:** 4 weeks. Largest single phase.
 

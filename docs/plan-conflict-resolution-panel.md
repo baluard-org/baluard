@@ -1,7 +1,7 @@
 # Conflict Resolution Panel: failure modes + design contract
 
 Status: **Phase 2 implemented (2026-07-02).** Backend wired: engine integration (`run_sync_cycle_with_resolver`, `ConflictResolution`, `NeedsDecision`, `finalize_conflicts`), daemon decrypt + `merge_ciphers` (`conflict_decrypt_and_merge`), `keep_both` (`conflict_resolve_keep_both`), frontend real IPC (`conflictFlow.js`, AutoSyncContext poll, panel resolver). Open: stuck-queue escape (see below).
-Related: `crates/baluard-core/src/sync/engine.rs`, `crates/baluard-core/src/sync/conflict.rs`, `crates/baluard-daemon/src/state.rs`, `crates/baluard-daemon/src/autosync.rs`, `desktop/src/components/ConflictResolutionPanel.jsx`, `desktop/src/lib/conflictFlow.js`.
+Related: `crates/baluard-core/src/sync/engine.rs`, `crates/baluard-core/src/sync/conflict.rs`, `crates/baluard-runtime/src/state.rs`, `crates/baluard-runtime/src/autosync.rs`, `desktop/src/components/ConflictResolutionPanel.jsx`, `desktop/src/lib/conflictFlow.js`.
 
 ## Goal
 

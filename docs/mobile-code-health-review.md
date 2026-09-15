@@ -295,7 +295,7 @@ Executed:
 8. Tests: new EditCipherPayloadTest (merge-on-save contract: unmodeled fields survive, cleared fields send null, new entries omit id); StubVault extended for interface members it had missed.
 9. Onboarding hero rewritten; first FeatureRow is now "Encrypted on your device"; git named plainly in the sync feature line.
 
-Verification: `:shared:compileDebugKotlinAndroid` PASS; `:shared:testDebugUnitTest` PASS (all suites, incl. the new payload test); desktop `vite build` PASS + vitest 229/229 PASS.
+Verification: `:shared:compileDebugKotlinAndroid` PASS; `:shared:testDebugUnitTest` PASS (all suites, incl. the new payload test); desktop `vite build` PASS + vitest PASS.
 
 Known blockers, pre-existing, unrelated to this pass:
 

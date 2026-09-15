@@ -849,21 +849,21 @@ e2e: build-release
 	echo "=== INIT ===" && printf "testpass123\ntestpass123\n" | target/release/{{ binary }} init --vault-path "$VAULT"
 	echo ""
 	echo "=== DAEMON ===" && target/release/{{ daemon }} --vault-path "$VAULT" --socket "$SOCK" &>/tmp/baluard-daemon.log & DAEMON_PID=$!; sleep 1
-	echo "=== PING ===" && baluard ping
+	echo "=== PING ===" && $CLI ping
 	echo ""
-	echo "=== UNLOCK ===" && baluard unlock <<< "testpass123"
+	echo "=== UNLOCK ===" && $CLI unlock <<< "testpass123"
 	echo ""
-	echo "=== ADD ===" && baluard add --name "Test" --username "user@test.com" --password "secret123"
-	UUID=$(baluard list 2>&1 | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+	echo "=== ADD ===" && $CLI add login --name "Test" --username "user@test.com" --password "secret123"
+	UUID=$($CLI list 2>&1 | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
 	echo "UUID: $UUID"
 	echo ""
-	echo "=== GET ===" && baluard get "$UUID" 2>&1
+	echo "=== GET ===" && $CLI get "$UUID" 2>&1
 	echo ""
-	echo "=== DELETE ===" && baluard delete "$UUID"
+	echo "=== DELETE ===" && $CLI delete "$UUID"
 	echo ""
-	echo "=== LIST (empty) ===" && baluard list
+	echo "=== LIST (empty) ===" && $CLI list
 	echo ""
-	echo "=== LOCK ===" && baluard lock
+	echo "=== LOCK ===" && $CLI lock
 	echo ""
 	kill $DAEMON_PID 2>/dev/null; wait $DAEMON_PID 2>/dev/null || true
 	rm -f "$SOCK" "${SOCK%.sock}.tok"

@@ -18,9 +18,9 @@ We are **not** building a FIDO2 server (no cloud). Baluard is a **software authe
 - v1: initial research and analysis
 - v2: incorporated the first peer review. Major changes: `passkey-rs` evaluation moved to Phase 0 (was deferred); Linux user verification strategy decided (master password re-prompt); conditional mediation added as hard Phase 2 scope; counter git-sync `max()` strategy added; extension `world: "MAIN"` for CSP-strict sites; mobile architecture committed to UniFFI library (no daemon process on mobile); `PasskeyUseModal` deferred to Phase 2; local `webauthn-rs` RP test harness added as hard deliverable.
 - v3: incorporated the second peer review. Approved with fixes. Changes: removed `discoverable: bool` field (invariant is not data); removed contradictory `web_accessible_resources` line in §4.7; added explicit `residentKey: "required"` + `requireResidentKey: true` + `userVerification: "required"` to `authenticatorSelection`; made `coset`/`ciborium` deps conditional on `passkey-rs` rejection; made `uniffi` interface synchronous; added fresh-KDF-verify constraint to Linux UV substitute; rewrote Phase 3 scope to remove stale "Daemon IPC over local network" text contradicting the UniFFI decision; clarified counter race risk as inherent to all synced passkey implementations (not Baluard-specific).
-- v4: Phase 0 implemented and peer-reviewed. `passkey-rs` 0.5.x adopted (ADR 0007). ES256 only (no EdDSA). 342 tests pass.
-- v5: Phase 1 implemented (ceremony wiring, daemon IPC, CLI, test harness). Two mid-point peer reviews + comprehensive Phase 0+1 review. 363 tests pass. All actionable findings fixed. Phase 2 prerequisites documented.
-- v6 (2026-06-12): **Model rework**. Removed `CipherType::Passkey` and `CipherKind::Passkey(PasskeyData)`. Passkeys now embedded inside `LoginData::fido2_credentials: Option<Vec<PasskeyData>>` (Bitwarden-compatible). Added `PasskeyData.name: Option<String>` for per-credential naming. `passkey.delete` and `passkey.rename` now take `credential_id` (not just cipher_id). `passkey.list` response gained `login_name`, `has_password`, `pk_name` for context. Export uses ISO 8601 for `creation_date` and `URL_SAFE_NO_PAD` for `user_handle`. Peer review of rework: 3 blockers + 3 high + 2 medium + 2 low + 2 feature gaps, all fixed. 360 tests pass.
+- v4: Phase 0 implemented and peer-reviewed. `passkey-rs` 0.5.x adopted (ADR 0007). ES256 only (no EdDSA).
+- v5: Phase 1 implemented (ceremony wiring, daemon IPC, CLI, test harness). Two mid-point peer reviews + comprehensive Phase 0+1 review. All actionable findings fixed. Phase 2 prerequisites documented.
+- v6 (2026-06-12): **Model rework**. Removed `CipherType::Passkey` and `CipherKind::Passkey(PasskeyData)`. Passkeys now embedded inside `LoginData::fido2_credentials: Option<Vec<PasskeyData>>` (Bitwarden-compatible). Added `PasskeyData.name: Option<String>` for per-credential naming. `passkey.delete` and `passkey.rename` now take `credential_id` (not just cipher_id). `passkey.list` response gained `login_name`, `has_password`, `pk_name` for context. Export uses ISO 8601 for `creation_date` and `URL_SAFE_NO_PAD` for `user_handle`. Peer review of rework: 3 blockers + 3 high + 2 medium + 2 low + 2 feature gaps, all fixed.
 
 ---
 
@@ -367,7 +367,7 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 
 ### Phase 0: Schema + import + decision gates ✅ COMPLETE
 
-**Completed**: 2026-06-12. 342 tests pass at v5. **Reworked to embedded model in commit 823d538 (360 tests pass)**. Peer-reviewed by external peer review (Phase 0 + Phase 1: 3 rounds). Then again after rework: 12 findings, all fixed in commit ad3e1e0.
+**Completed**: 2026-06-12. **Reworked to embedded model in commit 823d538**. Peer-reviewed by external peer review (Phase 0 + Phase 1: 3 rounds). Then again after rework: 12 findings, all fixed in commit ad3e1e0.
 
 #### 0.1 Schema (`types.rs`) ✅
 - **`LoginData::fido2_credentials: Option<Vec<PasskeyData>>`** added (Bitwarden-compatible)
@@ -388,7 +388,7 @@ No new telemetry. Passkey operations are logged at Debug level only when `BALUAR
 
 #### 0.3 passkey-rs Spike ✅
 - Workspace deps added: `passkey 0.5`, `webauthn-rs 0.5`, `webauthn-rs-proto 0.5`, `webauthn-rs-core 0.5`
-- Spike test in `crates/baluard-core/tests/passkey_spike.rs` (2 tests: registration + assertion round-trip through webauthn-rs)
+- Spike test in `crates/baluard-core/tests/passkey_spike.rs` (registration + assertion round-trip through webauthn-rs)
 - **Verdict: `passkey-rs` 0.5.x adopted**: documented in `docs/plan-passkey-rs-evaluation.md`
 - ES256 only (passkey-rs limitation; no EdDSA support in v0.5.x)
 - JSON serde bridge between passkey-rs and webauthn-rs types works cleanly
@@ -625,7 +625,7 @@ These gaps were identified during the Phase 0+1 comprehensive peer review. None 
 - `crates/baluard-core/src/import/bw_json.rs`: typed passkey parse ✅
 - `crates/baluard-core/src/import/export.rs`: emit passkey in BW JSON ✅
 - `crates/baluard-daemon/src/handler.rs`: add passkey routes (no `passkey_counter_increment`; use `update_cipher`)
-- `crates/baluard-daemon/src/state.rs`: passkey state cache
+- `crates/baluard-runtime/src/state.rs`: passkey state cache
 - `desktop/src/lib/payload.js`: passkey payload builder
 - `desktop/src/lib/filters.js`: passkey category mapping
 - `desktop/src/i18n/locales/en.json` + `es.json`, new keys (Phase 1 only for create + list; use modal text in Phase 2)

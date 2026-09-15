@@ -2,10 +2,6 @@
 
 Compose Multiplatform (Android + iOS) client for Baluard.
 
-# Baluard mobile
-
-Compose Multiplatform (Android + iOS) client for Baluard.
-
 **Status: Android Phases 0-5 implemented.** The Rust FFI layer, Kotlin ViewModels, and Compose UI are complete and verified. Verification on host builds includes Kotlin metadata compile and Android packaging via `just android-apk`. Phase 6 (Android Autofill Service) and iOS credential extension are next.
 
 ## Structure

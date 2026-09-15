@@ -279,7 +279,7 @@ cd /tmp/uniffi-bindgen-runner && cargo build --release
   <repo>/crates/baluard-uniffi/src/uniffi.toml
 ```
 
-Expect `mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/baluard.kt`. Commit it.
+Bindgen outputs `baluard.kt`, which `regen-bindings.sh` renames to `baluard_uniffi.kt` (the committed binding at `mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/baluard_uniffi.kt`) to keep package imports stable. Commit it.
 
 > The runner uses `uniffi_bindgen::bindings::KotlinBindingGenerator`, note the
 > re-export at `bindings::`, **not** `bindings::kotlin::` (the `kotlin` submodule is

@@ -130,15 +130,15 @@ just desktop-debug
 
 ### Mobile (Android / iOS)
 
-The mobile target dirs (`desktop/src-tauri/gen/android`, `gen/ios`) are populated by `tauri android init` / `taura ios init`. Until those run, the `android/` and `ios/` outputs from `icon-gen` wait in `assets/app-icons/`. After init:
+The Android target directory lives under the Compose Multiplatform app at `mobile/androidApp/src/main/res/`. Deploy the generated Android mipmap icons directly:
 
 ```bash
-# Android
-cp -r assets/app-icons/android/mipmap-* desktop/src-tauri/gen/android/app/src/main/res/
+# Android (Compose Multiplatform app)
+cp -r assets/app-icons/android/mipmap-* mobile/androidApp/src/main/res/
 
-# iOS
+# iOS (Xcode asset catalog)
 cp assets/app-icons/ios/AppIcon-*.png assets/app-icons/ios/Contents.json \
-   desktop/src-tauri/gen/ios/Assets.xcassets/AppIcon.appiconset/
+   mobile/iosApp/Assets.xcassets/AppIcon.appiconset/
 ```
 
 ---

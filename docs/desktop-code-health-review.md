@@ -2,7 +2,7 @@
 
 Scope: `desktop/src` (SolidJS frontend), `desktop/src-tauri` (Rust shell), `desktop/src/i18n/locales`. Companion to `docs/mobile-code-health-review.md` (same method: mechanical sweeps first, then file-by-file read).
 
-Baseline at `e7e00a3`: vitest 229/229 green, `vite build` green. Every change in this pass must leave that true.
+Baseline at `e7e00a3`: vitest green, `vite build` green. Every change in this pass must leave that true.
 
 Method notes: unused-symbol counts come from ripgrep over `src` with tests and the defining file excluded; the i18n audit is a script that flattens both locale files and cross-checks every `t()` call site, `cipherSchema` label keys, and concatenated-key prefixes (`t("categories." + id)` style). Peer-review section at the end records what the reviewers found and what was accepted or withdrawn.
 

@@ -39,9 +39,9 @@ Behaviour which can be reasonably considered harassment will not be tolerated.
 ### Rust
 
 - `just test`: full suite (core + daemon + CLI + desktop-driver bits)
-- `just test-core`: `baluard-core` only (~400 tests, ~5s)
+- `just test-core`: `baluard-core` only
 - `just test-cli`: CLI integration tests (`crates/baluard-cli/tests/`)
-- `just test-nmh`: native messaging host tests (`crates/baluard-nmh/`, ~14 tests)
+- `just test-nmh`: native messaging host tests (`crates/baluard-nmh/`)
 - `just test-verbose`: pass `--nocapture` to see stdout
 
 CLI tests spawn the `baluard` binary via `assert_cmd` against a

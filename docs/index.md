@@ -22,7 +22,7 @@
 
 | Document | Description |
 |----------|-------------|
-| [Dev Setup & Workflow](dev-setup.md) | Prerequisites, platform-specific setup, build commands, testing (778 Rust tests + 229 desktop vitest tests + 96 browser vitest tests), troubleshooting |
+| [Dev Setup & Workflow](dev-setup.md) | Prerequisites, platform-specific setup, build commands, testing, troubleshooting |
 | [Mobile Dev Setup](mobile-dev-setup.md) | Android SDK, NDK, OpenJDK 17, and Gradle setup for mobile development |
 | [Progress](progress.md) | Implementation status, review history, pending work |
 | [Cover Commit Policy](threat-model.md#t14-cover-commit-correlation) | Timing-noise scheduling rules and rationale |
