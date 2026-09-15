@@ -18,7 +18,7 @@ import {
   visibleInputs,
   setNativeValue,
   fillLoginForm,
-} from "../src/content.js";
+} from "../src/autofill.js";
 
 function makeInput(type, attrs = {}) {
   const el = document.createElement("input");

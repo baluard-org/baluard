@@ -17,8 +17,8 @@ import {
   classifyDisconnect,
   buildError,
   senderUrl,
-  originOf,
 } from "../src/background.js";
+import { originOf } from "../src/url.js";
 
 describe("originOf (B1: fill-time origin binding)", () => {
   it("returns scheme+host+port", () => {

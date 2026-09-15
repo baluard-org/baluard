@@ -16,7 +16,7 @@
 // The icon shows on focus of username/password fields only — no continuous
 // form scanning, no fingerprintable page-load probing.
 
-import { fillLoginForm, isUsernameField, isTotpField, findTotpFields, setNativeValue } from "./autofill.js";
+import { fillLoginForm, isUsernameField, isTotpField, findTotpFields, setNativeValue, isVisible } from "./autofill.js";
 import { getSettings, normalizeClearSeconds } from "./settings.js";
 
 // Status mapping for the inline dropdown. Exported for unit tests (the
@@ -373,7 +373,7 @@ export function statusKeyFor(code) {
       if (
         el &&
         el.tagName === "INPUT" &&
-        isVisibleField(el) &&
+        isVisible(el) &&
         (isUsernameField(el) || isTotpField(el))
       ) {
         showIcon(el);
@@ -395,9 +395,7 @@ export function statusKeyFor(code) {
     (e) => {
       // Focus left login fields entirely (and is not our own UI) -> hide.
       if (targetInput && e.target !== targetInput && !host.contains(e.target)) {
-        const stillOnField = e.target === targetInput;
         if (
-          !stillOnField &&
           !(
             e.target &&
             e.target.tagName === "INPUT" &&
@@ -435,15 +433,6 @@ export function statusKeyFor(code) {
     toggleMenu();
   });
 
-  // Local copies of visibility helpers (autofill.js exports them for other
-  // bundles; duplicated here in the template only as needed).
-  function isVisibleField(el) {
-    if (!el || !el.getBoundingClientRect) return false;
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return false;
-    const style = window.getComputedStyle(el);
-    return style.display !== "none" && style.visibility !== "hidden";
-  }
 
   let statusTimer = null;
   function showStatus(text, anchorEl) {

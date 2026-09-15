@@ -7,15 +7,7 @@
 //
 // Field detection + fill logic lives in autofill.js (shared with inline.js).
 
-import {
-  fillLoginForm,
-  visibleInputs,
-  isTextLike,
-  isVisible,
-  setNativeValue,
-} from "./autofill.js";
-
-export { fillLoginForm, visibleInputs, isTextLike, isVisible, setNativeValue };
+import { fillLoginForm } from "./autofill.js";
 
 (() => {
   // Guard against double-injection in one frame.
