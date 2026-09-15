@@ -1,6 +1,7 @@
 import { render } from "solid-js/web";
 import { createSignal, Show, For, onMount } from "solid-js";
 import { getSettings, updateSettings, normalizeClearSeconds } from "./settings.js";
+import { originOf } from "./url.js";
 // ?inline gives the raw CSS string. It is rendered as a DYNAMIC <style>
 // child on purpose: Solid bakes STATIC template children into an HTML
 // string and entity-escapes them, which turned every "&" nesting selector
@@ -34,7 +35,6 @@ const STRINGS = {
     loading: "Loading…",
     activeVault: "Vault",
     retry: "Try again",
-    openApp: "Open the Baluard app",
     downloadApp: "Download the Baluard app",
     // Welcome (first run)
     welcome: "Welcome to Baluard",
@@ -65,7 +65,6 @@ const STRINGS = {
     errorTimeout: "Couldn't reach the Baluard app. Make sure it's running, then try again.",
     pairExpired: "The connection request expired. Please try again.",
     // Ready
-    search: "Search",
     noMatches: "No logins for this site",
     fill: "Fill",
     copyUsername: "Copy username",
@@ -93,7 +92,6 @@ const STRINGS = {
     loading: "Cargando…",
     activeVault: "Caja fuerte",
     retry: "Reintentar",
-    openApp: "Abrir la app de Baluard",
     downloadApp: "Descargar la app de Baluard",
     // Welcome (first run)
     welcome: "Te damos la bienvenida a Baluard",
@@ -124,7 +122,6 @@ const STRINGS = {
     errorTimeout: "No se pudo contactar con la app de Baluard. Asegúrate de que esté abierta e inténtalo de nuevo.",
     pairExpired: "La solicitud de conexión expiró. Vuelve a intentarlo.",
     // Ready
-    search: "Buscar",
     noMatches: "No hay inicios de sesión para este sitio",
     fill: "Rellenar",
     copyUsername: "Copiar usuario",
@@ -174,8 +171,8 @@ const [pairCode, setPairCode] = createSignal("");
 const ONBOARDED_KEY = "onboarded";
 // Last-known resting state, so reopening the popup shows something useful
 // instantly instead of flashing "Loading…" while we re-probe the SW/NMH.
-// Only resting states are cached (not-paired / no-daemon / locked / ready);
-// transient states (loading / connecting / welcome) are never cached.
+// Resting states are cached; "connecting" is cached too but only resumed
+// within the pairing TTL (see boot()). "loading" / "welcome" are never.
 const LAST_STATE_KEY = "last_state";
 const CACHEABLE_STATES = new Set(["not-paired", "no-daemon", "locked", "ready", "connecting"]);
 
@@ -237,7 +234,6 @@ function setStatePersisted(s) {
 }
 
 async function refresh(silent = false) {
-  console.log("[baluard] refresh silent=", silent);
   // Only show the loading spinner when we have nothing cached to show. When
   // `silent`, we keep the current (cached) resting state on screen while the
   // re-probe runs, so reopening the popup never flashes "Loading…".
@@ -311,8 +307,8 @@ async function dismissWelcome() {
 }
 
 async function connect() {
-  console.log("[baluard] connect() called");
   const code = pairCode().trim();
+  const browser = detectBrowser();
   if (!code) return;
   setStatePersisted("connecting");
   setError(null);
@@ -324,15 +320,13 @@ async function connect() {
     // Race against the daemon TTL so a never-approved ceremony can't wedge
     // the popup — the user gets a clear expiry instead of a spinner.
     await Promise.race([
-      send("bridge.pair_complete", { name: detectBrowser(), browser: detectBrowser(), code }),
+      send("bridge.pair_complete", { name: browser, browser, code }),
       timeout(PAIR_TTL_MS, "pair-timeout"),
     ]);
-    console.log("[baluard] pair_complete resolved OK -> refresh");
     // Paired! Mark onboarded + refresh into the ready state.
     await markOnboarded();
     refresh(true);
   } catch (e) {
-    console.log("[baluard] connect failed:", e.code, e.message);
     const strings = STRINGS[detectLocale()] || STRINGS.en;
     if (e.code === "pair-timeout") setError(strings.pairExpired);
     else if (/pair code/i.test(e.message || "")) setError(strings.wrongCode);
@@ -424,13 +418,7 @@ async function copyTotp(entry) {
   }
 }
 
-function originOf(url) {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return "";
-  }
-}
+
 
 // Clipboard via an offscreen document (service worker has no DOM). The
 // background.js handles the offscreen lifecycle; here we just post a message.
@@ -483,7 +471,6 @@ const PAIR_TTL_MS = 120_000;
 
 async function boot() {
   const cached = await getLastState();
-  console.log("[baluard] boot cached=", cached);
   if (cached.state) setState(cached.state);
   // Resume an in-flight pairing ceremony ONLY if still within the daemon's
   // TTL window. If the prior attempt expired (user closed the popup and the
@@ -496,7 +483,6 @@ async function boot() {
     // not-paired, the ceremony is done — skip reissuing and go straight to
     // refresh (lands on ready/locked). Only reissue if still not-paired.
     const still = await isStillUnpaired();
-    console.log("[baluard] isStillUnpaired=", still);
     if (still) {
       connect();
       return;

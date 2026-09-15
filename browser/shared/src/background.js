@@ -7,6 +7,9 @@
 // Per Decision 2: holds NO secrets in chrome.storage beyond transient request
 // IDs. The bridge token lives in the NMH's memory, never here.
 
+import { normalizeClearSeconds } from "./settings.js";
+import { originOf } from "./url.js";
+
 const NMH_HOST = "xyz.actitud.baluard"; // matches the host manifest `name`
 const MIN_NMH_VERSION = "0.1.0";
 
@@ -62,7 +65,6 @@ function connect() {
   // or times out, queued actions reject with the cannot-reach error.
   handshake = withTimeout(
     send("ping", {}).then((r) => {
-      console.log("[baluard] ping raw resp:", JSON.stringify(r));
       versionInfo = r;
       // ping's payload is a JSON string like {"nmh_version":"0.1.0",...}.
       let nmh = "0.0.0";
@@ -71,7 +73,6 @@ function connect() {
         const parsed = JSON.parse(raw);
         nmh = parsed.nmh_version || "0.0.0";
       } catch (_) {}
-      console.log("[baluard] parsed nmh_version:", nmh);
       if (compareVersions(nmh, MIN_NMH_VERSION) < 0) {
         versionSkew = true;
         console.error(
@@ -86,11 +87,9 @@ function connect() {
 }
 
 function onMessage(msg) {
-  console.log("[baluard-sw] onMessage", msg && msg.id, msg && msg.ok, msg && msg.code);
   if (!msg || msg.id == null) return;
   const entry = pending.get(msg.id);
   if (!entry) {
-    console.log("[baluard-sw] no pending entry for id", msg && msg.id);
     return;
   }
   pending.delete(msg.id);
@@ -202,17 +201,10 @@ function hostnameOf(url) {
   }
 }
 
-// B1: fill-time origin (scheme + host + port). A credential saved on
-// https://example.com must NOT fill on http://example.com — a network
-// attacker can serve the plain-HTTP page and read the typed password.
-// Content scripts compare this against location.origin (same definition).
-export function originOf(url) {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return "";
-  }
-}
+// B1: fill-time origin is scheme+host+port (originOf, shared in url.js).
+// A credential saved on https://example.com must NOT fill on
+// http://example.com — a network attacker can serve the plain-HTTP page
+// and read the typed password. Content scripts compare location.origin.
 
 async function handleInlineMatches(sender) {
   const url = senderUrl(sender);
@@ -458,29 +450,27 @@ const SETTINGS_KEY = "settings";
 
 // Read a boolean setting, default ON (mirrors DEFAULT_SETTINGS in
 // settings.js: absent key means enabled).
-async function settingEnabled(name) {
+async function readSettings() {
   try {
-    const settings = await chrome.storage.local
+    return await chrome.storage.local
       .get([SETTINGS_KEY])
       .then((r) => r[SETTINGS_KEY] || {});
-    return settings[name] !== false;
   } catch {
-    return true;
+    return {};
   }
 }
 
-// Clipboard auto-clear seconds (choices mirror settings.js
-// CLEAR_SECONDS_CHOICES; 0 = never). Self-contained validation on purpose:
-// background.js is copied verbatim into the Chrome dist (module service
-// worker, no bundler step), so it must not import settings.js.
-const CLEAR_CHOICES = [0, 10, 30, 60, 120];
+async function settingEnabled(name) {
+  const settings = await readSettings();
+  return settings[name] !== false;
+}
+
+// Clipboard auto-clear seconds, validated by settings.js
+// normalizeClearSeconds. background.js is esbuild-bundled (see
+// vite.config.js), so importing the shared helper is safe.
 async function getClipboardClearSeconds() {
   try {
-    const s = await chrome.storage.local
-      .get([SETTINGS_KEY])
-      .then((r) => r[SETTINGS_KEY] || {});
-    const n = Number(s.clipboardClearSeconds);
-    return CLEAR_CHOICES.includes(n) ? n : 60;
+    return normalizeClearSeconds((await readSettings()).clipboardClearSeconds);
   } catch {
     return 60;
   }
@@ -488,12 +478,7 @@ async function getClipboardClearSeconds() {
 
 async function syncInlineScript() {
   if (!chrome.scripting?.registerContentScripts) return; // API unavailable
-  let settings = {};
-  try {
-    settings = await chrome.storage.local.get([SETTINGS_KEY]).then((r) => r[SETTINGS_KEY] || {});
-  } catch {
-    settings = {};
-  }
+  const settings = await readSettings();
   // Default ON (settings.js DEFAULT_SETTINGS mirrors this).
   const enabled = settings.inlineAutofill !== false;
   try {

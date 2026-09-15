@@ -60,10 +60,8 @@ export function fillLoginForm(cred) {
 
   if (totpCode) fillTotpField(totpCode);
 
-  // Best-effort: submit the form if there's a submit button and the page
-  // seems to expect it (autofill UX). Defer to the user otherwise — many
-  // modern logins do client-side validation. We do NOT auto-submit; the
-  // user presses Enter. This is the safer default.
+  // Deliberately NO auto-submit: modern logins often do client-side
+  // validation; the user presses Enter when the page is ready.
 }
 
 export function visibleInputs(type) {
