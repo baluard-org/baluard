@@ -6,7 +6,7 @@
 
 > **Implementation note (2026-06-17):** Phases 1 through 6 and the provider selection UI are **Done**. This PRD is the original requirements record; for current implementation reality see `docs/plan-git-providers-multi-vault.md` and `docs/git-provider-apps-and-tokens.md` (provider app registration + token strategy).
 >
-> **Key divergences from this PRD:** (1) GitLab uses **device flow** as primary auth (it does NOT require `client_secret`, that claim in §5 was incorrect; GitLab supports public-client device flow since 17.9). (2) Codeberg uses **web-OAuth (auth-code + PKCE)** as primary, not PAT-only. (3) Providers use **raw `reqwest`**, not the `gitlab`/`forgejo-api` crates named in §5. (4) PAT is an Advanced Options fallback for all three, not the primary path for GitLab/Codeberg.
+> **Key divergences from this PRD:** (1) GitLab uses **device flow** as primary auth (it does NOT require `client_secret`, that claim in §5 was incorrect; GitLab supports public-client device flow since 17.9). (2) Codeberg uses **web-OAuth (auth-code + PKCE)** as primary, not PAT-only. (3) Providers use **raw `reqwest`**, not the `gitlab`/`forgejo-api` crates named in §5. (4) PAT is an Advanced Options fallback for all three, not the primary path for GitLab/Codeberg. (5) The baluard- repo-name prefix is enforced by normalization (2026-09-15): every slug/repo entry point runs slug::normalize_slug(), so a user-typed personal becomes baluard-personal everywhere. The PRD wording letting users remove the prefix is superseded.
 
 ---
 

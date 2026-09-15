@@ -6,7 +6,7 @@
 
 Durable decisions that apply across all phases:
 
-- **Slug**: replaces `subtitle` in `VaultSettings`. Lowercase, `a-z0-9`, hyphens, 4-63 chars. `baluard-` prefix suggested but not enforced. Immutable after creation.
+- **Slug**: replaces `subtitle` in `VaultSettings`. Lowercase, `a-z0-9`, hyphens, 4-63 chars. `baluard-` prefix ENFORCED (2026-09-15): every entry point (CLI init, `vault.create` IPC, clone, `vault.setup_sync`, `provider.create_repo`) runs `slug::normalize_slug()`, which auto-prepends the prefix — users type "personal", the slug and the remote repo become "baluard-personal". Normalization, never rejection. The `.baluard` marker (slug + vault_id) remains the identity anchor; the repo name is recognition, not identity. Immutable after creation.
 - **`.baluard` marker**: JSON at vault root (`{ version, vault_id, slug }`). Tracked in git. Machine-readable detection mechanism.
 - **Local layout**: `<data_dir>/vaults/<slug>/` for managed vaults. Imported vaults stay at original path. Registry stores absolute paths.
 - **Registry**: `<data_dir>/registry.json`. Atomic writes (temp + rename). Cross-process locking via `fd-lock`.
@@ -76,7 +76,7 @@ Define the `ForgeProvider` trait with `async fn` methods. Implement `DeviceFlowS
 
 ### What to build
 
-Implement GitHub `list_repos`, `create_private_repo`, `detect_vault_repos` (search API: `filename:.baluard+user:USERNAME`), `get_clone_url`. Add git2-rs `RemoteCallbacks::credentials()` callback that reads token from keyring. Add daemon routes: `provider.repos`, `provider.vault_repos`, `provider.create_repo`, `vault.setup_sync`. Implement repo creation with private visibility verification. Wire "Enable sync" toggle in vault creation wizard: on toggle, show provider picker, auth flow, repo name field (defaults to slug), create + first push. Token refresh for provider token (no-op for GitHub, but plumbing exists).
+Implement GitHub `list_repos`, `create_private_repo`, `detect_vault_repos` (PRIMARY: paginate OWNED repos + probe `.baluard` per repo; SUPPLEMENTARY: search API `filename:.baluard+user:USERNAME`, deduped), `get_clone_url`. Add git2-rs `RemoteCallbacks::credentials()` callback that reads token from keyring. Add daemon routes: `provider.repos`, `provider.vault_repos`, `provider.create_repo`, `vault.setup_sync`. Implement repo creation with private visibility verification. Wire "Enable sync" toggle in vault creation wizard: on toggle, show provider picker, auth flow, repo name field (defaults to slug; normalized to the enforced `baluard-` prefix on create), create + first push. Token refresh for provider token (no-op for GitHub, but plumbing exists).
 
 ### Acceptance criteria
 
@@ -100,7 +100,7 @@ Deferred to later phases:
 - **W3**: `ProviderToken.refresh_token` field as `SecretString` (zeroize-on-drop already protects it)
 - **W9**: TOCTOU on registry load/save (single-process daemon, small window)
 - **N2**: Extract provider+token loading boilerplate into helper (revisit when Phase 5 adds providers)
-- **N4**: GitHub code search does not index private repos (need list+fetch fallback in Phase 4)
+- **N4**: GitHub code search does not index private repos and only indexes default branches, with indexing lag for fresh repos. RESOLVED 2026-09-15: GitHub `detect_vault_repos` now uses list+probe as the PRIMARY tier (paginate OWNED repos via `affiliation=owner`, probe `.baluard` concurrently per page, 20-page cap), with code search demoted to a supplementary deduped pass for repos outside the owned list.
 
 ---
 
