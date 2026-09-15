@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import xyz.actitud.baluard.i18n.t
@@ -67,14 +68,14 @@ fun GitExplainerDialog(onDismiss: () -> Unit) {
 /**
  * Three-node picture of the sync story: this device -> (encrypted) ->
  * the user's git account -> their other devices.
+ *
+ * Vertical layout on purpose: the dialog is narrow and users run large
+ * font scales - a horizontal row force-wraps the last node's label
+ * character-by-character. Full-width rows never overflow.
  */
 @Composable
 private fun GitDiagram() {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-    ) {
+    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         DiagramNode(Icons.Default.Lock, t("gitWhat.diagramDevice"))
         DiagramArrow()
         DiagramNode(Icons.Default.Cloud, t("gitWhat.diagramAccount"))
@@ -85,10 +86,14 @@ private fun GitDiagram() {
 
 @Composable
 private fun DiagramNode(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
         Box(
             modifier = Modifier
-                .size(44.dp)
+                .size(40.dp)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
                 .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f), CircleShape),
@@ -98,13 +103,13 @@ private fun DiagramNode(icon: androidx.compose.ui.graphics.vector.ImageVector, l
                 imageVector = icon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(20.dp),
             )
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.width(10.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -112,12 +117,14 @@ private fun DiagramNode(icon: androidx.compose.ui.graphics.vector.ImageVector, l
 
 @Composable
 private fun DiagramArrow() {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 6.dp)) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(
             imageVector = Icons.AutoMirrored.Filled.ArrowRightAlt,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier
+                .size(18.dp)
+                .rotate(90f),
         )
         Text(
             text = t("gitWhat.diagramEncrypted"),
@@ -126,7 +133,6 @@ private fun DiagramArrow() {
         )
     }
 }
-
 /** Small text link that opens [GitExplainerDialog]. */
 @Composable
 fun GitWhatLink(onOpen: () -> Unit, modifier: Modifier = Modifier) {
