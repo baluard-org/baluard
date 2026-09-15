@@ -4,6 +4,7 @@ import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { startClone } from "../lib/cloneFlow.js";
 import { daemon } from "../lib/daemon.js";
+import { providerLabel as providerLabelT } from "../lib/providers.js";
 import { createProviderConnect } from "../lib/providerConnect.js";
 import { sanitizeError } from "../lib/utils.js";
 import CopyButton from "./CopyButton.jsx";
@@ -152,8 +153,7 @@ export default function CloneFromProviderScreen(props) {
 		}
 	}
 
-	const providerLabel = (key) =>
-		key ? key.charAt(0).toUpperCase() + key.slice(1) : "";
+	const providerLabel = (key) => providerLabelT(t, key);
 
 	return (
 		<div class="clone-screen flex items-center justify-center h-full bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4">

@@ -3,34 +3,10 @@
 // auto-clear timer.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { typeLabel, stripDigits, handleCardInput } from "../lib/helpers.js";
+import { stripDigits, handleCardInput } from "../lib/helpers.js";
 import { formatCardNumber } from "../lib/utils.js";
 import { copyToClipboard } from "../lib/clipboard.js";
 
-describe("typeLabel", () => {
-  it("returns the human-readable label for known types", () => {
-    expect(typeLabel("login")).toBe("Login");
-    expect(typeLabel("card")).toBe("Card");
-    expect(typeLabel("identity")).toBe("Identity");
-    expect(typeLabel("secureNote")).toBe("Secure Note");
-    expect(typeLabel("sshKey")).toBe("SSH Key");
-    expect(typeLabel("bankAccount")).toBe("Bank Account");
-    expect(typeLabel("driversLicense")).toBe("Driver License");
-    expect(typeLabel("passport")).toBe("Passport & ID");
-  });
-
-  it("space-separates unknown camelCase types (no title-case)", () => {
-    // The fallback only inserts spaces before uppercase letters — it does
-    // NOT title-case. Pin the actual behavior so a refactor that adds
-    // title-casing is caught.
-    expect(typeLabel("customField")).toBe("custom Field");
-  });
-
-  it("falls back to 'Login' for null/undefined", () => {
-    expect(typeLabel(null)).toBe("Login");
-    expect(typeLabel(undefined)).toBe("Login");
-  });
-});
 
 describe("stripDigits", () => {
   it("removes all non-digit characters", () => {

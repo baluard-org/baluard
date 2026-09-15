@@ -37,6 +37,5 @@ export function dismiss(id) {
 export const toastSuccess = (msg, opts) => toast("success", msg, opts);
 export const toastError   = (msg, opts) => toast("error",   msg, { duration: 6000, manual: true, ...opts });
 export const toastWarning = (msg, opts) => toast("warning", msg, { duration: 5000, ...opts });
-export const toastInfo    = (msg, opts) => toast("info",    msg, opts);
 
 export { toasts };

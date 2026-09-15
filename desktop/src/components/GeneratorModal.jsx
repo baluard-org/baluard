@@ -4,6 +4,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { generateSecurePassword, generatePassphrase } from "../lib/utils.js";
 import { IconCopy, IconCheck, IconRefresh } from "./Icon.jsx";
 import { copyToClipboard } from "../lib/clipboard.js";
+import { useCopyFeedback } from "../lib/useCopyFeedback.js";
 import { daemon } from "../lib/daemon.js";
 import FocusTrap from "./FocusTrap.jsx";
 
@@ -22,7 +23,7 @@ export default function GeneratorModal(props) {
   const { t } = useI18n();
   let dialogRef;
   const [mode, setMode] = createSignal(MODE_PASSWORD);
-  const [copied, setCopied] = createSignal(false);
+  const [copied, copyResult] = useCopyFeedback();
   const [historyCopied, setHistoryCopied] = createSignal(null);
 
   // Password params
@@ -118,7 +119,7 @@ export default function GeneratorModal(props) {
 
   async function handleCopy() {
     const val = result();
-    await copyToClipboard(val);
+    await copyResult(val);
     // Persist to history on copy (user's explicit action)
     // Avoid duplicate if already persisted (e.g. after regenerate)
     if (val !== lastPersisted()) {
@@ -126,8 +127,6 @@ export default function GeneratorModal(props) {
       persistToHistory(val, mode() === MODE_PASSWORD ? "password" : "passphrase", params);
       setLastPersisted(val);
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
   }
 
   async function handleHistoryCopy(val, id) {

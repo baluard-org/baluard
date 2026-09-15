@@ -56,7 +56,6 @@ vi.mock("../context/toastSignal.js", () => ({
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
   toastWarning: vi.fn(),
-  toastInfo: vi.fn(),
   dismiss: vi.fn(),
   toasts: { length: 0 },
 }));

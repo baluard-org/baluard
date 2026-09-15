@@ -453,48 +453,6 @@ async fn daemon_status() -> bool {
         .unwrap_or(false)
 }
 
-/// Lock every currently-unlocked vault (Phase 6 defensive primitive).
-///
-/// Fired by the desktop on screen-lock / system sleep / app-resign-active
-/// (window blur) so a device becoming unattended caps multi-vault key
-/// exposure immediately instead of waiting for each vault's idle timer.
-/// Clears the per-vault session token map on success; the daemon zeroizes
-/// all key material. Non-blocking on daemon errors (a down daemon has no
-/// keys to lock).
-#[tauri::command]
-async fn lock_all_vaults(app: AppHandle) -> bool {
-    log::info!("[desktop] system event → lock_all_vaults");
-    let store = app.state::<Mutex<SessionStore>>();
-    // Clear our token cache first so the frontend treats every vault as
-    // locked even if the daemon RPC is slow.
-    {
-        let mut st = store.lock().unwrap();
-        st.tokens.clear();
-        st.active_slug = None;
-    }
-    // D5: async + spawn_blocking — this fires on the blur path (exactly
-    // when the user switches away); the sync version froze the UI thread
-    // for up to 30s when the daemon hung.
-    let result = tauri::async_runtime::spawn_blocking(|| send_request("vaults.lock_all", "")).await;
-    match result {
-        Ok(Ok(payload)) => {
-            log::info!("[desktop] lock_all succeeded: {payload}");
-            true
-        }
-        // Daemon unreachable or returned a daemon-level error string: a
-        // down daemon has no keys to lock, and we already cleared the token
-        // cache above so the frontend state is consistent.
-        Ok(Err(e)) => {
-            log::warn!("[desktop] lock_all RPC failed: {e}");
-            false
-        }
-        Err(join_err) => {
-            log::warn!("[desktop] lock_all task failed: {join_err}");
-            false
-        }
-    }
-}
-
 /// Reveal the main window once the frontend has finished loading and rendering,
 /// avoiding the white flash.
 #[tauri::command]
@@ -1109,7 +1067,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             daemon_request,
             daemon_status,
-            lock_all_vaults,
             show_window,
             update_tray_icon,
             save_recovery_phrase,

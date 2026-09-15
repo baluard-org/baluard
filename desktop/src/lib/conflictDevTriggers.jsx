@@ -8,10 +8,6 @@ import { mockSampleConflict, mockSampleTypeChange } from "./conflictMocks.js";
 // dogfood the panel UX without standing up a real git conflict or wiring
 // the deferred `sync.conflict` backend route.
 //
-// Opt-in even in dev: hidden by default. To re-enable, run in the devtools
-// console:  localStorage.setItem("baluard.dev.conflictTrigger", "1")
-// then reload.
-//
 // See docs/plan-conflict-resolution-panel.md for the panel contract.
 
 export default function ConflictDevTrigger() {

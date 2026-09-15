@@ -3,7 +3,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { IconNote, IconCopy, IconCheck, IconDownload } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
-import { copyToClipboard } from "../lib/clipboard.js";
+import { useCopyFeedback } from "../lib/useCopyFeedback.js";
 import { invoke } from "@tauri-apps/api/core";
 import { toastSuccess, toastError } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -49,7 +49,7 @@ function pickVerificationPositions(phrase) {
 export default function RecoveryScreen() {
   const auth = useAuth();
   const { t } = useI18n();
-  const [copied, setCopied] = createSignal(false);
+  const [copied, copy] = useCopyFeedback(2000);
   const [verifyWords, setVerifyWords] = createSignal(["", "", "", ""]);
   const [showExamples, setShowExamples] = createSignal(false);
 
@@ -68,9 +68,7 @@ export default function RecoveryScreen() {
   });
 
   const handleCopy = async () => {
-    await copyToClipboard(phrase());
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    await copy(phrase());
   };
 
   const handleDownload = async () => {
@@ -142,7 +140,7 @@ export default function RecoveryScreen() {
           <button
             onClick={handleCopy}
             class="absolute top-2 right-2 p-1.5 rounded-lg bg-[var(--color-sidebar)] border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-detail)] transition-all cursor-pointer shadow-sm flex items-center gap-1 text-xs"
-            title={t("recovery.copyToClipboard")}
+            title={t("common.copy")}
           >
             <Show when={copied()} fallback={
               <IconCopy class="w-4 h-4" />

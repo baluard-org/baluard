@@ -36,13 +36,6 @@ async function daemon(action, payload = "", slug = null) {
   return res.payload;
 }
 
-// Phase 6 / T15: lock every currently-unlocked vault. Used by the
-// window-blur hook (handled in the Tauri backend) and available to the
-// frontend for a manual "lock all" action. Returns true on success.
-async function lockAllVaults() {
-  return invoke("lock_all_vaults");
-}
-
 // Instruct the Tauri backend to reveal the main window once frontend has mounted/loaded.
 async function showWindow() {
   return invoke("show_window");
@@ -59,4 +52,4 @@ async function setTrayOnly(enabled) {
   return invoke("set_tray_only", { enabled });
 }
 
-export { daemon, lockAllVaults, showWindow, getDesktopPrefs, setTrayOnly };
+export { daemon, showWindow, getDesktopPrefs, setTrayOnly };

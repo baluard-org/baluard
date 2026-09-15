@@ -13,7 +13,6 @@ vi.mock("../context/toastSignal.js", () => ({
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
   toastWarning: vi.fn(),
-  toastInfo: vi.fn(),
   dismiss: vi.fn(),
   toasts: { length: 0 },
 }));
@@ -107,9 +106,10 @@ describe("SshKeyGenerator", () => {
     const { container } = render(() => (
       <SshKeyGenerator privateKey="-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----" />
     ));
-    // The block is gated behind <details> with "Show private key" summary.
-    expect(container.textContent).toContain("Private Key");
-    expect(container.textContent).toContain("Show private key");
+    // The block is gated behind <details>; labels resolve through t(), so the
+    // assertions match the key paths the test renderer emits.
+    expect(container.textContent).toContain("fields.privateKey");
+    expect(container.textContent).toContain("entry.sshShowPrivate");
   });
 
   it("does NOT render key blocks when no props provided", () => {

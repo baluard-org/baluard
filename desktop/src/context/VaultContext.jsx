@@ -5,23 +5,20 @@ import { buildAddPayload, buildUpdatePayload, buildGetPayload } from "../lib/pay
 import { consumeVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { toastError, toastWarning } from "./toastSignal.js";
 import { setTheme as setAppTheme } from "./themeSignal.js";
+import { makeTransitionGuard } from "../lib/transitionGuard.js";
 
 const VaultContext = createContext(null);
 
 // Valid pane transitions. Dev-only guard.
 const VALID_PANE_TRANSITIONS = {
   welcome: ["detail", "add"],
-  detail:  ["welcome", "edit"],
+  detail:  ["welcome", "edit", "add"],
   edit:    ["detail", "welcome"],
   add:     ["welcome", "detail"],
 };
 
-function guardedSetPane(setActivePane, from, to) {
-  if (!VALID_PANE_TRANSITIONS[from]?.includes(to)) {
-    console.warn(`[vault] Invalid pane transition: ${from} → ${to}`);
-  }
-  setActivePane(to);
-}
+// DEV-only diagnostics; the state write always runs (see transitionGuard.js).
+const guardPane = makeTransitionGuard(VALID_PANE_TRANSITIONS, "vault");
 
 const EMPTY_CIPHER = {
   name: "", username: "", password: "", uris: [], notes: "",
@@ -141,8 +138,9 @@ function VaultProvider(props) {
     try {
       await daemon("vault.update", JSON.stringify(buildUpdatePayload(id, cipherData)));
       await refreshCiphers(t);
-      const updated = JSON.parse(await daemon("vault.get", JSON.stringify(buildGetPayload(id))));
-      return updated;
+      // list_full already carries the fresh cipher (K3): skip the extra
+      // vault.get round-trip and serve the updated item from the list.
+      return ciphers().find((c) => c.id === id) || null;
     } catch (e) {
       toastError(sanitizeError(e, t));
       return null;
@@ -161,7 +159,7 @@ function VaultProvider(props) {
   async function deleteCipher(id, t) {
     try {
       await daemon("vault.delete", id);
-      guardedSetPane(setActivePane, activePane(), "welcome");
+      guardPane(activePane(), "welcome", setActivePane);
       await refreshCiphers(t);
       return true;
     } catch (e) {
@@ -173,7 +171,7 @@ function VaultProvider(props) {
   async function restoreCipher(id, t) {
     try {
       await daemon("vault.trash.restore", id);
-      guardedSetPane(setActivePane, activePane(), "welcome");
+      guardPane(activePane(), "welcome", setActivePane);
       await refreshCiphers(t);
       return true;
     } catch (e) {
@@ -185,7 +183,7 @@ function VaultProvider(props) {
   async function archiveCipher(id, t) {
     try {
       await daemon("vault.archive", id);
-      guardedSetPane(setActivePane, activePane(), "welcome");
+      guardPane(activePane(), "welcome", setActivePane);
       await refreshCiphers(t);
       return true;
     } catch (e) {
@@ -209,7 +207,7 @@ function VaultProvider(props) {
   async function unarchiveCipher(id, t) {
     try {
       await daemon("vault.unarchive", id);
-      guardedSetPane(setActivePane, activePane(), "welcome");
+      guardPane(activePane(), "welcome", setActivePane);
       await refreshCiphers(t);
       return true;
     } catch (e) {

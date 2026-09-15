@@ -88,10 +88,6 @@ export function IconShield(props) {
   return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.618 4.984A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></SVG>;
 }
 
-export function IconShieldCheck(props) {
-  return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.618 4.984A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4" /></SVG>;
-}
-
 export function IconAlert(props) {
   return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></SVG>;
 }
@@ -128,10 +124,6 @@ export function IconPencil(props) {
   return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></SVG>;
 }
 
-export function IconLink(props) {
-  return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></SVG>;
-}
-
 export function IconLinkSimple(props) {
   return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></SVG>;
 }
@@ -152,10 +144,6 @@ export function IconBolt(props) {
   return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></SVG>;
 }
 
-export function IconPlay(props) {
-  return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 4l8 6-8 6V4z" /></SVG>;
-}
-
 export function IconUpload(props) {
   return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></SVG>;
 }
@@ -168,25 +156,8 @@ export function IconMonitor(props) {
   return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></SVG>;
 }
 
-export function IconUser(props) {
-  return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm-6 6c0-2.21 3.58-4 8-4s8 1.79 8 4" /></SVG>;
-}
-
 export function IconChevronDown(props) {
   return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></SVG>;
-}
-
-export function IconDatabase(props) {
-  return <SVG {...props}><ellipse cx="12" cy="5" rx="9" ry="3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></SVG>;
-}
-
-export function IconExclaim(props) {
-  return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></SVG>;
-}
-
-// Fire icon used for breach/weak password indicators
-export function IconFire(props) {
-  return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 0112 22a8 8 0 01-8-8c0-4.4 2.9-8 6-8s6 3.6 6 8c0 1.1-.9 2-2 2s-2-.9-2-2" /></SVG>;
 }
 
 // Sun-with-rays (different from IconSun which is circle-only)

@@ -14,9 +14,9 @@ import ConflictBanner from "./ConflictBanner.jsx";
 import CipherRow from "./CipherRow.jsx";
 import CipherDetail from "./CipherDetail.jsx";
 import AddEditCipherForm from "./AddEditCipherForm.jsx";
+import ConfirmModal from "./ConfirmModal.jsx";
 import DeleteConfirmModal from "./DeleteConfirmModal.jsx";
 import ArchiveConfirmModal from "./ArchiveConfirmModal.jsx";
-import FocusTrap from "./FocusTrap.jsx";
 import GeneratorModal from "./GeneratorModal.jsx";
 import RepromptModal from "./RepromptModal.jsx";
 import SettingsModal from "./SettingsModal.jsx";
@@ -36,8 +36,6 @@ export default function VaultView() {
   const [newCipher, setNewCipher] = createSignal({ ...EMPTY_CIPHER });
   const [showDeleteConfirm, setShowDeleteConfirm] = createSignal(false);
   const [showArchiveConfirm, setShowArchiveConfirm] = createSignal(false);
-  let emptyTrashRef;
-  let deleteTagRef;
   const [showGenerator, setShowGenerator] = createSignal(false);
   const [showAddMenu, setShowAddMenu] = createSignal(false);
   const [showEmptyTrashConfirm, setShowEmptyTrashConfirm] = createSignal(false);
@@ -134,68 +132,35 @@ export default function VaultView() {
           if (ok) { setViewCipher(null); }
         }}
       />
-      <Show when={deleteTagName()}>
-        <div
-          ref={deleteTagRef}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="delete-tag-title"
-          class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-          onClick={() => setDeleteTagName(null)}
-        >
-          <FocusTrap containerRef={deleteTagRef} onEscape={() => setDeleteTagName(null)} />
-          <div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
-            <h3 id="delete-tag-title" class="text-lg font-bold text-[var(--color-text)] mb-2">{t("entry.deleteTagTitle")}</h3>
-            <p class="text-sm text-[var(--color-muted)] mb-6">{t("entry.deleteTagConfirm", { tag: deleteTagName() })}</p>
-            <div class="flex gap-3">
-              <button
-                onClick={() => setDeleteTagName(null)}
-                class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] font-semibold transition-all cursor-pointer"
-              >{t("entry.cancel")}</button>
-              <button
-                onClick={async () => {
-                  const name = deleteTagName();
-                  setDeleteTagName(null);
-                  await vault.deleteTag(name, t);
-                }}
-                class="flex-1 py-2.5 rounded-xl bg-red-950/40 text-red-400 border border-red-900/30 hover:bg-red-950/60 font-semibold transition-all cursor-pointer"
-              >{t("entry.delete")}</button>
-            </div>
-          </div>
-        </div>
-      </Show>
-      <Show when={showEmptyTrashConfirm()}>
-        <div
-          ref={emptyTrashRef}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="empty-trash-title"
-          class="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]"
-          onClick={() => setShowEmptyTrashConfirm(false)}
-        >
-          <FocusTrap containerRef={emptyTrashRef} onEscape={() => setShowEmptyTrashConfirm(false)} />
-          <div class="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
-            <h3 id="empty-trash-title" class="text-lg font-bold text-[var(--color-text)] mb-2">{t("vault.emptyTrash")}</h3>
-            <p class="text-sm text-[var(--color-muted)] mb-6">{t("vault.emptyTrashConfirm")}</p>
-            <div class="flex gap-3">
-              <button
-                onClick={() => setShowEmptyTrashConfirm(false)}
-                class="flex-1 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)] font-semibold transition-all cursor-pointer"
-              >{t("entry.cancel")}</button>
-              <button
-                onClick={async () => {
-                  setShowEmptyTrashConfirm(false);
-                  try {
-                    await daemon("vault.trash.purge", "0");
-                    await vault.refreshCiphers(t);
-                  } catch (e) { toastError(sanitizeError(e, t)); }
-                }}
-                class="flex-1 py-2.5 rounded-xl bg-red-950/40 text-red-400 border border-red-900/30 hover:bg-red-950/60 font-semibold transition-all cursor-pointer"
-              >{t("vault.emptyTrash")}</button>
-            </div>
-          </div>
-        </div>
-      </Show>
+      <ConfirmModal
+        show={!!deleteTagName()}
+        idPrefix="delete-tag"
+        title={t("entry.deleteTagTitle")}
+        body={t("entry.deleteTagConfirm", { tag: deleteTagName() })}
+        confirmLabel={t("entry.delete")}
+        confirmClass="bg-red-950/40 text-red-400 border border-red-900/30 hover:bg-red-950/60"
+        onConfirm={async () => {
+          const name = deleteTagName();
+          setDeleteTagName(null);
+          await vault.deleteTag(name, t);
+        }}
+        onClose={() => setDeleteTagName(null)}
+      />
+      <ConfirmModal
+        show={showEmptyTrashConfirm()}
+        idPrefix="empty-trash"
+        title={t("vault.emptyTrash")}
+        body={t("vault.emptyTrashConfirm")}
+        confirmLabel={t("vault.emptyTrash")}
+        confirmClass="bg-red-950/40 text-red-400 border border-red-900/30 hover:bg-red-950/60"
+        onConfirm={async () => {
+          try {
+            await daemon("vault.trash.purge", "0");
+            await vault.refreshCiphers(t);
+          } catch (e) { toastError(sanitizeError(e, t)); }
+        }}
+        onClose={() => setShowEmptyTrashConfirm(false)}
+      />
       <GeneratorModal showGenerator={showGenerator()} setShowGenerator={setShowGenerator} />
       <RepromptModal />
       <SettingsModal />

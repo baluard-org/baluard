@@ -11,27 +11,6 @@ export const FIELD_LABEL = "text-xs font-bold uppercase tracking-wider text-[var
 /** Card container in CopyableField / CipherDetail. */
 export const CARD_ROW = "p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] hover:border-[var(--color-primary)] transition-colors flex items-center justify-between group";
 
-// ── Cipher type display names ──
-
-const TYPE_LABELS = {
-  login: "Login",
-  card: "Card",
-  identity: "Identity",
-  secureNote: "Secure Note",
-  sshKey: "SSH Key",
-  bankAccount: "Bank Account",
-  driversLicense: "Driver License",
-  passport: "Passport & ID",
-};
-
-/**
- * Human-readable cipher type label.
- * Falls back to title-cased key for unknown types.
- */
-export function typeLabel(cipherType) {
-  return TYPE_LABELS[cipherType] || (cipherType || "Login").replace(/([A-Z])/g, " $1").trim();
-}
-
 // ── Card number input helpers ──
 
 /**

@@ -2,6 +2,7 @@ import { createSignal, createMemo, Show, onSettled } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { suggestSlug, cleanSlug, validateSlug } from "../lib/slug.js";
+import { toastWarning } from "../context/toastSignal.js";
 import { IconPencil, IconCheck, IconBaluardLogo } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 
@@ -23,6 +24,7 @@ export default function CreateVaultScreen() {
   const { t, locale, setLocale } = useI18n();
 
   const [vaultName, setVaultName] = createSignal("");
+  const [confirmPassword, setConfirmPassword] = createSignal("");
   const [customSlug, setCustomSlug] = createSignal("");
   const [editingSlug, setEditingSlug] = createSignal(false);
 
@@ -67,6 +69,8 @@ export default function CreateVaultScreen() {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (auth.status() === "creating" || !canSubmit()) return;
+    if (confirmPassword().length < 8) { toastWarning(t("create.errorMinLength")); return; }
+    if (confirmPassword() !== auth.createPassword()) { toastWarning(t("create.errorMismatch")); return; }
     auth.createVault(t, { slug: activeSlug(), name: vaultName().trim() });
   };
 
@@ -154,6 +158,7 @@ export default function CreateVaultScreen() {
             autocapitalize="off"
             spellcheck="false"
             placeholder={t("create.confirmPlaceholder")}
+            onInput={(e) => setConfirmPassword(e.target.value)}
             class="create-vault-screen__input w-full px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] transition-all"
           />
           <button

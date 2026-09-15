@@ -1,13 +1,13 @@
-import { createSignal, Show } from "solid-js";
+import { Show } from "solid-js";
 import { IconCopy, IconCheck } from "./Icon.jsx";
-import { copyToClipboard } from "../lib/clipboard.js";
+import { useCopyFeedback } from "../lib/useCopyFeedback.js";
 import { useI18n } from "../i18n/index.jsx";
 
 /**
  * Reusable copy-to-clipboard button with animated feedback.
- * Shows copy icon → green checkmark + "Copied" label for 1.8s.
+ * Shows copy icon → green checkmark for 1.8s.
  *
- * L1 fix: always auto-clears the clipboard after 30s via copyToClipboard.
+ * Always auto-clears the clipboard after 30s via copyToClipboard.
  * Only clears if the clipboard still contains the value we wrote
  * (avoids stomping on a user-initiated copy of something else).
  *
@@ -19,25 +19,19 @@ import { useI18n } from "../i18n/index.jsx";
  */
 export default function CopyButton(props) {
   const { t } = useI18n();
-  const [copied, setCopied] = createSignal(false);
+  const [copied, copy] = useCopyFeedback();
 
   async function handleCopy(e) {
     e.stopPropagation();
-    const value = props.value || "";
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
-    // Use the shared utility's default (30s). If a non-default timeout is
-    // ever needed, add the prop back here AND wire it from at least one
-    // caller — dead config surface is worse than no config.
-    await copyToClipboard(value);
+    await copy(props.value);
   }
 
   return (
     <button
       onClick={handleCopy}
       class={`copy-btn flex items-center gap-1.5 cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors ${props.class || ""}`}
-      title={props.title || t("recovery.copyToClipboard")}
-      aria-label={props.title || t("recovery.copyToClipboard")}
+      title={props.title || t("common.copy")}
+      aria-label={props.title || t("common.copy")}
     >
       <Show when={copied()} fallback={
         <IconCopy class="w-4 h-4" />

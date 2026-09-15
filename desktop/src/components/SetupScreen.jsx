@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { daemon } from "../lib/daemon.js";
+import { providerLabel } from "../lib/providers.js";
 import { createProviderConnect } from "../lib/providerConnect.js";
 import { sanitizeError } from "../lib/utils.js";
 import { startVaultPrefetch } from "../lib/vaultPrefetch.js";
@@ -18,10 +19,7 @@ const PROVIDERS = [
   { key: "codeberg", label: "providerCodeberg", Icon: IconCodeberg },
 ];
 
-function providerLabel(t, key) {
-  const map = { github: "providerGitHub", gitlab: "providerGitLab", codeberg: "providerCodeberg" };
-  return t(`sync.${map[key] || key}`);
-}
+
 
 export default function SetupScreen() {
   const auth = useAuth();

@@ -4,6 +4,7 @@ import { createSignal, createContext, useContext, onSettled } from "solid-js";
 // reflects THAT vault's keychain entry, not a stale global value.
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
+import { makeTransitionGuard } from "../lib/transitionGuard.js";
 import { buildCreatePayload } from "../lib/payload.js";
 import { startVaultPrefetch } from "../lib/vaultPrefetch.js";
 import { toastError, toastWarning } from "./toastSignal.js";
@@ -22,12 +23,8 @@ const VALID_AUTH_TRANSITIONS = {
   welcome:   ["init", "locked"],
 };
 
-function guardedSetStatus(setStatus, from, to) {
-  if (!VALID_AUTH_TRANSITIONS[from]?.includes(to)) {
-    console.warn(`[auth] Invalid transition: ${from} → ${to}`);
-  }
-  setStatus(to);
-}
+// DEV-only diagnostics; the state write always runs (see transitionGuard.js).
+const guardStatus = makeTransitionGuard(VALID_AUTH_TRANSITIONS, "auth");
 
 function AuthProvider(props) {
   const [status, setStatus] = createSignal("locked");
@@ -104,7 +101,7 @@ function AuthProvider(props) {
     const password = loginPasswordRef?.value;
     if (!password) return false;
     const target = switchTarget();
-    guardedSetStatus(setStatus, status(), "unlocking");
+    guardStatus(status(), "unlocking", setStatus);
     try {
       // Phase 6: if a switch target is set, unlock THAT vault; otherwise
       // unlock the active one. vault.unlock opens + unlocks + inserts into
@@ -119,11 +116,11 @@ function AuthProvider(props) {
       try { setVaultInfo(JSON.parse(infoStr)); } catch {}
       setSwitchTarget(null);
       startVaultPrefetch();
-      guardedSetStatus(setStatus, status(), "unlocked");
+      guardStatus(status(), "unlocked", setStatus);
       return true;
     } catch (e) {
       toastError(sanitizeError(e, t));
-      guardedSetStatus(setStatus, status(), "locked");
+      guardStatus(status(), "locked", setStatus);
       return false;
     }
   }
@@ -131,7 +128,7 @@ function AuthProvider(props) {
   async function lock(t) {
     try {
       await daemon("vault.lock");
-      guardedSetStatus(setStatus, status(), "locked");
+      guardStatus(status(), "locked", setStatus);
       setVaultInfo(null);
       // D3: defensive — if onboarding was abandoned mid-setup, the vault
       // password signal must not survive a lock cycle either.
@@ -144,18 +141,16 @@ function AuthProvider(props) {
 
   async function createVault(t, { slug, name } = {}) {
     const pw = createPassword();
-    const confirm = document.getElementById("create-confirm")?.value;
     if (!pw || pw.length < 8) { toastWarning(t("create.errorMinLength")); return; }
-    if (pw !== confirm) { toastWarning(t("create.errorMismatch")); return; }
     setCreatePassword(pw);
-    guardedSetStatus(setStatus, status(), "creating");
+    guardStatus(status(), "creating", setStatus);
     try {
       const result = JSON.parse(await daemon("vault.create", JSON.stringify(buildCreatePayload(pw, { slug, name }))));
       setRecoveryPhrase(result.recovery_phrase);
-      guardedSetStatus(setStatus, status(), "recovery");
+      guardStatus(status(), "recovery", setStatus);
     } catch (e) {
       toastError(sanitizeError(e, t));
-      guardedSetStatus(setStatus, status(), "init");
+      guardStatus(status(), "init", setStatus);
     }
   }
 

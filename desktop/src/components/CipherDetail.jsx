@@ -11,6 +11,7 @@ import { SECTION_LABEL } from "../lib/helpers.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
 import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
+import { useCopyFeedback } from "../lib/useCopyFeedback.js";
 import FocusTrap from "./FocusTrap.jsx";
 import ExternalLink from "./ExternalLink.jsx";
 import CardBrandDisplay from "./CardBrandDisplay.jsx";
@@ -19,11 +20,9 @@ import CipherAvatar from "./CipherAvatar.jsx";
 /** Small copy button for the notes header. Copies entire notes content. */
 function CopyNotesButton(props) {
   const { t } = useI18n();
-  const [copied, setCopied] = createSignal(false);
+  const [copied, copy] = useCopyFeedback();
   async function handleCopy() {
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
-    await copyToClipboard(props.value || "");
+    await copy(props.value);
   }
   return (
     <button
@@ -510,7 +509,7 @@ export default function CipherDetail(props) {
                       </div>
                     </div>
                     <div class="flex items-center gap-1 shrink-0 ml-2">
-                      <button onClick={handleDownload} class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer" title="Download">
+                      <button onClick={handleDownload} class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer" title={t("common.download")}>
                         <IconDownload class="w-4 h-4" />
                       </button>
                     </div>

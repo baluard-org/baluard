@@ -84,7 +84,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { daemon, lockAllVaults, showWindow } from "../lib/daemon.js";
+import { daemon, showWindow } from "../lib/daemon.js";
 
 describe("daemon wrapper", () => {
   beforeEach(() => {
@@ -186,16 +186,9 @@ describe("daemon wrapper", () => {
   });
 });
 
-describe("lockAllVaults + showWindow", () => {
+describe("showWindow", () => {
   beforeEach(() => {
     vi.mocked(invoke).mockReset();
-  });
-
-  it("lockAllVaults calls the dedicated Tauri command", async () => {
-    vi.mocked(invoke).mockResolvedValue(true);
-    const result = await lockAllVaults();
-    expect(invoke).toHaveBeenCalledWith("lock_all_vaults");
-    expect(result).toBe(true);
   });
 
   it("showWindow calls the dedicated Tauri command", async () => {
