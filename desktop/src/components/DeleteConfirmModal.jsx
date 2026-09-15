@@ -15,6 +15,7 @@ export default function DeleteConfirmModal(props) {
       confirmLabel={inTrash ? t("entry.deletePermanently") : t("entry.delete")}
       confirmVariant="danger"
       onConfirm={() => props.onDelete?.(props.viewCipher?.id)}
+      closeOnOverlay={false}
       onClose={() => props.setShowDeleteConfirm(false)}
     />
   );

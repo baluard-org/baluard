@@ -34,10 +34,10 @@ export default function CopyButton(props) {
       aria-label={props.title || t("common.copy")}
     >
       <Show when={copied()} fallback={
-        <IconCopy class="w-4 h-4" />
+        <IconCopy class={props.iconClass || "w-4 h-4"} />
       }>
         <span class="copy-btn__feedback copy-feedback">
-          <IconCheck class="w-4 h-4 text-[var(--color-success)]" />
+          <IconCheck class={props.iconClass || "w-4 h-4 text-[var(--color-success)]"} />
         </span>
       </Show>
       <Show when={props.label && !copied()}>
