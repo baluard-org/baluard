@@ -213,6 +213,9 @@ Daemon-side via `ssh-key` crate. 2 key types: Ed25519 (default/recommended), ECD
 ### User Profile
 Display name, subtitle, avatar stored in `VaultSettings`. Avatar as file in vault (`meta/avatar.{ext}`). Sidebar reads from VaultContext profile signals. SettingsModal syncs on close via `createEffect`.
 
+### Slug & Repo Prefix (enforced)
+Every vault slug and provider repo name carries the `baluard-` prefix. All entry points (CLI `init`, daemon `vault.create`, `provider.clone`, `vault.setup_sync`, `provider.create_repo`) run `slug::normalize_slug()`, which auto-prepends it: users type "personal", the slug and the remote repo become "baluard-personal". Normalization, never rejection - `validate_slug` stays a shape check applied AFTER normalization. Desktop previews normalize through the mirrored `normalizeSlug` in `desktop/src/lib/slug.js`. Provider repo detection is marker-based, never name-based: `provider.vault_repos` probes the `.baluard` file (slug + vault_id) - GitHub lists OWNED repos + probes primary with code search (`filename:.baluard user:<login>`) as a supplementary deduped pass (code search lags, indexes default branches only, can miss private repos); GitLab/Codeberg paginate + probe (Codeberg scoped `type=owner`). Unrelated repos never surface in pickers.
+
 ### Vault Creation Wizard
 Multi-step wizard for both CLI and desktop. CLI: `baluard init` with `--profile`, `--name`, `--slug`, `--theme`, `--lang`, `--auto-lock` flags + interactive fallback. Desktop: 3-step flow (language+password -> recovery phrase -> profile+preferences). `VaultCreator` builder chains `.profile()` + `.preferences()` on `execute()`. Desktop applies post-creation via `settings.set` + `locale.save` IPC. `--subtitle` was removed (2026-06-11) after the profile step absorbed it.
 
