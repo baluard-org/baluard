@@ -130,7 +130,11 @@ pub fn seal_bytes(
     let id = device_id.or_else(|| {
         serde_json::from_str::<serde_json::Value>(inner_json)
             .ok()
-            .and_then(|v| v["device_id"].as_str().and_then(|s| Uuid::parse_str(s).ok()))
+            .and_then(|v| {
+                v["device_id"]
+                    .as_str()
+                    .and_then(|s| Uuid::parse_str(s).ok())
+            })
     });
     if let Some(id) = id {
         doc["device_id"] = serde_json::Value::String(id.to_string());
@@ -168,13 +172,18 @@ pub fn seal_file(
     device_id: Option<Uuid>,
 ) -> Result<(), BaluardError> {
     let bytes = seal_bytes(seal_key, inner_json, device_id)?;
-    super::write_vault_file(path, &bytes)
-        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write sealed devkey: {e}"))))?;
+    super::write_vault_file(path, &bytes).map_err(|e| {
+        BaluardError::from(VaultError::Metadata(format!("write sealed devkey: {e}")))
+    })?;
     if let Some(vault_dir) = path.parent().and_then(|p| p.parent()) {
         let id = device_id.or_else(|| {
             serde_json::from_str::<serde_json::Value>(inner_json)
                 .ok()
-                .and_then(|v| v["device_id"].as_str().and_then(|s| Uuid::parse_str(s).ok()))
+                .and_then(|v| {
+                    v["device_id"]
+                        .as_str()
+                        .and_then(|s| Uuid::parse_str(s).ok())
+                })
         });
         if let Some(id) = id {
             let _ = write_device_id(vault_dir, id);
@@ -246,7 +255,11 @@ pub fn rotate_seal_key(
             let id = device_id.or_else(|| {
                 serde_json::from_str::<serde_json::Value>(&file)
                     .ok()
-                    .and_then(|v| v["device_id"].as_str().and_then(|s| Uuid::parse_str(s).ok()))
+                    .and_then(|v| {
+                        v["device_id"]
+                            .as_str()
+                            .and_then(|s| Uuid::parse_str(s).ok())
+                    })
             });
             let inner = open_bytes(old_seal_key, file.as_bytes())?;
             seal_file(path, &inner, new_seal_key, id)?;
