@@ -12,17 +12,12 @@
  * - "baluard-" prefix suggested but not enforced
  */
 
-/**
- * Normalize a user-provided name into a suggested slug.
- * Lowercases, collapses non-alphanumerics to single hyphens, strips
- * leading/trailing hyphens, prepends "baluard-" if needed, enforces length.
- */
-export function suggestSlug(name) {
-  const lowered = (name || "").toLowerCase();
-
+// Shared normalize: lowercase, invalid chars → single hyphens, strip
+// leading/trailing hyphens (slug.rs parity; see file header).
+function slugChars(input) {
   const chars = [];
   let prevHyphen = false;
-  for (const ch of lowered) {
+  for (const ch of (input || "").toLowerCase()) {
     if (/[a-z0-9]/.test(ch)) {
       chars.push(ch);
       prevHyphen = false;
@@ -31,14 +26,18 @@ export function suggestSlug(name) {
       prevHyphen = true;
     }
   }
-
-  // Strip leading/trailing hyphens
   while (chars[0] === "-") chars.shift();
   while (chars[chars.length - 1] === "-") chars.pop();
+  return chars.join("");
+}
 
-  let base = chars.join("");
+/**
+ * Normalize a user-provided name into a suggested slug.
+ * Prepends "baluard-" if needed and enforces length.
+ */
+export function suggestSlug(name) {
+  const base = slugChars(name);
   if (!base) return "baluard-vault";
-
   const withPrefix = base.startsWith("baluard-") ? base : `baluard-${base}`;
   return enforceLength(withPrefix);
 }
@@ -64,22 +63,7 @@ export function validateSlug(slug) {
  * Returns the cleaned slug.
  */
 export function cleanSlug(input) {
-  const lowered = (input || "").toLowerCase();
-
-  const chars = [];
-  let prevHyphen = false;
-  for (const ch of lowered) {
-    if (/[a-z0-9]/.test(ch)) {
-      chars.push(ch);
-      prevHyphen = false;
-    } else if (!prevHyphen) {
-      chars.push("-");
-      prevHyphen = true;
-    }
-  }
-  while (chars[0] === "-") chars.shift();
-  while (chars[chars.length - 1] === "-") chars.pop();
-  return chars.join("");
+  return slugChars(input);
 }
 
 function enforceLength(slug) {

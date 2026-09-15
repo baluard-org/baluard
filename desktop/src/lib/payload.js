@@ -20,10 +20,6 @@ export function buildUris(uris) {
 }
 
 /**
- * Build the CipherKind tagged union object from form state.
- * { type: "login", data: { ... } }
- */
-/**
  * Build the structured kind object from a flat cipher buffer.
  * Uses cipherSchema.toKind for each type.
  */
@@ -57,16 +53,7 @@ export function buildAddPayload(c) {
  * Build the full vault.update payload.
  */
 export function buildUpdatePayload(id, c) {
-  return {
-    id,
-    name: c.name,
-    kind: buildKind(c),
-    favorite: c.favorite || false,
-    notes: c.notes || null,
-    folder_id: c.folder_id || null,
-    custom_fields: c.custom_fields || [],
-    tags: c.tags || [],
-  };
+  return { id, ...buildAddPayload(c) };
 }
 
 /**
@@ -76,12 +63,6 @@ export function buildGetPayload(id) {
   return { id, decrypt: true };
 }
 
-/**
- * Build settings.set payload.
- */
-export function buildSettingsPayload(key, value) {
-  return { [key]: value };
-}
 
 /**
  * Build vault.create payload.

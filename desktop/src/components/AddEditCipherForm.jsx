@@ -246,32 +246,6 @@ export default function AddEditCipherForm(props) {
     );
   }
 
-  // Renders all fields for schema-driven types, respecting layout grids
-
-  function renderSchemaFields() {
-    const s = schema();
-    if (!s.fields.length) return null;
-
-    const layoutRows = s.layout || [];
-    const laidOut = new Set(layoutRows.flat());
-    const standalone = s.fields.filter(f => !laidOut.has(f.key));
-
-    return (
-      <>
-        <For each={layoutRows}>
-          {row => {
-            const rowFields = row.map(k => s.fields.find(f => f.key === k)).filter(Boolean);
-            return (
-              <div class={GRID_CLS[row.length] || GRID_CLS[2]}>
-                <For each={rowFields}>{f => renderField(f)}</For>
-              </div>
-            );
-          }}
-        </For>
-        <For each={standalone}>{f => renderField(f)}</For>
-      </>
-    );
-  }
 
   // ── Type-specific sections ──
 
@@ -289,7 +263,7 @@ export default function AddEditCipherForm(props) {
           <div class="relative flex items-center">
             <input placeholder={t("entry.passwordPlaceholder")} type={showPassword() ? "text" : "password"} class={MONO_CLS + " pr-44"} value={newCipher().password} onInput={e => update("password", e.target.value)} {...SECURE_INPUT} />
             <div class="absolute right-2 flex items-center gap-1.5">
-              <button type="button" onClick={() => setShowPassword(!showPassword())} class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer border border-transparent hover:border-[var(--color-border)]" title={showPassword() ? "Hide password" : "Show password"}>
+              <button type="button" onClick={() => setShowPassword(!showPassword())} class="p-1.5 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer border border-transparent hover:border-[var(--color-border)]" title={showPassword() ? t("common.hide") : t("common.show")}>
                 <Show when={showPassword()} fallback={<IconEye class="w-4 h-4" />}><IconEyeOff class="w-4 h-4" /></Show>
               </button>
               <button type="button" onClick={() => { setShowGen(!showGen()); if (!newCipher().password) handleGenerate(); }} class="px-3 py-1.5 rounded-lg text-xs font-bold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] transition-all cursor-pointer shadow-sm">
@@ -300,7 +274,7 @@ export default function AddEditCipherForm(props) {
           <Show when={showGen()}>
             <div class="mt-3 p-4 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-4">
               <div class="flex items-center justify-between text-xs text-[var(--color-text)]">
-                <span>Length: <strong class="text-[var(--color-primary)] text-sm">{genLen()}</strong></span>
+                <span>{t("entry.genLength")} <strong class="text-[var(--color-primary)] text-sm">{genLen()}</strong></span>
                 <input type="range" min="8" max="64" value={genLen()} onInput={e => { setGenLen(parseInt(e.target.value)); handleGenerate(); }} class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer" />
               </div>
               <div class="grid grid-cols-3 gap-2">
@@ -308,7 +282,7 @@ export default function AddEditCipherForm(props) {
                 <button onClick={() => { setGenNums(!genNums()); handleGenerate(); }} class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${genNums() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>0-9</button>
                 <button onClick={() => { setGenSyms(!genSyms()); handleGenerate(); }} class={`p-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${genSyms() ? "bg-[var(--color-primary)] text-[var(--color-primary-text)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)]"}`}>!@#</button>
               </div>
-              <button onClick={handleGenerate} class="w-full py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] hover:bg-[var(--color-sidebar)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer">Generate New</button>
+              <button onClick={handleGenerate} class="w-full py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] hover:bg-[var(--color-sidebar)] text-xs font-bold text-[var(--color-text)] transition-all cursor-pointer">{t("entry.generateNew")}</button>
             </div>
           </Show>
         </div>
@@ -316,25 +290,25 @@ export default function AddEditCipherForm(props) {
         {/* Multi-URI list */}
         <div>
           <div class="flex items-center justify-between mb-1.5">
-            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">URIs</label>
+            <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.uris")}</label>
             <button type="button" onClick={addUri} class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-sidebar)] hover:bg-[var(--color-border)] border border-[var(--color-border)] text-[var(--color-text)] transition-all cursor-pointer flex items-center gap-1">
-              <IconPlus class="w-3 h-3 text-[var(--color-primary)]" /> Add URI
+              <IconPlus class="w-3 h-3 text-[var(--color-primary)]" /> {t("entry.addUri")}
             </button>
           </div>
           <For each={uris()}>
             {(uriObj, index) => (
               <div class="flex gap-2 mb-2">
-                <input placeholder="https://example.com" class={INPUT_CLS + " flex-1"} value={uriObj.uri || ""} onInput={e => updateUri(index(), "uri", e.target.value)} {...SECURE_INPUT} />
+                <input placeholder={t("entry.uriPlaceholder")} class={INPUT_CLS + " flex-1"} value={uriObj.uri || ""} onInput={e => updateUri(index(), "uri", e.target.value)} {...SECURE_INPUT} />
                 <select class="px-2 py-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-muted)] outline-none" value={uriObj.match_strategy || ""} onChange={e => updateUri(index(), "match_strategy", e.target.value || null)}>
-                  <option value="">Default</option>
-                  <option value="domain">Domain</option>
-                  <option value="host">Host</option>
-                  <option value="startsWith">Starts with</option>
-                  <option value="exact">Exact</option>
-                  <option value="regex">Regex</option>
-                  <option value="never">Never</option>
+                  <option value="">{t("entry.matchDefault")}</option>
+                  <option value="domain">{t("entry.matchDomain")}</option>
+                  <option value="host">{t("entry.matchHost")}</option>
+                  <option value="startsWith">{t("entry.matchStartsWith")}</option>
+                  <option value="exact">{t("entry.matchExact")}</option>
+                  <option value="regex">{t("entry.matchRegex")}</option>
+                  <option value="never">{t("entry.matchNever")}</option>
                 </select>
-                <button type="button" onClick={() => removeUri(index())} class="px-3 py-3 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-xl border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in" title="Remove URI">
+                <button type="button" onClick={() => removeUri(index())} class="px-3 py-3 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-xl border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center animate-fade-in" title={t("entry.removeUri")}>
                   <IconX class="w-4 h-4" />
                 </button>
               </div>
@@ -343,14 +317,14 @@ export default function AddEditCipherForm(props) {
           <Show when={!uris().length}>
             <div class="flex justify-center p-6 rounded-xl bg-[var(--color-card)] border border-dashed border-[var(--color-border)]">
               <button type="button" onClick={addUri} class="px-4 py-2 rounded-lg text-xs font-bold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] transition-all cursor-pointer shadow-sm flex items-center gap-1.5">
-                <IconPlus class="w-3.5 h-3.5" /> Add URI
+                <IconPlus class="w-3.5 h-3.5" /> {t("entry.addUri")}
               </button>
             </div>
           </Show>
         </div>
 
         <div>
-          <label class={FIELD_LABEL}>TOTP URI</label>
+          <label class={FIELD_LABEL}>{t("entry.totpUri")}</label>
           <input placeholder="otpauth://totp/..." class={MONO_CLS} value={newCipher().totp_uri || ""} onInput={e => update("totp_uri", e.target.value)} {...SECURE_INPUT} />
         </div>
       </>
@@ -362,23 +336,23 @@ export default function AddEditCipherForm(props) {
       <>
         <CardBrandDisplay number={newCipher().cardNumber || ""} />
         <div>
-          <label class={FIELD_LABEL}>Cardholder Name</label>
+          <label class={FIELD_LABEL}>{t("fields.cardholder")}</label>
           <input placeholder="Full name on card" class={INPUT_CLS} value={newCipher().cardholder_name || ""} onInput={e => update("cardholder_name", e.target.value)} {...SECURE_INPUT} />
         </div>
         <div>
-          <label class={FIELD_LABEL}>Card Number</label>
+          <label class={FIELD_LABEL}>{t("fields.cardNumber")}</label>
           <input placeholder="1234 5678 9012 3456" class={MONO_CLS} value={formatCardNumber(newCipher().cardNumber || "")} onInput={handleCardInput(update)} {...SECURE_INPUT} />
         </div>
         <div class="grid grid-cols-3 gap-3">
           <div>
-            <label class={FIELD_LABEL}>Month</label>
+            <label class={FIELD_LABEL}>{t("fields.expMonth")}</label>
             <select class={INPUT_CLS} value={newCipher().expMonth || ""} onChange={e => update("expMonth", e.target.value)}>
               <option value="">MM</option>
               {["01","02","03","04","05","06","07","08","09","10","11","12"].map(m => <option value={m}>{m}</option>)}
             </select>
           </div>
           <div>
-            <label class={FIELD_LABEL}>Year</label>
+            <label class={FIELD_LABEL}>{t("fields.expYear")}</label>
             <input placeholder="2028" class={MONO_CLS} value={newCipher().expYear || ""} onInput={e => update("expYear", e.target.value)} {...SECURE_INPUT} />
           </div>
           <div>
@@ -697,7 +671,7 @@ export default function AddEditCipherForm(props) {
                         type="button"
                         role="switch"
                         aria-checked={field.value === "true"}
-                        aria-label={field.name || "Boolean toggle"}
+                        aria-label={field.name || t("entry.fieldTypeBoolean")}
                         onClick={() => { const nv = field.value === "true" ? "false" : "true"; fieldsRef[i()] = { ...fieldsRef[i()], value: nv }; setFields([...fieldsRef]); }}
                         class="flex-1 relative h-10 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] transition-colors cursor-pointer"
                       >

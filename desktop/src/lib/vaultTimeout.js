@@ -1,7 +1,7 @@
 // Vault timeout policy presets (mirrors baluard-core VaultTimeout).
 //
-// Single source of truth for the dropdown options shown in SettingsModal,
-// AutoLockButton popover, and the SetupScreen wizard. The wire token is the
+// Single source of truth for the dropdown options shown in SettingsModal
+// and the SetupScreen wizard. The wire token is the
 // value sent to the daemon's `settings.set` (`{ vault_timeout: token }`).
 //
 // The OS power-event triggers from the Bitwarden reference UI (On system
@@ -26,10 +26,7 @@ export const VAULT_TIMEOUT_PRESETS = [
 export const DEFAULT_VAULT_TIMEOUT = "15m";
 
 /// Map a stored token to a known preset token, defaulting on miss.
-/// Falls back to the default for anything unrecognized, including legacy
-/// The daemon stores `vault_timeout` as a string token. Map any stored
-/// value to a known preset token, falling back to the default for anything
-/// unrecognized.
+/// Falls back to the default for anything unrecognized.
 export function normalizeVaultTimeout(raw) {
   if (raw == null) return DEFAULT_VAULT_TIMEOUT;
   const s = String(raw).trim().toLowerCase();

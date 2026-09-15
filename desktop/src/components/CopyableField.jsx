@@ -1,15 +1,15 @@
 import { createSignal, Show } from "solid-js";
 import { IconEye, IconEyeOff, IconCopy, IconCheck } from "./Icon.jsx";
 import { CARD_ROW } from "../lib/helpers.js";
-import { copyToClipboard } from "../lib/clipboard.js";
+import { useCopyFeedback } from "../lib/useCopyFeedback.js";
+import { useI18n } from "../i18n/index.jsx";
 
 export default function CopyableField(props) {
-  const [copied, setCopied] = createSignal(false);
+  const { t } = useI18n();
+  const [copied, copy] = useCopyFeedback();
 
   async function handleCopy() {
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
-    await copyToClipboard(props.copyValue ?? (props.value || ""));
+    await copy(props.copyValue ?? (props.value || ""));
   }
 
   return (
@@ -29,7 +29,7 @@ export default function CopyableField(props) {
           <button
             onClick={props.onToggleShow}
             class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer"
-            title={props.showPassword ? "Hide" : "Show"}
+            title={props.showPassword ? t("common.hide") : t("common.show")}
           >
             <Show when={props.showPassword} fallback={
               <IconEye class="w-4 h-4" />
@@ -41,7 +41,7 @@ export default function CopyableField(props) {
         <button
           onClick={handleCopy}
           class="p-2 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)] transition-colors cursor-pointer"
-          title="Copy to clipboard"
+          title={t("common.copy")}
         >
           <Show when={copied()} fallback={
             <IconCopy class="w-4 h-4" />

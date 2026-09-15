@@ -44,19 +44,3 @@ export function Input(props) {
     />
   );
 }
-
-export function FormGroup(props) {
-  return (
-    <div class={`flex flex-col gap-1.5 ${props.class || ""}`}>
-      <label for={props.for} class="text-xs font-bold text-[var(--color-text)]">
-        {props.label}
-      </label>
-      {props.children}
-      <Show when={props.error}>
-        <span class="text-xs text-[var(--color-danger)]" id={props.errorId}>
-          {props.error}
-        </span>
-      </Show>
-    </div>
-  );
-}

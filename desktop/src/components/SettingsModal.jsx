@@ -16,6 +16,21 @@ import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 import SyncTab from "./SyncTab.jsx";
 import BridgeTab from "./BridgeTab.jsx";
 
+function TabButton(props) {
+  return (
+    <button
+      onClick={() => props.setActiveTab(props.id)}
+      class={`flex-1 px-3 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
+        props.active === props.id
+          ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
+          : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)]/50"
+      }`}
+    >
+      {props.label}
+    </button>
+  );
+}
+
 export default function SettingsModal() {
   const vault = useVault();
   const auth = useAuth();
@@ -416,56 +431,11 @@ export default function SettingsModal() {
 
             {/* Navigation Tabs */}
             <div class="px-6 py-3 border-b border-[var(--color-border)] shrink-0 bg-[var(--color-sidebar)]/30 flex gap-2 w-full">
-              <button
-                onClick={() => setActiveTab("general")}
-                class={`flex-1 px-3 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
-                  activeTab() === "general"
-                    ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
-                    : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)]/50"
-                }`}
-              >
-                {t("settings.tabGeneral")}
-              </button>
-              <button
-                onClick={() => setActiveTab("data")}
-                class={`flex-1 px-3 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
-                  activeTab() === "data"
-                    ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
-                    : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)]/50"
-                }`}
-              >
-                {t("settings.tabData")}
-              </button>
-              <button
-                onClick={() => setActiveTab("sync")}
-                class={`flex-1 px-3 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
-                  activeTab() === "sync"
-                    ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
-                    : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)]/50"
-                }`}
-              >
-                {t("settings.tabSync")}
-              </button>
-              <button
-                onClick={() => setActiveTab("devices")}
-                class={`flex-1 px-3 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
-                  activeTab() === "devices"
-                    ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
-                    : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)]/50"
-                }`}
-              >
-                {t("settings.tabDevices")}
-              </button>
-              <button
-                onClick={() => setActiveTab("bridge")}
-                class={`flex-1 px-3 py-1.5 text-xs font-bold rounded-lg transition-all text-center whitespace-nowrap cursor-pointer ${
-                  activeTab() === "bridge"
-                    ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
-                    : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)]/50"
-                }`}
-              >
-                {t("settings.tabBridge")}
-              </button>
+              <TabButton id="general" label={t("settings.tabGeneral")} active={activeTab()} setActiveTab={setActiveTab} />
+              <TabButton id="data" label={t("settings.tabData")} active={activeTab()} setActiveTab={setActiveTab} />
+              <TabButton id="sync" label={t("settings.tabSync")} active={activeTab()} setActiveTab={setActiveTab} />
+              <TabButton id="devices" label={t("settings.tabDevices")} active={activeTab()} setActiveTab={setActiveTab} />
+              <TabButton id="bridge" label={t("settings.tabBridge")} active={activeTab()} setActiveTab={setActiveTab} />
             </div>
 
             {/* Content */}

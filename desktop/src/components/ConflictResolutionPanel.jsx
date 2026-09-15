@@ -64,9 +64,10 @@ export default function ConflictResolutionPanel(props) {
     // resolver that just succeeds, draining the queue locally. Per-item flag
     // (not a global mode) so a mock and a real conflict can coexist without
     // the mock's no-op leaking onto the real one.
-    const resolver = conflicts.headIsMock()
-      ? async () => {}
-      : props.resolver ?? ((_conflict, v) => resolveConflict(v));
+    const resolver =
+      import.meta.env.DEV && conflicts.headIsMock()
+        ? async () => {}
+        : props.resolver ?? ((_conflict, v) => resolveConflict(v));
     try {
       await conflicts.resolve(verdict, resolver);
       setExplainOpen(false);

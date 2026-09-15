@@ -19,7 +19,6 @@ const VaultSwitcherContext = createContext(null);
 function VaultSwitcherProvider(props) {
   const [vaults, setVaults] = createSignal([]);
   const [activeSlug, setActiveSlug] = createSignal(null);
-  const [loading, setLoading] = createSignal(false);
 
   async function refresh() {
     try {
@@ -96,7 +95,6 @@ function VaultSwitcherProvider(props) {
   const store = {
     vaults,
     activeSlug,
-    loading,
     refresh,
     switchTo,
     close,

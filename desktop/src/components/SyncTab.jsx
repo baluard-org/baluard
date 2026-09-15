@@ -3,6 +3,7 @@ import { useI18n } from "../i18n/index.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { daemon } from "../lib/daemon.js";
 import { createProviderConnect } from "../lib/providerConnect.js";
+import { providerLabel as providerLabelT } from "../lib/providers.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess, toastWarning } from "../context/toastSignal.js";
 import GitExplainerModal from "./GitExplainerModal.jsx";
@@ -439,14 +440,7 @@ export default function SyncTab() {
     return { key, ...providers[key] };
   }
 
-  function providerLabel(key) {
-    const map = {
-      github: "providerGitHub",
-      gitlab: "providerGitLab",
-      codeberg: "providerCodeberg",
-    };
-    return t(`sync.${map[key] || key}`);
-  }
+  const providerLabel = (key) => providerLabelT(t, key);
 
   // Human "X ago" for a Unix-seconds timestamp. Returns a key the i18n
   // lastSynced template interpolates. Uses relative units, never a raw hash
