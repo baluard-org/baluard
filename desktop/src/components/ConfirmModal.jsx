@@ -30,8 +30,8 @@ export default function ConfirmModal(props) {
           aria-modal="true"
           aria-labelledby={`${props.idPrefix}-title`}
           aria-describedby={`${props.idPrefix}-desc`}
-          class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-          onClick={() => props.onClose?.()}
+          class={`fixed inset-0 bg-black/50 flex items-center justify-center ${props.overlayClass || "z-50"}`}
+          onClick={() => props.closeOnOverlay !== false && props.onClose?.()}
         >
           <FocusTrap containerRef={dialogRef} onEscape={() => props.onClose?.()} />
           <div

@@ -14,6 +14,7 @@ export default function ArchiveConfirmModal(props) {
       confirmLabel={t("entry.archive")}
       confirmClass="bg-amber-950/40 text-amber-400 border border-amber-900/30 hover:bg-amber-950/65"
       onConfirm={() => props.onConfirm?.()}
+      closeOnOverlay={false}
       onClose={() => props.setShow(false)}
     />
   );

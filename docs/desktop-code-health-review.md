@@ -123,3 +123,5 @@ Verdict: AGREE with sections 2-5; AGREE-WITH-CHANGES on section 1. Independently
 2. **R7 phrasing risk**: "DEV-gate the guard" is ambiguous — the gate must cover only the `console.warn`, never the `setStatus`/`setPane` write, or prod transitions would short-circuit. Wording tightened in R7.
 
 Confirmed correct (against my earlier caution): R2's `prompt()` finding is real and in code — moot only because D13 supersedes it. No false positives found in the reviewer's independent spot-checks; `IconLink` vs `IconLinkSimple` near-name trap noted as correctly handled.
+
+Resolution: the one blocker (dangling `lockAllVaults` import in `disableAutofill.test.js`) was fixed in the implementation commit. All three cosmetic nits are resolved in the follow-up commit: the empty-trash dialog keeps its `z-[100]` overlay (new `overlayClass` prop on `ConfirmModal`), Delete/Archive modals opt out of overlay-click-to-close (new `closeOnOverlay` prop, preserving their original behavior), and the SSH copy icons keep their original size via the new `iconClass` prop on the shared `CopyButton`.

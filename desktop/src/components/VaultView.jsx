@@ -149,6 +149,7 @@ export default function VaultView() {
       <ConfirmModal
         show={showEmptyTrashConfirm()}
         idPrefix="empty-trash"
+        overlayClass="z-[100]"
         title={t("vault.emptyTrash")}
         body={t("vault.emptyTrashConfirm")}
         confirmLabel={t("vault.emptyTrash")}
