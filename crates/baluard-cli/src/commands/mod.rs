@@ -132,18 +132,16 @@ pub fn handle_init(
     // Resolve slug: flag > auto-generate from display name > prompt
     let slug = match flag_slug {
         Some(s) => {
-            let (cleaned, modified) = baluard_core::vault::slug::clean_slug(&s);
-            if let Err(e) = baluard_core::vault::slug::validate_slug(&cleaned) {
+            // Enforced prefix: "personal" becomes "baluard-personal".
+            let normalized = baluard_core::vault::slug::normalize_slug(&s);
+            if let Err(e) = baluard_core::vault::slug::validate_slug(&normalized) {
                 eprintln!("error: invalid slug '{s}': {e}");
-                if modified {
-                    eprintln!("  (auto-corrected to '{cleaned}' but still invalid)");
-                }
                 std::process::exit(1);
             }
-            if modified {
-                eprintln!("Slug auto-corrected to: {cleaned}");
+            if normalized != s {
+                eprintln!("Slug normalized to: {normalized}");
             }
-            Some(cleaned)
+            Some(normalized)
         }
         None => {
             let name_for_slug = display_name.as_deref().unwrap_or("Personal");
@@ -153,7 +151,7 @@ pub fn handle_init(
                 if input.is_empty() {
                     Some(suggested)
                 } else {
-                    let (cleaned, _) = baluard_core::vault::slug::clean_slug(&input);
+                    let cleaned = baluard_core::vault::slug::normalize_slug(&input);
                     match baluard_core::vault::slug::validate_slug(&cleaned) {
                         Ok(()) => Some(cleaned),
                         Err(e) => {
@@ -1696,23 +1694,21 @@ pub fn handle_sync_clone_url(
         }
     }
     // Slug default: last URL path segment, minus a .git suffix.
-    let slug = slug_override
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            url.trim_end_matches('/')
-                .rsplit('/')
-                .next()
-                .unwrap_or("vault")
-                .trim_end_matches("/")
-                .strip_suffix(".git")
-                .unwrap_or_else(|| {
-                    url.trim_end_matches('/')
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or("vault")
-                })
-                .to_string()
-        });
+    let slug = slug_override.map(str::to_string).unwrap_or_else(|| {
+        url.trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or("vault")
+            .trim_end_matches("/")
+            .strip_suffix(".git")
+            .unwrap_or_else(|| {
+                url.trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("vault")
+            })
+            .to_string()
+    });
 
     let job_id = start_clone_job(url, provider_override, &slug, &slug, socket)?;
     let (out_slug, path) = poll_clone_job(&job_id, socket)?;
@@ -2909,16 +2905,18 @@ pub fn handle_vaults(action: &VaultAction, cli: &Cli) -> Result<(), Box<dyn std:
 /// so it appears in the app again. Non-destructive: nothing is opened,
 /// switched, or unsealed. Fails closed on directories without a
 /// `.baluard` marker — only real Baluard vaults get registered.
-fn vaults_add(path_str: &str, slug_override: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+fn vaults_add(
+    path_str: &str,
+    slug_override: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let raw = Path::new(path_str);
     if !raw.is_dir() {
         return Err(format!("Not a directory: {path_str}").into());
     }
-    let path = std::fs::canonicalize(raw)
-        .map_err(|e| format!("Cannot resolve {path_str}: {e}"))?;
+    let path = std::fs::canonicalize(raw).map_err(|e| format!("Cannot resolve {path_str}: {e}"))?;
 
-    let marker = baluard_core::vault::registry::BaluardMarker::read_from_vault(&path)?
-        .ok_or_else(|| {
+    let marker =
+        baluard_core::vault::registry::BaluardMarker::read_from_vault(&path)?.ok_or_else(|| {
             format!(
                 "Not a Baluard vault: {} has no .baluard marker.",
                 path.display()
@@ -2929,7 +2927,13 @@ fn vaults_add(path_str: &str, slug_override: Option<&str>) -> Result<(), Box<dyn
     // it keys registry lookups and daemon paths (C11 class).
     let slug = slug_override
         .map(str::to_string)
-        .or_else(|| if marker.slug.is_empty() { None } else { Some(marker.slug.clone()) })
+        .or_else(|| {
+            if marker.slug.is_empty() {
+                None
+            } else {
+                Some(marker.slug.clone())
+            }
+        })
         .unwrap_or_else(|| {
             path.file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -2947,9 +2951,11 @@ fn vaults_add(path_str: &str, slug_override: Option<&str>) -> Result<(), Box<dyn
     }
     // Same directory under a different slug = double-attach; refuse. Canonicalize
     // existing registry paths so symlinks and alternate spellings cannot bypass.
-    if reg.vaults.values().any(|v| {
-        std::fs::canonicalize(&v.path).map_or_else(|_| v.path == path, |cp| cp == path)
-    }) {
+    if reg
+        .vaults
+        .values()
+        .any(|v| std::fs::canonicalize(&v.path).map_or_else(|_| v.path == path, |cp| cp == path))
+    {
         return Err(
             "This directory is already registered under a different slug. Detach it first: baluard vaults detach <slug>"
                 .into(),
@@ -2982,9 +2988,7 @@ fn vaults_add(path_str: &str, slug_override: Option<&str>) -> Result<(), Box<dyn
 
     println!("Registered vault '{slug}' at {}.", path.display());
     println!("Open it with:     baluard vaults switch {slug}");
-    println!(
-        "If this device was never enrolled, run: baluard enroll-with-phrase --vault {slug}"
-    );
+    println!("If this device was never enrolled, run: baluard enroll-with-phrase --vault {slug}");
     Ok(())
 }
 

@@ -7,59 +7,37 @@
 //! - Lowercase `a-z0-9` and hyphens only
 //! - Must start and end with alphanumeric
 //! - 4-63 characters
-//! - `baluard-` prefix suggested but not enforced
+//! - `baluard-` prefix enforced: normalize_slug() prepends it at every entry
+//!   point (users type "personal", the slug becomes "baluard-personal")
 //! - Immutable after vault creation
+
+/// Normalize any user-provided slug into the enforced canonical form.
+///
+/// Enforcement rule: every vault slug and provider repo name carries the
+/// `baluard-` prefix. Users type "personal", the stored slug becomes
+/// "baluard-personal" - normalization, never rejection.
+///
+/// Pipeline: clean_slug -> ensure `baluard-` prefix -> enforce_length.
+/// Empty input falls back to `baluard-vault`.
+pub fn normalize_slug(slug: &str) -> String {
+    let (cleaned, _) = clean_slug(slug);
+    if cleaned.is_empty() {
+        return "baluard-vault".to_string();
+    }
+    let with_prefix = if cleaned.starts_with("baluard-") {
+        cleaned
+    } else {
+        format!("baluard-{cleaned}")
+    };
+    enforce_length(&with_prefix)
+}
 
 /// Normalize a user-provided name into a suggested slug.
 ///
-/// Steps:
-/// 1. Lowercase
-/// 2. Replace non-alphanumeric runs with single hyphen
-/// 3. Strip leading/trailing hyphens
-/// 4. Prepend `baluard-` if not already prefixed
-/// 5. Enforce min 4 chars (pad with hyphens if needed)
-/// 6. Truncate to 63 chars, stripping trailing hyphens
-///
-/// Returns a valid slug string.
+/// Alias for [normalize_slug]; kept for call sites that read as
+/// "generate a suggestion from a display name".
 pub fn suggest_slug(name: &str) -> String {
-    let lowered = name.to_lowercase();
-
-    // Replace any non-alphanumeric character with a hyphen
-    let mut chars = Vec::new();
-    let mut prev_hyphen = false;
-    for ch in lowered.chars() {
-        if ch.is_ascii_alphanumeric() {
-            chars.push(ch);
-            prev_hyphen = false;
-        } else if !prev_hyphen {
-            chars.push('-');
-            prev_hyphen = true;
-        }
-    }
-
-    // Strip leading/trailing hyphens
-    while chars.first() == Some(&'-') {
-        chars.remove(0);
-    }
-    while chars.last() == Some(&'-') {
-        chars.pop();
-    }
-
-    let base: String = chars.into_iter().collect();
-
-    if base.is_empty() {
-        return "baluard-vault".to_string();
-    }
-
-    // Prepend baluard- if not already prefixed
-    let with_prefix = if base.starts_with("baluard-") {
-        base
-    } else {
-        format!("baluard-{base}")
-    };
-
-    // Enforce length constraints
-    enforce_length(&with_prefix)
+    normalize_slug(name)
 }
 
 /// Validate a slug string against the rules.
@@ -326,6 +304,40 @@ mod tests {
         // User removes prefix, still valid
         assert!(validate_slug("work").is_ok());
         assert!(validate_slug("my-vault").is_ok());
+    }
+
+    #[test]
+    fn normalize_prepends_prefix() {
+        // Users type "personal", the slug becomes "baluard-personal".
+        assert_eq!(normalize_slug("personal"), "baluard-personal");
+        assert_eq!(normalize_slug("My_Work.Vault"), "baluard-my-work-vault");
+    }
+
+    #[test]
+    fn normalize_keeps_existing_prefix() {
+        assert_eq!(normalize_slug("baluard-personal"), "baluard-personal");
+    }
+
+    #[test]
+    fn normalize_empty_falls_back() {
+        assert_eq!(normalize_slug(""), "baluard-vault");
+        assert_eq!(normalize_slug("@#$"), "baluard-vault");
+    }
+
+    #[test]
+    fn normalize_idempotent() {
+        assert_eq!(
+            normalize_slug(&normalize_slug("personal")),
+            normalize_slug("personal")
+        );
+    }
+
+    #[test]
+    fn normalize_output_always_valid() {
+        for input in ["personal", "work", "baluard-x", "My Vault 2026"] {
+            let slug = normalize_slug(input);
+            assert!(validate_slug(&slug).is_ok(), "input {input} -> {slug}");
+        }
     }
 }
 

@@ -3,7 +3,7 @@
 // crates/baluard-core/src/vault/slug.rs.
 
 import { describe, it, expect } from "vitest";
-import { suggestSlug, validateSlug, cleanSlug } from "../lib/slug.js";
+import { suggestSlug, validateSlug, cleanSlug, normalizeSlug } from "../lib/slug.js"
 
 describe("suggestSlug", () => {
   it("lowercases and replaces non-alphanumerics with hyphens", () => {
@@ -95,5 +95,27 @@ describe("cleanSlug", () => {
 
   it("returns empty string for input with no alphanumerics", () => {
     expect(cleanSlug("!!!")).toBe("");
+  });
+});
+describe("normalizeSlug", () => {
+  it("prepends the enforced baluard- prefix", () => {
+    expect(normalizeSlug("personal")).toBe("baluard-personal");
+    expect(normalizeSlug("My_Work.Vault")).toBe("baluard-my-work-vault");
+  });
+
+  it("keeps an existing prefix (idempotent)", () => {
+    expect(normalizeSlug("baluard-personal")).toBe("baluard-personal");
+    expect(normalizeSlug(normalizeSlug("personal"))).toBe(normalizeSlug("personal"));
+  });
+
+  it("falls back to baluard-vault on empty input", () => {
+    expect(normalizeSlug("")).toBe("baluard-vault");
+    expect(normalizeSlug("@#$")).toBe("baluard-vault");
+  });
+
+  it("always yields a slug that passes validateSlug", () => {
+    for (const input of ["personal", "work", "baluard-x", "My Vault 2026"]) {
+      expect(validateSlug(normalizeSlug(input))).toBeNull();
+    }
   });
 });

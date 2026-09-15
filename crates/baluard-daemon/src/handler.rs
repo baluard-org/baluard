@@ -2381,11 +2381,13 @@ async fn handle_vault_create(mut req: GatewayRequest, host: &SharedVaultHost) ->
     // The VaultState::create_vault() expects a vault_path to already be set
     // on the state. We need a path. Resolve from slug (registry will create
     // the entry later) or fall back to the data_dir vaults/<slug> layout.
-    let slug = slug_hint.unwrap_or_else(|| {
+    // Enforce the baluard- prefix: users type "personal", the vault
+    // becomes "baluard-personal" (the slug joins a filesystem path below).
+    let slug = baluard_core::vault::slug::normalize_slug(&slug_hint.unwrap_or_else(|| {
         // Synthesize a slug from a UUID if none was provided. Caller can
         // rename later via the registry.
         format!("vault-{}", &uuid::Uuid::new_v4().to_string()[..8])
-    });
+    }));
     // C11: the slug reaches a filesystem path join below — reject anything
     // the slug rules disallow (path traversal, separators, dots) before it
     // can escape vaults_dir(). The synthesized UUID fallback always passes.
@@ -2539,6 +2541,7 @@ async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) 
     let Some(slug) = v["slug"].as_str().map(str::to_string) else {
         return err_response("Missing 'slug' in clone payload".to_string());
     };
+    let slug = baluard_core::vault::slug::normalize_slug(&slug);
     let display_name = v["display_name"]
         .as_str()
         .map(str::to_string)
@@ -4019,10 +4022,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(p) => p,
                 Err(e) => return err_response(format!("Invalid payload: {e}")),
             };
-            let name = match payload["name"].as_str() {
+            let name = baluard_core::vault::slug::normalize_slug(&match payload["name"].as_str() {
                 Some(n) => n.to_string(),
                 None => return err_response("Missing repo name"),
-            };
+            });
             let state_file =
                 baluard_core::providers::token::ProvidersState::load().unwrap_or_default();
             let info = match state_file.get(provider) {
@@ -4097,6 +4100,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             } else {
                 repo_name
             };
+            let effective_name = baluard_core::vault::slug::normalize_slug(&effective_name);
 
             // Resolve the remote URL: either reuse an already-created repo
             // (passed in the payload) or create a new private repo now.

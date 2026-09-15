@@ -9,7 +9,7 @@
  * - Lowercase a-z0-9 and hyphens only
  * - Must start and end with alphanumeric
  * - 4-63 characters
- * - "baluard-" prefix suggested but not enforced
+ * - "baluard-" prefix enforced via normalizeSlug at every entry point
  */
 
 // Shared normalize: lowercase, invalid chars → single hyphens, strip
@@ -64,6 +64,18 @@ export function validateSlug(slug) {
  */
 export function cleanSlug(input) {
   return slugChars(input);
+}
+
+/**
+ * Enforced canonical form (mirrors slug.rs normalize_slug): cleanSlug +
+ * guaranteed "baluard-" prefix + length cap. Users type "personal", the
+ * slug becomes "baluard-personal" - normalization, never rejection.
+ */
+export function normalizeSlug(slug) {
+  const cleaned = cleanSlug(slug);
+  if (!cleaned) return "baluard-vault";
+  const withPrefix = cleaned.startsWith("baluard-") ? cleaned : `baluard-${cleaned}`;
+  return enforceLength(withPrefix);
 }
 
 function enforceLength(slug) {

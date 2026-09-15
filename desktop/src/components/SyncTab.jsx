@@ -7,6 +7,7 @@ import { providerLabel as providerLabelT } from "../lib/providers.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess, toastWarning } from "../context/toastSignal.js";
 import GitExplainerModal from "./GitExplainerModal.jsx";
+import { normalizeSlug } from "../lib/slug.js";
 import { IconUpload, IconDownload, IconRefresh, IconAlert, IconSpinner } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import ExternalLink from "./ExternalLink.jsx";
@@ -273,7 +274,7 @@ export default function SyncTab() {
 
     try {
       // Try creating the repo. If it already exists (partial failure), skip to setup.
-      let repoNameUsed = repoName() || "baluard-vault";
+      const repoNameUsed = normalizeSlug(repoName() || "baluard-vault");
       let repoCreated = false;
       let cloneUrl = null;
       try {
