@@ -44,6 +44,51 @@
                 android:resource="@xml/autofill_service_configuration" />
         </service>
 
+        <!-- Accessibility fill (Phase 6.5, plan-android-accessibility-tile):
+             Bitwarden-current model. The service idles listening ONLY for
+             window-state changes and acts exclusively after the user arms
+             the quick-settings fill tile. Gated by the Baluard-side flag
+             (AccessibilityFill, default OFF) on every event.
+             isAccessibilityTool=false: it is an autofill fallback, not an
+             accessibility aid. -->
+        <service
+            android:name=".autofill.BaluardAccessibilityService"
+            android:process=":autofill"
+            android:exported="true"
+            android:label="@string/a11y_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service" />
+        </service>
+
+        <!-- Quick-settings fill tile: the user-facing trigger of the a11y
+             flow. Same :autofill process so it arms the in-process bridge. -->
+        <service
+            android:name=".autofill.BaluardA11yTileService"
+            android:process=":autofill"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/a11y_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- NoDisplay trampoline: collapsing the quick-settings shade must
+             produce a window-state change for the armed service to see. -->
+        <activity
+            android:name=".autofill.A11yTileTrampoline"
+            android:process=":autofill"
+            android:exported="false"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+
         <!-- Trampoline hosting the BiometricPrompt ceremony (plan D6). Same
              :autofill process as the service so AutofillSession is shared;
              translucent theme (NOT NoDisplay, the prompt needs a window);

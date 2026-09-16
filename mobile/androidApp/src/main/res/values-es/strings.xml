@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">Permite a Baluard rellenar campos de acceso en apps donde el autofill normal no funciona. Baluard lee los campos solo cuando usas la tarjeta de relleno en tus ajustes rápidos, y nunca guarda ni envía lo que ve.</string>
+    <string name="a11y_service_label">Relleno por accesibilidad de Baluard</string>
+    <string name="a11y_tile_label">Rellenar con Baluard</string>
+</resources>

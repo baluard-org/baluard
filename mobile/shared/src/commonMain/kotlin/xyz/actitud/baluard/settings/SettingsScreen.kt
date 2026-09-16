@@ -61,6 +61,7 @@ import xyz.actitud.baluard.detail.str
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.AutofillRole
 import xyz.actitud.baluard.platform.AutofillSuggestions
+import xyz.actitud.baluard.platform.AccessibilityFill
 import xyz.actitud.baluard.platform.Biometric
 import xyz.actitud.baluard.platform.BrowserAutofillIntegration
 import xyz.actitud.baluard.platform.ClipboardPrefs
@@ -560,6 +561,84 @@ fun SettingsScreen(
                                 onCheckedChange = { BrowserAutofillIntegration.openSettings() },
                             )
                         }
+                    }
+
+                    // Use accessibility (Phase 6.5): the quick-settings fill
+                    // tile for apps that ignore normal autofill. Opt-in,
+                    // default off, disclosed before enabling.
+                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    var a11yOn by remember { mutableStateOf(AccessibilityFill.enabled()) }
+                    var showA11yDisclosure by remember { mutableStateOf(false) }
+                    var a11ySystemOn by remember { mutableStateOf(AccessibilityFill.serviceEnabledInSystem()) }
+                    LifecycleResumeEffect("a11y-system") {
+                        a11ySystemOn = AccessibilityFill.serviceEnabledInSystem()
+                        onPauseOrDispose { }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = t("settings.a11yTitle"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = a11yOn,
+                            onCheckedChange = { want ->
+                                if (want) {
+                                    showA11yDisclosure = true
+                                } else {
+                                    AccessibilityFill.setEnabled(false)
+                                    a11yOn = false
+                                }
+                            },
+                        )
+                    }
+                    Text(
+                        t("settings.a11ySummary"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    if (a11yOn) {
+                        if (!a11ySystemOn) {
+                            BaluardPrimaryButton(
+                                text = t("settings.a11yOpenSystem"),
+                                onClick = { AccessibilityFill.openSystemA11ySettings() },
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                        Text(
+                            t("settings.a11yTileHint"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+
+                    // Enable disclosure (out-of-card, same composable scope).
+                    if (showA11yDisclosure) {
+                        AlertDialog(
+                            onDismissRequest = { showA11yDisclosure = false },
+                            title = { Text(t("settings.a11yDisclosureTitle")) },
+                            text = { Text(t("settings.a11yDisclosureBody")) },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    AccessibilityFill.setEnabled(true)
+                                    a11yOn = true
+                                    AccessibilityFill.openSystemA11ySettings()
+                                    showA11yDisclosure = false
+                                }) { Text(t("settings.a11yDisclosureAccept")) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showA11yDisclosure = false }) {
+                                    Text(t("common.cancel"))
+                                }
+                            },
+                        )
                     }
                 }
             }

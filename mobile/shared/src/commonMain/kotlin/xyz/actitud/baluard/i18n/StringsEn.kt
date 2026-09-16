@@ -435,5 +435,17 @@ internal val EN: Map<String, String> = mapOf(
     "settings.braveIntegrationHint" to "Improves login filling for supported websites in Brave. Tapping opens Brave's autofill settings.",
 
     // Settings > Autofill accessibility fill (Phase 6.5, opt-in, default off).
+    "settings.a11yTitle" to "Use accessibility",
+    "settings.a11ySummary" to "For apps where normal autofill does not work. Off by default.",
+    "settings.a11yDisclosureTitle" to "Allow accessibility fill?",
+    "settings.a11yDisclosureBody" to "In apps that ignore normal autofill, Baluard can fill login fields for you. The accessibility service reads a field only after you tap the fill tile in your quick settings. Nothing it sees is stored or sent anywhere, and you can turn this off anytime.",
+    "settings.a11yDisclosureAccept" to "Allow",
+    "settings.a11yOpenSystem" to "Open Accessibility settings",
+    "settings.a11yTileHint" to "Then add the Baluard tile to your quick settings and tap it on a login screen.",
+    "a11y.toastEnableBaluardFirst" to "Turn on Use accessibility in Baluard first.",
+    "a11y.toastEnableSystem" to "Enable Baluard in Accessibility settings first.",
+    "a11y.toastNoFields" to "No login fields on this screen.",
+    "a11y.noMatches" to "No saved logins for this app",
+    "a11y.totpCopied" to "TOTP code copied",
     "settings.autofillHint" to "Filling asks for your fingerprint whenever the autofill session is locked. Locking the app here does not lock autofill, and the other way around.",
 )
