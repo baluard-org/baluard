@@ -36,6 +36,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
@@ -50,10 +51,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.data.vaultTimeoutLabel
+import xyz.actitud.baluard.detail.str
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.Biometric
 import xyz.actitud.baluard.platform.ClipboardPrefs
@@ -261,6 +265,55 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),
+                )
+
+                BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                // Website icons on new entries (fetch_favicons opt-in,
+                // desktop SettingsModal parity; default off for privacy).
+                var fetchFavicons by remember(vaultPath) { mutableStateOf(false) }
+                var faviconsLoaded by remember(vaultPath) { mutableStateOf(false) }
+                LaunchedEffect(vaultPath) {
+                    val json = repo.getSettings(vault) ?: return@LaunchedEffect
+                    fetchFavicons = runCatching {
+                        (Json.parseToJsonElement(json) as? JsonObject).str("fetch_favicons") == "true"
+                    }.getOrDefault(false)
+                    faviconsLoaded = true
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = t("settings.favicons"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Switch(
+                        checked = fetchFavicons,
+                        enabled = faviconsLoaded,
+                        onCheckedChange = { want ->
+                            fetchFavicons = want
+                            scope.launch {
+                                val ok = repo.saveSettings(
+                                    vault,
+                                    """{"fetch_favicons": $want}""",
+                                )
+                                if (!ok) fetchFavicons = !want
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                }
+
+                Text(
+                    text = t("settings.faviconsHint"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
                 BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))

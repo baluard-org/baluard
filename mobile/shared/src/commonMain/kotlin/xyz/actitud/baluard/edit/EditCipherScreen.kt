@@ -38,6 +38,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -89,13 +91,21 @@ fun EditCipherScreen(
 ) {
     val form by viewModel.form.collectAsState()
     val folders by viewModel.folders.collectAsState()
+    val allTags by viewModel.allTags.collectAsState()
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // Password generator knobs (desktop parity: 8-64 slider + 3 toggles).
+    var genLen by remember { mutableStateOf(16) }
+    var genUpper by remember { mutableStateOf(true) }
+    var genNums by remember { mutableStateOf(true) }
+    var genSyms by remember { mutableStateOf(true) }
+    var showGenOptions by remember { mutableStateOf(false) }
 
     LaunchedEffect(cipherId) {
         if (cipherId != null) viewModel.load(vault, cipherId) else viewModel.reset()
         viewModel.loadFolders(vault)
+        viewModel.loadTags(vault)
     }
 
     Scaffold(
@@ -164,17 +174,64 @@ fun EditCipherScreen(
                 SectionCard(title = t("edit.sectionCredentials")) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         fields.forEach { spec ->
-                            if (form.typeTag == "login" && spec.wireKey == "password") {
-                                PasswordWithGenerator(
-                                    value = form.values[spec.wireKey].orEmpty(),
-                                    enabled = !saving,
-                                    onValueChange = { viewModel.setField(spec.wireKey, it) },
-                                    onGenerate = {
-                                        scope.launch { viewModel.setField(spec.wireKey, viewModel.generatePassword()) }
-                                    },
-                                )
-                            } else {
-                                BaluardTextField(
+                            when {
+                                form.typeTag == "login" && spec.wireKey == "password" -> {
+                                    PasswordWithGenerator(
+                                        value = form.values[spec.wireKey].orEmpty(),
+                                        enabled = !saving,
+                                        genLen = genLen,
+                                        genUpper = genUpper,
+                                        genNums = genNums,
+                                        genSyms = genSyms,
+                                        showOptions = showGenOptions,
+                                        onValueChange = { viewModel.setField(spec.wireKey, it) },
+                                        onLengthChange = { genLen = it },
+                                        onUpperChange = { genUpper = it },
+                                        onNumsChange = { genNums = it },
+                                        onSymsChange = { genSyms = it },
+                                        onToggleOptions = { showGenOptions = !showGenOptions },
+                                        onGenerate = {
+                                            scope.launch {
+                                                viewModel.setField(
+                                                    spec.wireKey,
+                                                    viewModel.generatePassword(genLen, genUpper, genNums, genSyms),
+                                                )
+                                            }
+                                        },
+                                    )
+                                }
+
+                                form.typeTag == "card" && spec.wireKey == "number" -> {
+                                    CardNumberField(
+                                        value = form.values[spec.wireKey].orEmpty(),
+                                        enabled = !saving,
+                                        onValueChange = { viewModel.setField(spec.wireKey, it) },
+                                    )
+                                }
+
+                                form.typeTag == "card" && spec.wireKey == "exp_month" -> {
+                                    DropdownField(
+                                        label = t("detail.f.expMonth"),
+                                        selected = form.values[spec.wireKey].orEmpty(),
+                                        options = listOf("" to "MM") + (1..12).map {
+                                            "%02d".format(it) to "%02d".format(it)
+                                        },
+                                        enabled = !saving,
+                                        onSelect = { viewModel.setField(spec.wireKey, it) },
+                                    )
+                                }
+
+                                form.typeTag == "passport" && spec.wireKey == "sex" -> {
+                                    DropdownField(
+                                        label = t("detail.f.sex"),
+                                        selected = form.values[spec.wireKey].orEmpty(),
+                                        options = listOf("" to "--", "M" to "M", "F" to "F", "X" to "X"),
+                                        enabled = !saving,
+                                        onSelect = { viewModel.setField(spec.wireKey, it) },
+                                    )
+                                }
+
+                                else -> BaluardTextField(
                                     value = form.values[spec.wireKey].orEmpty(),
                                     onValueChange = { viewModel.setField(spec.wireKey, it) },
                                     label = t(spec.labelKey),
@@ -268,6 +325,7 @@ fun EditCipherScreen(
             SectionCard(title = t("edit.tags")) {
                 TagsEditor(
                     tags = form.tags,
+                    suggestions = allTags,
                     enabled = !saving,
                     onAdd = { viewModel.addTag(it) },
                     onRemove = { viewModel.removeTag(it) },
@@ -549,8 +607,13 @@ private fun FolderPicker(
     enabled: Boolean,
     onSelect: (String?) -> Unit,
 ) {
+    // Desktop flatFolderTree parity: DFS order, parents before children,
+    // depth shown as non-breaking-space indentation.
+    val withDepth = foldersWithDepth(folders)
     val options: List<Pair<String, String>> =
-        listOf("" to "edit.noFolder") + folders.map { it.id to it.name }
+        listOf("" to "edit.noFolder") + withDepth.map { (folder, depth) ->
+            folder.id to "\u00A0".repeat(depth * 2) + folder.name
+        }
     DropdownField(
         label = t("edit.folder"),
         selected = selectedId.orEmpty(),
@@ -613,7 +676,17 @@ private fun DropdownField(
 private fun PasswordWithGenerator(
     value: String,
     enabled: Boolean,
+    genLen: Int,
+    genUpper: Boolean,
+    genNums: Boolean,
+    genSyms: Boolean,
+    showOptions: Boolean,
     onValueChange: (String) -> Unit,
+    onLengthChange: (Int) -> Unit,
+    onUpperChange: (Boolean) -> Unit,
+    onNumsChange: (Boolean) -> Unit,
+    onSymsChange: (Boolean) -> Unit,
+    onToggleOptions: () -> Unit,
     onGenerate: () -> Unit,
 ) {
     Column {
@@ -625,16 +698,92 @@ private fun PasswordWithGenerator(
             enabled = enabled,
         )
         Spacer(Modifier.height(6.dp))
-        TextButton(onClick = onGenerate, enabled = enabled) {
-            Text(t("edit.generatePassword"))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onGenerate, enabled = enabled) {
+                Text(t("edit.generatePassword"))
+            }
+            TextButton(onClick = onToggleOptions, enabled = enabled) {
+                Text(t("edit.generatorOptions"))
+            }
         }
+        if (showOptions) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = t("edit.genLength", genLen.toString()),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Slider(
+                    value = genLen.toFloat(),
+                    onValueChange = { onLengthChange(it.toInt()) },
+                    valueRange = 8f..64f,
+                    enabled = enabled,
+                )
+                SwitchRow(t("edit.genUpper"), genUpper, enabled, onUpperChange)
+                SwitchRow(t("edit.genNumbers"), genNums, enabled, onNumsChange)
+                SwitchRow(t("edit.genSymbols"), genSyms, enabled, onSymsChange)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Switch(checked = checked, onCheckedChange = onToggle, enabled = enabled)
+    }
+}
+
+@Composable
+private fun CardNumberField(value: String, enabled: Boolean, onValueChange: (String) -> Unit) {
+    Column {
+        detectCardBrand(value)?.let { brand ->
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+            ) {
+                Text(
+                    text = brand,
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+        }
+        BaluardTextField(
+            value = formatCardNumber(value),
+            onValueChange = { raw -> onValueChange(raw.filter(Char::isDigit).take(19)) },
+            label = t("detail.f.number"),
+            enabled = enabled,
+        )
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TagsEditor(tags: List<String>, enabled: Boolean, onAdd: (String) -> Unit, onRemove: (String) -> Unit) {
+private fun TagsEditor(
+    tags: List<String>,
+    suggestions: List<String>,
+    enabled: Boolean,
+    onAdd: (String) -> Unit,
+    onRemove: (String) -> Unit,
+) {
     var input by remember { mutableStateOf("") }
+    // Desktop parity: existing tags minus chosen ones, prefix match, max 5.
+    val suggestionsToShow = suggestions
+        .filter { s -> input.isNotBlank() && s.contains(input.trim(), ignoreCase = true) }
+        .filter { s -> tags.none { it.equals(s, ignoreCase = true) } }
+        .take(5)
     Column {
         if (tags.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -672,6 +821,16 @@ private fun TagsEditor(tags: List<String>, enabled: Boolean, onAdd: (String) -> 
             }),
             modifier = Modifier.fillMaxWidth(),
         )
+        if (suggestionsToShow.isNotEmpty()) {
+            Column {
+                suggestionsToShow.forEach { s ->
+                    DropdownMenuItem(
+                        text = { Text(s) },
+                        onClick = { onAdd(s); input = "" },
+                    )
+                }
+            }
+        }
         TextButton(
             onClick = {
                 onAdd(input)

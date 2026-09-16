@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import xyz.actitud.baluard.platform.platformLogE
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -19,6 +20,7 @@ import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.PasswordConfig
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.detail.fieldsFor
+import xyz.actitud.baluard.detail.str
 import xyz.actitud.baluard.detail.str
 
 /**
@@ -49,6 +51,9 @@ class EditCipherViewModel(private val repo: VaultRepository) {
 
     private val _folders = MutableStateFlow<List<MobileFolderInfo>>(emptyList())
     val folders: StateFlow<List<MobileFolderInfo>> = _folders.asStateFlow()
+
+    private val _allTags = MutableStateFlow<List<String>>(emptyList())
+    val allTags: StateFlow<List<String>> = _allTags.asStateFlow()
 
     private var existingId: String? = null
 
@@ -138,12 +143,17 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         _folders.value = runCatching { repo.listFolders(vault) }.getOrDefault(_folders.value)
     }
 
-    /** Inline password generation (desktop parity: the password field grows a
-     * generate action). Deterministic config; the Generator screen covers the
-     * configurable case. */
-    suspend fun generatePassword(): String =
-        repo.generatePassword(PasswordConfig(16u, upper = true, numbers = true, symbols = true))
-            .getOrElse { "" }
+    /** All known tags for autocomplete; failures leave the previous list. */
+    suspend fun loadTags(vault: MobileVault) {
+        _allTags.value = runCatching { repo.listTags(vault) }.getOrDefault(_allTags.value)
+    }
+
+    /** Inline password generation with desktop's knobs (length 8-64,
+     * uppercase / numbers / symbols toggles). */
+    suspend fun generatePassword(length: Int, upper: Boolean, numbers: Boolean, symbols: Boolean): String =
+        repo.generatePassword(
+            PasswordConfig(length.coerceIn(1, 128).toUInt(), upper, numbers, symbols),
+        ).getOrElse { "" }
 
     /** SSH keypair generation (desktop SshKeyGenerator parity). Fills the
      * public_key / private_key / key_fingerprint form fields. Returns false on
@@ -189,6 +199,7 @@ class EditCipherViewModel(private val repo: VaultRepository) {
 
     /** Persist: addCipher if new, updateCipher if editing. Returns the cipher id. */
     suspend fun save(vault: MobileVault): Result<String> {
+        if (_form.value.typeTag == "login") maybeFetchFavicon(vault)
         val f = _form.value
         val payload = buildPayload(f, existingId, originalData)
         return runCatching {
@@ -198,6 +209,40 @@ class EditCipherViewModel(private val repo: VaultRepository) {
             } else {
                 repo.addCipher(vault, payload)
             }
+        }
+    }
+
+    /** Desktop maybeFetchFavicon parity: on login save, when the opt-in
+     * fetch_favicons setting is on, fetch a favicon for the first URI and
+     * stage it (or clear a stale one when the URI is gone). When the setting
+     * is off this is a no-op and the stored favicon is preserved untouched. */
+    private suspend fun maybeFetchFavicon(vault: MobileVault) {
+        val f = _form.value
+        val faviconsEnabled = repo.getSettings(vault)
+            ?.let { json ->
+                runCatching { (Json.parseToJsonElement(json) as? JsonObject).str("fetch_favicons") == "true" }
+                    .getOrDefault(false)
+            } == true
+        if (!faviconsEnabled) return
+
+        val domain = extractDomain(f.uris.firstOrNull { it.uri.isNotBlank() }?.uri)
+        if (domain == null) {
+            // No usable URI: clear any previously-stored favicon.
+            if (f.faviconOverride != null || f.hasStoredFavicon) {
+                _form.value = f.copy(faviconOverride = JsonNull)
+            }
+            return
+        }
+        val raw = runCatching { repo.fetchFavicon(vault, domain) }.getOrDefault("")
+        val obj = raw.takeIf { it.isNotBlank() }
+            ?.let { runCatching { Json.parseToJsonElement(it) as? JsonObject }.getOrNull() }
+        val data = obj?.str("data")
+        val mime = obj?.str("mime")
+        _form.value = if (data != null && mime != null) {
+            val icon = buildJsonObject { put("data", data); put("mime", mime) }
+            _form.value.copy(faviconOverride = icon)
+        } else {
+            _form.value.copy(faviconOverride = JsonNull)
         }
     }
 
@@ -223,6 +268,9 @@ class EditCipherViewModel(private val repo: VaultRepository) {
                         u.matchStrategy?.let { put("match_strategy", it) }
                     } }))
                 put("totp_uri", if (f.totpUri.isBlank()) JsonNull else JsonPrimitive(f.totpUri.trim()))
+                // Fetched-on-save favicon; null override = untouched (the
+                // originalData copy preserves whatever was stored).
+                f.faviconOverride?.let { put("favicon", it) }
             }
         }
         val root = buildJsonObject {
@@ -279,6 +327,13 @@ data class EditForm(
     val uris: List<UriRow> = emptyList(),
     /** Login TOTP seed URI (kind.data.totp_uri). */
     val totpUri: String = "",
+    /** Fetched-on-save favicon: null = untouched (preserve stored value);
+    * JsonNull = clear; object = {data, mime} to store. Set only when the
+    * fetch_favicons opt-in is enabled. */
+    val faviconOverride: JsonElement? = null,
+    /** Whether the stored cipher has a favicon (drives the clear-on-no-URI
+    * path in [EditCipherViewModel.maybeFetchFavicon]). */
+    val hasStoredFavicon: Boolean = false,
     val customFields: List<CustomFieldEdit> = emptyList(),
     val tags: List<String> = emptyList(),
     val folderId: String? = null,
@@ -333,6 +388,7 @@ internal fun parseLoadedCipher(raw: String): EditForm {
         }.toMap(),
         uris = uris,
         totpUri = if (tag == "login") (data.str("totp_uri") ?: obj.str("totp")).orEmpty() else "",
+        hasStoredFavicon = (data["favicon"] as? JsonObject)?.str("data") != null,
         customFields = customFields,
         tags = (obj["tags"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
         folderId = obj.str("folder_id"),
@@ -343,4 +399,18 @@ internal fun parseLoadedCipher(raw: String): EditForm {
 private fun extractData(raw: String): JsonObject? {
     val obj = Json.parseToJsonElement(raw) as? JsonObject ?: return null
     return (obj["kind"] as? JsonObject)?.get("data") as? JsonObject ?: JsonObject(emptyMap())
+}
+
+/** Desktop extractDomain parity: strip protocol, www, path, port and query;
+ * lowercase. Null when nothing usable remains. */
+internal fun extractDomain(uri: String?): String? {
+    var s = uri?.trim().orEmpty()
+    if (s.isEmpty()) return null
+    s = s.removePrefix("https://").removePrefix("http://")
+        .removePrefix("www.")
+        .split("/").first()
+        .split(":").first()
+        .split("?").first()
+        .lowercase()
+    return s.ifEmpty { null }
 }
