@@ -4,6 +4,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.platform.Clock
@@ -29,10 +32,7 @@ class TotpViewModel(private val repo: VaultRepository) {
     suspend fun start(vault: MobileVault, cipherId: String) {
         _state.value = TotpState.Loading
         try {
-            val raw = repo.totpCode(vault, cipherId)
-            val parts = raw.split(' ')
-            val code = parts.firstOrNull { it.all(Char::isDigit) } ?: raw
-            val secs = parts.lastOrNull()?.toIntOrNull() ?: secondsIntoWindow()
+            val (code, secs) = fetch(vault, cipherId)
             _state.value = TotpState.Code(code, secs)
             // Tick the countdown once a second; re-fetch near the rollover.
             while (true) {
@@ -40,11 +40,9 @@ class TotpViewModel(private val repo: VaultRepository) {
                 val cur = (_state.value as? TotpState.Code) ?: break
                 val next = cur.secondsRemaining - 1
                 if (next <= 0) {
-                    // Re-fetch at the window boundary.
-                    val refreshed = runCatching { repo.totpCode(vault, cipherId) }.getOrNull()
-                    val rp = refreshed?.split(' ')?.lastOrNull()?.toIntOrNull() ?: 30
-                    val rc = refreshed?.split(' ')?.firstOrNull { it.all(Char::isDigit) } ?: cur.code
-                    _state.value = TotpState.Code(rc, rp)
+                    val refreshed = runCatching { fetch(vault, cipherId) }
+                        .getOrElse { cur.code to 30 }
+                    _state.value = TotpState.Code(refreshed.first, refreshed.second)
                 } else {
                     _state.value = cur.copy(secondsRemaining = next)
                 }
@@ -57,10 +55,32 @@ class TotpViewModel(private val repo: VaultRepository) {
         }
     }
 
-    private fun secondsIntoWindow(): Int {
-        val epochSeconds = Clock.currentTimeMillis() / 1000
-        return (30 - (epochSeconds % 30)).toInt().coerceIn(1, 30)
+    private suspend fun fetch(vault: MobileVault, cipherId: String): Pair<String, Int> {
+        val raw = repo.totpCode(vault, cipherId)
+        return parseTotpResponse(raw, Clock.currentTimeMillis() / 1000)
+            ?: throw IllegalStateException("Unparseable TOTP response")
     }
+}
+
+/**
+ * Parses the runtime TOTP wire response: JSON
+ * {"code":"123456","period_seconds":30,"expires_at":<unix_secs>}. Returns
+ * (code, secondsRemaining), computed from the expires_at epoch so odd periods
+ * stay correct. The legacy "<code> <secs>" space form is accepted defensively
+ * for older runtimes. Null when neither parses.
+ */
+internal fun parseTotpResponse(raw: String, epochSeconds: Long): Pair<String, Int>? {
+    val obj = runCatching { Json.parseToJsonElement(raw) as? JsonObject }.getOrNull()
+    if (obj != null) {
+        val code = (obj["code"] as? JsonPrimitive)?.content ?: return null
+        val expiresAt = (obj["expires_at"] as? JsonPrimitive)?.content?.toLongOrNull()
+            ?: return code to 30
+        return code to (expiresAt - epochSeconds).toInt().coerceIn(0, 3600)
+    }
+    val parts = raw.trim().split(' ')
+    val code = parts.firstOrNull { it.all(Char::isDigit) } ?: return null
+    val secs = parts.lastOrNull()?.toIntOrNull() ?: 30
+    return code to secs.coerceIn(1, 3600)
 }
 
 sealed interface TotpState {
