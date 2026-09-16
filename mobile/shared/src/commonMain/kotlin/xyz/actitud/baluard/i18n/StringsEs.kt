@@ -420,4 +420,11 @@ internal val ES: Map<String, String> = mapOf(
     "detail.passkey.created" to "Creado",
     "detail.passkey.missingKey" to "Este pase se importó sin su clave privada. Inicia sesión en el sitio para registrarlo de nuevo.",
     "detail.attachments" to "Adjuntos",
+
+    // Android autofill picker + trampoline (Phase 6). El título del prompt
+    // biométrico reutiliza login.biometricTitle.
+    "autofill.unlockHint" to "Toca para desbloquear y rellenar",
+    "autofill.noUsername" to "(sin usuario)",
+    "autofill.openAppToSetup" to "Abre Baluard primero para activar el desbloqueo rápido",
+    "autofill.unlockFailed" to "No se pudo desbloquear. Abre Baluard e inténtalo de nuevo.",
 )

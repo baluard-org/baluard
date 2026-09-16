@@ -18,6 +18,10 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             // MainActivity is a FragmentActivity host for BiometricPrompt (B5).
             implementation("androidx.fragment:fragment-ktx:1.6.2")
+            // Autofill service/activity (:autofill process) call uniffi suspend
+            // fns and BiometricPrompt directly; same versions as :shared.
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+            implementation("net.java.dev.jna:jna:5.14.0@aar")
         }
     }
 }

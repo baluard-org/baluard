@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
+        android:name=".BaluardApplication"
         android:label="Baluard"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
@@ -36,6 +37,19 @@
                 <action android:name="android.service.autofill.AutofillService" />
             </intent-filter>
         </service>
+
+        <!-- Trampoline hosting the BiometricPrompt ceremony (plan D6). Same
+             :autofill process as the service so AutofillSession is shared;
+             translucent theme (NOT NoDisplay, the prompt needs a window);
+             not exported (launched only via our own PendingIntent). -->
+        <activity
+            android:name=".autofill.AutofillActivity"
+            android:process=":autofill"
+            android:exported="false"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Baluard.Autofill" />
 
         <!-- Native lib: the Rust cdylib (libbaluard.so) is packaged per-ABI
              under jniLibs/<abi>/ by the host build (cargo-ndk or manual copy).
