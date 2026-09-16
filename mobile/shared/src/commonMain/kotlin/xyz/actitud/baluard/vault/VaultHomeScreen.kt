@@ -122,6 +122,15 @@ fun VaultHomeScreen(
 
     LaunchedEffectHubLoader(vault, revision, listViewModel)
 
+    // Deep-search index: built lazily on the first search; the version bump
+    // recomposes results with content matches once it lands. Declared AFTER
+    // the hub loader so a revision bump refreshes (and invalidates the index)
+    // before ensureContentIndex can short-circuit on the stale cache.
+    val indexVersion by listViewModel.indexVersion.collectAsState()
+    LaunchedEffect(vault, revision, query) {
+        if (query.isNotBlank()) listViewModel.ensureContentIndex(vault)
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
