@@ -134,6 +134,31 @@ To circumvent mobile OS sandboxes that aggressively terminate background synchro
 
 ---
 
+### D7-bis. Daemon Rationale: Why a Resident Process (2026-12)
+
+**Decision: the vault engine runs in a separate daemon process, sidecar-owned by the desktop app. It is not folded into the UI process (the Bitwarden / KeePassXC / 1Password model).**
+
+Every mainstream competitor ships a daemonless desktop app: Electron/standalone process, crypto in-process, extension integration via native messaging pointed at the app itself. The single-app model is viable and proven. Baluard keeps a daemon anyway, for four reasons that outrank the packaging simplicity it would buy.
+
+**Why the split (priority order):**
+
+1. **Key-process isolation (the load-bearing reason).** The daemon is the only process holding KEK, Root Key, and SGKs. The desktop webview parses remote-influenced content: favicons, imported files, entry strings. A decoder or rendering bug in the UI tier therefore reaches displayed plaintext and clipboard, never key material. Folding `baluard-runtime` into the app process converts "compromised UI" into "compromised vault". Bitwarden accepts exactly this exposure because its crypto already lives in the renderer process; we do not have to.
+2. **Single sync writer per machine.** The daemon is the only process running sync cycles against the on-disk repo (`cycle_lock`, C3). A daemonless design needs the NMH and the CLI to run the same commit→pull→push cycles in parallel processes. Git file locks serialize raw writes but not semantic intent: parallel cycles churn merge conflicts and race on `sync-state.json`. Bitwarden's server arbitrates per-object revisions; a git remote arbitrates far less. With the weaker arbiter, single-writer is not optional.
+3. **One unlocked session, three clients.** Desktop, CLI, and the browser extension (NMH relay) share the daemon's in-memory unlocked vaults and bridge tokens: unlock once, every client is served. Per-client sessions mean each process holds its own key material and runs its own unlock flow (Bitwarden CLI and extension each unlock separately; its desktop biometric bridge is the same resident role, merely embedded in the app).
+4. **Capability enforcement for the webview.** The D2 webview hardening (action allowlist, forbidden-key filter) works because the webview is a dumb client: authority and key material sit on the daemon side of the socket. Trust boundary and capability boundary coincide. In-process, the allowlist becomes advisory.
+5. **Deterministic teardown.** App quit = SIGTERM → 200 ms grace → keys zeroized. No key material outlives the UI lifecycle, and no second process lingers with secrets in memory.
+
+**Lifecycle facts (what the daemon does NOT do):**
+
+- The daemon is a Tauri sidecar: started on app launch, stopped on app quit. NMH and CLI never spawn it: NMH fails closed on a dead socket; the CLI points users at `baluard-daemon` or `--direct`.
+- Window close is NOT quit: the window hides to the system tray (macOS Dock optional) and the daemon keeps running, so debounced pushes, periodic pulls, and conflict resolution continue while the UI is hidden.
+- App quit DOES stop everything: no background git sync, no headless operation after quit. Autosync is tied to the app lifecycle by design.
+- A headless daemon (system autostart, sync with no UI ever) is architecturally possible — the binary runs standalone — but is not built. It would trade away the zeroize-on-quit guarantee in point 5 and needs its own threat model (keys resident while the user believes the app is closed). Not planned.
+
+**Alternative rejected (2026-12, egui + daemonless evaluation):** hosting the daemon role inside the desktop app process (serve the socket in-process). Rejected on points 1-3. Availability was NOT the differentiator: the extension is app-gated today either way, because the sidecar dies with the app. The differentiators are key isolation, single-writer sync, and the shared unlocked session.
+
+---
+
 ### D8. Mobile Tier: UniFFI Bindings (baluard-uniffi)
 
 **Decision: Mozilla UniFFI for Rust-to-Kotlin/Swift bridge**
