@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,8 +18,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Checkbox
@@ -27,12 +33,15 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Scaffold
 import xyz.actitud.baluard.detail.cipherTypeWireTags
 import xyz.actitud.baluard.ui.components.BaluardTopBar
 import androidx.compose.runtime.Composable
@@ -47,8 +56,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import xyz.actitud.baluard.data.MobileFolderInfo
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.detail.FieldSpec
 import xyz.actitud.baluard.detail.fieldsFor
@@ -77,12 +88,14 @@ fun EditCipherScreen(
     onCancelled: () -> Unit = {},
 ) {
     val form by viewModel.form.collectAsState()
+    val folders by viewModel.folders.collectAsState()
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(cipherId) {
         if (cipherId != null) viewModel.load(vault, cipherId) else viewModel.reset()
+        viewModel.loadFolders(vault)
     }
 
     Scaffold(
@@ -119,45 +132,30 @@ fun EditCipherScreen(
 
                 Spacer(Modifier.height(12.dp))
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                        .clickable(enabled = !saving) { viewModel.setFavorite(!form.favorite) }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Star,
-                                contentDescription = null,
-                                tint = if (form.favorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp),
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                text = t("edit.favorite"),
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                        }
-                        Checkbox(
-                            checked = form.favorite,
-                            onCheckedChange = { viewModel.setFavorite(it) },
-                            enabled = !saving,
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = MaterialTheme.colorScheme.primary,
-                                checkmarkColor = MaterialTheme.colorScheme.onPrimary,
-                            ),
-                        )
-                    }
-                }
+                CheckboxRow(
+                    label = t("edit.favorite"),
+                    checked = form.favorite,
+                    enabled = !saving,
+                    onToggle = { viewModel.setFavorite(it) },
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                CheckboxRow(
+                    label = t("edit.reprompt"),
+                    checked = form.reprompt,
+                    enabled = !saving,
+                    onToggle = { viewModel.setReprompt(it) },
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                FolderPicker(
+                    selectedId = form.folderId,
+                    folders = folders,
+                    enabled = !saving,
+                    onSelect = { viewModel.setFolderId(it) },
+                )
             }
 
             // Schema-driven Fields Section
@@ -166,15 +164,131 @@ fun EditCipherScreen(
                 SectionCard(title = t("edit.sectionCredentials")) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         fields.forEach { spec ->
-                            BaluardTextField(
-                                value = form.values[spec.wireKey].orEmpty(),
-                                onValueChange = { viewModel.setField(spec.wireKey, it) },
-                                label = t(spec.labelKey),
-                                isPassword = spec.sensitive,
-                                enabled = !saving,
-                            )
+                            if (form.typeTag == "login" && spec.wireKey == "password") {
+                                PasswordWithGenerator(
+                                    value = form.values[spec.wireKey].orEmpty(),
+                                    enabled = !saving,
+                                    onValueChange = { viewModel.setField(spec.wireKey, it) },
+                                    onGenerate = {
+                                        scope.launch { viewModel.setField(spec.wireKey, viewModel.generatePassword()) }
+                                    },
+                                )
+                            } else {
+                                BaluardTextField(
+                                    value = form.values[spec.wireKey].orEmpty(),
+                                    onValueChange = { viewModel.setField(spec.wireKey, it) },
+                                    label = t(spec.labelKey),
+                                    isPassword = spec.sensitive,
+                                    enabled = !saving,
+                                )
+                            }
                         }
                     }
+                }
+            }
+
+            // Login-only: multi-URI list with match strategy + TOTP seed
+            if (form.typeTag == "login") {
+                SectionCard(title = t("edit.uris")) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        form.uris.forEachIndexed { index, row ->
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    BaluardTextField(
+                                        value = row.uri,
+                                        onValueChange = { viewModel.setUri(index, it) },
+                                        label = t("edit.uriField"),
+                                        placeholder = t("edit.uriPlaceholder"),
+                                        enabled = !saving,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    RemoveButton(t("edit.removeUri"), !saving) { viewModel.removeUri(index) }
+                                }
+                                DropdownField(
+                                    label = t("edit.match"),
+                                    selected = row.matchStrategy.orEmpty(),
+                                    options = MATCH_STRATEGIES,
+                                    enabled = !saving,
+                                    onSelect = { viewModel.setUriMatch(index, it.ifEmpty { null }) },
+                                )
+                            }
+                        }
+                        AddButton(t("edit.addUri"), !saving) { viewModel.addUri() }
+                    }
+                }
+
+                SectionCard(title = t("edit.totpUri")) {
+                    BaluardTextField(
+                        value = form.totpUri,
+                        onValueChange = { viewModel.setTotpUri(it) },
+                        label = null,
+                        placeholder = t("edit.totpUriPlaceholder"),
+                        enabled = !saving,
+                    )
+                }
+            }
+
+            // SSH keypair generation (desktop SshKeyGenerator parity)
+            if (form.typeTag == "sshKey") {
+                SectionCard(title = t("edit.sshGenerator")) {
+                    var sshBusy by remember { mutableStateOf(false) }
+                    var sshType by remember { mutableStateOf("ed25519") }
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        DropdownField(
+                            label = t("edit.sshAlgorithm"),
+                            selected = sshType,
+                            options = listOf(
+                                "ed25519" to "edit.sshEd25519",
+                                "ecdsa256" to "edit.sshEcdsa",
+                            ),
+                            enabled = !saving && !sshBusy,
+                            onSelect = { sshType = it },
+                        )
+                        TextButton(
+                            onClick = {
+                                sshBusy = true
+                                scope.launch {
+                                    val ok = viewModel.generateSshKey(vault, sshType)
+                                    sshBusy = false
+                                    if (!ok) error = t("edit.sshGenerateFailed")
+                                }
+                            },
+                            enabled = !saving && !sshBusy,
+                        ) {
+                            Text(if (sshBusy) t("common.saving") else t("edit.sshGenerate"))
+                        }
+                    }
+                }
+            }
+
+            // Tags
+            SectionCard(title = t("edit.tags")) {
+                TagsEditor(
+                    tags = form.tags,
+                    enabled = !saving,
+                    onAdd = { viewModel.addTag(it) },
+                    onRemove = { viewModel.removeTag(it) },
+                )
+            }
+
+            // Custom Fields
+            SectionCard(title = t("edit.customFields")) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    form.customFields.forEachIndexed { index, field ->
+                        CustomFieldEditor(
+                            field = field,
+                            enabled = !saving,
+                            onName = { viewModel.setCustomFieldName(index, it) },
+                            onValue = { viewModel.setCustomFieldValue(index, it) },
+                            onType = { viewModel.setCustomFieldType(index, it) },
+                            onLinkedTarget = { viewModel.setCustomFieldLinkedTarget(index, it) },
+                            onRemove = { viewModel.removeCustomField(index) },
+                        )
+                    }
+                    AddButton(t("edit.addField"), !saving) { viewModel.addCustomField() }
                 }
             }
 
@@ -219,7 +333,9 @@ fun EditCipherScreen(
                             .onFailure { saving = false; error = it.message }
                     }
                 },
-                enabled = form.name.isNotBlank(),
+                // A failed load leaves an empty form; saving would overwrite
+                // the entry with blank data.
+                enabled = form.name.isNotBlank() && viewModel.loadError == null,
                 loading = saving,
                 leadingIcon = Icons.Default.Save,
             )
@@ -307,5 +423,350 @@ private fun TypePicker(tag: String, editable: Boolean, onSelected: (String) -> U
                 )
             }
         }
+    }
+}
+
+/** URI match strategies on the wire; "" = desktop's "Default" (absent key). */
+private val MATCH_STRATEGIES = listOf(
+    "" to "edit.match.default",
+    "domain" to "edit.match.domain",
+    "host" to "edit.match.host",
+    "startsWith" to "edit.match.startsWith",
+    "exact" to "edit.match.exact",
+    "regex" to "edit.match.regex",
+    "never" to "edit.match.never",
+)
+
+/** Custom-field Linked targets, desktop AddEditCipherForm parity. */
+private val LINKED_TARGETS: List<String> = listOf(
+    "LoginUsername", "LoginPassword",
+    "CardCardholderName", "CardNumber", "CardExpMonth", "CardExpYear", "CardCvv",
+    "IdentityTitle", "IdentityFirstName", "IdentityMiddleName", "IdentityLastName",
+    "IdentityUsername", "IdentityCompany", "IdentityEmail", "IdentityPhone",
+    "IdentityAddress1", "IdentityAddress2", "IdentityAddress3",
+    "IdentityCity", "IdentityState", "IdentityPostalCode", "IdentityCountry",
+    "BankAccountBankName", "BankAccountNameOnAccount", "BankAccountAccountType",
+    "BankAccountAccountNumber", "BankAccountRoutingNumber", "BankAccountBranchNumber",
+    "BankAccountPin", "BankAccountSwiftCode", "BankAccountIban", "BankAccountBankContactPhone",
+    "DriversLicenseFirstName", "DriversLicenseMiddleName", "DriversLicenseLastName",
+    "DriversLicenseDateOfBirth", "DriversLicenseLicenseNumber", "DriversLicenseIssuingCountry",
+    "DriversLicenseIssuingState",
+    "DriversLicenseIssueDate", "DriversLicenseExpirationDate", "DriversLicenseIssuingAuthority",
+    "DriversLicenseLicenseClass",
+    "PassportSurname", "PassportGivenName", "PassportDateOfBirth", "PassportSex",
+    "PassportBirthPlace", "PassportNationality", "PassportIssuingCountry",
+    "PassportPassportNumber", "PassportPassportType", "PassportNationalIdNumber",
+    "PassportIssuingAuthority", "PassportIssueDate", "PassportExpirationDate",
+)
+
+private fun linkedTargetLabelKey(target: String): String = when (target) {
+    "LoginUsername", "IdentityUsername" -> "edit.username"
+    "LoginPassword" -> "edit.password"
+    "CardCardholderName" -> "detail.f.cardholder"
+    "CardNumber" -> "detail.f.number"
+    "CardExpMonth" -> "detail.f.expMonth"
+    "CardExpYear" -> "detail.f.expYear"
+    "CardCvv" -> "detail.f.code"
+    "IdentityTitle" -> "detail.f.title"
+    "IdentityFirstName" -> "detail.f.firstName"
+    "IdentityMiddleName" -> "detail.f.middleName"
+    "IdentityLastName" -> "detail.f.lastName"
+    "IdentityCompany" -> "detail.f.company"
+    "IdentityEmail" -> "detail.f.email"
+    "IdentityPhone" -> "detail.f.phone"
+    "IdentityAddress1" -> "detail.f.address1"
+    "IdentityAddress2" -> "detail.f.address2"
+    "IdentityAddress3" -> "detail.f.address3"
+    "IdentityCity" -> "detail.f.city"
+    "IdentityState" -> "detail.f.state"
+    "IdentityPostalCode" -> "detail.f.postalCode"
+    "IdentityCountry" -> "detail.f.country"
+    "BankAccountBankName" -> "detail.f.bankName"
+    "BankAccountNameOnAccount" -> "detail.f.nameOnAccount"
+    "BankAccountAccountType" -> "detail.f.accountType"
+    "BankAccountAccountNumber" -> "detail.f.accountNumber"
+    "BankAccountRoutingNumber" -> "detail.f.routingNumber"
+    "BankAccountBranchNumber" -> "detail.f.branchNumber"
+    "BankAccountPin" -> "detail.f.pin"
+    "BankAccountSwiftCode" -> "detail.f.swiftCode"
+    "BankAccountIban" -> "detail.f.iban"
+    "BankAccountBankContactPhone" -> "detail.f.bankPhone"
+    "DriversLicenseFirstName" -> "detail.f.firstName"
+    "DriversLicenseMiddleName" -> "detail.f.middleName"
+    "DriversLicenseLastName" -> "detail.f.lastName"
+    "DriversLicenseDateOfBirth" -> "detail.f.dateOfBirth"
+    "DriversLicenseLicenseNumber" -> "detail.f.licenseNumber"
+    "DriversLicenseIssuingCountry" -> "detail.f.issuingCountry"
+    "DriversLicenseIssuingState" -> "detail.f.issuingState"
+    "DriversLicenseIssueDate" -> "detail.f.issueDate"
+    "DriversLicenseExpirationDate" -> "detail.f.expirationDate"
+    "DriversLicenseIssuingAuthority" -> "detail.f.issuingAuthority"
+    "DriversLicenseLicenseClass" -> "detail.f.licenseClass"
+    "PassportSurname" -> "detail.f.surname"
+    "PassportGivenName" -> "detail.f.givenName"
+    "PassportDateOfBirth" -> "detail.f.dateOfBirth"
+    "PassportSex" -> "detail.f.sex"
+    "PassportBirthPlace" -> "detail.f.birthPlace"
+    "PassportNationality" -> "detail.f.nationality"
+    "PassportIssuingCountry" -> "detail.f.issuingCountry"
+    "PassportPassportNumber" -> "detail.f.passportNumber"
+    "PassportPassportType" -> "detail.f.passportType"
+    "PassportNationalIdNumber" -> "detail.f.nationalId"
+    "PassportIssuingAuthority" -> "detail.f.issuingAuthority"
+    "PassportIssueDate" -> "detail.f.issueDate"
+    "PassportExpirationDate" -> "detail.f.expirationDate"
+    else -> target
+}
+
+@Composable
+private fun CheckboxRow(label: String, checked: Boolean, enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onToggle,
+            enabled = enabled,
+            colors = CheckboxDefaults.colors(
+                checkedColor = MaterialTheme.colorScheme.primary,
+                checkmarkColor = MaterialTheme.colorScheme.onPrimary,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun FolderPicker(
+    selectedId: String?,
+    folders: List<MobileFolderInfo>,
+    enabled: Boolean,
+    onSelect: (String?) -> Unit,
+) {
+    val options: List<Pair<String, String>> =
+        listOf("" to "edit.noFolder") + folders.map { it.id to it.name }
+    DropdownField(
+        label = t("edit.folder"),
+        selected = selectedId.orEmpty(),
+        options = options,
+        enabled = enabled,
+        onSelect = { onSelect(it.ifEmpty { null }) },
+    )
+}
+
+/** Labeled dropdown over (value, i18n key) options. Empty value = "unset". */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DropdownField(
+    label: String,
+    selected: String,
+    options: List<Pair<String, String>>,
+    enabled: Boolean,
+    onSelect: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = options.firstOrNull { it.first == selected }?.second?.let { t(it) } ?: selected
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { if (enabled) expanded = it }) {
+        OutlinedTextField(
+            value = selectedLabel,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            singleLine = true,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            options.forEach { (value, labelKey) ->
+                DropdownMenuItem(
+                    text = { Text(if (labelKey.contains(".")) t(labelKey) else labelKey) },
+                    onClick = {
+                        onSelect(value)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PasswordWithGenerator(
+    value: String,
+    enabled: Boolean,
+    onValueChange: (String) -> Unit,
+    onGenerate: () -> Unit,
+) {
+    Column {
+        BaluardTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = t("edit.password"),
+            isPassword = true,
+            enabled = enabled,
+        )
+        Spacer(Modifier.height(6.dp))
+        TextButton(onClick = onGenerate, enabled = enabled) {
+            Text(t("edit.generatePassword"))
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TagsEditor(tags: List<String>, enabled: Boolean, onAdd: (String) -> Unit, onRemove: (String) -> Unit) {
+    var input by remember { mutableStateOf("") }
+    Column {
+        if (tags.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                tags.forEach { tag ->
+                    InputChip(
+                        selected = false,
+                        onClick = { onRemove(tag) },
+                        label = { Text(tag) },
+                        trailingIcon = {
+                            Icon(Icons.Default.Close, contentDescription = t("edit.removeTag"), Modifier.size(14.dp))
+                        },
+                        enabled = enabled,
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        OutlinedTextField(
+            value = input,
+            onValueChange = { input = it },
+            label = null,
+            placeholder = { Text(t("edit.tagPlaceholder")) },
+            enabled = enabled,
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+            ),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = {
+                if (input.isNotBlank()) { onAdd(input); input = "" }
+            }),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        TextButton(
+            onClick = {
+                onAdd(input)
+                input = ""
+            },
+            enabled = enabled && input.isNotBlank(),
+        ) {
+            Text(t("edit.addTag"))
+        }
+    }
+}
+
+@Composable
+private fun CustomFieldEditor(
+    field: CustomFieldEdit,
+    enabled: Boolean,
+    onName: (String) -> Unit,
+    onValue: (String) -> Unit,
+    onType: (String) -> Unit,
+    onLinkedTarget: (String) -> Unit,
+    onRemove: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            BaluardTextField(
+                value = field.name,
+                onValueChange = onName,
+                label = t("edit.fieldName"),
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+            )
+            RemoveButton(t("edit.removeField"), enabled, onRemove)
+        }
+        DropdownField(
+            label = t("edit.fieldType"),
+            selected = field.fieldType,
+            options = listOf(
+                "Text" to "edit.fieldType.text",
+                "Hidden" to "edit.fieldType.hidden",
+                "Boolean" to "edit.fieldType.boolean",
+                "Linked" to "edit.fieldType.linked",
+            ),
+            enabled = enabled,
+            onSelect = onType,
+        )
+        when {
+            field.isLinked -> DropdownField(
+                label = t("edit.linkedTarget"),
+                selected = field.linkedTarget.orEmpty(),
+                options = LINKED_TARGETS.map { it to linkedTargetLabelKey(it) },
+                enabled = enabled,
+                onSelect = onLinkedTarget,
+            )
+            field.isBoolean -> Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = field.name.ifBlank { t("edit.fieldType.boolean") },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Switch(
+                    checked = field.value == "true",
+                    onCheckedChange = { onValue(if (it) "true" else "false") },
+                    enabled = enabled,
+                )
+            }
+            else -> BaluardTextField(
+                value = field.value,
+                onValueChange = onValue,
+                label = t("edit.fieldValue"),
+                isPassword = field.isHidden,
+                enabled = enabled,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AddButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    TextButton(onClick = onClick, enabled = enabled) {
+        Icon(Icons.Default.Add, contentDescription = null, Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label)
+    }
+}
+
+@Composable
+private fun RemoveButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    TextButton(onClick = onClick, enabled = enabled) {
+        Icon(Icons.Default.Close, contentDescription = label, Modifier.size(16.dp))
     }
 }

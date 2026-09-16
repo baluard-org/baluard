@@ -464,6 +464,14 @@ impl MobileVault {
         Ok(metas.into_iter().map(MobileCipherMeta::from).collect())
     }
 
+    /// Generate an SSH keypair. `keyType`: "ed25519" (default) | "ecdsa256".
+    /// Returns JSON {public_key, fingerprint, private_key}; formatted OpenSSH
+    /// strings only, matching the desktop generator (RSA removed, L7).
+    pub async fn ssh_generate_key(&self, key_type: String) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "type": key_type }).to_string();
+        Ok(self.state.ssh_generate_key(&payload).await?)
+    }
+
     /// Archive a cipher: hide from the main list, search, and suggestions.
     pub async fn archive_cipher(&self, id: String) -> Result<(), BaluardError> {
         Ok(self.state.archive_cipher(&id).await?)

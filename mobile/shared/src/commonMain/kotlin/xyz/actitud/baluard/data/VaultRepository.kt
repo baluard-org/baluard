@@ -77,6 +77,11 @@ class VaultRepository {
     suspend fun deleteCipher(vault: MobileVault, id: String): Unit = vault.deleteCipher(id)
     suspend fun totpCode(vault: MobileVault, id: String): String = vault.totpCode(id)
 
+    /** Generate an SSH keypair (ed25519 | ecdsa256). JSON {public_key,
+     * fingerprint, private_key}. Formatted strings only. */
+    suspend fun sshGenerateKey(vault: MobileVault, keyType: String): String =
+        vault.sshGenerateKey(keyType)
+
     /** Live auto-sync status (pending changes / state) for the
      * remove-from-device guard: removal requires idle + zero pending. */
     suspend fun syncStatus(vault: MobileVault): MobileSyncStatus = vault.syncStatus()
