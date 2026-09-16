@@ -101,6 +101,7 @@ webauthn-rs-proto = { version = "0.5", default-features = false }
 webauthn-rs-core = { version = "0.5", default-features = false }
 url = "2"
 public-suffix = "0.1"
+regex-lite = "0.1"
 coset = "0.4"
 
 # Platform paths

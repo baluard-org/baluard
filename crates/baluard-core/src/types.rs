@@ -297,6 +297,151 @@ impl UriMatchStrategy {
     }
 }
 
+/// Autofill URI matching engine (Phase 6, plan D1/D4).
+///
+/// Direction: `matches(uri, target)` asks whether a vault entry URI (`uri`)
+/// should be offered for a fill request target (`target`). Targets are either
+/// web origins (`https://host/...`) or native app packages
+/// (`androidapp://com.pkg`). An app target only ever matches an entry URI
+/// carrying the same `androidapp://` package, never a web URI, and vice
+/// versa: a crafted package can never harvest web-URI matches and a web page
+/// can never surface credentials tagged for an app. Fail closed everywhere:
+/// unparseable input, invalid regex, unknown TLD all mean "no match".
+#[cfg(feature = "uri-match")]
+impl UriMatchStrategy {
+    pub fn matches(&self, uri: &str, target: &str) -> bool {
+        match self {
+            UriMatchStrategy::Never => false,
+            UriMatchStrategy::Regex => regex_matches(uri, target),
+            UriMatchStrategy::StartsWith => starts_with_matches(uri, target),
+            UriMatchStrategy::Exact => exact_matches(uri, target),
+            UriMatchStrategy::Host => host_matches(uri, target),
+            UriMatchStrategy::Domain => domain_matches(uri, target),
+        }
+    }
+}
+
+/// Extract the host (punycode, port stripped, lowercased) of a URI-ish
+/// string. Accepts full URLs (`https://a.b/c`), bare hosts (`a.b/c`), and
+/// non-special schemes (`androidapp://com.pkg`). Returns None when no
+/// parseable authority exists.
+#[cfg(feature = "uri-match")]
+fn uri_host(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // Bare hosts and schemeless strings: parse with an assumed scheme so the
+    // url crate does the authority/port/punycode work for us.
+    let parsed = url::Url::parse(s).or_else(|_| url::Url::parse(&format!("https://{s}")));
+    parsed
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+}
+
+/// Registrable domain (eTLD+1, punycode) of a host. None when the host IS a
+/// public suffix or the suffix is unknown to the compiled PSL list.
+#[cfg(feature = "uri-match")]
+fn registrable_domain(host: &str) -> Option<String> {
+    use public_suffix::EffectiveTLDProvider;
+    public_suffix::DEFAULT_PROVIDER
+        .effective_tld_plus_one(host)
+        .ok()
+        .map(str::to_ascii_lowercase)
+}
+
+/// Scheme + normalized authority + path/query. Lowercases scheme and host,
+/// strips default ports, collapses the root path to a trailing slash. None
+/// when the string carries no parseable authority (or is a bare host, which
+/// cannot take part in full-URL comparisons).
+#[cfg(feature = "uri-match")]
+fn normalize_url(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    let u = url::Url::parse(s).ok()?;
+    let scheme = u.scheme();
+    let host = u.host_str()?;
+    // A schemeless input like "github.com/x" would have been "parsed" as a
+    // scheme "github.com" above; refuse anything whose scheme contains a dot,
+    // which no real scheme does.
+    if scheme.contains('.') {
+        return None;
+    }
+    let port = match u.port() {
+        Some(p) if (scheme == "https" && p == 443) || (scheme == "http" && p == 80) => None,
+        other => other,
+    };
+    let mut out = format!("{scheme}://{}", host.to_ascii_lowercase());
+    if let Some(p) = port {
+        out.push_str(&format!(":{p}"));
+    }
+    let path = u.path();
+    if path != "/" {
+        out.push_str(path);
+    }
+    if let Some(q) = u.query() {
+        out.push('?');
+        out.push_str(q);
+    }
+    Some(out)
+}
+
+#[cfg(feature = "uri-match")]
+fn host_matches(uri: &str, target: &str) -> bool {
+    match (uri_host(uri), uri_host(target)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+#[cfg(feature = "uri-match")]
+fn domain_matches(uri: &str, target: &str) -> bool {
+    match (uri_host(uri), uri_host(target)) {
+        (Some(a), Some(b)) => match (registrable_domain(&a), registrable_domain(&b)) {
+            (Some(ra), Some(rb)) => ra == rb,
+            // A host that IS a public suffix (or unknown) has no registrable
+            // domain; fall back to whole-host equality rather than matching
+            // two unrelated single-label hosts.
+            (None, None) => a == b,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+#[cfg(feature = "uri-match")]
+fn starts_with_matches(uri: &str, target: &str) -> bool {
+    match (normalize_url(uri), normalize_url(target)) {
+        (Some(a), Some(b)) => {
+            if !b.starts_with(&a) {
+                return false;
+            }
+            // Segment boundary: "x.com/app" must not match "x.com/application".
+            // The prefix must end the target or be followed by a path/query/
+            // fragment separator.
+            b.len() == a.len() || matches!(b.as_bytes()[a.len()], b'/' | b'?' | b'#' | b'&')
+        }
+        _ => false,
+    }
+}
+
+#[cfg(feature = "uri-match")]
+fn exact_matches(uri: &str, target: &str) -> bool {
+    match (normalize_url(uri), normalize_url(target)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+#[cfg(feature = "uri-match")]
+fn regex_matches(uri: &str, target: &str) -> bool {
+    // Entry URI is the pattern, case-insensitive over the raw target. An
+    // invalid or hostile pattern (catastrophic backtracking is bounded by
+    // regex-lite's size limits) fails closed to no match.
+    regex_lite::Regex::new(uri)
+        .map(|re| re.is_match(target.trim()))
+        .unwrap_or(false)
+}
+
 /// A single URI with its match strategy.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoginUri {
@@ -1748,5 +1893,118 @@ mod tests {
             resolve_linked_field(&cipher, &LinkedFieldType::PassportSex),
             None
         );
+    }
+
+    // ── Autofill URI matching (Phase 6) ──────────────────────────
+
+    use UriMatchStrategy as M;
+
+    #[test]
+    fn never_never_matches() {
+        assert!(!M::Never.matches("https://x.com", "https://x.com"));
+        assert!(!M::Never.matches("androidapp://com.x", "androidapp://com.x"));
+    }
+
+    #[test]
+    fn domain_strategy_matches_registrable_domain() {
+        assert!(M::Domain.matches("https://github.com", "https://gist.github.com/foo"));
+        assert!(M::Domain.matches("https://www.GitHub.com", "https://api.github.com"));
+        assert!(!M::Domain.matches("https://github.com", "https://github.evil.dev"));
+        // co.uk: suffix handling, not naive last-two-labels
+        assert!(M::Domain.matches("https://bbc.co.uk", "https://news.bbc.co.uk/sport"));
+        // same registrable domain, different subdomains: matches (correct)
+        assert!(M::Domain.matches("https://a.bbc.co.uk", "https://news.bbc.co.uk"));
+        // suffix-lookalike: registrable evil.com, never matches bbc.co.uk
+        assert!(!M::Domain.matches("https://bbc.co.uk", "https://bbc.co.uk.evil.com"));
+    }
+
+    #[test]
+    fn domain_strategy_is_scheme_compatible_only() {
+        // App packages never match web URIs under Domain: package hosts land
+        // in their own TLD ("android"), so the registrable domains differ.
+        assert!(!M::Domain.matches("https://github.com", "androidapp://com.github.android"));
+        assert!(M::Domain.matches(
+            "androidapp://com.github.android",
+            "androidapp://com.github.android"
+        ));
+    }
+
+    #[test]
+    fn host_strategy_is_exact_host() {
+        assert!(M::Host.matches(
+            "https://login.github.com",
+            "https://login.github.com/signin"
+        ));
+        assert!(!M::Host.matches("https://login.github.com", "https://gist.github.com"));
+        // ports ignored for host comparison
+        assert!(M::Host.matches("https://x.com:8443", "https://x.com"));
+        assert!(M::Host.matches("x.com", "https://X.com/"));
+    }
+
+    #[test]
+    fn starts_with_strategy_prefixes_path() {
+        assert!(M::StartsWith.matches("https://x.com/app", "https://x.com/app/page"));
+        assert!(M::StartsWith.matches("https://x.com", "https://x.com/anything"));
+        assert!(!M::StartsWith.matches("https://x.com/app", "https://x.com/application"));
+        assert!(!M::StartsWith.matches("https://x.com", "https://evil.com/https://x.com"));
+    }
+
+    #[test]
+    fn exact_strategy_requires_full_url_equality() {
+        assert!(M::Exact.matches("https://x.com/login", "https://x.com/login"));
+        assert!(M::Exact.matches("https://x.com/", "https://x.com"));
+        assert!(M::Exact.matches("https://x.com:443/a", "https://x.com/a"));
+        assert!(!M::Exact.matches("https://x.com/login", "https://x.com/login?next=/"));
+    }
+
+    #[test]
+    fn regex_strategy_matches_pattern_against_target() {
+        assert!(M::Regex.matches(
+            "https://x\\.com/.*/login",
+            "https://x.com/deep/nested/login"
+        ));
+        assert!(!M::Regex.matches("https://x\\.com/", "https://evil.com/"));
+        // invalid regex fails closed
+        assert!(!M::Regex.matches("([unclosed", "https://x.com"));
+    }
+
+    #[test]
+    fn garbage_inputs_fail_closed() {
+        for s in [M::Domain, M::Host, M::StartsWith, M::Exact] {
+            assert!(!s.matches("", "https://x.com"));
+            assert!(!s.matches("https://x.com", "  "));
+        }
+    }
+
+    #[test]
+    fn proptest_host_strategy_is_symmetric() {
+        let strategy = proptest::prelude::prop_oneof![
+            proptest::prelude::Just("a.example.com"),
+            proptest::prelude::Just("b.example.co.uk"),
+            proptest::prelude::Just("xn--nxasmq6b.example"),
+        ];
+        proptest::proptest!(|(a in &strategy, b in &strategy)| {
+            let res_ab = M::Host.matches(a, b);
+            let res_ba = M::Host.matches(b, a);
+            proptest::prop_assert_eq!(res_ab, res_ba);
+        });
+    }
+
+    #[test]
+    fn proptest_never_and_domain_invariants() {
+        let hosts = proptest::prelude::prop_oneof![
+            proptest::prelude::Just("site.example"),
+            proptest::prelude::Just("sub.site.example"),
+            proptest::prelude::Just("other.example"),
+        ];
+        proptest::proptest!(|(entry in &hosts, target in &hosts)| {
+            proptest::prop_assert!(!M::Never.matches(entry, target));
+            let same_site = registrable_domain_test(entry) == registrable_domain_test(target);
+            proptest::prop_assert_eq!(M::Domain.matches(entry, target), same_site || entry == target);
+        });
+    }
+
+    fn registrable_domain_test(host: &str) -> Option<String> {
+        uri_host(host).and_then(|h| registrable_domain(&h))
     }
 }

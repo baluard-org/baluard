@@ -861,6 +861,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -905,6 +907,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_add_cipher(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_archive_cipher(`ptr`: Pointer,`id`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_autofill_query(`ptr`: Pointer,`target`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_create_folder(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
@@ -1192,6 +1196,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_query(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_create_folder(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_create_tag(
@@ -1369,6 +1375,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher() != 4306.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_query() != 15695.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_create_folder() != 29428.toShort()) {
@@ -2430,6 +2439,15 @@ public interface MobileVaultInterface {
     suspend fun `archiveCipher`(`id`: kotlin.String)
     
     /**
+     * Autofill credential query (Phase 6, plan D1/D2/D4). Match vault
+     * logins against a fill target: `https://...` for web fills,
+     * `androidapp://com.pkg` for native app fills. Returns a JSON array of
+     * `{id, name, username, favorite}` ranked favorites-first; passwords
+     * NEVER cross this boundary (fetch the chosen cipher via `get_cipher`).
+     */
+    suspend fun `autofillQuery`(`target`: kotlin.String): kotlin.String
+    
+    /**
      * Create a new folder (JSON payload `{"name": "..."}`).
      */
     suspend fun `createFolder`(`payload`: kotlin.String): kotlin.String
@@ -2800,6 +2818,34 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         // lift function
         { Unit },
         
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Autofill credential query (Phase 6, plan D1/D2/D4). Match vault
+     * logins against a fill target: `https://...` for web fills,
+     * `androidapp://com.pkg` for native app fills. Returns a JSON array of
+     * `{id, name, username, favorite}` ranked favorites-first; passwords
+     * NEVER cross this boundary (fetch the chosen cipher via `get_cipher`).
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `autofillQuery`(`target`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_autofill_query(
+                thisPtr,
+                FfiConverterString.lower(`target`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
         // Error FFI converter
         BaluardException.ErrorHandler,
     )

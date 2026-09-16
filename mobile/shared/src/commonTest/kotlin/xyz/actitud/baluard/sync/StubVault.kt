@@ -30,6 +30,11 @@ open class StubVault(
         return resolveResultJson
     }
 
+    override suspend fun autofillQuery(target: String): String {
+        calls += "autofillQuery"
+        return "[]"
+    }
+
     override suspend fun shouldAutoLock(): Boolean {
         calls += "shouldAutoLock"
         return shouldLock

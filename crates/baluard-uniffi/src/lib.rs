@@ -357,6 +357,15 @@ impl MobileVault {
         Ok(self.state.get_cipher(&id, decrypt).await?)
     }
 
+    /// Autofill credential query (Phase 6, plan D1/D2/D4). Match vault
+    /// logins against a fill target: `https://...` for web fills,
+    /// `androidapp://com.pkg` for native app fills. Returns a JSON array of
+    /// `{id, name, username, favorite}` ranked favorites-first; passwords
+    /// NEVER cross this boundary (fetch the chosen cipher via `get_cipher`).
+    pub async fn autofill_query(&self, target: String) -> Result<String, BaluardError> {
+        Ok(self.state.autofill_query(&target).await?)
+    }
+
     /// Add a new cipher (JSON payload per the daemon wire format). Returns the
     /// new cipher's JSON (with generated id, tier, epoch).
     pub async fn add_cipher(&self, payload: String) -> Result<String, BaluardError> {
@@ -934,7 +943,12 @@ pub async fn clone_vault_start(
     let flag_clone = cancel_flag.clone();
 
     tokio::task::spawn_blocking(move || {
-        baluard_runtime::providers::clone_and_register(Some(p_enum), &clone_url, &path, Some(flag_clone))
+        baluard_runtime::providers::clone_and_register(
+            Some(p_enum),
+            &clone_url,
+            &path,
+            Some(flag_clone),
+        )
     })
     .await
     .map_err(|e| BaluardError::Vault {
@@ -1197,6 +1211,142 @@ mod tests {
         assert!(
             vault.list_ciphers().await.unwrap().is_empty(),
             "vault empty after delete"
+        );
+    }
+
+    #[tokio::test]
+    async fn autofill_query_matches_logins_and_never_leaks_passwords() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let vault = create_vault(path, "pw".to_string(), "dev".to_string())
+            .await
+            .unwrap();
+        vault.unlock("pw".to_string()).await.unwrap();
+
+        let login = |name: &str, username: &str, password: &str, uris: serde_json::Value| {
+            serde_json::json!({
+                "name": name,
+                "kind": {"type": "login", "data": {
+                    "username": username,
+                    "password": password,
+                    "uris": uris,
+                    "totp_uri": null,
+                    "autofill_on_page_load": false,
+                    "password_revision_date": null,
+                    "favicon": null,
+                    "fido2_credentials": null
+                }}
+            })
+            .to_string()
+        };
+
+        vault
+            .add_cipher(login(
+                "GitHub",
+                "esteban",
+                "gh-secret",
+                serde_json::json!([{"uri": "https://github.com", "matchStrategy": "domain"}]),
+            ))
+            .await
+            .unwrap();
+        vault
+            .add_cipher(login(
+                "Gist",
+                "esteban2",
+                "gist-secret",
+                serde_json::json!([{"uri": "https://gist.github.com", "matchStrategy": "host"}]),
+            ))
+            .await
+            .unwrap();
+        vault
+            .add_cipher(login(
+                "Unrelated",
+                "x",
+                "x-secret",
+                serde_json::json!([{"uri": "https://other.example", "matchStrategy": "domain"}]),
+            ))
+            .await
+            .unwrap();
+        // Non-login cipher: card must never appear in autofill results.
+        vault
+            .add_cipher(
+                serde_json::json!({
+                    "name": "Bank card",
+                    "kind": {"type": "card", "data": {
+                        "cardholder_name": "Esteban",
+                        "number": "4111111111111111",
+                        "brand": "visa",
+                        "exp_month": "12",
+                        "exp_year": "2030",
+                        "code": "123"
+                    }}
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        // Domain strategy: github.com matches subdomains too.
+        let web = serde_json::from_str::<serde_json::Value>(
+            &vault
+                .autofill_query("https://gist.github.com/login".to_string())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let names: Vec<&str> = web
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v["name"].as_str())
+            .collect();
+        assert!(
+            names.contains(&"GitHub"),
+            "domain strategy matches subdomain: {names:?}"
+        );
+        assert!(
+            !names.contains(&"Unrelated"),
+            "unrelated entry must not match"
+        );
+
+        // App target: package equality only.
+        let app = serde_json::from_str::<serde_json::Value>(
+            &vault
+                .autofill_query("androidapp://com.github.android".to_string())
+                .await
+                .unwrap(),
+        )
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .clone();
+        assert!(
+            app.is_empty(),
+            "web URIs must never match app targets: {app:?}"
+        );
+
+        // Secret-absence invariant: passwords never in autofill output.
+        let raw = vault
+            .autofill_query("https://github.com".to_string())
+            .await
+            .unwrap();
+        assert!(
+            !raw.contains("gh-secret"),
+            "password leaked in autofill query"
+        );
+        assert!(!raw.contains("gist-secret"));
+        assert!(
+            !raw.contains("password"),
+            "no password key in autofill output"
+        );
+
+        // Locked vault fails closed.
+        vault.lock().await.unwrap();
+        assert!(
+            vault
+                .autofill_query("https://github.com".to_string())
+                .await
+                .is_err()
         );
     }
 
