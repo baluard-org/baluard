@@ -49,6 +49,12 @@ class AutofillActivity : FragmentActivity() {
         // wired here as well.
         AppContextHolder.set(this)
         AppContextHolder.setActivity(this)
+        // Mirror the app-wide FLAG_SECURE policy (peer-review finding #6):
+        // the picker shows entry names/usernames and must stay out of
+        // screenshots, recents and recordings when the user opted for it.
+        if (!xyz.actitud.baluard.platform.ScreenshotPrefs().allowScreenshots()) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
         setContentView(R.layout.autofill_activity)
 
         val mode = intent?.getStringExtra(EXTRA_MODE) ?: MODE_DATASETS
@@ -168,6 +174,8 @@ class AutofillActivity : FragmentActivity() {
             val matches = AutofillSession.matches(target)
             runOnUiThread {
                 statusView().visibility = View.GONE
+                findViewById<View>(R.id.autofill_progress).visibility = View.GONE
+                findViewById<View>(R.id.autofill_picker_scroll).visibility = View.VISIBLE
                 val list = findViewById<LinearLayout>(R.id.autofill_picker_list)
                 list.visibility = View.VISIBLE
                 if (matches.isEmpty()) {
@@ -243,6 +251,7 @@ class AutofillActivity : FragmentActivity() {
 
     private fun failOnUiThread(message: String) {
         runOnUiThread {
+            findViewById<View>(R.id.autofill_progress).visibility = View.GONE
             statusView().text = message
             // Leave a beat to read the message, then release the fill request
             // with no result (the OS falls back to its keyboard).

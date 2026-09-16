@@ -11,7 +11,7 @@ crate-type = ["cdylib", "lib"]
 name = "baluard_uniffi"
 
 [dependencies]
-baluard-core = { path = "../baluard-core", features = ["git-sync"] }
+baluard-core = { path = "../baluard-core", features = ["git-sync", "uri-match"] }
 baluard-runtime = { path = "../baluard-runtime" }
 uniffi = { workspace = true, features = ["tokio"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macros"] }

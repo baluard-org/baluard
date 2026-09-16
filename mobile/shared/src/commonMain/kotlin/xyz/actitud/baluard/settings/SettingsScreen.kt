@@ -458,10 +458,6 @@ fun SettingsScreen(
             // Autofill Section (Android only; iOS has no requestable role,
             // Phase 7). Status refreshes when the screen regains focus after
             // the user returns from the system provider picker.
-            // Autofill Section (Android only; iOS has no requestable role,
-            // Phase 7). Layout mirrors Bitwarden's Autofill screen (plan 2b):
-            // services toggle, suggestions style, browser integration.
-            // Status refreshes when the screen regains focus.
             if (AutofillRole.isSupported()) {
                 SectionCard(title = t("settings.autofillSection")) {
                     var roleEnabled by remember { mutableStateOf(AutofillRole.isEnabled()) }

@@ -61,6 +61,12 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun extractAutofillSave(intent: Intent?): AutofillSavePrefill? {
+        // Spoof guard (peer-review finding #3): MainActivity is exported
+        // (launcher), so any app could start it with save extras. Only trust
+        // them when the launch came from our own package (the :autofill
+        // service process). Strict: null attribution (system launches) is
+        // rejected too; those never carry our extras.
+        if (getLaunchedFromPackage() != packageName) return null
         val username = intent?.getStringExtra(EXTRA_SAVE_USERNAME)
         val password = intent?.getStringExtra(EXTRA_SAVE_PASSWORD)
         val uri = intent?.getStringExtra(EXTRA_SAVE_URI)
