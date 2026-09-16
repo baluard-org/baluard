@@ -2094,10 +2094,11 @@ impl VaultState {
     }
 
     /// List cipher metadata for entries that have a TOTP seed (hub card).
+    /// Archived entries are excluded: archive hides from lists and search.
     pub async fn list_totp_meta(&self) -> Result<Vec<baluard_core::types::CipherMeta>, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
-        let metas = handle.list_cipher_meta_full().map_err(|e| format!("{e}"))?;
+        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
         let mut out = Vec::new();
         for meta in &metas {
             match handle.get_cipher(meta.id) {
@@ -3722,5 +3723,42 @@ mod favicon_tests {
             url,
             "https://www.google.com/s2/favicons?domain=example.com&sz=32"
         );
+    }
+}
+
+#[cfg(test)]
+mod totp_meta_tests {
+    use super::VaultState;
+
+    /// Archived TOTP logins must vanish from the Authenticator card and its
+    /// list search: archive hides from lists and search, not just the main
+    /// list. Regression for the list_cipher_meta_full -> list_cipher_meta fix.
+    /// IGNORED: VaultState creation probes the OS keyring over D-Bus, which
+    /// blocks forever on headless machines without a Secret Service. Run on
+    /// a desktop session: cargo test -p baluard-runtime -- --ignored
+    #[tokio::test]
+    #[ignore = "needs an OS keyring (D-Bus Secret Service); hangs headless"]
+    async fn list_totp_meta_excludes_archived() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = VaultState::new(dir.path().to_path_buf());
+        state
+            .create_vault(r#"{"password":"t3st-v4ult","profile":"mobile_low"}"#)
+            .await
+            .unwrap();
+        // create_vault leaves the handle unlocked.
+
+        // add_cipher returns the new cipher's bare UUID string.
+        let id = state
+            .add_cipher(
+                r#"{"name":"Bank","kind":{"type":"login","data":{
+                     "username":"u","totp_uri":"otpauth://totp/bank?secret=ABC"}}}"#,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(state.list_totp_meta().await.unwrap().len(), 1);
+
+        state.archive_cipher(&id).await.unwrap();
+        assert!(state.list_totp_meta().await.unwrap().is_empty());
     }
 }
