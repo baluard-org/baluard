@@ -87,6 +87,10 @@ class AutofillActivity : FragmentActivity() {
                         applicationContext,
                         fields,
                         target,
+                        // Specs cached from the original request (plan 2b/S2);
+                        // empty list renders popup-only, same as the direct path.
+                        InlineStyle(AutofillInlineCache.specs, AutofillInlineCache.maxCount)
+                            .takeIf { AutofillInlineCache.specs.isNotEmpty() },
                     ) ?: AutofillResponseBuilder.saveOnlyResponse(applicationContext, fields, target)
                     deliverOnUiThread(response)
                 }

@@ -428,10 +428,17 @@ internal val ES: Map<String, String> = mapOf(
     "autofill.openAppToSetup" to "Abre Baluard primero para activar el desbloqueo rápido",
     "autofill.unlockFailed" to "No se pudo desbloquear. Abre Baluard e inténtalo de nuevo.",
 
-    // Settings > Autofill (Phase 6 P5, solo Android).
+    // Settings > Autofill (Phase 6, diseño como Bitwarden).
     "settings.autofillSection" to "Autofill",
-    "settings.autofillOn" to "Activado. Baluard rellena tus credenciales en otras apps.",
-    "settings.autofillOff" to "Desactivado. Actívalo para rellenar credenciales de otras apps con Baluard.",
-    "settings.autofillChoose" to "Elegir Baluard como proveedor de autofill",
+    "settings.autofillServices" to "Servicios de autocompletar",
+    "settings.autofillServicesHint" to "Permite que Baluard use tus credenciales guardadas para iniciar sesión en otras apps del dispositivo.",
+    "settings.autofillSuggestions" to "Mostrar sugerencias de autocompletar",
+    "settings.autofillSuggestionsInline" to "Integrado (aparece en el teclado)",
+    "settings.autofillSuggestionsPopup" to "Ventana emergente (sobre el campo)",
+    "settings.autofillSuggestionsHint" to "Elige cómo aparecen las sugerencias al iniciar sesión en otras apps del dispositivo.",
+    "settings.braveIntegration" to "Usar la integración de autofill de Brave",
+    "settings.braveIntegrationHint" to "Mejora el relleno de credenciales en sitios compatibles de Brave. Al tocar, se abren los ajustes de autofill de Brave.",
+
+    // Settings > Autofill accessibility fill (Phase 6.5, opcional, apagado).
     "settings.autofillHint" to "Rellenar pide tu huella cada vez que la sesión de autofill está bloqueada. Bloquear la app aquí no bloquea el autofill, ni al revés.",
 )

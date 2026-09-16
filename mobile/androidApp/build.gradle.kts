@@ -22,6 +22,9 @@ kotlin {
             // fns and BiometricPrompt directly; same versions as :shared.
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
             implementation("net.java.dev.jna:jna:5.14.0@aar")
+            // Inline autofill chips (InlineSuggestionUi) for the
+            // "Display autofill suggestions: Inline" option (plan 2b/S2).
+            implementation("androidx.autofill:autofill:1.1.0")
         }
     }
 }

@@ -423,10 +423,17 @@ internal val EN: Map<String, String> = mapOf(
     "autofill.openAppToSetup" to "Open Baluard first to set up quick unlock",
     "autofill.unlockFailed" to "Could not unlock. Open Baluard and try again.",
 
-    // Settings > Autofill (Phase 6 P5, Android only).
+    // Settings > Autofill (Phase 6, Bitwarden-parity layout).
     "settings.autofillSection" to "Autofill",
-    "settings.autofillOn" to "On. Baluard fills your logins in other apps.",
-    "settings.autofillOff" to "Off. Turn on to fill logins from other apps with Baluard.",
-    "settings.autofillChoose" to "Set Baluard as autofill provider",
+    "settings.autofillServices" to "Autofill services",
+    "settings.autofillServicesHint" to "Allow Baluard to use your saved login information to sign in to other apps on your device.",
+    "settings.autofillSuggestions" to "Display autofill suggestions",
+    "settings.autofillSuggestionsInline" to "Inline (shows in keyboard)",
+    "settings.autofillSuggestionsPopup" to "Popup (shows over input field)",
+    "settings.autofillSuggestionsHint" to "Choose how autofill suggestions appear when you sign in to other apps on your device.",
+    "settings.braveIntegration" to "Use Brave autofill integration",
+    "settings.braveIntegrationHint" to "Improves login filling for supported websites in Brave. Tapping opens Brave's autofill settings.",
+
+    // Settings > Autofill accessibility fill (Phase 6.5, opt-in, default off).
     "settings.autofillHint" to "Filling asks for your fingerprint whenever the autofill session is locked. Locking the app here does not lock autofill, and the other way around.",
 )
