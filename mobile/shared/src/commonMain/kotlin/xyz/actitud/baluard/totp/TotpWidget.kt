@@ -59,6 +59,11 @@ fun TotpWidget(
     val state by viewModel.state.collectAsState()
     val copied = rememberCopied()
 
+    // Nothing else starts the fetch: without this the state sits on Loading
+    // forever (spinner + "loading code"). Leaving the screen cancels the
+    // countdown loop via the CancellationException path in start().
+    LaunchedEffect(vault, cipherId) { viewModel.start(vault, cipherId) }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
