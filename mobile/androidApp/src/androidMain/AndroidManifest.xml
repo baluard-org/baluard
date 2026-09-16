@@ -37,6 +37,11 @@
             <intent-filter>
                 <action android:name="android.service.autofill.AutofillService" />
             </intent-filter>
+            <!-- Capabilities: inline suggestions + browser compat list
+                 (plan 2b/S2/S3). -->
+            <meta-data
+                android:name="android.autofill"
+                android:resource="@xml/autofill_service_configuration" />
         </service>
 
         <!-- Trampoline hosting the BiometricPrompt ceremony (plan D6). Same

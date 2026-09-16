@@ -78,10 +78,21 @@ class BaluardAutofillService : AutofillService() {
                     return@execute
                 }
 
+                // Inline style (plan 2b/S2): pref-gated; cache the specs for
+                // the post-biometric rebuild in AutofillActivity.
+                val inlineRequest = request.inlineSuggestionsRequest
+                val inline = if (xyz.actitud.baluard.platform.AutofillSuggestions.inlineEnabled()) {
+                    InlineStyle(
+                        specs = inlineRequest?.inlinePresentationSpecs.orEmpty(),
+                        maxCount = inlineRequest?.maxSuggestionCount ?: 0,
+                    )
+                } else null
+                AutofillInlineCache.update(inline?.specs ?: emptyList(), inline?.maxCount ?: 0)
+
                 val response = runBlocking {
                     AutofillSession.lockIfExpired()
                     if (AutofillSession.ensureOpen()) {
-                        AutofillResponseBuilder.filledResponse(applicationContext, form.fields, form.target)
+                        AutofillResponseBuilder.filledResponse(applicationContext, form.fields, form.target, inline)
                             ?: AutofillResponseBuilder.saveOnlyResponse(
                                 applicationContext,
                                 form.fields,

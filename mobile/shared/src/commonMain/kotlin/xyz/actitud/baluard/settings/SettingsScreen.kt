@@ -60,7 +60,9 @@ import xyz.actitud.baluard.data.vaultTimeoutLabel
 import xyz.actitud.baluard.detail.str
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.AutofillRole
+import xyz.actitud.baluard.platform.AutofillSuggestions
 import xyz.actitud.baluard.platform.Biometric
+import xyz.actitud.baluard.platform.BrowserAutofillIntegration
 import xyz.actitud.baluard.platform.ClipboardPrefs
 import xyz.actitud.baluard.platform.removeVaultDirectory
 import xyz.actitud.baluard.platform.ScreenshotPrefs
@@ -455,6 +457,10 @@ fun SettingsScreen(
             // Autofill Section (Android only; iOS has no requestable role,
             // Phase 7). Status refreshes when the screen regains focus after
             // the user returns from the system provider picker.
+            // Autofill Section (Android only; iOS has no requestable role,
+            // Phase 7). Layout mirrors Bitwarden's Autofill screen (plan 2b):
+            // services toggle, suggestions style, browser integration.
+            // Status refreshes when the screen regains focus.
             if (AutofillRole.isSupported()) {
                 SectionCard(title = t("settings.autofillSection")) {
                     var roleEnabled by remember { mutableStateOf(AutofillRole.isEnabled()) }
@@ -462,24 +468,99 @@ fun SettingsScreen(
                         roleEnabled = AutofillRole.isEnabled()
                         onPauseOrDispose { }
                     }
-                    Text(
-                        if (roleEnabled) t("settings.autofillOn") else t("settings.autofillOff"),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    if (!roleEnabled) {
-                        BaluardPrimaryButton(
-                            text = t("settings.autofillChoose"),
-                            onClick = { AutofillRole.requestRole() },
-                            modifier = Modifier.padding(top = 8.dp),
+
+                    // Autofill services: mirrors the system provider state;
+                    // flipping it opens the system picker.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = t("settings.autofillServices"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = roleEnabled,
+                            onCheckedChange = { AutofillRole.requestRole() },
                         )
                     }
                     Text(
-                        t("settings.autofillHint"),
+                        t("settings.autofillServicesHint"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 6.dp),
                     )
+
+                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    // Display autofill suggestions: inline chips or popup.
+                    var inlineSuggestions by remember {
+                        mutableStateOf(AutofillSuggestions.inlineEnabled())
+                    }
+                    Column(modifier = Modifier.padding(top = 6.dp)) {
+                        Text(
+                            text = t("settings.autofillSuggestions"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        PresetDropdown(
+                            current = if (inlineSuggestions) "inline" else "popup",
+                            presets = listOf(
+                                LabeledPreset("inline", "settings.autofillSuggestionsInline"),
+                                LabeledPreset("popup", "settings.autofillSuggestionsPopup"),
+                            ),
+                            onSelect = { choice ->
+                                inlineSuggestions = choice == "inline"
+                                AutofillSuggestions.setInlineEnabled(choice == "inline")
+                            },
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                        Text(
+                            t("settings.autofillSuggestionsHint"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+
+                    // Browser integration: a live mirror of the browser's own
+                    // third-party autofill switch; tapping opens its settings.
+                    if (BrowserAutofillIntegration.isAvailable()) {
+                        BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        var braveEnabled by remember {
+                            mutableStateOf(BrowserAutofillIntegration.isEnabled() == true)
+                        }
+                        LifecycleResumeEffect("brave") {
+                            braveEnabled = BrowserAutofillIntegration.isEnabled() == true
+                            onPauseOrDispose { }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = t("settings.braveIntegration"),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    t("settings.braveIntegrationHint"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                            }
+                            Switch(
+                                checked = braveEnabled,
+                                onCheckedChange = { BrowserAutofillIntegration.openSettings() },
+                            )
+                        }
+                    }
                 }
             }
 

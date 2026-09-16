@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Autofill service capabilities (plan 2b/S2/S3).
+     supportsInlineSuggestions is ALWAYS on: the user's Inline/Popup
+     preference gates chips at fill time, not the declaration.
+     compatibility-package: OS-level browser-compat list for the Chromium
+     third-party autofill integration (Brave channels + Chrome family). -->
+<autofill-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:supportsInlineSuggestions="true">
+
+    <compatibility-package
+        android:name="com.brave.browser"
+        android:maxLongVersionCode="427912623" />
+    <compatibility-package android:name="com.brave.browser.beta" />
+    <compatibility-package android:name="com.brave.browser.nightly" />
+    <compatibility-package android:name="com.android.chrome" />
+    <compatibility-package android:name="com.chrome.beta" />
+    <compatibility-package android:name="com.vivaldi.browser" />
+</autofill-service>

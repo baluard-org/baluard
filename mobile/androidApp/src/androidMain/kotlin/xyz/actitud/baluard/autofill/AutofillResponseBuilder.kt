@@ -3,14 +3,28 @@ package xyz.actitud.baluard.autofill
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.service.autofill.Dataset
 import android.service.autofill.FillResponse
+import android.graphics.drawable.Icon
+import android.service.autofill.InlinePresentation
+import android.service.autofill.Presentations
 import android.service.autofill.SaveInfo
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillValue
+import android.widget.inline.InlinePresentationSpec
 import android.widget.RemoteViews
+import androidx.autofill.inline.UiVersions
+import androidx.autofill.inline.v1.InlineSuggestionUi
 import xyz.actitud.baluard.R
 import xyz.actitud.baluard.i18n.t
+
+/**
+ * Inline-chip parameters for one fill response (plan 2b/S2): the IME's
+ * presentation specs from the original FillRequest, distributed across
+ * datasets with last-spec reuse, capped like Bitwarden at 5 slots.
+ */
+data class InlineStyle(val specs: List<InlinePresentationSpec>, val maxCount: Int)
 
 /**
  * Shared FillResponse construction for the service (direct path, session
@@ -50,20 +64,26 @@ object AutofillResponseBuilder {
 
     /**
      * Direct datasets for an unlocked session. One dataset per match; values
-     * are only attached to ids the form actually has. Returns null when the
-     * query yielded nothing, in which case the caller falls back to a
-     * save-only response so on-save capture still works.
+     * are only attached to ids the form actually has. When [inline] carries
+     * IME specs, each dataset ALSO carries a keyboard chip (never instead of
+     * the popup row); unsupported IMEs silently render the popup only.
+     * Returns null when the query yielded nothing, in which case the caller
+     * falls back to a save-only response so on-save capture still works.
      */
-    suspend fun filledResponse(context: Context, fields: TargetFields, target: String): FillResponse? {
+    suspend fun filledResponse(
+        context: Context,
+        fields: TargetFields,
+        target: String,
+        inline: InlineStyle? = null,
+    ): FillResponse? {
         val matches = AutofillSession.matches(target)
         if (matches.isEmpty()) return null
 
         val builder = FillResponse.Builder()
-        for (match in matches) {
-            val (username, password) = AutofillSession.credential(match.id) ?: continue
-            // Presentation lives in the Dataset constructor at this API level
-            // (there is no setPresentation(RemoteViews) on the builder).
-            val ds = Dataset.Builder(datasetPresentation(context, match.name, username))
+        matches.forEachIndexed { index, match ->
+            val (username, password) = AutofillSession.credential(match.id) ?: return@forEachIndexed
+            val chip = inline?.let { inlineChipOrNull(context, it, index, match.name, username) }
+            val ds = datasetBuilder(context, match.name, username, chip)
             if (fields.usernameId != null && username != null) {
                 ds.setValue(fields.usernameId, AutofillValue.forText(username))
             }
@@ -93,6 +113,60 @@ object AutofillResponseBuilder {
         return builder
             .setFlags(SaveInfo.FLAG_SAVE_ON_ALL_VIEWS_INVISIBLE)
             .build()
+    }
+
+    private fun datasetBuilder(
+        context: Context,
+        name: String,
+        username: String?,
+        chip: InlinePresentation?,
+    ): Dataset.Builder {
+        val views = datasetPresentation(context, name, username)
+        return when {
+            chip == null -> Dataset.Builder(views)
+            // Presentations is API 33+; 12L keeps the deprecated setter.
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> Dataset.Builder(
+                Presentations.Builder()
+                    .setMenuPresentation(views)
+                    .setInlinePresentation(chip)
+                    .build(),
+            )
+            else -> Dataset.Builder(views).setInlinePresentation(chip)
+        }
+    }
+
+    /**
+     * Keyboard chip for one dataset, or null when the IME does not support
+     * inline UI v1 or the spec budget ran out (silent popup fallback).
+     */
+    private fun inlineChipOrNull(
+        context: Context,
+        inline: InlineStyle,
+        index: Int,
+        name: String,
+        username: String?,
+    ): InlinePresentation? {
+        val budget = (inline.maxCount - 1).coerceIn(0, 5)
+        val spec = if (index < budget) inline.specs.getOrNull(index) else inline.specs.lastOrNull()
+        spec ?: return null
+        val styleOk = runCatching {
+            UiVersions.getVersions(spec.style).contains(UiVersions.INLINE_UI_VERSION_1)
+        }.getOrDefault(false)
+        if (!styleOk) return null
+        // Placeholder launch: tapping a chip fills through the dataset itself;
+        // some IMEs fire this intent for their own UI affordances.
+        val pi = PendingIntent.getActivity(
+            context,
+            1001,
+            Intent(context, xyz.actitud.baluard.MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val content = InlineSuggestionUi.newContentBuilder(pi)
+            .setTitle(name)
+            .setSubtitle(username?.takeIf { it.isNotBlank() } ?: t("autofill.noUsername"))
+            .setStartIcon(Icon.createWithResource(context, R.mipmap.ic_launcher))
+            .build()
+        return InlinePresentation(content.slice, spec, false)
     }
 
     private fun unlockPresentation(context: Context): RemoteViews =
