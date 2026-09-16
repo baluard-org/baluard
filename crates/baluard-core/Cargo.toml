@@ -46,6 +46,7 @@ zip = { version = "2.2", default-features = false, features = ["deflate"] }
 passkey = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 public-suffix = { workspace = true, optional = true }
+regex-lite = { workspace = true, optional = true }
 coset = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
@@ -72,8 +73,11 @@ public-suffix = "0.1"
 
 [features]
 default = ["full"]
-full = ["git-sync", "org", "emergency", "passkey-ceremony"]
+full = ["git-sync", "org", "emergency", "passkey-ceremony", "uri-match"]
 passkey-ceremony = ["dep:passkey", "dep:url", "dep:public-suffix", "dep:coset", "dep:tokio"]
+# Autofill URI matching (Phase 6): reuses the url + public-suffix deps already
+# pulled by passkey-ceremony; regex-lite is matcher-only.
+uri-match = ["dep:url", "dep:public-suffix", "dep:regex-lite"]
 git-sync = ["dep:git2"]
 org = []
 emergency = []

@@ -7,7 +7,7 @@ rust-version.workspace = true
 description = "Baluard vault-session orchestration (host, state, autosync, PIN escrow) — hostable in-process by the desktop daemon and mobile apps"
 
 [dependencies]
-baluard-core = { path = "../baluard-core", features = ["git-sync", "passkey-ceremony"] }
+baluard-core = { path = "../baluard-core", features = ["git-sync", "passkey-ceremony", "uri-match"] }
 log = "0.4"
 tokio = { workspace = true }
 serde = { workspace = true }

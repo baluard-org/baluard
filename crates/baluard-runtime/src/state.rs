@@ -628,6 +628,59 @@ impl VaultState {
         serde_json::to_string(&result).map_err(|e| format!("Serialization: {e}"))
     }
 
+    /// Autofill credential query (Phase 6, plan D1/D2/D4).
+    ///
+    /// Decrypts LOGIN ciphers only (never trash, never archived), matches
+    /// each stored URI against `target` using that URI's own strategy, and
+    /// returns a JSON array of `{id, name, username, favorite}` ranked
+    /// favorites-first then by name. Passwords and TOTP seeds NEVER appear
+    /// in the output; the caller fetches the chosen cipher separately.
+    pub async fn autofill_query(&self, target: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+
+        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
+        let mut matched: Vec<serde_json::Value> = Vec::new();
+        for meta in &metas {
+            if meta.cipher_type != baluard_core::types::CipherType::Login {
+                continue;
+            }
+            let decrypted = match handle.get_cipher(meta.id) {
+                Ok(baluard_core::vault::handle::CipherRead::Decrypted(c)) => c,
+                _ => continue,
+            };
+            let baluard_core::types::CipherKind::Login(login) = &decrypted.kind else {
+                continue;
+            };
+            let hit = login
+                .uris
+                .iter()
+                .any(|lu| lu.match_strategy.matches(&lu.uri, target));
+            if !hit {
+                continue;
+            }
+            matched.push(serde_json::json!({
+                "id": meta.id.to_string(),
+                "name": meta.name,
+                "username": meta.username,
+                "favorite": meta.favorite,
+            }));
+        }
+        matched.sort_by(|a, b| {
+            let fav = |v: &serde_json::Value| v["favorite"].as_bool().unwrap_or(false);
+            fav(b).cmp(&fav(a)).then_with(|| {
+                a["name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(b["name"].as_str().unwrap_or(""))
+            })
+        });
+        serde_json::to_string(&matched).map_err(|e| format!("serialization: {e}"))
+    }
+
     /// Get a cipher by ID. Requires vault to be unlocked for decryption.
     pub async fn get_cipher(&self, id_str: &str, decrypt: bool) -> Result<String, String> {
         let guard = self.inner.read().await;
