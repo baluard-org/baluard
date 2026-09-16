@@ -8,7 +8,7 @@ import android.os.PowerManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import xyz.actitud.baluard.platform.A11yUri
 import xyz.actitud.baluard.platform.FieldHeuristics
 import xyz.actitud.baluard.platform.FieldKind
@@ -123,16 +123,29 @@ class BaluardAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow ?: return
         if (root.packageName != fill.targetPackage) return
 
-        val (username, password) = runBlocking { AutofillSession.credential(fill.cipherId) }
-            ?: run { AutofillA11yBridge.pendingFill = null; return }
+        // Session work runs off the main thread (a11y events arrive on it);
+        // decrypt + clipboard must never block it (peer-review finding #1).
+        AutofillSession.scope.launch {
+            val (username, password) = AutofillSession.credential(fill.cipherId)
+                ?: run { AutofillA11yBridge.pendingFill = null; return@launch }
 
-        val filled = fillFields(root, username, password)
-        if (filled) {
-            AutofillA11yBridge.pendingFill = null
-            copyTotp(fill.cipherId)
+            val filled = fillFields(root, username, password)
+            if (filled) {
+                AutofillA11yBridge.pendingFill = null
+                AutofillSession.totpCode(fill.cipherId)?.let { code ->
+                    copyToClipboard(code)
+                    toastMain(t("a11y.totpCopied"))
+                }
+            }
+            // Fill failed (nodes vanished): keep pending until the user
+            // re-taps the tile or the flow is cleared. Death fails secure.
         }
-        // Fill failed (nodes vanished): keep pending until the user re-taps
-        // the tile or the flow is cleared. Process death fails secure.
+    }
+
+    private fun toastMain(message: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(applicationContext, message, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     /**
@@ -177,16 +190,6 @@ class BaluardAccessibilityService : AccessibilityService() {
         }
         node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
     }.getOrDefault(false)
-
-    private fun copyTotp(cipherId: String) {
-        val code = runBlocking { AutofillSession.totpCode(cipherId) } ?: return
-        copyToClipboard(code)
-        android.widget.Toast.makeText(
-            applicationContext,
-            t("a11y.totpCopied"),
-            android.widget.Toast.LENGTH_SHORT,
-        ).show()
-    }
 
     // ── Node classification (maps a11y nodes onto FieldHeuristics) ──
 

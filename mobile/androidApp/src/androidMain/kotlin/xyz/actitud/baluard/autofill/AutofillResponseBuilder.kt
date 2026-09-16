@@ -79,6 +79,10 @@ object AutofillResponseBuilder {
         val matches = AutofillSession.matches(target)
         if (matches.isEmpty()) return null
 
+        // Every matched entry is decrypted up front so each dataset carries
+        // its values: inherent to multi-dataset responses (Bitwarden does the
+        // same); per-dataset authentication would add a prompt per row.
+        // Plan D2 holds where it matters: the QUERY never returns passwords.
         val builder = FillResponse.Builder()
         matches.forEachIndexed { index, match ->
             val (username, password) = AutofillSession.credential(match.id) ?: return@forEachIndexed

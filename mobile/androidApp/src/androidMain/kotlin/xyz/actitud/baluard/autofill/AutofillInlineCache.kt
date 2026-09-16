@@ -10,6 +10,9 @@ import android.widget.inline.InlinePresentationSpec
  * Styles only, never credentials; process death clears it harmlessly.
  */
 object AutofillInlineCache {
+    // Single-writer assumption: the last fill request wins. A second request
+    // overwriting specs while an earlier one awaits biometric only affects
+    // chip styling, never credentials (peer-review finding #7, accepted).
     var specs: List<InlinePresentationSpec> = emptyList()
     var maxCount: Int = 0
 

@@ -3,6 +3,8 @@ package xyz.actitud.baluard.autofill
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import xyz.actitud.baluard.MobileVault
@@ -35,24 +37,32 @@ object AutofillSession {
     private var vault: MobileVault? = null
     private var activePath: String? = null
 
+    /** Serializes session mutations (peer-review finding #4): the autofill
+     *  service, the tile flow and the picker all call in from different
+     *  dispatchers; open/unlock/lock must not interleave. */
+    private val mutationMutex = Mutex()
+
     /** UI-facing async work runs here; never the main thread. */
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /**
      * Open the last-active vault (main-app handoff via [VaultRegistry]'s
      * persisted active path). Returns whether the session is unlocked.
-     * Switching the active vault in the main app is honored on the next call.
+     * Switching the active vault in the main app is honored on the next call;
+     * the superseded handle is LOCKED first so its keys zeroize
+     * deterministically instead of waiting for GC (peer-review finding #5).
      */
-    suspend fun ensureOpen(): Boolean {
+    suspend fun ensureOpen(): Boolean = mutationMutex.withLock {
         val path = VaultRegistry.loadActiveVault() ?: return false
         if (vault == null || activePath != path) {
+            runCatching { vault?.lock() }
             // Stale handle for a removed/switched vault: drop the reference;
             // the Rust Arc (and its keys) free on GC / process exit.
             vault = null
             activePath = path
             vault = runCatching { openVault(path) }.getOrNull()
         }
-        return vault?.isUnlocked() == true
+        vault?.isUnlocked() == true
     }
 
     /** Lock when the vault's own timeout policy says so. Cheap, per request. */
@@ -65,17 +75,28 @@ object AutofillSession {
      * Unlock with the biometric-gated KEK. Returns false on any failure
      * (stale KEK after a password change fails closed in the runtime).
      */
-    suspend fun unlock(kek: ByteArray): Boolean {
-        ensureOpen()
+    suspend fun unlock(kek: ByteArray): Boolean = mutationMutex.withLock {
+        ensureOpenUnlocked()
         val v = vault ?: return false
         runCatching { v.unlockWithKek(kek) }.getOrElse { return false }
-        return v.isUnlocked()
+        v.isUnlocked()
     }
 
-    suspend fun lock() {
+    suspend fun lock() = mutationMutex.withLock {
         runCatching { vault?.lock() }
         vault = null
         activePath = null
+    }
+
+    /** ensureOpen body without the mutex (callers holding [mutationMutex]). */
+    private suspend fun ensureOpenUnlocked() {
+        val path = VaultRegistry.loadActiveVault() ?: return
+        if (vault == null || activePath != path) {
+            runCatching { vault?.lock() }
+            vault = null
+            activePath = path
+            vault = runCatching { openVault(path) }.getOrNull()
+        }
     }
 
     /**
