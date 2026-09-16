@@ -149,12 +149,18 @@ uninstall:
 # ── Test ────────────────────────────────────────────────────────────────────
 
 # Run all tests
+# BALUARD_DISABLE_KEYRING: hermetic tests. On hosts with a live Secret
+# Service whose collection is locked, keyring reads inside vault open/unlock
+# block forever on an unlock prompt no GUI answers (CI has no D-Bus and fails
+# fast; dev boxes do not). The env var routes keyring-backed paths to their
+# fail-closed fallbacks (crate::keyring_disabled).
 test: _sysdeps-core
-	{{ linuxbrew_env }} cargo test
+	BALUARD_DISABLE_KEYRING=1 {{ linuxbrew_env }} cargo test
 
 # Run tests in release mode
+# See the BALUARD_DISABLE_KEYRING note on `test`.
 test-release:
-	{{ linuxbrew_env }} cargo test --release
+	BALUARD_DISABLE_KEYRING=1 {{ linuxbrew_env }} cargo test --release
 
 # Run core library tests only
 test-core:
