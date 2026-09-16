@@ -440,5 +440,17 @@ internal val ES: Map<String, String> = mapOf(
     "settings.braveIntegrationHint" to "Mejora el relleno de credenciales en sitios compatibles de Brave. Al tocar, se abren los ajustes de autofill de Brave.",
 
     // Settings > Autofill accessibility fill (Phase 6.5, opcional, apagado).
+    "settings.a11yTitle" to "Usar accesibilidad",
+    "settings.a11ySummary" to "Para apps donde el autofill normal no funciona. Apagado por defecto.",
+    "settings.a11yDisclosureTitle" to "¿Permitir el relleno por accesibilidad?",
+    "settings.a11yDisclosureBody" to "En apps que ignoran el autofill normal, Baluard puede rellenar los campos por ti. El servicio de accesibilidad lee un campo solo después de que toques la tarjeta de relleno en tus ajustes rápidos. Nada de lo que ve se guarda ni se envía, y puedes apagarlo cuando quieras.",
+    "settings.a11yDisclosureAccept" to "Permitir",
+    "settings.a11yOpenSystem" to "Abrir ajustes de accesibilidad",
+    "settings.a11yTileHint" to "Luego añade la tarjeta de Baluard a tus ajustes rápidos y tócala en una pantalla de inicio de sesión.",
+    "a11y.toastEnableBaluardFirst" to "Activa primero Usar accesibilidad en Baluard.",
+    "a11y.toastEnableSystem" to "Activa primero Baluard en ajustes de accesibilidad.",
+    "a11y.toastNoFields" to "No hay campos de acceso en esta pantalla.",
+    "a11y.noMatches" to "Sin credenciales guardadas para esta app",
+    "a11y.totpCopied" to "Código TOTP copiado",
     "settings.autofillHint" to "Rellenar pide tu huella cada vez que la sesión de autofill está bloqueada. Bloquear la app aquí no bloquea el autofill, ni al revés.",
 )

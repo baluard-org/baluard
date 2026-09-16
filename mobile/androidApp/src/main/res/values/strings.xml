@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">Lets Baluard fill login fields in apps where normal autofill does not work. Baluard reads fields only after you use the fill tile in your quick settings, and never stores or sends what it sees.</string>
+    <string name="a11y_service_label">Baluard accessibility fill</string>
+    <string name="a11y_tile_label">Baluard fill</string>
+</resources>

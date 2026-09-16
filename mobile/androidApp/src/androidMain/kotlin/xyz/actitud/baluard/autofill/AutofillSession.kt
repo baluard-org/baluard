@@ -111,4 +111,16 @@ object AutofillSession {
         val password = o.opt("password") as? String
         return username to password
     }
+
+    /**
+     * Derived TOTP code for a cipher (6 digits), or null when the entry has
+     * no seed or the vault is locked. Only the derived code crosses the FFI;
+     * the seed never does (same invariant as the desktop).
+     */
+    suspend fun totpCode(id: String): String? {
+        val v = vault?.takeIf { it.isUnlocked() } ?: return null
+        val raw = runCatching { v.totpCode(id) }.getOrNull() ?: return null
+        val code = runCatching { JSONObject(raw).optString("code") }.getOrNull()
+        return code?.takeIf { it.isNotEmpty() }
+    }
 }
