@@ -138,6 +138,22 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         _form.value = EditForm()
     }
 
+    /** Seed a fresh login form from an autofill save capture (Phase 6 P4).
+    *  Call right after [reset]; only ever used in create mode. */
+    fun prefillFromAutofill(p: xyz.actitud.baluard.platform.AutofillSavePrefill) {
+        val host = p.uri?.substringAfter("://", missingDelimiterValue = "")
+            ?.substringBefore("/")
+            ?.takeIf { it.isNotBlank() }
+        _form.value = _form.value.copy(
+            name = host ?: _form.value.name,
+            values = _form.value.values + mapOf(
+                "username" to (p.username ?: ""),
+                "password" to (p.password ?: ""),
+            ),
+            uris = if (p.uri.isNullOrBlank()) _form.value.uris else listOf(UriRow(uri = p.uri)),
+        )
+    }
+
     /** Folder options for the picker; failures leave the previous (or empty) list. */
     suspend fun loadFolders(vault: MobileVault) {
         _folders.value = runCatching { repo.listFolders(vault) }.getOrDefault(_folders.value)

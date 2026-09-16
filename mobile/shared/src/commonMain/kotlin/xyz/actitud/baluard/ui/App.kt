@@ -110,7 +110,13 @@ private sealed interface RootStage {
  * [vaultPath] overrides the platform default (host intent / debug builds).
  */
 @Composable
-fun App(vaultPath: String? = null) {
+fun App(
+    vaultPath: String? = null,
+    // Autofill save handoff (Phase 6 P4): a login the OS captured lands on a
+    // prefilled create editor, after unlock if the vault was locked.
+    savePrefill: xyz.actitud.baluard.platform.AutofillSavePrefill? = null,
+    onSavePrefillConsumed: () -> Unit = {},
+) {
     BaluardTheme {
         Surface(
             modifier = Modifier.fillMaxSize(),
@@ -153,6 +159,14 @@ fun App(vaultPath: String? = null) {
         var nav by remember { mutableStateOf<Nav>(Nav.List) }
         var saveRevision by remember { mutableStateOf(0) }
         val scope = rememberCoroutineScope()
+        // Land on the prefilled create editor when a save handoff arrives
+        // (immediately if unlocked, right after unlock otherwise).
+        LaunchedEffect(savePrefill) {
+            if (savePrefill != null) {
+                detailOrigin = null
+                nav = Nav.Edit(null)
+            }
+        }
         // Switch vaults (desktop VaultSwitcher parity): lock + forget the
         // current handle, persist the new path, reset the UI to Unlock.
         val switchVault: (String) -> Unit = { target ->
@@ -465,6 +479,8 @@ fun App(vaultPath: String? = null) {
                                     vault = vault,
                                     cipherId = n.cipherId,
                                     viewModel = editVm,
+                                    initialPrefill = savePrefill.takeIf { n.cipherId == null },
+                                    onPrefillConsumed = onSavePrefillConsumed,
                                     onSaved = {
                                         saveRevision++
                                         notifyMutation()

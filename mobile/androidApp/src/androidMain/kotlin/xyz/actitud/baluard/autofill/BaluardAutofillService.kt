@@ -1,6 +1,7 @@
 package xyz.actitud.baluard.autofill
 
 import android.app.assist.AssistStructure
+import android.content.Intent
 import android.os.Build
 import android.os.CancellationSignal
 import android.service.autofill.AutofillService
@@ -15,6 +16,8 @@ import android.view.autofill.AutofillId
 import androidx.annotation.RequiresApi
 import java.util.concurrent.Executors
 import kotlinx.coroutines.runBlocking
+import xyz.actitud.baluard.MainActivity
+import xyz.actitud.baluard.platform.AutofillSavePrefill
 import xyz.actitud.baluard.platform.FieldHeuristics
 import xyz.actitud.baluard.platform.FieldKind
 import xyz.actitud.baluard.platform.FieldView
@@ -103,9 +106,65 @@ class BaluardAutofillService : AutofillService() {
     }
 
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
-        // P4: route the submitted values into the main app for saving. The
-        // save-only fill responses carry SaveInfo, so this fires on submit.
-        callback.onSuccess()
+        // Phase 6 P4: capture the committed values and hand them to the main
+        // app as a prefilled create form. The editor IS the confirmation:
+        // nothing saves without the user tapping Save there.
+        executor.execute {
+            try {
+                val captured = parseSave(request)
+                if (captured != null) {
+                    val launch = Intent(this, MainActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        putExtra(MainActivity.EXTRA_SAVE_USERNAME, captured.username)
+                        putExtra(MainActivity.EXTRA_SAVE_PASSWORD, captured.password)
+                        putExtra(MainActivity.EXTRA_SAVE_URI, captured.uri)
+                    }
+                    startActivity(launch)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "save handoff failed", e)
+            } finally {
+                // Acknowledge either way: a failed capture must not wedge the
+                // target app's save flow.
+                callback.onSuccess()
+            }
+        }
+    }
+
+    /** Best-effort capture of the committed username/password plus origin. */
+    private fun parseSave(request: SaveRequest): AutofillSavePrefill? {
+        var username: String? = null
+        var password: String? = null
+        var webDomain: String? = null
+        var packageName: String? = null
+
+        for (context in request.fillContexts) {
+            val structure = context.structure ?: continue
+            packageName = packageName ?: structure.activityComponent?.packageName
+            for (i in 0 until structure.windowNodeCount) {
+                val window = structure.getWindowNodeAt(i)
+                walkNode(window.rootViewNode) { node ->
+                    val kind = FieldHeuristics.classify(adapt(node))
+                    // autofillValue carries the value the target app actually
+                    // committed; blank values (password re-type prompts) are
+                    // skipped so a confirm-password field cannot win.
+                    val value = node.autofillValue?.textValue?.toString()
+                        ?.takeIf { it.isNotBlank() }
+                    if (value != null) {
+                        when (kind) {
+                            FieldKind.Password -> password = password ?: value
+                            FieldKind.Username -> username = username ?: value
+                            FieldKind.Other -> Unit
+                        }
+                    }
+                    if (webDomain == null) node.webDomain?.let { webDomain = it }
+                }
+            }
+        }
+
+        if (username == null && password == null) return null
+        val target = FieldHeuristics.targetFor(packageName, webDomain)
+        return AutofillSavePrefill(username, password, target)
     }
 
     /** Parsed login form: the fields to fill plus the match target. */
