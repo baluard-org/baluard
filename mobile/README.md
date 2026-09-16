@@ -2,7 +2,7 @@
 
 Compose Multiplatform (Android + iOS) client for Baluard.
 
-**Status: Android Phases 0-5 implemented.** The Rust FFI layer, Kotlin ViewModels, and Compose UI are complete and verified. Verification on host builds includes Kotlin metadata compile and Android packaging via `just android-apk`. Phase 6 (Android Autofill Service) and iOS credential extension are next.
+**Status: Android Phases 0-5 implemented, edit/create at desktop parity.** The Rust FFI layer, Kotlin ViewModels, and Compose UI are complete and verified. Verification on host builds includes Kotlin metadata compile and Android packaging via `just android-apk`. Phase 6 (Android Autofill Service) and iOS credential extension are next.
 
 ## Structure
 
@@ -24,7 +24,7 @@ just android-bindings     # Regenerate UniFFI bindings
 
 - **Onboarding**: Create new vault with BIP-39 recovery phrase, or connect to Git providers (GitHub, GitLab, Codeberg) to clone and enroll devices.
 - **Home Hub**: Categorized vault hub with lock state badge, cipher type badges, count pills, tags list, and vault switch bar.
-- **Vault Views**: Filtered entry lists (all items, favorites, folders, tags), detail view, and editing for all 8 cipher types.
+- **Vault Views**: Filtered entry lists (all items, favorites, folders, tags), deep search matching every entry field (password excluded; trash and archived entries excluded), detail view, and editing for all 8 cipher types at desktop parity: URIs with match detection, TOTP seed, custom fields (Text/Hidden/Boolean/Linked), tags, folder, reprompt, configurable password generator, card number formatting with brand detection, SSH keypair generation, and favicon fetch-on-save (opt-in, Settings > Security).
 - **Tools**: Password and passphrase generator, TOTP generator widget with boundary-aligned refresh.
 - **Security**: Biometric unlock via BiometricPrompt ceremony, auto-lock on timer and backgrounding, screenshot protection toggle, and clipboard auto-clear.
 - **Sync & Conflict**: Manual sync button with explicit progress phases, pull-on-unlock, push-after-mutation, and inline conflict resolution panel.
