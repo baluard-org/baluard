@@ -59,6 +59,7 @@ import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.data.vaultTimeoutLabel
 import xyz.actitud.baluard.detail.str
 import xyz.actitud.baluard.i18n.t
+import xyz.actitud.baluard.platform.AutofillRole
 import xyz.actitud.baluard.platform.Biometric
 import xyz.actitud.baluard.platform.ClipboardPrefs
 import xyz.actitud.baluard.platform.removeVaultDirectory
@@ -72,6 +73,7 @@ import xyz.actitud.baluard.sync.runSyncCycle
 import xyz.actitud.baluard.ui.components.BaluardCard
 import xyz.actitud.baluard.ui.components.BaluardDivider
 import xyz.actitud.baluard.ui.components.BaluardPrimaryButton
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import xyz.actitud.baluard.ui.components.BaluardTopBar
 import xyz.actitud.baluard.ui.components.LabeledPreset
 import xyz.actitud.baluard.ui.components.PresetDropdown
@@ -448,6 +450,37 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),
                 )
+            }
+
+            // Autofill Section (Android only; iOS has no requestable role,
+            // Phase 7). Status refreshes when the screen regains focus after
+            // the user returns from the system provider picker.
+            if (AutofillRole.isSupported()) {
+                SectionCard(title = t("settings.autofillSection")) {
+                    var roleEnabled by remember { mutableStateOf(AutofillRole.isEnabled()) }
+                    LifecycleResumeEffect(Unit) {
+                        roleEnabled = AutofillRole.isEnabled()
+                        onPauseOrDispose { }
+                    }
+                    Text(
+                        if (roleEnabled) t("settings.autofillOn") else t("settings.autofillOff"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    if (!roleEnabled) {
+                        BaluardPrimaryButton(
+                            text = t("settings.autofillChoose"),
+                            onClick = { AutofillRole.requestRole() },
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                    Text(
+                        t("settings.autofillHint"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
             }
 
             // Vault Section: remove this device's copy (remote is kept).
