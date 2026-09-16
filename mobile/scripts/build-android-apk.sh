@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-android-apk.sh — produce the Baluard Android debug APK on a macOS host.
+# build-android-apk.sh — produce the Baluard Android debug APK on a macOS or Linux host.
 #
 # One command: builds the Rust cdylib for all 4 ABIs, writes local.properties,
 # runs `./gradlew :androidApp:assembleDebug`, and prints the APK path.
@@ -13,8 +13,9 @@
 #   ./scripts/build-android-apk.sh --skip-native     # skip cargo-ndk (use committed .so)
 #
 # Prereqs (the script checks and tells you the exact install command):
-#   JDK 17            brew install --cask temurin@17
-#   Android SDK       brew install --cask android-commandlinetools android-platform-tools
+#   JDK 17            macOS: brew install --cask temurin@17 | Debian/Ubuntu: apt install openjdk-17-jdk
+#   Android SDK       macOS: brew install --cask android-commandlinetools android-platform-tools
+#                     Linux: Android Studio (installs to ~/Android/Sdk) or cmdline-tools in /opt/android-sdk
 #   NDK r27c          sdkmanager "ndk;27.2.12479018"
 #   Rust + targets    rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
 #   cargo-ndk         cargo install cargo-ndk
@@ -44,11 +45,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Platform guard ──────────────────────────────────────────────────────────
-if [[ "$(uname)" != "Darwin" ]]; then
-  echo "ERROR: this script builds the Android APK on macOS. You are on $(uname)." >&2
-  echo "       Run it on your Mac." >&2
-  exit 1
-fi
+case "$(uname)" in
+  Darwin|Linux) ;;
+  *) echo "ERROR: this script builds the Android APK on macOS or Linux. You are on $(uname)." >&2; exit 1 ;;
+esac
 
 echo "==> Baluard Android build"
 echo "    repo:     $REPO_ROOT"
@@ -59,22 +59,44 @@ echo
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
 # JDK 17 (Gradle 8.10 / AGP 8.7 reject JDK 21+; Temurin 17 is the proven pair).
-if [[ -n "${JAVA_HOME:-}" ]] && /usr/libexec/java_home -v 17 &>/dev/null; then
+# macOS: java_home. Linux: Android Studio's ~/.jdks, distro JVMs, Homebrew openjdk@17,
+# or sdkman. A JAVA_HOME already pointing at 17 wins everywhere.
+JDK17_HOME=""
+if [[ -n "${JAVA_HOME:-}" ]] && "$JAVA_HOME/bin/java" -version 2>&1 | grep -q '"17'; then
   JDK17_HOME="$JAVA_HOME"
+elif [[ "$(uname)" == "Darwin" ]] && /usr/libexec/java_home -v 17 &>/dev/null; then
+  JDK17_HOME="$(/usr/libexec/java_home -v 17)"
 else
-  JDK17_HOME="$(/usr/libexec/java_home -v 17 2>/dev/null || true)"
+  for cand in \
+    "$HOME"/.jdks/temurin-17* \
+    "$HOME"/.jdks/corretto-17* \
+    "$HOME"/.jdks/zulu-17* \
+    /usr/lib/jvm/java-17-openjdk-* \
+    /home/linuxbrew/.linuxbrew/opt/openjdk@17 \
+    "$HOME"/.sdkman/candidates/java/17* ; do
+    [[ -x "$cand/bin/java" ]] && JDK17_HOME="$cand" && break
+  done
 fi
-[[ -n "$JDK17_HOME" ]] || fail "JDK 17 not found. Install: brew install --cask temurin@17"
+[[ -n "$JDK17_HOME" ]] || fail "JDK 17 not found. Install: brew install --cask temurin@17 | Debian/Ubuntu: apt install openjdk-17-jdk"
 echo "    JDK 17:   $JDK17_HOME"
 
-# Android SDK root: env, then Homebrew cmdline-tools, then Android Studio default.
+# Android SDK root: env, then Homebrew cmdline-tools, then per-OS defaults:
+#   macOS: Android Studio ~/Library/Android/sdk
+#   Linux: Android Studio ~/Android/Sdk, /opt/android-sdk, distro /usr/lib/android-sdk
 SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [[ -z "$SDK_ROOT" ]]; then
-  for cand in "/opt/homebrew/share/android-commandlinetools" "$HOME/Library/Android/sdk" "/usr/local/share/android-commandlinetools"; do
+  for cand in \
+    "/opt/homebrew/share/android-commandlinetools" \
+    "$HOME/Library/Android/sdk" \
+    "/usr/local/share/android-commandlinetools" \
+    "$HOME/Android/Sdk" \
+    "/opt/android-sdk" \
+    "/usr/lib/android-sdk" \
+    "/home/linuxbrew/.linuxbrew/share/android-commandlinetools" ; do
     [[ -d "$cand/cmdline-tools" || -d "$cand/platform-tools" ]] && SDK_ROOT="$cand" && break
   done
 fi
-[[ -n "$SDK_ROOT" && -d "$SDK_ROOT" ]] || fail "Android SDK not found. Install: brew install --cask android-commandlinetools\n       then set ANDROID_HOME or rerun."
+[[ -n "$SDK_ROOT" && -d "$SDK_ROOT" ]] || fail "Android SDK not found. Install Android Studio or cmdline-tools into ~/Android/Sdk,\n       then set ANDROID_HOME or rerun."
 echo "    SDK:      $SDK_ROOT"
 export ANDROID_HOME="$SDK_ROOT"
 export ANDROID_SDK_ROOT="$SDK_ROOT"
@@ -114,6 +136,9 @@ echo "    NDK:      $NDK_HOME"
 # Rust + cargo-ndk (only needed when building the native cdylib).
 CARGO_NDK="cargo-ndk"
 if [[ $SKIP_NATIVE -eq 0 ]]; then
+  # Rustup first: a Homebrew/distro rust in PATH shadows rustup and lacks the
+  # Android targets (Gotcha 1; on Linux ~/.cargo/bin is often off-PATH entirely).
+  [[ -d "$HOME/.cargo/bin" ]] && export PATH="$HOME/.cargo/bin:$PATH"
   command -v cargo >/dev/null  || fail "Rust not found. Install via rustup: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
   command -v "$CARGO_NDK" >/dev/null || fail "cargo-ndk not found. Install: cargo install cargo-ndk"
   echo "    cargo-ndk: $(command -v $CARGO_NDK)"
