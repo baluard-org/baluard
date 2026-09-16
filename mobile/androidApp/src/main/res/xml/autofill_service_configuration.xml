@@ -7,9 +7,7 @@
 <autofill-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:supportsInlineSuggestions="true">
 
-    <compatibility-package
-        android:name="com.brave.browser"
-        android:maxLongVersionCode="427912623" />
+    <compatibility-package android:name="com.brave.browser" />
     <compatibility-package android:name="com.brave.browser.beta" />
     <compatibility-package android:name="com.brave.browser.nightly" />
     <compatibility-package android:name="com.android.chrome" />

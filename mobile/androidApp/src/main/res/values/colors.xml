@@ -3,4 +3,9 @@
      Brand light: Clean White / Slate (#F4F6F6). -->
 <resources>
     <color name="splash_bg">#F4F6F6</color>
+    <!-- Autofill dataset popup rows (RemoteViews): resolved against the
+         TARGET APP's uiMode, which can differ from the system setting, so
+         both variants must exist. Agy finding, device pass. -->
+    <color name="autofill_text_primary">#1C1B1F</color>
+    <color name="autofill_text_secondary">#49454F</color>
 </resources>
