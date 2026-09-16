@@ -88,6 +88,10 @@ fun EditCipherScreen(
     viewModel: EditCipherViewModel,
     onSaved: () -> Unit,
     onCancelled: () -> Unit = {},
+    // Autofill save handoff (Phase 6 P4): seeds the create form once, then
+    // the caller drops the handoff so it cannot re-seed later.
+    initialPrefill: xyz.actitud.baluard.platform.AutofillSavePrefill? = null,
+    onPrefillConsumed: () -> Unit = {},
 ) {
     val form by viewModel.form.collectAsState()
     val folders by viewModel.folders.collectAsState()
@@ -103,7 +107,15 @@ fun EditCipherScreen(
     var showGenOptions by remember { mutableStateOf(false) }
 
     LaunchedEffect(cipherId) {
-        if (cipherId != null) viewModel.load(vault, cipherId) else viewModel.reset()
+        if (cipherId != null) {
+            viewModel.load(vault, cipherId)
+        } else {
+            viewModel.reset()
+            if (initialPrefill != null) {
+                viewModel.prefillFromAutofill(initialPrefill)
+                onPrefillConsumed()
+            }
+        }
         viewModel.loadFolders(vault)
         viewModel.loadTags(vault)
     }
