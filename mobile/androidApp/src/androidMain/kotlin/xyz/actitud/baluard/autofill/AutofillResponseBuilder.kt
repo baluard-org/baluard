@@ -88,13 +88,21 @@ object AutofillResponseBuilder {
             val (username, password) = AutofillSession.credential(match.id) ?: return@forEachIndexed
             val chip = inline?.let { inlineChipOrNull(context, it, index, match.name, username) }
             val ds = datasetBuilder(context, match.name, username, chip)
+            var hasValue = false
             if (fields.usernameId != null && username != null) {
                 ds.setValue(fields.usernameId, AutofillValue.forText(username))
+                hasValue = true
             }
             if (fields.passwordId != null && password != null) {
                 ds.setValue(fields.passwordId, AutofillValue.forText(password))
+                hasValue = true
             }
-            builder.addDataset(ds.build())
+            // Dataset.build() throws IllegalStateException with zero field
+            // values (Agy finding #3): a username-only form fed by an entry
+            // with null username would crash. Skip empty datasets.
+            if (hasValue) {
+                builder.addDataset(ds.build())
+            }
         }
         return builder.setSaveInfo(saveInfo(fields)).build()
     }

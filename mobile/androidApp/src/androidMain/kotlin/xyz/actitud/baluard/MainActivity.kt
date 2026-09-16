@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.fragment.app.FragmentActivity
+import xyz.actitud.baluard.autofill.AutofillSaveToken
 import xyz.actitud.baluard.platform.AppContextHolder
 import xyz.actitud.baluard.platform.AutofillSavePrefill
 import xyz.actitud.baluard.ui.App
@@ -61,20 +62,24 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun extractAutofillSave(intent: Intent?): AutofillSavePrefill? {
-        // Spoof guard (peer-review finding #3): MainActivity is exported
-        // (launcher), so any app could start it with save extras. Only trust
-        // them when the launch came from our own package (the :autofill
-        // service process). Strict: null attribution (system launches) is
-        // rejected too; those never carry our extras.
-        if (getLaunchedFromPackage() != packageName) return null
-        val username = intent?.getStringExtra(EXTRA_SAVE_USERNAME)
-        val password = intent?.getStringExtra(EXTRA_SAVE_PASSWORD)
-        val uri = intent?.getStringExtra(EXTRA_SAVE_URI)
+        // Spoof guard (peer-review finding #3, Agy revision): MainActivity is
+        // exported (launcher), so any app could start it with save extras.
+        // getLaunchedFromPackage is API 34+ (would crash on our minSdk 32),
+        // so the guard is a one-time token: the :autofill service process
+        // writes a random token to app-sandbox storage right before launch
+        // and passes it in the intent. Other apps can neither read the
+        // sandbox file nor guess the UUID; the token is consumed on use.
+        val token = intent?.getStringExtra(EXTRA_SAVE_TOKEN) ?: return null
+        if (!AutofillSaveToken.consume(token)) return null
+        val username = intent.getStringExtra(EXTRA_SAVE_USERNAME)
+        val password = intent.getStringExtra(EXTRA_SAVE_PASSWORD)
+        val uri = intent.getStringExtra(EXTRA_SAVE_URI)
         if (username == null && password == null && uri == null) return null
         return AutofillSavePrefill(username, password, uri)
     }
 
     companion object {
+        const val EXTRA_SAVE_TOKEN = "baluard.autofill.SAVE_TOKEN"
         const val EXTRA_SAVE_USERNAME = "baluard.autofill.SAVE_USERNAME"
         const val EXTRA_SAVE_PASSWORD = "baluard.autofill.SAVE_PASSWORD"
         const val EXTRA_SAVE_URI = "baluard.autofill.SAVE_URI"

@@ -187,8 +187,9 @@ class AutofillActivity : FragmentActivity() {
                                 title = match.name,
                                 subtitle = match.username,
                                 onClick = {
-                                    AutofillA11yBridge.pendingFill =
-                                        AutofillA11yBridge.PendingFill(match.id, target, targetPackage())
+                                    AutofillA11yBridge.startPendingFill(
+                                        AutofillA11yBridge.PendingFill(match.id, target, targetPackage()),
+                                    )
                                     finish()
                                 },
                             ),

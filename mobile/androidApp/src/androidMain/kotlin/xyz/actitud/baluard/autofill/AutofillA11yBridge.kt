@@ -24,6 +24,29 @@ object AutofillA11yBridge {
     @Volatile
     var pendingFill: PendingFill? = null
 
+    /** Failed fill attempts for the current pending fill (bounded retries). */
+    @Volatile
+    var pendingFillAttempts: Int = 0
+
+    private const val MAX_ATTEMPTS = 3
+
+    /** Set + reset the retry budget (peer-review Agy finding #6). */
+    fun startPendingFill(fill: PendingFill) {
+        pendingFill = fill
+        pendingFillAttempts = 0
+    }
+
+    /** True while the pending fill may still be retried; clears at the cap. */
+    fun registerAttempt(): Boolean {
+        if (pendingFillAttempts >= MAX_ATTEMPTS) {
+            pendingFill = null
+            pendingFillAttempts = 0
+            return false
+        }
+        pendingFillAttempts += 1
+        return true
+    }
+
     fun armParse() {
         parseArmed = true
     }
@@ -31,5 +54,6 @@ object AutofillA11yBridge {
     fun clear() {
         parseArmed = false
         pendingFill = null
+        pendingFillAttempts = 0
     }
 }
