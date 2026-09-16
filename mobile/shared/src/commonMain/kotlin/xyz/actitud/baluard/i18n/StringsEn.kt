@@ -422,4 +422,11 @@ internal val EN: Map<String, String> = mapOf(
     "autofill.noUsername" to "(no username)",
     "autofill.openAppToSetup" to "Open Baluard first to set up quick unlock",
     "autofill.unlockFailed" to "Could not unlock. Open Baluard and try again.",
+
+    // Settings > Autofill (Phase 6 P5, Android only).
+    "settings.autofillSection" to "Autofill",
+    "settings.autofillOn" to "On. Baluard fills your logins in other apps.",
+    "settings.autofillOff" to "Off. Turn on to fill logins from other apps with Baluard.",
+    "settings.autofillChoose" to "Set Baluard as autofill provider",
+    "settings.autofillHint" to "Filling asks for your fingerprint whenever the autofill session is locked. Locking the app here does not lock autofill, and the other way around.",
 )
