@@ -4,7 +4,6 @@ import android.app.assist.AssistStructure
 import android.os.Build
 import android.os.CancellationSignal
 import android.service.autofill.AutofillService
-import android.service.autofill.Dataset
 import android.service.autofill.FillCallback
 import android.service.autofill.FillRequest
 import android.service.autofill.FillResponse
@@ -13,22 +12,32 @@ import android.service.autofill.SaveRequest
 import android.util.Log
 import android.view.View
 import android.view.autofill.AutofillId
-import android.view.autofill.AutofillValue
 import androidx.annotation.RequiresApi
 import java.util.concurrent.Executors
+import kotlinx.coroutines.runBlocking
+import xyz.actitud.baluard.platform.FieldHeuristics
+import xyz.actitud.baluard.platform.FieldKind
+import xyz.actitud.baluard.platform.FieldView
 
 /**
- * Baluard Android Autofill Service (plan §3.7).
+ * Baluard Android Autofill Service (plan §3.7, Phase 6).
  *
  * CRITICAL SECURITY INVARIANT (plan §3.2): this service runs as a SEPARATE OS
- * process with strict memory limits. It MUST unlock via [MobileVault.unlockWithKek]
- * using a biometric-gated KEK retrieved from the AndroidKeystore — NEVER the
- * master-password Argon2id KDF (a 64-256 MB KDF would OOM the service before
- * completing). The main app can run the full KDF; this process cannot.
+ * process (`:autofill`, enforced in the manifest and asserted by
+ * AutofillProcessIsolationTest) with strict memory limits. It MUST unlock via
+ * [AutofillSession.unlock], fed by the biometric-gated KEK from
+ * [AutofillActivity]. The master-password Argon2id KDF (64-256 MB) never runs
+ * here; it would OOM the process before completing.
  *
- * No network sync on the onFillRequest hot path: query a local cipher index
- * only. The service is native Kotlin (NOT Compose) for fast cold start + low
- * memory. A simpler View-based credential picker renders via RemoteViews.
+ * No network on the fill hot path: matching is `VaultState::autofill_query`
+ * over the local vault only (plan D1/D9). Picker UI is RemoteViews only, no
+ * Compose in this process (plan D7).
+ *
+ * Unlock model (plan D6): cold session -> response-level authentication, the
+ * OS launches [AutofillActivity] for the BiometricPrompt ceremony, real
+ * datasets come back through EXTRA_AUTHENTICATION_RESULT. Unlocked session ->
+ * datasets are served directly. Every request re-checks the vault's own
+ * auto-lock policy first.
  */
 @RequiresApi(Build.VERSION_CODES.O)
 class BaluardAutofillService : AutofillService() {
@@ -39,8 +48,7 @@ class BaluardAutofillService : AutofillService() {
         private const val TAG = "BaluardAutofill"
 
         // M10: onFailure messages can surface in system autofill diagnostics.
-        // Static codes only; the real reason (which may carry Rust paths or
-        // provider detail) goes to logcat, never across the callback.
+        // Static codes only; the real reason goes to logcat, never the callback.
         private const val ERR_NO_STRUCTURE = "no_structure"
         private const val ERR_NO_FIELDS = "no_fields"
         private const val ERR_FILL_FAILED = "fill_failed"
@@ -51,8 +59,6 @@ class BaluardAutofillService : AutofillService() {
         cancellationSignal: CancellationSignal,
         callback: FillCallback,
     ) {
-        // Phase 6 scaffold: parse the AssistStructure for username/password
-        // fields + the package domain, then match against the vault index.
         val structure = request.fillContexts.lastOrNull()?.structure
         if (structure == null) {
             Log.w(TAG, "fill request had no structure")
@@ -60,23 +66,35 @@ class BaluardAutofillService : AutofillService() {
             return
         }
 
-        // Run the parse + match off the main thread (the service has seconds
-        // of budget). The KEK-gated unlock + index read happen here.
         executor.execute {
             try {
-                val parsed = parseAutofillFields(structure)
-                if (parsed.usernameId == null && parsed.passwordId == null) {
-                    Log.w(TAG, "no autofillable fields in ${parsed.domain ?: "unknown package"}")
+                val form = parseForm(structure)
+                if (form == null) {
+                    Log.i(TAG, "no autofillable fields; ignoring")
                     callback.onFailure(ERR_NO_FIELDS)
                     return@execute
                 }
 
-                // TODO Phase 6: unlock via unlock_with_kek (KEK from AndroidKeystore,
-                //   gated by BiometricPrompt), then list_ciphers + match by package
-                //   domain. Build a Dataset per matching login. For the scaffold we
-                //   return an empty response (no credentials yet) so the OS degrades
-                //   gracefully instead of crashing.
-                callback.onSuccess(FillResponse.Builder().build())
+                val response = runBlocking {
+                    AutofillSession.lockIfExpired()
+                    if (AutofillSession.ensureOpen()) {
+                        AutofillResponseBuilder.filledResponse(applicationContext, form.fields, form.target)
+                            ?: AutofillResponseBuilder.saveOnlyResponse(
+                                applicationContext,
+                                form.fields,
+                                form.target,
+                            )
+                    } else {
+                        AutofillResponseBuilder.authenticationResponse(
+                            applicationContext,
+                            form.fields,
+                            form.target,
+                        )
+                    }
+                }
+
+                if (cancellationSignal.isCanceled) return@execute
+                callback.onSuccess(response)
             } catch (e: Exception) {
                 Log.w(TAG, "autofill fill failed", e)
                 callback.onFailure(ERR_FILL_FAILED)
@@ -85,43 +103,74 @@ class BaluardAutofillService : AutofillService() {
     }
 
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
-        // User submitted a login form elsewhere → offer to save it as a new cipher.
-        // Phase 6 scaffold: parse the saved fields + prompt to add via the main app.
+        // P4: route the submitted values into the main app for saving. The
+        // save-only fill responses carry SaveInfo, so this fires on submit.
         callback.onSuccess()
     }
 
+    /** Parsed login form: the fields to fill plus the match target. */
+    data class Form(
+        val usernameId: AutofillId?,
+        val passwordId: AutofillId?,
+        val target: String,
+    ) {
+        val fields: AutofillResponseBuilder.TargetFields
+            get() = AutofillResponseBuilder.TargetFields(usernameId, passwordId)
+    }
+
     /**
-     * Walk the AssistStructure to find autofillable username/password fields
-     * and the package domain (for matching). Mirrors the heuristic across app
-     * implementations Chrome/banking/social use; a known-bad-app list lives in
-     * the full impl (plan §6 risk: AssistStructure parsing is fragile).
+     * Walk the AssistStructure with the layered heuristics in
+     * [FieldHeuristics]. Real ViewNodes are adapted onto [FieldView] so the
+     * classification logic stays unit-testable (plan P3).
      */
-    private fun parseAutofillFields(structure: AssistStructure): ParsedFields {
+    private fun parseForm(structure: AssistStructure): Form? {
         var usernameId: AutofillId? = null
         var passwordId: AutofillId? = null
+        var webDomain: String? = null
+
+        val packageName = structure.activityComponent?.packageName
+
         for (i in 0 until structure.windowNodeCount) {
             val window = structure.getWindowNodeAt(i)
             walkNode(window.rootViewNode) { node ->
-                val hints = node.autofillHints?.toList().orEmpty()
-                val isUser = hints.contains(View.AUTOFILL_HINT_USERNAME) ||
-                    hints.contains(View.AUTOFILL_HINT_EMAIL_ADDRESS)
-                val isPass = hints.contains(View.AUTOFILL_HINT_PASSWORD)
-                if (isPass && passwordId == null) passwordId = node.autofillId
-                else if (isUser && usernameId == null) usernameId = node.autofillId
+                val field = adapt(node)
+                when (FieldHeuristics.classify(field)) {
+                    FieldKind.Password -> {
+                        if (passwordId == null) {
+                            passwordId = node.autofillId
+                            // Prefer the password field's own web origin.
+                            node.webDomain?.let { webDomain = it }
+                        }
+                    }
+                    FieldKind.Username -> {
+                        if (usernameId == null) usernameId = node.autofillId
+                    }
+                    FieldKind.Other -> Unit
+                }
+                // WebView containers report the origin without being fields.
+                if (webDomain == null) node.webDomain?.let { webDomain = it }
             }
         }
-        return ParsedFields(usernameId, passwordId, structure.activityComponent?.packageName)
+
+        if (usernameId == null && passwordId == null) return null
+        val target = FieldHeuristics.targetFor(packageName, webDomain) ?: return null
+        return Form(usernameId, passwordId, target)
     }
+
+    private fun adapt(node: AssistStructure.ViewNode): FieldView = FieldView(
+        autofillId = node.autofillId,
+        hints = node.autofillHints?.toList().orEmpty(),
+        inputType = node.inputType,
+        idEntry = node.idEntry,
+        hint = node.hint,
+        text = node.text?.toString(),
+        htmlAutocomplete = node.htmlInfo?.attributes
+            ?.firstOrNull { it.first.equals("autocomplete", ignoreCase = true) }?.second,
+        webDomain = node.webDomain,
+    )
 
     private fun walkNode(node: AssistStructure.ViewNode, visit: (AssistStructure.ViewNode) -> Unit) {
         visit(node)
         for (i in 0 until node.childCount) walkNode(node.getChildAt(i), visit)
     }
-
-    private data class ParsedFields(
-        val usernameId: AutofillId?,
-        val passwordId: AutofillId?,
-        val domain: String?,
-    )
-
 }

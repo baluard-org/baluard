@@ -415,4 +415,11 @@ internal val EN: Map<String, String> = mapOf(
     "conflict.crossEpochTitle" to "Version mismatch",
     "conflict.crossEpochBody" to "One copy of \"{0}\" is locked with older keys. Keep one version now; open it later on the device that has those keys.",
     "conflict.error" to "Could not apply your choice. Try again.",
+
+    // Android autofill picker + trampoline (Phase 6). The biometric prompt
+    // title reuses login.biometricTitle.
+    "autofill.unlockHint" to "Tap to unlock and fill",
+    "autofill.noUsername" to "(no username)",
+    "autofill.openAppToSetup" to "Open Baluard first to set up quick unlock",
+    "autofill.unlockFailed" to "Could not unlock. Open Baluard and try again.",
 )
