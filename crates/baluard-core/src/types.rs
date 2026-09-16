@@ -310,15 +310,30 @@ impl UriMatchStrategy {
 #[cfg(feature = "uri-match")]
 impl UriMatchStrategy {
     pub fn matches(&self, uri: &str, target: &str) -> bool {
+        if self == &UriMatchStrategy::Never {
+            return false;
+        }
+        // Scheme isolation (plan D4, Agy finding #5): native app targets only
+        // ever match androidapp:// entry URIs, and web URIs only match web
+        // targets. Regex is pattern-land with no scheme semantics.
+        if self != &UriMatchStrategy::Regex && is_androidapp(uri) != is_androidapp(target) {
+            return false;
+        }
         match self {
-            UriMatchStrategy::Never => false,
             UriMatchStrategy::Regex => regex_matches(uri, target),
             UriMatchStrategy::StartsWith => starts_with_matches(uri, target),
             UriMatchStrategy::Exact => exact_matches(uri, target),
             UriMatchStrategy::Host => host_matches(uri, target),
             UriMatchStrategy::Domain => domain_matches(uri, target),
+            UriMatchStrategy::Never => false,
         }
     }
+}
+
+/// True when the string carries the native-app scheme (case-insensitive).
+#[cfg(feature = "uri-match")]
+fn is_androidapp(raw: &str) -> bool {
+    raw.trim_start().to_ascii_lowercase().starts_with("androidapp://")
 }
 
 /// Extract the host (punycode, port stripped, lowercased) of a URI-ish
@@ -415,10 +430,12 @@ fn starts_with_matches(uri: &str, target: &str) -> bool {
             if !b.starts_with(&a) {
                 return false;
             }
-            // Segment boundary: "x.com/app" must not match "x.com/application".
-            // The prefix must end the target or be followed by a path/query/
-            // fragment separator.
-            b.len() == a.len() || matches!(b.as_bytes()[a.len()], b'/' | b'?' | b'#' | b'&')
+            // Segment boundary: "x.com/app" must not match
+            // "x.com/application". A trailing slash on the entry already
+            // provides the boundary (Agy finding #4).
+            a.ends_with('/')
+                || b.len() == a.len()
+                || matches!(b.as_bytes().get(a.len()), Some(b'/') | Some(b'?') | Some(b'#') | Some(b'&'))
         }
         _ => false,
     }
@@ -1946,7 +1963,22 @@ mod tests {
         assert!(M::StartsWith.matches("https://x.com/app", "https://x.com/app/page"));
         assert!(M::StartsWith.matches("https://x.com", "https://x.com/anything"));
         assert!(!M::StartsWith.matches("https://x.com/app", "https://x.com/application"));
+        // Entry with trailing slash still matches child paths (Agy #4).
+        assert!(M::StartsWith.matches("https://x.com/app/", "https://x.com/app/page"));
         assert!(!M::StartsWith.matches("https://x.com", "https://evil.com/https://x.com"));
+    }
+
+    #[test]
+    fn scheme_isolation_app_vs_web() {
+        // Agy #5: no strategy may cross androidapp:// and web origins.
+        assert!(!M::Host.matches("androidapp://com.example", "https://com.example"));
+        assert!(!M::Host.matches("https://com.example", "androidapp://com.example"));
+        assert!(!M::Domain.matches("androidapp://com.example", "https://example"));
+        assert!(!M::StartsWith.matches("https://com.example", "androidapp://com.example/x"));
+        assert!(!M::Exact.matches("androidapp://com.example", "https://com.example"));
+        // Same-scheme pairs keep matching.
+        assert!(M::Host.matches("androidapp://com.example", "androidapp://com.example"));
+        assert!(M::Domain.matches("https://com.example", "https://www.com.example"));
     }
 
     #[test]

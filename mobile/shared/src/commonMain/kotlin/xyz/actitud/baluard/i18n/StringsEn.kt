@@ -447,5 +447,4 @@ internal val EN: Map<String, String> = mapOf(
     "a11y.toastNoFields" to "No login fields on this screen.",
     "a11y.noMatches" to "No saved logins for this app",
     "a11y.totpCopied" to "TOTP code copied",
-    "settings.autofillHint" to "Filling asks for your fingerprint whenever the autofill session is locked. Locking the app here does not lock autofill, and the other way around.",
 )

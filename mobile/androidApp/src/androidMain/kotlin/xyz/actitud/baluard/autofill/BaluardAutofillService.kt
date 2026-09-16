@@ -126,6 +126,10 @@ class BaluardAutofillService : AutofillService() {
                 if (captured != null) {
                     val launch = Intent(this, MainActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        // One-time sandbox token: the receiving activity only
+                        // honors this handoff when the token matches (spoof
+                        // guard, Agy finding #1).
+                        putExtra(MainActivity.EXTRA_SAVE_TOKEN, AutofillSaveToken.mint())
                         putExtra(MainActivity.EXTRA_SAVE_USERNAME, captured.username)
                         putExtra(MainActivity.EXTRA_SAVE_PASSWORD, captured.password)
                         putExtra(MainActivity.EXTRA_SAVE_URI, captured.uri)

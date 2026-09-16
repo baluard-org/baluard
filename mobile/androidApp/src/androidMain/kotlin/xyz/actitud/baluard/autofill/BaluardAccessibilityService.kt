@@ -122,6 +122,12 @@ class BaluardAccessibilityService : AccessibilityService() {
     private fun performFill(fill: AutofillA11yBridge.PendingFill) {
         val root = rootInActiveWindow ?: return
         if (root.packageName != fill.targetPackage) return
+        // Only attempt on screens that actually show login fields (Agy
+        // finding #6): never inject credentials into arbitrary inputs.
+        if (!hasFillableFields(root)) return
+        // Retry budget: 3 bounded attempts, then the pending fill dies (the
+        // user re-taps the tile instead of risking stray fills).
+        if (!AutofillA11yBridge.registerAttempt()) return
 
         // Session work runs off the main thread (a11y events arrive on it);
         // decrypt + clipboard must never block it (peer-review finding #1).
@@ -132,13 +138,14 @@ class BaluardAccessibilityService : AccessibilityService() {
             val filled = fillFields(root, username, password)
             if (filled) {
                 AutofillA11yBridge.pendingFill = null
+                AutofillA11yBridge.pendingFillAttempts = 0
                 AutofillSession.totpCode(fill.cipherId)?.let { code ->
                     copyToClipboard(code)
                     toastMain(t("a11y.totpCopied"))
                 }
             }
-            // Fill failed (nodes vanished): keep pending until the user
-            // re-taps the tile or the flow is cleared. Death fails secure.
+            // Fill failed: the attempt is already counted; the budget clears
+            // the pending fill after 3. Process death fails secure.
         }
     }
 

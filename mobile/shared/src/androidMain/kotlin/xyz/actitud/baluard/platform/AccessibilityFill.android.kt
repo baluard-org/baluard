@@ -9,20 +9,19 @@ import android.view.accessibility.AccessibilityManager
 /**
  * Android actual. The system readback matches OUR service only (package +
  * AccessibilityServiceInfo.FEEDBACK_GENERIC list), mirroring Bitwarden's
- * AccessibilityManager-first check.
+ * AccessibilityManager-first check. The opt-in flag is file-backed
+ * (AutofillFlagFile): SharedPreferences are per-process caches and the flag
+ * flips in the main process while the :autofill service reads it (Agy
+ * finding #7).
  */
 actual object AccessibilityFill {
 
-    private const val FILE = "baluard_autofill_prefs"
-    private const val KEY = "a11y_fill_enabled"
+    private const val FLAG_FILE = "a11y_fill_enabled"
 
-    private fun prefs() = AppContextHolder.get()
-        ?.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-
-    actual fun enabled(): Boolean = prefs()?.getBoolean(KEY, false) ?: false
+    actual fun enabled(): Boolean = AutofillFlagFile.read(FLAG_FILE, default = false)
 
     actual fun setEnabled(enabled: Boolean) {
-        prefs()?.edit()?.putBoolean(KEY, enabled)?.apply()
+        AutofillFlagFile.write(FLAG_FILE, enabled)
     }
 
     actual fun serviceEnabledInSystem(): Boolean = runCatching {

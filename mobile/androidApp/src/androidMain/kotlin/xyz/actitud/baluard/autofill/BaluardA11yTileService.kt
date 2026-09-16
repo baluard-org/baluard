@@ -30,7 +30,20 @@ class BaluardA11yTileService : TileService() {
         AutofillA11yBridge.armParse()
         val intent = android.content.Intent(this, A11yTileTrampoline::class.java)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivityAndCollapse(intent)
+        // API 34 requires the PendingIntent overload for targetSdk 34+ apps
+        // (Agy finding #2); older releases keep the Intent variant.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val pending = android.app.PendingIntent.getActivity(
+                this,
+                0,
+                intent,
+                android.app.PendingIntent.FLAG_IMMUTABLE,
+            )
+            startActivityAndCollapse(pending)
+        } else {
+            @Suppress("DEPRECATION")
+            startActivityAndCollapse(intent)
+        }
     }
 
     override fun onStartListening() {

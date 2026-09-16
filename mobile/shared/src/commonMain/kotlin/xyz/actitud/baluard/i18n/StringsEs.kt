@@ -452,5 +452,4 @@ internal val ES: Map<String, String> = mapOf(
     "a11y.toastNoFields" to "No hay campos de acceso en esta pantalla.",
     "a11y.noMatches" to "Sin credenciales guardadas para esta app",
     "a11y.totpCopied" to "Código TOTP copiado",
-    "settings.autofillHint" to "Rellenar pide tu huella cada vez que la sesión de autofill está bloqueada. Bloquear la app aquí no bloquea el autofill, ni al revés.",
 )
