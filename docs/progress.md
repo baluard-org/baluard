@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-09-13 (Mobile Android Phases 0-5 implemented; Phase 6 Autofill Service next.)
+> Last updated: 2026-09-16 (Mobile: desktop-parity edit/create, deep search over every field, TOTP + favicon fixes; Phase 6 Autofill next.)
 
 ---
 
@@ -17,6 +17,7 @@ Active work: **mobile app (Android first)**, Phase 6 (Android Autofill Service).
 | Phase 3 | Sync Lifecycle: on_foreground pull, on_mutation push, sync indicator | ✅ done |
 | Phase 4 | Edge Cases: ConflictResolutionPanel, multi-vault switcher, settings | ✅ done |
 | Phase 5 | Release Polish: Material 3 brand theme, R8 rules, unit tests | ✅ done |
+| Parity polish | Mobile edit/create at desktop parity (URIs + match strategy, TOTP seed, custom fields Text/Hidden/Boolean/Linked, tags, folder, reprompt, configurable generator, card formatting + brand, exp-month/sex dropdowns, SSH keypair generation, favicon fetch-on-save), deep search over every field (password excluded, trash/archived excluded), TOTP card + settings fixes | ✅ done |
 | Phase 6 | Android Autofill Service (`AutofillService`, dataset provider, manual fallback) | ⏳ next |
 
 Docs: `docs/plan-mobile-apps.md`, `docs/plan-mobile-onboarding.md`, `mobile/README.md`.
@@ -34,7 +35,7 @@ Docs: `docs/plan-mobile-apps.md`, `docs/plan-mobile-onboarding.md`, `mobile/READ
 
 ## Current Status
 
-Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done**. **Mobile: Android Phases 0-5 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build). Phase 6 Autofill next**.
+Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done**. **Mobile: Android Phases 0-5 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit at desktop parity, deep search, generator, TOTP, favicon opt-in, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build). Phase 6 Autofill next**.
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
@@ -46,7 +47,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 - `/crates/baluard-nmh` - Native messaging host binary (browser extension bridge, stdio-JSON <-> varint-protobuf)
 - `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 8 cipher types, generator, TOTP, auto-lock, dark/light themes, i18n en/es, 38 components)
 - `/browser` - Chromium + Firefox MV3 extensions (shared codebase, two targets). KeePassXC-Browser-style bridge client. Paired companion model (rides the desktop's unlock state)
-- `/mobile` - Kotlin Multiplatform app (Compose UI + UniFFI integration; onboarding create + provider flows, vault list with type/tag/favorite filters, detail + edit for all 8 cipher types, generator, TOTP, settings, i18n EN/ES)
+- `/mobile` - Kotlin Multiplatform app (Compose UI + UniFFI integration; onboarding create + provider flows, vault list with type/tag/favorite filters + deep search, detail + edit for all 8 cipher types at desktop parity, generator, TOTP, settings incl. favicon opt-in, i18n EN/ES)
 - `/docs` - Architecture, design, threat model, plans, PRDs, ADRs
 
 ---
@@ -58,7 +59,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | `workspace` | Done | Rust workspace with baluard-core, baluard-runtime, baluard-uniffi, baluard-cli, baluard-daemon, baluard-nmh crates |
 | `baluard-runtime` | Done | Extracted in-process vault runtime: VaultHost, VaultState, AutoSyncHandle, PinEscrow, ProviderManager, RateLimiter |
 | `baluard-uniffi` | Done | UniFFI C-FFI / Kotlin Multiplatform / Swift bindings over baluard-runtime + baluard-core |
-| `mobile/android` | Done (Phases 0-5) | Compose Multiplatform Android client: onboarding (create + clone + device enrollment), home hub, filtered entry lists, 8 cipher types detail/edit, generator, TOTP, biometric unlock ceremony, auto-lock, sync feedback, conflict resolution panel, multi-vault switcher, R8 release build. Phase 6 (Autofill) next |
+| `mobile/android` | Done (Phases 0-5 + parity) | Compose Multiplatform Android client: onboarding (create + clone + device enrollment), home hub, filtered entry lists, deep search over every field (password excluded, trash/archived excluded), 8 cipher types detail/edit at desktop parity (URIs + match strategy, TOTP seed, custom fields Text/Hidden/Boolean/Linked, tags, folder, reprompt, generator knobs, card formatting + brand, SSH keypair generation, favicon fetch-on-save), generator, TOTP, biometric unlock ceremony, auto-lock, sync feedback, conflict resolution panel, multi-vault switcher, R8 release build. Phase 6 (Autofill) next |
 | `proto/schemas` | Done | `vault.proto`, `space.proto`, `auth.proto`. Compiled by prost-build in daemon and CLI |
 | `crypto/aead` | Done | AES-256-GCM with strict AAD binding |
 | `crypto/webauthn` | Done (Phase 0+1) | FIDO2/WebAuthn ceremony via `passkey-rs` 0.5.x. ES256 only. `BaluardCredentialStore` (Arc<Mutex> mutation tracking), `PasskeyIndex` (in-vault passkey lookup), `CeremonyCache` (300s TTL, max 64 pending, FIFO eviction, OsRng challenges). Passkeys embedded in `LoginData::fido2_credentials`. |
@@ -98,14 +99,14 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | Nested Folders | Done | Max depth 16. Cascade delete. BFS descendant collection |
 | Archive | Done | Archive/unarchive ciphers. Separate list view |
 | Extra cipher types | Done | BankAccount (10 fields), DriversLicense (12 fields), Passport & ID (13 fields)
-| SSH key generation | Done | Ed25519 (default), ECDSA P-256. RSA 4096 removed (L7 fix: rsa crate had RUSTSEC-2023-0071 Marvin Attack, no fix). Daemon-side via `ssh-key` crate. OpenSSH format output |
+| SSH key generation | Done | Ed25519 (default), ECDSA P-256. RSA 4096 removed (L7 fix: rsa crate had RUSTSEC-2023-0071 Marvin Attack, no fix). Daemon-side via `ssh-key` crate. OpenSSH format output. **Mobile parity**: `ssh_generate_key` uniffi wrapper + generator section on the sshKey edit form |
 | User profile | Done | Display name, subtitle, avatar in VaultSettings. Avatar file in vault dir. Sidebar reads from context |
 | Modal accessibility | Done | FocusTrap component (Tab trap, Escape dismiss, auto-focus, restore focus). Applied to all 9 modals (Add/Edit, DeleteConfirm, ArchiveConfirm, Reprompt, Generator, Settings, EmptyTrash, SetupScreen, DetachVault, SwitchUnlock) |
 | Tag deletion | Done | Hover X on sidebar pills, confirmation modal, tag.delete daemon command |
 | Archive confirmation | Done | ArchiveConfirmModal with FocusTrap. Prompts before archiving entries |
 | i18n completion | Done | All hardcoded strings replaced with t() keys. en.json + es.json in sync |
 | Toast notifications | Done | toastSignal.js standalone signals. All user feedback via toasts |
-| Favicons | Done | Opt-in persisted website icons (`favicon` cipher field). Fetched at save time. 16KB cap + magic-byte check + default-off. `desktop/src/lib/cipherSchema.js` + `Avatar`/`CipherRow` chip treatment |
+| Favicons | Done | Opt-in persisted website icons (`favicon` cipher field). Fetched at save time. 16KB cap + magic-byte check + default-off. `desktop/src/lib/cipherSchema.js` + `Avatar`/`CipherRow` chip treatment. **Mobile parity**: `fetch_favicon` uniffi wrapper (self-gated on the setting), fetch at edit-save, Settings > Security toggle with risk hint |
 | App icons | Done | `just app-icons SOURCE OUT` builds 48/128 PNG variants from brand logo for all platforms (macOS/Windows/Linux/Android/iOS + tray monochrome + system tray). `desktop/src-tauri/icons/` |
 | Vault detach | Done | UI: `DetachVaultModal` in `VaultSwitcher` dropdown (safe detach only: drops registry entry). Destructive arm (`delete_from_disk`) NOT exposed in UI; CLI-only via `baluard vaults detach <slug> --delete-from-disk` (slug retyping + `.baluard` marker check). `vaults.detach` daemon route still supports both for the CLI caller |
 | Browser extension Phase 0+1 | Done | NMH binary + bridge module + paired-companion pairing flow. `bridge.pair_start` (desktop-initiated, token-gated, one-shot pending approval) + `bridge.pair_complete` (held pending Approve click in desktop UI). Scoped bridge token (`TokenKind::Bridge { pairing_id }`) on host registry; allowlist (no `vault.list_full`, no `vault.delete`, no `settings.*`, no `passkey.*`, no `sync.*` mutations). Per-`pairing_id` rate cap on `bridge.match`+`vault.get`. Top-frame-only content script, popup-driven fill (no auto-fill on load). See `docs/plan-browser-extension.md` |
