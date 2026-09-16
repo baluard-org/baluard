@@ -8,25 +8,36 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import xyz.actitud.baluard.platform.platformLogE
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import xyz.actitud.baluard.data.MobileFolderInfo
 import xyz.actitud.baluard.MobileVault
+import xyz.actitud.baluard.PasswordConfig
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.detail.fieldsFor
+import xyz.actitud.baluard.detail.str
 
 /**
  * Drives the cipher edit form for all 8 types (plan §3: create/edit any
- * type). The form is generic: field rows come from [fieldsFor] (the same
- * schema the detail screen renders), keyed by wire field name.
+ * type), at desktop parity: scalar schema fields, login URIs with match
+ * strategy, TOTP seed, custom fields (Text/Hidden/Boolean/Linked), tags,
+ * folder, favorite and reprompt.
  *
  * Merge-on-save semantics: the loaded cipher's `data` object is captured
  * whole and only the edited keys are overwritten. This preserves fields the
- * form does not model (passkeys, URIs, TOTP seed, password revision date) —
+ * form does not model (passkeys, password revision date, favicon) —
  * replacing the object wholesale would wipe them, since update_cipher
- * replaces `kind` entirely (AGENTS.md "Daemon Wire Format").
+ * replaces `kind` entirely (AGENTS.md "Daemon Wire Format"). URIs and the
+ * TOTP seed ARE modeled: load() fills them from the cipher, so an untouched
+ * edit re-emits them unchanged.
+ *
+ * Root-level keys (tags, custom_fields, folder_id, reprompt) are always sent
+ * explicitly, matching the desktop form's full-replace behavior: an empty
+ * tag/field list clears what was there.
  */
 class EditCipherViewModel(private val repo: VaultRepository) {
     private val _form = MutableStateFlow(EditForm())
@@ -36,6 +47,8 @@ class EditCipherViewModel(private val repo: VaultRepository) {
     var loadError: String? by mutableStateOf(null)
         private set
 
+    private val _folders = MutableStateFlow<List<MobileFolderInfo>>(emptyList())
+    val folders: StateFlow<List<MobileFolderInfo>> = _folders.asStateFlow()
 
     private var existingId: String? = null
 
@@ -45,6 +58,9 @@ class EditCipherViewModel(private val repo: VaultRepository) {
     fun setName(v: String) { _form.value = _form.value.copy(name = v) }
     fun setNotes(v: String) { _form.value = _form.value.copy(notes = v) }
     fun setFavorite(v: Boolean) { _form.value = _form.value.copy(favorite = v) }
+    fun setReprompt(v: Boolean) { _form.value = _form.value.copy(reprompt = v) }
+    fun setTotpUri(v: String) { _form.value = _form.value.copy(totpUri = v) }
+    fun setFolderId(v: String?) { _form.value = _form.value.copy(folderId = v) }
 
     /** Set one dynamic field value (wire key). */
     fun setField(key: String, value: String) {
@@ -57,34 +73,111 @@ class EditCipherViewModel(private val repo: VaultRepository) {
         _form.value = _form.value.copy(typeTag = tag, values = emptyMap())
     }
 
+    // ── URIs (login) ──
+
+    fun addUri() { _form.value = _form.value.copy(uris = _form.value.uris + UriRow()) }
+    fun removeUri(index: Int) {
+        _form.value = _form.value.copy(uris = _form.value.uris.filterIndexed { i, _ -> i != index })
+    }
+    fun setUri(index: Int, uri: String) = mutateUri(index) { it.copy(uri = uri) }
+    fun setUriMatch(index: Int, match: String?) = mutateUri(index) { it.copy(matchStrategy = match) }
+
+    private fun mutateUri(index: Int, edit: (UriRow) -> UriRow) {
+        _form.value = _form.value.copy(uris = _form.value.uris.mapIndexed { i, r -> if (i == index) edit(r) else r })
+    }
+
+    // ── Custom fields ──
+
+    fun addCustomField() {
+        _form.value = _form.value.copy(customFields = _form.value.customFields + CustomFieldEdit())
+    }
+    fun removeCustomField(index: Int) {
+        _form.value = _form.value.copy(customFields = _form.value.customFields.filterIndexed { i, _ -> i != index })
+    }
+    fun setCustomFieldName(index: Int, name: String) = mutateCustomField(index) { it.copy(name = name) }
+    fun setCustomFieldValue(index: Int, value: String) = mutateCustomField(index) { it.copy(value = value) }
+
+    /** Type switch, desktop parity: Boolean seeds "false", Linked clears the value. */
+    fun setCustomFieldType(index: Int, type: String) = mutateCustomField(index) {
+        when {
+            type == "Linked" -> it.copy(fieldType = "Linked", linkedTarget = it.linkedTarget ?: "LoginUsername", value = "")
+            type == "Boolean" -> it.copy(fieldType = "Boolean", value = it.value.ifBlank { "false" })
+            else -> it.copy(fieldType = type)
+        }
+    }
+    fun setCustomFieldLinkedTarget(index: Int, target: String) = mutateCustomField(index) { it.copy(linkedTarget = target) }
+
+    private fun mutateCustomField(index: Int, edit: (CustomFieldEdit) -> CustomFieldEdit) {
+        _form.value = _form.value.copy(customFields = _form.value.customFields.mapIndexed { i, f -> if (i == index) edit(f) else f })
+    }
+
+    // ── Tags ──
+
+    /** Desktop parity: lowercase, deduped case-insensitively, max 20 x 64 chars. */
+    fun addTag(raw: String) {
+        val tag = raw.trim().lowercase().removeSuffix(",")
+        val f = _form.value
+        if (tag.isEmpty() || f.tags.size >= 20 || tag.length > 64) return
+        if (f.tags.any { it.equals(tag, ignoreCase = true) }) return
+        _form.value = f.copy(tags = f.tags + tag)
+    }
+    fun removeTag(tag: String) {
+        _form.value = _form.value.copy(tags = _form.value.tags - tag)
+    }
+
     /** Blank the form for a new entry (shared VM instance across screens). */
     fun reset() {
         existingId = null
         originalData = null
+        loadError = null
         _form.value = EditForm()
+    }
+
+    /** Folder options for the picker; failures leave the previous (or empty) list. */
+    suspend fun loadFolders(vault: MobileVault) {
+        _folders.value = runCatching { repo.listFolders(vault) }.getOrDefault(_folders.value)
+    }
+
+    /** Inline password generation (desktop parity: the password field grows a
+     * generate action). Deterministic config; the Generator screen covers the
+     * configurable case. */
+    suspend fun generatePassword(): String =
+        repo.generatePassword(PasswordConfig(16u, upper = true, numbers = true, symbols = true))
+            .getOrElse { "" }
+
+    /** SSH keypair generation (desktop SshKeyGenerator parity). Fills the
+     * public_key / private_key / key_fingerprint form fields. Returns false on
+     * FFI or parse failure (caller surfaces the error). */
+    suspend fun generateSshKey(vault: MobileVault, keyType: String): Boolean {
+        val raw = runCatching { repo.sshGenerateKey(vault, keyType) }.getOrNull() ?: return false
+        val obj = runCatching { Json.parseToJsonElement(raw) as? JsonObject }.getOrNull() ?: return false
+        fun f(k: String): String = obj.str(k).orEmpty()
+        val publicKey = f("public_key")
+        val privateKey = f("private_key")
+        val fingerprint = f("fingerprint")
+        if (publicKey.isBlank() || privateKey.isBlank()) return false
+        _form.value = _form.value.copy(values = _form.value.values + mapOf(
+            "public_key" to publicKey,
+            "private_key" to privateKey,
+            "key_fingerprint" to fingerprint,
+        ))
+        return true
     }
 
     /** Load an existing cipher by id (decrypted) into the form. */
     suspend fun load(vault: MobileVault, id: String) {
+        // Clear the previous cipher FIRST: on a failed load the Save button
+        // (form.name.isNotBlank) would otherwise stay enabled and overwrite
+        // the wrong entry with stale form data.
+        loadError = null
+        existingId = null
+        originalData = null
+        _form.value = EditForm()
         try {
             val raw = repo.getCipher(vault, id, decrypt = true)
-            val obj = Json.parseToJsonElement(raw) as JsonObject
-            val kind = obj["kind"] as? JsonObject
-            val tag = (kind?.get("type") as? JsonPrimitive)?.content ?: "login"
-            val data = kind?.get("data") as? JsonObject ?: JsonObject(emptyMap())
-
             existingId = id
-            originalData = data
-            _form.value = EditForm(
-                name = (obj["name"] as? JsonPrimitive)?.content ?: "",
-                typeTag = tag,
-                notes = (obj["notes"] as? JsonPrimitive)?.content ?: "",
-                favorite = (obj["favorite"] as? JsonPrimitive)?.content == "true",
-                values = fieldsFor(tag).mapNotNull { spec ->
-                    val v = (data[spec.wireKey] as? JsonPrimitive)?.content
-                    if (v.isNullOrBlank()) null else spec.wireKey to v
-                }.toMap(),
-            )
+            originalData = extractData(raw)
+            _form.value = parseLoadedCipher(raw)
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -109,10 +202,11 @@ class EditCipherViewModel(private val repo: VaultRepository) {
     }
 
     /**
-     * Daemon-wire JSON: {name, favorite, notes, kind: {type, data}}. `data`
-     * starts from the original object (preserving unmodeled fields) and
-     * overlays the form values; a cleared field sends null so the stored
-     * value is removed. New entries start from an empty object (nulls).
+     * Daemon-wire JSON: {name, favorite, reprompt, notes, folder_id, tags,
+     * custom_fields, kind: {type, data}}. `data` starts from the original
+     * object (preserving unmodeled fields) and overlays the form values; a
+     * cleared field sends null so the stored value is removed. New entries
+     * start from an empty object (nulls).
      */
     internal fun buildPayload(f: EditForm, id: String?, originalData: JsonObject?): String {
         val data = buildJsonObject {
@@ -121,12 +215,33 @@ class EditCipherViewModel(private val repo: VaultRepository) {
                 val v = f.values[spec.wireKey].orEmpty()
                 put(spec.wireKey, if (v.isBlank()) JsonNull else JsonPrimitive(v))
             }
+            if (f.typeTag == "login") {
+                put("uris", JsonArray(f.uris
+                    .filter { it.uri.isNotBlank() }
+                    .map { u -> buildJsonObject {
+                        put("uri", u.uri.trim())
+                        u.matchStrategy?.let { put("match_strategy", it) }
+                    } }))
+                put("totp_uri", if (f.totpUri.isBlank()) JsonNull else JsonPrimitive(f.totpUri.trim()))
+            }
         }
         val root = buildJsonObject {
             if (id != null) put("id", id)
             put("name", f.name)
             put("favorite", f.favorite)
+            put("reprompt", f.reprompt)
             put("notes", if (f.notes.isBlank()) JsonNull else JsonPrimitive(f.notes))
+            put("folder_id", f.folderId?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("tags", JsonArray(f.tags.map { JsonPrimitive(it) }))
+            put("custom_fields", JsonArray(f.customFields
+                .filter { it.name.isNotBlank() }
+                .map { cf -> buildJsonObject {
+                    put("name", cf.name.trim())
+                    put("value", cf.value)
+                    put("field_type", cf.linkedTarget
+                        ?.let { target -> buildJsonObject { put("Linked", target) } }
+                        ?: JsonPrimitive(cf.fieldType))
+                } }))
             put("kind", buildJsonObject {
                 put("type", f.typeTag)
                 put("data", data)
@@ -136,11 +251,96 @@ class EditCipherViewModel(private val repo: VaultRepository) {
     }
 }
 
+/** One login URI: {uri, match_strategy} on the wire. */
+data class UriRow(val uri: String = "", val matchStrategy: String? = null)
+
+/** Editable custom field. Wire field_type: "Text"|"Hidden"|"Boolean" or
+ * {"Linked":"<target>"} (linkedTarget non-null). */
+data class CustomFieldEdit(
+    val name: String = "",
+    val value: String = "",
+    val fieldType: String = "Text",
+    val linkedTarget: String? = null,
+) {
+    val isLinked: Boolean get() = linkedTarget != null
+    val isBoolean: Boolean get() = !isLinked && fieldType == "Boolean"
+    val isHidden: Boolean get() = !isLinked && fieldType == "Hidden"
+}
+
 data class EditForm(
     val name: String = "",
     val typeTag: String = "login",
     val notes: String = "",
     val favorite: Boolean = false,
+    val reprompt: Boolean = false,
     /** Dynamic field values by wire key (see [fieldsFor]). */
     val values: Map<String, String> = emptyMap(),
+    /** Login URIs (kind.data.uris); empty for other types. */
+    val uris: List<UriRow> = emptyList(),
+    /** Login TOTP seed URI (kind.data.totp_uri). */
+    val totpUri: String = "",
+    val customFields: List<CustomFieldEdit> = emptyList(),
+    val tags: List<String> = emptyList(),
+    val folderId: String? = null,
 )
+
+/** Parse a decrypted get_cipher response into the edit form. Wire shape
+ * (runtime cipher_to_json): name/favorite/reprompt/notes/folder_id/tags/
+ * custom_fields flat at root; kind.data carries the per-type fields including
+ * uris and totp_uri for logins. */
+internal fun parseLoadedCipher(raw: String): EditForm {
+    val obj = Json.parseToJsonElement(raw) as JsonObject
+    val kind = obj["kind"] as? JsonObject
+    val tag = (kind?.get("type") as? JsonPrimitive)?.content ?: "login"
+    val data = kind?.get("data") as? JsonObject ?: JsonObject(emptyMap())
+
+    val uris = if (tag == "login") {
+        (data["uris"] as? JsonArray)?.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val uri = o.str("uri") ?: return@mapNotNull null
+            UriRow(uri, o.str("match_strategy"))
+        }.orEmpty()
+    } else emptyList()
+
+    val customFields = (obj["custom_fields"] as? JsonArray)?.mapNotNull { el ->
+        val o = el as? JsonObject ?: return@mapNotNull null
+        val name = o.str("name") ?: return@mapNotNull null
+        val ft = o["field_type"]
+        val linked = ((ft as? JsonObject)?.get("Linked") as? JsonPrimitive)
+            ?.takeUnless { it is JsonNull }?.content
+        val ftContent = (ft as? JsonPrimitive)?.takeUnless { it is JsonNull }?.content
+        CustomFieldEdit(
+            name = name,
+            value = o.str("value").orEmpty(),
+            fieldType = when {
+                linked != null -> "Linked"
+                !ftContent.isNullOrBlank() -> ftContent
+                else -> "Text"
+            },
+            linkedTarget = linked,
+        )
+    }.orEmpty()
+
+    return EditForm(
+        name = obj.str("name").orEmpty(),
+        typeTag = tag,
+        notes = obj.str("notes").orEmpty(),
+        favorite = (obj["favorite"] as? JsonPrimitive)?.content == "true",
+        reprompt = (obj["reprompt"] as? JsonPrimitive)?.content == "true",
+        values = fieldsFor(tag).mapNotNull { spec ->
+            val v = data.str(spec.wireKey)
+            if (v.isNullOrBlank()) null else spec.wireKey to v
+        }.toMap(),
+        uris = uris,
+        totpUri = if (tag == "login") (data.str("totp_uri") ?: obj.str("totp")).orEmpty() else "",
+        customFields = customFields,
+        tags = (obj["tags"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
+        folderId = obj.str("folder_id"),
+    )
+}
+
+/** kind.data out of a decrypted cipher response (empty object when absent). */
+private fun extractData(raw: String): JsonObject? {
+    val obj = Json.parseToJsonElement(raw) as? JsonObject ?: return null
+    return (obj["kind"] as? JsonObject)?.get("data") as? JsonObject ?: JsonObject(emptyMap())
+}

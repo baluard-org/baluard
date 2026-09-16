@@ -49,6 +49,9 @@ internal fun fieldsFor(tag: String): List<FieldSpec> = when (tag) {
         FieldSpec("detail.f.company", "company"),
         FieldSpec("detail.f.email", "email"),
         FieldSpec("detail.f.phone", "phone"),
+        FieldSpec("detail.f.address1", "address1"),
+        FieldSpec("detail.f.address2", "address2"),
+        FieldSpec("detail.f.address3", "address3"),
         FieldSpec("detail.f.city", "city"),
         FieldSpec("detail.f.state", "state"),
         FieldSpec("detail.f.postalCode", "postal_code"),
@@ -69,6 +72,10 @@ internal fun fieldsFor(tag: String): List<FieldSpec> = when (tag) {
         FieldSpec("detail.f.accountNumber", "account_number", sensitive = true, mono = true),
         FieldSpec("detail.f.routingNumber", "routing_number", sensitive = true, mono = true),
         FieldSpec("detail.f.branchNumber", "branch_number", sensitive = true, mono = true),
+        FieldSpec("detail.f.pin", "pin", sensitive = true, mono = true),
+        FieldSpec("detail.f.swiftCode", "swift_code", mono = true),
+        FieldSpec("detail.f.iban", "iban", mono = true),
+        FieldSpec("detail.f.bankPhone", "bank_contact_phone"),
     )
     "driversLicense" -> listOf(
         FieldSpec("detail.f.firstName", "first_name"),
@@ -77,6 +84,11 @@ internal fun fieldsFor(tag: String): List<FieldSpec> = when (tag) {
         FieldSpec("detail.f.dateOfBirth", "date_of_birth"),
         FieldSpec("detail.f.licenseNumber", "license_number", sensitive = true, mono = true),
         FieldSpec("detail.f.issuingCountry", "issuing_country"),
+        FieldSpec("detail.f.issuingState", "issuing_state"),
+        FieldSpec("detail.f.issueDate", "issue_date"),
+        FieldSpec("detail.f.expirationDate", "expiration_date"),
+        FieldSpec("detail.f.issuingAuthority", "issuing_authority"),
+        FieldSpec("detail.f.licenseClass", "license_class"),
     )
     "passport" -> listOf(
         FieldSpec("detail.f.surname", "surname"),

@@ -857,6 +857,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -955,6 +957,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_set_settings(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_should_auto_lock(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_ssh_generate_key(`ptr`: Pointer,`keyType`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_sync_offline_tick(`ptr`: Pointer,
     ): Long
@@ -1238,6 +1242,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_ssh_generate_key(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_sync_offline_tick(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_sync_on_background(
@@ -1438,6 +1444,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock() != 5891.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_ssh_generate_key() != 42401.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_offline_tick() != 35820.toShort()) {
@@ -2554,6 +2563,13 @@ public interface MobileVaultInterface {
     suspend fun `shouldAutoLock`(): kotlin.Boolean
     
     /**
+     * Generate an SSH keypair. `keyType`: "ed25519" (default) | "ecdsa256".
+     * Returns JSON {public_key, fingerprint, private_key}; formatted OpenSSH
+     * strings only, matching the desktop generator (RSA removed, L7).
+     */
+    suspend fun `sshGenerateKey`(`keyType`: kotlin.String): kotlin.String
+    
+    /**
      * Host-scheduled 30s probe while Offline + foregrounded (the one piece of
      * background_loop mobile must reproduce).
      */
@@ -3428,6 +3444,32 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { FfiConverterBoolean.lift(it) },
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Generate an SSH keypair. `keyType`: "ed25519" (default) | "ecdsa256".
+     * Returns JSON {public_key, fingerprint, private_key}; formatted OpenSSH
+     * strings only, matching the desktop generator (RSA removed, L7).
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `sshGenerateKey`(`keyType`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_ssh_generate_key(
+                thisPtr,
+                FfiConverterString.lower(`keyType`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
     )
     }
 

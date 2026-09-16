@@ -51,7 +51,7 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
                 uris = parseUris(data),
                 notes = obj.str("notes")?.takeIf { it.isNotBlank() },
                 hasTotp = !data.str("totp_uri").isNullOrBlank(),
-                customFields = parseCustomFields(data),
+                customFields = parseCustomFields(obj), // wire root, not kind.data
                 passkeys = parsePasskeys(data),
                 attachments = parseAttachments(data),
             )

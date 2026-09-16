@@ -38,6 +38,11 @@ open class StubVault(
     override suspend fun syncOnUnlock() { calls += "syncOnUnlock" }
     override suspend fun syncOnMutation() { calls += "syncOnMutation" }
     override suspend fun syncOnForeground() { calls += "syncOnForeground" }
+
+    override suspend fun sshGenerateKey(keyType: String): String {
+        calls += "sshGenerateKey:$keyType"
+        return """{"public_key":"ssh-ed25519 AAAA","fingerprint":"SHA256:test","private_key":"-----BEGIN"}"""
+    }
     override suspend fun syncOnBackground() { calls += "syncOnBackground" }
     override suspend fun syncPullNow() { calls += "syncPullNow" }
     override suspend fun syncOfflineTick() { calls += "syncOfflineTick" }
