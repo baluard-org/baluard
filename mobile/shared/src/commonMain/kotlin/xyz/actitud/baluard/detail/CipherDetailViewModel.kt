@@ -5,6 +5,7 @@ import xyz.actitud.baluard.platform.platformLogE
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import xyz.actitud.baluard.MobileVault
@@ -37,7 +38,7 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
             val data = kind?.get("data") as? JsonObject
 
             val rows = fieldsFor(tag).mapNotNull { spec ->
-                val v = (data?.get(spec.wireKey) as? JsonPrimitive)?.content
+                val v = data.str(spec.wireKey)
                 if (v.isNullOrBlank()) null else FieldRow(spec, v)
             }
 
@@ -48,8 +49,8 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
                 typeTag = tag,
                 fields = rows,
                 uris = parseUris(data),
-                notes = (obj["notes"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() },
-                hasTotp = !(data?.get("totp_uri") as? JsonPrimitive)?.content.isNullOrBlank(),
+                notes = obj.str("notes")?.takeIf { it.isNotBlank() },
+                hasTotp = !data.str("totp_uri").isNullOrBlank(),
                 customFields = parseCustomFields(data),
                 passkeys = parsePasskeys(data),
                 attachments = parseAttachments(data),
@@ -95,8 +96,8 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
         (data?.get("custom_fields") as? kotlinx.serialization.json.JsonArray)
             ?.mapNotNull { el ->
                 val o = el as? JsonObject ?: return@mapNotNull null
-                val name = (o["name"] as? JsonPrimitive)?.content ?: return@mapNotNull null
-                val value = (o["value"] as? JsonPrimitive)?.content ?: ""
+                val name = o.str("name") ?: return@mapNotNull null
+                val value = o.str("value") ?: ""
                 val ft = (o["field_type"] as? JsonPrimitive)?.content
                 CustomFieldRow(
                     name = name,
@@ -222,3 +223,10 @@ internal fun formatBytes(bytes: Long): String = when {
     }
     else -> "$bytes B"
 }
+
+/** String content of [key], treating JSON null as absent. kotlinx JsonNull
+ * IS a JsonPrimitive whose content is the literal "null", so a plain cast
+ * turns every null field into the string "null" (the hasTotp bug: non-TOTP
+ * entries rendered a TOTP card whose fetch then failed). */
+internal fun JsonObject?.str(key: String): String? =
+    (this?.get(key) as? JsonPrimitive)?.takeUnless { it is JsonNull }?.content
