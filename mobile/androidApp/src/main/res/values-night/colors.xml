@@ -3,4 +3,7 @@
      Brand dark: Deep Forest Teal (#091315). -->
 <resources>
     <color name="splash_bg">#091315</color>
+    <!-- Autofill dataset popup rows: dark popup surfaces get light text. -->
+    <color name="autofill_text_primary">#E6E1E5</color>
+    <color name="autofill_text_secondary">#CAC4D0</color>
 </resources>

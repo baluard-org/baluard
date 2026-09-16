@@ -34,7 +34,7 @@
             android:ellipsize="end"
             android:textSize="14sp"
             android:textStyle="bold"
-            android:textColor="@android:color/primary_text_dark" />
+            android:textColor="@color/autofill_text_primary" />
 
         <TextView
             android:id="@+id/autofill_item_subtitle"
@@ -43,6 +43,6 @@
             android:maxLines="1"
             android:ellipsize="end"
             android:textSize="12sp"
-            android:textColor="@android:color/secondary_text_dark" />
+            android:textColor="@color/autofill_text_secondary" />
     </LinearLayout>
 </LinearLayout>
