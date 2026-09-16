@@ -472,6 +472,13 @@ impl MobileVault {
         Ok(self.state.ssh_generate_key(&payload).await?)
     }
 
+    /// Fetch a favicon for a login's domain. Payload is the URI or bare
+    /// domain; the runtime self-gates on the fetch_favicons setting (returns
+    /// "" when disabled or on failure). Returns JSON {data, mime} or "".
+    pub async fn fetch_favicon(&self, payload: String) -> Result<String, BaluardError> {
+        Ok(self.state.fetch_favicon(&payload).await?)
+    }
+
     /// Archive a cipher: hide from the main list, search, and suggestions.
     pub async fn archive_cipher(&self, id: String) -> Result<(), BaluardError> {
         Ok(self.state.archive_cipher(&id).await?)

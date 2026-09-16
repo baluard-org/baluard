@@ -4,6 +4,7 @@ import xyz.actitud.baluard.MobileCipherMeta
 import xyz.actitud.baluard.MobileSyncStatus
 import xyz.actitud.baluard.MobileCreateResult
 import xyz.actitud.baluard.MobileVault
+import xyz.actitud.baluard.detail.str
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -39,6 +40,8 @@ import xyz.actitud.baluard.startDeviceFlow as uniffiStartDeviceFlow
 data class MobileFolderInfo(
     val id: String,
     val name: String,
+    /** Parent folder id for hierarchy indentation; null = root. */
+    val parentId: String? = null,
 )
 
 class VaultRepository {
@@ -82,6 +85,29 @@ class VaultRepository {
     suspend fun sshGenerateKey(vault: MobileVault, keyType: String): String =
         vault.sshGenerateKey(keyType)
 
+    /** Fetch a favicon for a URI or domain. Returns JSON {data, mime}, or ""
+     * when the fetch_favicons setting is off or the fetch failed. */
+    suspend fun fetchFavicon(vault: MobileVault, domainOrUri: String): String =
+        vault.fetchFavicon(domainOrUri)
+
+    /** All known tags (tag index) for autocomplete. */
+    suspend fun listTags(vault: MobileVault): List<String> {
+        val raw = runCatching { vault.listTags() }.getOrNull() ?: return emptyList()
+        val arr = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonArray
+        }.getOrNull() ?: return emptyList()
+        return arr.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+    }
+
+    /** Raw decrypted settings JSON (theme, lang, fetch_favicons, ...). */
+    suspend fun getSettings(vault: MobileVault): String? =
+        runCatching { vault.getSettings() }.getOrNull()
+
+    /** Partial settings merge (daemon semantics: only provided keys change).
+     * Returns false on FFI failure. */
+    suspend fun saveSettings(vault: MobileVault, payload: String): Boolean =
+        runCatching { vault.setSettings(payload) }.isSuccess
+
     /** Live auto-sync status (pending changes / state) for the
      * remove-from-device guard: removal requires idle + zero pending. */
     suspend fun syncStatus(vault: MobileVault): MobileSyncStatus = vault.syncStatus()
@@ -104,7 +130,7 @@ class VaultRepository {
     /** Restore a trashed cipher back to the active vault. */
     suspend fun restoreCipher(vault: MobileVault, id: String) = vault.restoreCipher(id)
 
-    /** Folders as [{id, name}] for the list filter. Empty when the vault has none. */
+    /** Folders as [{id, name, parent_id}] for the list filter. Empty when the vault has none. */
     suspend fun listFolders(vault: MobileVault): List<MobileFolderInfo> {
         val raw = vault.listFolders()
         val arr = kotlinx.serialization.json.Json.parseToJsonElement(raw)
@@ -113,7 +139,11 @@ class VaultRepository {
             val o = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
             val id = (o["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
             val name = (o["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content
-            if (id != null && name != null) MobileFolderInfo(id, name) else null
+            if (id != null && name != null) MobileFolderInfo(
+                id = id,
+                name = name,
+                parentId = o.str("parent_id"),
+            ) else null
         }
     }
 // ── Slice B: provider onboarding (plan §4) ──

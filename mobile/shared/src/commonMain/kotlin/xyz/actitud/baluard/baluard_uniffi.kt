@@ -859,6 +859,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -917,6 +919,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_device_id(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_device_name(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_fetch_favicon(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_generator_history_add(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
@@ -1202,6 +1206,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_device_name(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_fetch_favicon(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_generator_history_add(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_generator_history_clear(
@@ -1384,6 +1390,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_device_name() != 63685.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_fetch_favicon() != 64896.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_generator_history_add() != 61066.toShort()) {
@@ -2454,6 +2463,13 @@ public interface MobileVaultInterface {
     suspend fun `deviceName`(): kotlin.String
     
     /**
+     * Fetch a favicon for a login's domain. Payload is the URI or bare
+     * domain; the runtime self-gates on the fetch_favicons setting (returns
+     * "" when disabled or on failure). Returns JSON {data, mime} or "".
+     */
+    suspend fun `fetchFavicon`(`payload`: kotlin.String): kotlin.String
+    
+    /**
      * Record a generated password into encrypted generator history.
      */
     suspend fun `generatorHistoryAdd`(`payload`: kotlin.String): kotlin.String
@@ -2952,6 +2968,32 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { FfiConverterString.lift(it) },
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Fetch a favicon for a login's domain. Payload is the URI or bare
+     * domain; the runtime self-gates on the fetch_favicons setting (returns
+     * "" when disabled or on failure). Returns JSON {data, mime} or "".
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `fetchFavicon`(`payload`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_fetch_favicon(
+                thisPtr,
+                FfiConverterString.lower(`payload`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
     )
     }
 

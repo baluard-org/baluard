@@ -43,6 +43,11 @@ open class StubVault(
         calls += "sshGenerateKey:$keyType"
         return """{"public_key":"ssh-ed25519 AAAA","fingerprint":"SHA256:test","private_key":"-----BEGIN"}"""
     }
+
+    override suspend fun fetchFavicon(payload: String): String {
+        calls += "fetchFavicon:$payload"
+        return ""
+    }
     override suspend fun syncOnBackground() { calls += "syncOnBackground" }
     override suspend fun syncPullNow() { calls += "syncPullNow" }
     override suspend fun syncOfflineTick() { calls += "syncOfflineTick" }
