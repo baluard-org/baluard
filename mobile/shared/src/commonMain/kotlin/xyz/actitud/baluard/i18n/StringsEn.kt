@@ -17,6 +17,7 @@ internal val EN: Map<String, String> = mapOf(
     "common.copied" to "Copied",
     "common.selected" to "Selected",
     "common.save" to "Save",
+    "common.delete" to "Delete",
     "common.saving" to "Saving…",
 
     // login / unlock

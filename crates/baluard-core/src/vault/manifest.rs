@@ -227,6 +227,12 @@ pub struct VaultSettings {
     /// `None` or `Some(true)` = enabled (default). `Some(false)` = disabled.
     #[serde(default)]
     pub fetch_favicons: Option<bool>,
+    /// User-defined equivalent domain groups (Bitwarden parity). Each inner
+    /// vec is one group of registrable domains the user declares equivalent
+    /// for autofill matching (e.g. portal.acme-corp.net <-> acme.com).
+    /// Synced via settings.enc; None = no custom groups defined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_equivalent_domains: Option<Vec<Vec<String>>>,
     /// Vault slug (machine-friendly identifier, e.g. "baluard-personal").
     /// Immutable after creation. Used as filesystem folder name, registry key, and git repo name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
