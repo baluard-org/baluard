@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.service.autofill.Dataset
 import android.service.autofill.Field
 import android.service.autofill.FillResponse
@@ -42,8 +43,12 @@ object AutofillResponseBuilder {
 
     /** Fields worth filling, as passed between service and activity. */
     data class TargetFields(val usernameId: AutofillId?, val passwordId: AutofillId?) {
-        val ids: Array<AutofillId>
-            get() = listOfNotNull(usernameId, passwordId).toTypedArray()
+        /** Separate extras, never a packed array: a password-only form would
+         *  shift the password into the username slot at index 0 (Agy #1). */
+        fun putInto(intent: Intent) {
+            usernameId?.let { intent.putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
+            passwordId?.let { intent.putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
+        }
     }
 
     /**
@@ -57,7 +62,8 @@ object AutofillResponseBuilder {
     fun authenticationResponse(context: Context, fields: TargetFields, target: String): FillResponse {
         val intent = Intent(context, AutofillActivity::class.java).apply {
             putExtra(AutofillActivity.EXTRA_TARGET, target)
-            putParcelableArrayListExtra(AutofillActivity.EXTRA_IDS, ArrayList(fields.ids.toList()))
+            fields.usernameId?.let { putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
+            fields.passwordId?.let { putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
         }
         val pending = PendingIntent.getActivity(
             context,
@@ -73,9 +79,9 @@ object AutofillResponseBuilder {
                 .setDialogPresentation(views)
                 .build()
             val b = Dataset.Builder()
-            for (id in fields.ids) {
+            listOfNotNull(fields.usernameId, fields.passwordId).forEach { autofillId ->
                 // Auth field: presentations only, no value.
-                b.setField(id, Field.Builder().setPresentations(presentations).build())
+                b.setField(autofillId, Field.Builder().setPresentations(presentations).build())
             }
             b
         } else {
@@ -84,7 +90,7 @@ object AutofillResponseBuilder {
         }
 
         return FillResponse.Builder()
-            .addDataset(dataset.setAuthentication(pending.intentSender).build())
+            .addDataset(dataset.setId("baluard-unlock").setAuthentication(pending.intentSender).build())
             .build()
     }
 
@@ -248,7 +254,8 @@ object AutofillResponseBuilder {
         val intent = Intent(context, AutofillActivity::class.java).apply {
             putExtra(AutofillActivity.EXTRA_MODE, AutofillActivity.MODE_FALLBACK_PICK)
             putExtra(AutofillActivity.EXTRA_TARGET, target)
-            putParcelableArrayListExtra(AutofillActivity.EXTRA_IDS, ArrayList(fields.ids.toList()))
+            fields.usernameId?.let { putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
+            fields.passwordId?.let { putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
         }
         val pending = PendingIntent.getActivity(
             context,
@@ -259,15 +266,15 @@ object AutofillResponseBuilder {
         val dataset = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val presentations = Presentations.Builder().setMenuPresentation(views).build()
             val b = Dataset.Builder()
-            for (id in fields.ids) {
-                b.setField(id, Field.Builder().setPresentations(presentations).build())
+            listOfNotNull(fields.usernameId, fields.passwordId).forEach { autofillId ->
+                b.setField(autofillId, Field.Builder().setPresentations(presentations).build())
             }
             b
         } else {
             @Suppress("DEPRECATION")
             Dataset.Builder(views)
         }
-        return dataset.setAuthentication(pending.intentSender)
+        return dataset.setId("baluard-open").setAuthentication(pending.intentSender)
     }
 
     private fun applyIgnored(
