@@ -6,40 +6,36 @@ import android.database.Cursor
 import android.net.Uri
 
 /**
- * Android actual (plan 2b/S3, mirrors bitwarden-android
- * BrowserThirdPartyAutofillManagerImpl):
- *
- * - Availability: package installed (any Brave release channel).
- * - State: Brave answers `content://<pkg>.AutofillThirdPartyModeContentProvider/
- *   autofill_third_party_mode` with column `autofill_third_party_state`
- *   (int != 0 = third-party autofill on). Provider missing = unknown (null):
- *   the row still shows per Esteban's call, tap deep-links to Brave settings.
- * - Deep link: ACTION_APPLICATION_PREFERENCES scoped to the Brave package,
- *   i.e. the browser's own in-app settings screen.
+ * Android actual (mirrors bitwarden-android
+ * BrowserThirdPartyAutofillManagerImpl): each browser answers
+ * `content://<pkg>.AutofillThirdPartyModeContentProvider/autofill_third_party_mode`
+ * with column `autofill_third_party_state` (int != 0 = on). Provider
+ * missing = unknown (null); deep link = ACTION_APPLICATION_PREFERENCES
+ * scoped to the browser package.
  */
 actual object BrowserAutofillIntegration {
 
-    private val channels = listOf(
-        "com.brave.browser",
-        "com.brave.browser.beta",
-        "com.brave.browser.nightly",
+    private class Spec(val id: String, val packages: List<String>) {
+        fun installed(): String? {
+            val context = AppContextHolder.get() ?: return null
+            for (pkg in packages) {
+                if (runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess) return pkg
+            }
+            return null
+        }
+    }
+
+    // Order = row order in Settings. Channel lists mirror Bitwarden's.
+    private val specs = listOf(
+        Spec("brave", listOf("com.brave.browser", "com.brave.browser.beta", "com.brave.browser.nightly")),
+        Spec("chrome", listOf("com.android.chrome", "com.chrome.beta")),
+        Spec("vivaldi", listOf("com.vivaldi.browser")),
     )
+
     private const val PROVIDER_SUFFIX = ".AutofillThirdPartyModeContentProvider/autofill_third_party_mode"
     private const val COLUMN = "autofill_third_party_state"
 
-    private fun installedPackage(): String? {
-        val context = AppContextHolder.get() ?: return null
-        val pm = context.packageManager
-        for (pkg in channels) {
-            if (runCatching { pm.getPackageInfo(pkg, 0) }.isSuccess) return pkg
-        }
-        return null
-    }
-
-    actual fun isAvailable(): Boolean = installedPackage() != null
-
-    actual fun isEnabled(): Boolean? {
-        val pkg = installedPackage() ?: return null
+    private fun probe(pkg: String): Boolean? {
         val context = AppContextHolder.get() ?: return null
         return runCatching {
             context.contentResolver.query(
@@ -54,8 +50,14 @@ actual object BrowserAutofillIntegration {
         }.getOrNull()
     }
 
-    actual fun openSettings() {
-        val pkg = installedPackage() ?: return
+    actual fun browsers(): List<BrowserIntegration> = specs.mapNotNull { spec ->
+        val pkg = spec.installed() ?: return@mapNotNull null
+        BrowserIntegration(id = spec.id, available = true, enabled = probe(pkg))
+    }
+
+    actual fun openSettings(id: String) {
+        val spec = specs.firstOrNull { it.id == id } ?: return
+        val pkg = spec.installed() ?: return
         val context = AppContextHolder.get() ?: return
         val intent = Intent(Intent.ACTION_APPLICATION_PREFERENCES).apply {
             addCategory(Intent.CATEGORY_DEFAULT)

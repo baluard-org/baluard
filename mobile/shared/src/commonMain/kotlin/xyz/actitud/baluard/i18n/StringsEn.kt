@@ -431,8 +431,10 @@ internal val EN: Map<String, String> = mapOf(
     "settings.autofillSuggestionsInline" to "Inline (shows in keyboard)",
     "settings.autofillSuggestionsPopup" to "Popup (shows over input field)",
     "settings.autofillSuggestionsHint" to "Choose how autofill suggestions appear when you sign in to other apps on your device.",
-    "settings.braveIntegration" to "Use Brave autofill integration",
-    "settings.braveIntegrationHint" to "Improves login filling for supported websites in Brave. Tapping opens Brave's autofill settings.",
+    "settings.browserIntegration.brave" to "Use Brave autofill integration",
+    "settings.browserIntegration.chrome" to "Use Chrome autofill integration",
+    "settings.browserIntegration.vivaldi" to "Use Vivaldi autofill integration",
+    "settings.browserIntegrationHint" to "Improves login filling for supported websites. Tapping opens the browser's autofill settings.",
 
     // Settings > Autofill accessibility fill (Phase 6.5, opt-in, default off).
     "settings.a11yTitle" to "Use accessibility",
