@@ -822,6 +822,7 @@ impl VaultHandle {
             display_name: None,
             subtitle: None,
             avatar_ext: None,
+            custom_equivalent_domains: None,
             enrollment_policy: enc_fields
                 .as_ref()
                 .map(|e| e.enrollment_policy)
@@ -5192,6 +5193,7 @@ mod tests {
             display_name: None,
             subtitle: None,
             avatar_ext: None,
+            custom_equivalent_domains: None,
             enrollment_policy: crate::vault::manifest::EnrollmentPolicy::Personal,
         };
         handle.save_settings(&settings).unwrap();

@@ -52,6 +52,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObject
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
@@ -560,6 +563,143 @@ fun SettingsScreen(
                                 onCheckedChange = { BrowserAutofillIntegration.openSettings(browser.id) },
                             )
                         }
+                    }
+
+                    // User-defined equivalent domain groups (Bitwarden
+                    // equivalent-domains parity): domains in one group
+                    // autofill each other. Stored in vault settings
+                    // (encrypted, git-synced).
+                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    var domainGroups by remember(vaultPath) {
+                        mutableStateOf<List<List<String>>>(emptyList())
+                    }
+                    LaunchedEffect(vaultPath) {
+                        domainGroups = runCatching {
+                            val json = repo.getSettings(vault) ?: return@runCatching emptyList()
+                            val arr = (Json.parseToJsonElement(json) as? JsonObject)
+                                ?.get("custom_equivalent_domains")
+                                ?.let { it as? JsonArray }
+                                ?: return@runCatching emptyList()
+                            arr.mapNotNull { g ->
+                                (g as? JsonArray)
+                                    ?.mapNotNull { (it as? JsonPrimitive)?.content }
+                                    ?.filter { it.isNotBlank() }
+                                    ?.takeIf { it.size >= 2 }
+                            }
+                        }.getOrDefault(emptyList())
+                    }
+                    var showAddGroup by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = t("settings.equivalentDomainsTitle"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { showAddGroup = true }) {
+                            Text(t("settings.equivalentDomainsAdd"))
+                        }
+                    }
+                    if (domainGroups.isEmpty()) {
+                        Text(
+                            t("settings.equivalentDomainsEmpty"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    for ((index, group) in domainGroups.withIndex()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = group.joinToString(", "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = {
+                                val next = domainGroups.toMutableList().apply { removeAt(index) }
+                                domainGroups = next
+                                scope.launch {
+                                    repo.saveSettings(
+                                        vault,
+                                        buildJsonObject {
+                                            put(
+                                                "custom_equivalent_domains",
+                                                JsonArray(next.map { g ->
+                                                    JsonArray(g.map { JsonPrimitive(it) })
+                                                }),
+                                            )
+                                        }.toString(),
+                                    )
+                                }
+                            }) {
+                                Text(t("common.delete"))
+                            }
+                        }
+                    }
+                    Text(
+                        t("settings.equivalentDomainsHint"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    if (showAddGroup) {
+                        var groupInput by remember { mutableStateOf("") }
+                        androidx.compose.material3.AlertDialog(
+                            onDismissRequest = { showAddGroup = false },
+                            title = { Text(t("settings.equivalentDomainsAdd")) },
+                            text = {
+                                androidx.compose.material3.OutlinedTextField(
+                                    value = groupInput,
+                                    onValueChange = { groupInput = it },
+                                    singleLine = true,
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    val group: List<String> = groupInput.split(',')
+                                        .map { entry ->
+                                            entry.trim().lowercase()
+                                                .removePrefix("https://").trimEnd('/')
+                                        }
+                                        .filter { entry -> entry.isNotBlank() && entry.contains('.') }
+                                        .distinct()
+                                    if (group.size >= 2) {
+                                        val next: List<List<String>> = domainGroups + listOf(group)
+                                        val groupJsons = next.map { g ->
+                                            val entries = g.map { entry ->
+                                                kotlinx.serialization.json.JsonPrimitive(entry)
+                                            }
+                                            kotlinx.serialization.json.JsonArray(entries)
+                                        }
+                                        val groupsJson =
+                                            kotlinx.serialization.json.JsonArray(groupJsons)
+                                        domainGroups = next
+                                        scope.launch {
+                                            repo.saveSettings(
+                                                vault,
+                                                buildJsonObject {
+                                                    put("custom_equivalent_domains", groupsJson)
+                                                }.toString(),
+                                            )
+                                        }
+                                    }
+                                    showAddGroup = false
+                                }) { Text(t("common.save")) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showAddGroup = false }) {
+                                    Text(t("common.cancel"))
+                                }
+                            },
+                        )
                     }
 
                     // Use accessibility (Phase 6.5): the quick-settings fill

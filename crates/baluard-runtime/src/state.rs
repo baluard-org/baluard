@@ -643,6 +643,14 @@ impl VaultState {
         }
 
         let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
+        // User-defined equivalent domain groups (Bitwarden parity): loaded
+        // from vault settings, consulted by the Domain strategy in addition
+        // to the bundled global list.
+        let custom_groups: Vec<Vec<String>> = handle
+            .get_settings()
+            .ok()
+            .and_then(|s| s.custom_equivalent_domains)
+            .unwrap_or_default();
         let mut matched: Vec<serde_json::Value> = Vec::new();
         for meta in &metas {
             if meta.cipher_type != baluard_core::types::CipherType::Login {
@@ -655,10 +663,10 @@ impl VaultState {
             let baluard_core::types::CipherKind::Login(login) = &decrypted.kind else {
                 continue;
             };
-            let hit = login
-                .uris
-                .iter()
-                .any(|lu| lu.match_strategy.matches(&lu.uri, target));
+            let hit = login.uris.iter().any(|lu| {
+                lu.match_strategy
+                    .matches_with(&lu.uri, target, &custom_groups)
+            });
             if !hit {
                 continue;
             }
@@ -768,6 +776,10 @@ impl VaultState {
         if let Some(v) = partial.get("avatar_ext") {
             settings.avatar_ext = serde_json::from_value(v.clone())
                 .map_err(|e| format!("Invalid avatar_ext: {e}"))?;
+        }
+        if let Some(v) = partial.get("custom_equivalent_domains") {
+            settings.custom_equivalent_domains = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid custom_equivalent_domains: {e}"))?;
         }
         if let Some(v) = partial.get("lang") {
             let lang = v.as_str().ok_or("lang must be a string")?;
