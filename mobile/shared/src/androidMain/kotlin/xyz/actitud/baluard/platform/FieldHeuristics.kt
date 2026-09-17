@@ -17,6 +17,14 @@ data class FieldView(
     val text: String?,
     val htmlAutocomplete: String?,
     val webDomain: String?,
+    // Chromium compat fields carry HTML metadata via htmlInfo and NOTHING
+    // else (no class name, no inputType, no hints) - these drive detection
+    // for Brave/Chrome fills.
+    val htmlTag: String? = null,
+    val htmlType: String? = null,
+    val htmlName: String? = null,
+    val htmlId: String? = null,
+    val htmlLabel: String? = null,
 )
 
 enum class FieldKind { Username, Password, Other }
@@ -39,10 +47,15 @@ object FieldHeuristics {
     private val usernameKeywords = listOf("email", "username", "user_name", "login", "account", "usuario", "correo")
 
     fun classify(f: FieldView): FieldKind {
-        // 1. HTML autocomplete (browsers/WebView surface it via htmlInfo).
+        // 1. Authoritative field metadata first: HTML autocomplete, then the
+        // HTML input type itself (Chromium compat exposes type=password
+        // even when everything else is empty).
         when (f.htmlAutocomplete?.lowercase()?.trim()) {
             "current-password", "new-password" -> return FieldKind.Password
             "username", "email", "login" -> return FieldKind.Username
+        }
+        if (f.htmlTag?.lowercase() == "input" && f.htmlType?.lowercase() == "password") {
+            return FieldKind.Password
         }
 
         // 2. Platform autofill hints (well-behaved native apps).
@@ -80,9 +93,10 @@ object FieldHeuristics {
             return FieldKind.Username
         }
 
-        // 4. Keywords: id/resource entry first (developer naming), then the
-        // visible hint, then existing text. Bounded to 64 chars; text can be huge.
-        for (source in listOf(f.idEntry, f.hint, f.text?.take(64))) {
+        // 4. Keywords: DOM name/id (Chromium compat), developer resource id,
+        // visible hint, label, existing text. Bounded to 64 chars; text can
+        // be huge.
+        for (source in listOf(f.idEntry, f.htmlName, f.htmlId, f.htmlLabel, f.hint, f.text?.take(64))) {
             val s = source?.lowercase()?.trim().takeUnless { it.isNullOrEmpty() } ?: continue
             if (passwordKeywords.any { s.contains(it) }) return FieldKind.Password
             if (usernameKeywords.any { s.contains(it) }) return FieldKind.Username

@@ -231,17 +231,27 @@ class BaluardAutofillService : AutofillService() {
         return Form(usernameId, passwordId, target)
     }
 
-    private fun adapt(node: AssistStructure.ViewNode): FieldView = FieldView(
-        autofillId = node.autofillId,
-        hints = node.autofillHints?.toList().orEmpty(),
-        inputType = node.inputType,
-        idEntry = node.idEntry,
-        hint = node.hint,
-        text = node.text?.toString(),
-        htmlAutocomplete = node.htmlInfo?.attributes
-            ?.firstOrNull { it.first.equals("autocomplete", ignoreCase = true) }?.second,
-        webDomain = node.webDomain,
-    )
+    private fun adapt(node: AssistStructure.ViewNode): FieldView {
+        val attrs = node.htmlInfo?.attributes.orEmpty()
+        fun attr(name: String): String? = attrs
+            .firstOrNull { it.first.equals(name, ignoreCase = true) }?.second
+
+        return FieldView(
+            autofillId = node.autofillId,
+            hints = node.autofillHints?.toList().orEmpty(),
+            inputType = node.inputType,
+            idEntry = node.idEntry,
+            hint = node.hint,
+            text = node.text?.toString(),
+            htmlAutocomplete = attr("autocomplete"),
+            webDomain = node.webDomain,
+            htmlTag = node.htmlInfo?.tag,
+            htmlType = attr("type"),
+            htmlName = attr("name"),
+            htmlId = attr("id"),
+            htmlLabel = attr("label"),
+        )
+    }
 
     private fun walkNode(node: AssistStructure.ViewNode, visit: (AssistStructure.ViewNode) -> Unit) {
         visit(node)

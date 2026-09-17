@@ -19,6 +19,11 @@ class FieldHeuristicsTest {
         text: String? = null,
         htmlAutocomplete: String? = null,
         webDomain: String? = null,
+        htmlTag: String? = null,
+        htmlType: String? = null,
+        htmlName: String? = null,
+        htmlId: String? = null,
+        htmlLabel: String? = null,
     ) = FieldView(
         autofillId = Any(),
         hints = hints,
@@ -28,6 +33,11 @@ class FieldHeuristicsTest {
         text = text,
         htmlAutocomplete = htmlAutocomplete,
         webDomain = webDomain,
+        htmlTag = htmlTag,
+        htmlType = htmlType,
+        htmlName = htmlName,
+        htmlId = htmlId,
+        htmlLabel = htmlLabel,
     )
 
     @Test
@@ -71,6 +81,38 @@ class FieldHeuristicsTest {
         assertEquals(FieldKind.Username, FieldHeuristics.classify(field(inputType = email)))
         // Plain text field with no signals: Other, never guessed.
         assertEquals(FieldKind.Other, FieldHeuristics.classify(field(inputType = 1 or 0)))
+    }
+
+    @Test
+    fun chromiumCompatFieldsClassifyFromHtmlMetadata() {
+        // The exact shapes logged from Brave (device pass): cls=null,
+        // inputType=0, no hints - only htmlInfo attrs carry meaning.
+        val username = field(
+            htmlTag = "input",
+            htmlType = "text",
+            htmlName = "username",
+            htmlId = "username",
+            htmlLabel = "Username",
+        )
+        val password = field(
+            htmlTag = "input",
+            htmlType = "password",
+            htmlName = "password",
+            htmlId = "password",
+            htmlLabel = "Password",
+        )
+        assertEquals(FieldKind.Username, FieldHeuristics.classify(username))
+        assertEquals(FieldKind.Password, FieldHeuristics.classify(password))
+    }
+
+    @Test
+    fun htmlInputTypePasswordBeatsHarmlessName() {
+        assertEquals(
+            FieldKind.Password,
+            FieldHeuristics.classify(
+                field(htmlTag = "input", htmlType = "password", htmlName = "confirm_username"),
+            ),
+        )
     }
 
     @Test
