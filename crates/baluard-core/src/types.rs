@@ -333,7 +333,61 @@ impl UriMatchStrategy {
 /// True when the string carries the native-app scheme (case-insensitive).
 #[cfg(feature = "uri-match")]
 fn is_androidapp(raw: &str) -> bool {
-    raw.trim_start().to_ascii_lowercase().starts_with("androidapp://")
+    raw.trim_start()
+        .to_ascii_lowercase()
+        .starts_with("androidapp://")
+}
+
+/// Global equivalent domains (Phase: Bitwarden parity, domain matching).
+///
+/// A bundled copy of Bitwarden's global equivalent-domains list: groups of
+/// registrable domains that belong to the same brand/service (youtube.com /
+/// google.com / gmail.com, apple.com / icloud.com, ...). Two hosts in the
+/// same group are treated as equivalent under the Domain strategy, in
+/// addition to strict eTLD+1 equality.
+///
+/// Provenance: Bitwarden's global equivalent domains (GPL-3.0), as a
+/// faithfully maintained copy from the Vaultwarden project. Credit:
+/// bitwarden.com. Refresh this file when Bitwarden updates their list.
+#[cfg(feature = "uri-match")]
+mod equivalence {
+    use std::sync::OnceLock;
+
+    #[derive(serde::Deserialize)]
+    struct Group {
+        domains: Vec<String>,
+        #[serde(default)]
+        excluded: bool,
+    }
+
+    fn groups() -> &'static [Group] {
+        static GROUPS: OnceLock<Vec<Group>> = OnceLock::new();
+        GROUPS.get_or_init(|| {
+            serde_json::from_str(include_str!("resources/global_equivalent_domains.json"))
+                .unwrap_or_default()
+        })
+    }
+
+    /// Index of the equivalence group containing [host]'s registrable
+    /// domain, if any. [host] must already be a bare lowercase host.
+    pub(super) fn group_index(host: &str) -> Option<usize> {
+        let registrable =
+            super::registrable_domain(host).unwrap_or_else(|| host.to_ascii_lowercase());
+        groups().iter().position(|g| {
+            !g.excluded
+                && g.domains
+                    .iter()
+                    .any(|d| d.eq_ignore_ascii_case(&registrable))
+        })
+    }
+
+    /// True when both hosts belong to the same equivalence group.
+    pub(super) fn same_group(a: &str, b: &str) -> bool {
+        match (group_index(a), group_index(b)) {
+            (Some(ga), Some(gb)) => ga == gb,
+            _ => false,
+        }
+    }
 }
 
 /// Extract the host (punycode, port stripped, lowercased) of a URI-ish
@@ -412,7 +466,7 @@ fn host_matches(uri: &str, target: &str) -> bool {
 fn domain_matches(uri: &str, target: &str) -> bool {
     match (uri_host(uri), uri_host(target)) {
         (Some(a), Some(b)) => match (registrable_domain(&a), registrable_domain(&b)) {
-            (Some(ra), Some(rb)) => ra == rb,
+            (Some(ra), Some(rb)) => ra == rb || equivalence::same_group(&ra, &rb),
             // A host that IS a public suffix (or unknown) has no registrable
             // domain; fall back to whole-host equality rather than matching
             // two unrelated single-label hosts.
@@ -435,7 +489,10 @@ fn starts_with_matches(uri: &str, target: &str) -> bool {
             // provides the boundary (Agy finding #4).
             a.ends_with('/')
                 || b.len() == a.len()
-                || matches!(b.as_bytes().get(a.len()), Some(b'/') | Some(b'?') | Some(b'#') | Some(b'&'))
+                || matches!(
+                    b.as_bytes().get(a.len()),
+                    Some(b'/') | Some(b'?') | Some(b'#') | Some(b'&')
+                )
         }
         _ => false,
     }
@@ -1933,6 +1990,22 @@ mod tests {
         assert!(M::Domain.matches("https://a.bbc.co.uk", "https://news.bbc.co.uk"));
         // suffix-lookalike: registrable evil.com, never matches bbc.co.uk
         assert!(!M::Domain.matches("https://bbc.co.uk", "https://bbc.co.uk.evil.com"));
+    }
+
+    #[test]
+    fn domain_strategy_equivalence_groups() {
+        // Bitwarden global equivalent domains (bundled list).
+        assert!(M::Domain.matches("https://google.com", "https://youtube.com/watch"));
+        assert!(M::Domain.matches("https://apple.com", "https://icloud.com"));
+        assert!(!M::Domain.matches("https://mail.google.com", "https://icloud.com"));
+        assert!(!M::Domain.matches("https://google.com", "https://apple.com"));
+        // Scheme isolation still applies inside groups.
+        assert!(!M::Domain.matches(
+            "androidapp://com.google.android.youtube",
+            "https://youtube.com"
+        ));
+        // Case + trailing noise handled via host normalization.
+        assert!(M::Domain.matches("https://Apple.com", "https://www.icloud.com"));
     }
 
     #[test]
