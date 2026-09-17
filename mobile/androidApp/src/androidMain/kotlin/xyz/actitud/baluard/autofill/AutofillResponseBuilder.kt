@@ -82,9 +82,13 @@ object AutofillResponseBuilder {
             Dataset.Builder(views)
         }
 
+        // NO SaveInfo on the auth response (device-pass finding): Bitwarden's
+        // working auth dataset carries none, and a SaveInfo bound to
+        // value-less fields is the remaining delta between ours (invisible)
+        // and theirs (renders). Save capture lives on the filled/save-only
+        // responses instead.
         return FillResponse.Builder()
-            .addDataset(dataset.setAuthentication(pending.intentSender).build())
-            .setSaveInfo(saveInfo(fields))
+            .addDataset(dataset.setId("baluard-unlock").setAuthentication(pending.intentSender).build())
             .build()
     }
 
@@ -145,7 +149,7 @@ object AutofillResponseBuilder {
             // Dataset.build() throws IllegalStateException with zero field
             // values (Agy finding #3): skip datasets that would be empty.
             if (hasValue) {
-                builder.addDataset(ds.build())
+                builder.addDataset(ds.setId("baluard-fill-$index").build())
             }
         }
         return builder.setSaveInfo(saveInfo(fields)).build()
