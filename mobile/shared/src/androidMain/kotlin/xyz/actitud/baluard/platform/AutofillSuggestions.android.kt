@@ -2,7 +2,7 @@ package xyz.actitud.baluard.platform
 
 /**
  * Android actual: file-backed flag (AutofillFlagFile) shared across the
- * main process and the `:autofill` service process (Agy finding #7).
+ * main process and the `:autofill` service process (review finding #7).
  */
 actual object AutofillSuggestions {
 

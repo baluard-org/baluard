@@ -122,7 +122,7 @@ class BaluardAccessibilityService : AccessibilityService() {
     private fun performFill(fill: AutofillA11yBridge.PendingFill) {
         val root = rootInActiveWindow ?: return
         if (root.packageName != fill.targetPackage) return
-        // Only attempt on screens that actually show login fields (Agy
+        // Only attempt on screens that actually show login fields (review
         // finding #6): never inject credentials into arbitrary inputs.
         if (!hasFillableFields(root)) return
         // Retry budget: 3 bounded attempts, then the pending fill dies (the

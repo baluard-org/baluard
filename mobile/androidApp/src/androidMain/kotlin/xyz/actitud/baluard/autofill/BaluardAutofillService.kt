@@ -136,7 +136,7 @@ class BaluardAutofillService : AutofillService() {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         // One-time sandbox token: the receiving activity only
                         // honors this handoff when the token matches (spoof
-                        // guard, Agy finding #1).
+                        // guard, review finding #1).
                         putExtra(MainActivity.EXTRA_SAVE_TOKEN, AutofillSaveToken.mint())
                         putExtra(MainActivity.EXTRA_SAVE_USERNAME, captured.username)
                         putExtra(MainActivity.EXTRA_SAVE_PASSWORD, captured.password)
@@ -273,7 +273,7 @@ class BaluardAutofillService : AutofillService() {
         // no username signal - the editable field above it becomes username.
         if (passwordId != null && usernameId == null && editableBeforePasswordId != null) {
             usernameId = editableBeforePasswordId
-            // A promoted username must not stay in the ignored list (Agy #2):
+            // A promoted username must not stay in the ignored list (review #2):
             // setIgnoredIds would suppress the very field we intend to fill.
             ignored.removeAll { it == usernameId }
         }

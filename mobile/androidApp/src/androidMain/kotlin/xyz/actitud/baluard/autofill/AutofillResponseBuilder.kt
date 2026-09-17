@@ -33,7 +33,7 @@ data class InlineStyle(val specs: List<InlinePresentationSpec>, val maxCount: In
  * already unlocked) and [AutofillActivity] (post-biometric path). One builder,
  * one presentation layout, save-info only where capture makes sense.
  *
- * Dataset shape (Agy review round 2): Chromium's native 3P autofill renderer
+ * Dataset shape (hardening review round 2): Chromium's native 3P autofill renderer
  * (Brave/Chrome 135+) only surfaces PER-FIELD presentations bound by
  * autofill id - dataset-level setValue + presentation is the legacy shape
  * and renders nothing there. Every field carries menu + dialog + inline
@@ -44,7 +44,7 @@ object AutofillResponseBuilder {
     /** Fields worth filling, as passed between service and activity. */
     data class TargetFields(val usernameId: AutofillId?, val passwordId: AutofillId?) {
         /** Separate extras, never a packed array: a password-only form would
-         *  shift the password into the username slot at index 0 (Agy #1). */
+         *  shift the password into the username slot at index 0 (review #1). */
         fun putInto(intent: Intent) {
             usernameId?.let { intent.putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
             passwordId?.let { intent.putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
@@ -151,7 +151,7 @@ object AutofillResponseBuilder {
             if (fields.usernameId != null && username != null) addField(fields.usernameId, username)
             if (fields.passwordId != null && password != null) addField(fields.passwordId, password)
             // Dataset.build() throws IllegalStateException with zero field
-            // values (Agy finding #3): skip datasets that would be empty.
+            // values (review finding #3): skip datasets that would be empty.
             if (hasValue) {
                 builder.addDataset(ds.setId("fill-" + match.id).build())
             }
@@ -255,7 +255,7 @@ object AutofillResponseBuilder {
             putExtra(AutofillActivity.EXTRA_MODE, AutofillActivity.MODE_FALLBACK_PICK)
             putExtra(AutofillActivity.EXTRA_TARGET, target)
             // The picker's Trust / Not-now actions need the raw package
-            // (Agy finding #1): without it both buttons were silent no-ops.
+            // (review finding #1): without it both buttons were silent no-ops.
             if (target.startsWith("androidapp://")) {
                 putExtra(
                     AutofillActivity.EXTRA_TARGET_PACKAGE,
@@ -295,7 +295,7 @@ object AutofillResponseBuilder {
         return builder.setIgnoredIds(*ignored.toTypedArray())
     }
 
-    /** Password required; username optional when both exist (Agy finding #4). */
+    /** Password required; username optional when both exist (review finding #4). */
     private fun saveInfo(fields: TargetFields): SaveInfo {
         // Required: the password field (or username for username-only forms).
         // Optional: the username, so multi-step flows still save when only

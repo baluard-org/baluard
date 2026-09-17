@@ -326,7 +326,7 @@ impl UriMatchStrategy {
         if self == &UriMatchStrategy::Never {
             return false;
         }
-        // Scheme isolation (plan D4, Agy finding #5): native app targets only
+        // Scheme isolation (plan D4, review finding #5): native app targets only
         // ever match androidapp:// entry URIs, and web URIs only match web
         // targets. Regex is pattern-land with no scheme semantics.
         if self != &UriMatchStrategy::Regex && is_androidapp(uri) != is_androidapp(target) {
@@ -564,7 +564,7 @@ fn custom_groups_match(groups: &[Vec<String>], ra: &str, rb: &str) -> bool {
         let covers = |registrable: &str| {
             group.iter().any(|entry| {
                 // Sanitize: strip scheme/path the user may have pasted
-                // (Agy finding #6), then fold to registrable domain.
+                // (review finding #6), then fold to registrable domain.
                 let bare = uri_host(entry).unwrap_or_else(|| entry.to_ascii_lowercase());
                 registrable_domain(&bare)
                     .unwrap_or_else(|| bare)
@@ -584,7 +584,7 @@ fn starts_with_matches(uri: &str, target: &str) -> bool {
             }
             // Segment boundary: "x.com/app" must not match
             // "x.com/application". A trailing slash on the entry already
-            // provides the boundary (Agy finding #4).
+            // provides the boundary (review finding #4).
             a.ends_with('/')
                 || b.len() == a.len()
                 || matches!(
@@ -2172,14 +2172,14 @@ mod tests {
         assert!(M::StartsWith.matches("https://x.com/app", "https://x.com/app/page"));
         assert!(M::StartsWith.matches("https://x.com", "https://x.com/anything"));
         assert!(!M::StartsWith.matches("https://x.com/app", "https://x.com/application"));
-        // Entry with trailing slash still matches child paths (Agy #4).
+        // Entry with trailing slash still matches child paths (review #4).
         assert!(M::StartsWith.matches("https://x.com/app/", "https://x.com/app/page"));
         assert!(!M::StartsWith.matches("https://x.com", "https://evil.com/https://x.com"));
     }
 
     #[test]
     fn scheme_isolation_app_vs_web() {
-        // Agy #5: no strategy may cross androidapp:// and web origins.
+        // review #5: no strategy may cross androidapp:// and web origins.
         assert!(!M::Host.matches("androidapp://com.example", "https://com.example"));
         assert!(!M::Host.matches("https://com.example", "androidapp://com.example"));
         assert!(!M::Domain.matches("androidapp://com.example", "https://example"));

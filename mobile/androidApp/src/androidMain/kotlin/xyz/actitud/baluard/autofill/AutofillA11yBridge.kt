@@ -30,7 +30,7 @@ object AutofillA11yBridge {
 
     private const val MAX_ATTEMPTS = 3
 
-    /** Set + reset the retry budget (peer-review Agy finding #6). */
+    /** Set + reset the retry budget (peer-review finding #6). */
     fun startPendingFill(fill: PendingFill) {
         pendingFill = fill
         pendingFillAttempts = 0

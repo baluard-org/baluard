@@ -714,7 +714,7 @@ fun SettingsScreen(
                     var rejectedApps by remember(vaultPath) {
                         mutableStateOf<List<Pair<String, String>>>(emptyList())
                     }
-                    // Re-read on every resume (Agy finding #2): trust and
+                    // Re-read on every resume (review finding #2): trust and
                     // rejection decisions happen in the :autofill process,
                     // so in-memory state here goes stale across app
                     // switches. Stale writes would silently drop pairings.
@@ -825,7 +825,7 @@ fun SettingsScreen(
                     }
                     // Rejected pairings: "Not now" in the picker blocks the
                     // suggestion permanently (per design), so the user needs
-                    // a recovery path (Agy finding #3). Removing a pair here
+                    // a recovery path (review finding #3). Removing a pair here
                     // lets the picker suggest it again.
                     if (suggestAppLogins && rejectedApps.isNotEmpty()) {
                         Text(

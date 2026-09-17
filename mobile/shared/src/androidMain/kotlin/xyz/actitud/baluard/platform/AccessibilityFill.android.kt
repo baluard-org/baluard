@@ -11,7 +11,7 @@ import android.view.accessibility.AccessibilityManager
  * AccessibilityServiceInfo.FEEDBACK_GENERIC list), mirroring Bitwarden's
  * AccessibilityManager-first check. The opt-in flag is file-backed
  * (AutofillFlagFile): SharedPreferences are per-process caches and the flag
- * flips in the main process while the :autofill service reads it (Agy
+ * flips in the main process while the :autofill service reads it (review
  * finding #7).
  */
 actual object AccessibilityFill {

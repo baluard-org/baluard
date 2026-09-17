@@ -3,7 +3,7 @@ package xyz.actitud.baluard.platform
 import java.io.File
 
 /**
- * Tiny cross-process flag store for the autofill feature gates (Agy finding
+ * Tiny cross-process flag store for the autofill feature gates (review finding
  * #7): SharedPreferences are cached per process and background processes do
  * not reload files written by another process, so a flag flipped in the main
  * app could stay stale in `:autofill` until restart. These flags are read

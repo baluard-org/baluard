@@ -200,7 +200,7 @@ class AutofillActivity : FragmentActivity() {
                     .map { it.id }
                     .toSet()
                 // Direct/trusted matches pin to the top of the list
-                // (Agy finding #4); the rest stays alphabetical.
+                // (review finding #4); the rest stays alphabetical.
                 val directIds = result.matches.map { it.id }.toSet()
                 val (matched, other) = logins
                     .filter { it.id !in suggestionIds }
@@ -343,7 +343,7 @@ class AutofillActivity : FragmentActivity() {
 
     private fun targetPackage(): String? {
         intent?.getStringExtra(EXTRA_TARGET_PACKAGE)?.let { return it }
-        // Fallback: derive from the target itself (Agy finding #1).
+        // Fallback: derive from the target itself (review finding #1).
         val target = intent?.getStringExtra(EXTRA_TARGET) ?: return null
         if (!target.startsWith("androidapp://")) return null
         return target.removePrefix("androidapp://").substringBefore('/')

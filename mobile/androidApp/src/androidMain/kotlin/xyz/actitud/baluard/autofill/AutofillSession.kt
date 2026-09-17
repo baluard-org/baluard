@@ -93,7 +93,7 @@ object AutofillSession {
     /**
      * Unlock with the biometric-gated KEK. Returns false on any failure
      * (stale KEK after a password change fails closed in the runtime).
-     * The KEK is zeroized before return regardless of outcome (Agy finding
+     * The KEK is zeroized before return regardless of outcome (review finding
      * #8): JVM heap is GC-managed, but we still shrink the exposure window.
      */
     suspend fun unlock(kek: ByteArray): Boolean = mutationMutex.withLock {
