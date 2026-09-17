@@ -319,7 +319,7 @@ internal val EN: Map<String, String> = mapOf(
     "settings.wifiOnly" to "Sync over Wi-Fi only (advisory)",
     "settings.security" to "Security",
     "settings.favicons" to "Show website icons",
-    "settings.faviconsHint" to "Off by default: fetching contacts an outside service with the site's domain, which reveals that this entry exists. Only the first website is queried.",
+    "settings.faviconsHint" to "Off by default. When on, logos come from Google's icon service. It sees which websites you save. Only the first website of each entry is used.",
     "settings.autoLock" to "Auto-lock",
     "settings.autoLockHint" to "Locks the vault when the app returns after being in the background longer than the chosen time.",
     "settings.autoLock.immediately" to "Immediately",
