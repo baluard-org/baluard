@@ -282,15 +282,15 @@ object AutofillResponseBuilder {
 
     /** Password required; username optional when both exist (Agy finding #4). */
     private fun saveInfo(fields: TargetFields): SaveInfo {
-        val requiredId = fields.passwordId ?: fields.usernameId
-        val builder = requiredId?.let {
-            SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_PASSWORD, arrayOf(it))
-        } ?: SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_PASSWORD)
+        // Required: the password field (or username for username-only forms).
+        // Optional: the username, so multi-step flows still save when only
+        // one of the two was submitted in this step.
+        val required = listOfNotNull(fields.passwordId ?: fields.usernameId)
         val optional = listOfNotNull(
-            fields.usernameId?.takeIf { fields.passwordId != null },
-            fields.passwordId,
-        ).toTypedArray()
-        if (optional.isNotEmpty()) builder.setOptionalIds(optional)
+            fields.usernameId?.takeIf { fields.passwordId != null && required.singleOrNull() == fields.passwordId },
+        )
+        val builder = SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_PASSWORD, required.toTypedArray())
+        if (optional.isNotEmpty()) builder.setOptionalIds(optional.toTypedArray())
         return builder
             .setFlags(SaveInfo.FLAG_SAVE_ON_ALL_VIEWS_INVISIBLE)
             .build()
