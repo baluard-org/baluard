@@ -436,8 +436,10 @@ internal val ES: Map<String, String> = mapOf(
     "settings.autofillSuggestionsInline" to "Integrado (aparece en el teclado)",
     "settings.autofillSuggestionsPopup" to "Ventana emergente (sobre el campo)",
     "settings.autofillSuggestionsHint" to "Elige cómo aparecen las sugerencias al iniciar sesión en otras apps del dispositivo.",
-    "settings.braveIntegration" to "Usar la integración de autofill de Brave",
-    "settings.braveIntegrationHint" to "Mejora el relleno de credenciales en sitios compatibles de Brave. Al tocar, se abren los ajustes de autofill de Brave.",
+    "settings.browserIntegration.brave" to "Usar la integración de autofill de Brave",
+    "settings.browserIntegration.chrome" to "Usar la integración de autofill de Chrome",
+    "settings.browserIntegration.vivaldi" to "Usar la integración de autofill de Vivaldi",
+    "settings.browserIntegrationHint" to "Mejora el relleno de credenciales en sitios compatibles. Al tocar, se abren los ajustes de autofill del navegador.",
 
     // Settings > Autofill accessibility fill (Phase 6.5, opcional, apagado).
     "settings.a11yTitle" to "Usar accesibilidad",

@@ -3,6 +3,19 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Package visibility (API 30+): the browser-integration rows probe
+         Chromium third-party autofill state via each browser's content
+         provider; without <queries> the packages are invisible and the
+         probes always fail. -->
+    <queries>
+        <package android:name="com.brave.browser" />
+        <package android:name="com.brave.browser.beta" />
+        <package android:name="com.brave.browser.nightly" />
+        <package android:name="com.android.chrome" />
+        <package android:name="com.chrome.beta" />
+        <package android:name="com.vivaldi.browser" />
+    </queries>
+
     <application
         android:name=".BaluardApplication"
         android:label="Baluard"

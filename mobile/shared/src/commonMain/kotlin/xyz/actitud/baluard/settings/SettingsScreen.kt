@@ -523,15 +523,18 @@ fun SettingsScreen(
                         )
                     }
 
-                    // Browser integration: a live mirror of the browser's own
-                    // third-party autofill switch; tapping opens its settings.
-                    if (BrowserAutofillIntegration.isAvailable()) {
+                    // Browser integrations: a live mirror of each browser's
+                    // own third-party autofill switch; tapping opens that
+                    // browser's settings. One row per installed browser.
+                    val browsers = remember { BrowserAutofillIntegration.browsers() }
+                    for (browser in browsers) {
                         BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
-                        var braveEnabled by remember {
-                            mutableStateOf(BrowserAutofillIntegration.isEnabled() == true)
+                        var browserEnabled by remember(browser.id) {
+                            mutableStateOf(browser.enabled == true)
                         }
-                        LifecycleResumeEffect("brave") {
-                            braveEnabled = BrowserAutofillIntegration.isEnabled() == true
+                        LifecycleResumeEffect(browser.id) {
+                            browserEnabled = BrowserAutofillIntegration.browsers()
+                                .firstOrNull { it.id == browser.id }?.enabled == true
                             onPauseOrDispose { }
                         }
                         Row(
@@ -541,20 +544,20 @@ fun SettingsScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = t("settings.braveIntegration"),
+                                    text = t("settings.browserIntegration." + browser.id),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
                                 Text(
-                                    t("settings.braveIntegrationHint"),
+                                    t("settings.browserIntegrationHint"),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(top = 4.dp),
                                 )
                             }
                             Switch(
-                                checked = braveEnabled,
-                                onCheckedChange = { BrowserAutofillIntegration.openSettings() },
+                                checked = browserEnabled,
+                                onCheckedChange = { BrowserAutofillIntegration.openSettings(browser.id) },
                             )
                         }
                     }
