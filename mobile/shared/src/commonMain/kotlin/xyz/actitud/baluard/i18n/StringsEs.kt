@@ -467,4 +467,5 @@ internal val ES: Map<String, String> = mapOf(
     "autofill.appSuggests" to "Parecen credenciales para",
     "autofill.appTrust" to "Confiar",
     "autofill.appNotNow" to "Ahora no",
+    "settings.rejectedAppsTitle" to "Sugerencias bloqueadas (borra para permitir de nuevo)",
 )

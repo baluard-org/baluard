@@ -199,8 +199,13 @@ class AutofillActivity : FragmentActivity() {
                     .flatMap { it.matches }
                     .map { it.id }
                     .toSet()
-                val rest = logins.filter { it.id !in suggestionIds }
-                runOnUiThread { renderList(target, rest, result.suggestions) }
+                // Direct/trusted matches pin to the top of the list
+                // (Agy finding #4); the rest stays alphabetical.
+                val directIds = result.matches.map { it.id }.toSet()
+                val (matched, other) = logins
+                    .filter { it.id !in suggestionIds }
+                    .partition { it.id in directIds }
+                runOnUiThread { renderList(target, matched + other, result.suggestions) }
             } else {
                 val matches = AutofillSession.matches(target)
                 runOnUiThread { renderList(target, matches, emptyList()) }
@@ -336,7 +341,13 @@ class AutofillActivity : FragmentActivity() {
         }
     }
 
-    private fun targetPackage(): String? = intent?.getStringExtra(EXTRA_TARGET_PACKAGE)
+    private fun targetPackage(): String? {
+        intent?.getStringExtra(EXTRA_TARGET_PACKAGE)?.let { return it }
+        // Fallback: derive from the target itself (Agy finding #1).
+        val target = intent?.getStringExtra(EXTRA_TARGET) ?: return null
+        if (!target.startsWith("androidapp://")) return null
+        return target.removePrefix("androidapp://").substringBefore('/')
+    }
 
     private fun statusView(): TextView = findViewById(R.id.autofill_status)
 

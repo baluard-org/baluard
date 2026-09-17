@@ -254,6 +254,14 @@ object AutofillResponseBuilder {
         val intent = Intent(context, AutofillActivity::class.java).apply {
             putExtra(AutofillActivity.EXTRA_MODE, AutofillActivity.MODE_FALLBACK_PICK)
             putExtra(AutofillActivity.EXTRA_TARGET, target)
+            // The picker's Trust / Not-now actions need the raw package
+            // (Agy finding #1): without it both buttons were silent no-ops.
+            if (target.startsWith("androidapp://")) {
+                putExtra(
+                    AutofillActivity.EXTRA_TARGET_PACKAGE,
+                    target.removePrefix("androidapp://").substringBefore('/'),
+                )
+            }
             fields.usernameId?.let { putExtra(AutofillActivity.EXTRA_USERNAME_ID, it) }
             fields.passwordId?.let { putExtra(AutofillActivity.EXTRA_PASSWORD_ID, it) }
         }

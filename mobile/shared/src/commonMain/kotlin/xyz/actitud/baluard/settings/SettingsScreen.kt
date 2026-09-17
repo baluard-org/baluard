@@ -711,21 +711,38 @@ fun SettingsScreen(
                     var trustedApps by remember(vaultPath) {
                         mutableStateOf<List<Pair<String, String>>>(emptyList())
                     }
-                    LaunchedEffect(vaultPath) {
-                        val json = runCatching { repo.getSettings(vault) }.getOrNull()
-                            ?: return@LaunchedEffect
-                        val obj = Json.parseToJsonElement(json) as? JsonObject
-                            ?: return@LaunchedEffect
-                        suggestAppLogins =
-                            (obj["suggest_app_logins"] as? JsonPrimitive)?.content == "true"
-                        trustedApps = (obj["trusted_app_packages"] as? JsonArray)?.mapNotNull { t ->
-                            val o = t as? JsonObject ?: return@mapNotNull null
-                            val p = (o["package"] as? JsonPrimitive)?.content
-                                ?: return@mapNotNull null
-                            val d = (o["domain"] as? JsonPrimitive)?.content
-                                ?: return@mapNotNull null
-                            p to d
-                        } ?: emptyList()
+                    var rejectedApps by remember(vaultPath) {
+                        mutableStateOf<List<Pair<String, String>>>(emptyList())
+                    }
+                    // Re-read on every resume (Agy finding #2): trust and
+                    // rejection decisions happen in the :autofill process,
+                    // so in-memory state here goes stale across app
+                    // switches. Stale writes would silently drop pairings.
+                    val readAppTrust: () -> Unit = {
+                        scope.launch {
+                            val json = runCatching { repo.getSettings(vault) }.getOrNull()
+                                ?: return@launch
+                            val obj = Json.parseToJsonElement(json) as? JsonObject
+                                ?: return@launch
+                            suggestAppLogins =
+                                (obj["suggest_app_logins"] as? JsonPrimitive)?.content == "true"
+                            fun parsePairs(key: String): List<Pair<String, String>> =
+                                (obj[key] as? JsonArray)?.mapNotNull { t ->
+                                    val o = t as? JsonObject ?: return@mapNotNull null
+                                    val p = (o["package"] as? JsonPrimitive)?.content
+                                        ?: return@mapNotNull null
+                                    val d = (o["domain"] as? JsonPrimitive)?.content
+                                        ?: return@mapNotNull null
+                                    p to d
+                                } ?: emptyList()
+                            trustedApps = parsePairs("trusted_app_packages")
+                            rejectedApps = parsePairs("rejected_app_packages")
+                        }
+                    }
+                    LaunchedEffect(vaultPath) { readAppTrust() }
+                    LifecycleResumeEffect(vaultPath) {
+                        readAppTrust()
+                        onPauseOrDispose { }
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -790,6 +807,56 @@ fun SettingsScreen(
                                             buildJsonObject {
                                                 put(
                                                     "trusted_app_packages",
+                                                    JsonArray(next.map { p ->
+                                                        buildJsonObject {
+                                                            put("package", JsonPrimitive(p.first))
+                                                            put("domain", JsonPrimitive(p.second))
+                                                        }
+                                                    }),
+                                                )
+                                            }.toString(),
+                                        )
+                                    }
+                                }) {
+                                    Text(t("common.delete"))
+                                }
+                            }
+                        }
+                    }
+                    // Rejected pairings: "Not now" in the picker blocks the
+                    // suggestion permanently (per design), so the user needs
+                    // a recovery path (Agy finding #3). Removing a pair here
+                    // lets the picker suggest it again.
+                    if (suggestAppLogins && rejectedApps.isNotEmpty()) {
+                        Text(
+                            t("settings.rejectedAppsTitle"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        for ((index, pair) in rejectedApps.withIndex()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = "${pair.first} / ${pair.second}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(onClick = {
+                                    val next = rejectedApps.toMutableList().apply {
+                                        removeAt(index)
+                                    }
+                                    rejectedApps = next
+                                    scope.launch {
+                                        repo.saveSettings(
+                                            vault,
+                                            buildJsonObject {
+                                                put(
+                                                    "rejected_app_packages",
                                                     JsonArray(next.map { p ->
                                                         buildJsonObject {
                                                             put("package", JsonPrimitive(p.first))
