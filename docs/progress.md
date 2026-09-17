@@ -261,7 +261,7 @@ Completed core, CLI, daemon, and desktop implementations.
 | **Phase 6** | Android Autofill Service (`BaluardAutofillService`, inline suggestions, save handoff, biometric KEK unlock) | **Done** |
 | **Phase 6.5** | Android Accessibility Tile (`BaluardA11yTileService` + `BaluardAccessibilityService`, browser URL scraping) | **Done** |
 | **Phase 7** | iOS Autofill Credential Provider extension (`ASCredentialProviderViewController`, shared UniFFI) | **Next** |
-| **Deferred: App-to-web matching** | Guess web domains from Android package names so web-saved logins also autofill inside native apps | **Blocked on Esteban decision** |
+| **Deferred: App-to-web matching** | Web-saved logins fill inside native apps via package-derived domain candidates + per-app trust (path B) | **Done** |
 
 ### Nice to Have / Future
 
@@ -269,9 +269,9 @@ Features parked for the far future. Do not start without explicit confirmation.
 
 #### App-to-web domain matching (path B: trust-on-first-use)
 
-**Status:** design approved by Esteban, not yet built. Target: Android
-autofill (mobile/androidApp `:autofill` process), extendable to iOS in
-Phase 7.
+**Status:** Done. Shipped in `feat(mobile): app-to-web autofill matching
+with per-app trust` (da8f2ab). Target: Android autofill (mobile/androidApp
+`:autofill` process), extendable to iOS in Phase 7.
 
 **Problem:** web-saved logins (e.g. `https://mybank.com`) do not
 autofill inside native apps (`com.mybank.app`) because the matcher
