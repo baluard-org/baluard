@@ -70,7 +70,7 @@ baluard/
 │   └── firefox/                # Firefox MV3 wrapper (manifest.extra.json)
 ├── mobile/                     # Kotlin Multiplatform Mobile App (Compose UI + UniFFI integration)
 │   ├── shared/                 # Common Compose UI, ViewModels, repository, and platform implementations
-│   └── androidApp/             # Android host application (single-Activity, adaptive icons, R8 rules)
+│   └── androidApp/             # Android host application (single-Activity, BaluardAutofillService, BaluardAccessibilityService, BaluardA11yTileService, adaptive icons, R8 rules)
 └── docs/                       # Architecture, design, plans, PRDs, threat model, post-quantum, 2fa, brand, app icons
 ```
 
@@ -110,7 +110,7 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 
 ## 3. Platform Tier Architecture
 
-### 3.1 Desktop Tier (B2C/B2B)
+### 3.1 Desktop Tier (B2C & B2B)
 
 **Current state**: CLI dual-mode (daemon-first via socket + `--direct` fallback). Daemon fully implemented with multi-vault host, sync coordinator, devices, TOTP, auto-lock, auto-sync (debounced push + event-driven pull + 30-min idle fallback + offline retry + conflict auto-resolve), PIN escrow, biometric unlock (per-vault scoped), bridge module for browser extension. Tauri desktop with full CRUD UI, 8 cipher types, generator, TOTP widget, multi-vault switcher, browser-extension pairing UI, conflict resolution panel, vault detach.
 
@@ -121,17 +121,16 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 
 ### 3.2 Mobile Tier (B2C)
 
-**Current state**: Android Phases 0-5 implemented. Compose Multiplatform codebase compiles to native Android and iOS targets. Consumes `baluard-runtime` and `baluard-core` in-process via `baluard-uniffi` bindings (no background daemon on mobile). Onboarding (new vault and git provider clone + device enrollment), home hub with categories and count pills, filtered entry lists, detail/edit for all 8 cipher types, password generator, TOTP widget, biometric unlock, auto-lock, sync feedback, and settings are operational. Phase 6 (Android Autofill Service) is next.
+**Current state**: Android Phases 0-6 implemented. Compose Multiplatform codebase compiles to native Android and iOS targets. Consumes `baluard-runtime` and `baluard-core` in-process via `baluard-uniffi` bindings (no background daemon on mobile). Onboarding (new vault and git provider clone + device enrollment), home hub with categories and count pills, filtered entry lists, detail/edit for all 8 cipher types at desktop parity, deep search, password generator, TOTP widget, biometric unlock, auto-lock, sync feedback, settings (including favicon opt-in), and full system autofill integration are operational. Phase 7 (iOS AutoFill extension) is next.
 
-**Target architecture**:
-- **KMP UI**: The application interface written in Compose Multiplatform (Kotlin Multiplatform) for shared Android/iOS screens.
-- **UniFFI Bindings**: `baluard-uniffi` binds `baluard-runtime` + `baluard-core` into Kotlin and Swift without manual JNI/cgo boilerplate.
-- **No intermediate process**: The mobile app hosts the runtime directly in-process.
-- **Just-In-Time (JIT) Sync Hook**:
-  1. When a mobile browser autofill action triggers, the OS calls the app's native autofill adapter.
-  2. The JIT hook checks for remote changes against the git remote.
-  3. If changes exist, the runtime pulls and decrypts updated buckets.
-  4. The OS prompts for biometrics and autofills the credential.
+**Architecture properties**:
+- **KMP UI**: Shared Android/iOS screens written in Compose Multiplatform.
+- **UniFFI Bindings**: `baluard-uniffi` exposes `baluard-runtime` and `baluard-core` to Kotlin and Swift without manual JNI boilerplate.
+- **In-process runtime**: The mobile app hosts the runtime directly in-process; no local daemon or socket layer.
+- **Isolated Autofill Service (`:autofill`)**: System autofill provider (`BaluardAutofillService`) runs in its own process. Unlocks via biometric-gated KEK (`unlock_with_kek`) to avoid the high-memory Argon2id KDF on memory-constrained service paths. Inline suggestions and dropdowns presentation.
+- **Offline-first fill path**: `onFillRequest` matches against local decrypted login metadata (`VaultState::autofill_query`) with no network calls or sync operations on the critical path.
+- **Save handoff**: `onSaveRequest` routes new credential creation to the main app via a single-use token (`AutofillSaveToken`).
+- **Accessibility fill tile**: `BaluardA11yTileService` + `BaluardAccessibilityService` offer quick-settings tile fill for browsers and applications that do not support Android Autofill APIs.
 
 ---
 

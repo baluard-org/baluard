@@ -168,7 +168,7 @@ Mobile apps bind to the vault engine via the `baluard-uniffi` crate over `baluar
 - **Swift (iOS)**: UniFFI generates Swift bindings compiled into an xcframework.
 - **No intermediate language**: The Rust core is the single source of truth. No Go, no cgo, no gomobile. UniFFI provides a clean memory boundary between Rust memory and foreign code.
 - **Direct in-process host**: The mobile client hosts `baluard-runtime` in-process directly without a background daemon.
-- **Status**: Implemented in `crates/baluard-uniffi/`. Android Phases 0 through 5 are complete (Compose Multiplatform onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 build). Phase 6 Autofill Service is next. iOS platform-specific actuals are pending.
+- **Status**: Implemented in `crates/baluard-uniffi/`. Android Phases 0 through 6 are complete (Compose Multiplatform onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit at desktop parity, deep search, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 build, Android Autofill Service with inline suggestions, save prompt, and quick-settings tile accessibility fill). Phase 7 iOS credential extension is next. iOS platform-specific actuals are pending.
 
 ---
 
@@ -947,6 +947,26 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 
 **App icons:** `just app-icons SOURCE OUT` builds 48/128 PNG variants from a source logo for all platforms (macOS/Windows/Linux/Android/iOS + tray monochrome + system tray). Replaces the previous hand-curated icon set with a deterministic pipeline; `desktop/src-tauri/icons/` regenerated on build.
 
+### D25. Android Autofill & Quick-Settings Accessibility Architecture (2026-09-16; DONE)
+
+See `docs/plan-android-autofill.md` and `docs/plan-android-accessibility-tile.md` for requirements and verification.
+
+**Isolated service process**: `BaluardAutofillService` runs under `android:process=":autofill"` to separate credential evaluation from the main Compose UI.
+
+**OOM-guard invariant**: unlock within the `:autofill` process exclusively uses `unlock_with_kek` using the biometric-gated KEK from Android Keystore. The Argon2id master-password KDF (64-256 MB) never runs in `:autofill`, preventing process termination by the Android low-memory killer.
+
+**Rust-native URI matching**: `UriMatchStrategy::matches` is implemented directly in `baluard-core` across 6 strategies (BaseDomain via `public-suffix` eTLD+1, Host, StartsWith, Exact, RegularExpression, Never). Enforces scheme isolation (`androidapp://` never cross-matches `https://`) and treats trailing slashes as segment boundaries.
+
+**Secret-absence batch query**: `VaultState::autofill_query` filters login ciphers and returns candidate metadata without passwords or "password" JSON keys. Plaintext credentials cross FFI only upon explicit dataset selection.
+
+**Response-level authentication**: cold sessions render an "Unlock Baluard" placeholder; user interaction launches transparent `AutofillActivity` for a `BiometricPrompt` with `CryptoObject` ceremony before presenting matched datasets.
+
+**Presentation modes**: supports both inline IME keyboard suggestions (`supportsInlineSuggestions`, default INLINE) and dropdown `RemoteViews`.
+
+**Secure save handoff**: `onSaveRequest` generates a single-use token (`AutofillSaveToken`) in app sandbox storage before launching `MainActivity`, securing credential creation from intent spoofing across all supported Android API levels.
+
+**Accessibility fill tile fallback**: `BaluardA11yTileService` + `BaluardAccessibilityService` provide an opt-in fill flow for browsers and apps lacking standard autofill support. Scrapes browser URL bars, presents an in-process picker (`AutofillA11yBridge`), injects credentials via `ACTION_SET_TEXT`, copies TOTP to clipboard, and bounds retries to 3 attempts per selection.
+
 ---
 
 ## Staged Implementation Roadmap
@@ -955,7 +975,7 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 - **Phase 2: Git Sync Engine**: git2-rs sync, conflict auto-healing, state machine. DONE.
 - **Phase 3: IPC Daemon & CLI**: baluard-daemon (tokio Unix socket server), baluard-cli (socket client), Protobuf gateway handler. DONE.
 - **Phase 4: Desktop UI & Open-Source Launch**: SolidJS/Tailwind Tauri v2 app, system tray, GPL-3.0 license. DONE.
-- **Phase 5: Browser Extension & Mobile**: MV3 browser extension (Chromium + Firefox) with native messaging (Phases 0+1 DONE, Phase 2 deferred). Mobile: UniFFI Rust bindings (`baluard-uniffi`) and Compose Multiplatform Android app (Phases 0-5 implemented, Phase 6 Autofill next; iOS platform-specific actuals pending).
+- **Phase 5: Browser Extension & Mobile**: MV3 browser extension (Chromium + Firefox) with native messaging (Phases 0+1 DONE, Phase 2 deferred). Mobile: UniFFI Rust bindings (`baluard-uniffi`) and Compose Multiplatform Android app (Phases 0-6 implemented: core UI, deep search, desktop-parity edit, biometric unlock, and system autofill service with quick-settings tile fill; Phase 7 iOS next).
 
 ---
 

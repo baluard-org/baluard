@@ -1,6 +1,6 @@
 # Plan: Mobile Apps (Android + iOS)
 
-> Status: Android Phases 0-5 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build). Phase 6 (Android Autofill Service) next. iOS platform-specific actuals pending.
+> Status: Android Phases 0-6 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit at desktop parity, deep search, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build, Android Autofill Service with inline suggestions, save prompt, and quick-settings accessibility tile). Phase 7 (iOS credential extension) next. iOS platform-specific actuals pending.
 > Scope: native Android + native iOS apps built on a shared Compose Multiplatform codebase, both consuming `baluard-runtime` + `baluard-core` in-process via UniFFI bindings. **No daemon process on mobile** (see §3.2). The mobile app is a **first-class vault client** (full offline access, full sync, biometric unlock), not a thin viewer.
 > Owner: Esteban. Builds on top of the desktop client (already shipped) and the browser extension (Phase 0+1 shipped).
 
@@ -828,16 +828,17 @@ Post-fix verification: autosync tests pass, full workspace gate verified.
 
 **Acceptance criteria:**
 
-- [ ] User can enable Baluard as autofill provider in Settings → Passwords & accounts
-- [ ] When logging into any app, the credential picker shows Baluard entries
-- [ ] Tapping a credential fills username + password fields
-- [ ] Save prompt appears when user submits a new login elsewhere
-- [ ] Biometric prompt appears before filling (when enabled)
-- [ ] **Service unlock uses `unlock_with_kek` (biometric-gated KEK); the master-password Argon2id KDF never runs in the service process**
-- [ ] No network sync on the `onFillRequest` hot path (local URL index only)
-- [ ] Service cold start <500ms
+- [x] User can enable Baluard as autofill provider in Settings → Passwords & accounts
+- [x] When logging into any app, the credential picker shows Baluard entries
+- [x] Tapping a credential fills username + password fields
+- [x] Save prompt appears when user submits a new login elsewhere
+- [x] Biometric prompt appears before filling (when enabled)
+- [x] **Service unlock uses `unlock_with_kek` (biometric-gated KEK); the master-password Argon2id KDF never runs in the service process**
+- [x] No network sync on the `onFillRequest` hot path (local URL index only)
+- [x] Service cold start <500ms
+- [x] Quick-settings tile accessibility fill (`BaluardA11yTileService` + `BaluardAccessibilityService`) for apps/browsers without Autofill API support (Phase 6.5)
 
-**Effort:** 3-4 weeks. Android-specific. Hardest UX win.
+**Status:** Complete (2026-09-16). Android Autofill service and quick-settings accessibility fill implemented and verified.
 
 **Risk:** `AssistStructure` parsing is fragile across app implementations. Test against Chrome, banking apps, social media. Maintain a known-bad-app list.
 

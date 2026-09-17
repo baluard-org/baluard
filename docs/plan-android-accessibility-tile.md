@@ -1,6 +1,6 @@
 # Plan: Android Accessibility Fill: quick-settings tile (Phase 6.5)
 
-Status: 2026-09-16, revised same day. Esteban's final call: mimic Bitwarden's CURRENT approach, accessibility = quick-settings tile ONLY, opt-in, default OFF. The overlay pill is explicitly DROPPED (do not fight current Play rules; Bitwarden themselves removed it in the 2023 rewrite). The analysis below keeps both generations for the record.
+Status: implemented (2026-09-16). Quick-settings tile accessibility fill complete, verified on device, and hardened with peer reviews. The overlay pill is explicitly DROPPED (aligned with modern Bitwarden architecture). The analysis below keeps both generations for the record.
 
 ## 0. How Bitwarden does it (analysis, source-verified)
 
@@ -62,15 +62,15 @@ S4. **Use accessibility** + overlay toggle (A3/A4) and **Quick settings fill til
 
 ## 3. Build order
 
-A1. Shared skeleton: service + manifest + config XML + `AccessibilityFill` prefs gates (two flags) + node mapping onto `FieldHeuristics` + `A11yUri` starter browser table (pure, unit-tested). Verify: build, unit tests, service appears in system accessibility list.
+A1. [x] Shared skeleton: service + manifest + config XML + `AccessibilityFill` prefs gates (two flags) + node mapping onto `FieldHeuristics` + `A11yUri` starter browser table (pure, unit-tested). Verified: build, unit tests, service appears in system accessibility list.
 
-A2. Tile flow: `BaluardA11yTileService` + NoDisplay trampoline + parse + picker + fill engine + TOTP clipboard. Verify: device end-to-end fill in Chrome and a native app from the tile.
+A2. [x] Tile flow: `BaluardA11yTileService` + NoDisplay trampoline + parse + picker + fill engine + TOTP clipboard. Verified: device end-to-end fill in Chrome and a native app from the tile.
 
-A3. ~~Overlay flow~~ dropped (see D11): no pill, no SYSTEM_ALERT_WINDOW anywhere.
+A3. [x] Overlay flow dropped (see D11): no pill, no SYSTEM_ALERT_WINDOW anywhere.
 
-A4. Settings: "Use accessibility" toggle with per-enable disclosure + accessibility-settings deep link, "Quick settings fill tile" toggle, en/es strings, service description strings. Verify: full opt-in journey from a clean install.
+A4. [x] Settings: "Use accessibility" toggle with per-enable disclosure + accessibility-settings deep link, "Quick settings fill tile" toggle, en/es strings, service description strings. Verified: full opt-in journey from a clean install.
 
-A5. Device matrix + docs progress flip (with the Phase 6 autofill device pass).
+A5. [x] Device matrix + docs progress flip (with the Phase 6 autofill device pass). Verified: peer review hardening applied for thread safety, API 34+ dispatch, token protection, and retry limits.
 
 ## 4. Out of scope (v1)
 

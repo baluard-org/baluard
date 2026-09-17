@@ -122,6 +122,7 @@ All commands run from the project root. `just` reads the `justfile`.
 | `just seed-demo` | Seed two demo vaults (personal with 100 entries + work, password: `baluard99`) |
 | `just android-apk` | Build release Android APK |
 | `just android-apk-fast` | Build debug Android APK |
+| `just android-install` | Build debug Android APK + adb install + launch on connected device |
 | `just android-bindings` | Regenerate UniFFI Kotlin bindings |
 | `just release` | Build tar.gz + SHA256 checksums in `dist/` |
 | `just cross-compile` | Build for linux/macOS x amd64/arm64 |

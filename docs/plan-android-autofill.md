@@ -1,6 +1,6 @@
 # Plan: Android Autofill (Phase 6)
 
-Status: draft 2026-09-16. Authoritative requirements: `docs/plan-mobile-apps.md` §3.2, §3.7, Phase 6. This document is the concrete build plan after auditing the current code state.
+Status: implemented (2026-09-16). Authoritative requirements: `docs/plan-mobile-apps.md` §3.2, §3.7, Phase 6. All build phases complete and verified on hardware over wireless adb.
 
 ## 0. Current state (audited)
 
@@ -17,14 +17,14 @@ Already exists, reuse as-is:
 | Vault discovery | `platform/VaultRegistry` | Scans sandbox, persists last-active vault path |
 | Process context | `platform/AppContextHolder` | Context holder + FragmentActivity host for BiometricPrompt |
 
-Missing (the actual Phase 6 work):
+Phase 6 implementation scope (completed):
 
-1. **No `Application` class.** `AppContextHolder.set()` runs only in `MainActivity.onCreate`. The `:autofill` process never runs MainActivity, so every platform actual that reads `AppContextHolder.get()` returns null there. Autofill cannot even reach the Keystore.
-2. **No URI matching engine anywhere.** `UriMatchStrategy` (Domain/Host/StartsWith/Exact/Regex/Never) exists as data in `baluard-core/src/types.rs` + `default_uri_match` setting, but no `matches()` is implemented. The browser extension uses raw hostname equality (`background.js hostnameOf`). Android autofill is the first real consumer.
-3. **No autofill query endpoint.** `MobileCipherMeta` carries no URIs. Matching requires decrypted login URIs, and current `get_cipher` returns full JSON including the password.
-4. **Service is a stub.** No unlock, no match, no datasets, no RemoteViews, no SaveInfo, no real `onSaveRequest`.
-5. **No `AutofillActivity`.** BiometricPrompt requires a FragmentActivity host; a Service has none. The plan's `autofill/AutofillActivity.kt` does not exist yet.
-6. **No session semantics** for the `:autofill` process (when is it unlocked, when does it re-lock).
+1. **`BaluardApplication`**: initializes context in both the main and `:autofill` processes.
+2. **URI matching engine in core**: `UriMatchStrategy::matches` in `baluard-core` with public-suffix eTLD+1 support and strict scheme isolation.
+3. **Autofill query batch endpoint**: `VaultState::autofill_query` in `baluard-runtime` / `baluard-uniffi` returning ranked match candidates without passwords.
+4. **Service implementation**: `BaluardAutofillService` with heuristics-based AssistStructure parsing, inline suggestions (Jetpack Autofill), dataset building, and save prompt handling.
+5. **`AutofillActivity`**: translucent trampoline host for `BiometricPrompt` with `CryptoObject` response-level authentication and a11y credential picker.
+6. **Session management**: `AutofillSession` with mutex-serialized lifecycle, KEK-only unlock (`unlock_with_kek`), and auto-lock tracking.
 
 ## 1. Architecture decisions
 

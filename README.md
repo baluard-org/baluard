@@ -13,7 +13,7 @@ baluard-nmh     -> Native messaging host (browser extension bridge, stdio-JSON <
 baluard-uniffi  -> UniFFI bindings consumed by Kotlin Multiplatform mobile app
 desktop/        -> Tauri v2 desktop app (SolidJS + Tailwind v4, 8 cipher types, generator, TOTP widget, switcher)
 browser/        -> MV3 browser extension for Chromium and Firefox (paired companion model)
-mobile/         -> Kotlin Multiplatform / Compose app for Android and iOS (home hub, filters, biometric, sync)
+mobile/         -> Kotlin Multiplatform / Compose app for Android and iOS (home hub, filters, biometric, sync, autofill)
 ```
 
 ## Quick Start
