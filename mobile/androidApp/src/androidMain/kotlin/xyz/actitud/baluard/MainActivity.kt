@@ -62,7 +62,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun extractAutofillSave(intent: Intent?): AutofillSavePrefill? {
-        // Spoof guard (peer-review finding #3, Agy revision): MainActivity is
+        // Spoof guard (peer-review finding #3, revision): MainActivity is
         // exported (launcher), so any app could start it with save extras.
         // getLaunchedFromPackage is API 34+ (would crash on our minSdk 32),
         // so the guard is a one-time token: the :autofill service process

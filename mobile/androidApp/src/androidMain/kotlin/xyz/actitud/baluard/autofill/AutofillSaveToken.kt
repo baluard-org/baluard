@@ -4,7 +4,7 @@ import java.util.UUID
 import xyz.actitud.baluard.platform.AppContextHolder
 
 /**
- * One-time token guarding the autofill save handoff (Agy review finding #1:
+ * One-time token guarding the autofill save handoff (review finding #1:
  * getLaunchedFromPackage is API 34+, minSdk is 32). The :autofill service
  * mints a token into app-sandbox storage immediately before launching
  * MainActivity; the activity consumes it. Other apps can neither read the

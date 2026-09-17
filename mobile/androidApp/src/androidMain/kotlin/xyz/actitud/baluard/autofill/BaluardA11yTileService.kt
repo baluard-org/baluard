@@ -31,7 +31,7 @@ class BaluardA11yTileService : TileService() {
         val intent = android.content.Intent(this, A11yTileTrampoline::class.java)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         // API 34 requires the PendingIntent overload for targetSdk 34+ apps
-        // (Agy finding #2); older releases keep the Intent variant.
+        // (review finding #2); older releases keep the Intent variant.
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val pending = android.app.PendingIntent.getActivity(
                 this,
