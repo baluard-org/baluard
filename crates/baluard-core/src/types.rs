@@ -310,6 +310,19 @@ impl UriMatchStrategy {
 #[cfg(feature = "uri-match")]
 impl UriMatchStrategy {
     pub fn matches(&self, uri: &str, target: &str) -> bool {
+        self.matches_with(uri, target, &[])
+    }
+
+    /// Domain matching with user-defined equivalent domain groups on top of
+    /// the bundled global list (Bitwarden equivalent-domains parity). Custom
+    /// groups widen Domain-strategy matches only; every other strategy and
+    /// all fail-closed rules are unchanged.
+    pub fn matches_with(
+        &self,
+        uri: &str,
+        target: &str,
+        custom_groups: &[Vec<String>],
+    ) -> bool {
         if self == &UriMatchStrategy::Never {
             return false;
         }
@@ -324,7 +337,7 @@ impl UriMatchStrategy {
             UriMatchStrategy::StartsWith => starts_with_matches(uri, target),
             UriMatchStrategy::Exact => exact_matches(uri, target),
             UriMatchStrategy::Host => host_matches(uri, target),
-            UriMatchStrategy::Domain => domain_matches(uri, target),
+            UriMatchStrategy::Domain => domain_matches(uri, target, custom_groups),
             UriMatchStrategy::Never => false,
         }
     }
@@ -463,10 +476,14 @@ fn host_matches(uri: &str, target: &str) -> bool {
 }
 
 #[cfg(feature = "uri-match")]
-fn domain_matches(uri: &str, target: &str) -> bool {
+fn domain_matches(uri: &str, target: &str, custom_groups: &[Vec<String>]) -> bool {
     match (uri_host(uri), uri_host(target)) {
         (Some(a), Some(b)) => match (registrable_domain(&a), registrable_domain(&b)) {
-            (Some(ra), Some(rb)) => ra == rb || equivalence::same_group(&ra, &rb),
+            (Some(ra), Some(rb)) => {
+                ra == rb
+                    || equivalence::same_group(&ra, &rb)
+                    || custom_groups_match(custom_groups, &ra, &rb)
+            }
             // A host that IS a public suffix (or unknown) has no registrable
             // domain; fall back to whole-host equality rather than matching
             // two unrelated single-label hosts.
@@ -475,6 +492,26 @@ fn domain_matches(uri: &str, target: &str) -> bool {
         },
         _ => false,
     }
+}
+
+/// True when one user-defined equivalent group covers BOTH registrable
+/// domains (plan: user custom equivalent domains). Entries fold to their
+/// own registrable domain, so a group entry portal.mybank.org covers
+/// mybank.org. Empty groups never match.
+fn custom_groups_match(groups: &[Vec<String>], ra: &str, rb: &str) -> bool {
+    groups.iter().any(|group| {
+        let covers = |registrable: &str| {
+            group.iter().any(|entry| {
+                // Sanitize: strip scheme/path the user may have pasted
+                // (Agy finding #6), then fold to registrable domain.
+                let bare = uri_host(entry).unwrap_or_else(|| entry.to_ascii_lowercase());
+                registrable_domain(&bare)
+                    .unwrap_or_else(|| bare)
+                    == registrable
+            })
+        };
+        covers(ra) && covers(rb)
+    })
 }
 
 #[cfg(feature = "uri-match")]
@@ -1990,6 +2027,44 @@ mod tests {
         assert!(M::Domain.matches("https://a.bbc.co.uk", "https://news.bbc.co.uk"));
         // suffix-lookalike: registrable evil.com, never matches bbc.co.uk
         assert!(!M::Domain.matches("https://bbc.co.uk", "https://bbc.co.uk.evil.com"));
+    }
+
+    #[test]
+    fn domain_strategy_custom_equivalent_groups() {
+        // User-defined groups (Bitwarden equivalent-domains parity):
+        // portal.mybank.org <-> mybank.com declared equivalent.
+        let groups: Vec<Vec<String>> =
+            vec![vec!["portal.mybank.org".into(), "mybank.com".into()]];
+        assert!(M::Domain.matches_with(
+            "https://portal.mybank.org",
+            "https://mybank.com/login",
+            &groups
+        ));
+        // Entries fold to their registrable domain: a group entry subdomain
+        // covers the bare domain.
+        assert!(M::Domain.matches_with(
+            "https://mybank.com",
+            "https://secure.portal.mybank.org",
+            &groups
+        ));
+        // Custom groups never leak across schemes...
+        assert!(!M::Domain.matches_with(
+            "androidapp://com.mybank.app",
+            "https://mybank.com",
+            &groups
+        ));
+        // ...and a lookalike host is not covered by the group entry.
+        assert!(!M::Domain.matches_with(
+            "https://evil-mybank.org",
+            "https://portal.mybank.org",
+            &groups
+        ));
+        // Without groups, behavior identical to before.
+        assert!(!M::Domain.matches_with(
+            "https://portal.mybank.org",
+            "https://mybank.com/login",
+            &[]
+        ));
     }
 
     #[test]
