@@ -632,9 +632,15 @@ impl VaultState {
     ///
     /// Decrypts LOGIN ciphers only (never trash, never archived), matches
     /// each stored URI against `target` using that URI's own strategy, and
-    /// returns a JSON array of `{id, name, username, favorite}` ranked
-    /// favorites-first then by name. Passwords and TOTP seeds NEVER appear
-    /// in the output; the caller fetches the chosen cipher separately.
+    /// returns a JSON object `{matches: [...], app_suggestions: [...]}`
+    /// ranked favorites-first then by name. Passwords and TOTP seeds NEVER
+    /// appear in the output; the caller fetches the chosen cipher separately.
+    ///
+    /// `app_suggestions` carries the path-B app-to-web flow: for
+    /// `androidapp://` targets with `suggest_app_logins` enabled, web-saved
+    /// logins whose registrable domain equals a package-derived candidate
+    /// surface here (untrusted) or flow straight into `matches` (trusted
+    /// pairs). Rejected pairs never surface.
     pub async fn autofill_query(&self, target: &str) -> Result<String, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
@@ -642,16 +648,20 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".into());
         }
 
-        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
+        let settings = handle.get_settings().ok();
         // User-defined equivalent domain groups (Bitwarden parity): loaded
         // from vault settings, consulted by the Domain strategy in addition
         // to the bundled global list.
-        let custom_groups: Vec<Vec<String>> = handle
-            .get_settings()
-            .ok()
-            .and_then(|s| s.custom_equivalent_domains)
+        let custom_groups: Vec<Vec<String>> = settings
+            .as_ref()
+            .and_then(|s| s.custom_equivalent_domains.clone())
             .unwrap_or_default();
+        let app_ctx = app_match_context(settings.as_ref(), target);
+
+        let metas = handle.list_cipher_meta().map_err(|e| format!("{e}"))?;
         let mut matched: Vec<serde_json::Value> = Vec::new();
+        // (entry json, web registrable domains) for suggestion assembly.
+        let mut web_entries: Vec<(serde_json::Value, Vec<String>)> = Vec::new();
         for meta in &metas {
             if meta.cipher_type != baluard_core::types::CipherType::Login {
                 continue;
@@ -667,15 +677,27 @@ impl VaultState {
                 lu.match_strategy
                     .matches_with(&lu.uri, target, &custom_groups)
             });
-            if !hit {
-                continue;
-            }
-            matched.push(serde_json::json!({
+            let web_regs: Vec<String> = login
+                .uris
+                .iter()
+                .filter_map(|lu| baluard_core::types::web_uri_registrable(&lu.uri))
+                .collect();
+            // Trusted pair (path B): a web entry whose registrable domain
+            // was trusted for this package fills like a direct match.
+            let trusted_hit = web_regs
+                .iter()
+                .any(|r| app_ctx.as_ref().is_some_and(|c| c.trusted.contains(r)));
+            let entry = serde_json::json!({
                 "id": meta.id.to_string(),
                 "name": meta.name,
                 "username": meta.username,
                 "favorite": meta.favorite,
-            }));
+            });
+            if hit || trusted_hit {
+                matched.push(entry);
+            } else if !web_regs.is_empty() {
+                web_entries.push((entry, web_regs));
+            }
         }
         matched.sort_by(|a, b| {
             let fav = |v: &serde_json::Value| v["favorite"].as_bool().unwrap_or(false);
@@ -686,7 +708,78 @@ impl VaultState {
                     .cmp(b["name"].as_str().unwrap_or(""))
             })
         });
-        serde_json::to_string(&matched).map_err(|e| format!("serialization: {e}"))
+        let matched_ids: Vec<&str> = matched
+            .iter()
+            .filter_map(|v| v["id"].as_str())
+            .collect();
+        let app_suggestions: Vec<serde_json::Value> = match &app_ctx {
+            Some(ctx) => ctx
+                .candidates
+                .iter()
+                .filter(|c| !ctx.trusted.contains(c) && !ctx.rejected.contains(c))
+                .filter_map(|c| {
+                    let m: Vec<&serde_json::Value> = web_entries
+                        .iter()
+                        .filter(|(_, regs)| regs.iter().any(|r| r == c))
+                        .map(|(j, _)| j)
+                        .filter(|j| !matched_ids.contains(&j["id"].as_str().unwrap_or("")))
+                        .collect();
+                    (!m.is_empty()).then(|| {
+                        serde_json::json!({"domain": c, "matches": m})
+                    })
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        serde_json::to_string(
+            &serde_json::json!({"matches": matched, "app_suggestions": app_suggestions}),
+        )
+        .map_err(|e| format!("serialization: {e}"))
+    }
+
+    /// Record a user trust decision for a (package, registrable domain)
+    /// pairing (path B app-to-web matching). [trust] true records trust
+    /// (the pair's web entries fill in that app); false records rejection
+    /// (the picker never suggests the pairing again). A later decision for
+    /// the same pair overrides the earlier one. The domain folds through
+    /// the PSL before storage, so lookalike hosts cannot smuggle in.
+    pub async fn autofill_app_trust_set(
+        &self,
+        package: &str,
+        domain: &str,
+        trust: bool,
+    ) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let package = package.trim().to_ascii_lowercase();
+        if package.is_empty() || package.contains("://") || package.contains('/') {
+            return Err("Invalid package name".into());
+        }
+        let domain = baluard_core::types::web_uri_registrable(domain)
+            .ok_or("Invalid domain")?;
+        let mut settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+        let pair = baluard_core::vault::manifest::AppDomainTrust {
+            package: package.clone(),
+            domain: domain.clone(),
+        };
+        let (add, remove) = if trust {
+            (&mut settings.trusted_app_packages, &mut settings.rejected_app_packages)
+        } else {
+            (&mut settings.rejected_app_packages, &mut settings.trusted_app_packages)
+        };
+        let list = add.get_or_insert_with(Vec::new);
+        list.retain(|p| p.package != package || p.domain != domain);
+        list.push(pair);
+        if let Some(rm) = remove.as_mut() {
+            rm.retain(|p| p.package != package || p.domain != domain);
+        }
+        // Read-modify-write against a possibly-open main process (last-
+        // write-wins file): the window is one settings field, written
+        // only on an explicit user tap. Accepted risk.
+        handle.save_settings(&settings).map_err(|e| format!("{e}"))
     }
 
     /// Get a cipher by ID. Requires vault to be unlocked for decryption.
@@ -780,6 +873,18 @@ impl VaultState {
         if let Some(v) = partial.get("custom_equivalent_domains") {
             settings.custom_equivalent_domains = serde_json::from_value(v.clone())
                 .map_err(|e| format!("Invalid custom_equivalent_domains: {e}"))?;
+        }
+        if let Some(v) = partial.get("suggest_app_logins") {
+            settings.suggest_app_logins = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid suggest_app_logins: {e}"))?;
+        }
+        if let Some(v) = partial.get("trusted_app_packages") {
+            settings.trusted_app_packages = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid trusted_app_packages: {e}"))?;
+        }
+        if let Some(v) = partial.get("rejected_app_packages") {
+            settings.rejected_app_packages = serde_json::from_value(v.clone())
+                .map_err(|e| format!("Invalid rejected_app_packages: {e}"))?;
         }
         if let Some(v) = partial.get("lang") {
             let lang = v.as_str().ok_or("lang must be a string")?;
@@ -3760,6 +3865,48 @@ fn registry_device_id(vault_path: &std::path::Path) -> String {
         }
     }
     String::new()
+}
+
+/// App-to-web matching context for a fill target (path B). Some(_) only
+/// when the setting is on AND the target is `androidapp://<package>`:
+/// trusted/rejected registrable domains for that package plus the
+/// package-derived candidates. Everything else (web targets, setting off)
+/// yields None and autofill behaves exactly as before.
+fn app_match_context(
+    settings: Option<&baluard_core::vault::manifest::VaultSettings>,
+    target: &str,
+) -> Option<AppMatchContext> {
+    let s = settings?;
+    if !s.suggest_app_logins.unwrap_or(false) {
+        return None;
+    }
+    let pkg = target.trim().to_ascii_lowercase();
+    let pkg = pkg.strip_prefix("androidapp://")?;
+    if pkg.is_empty() {
+        return None;
+    }
+    let trusted: Vec<String> = s
+        .trusted_app_packages
+        .iter()
+        .flatten()
+        .filter(|t| t.package == pkg)
+        .map(|t| t.domain.clone())
+        .collect();
+    let rejected: Vec<String> = s
+        .rejected_app_packages
+        .iter()
+        .flatten()
+        .filter(|t| t.package == pkg)
+        .map(|t| t.domain.clone())
+        .collect();
+    let candidates = baluard_core::types::app_domain_candidates(pkg);
+    Some(AppMatchContext { trusted, rejected, candidates })
+}
+
+struct AppMatchContext {
+    trusted: Vec<String>,
+    rejected: Vec<String>,
+    candidates: Vec<String>,
 }
 
 #[cfg(test)]

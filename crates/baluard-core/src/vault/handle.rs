@@ -796,6 +796,12 @@ impl VaultHandle {
                         device_names: None,
                         enrollment_policy: serde_json::from_value(v["enrollment_policy"].clone())
                             .unwrap_or(crate::vault::manifest::EnrollmentPolicy::Strict),
+                        // These post-date the legacy settings.json split: a
+                        // legacy file never carries them.
+                        custom_equivalent_domains: None,
+                        suggest_app_logins: None,
+                        trusted_app_packages: None,
+                        rejected_app_packages: None,
                     };
                     let legacy_lang = v["lang"].as_str().map(String::from);
                     (Some(enc), legacy_lang)
@@ -822,7 +828,16 @@ impl VaultHandle {
             display_name: None,
             subtitle: None,
             avatar_ext: None,
-            custom_equivalent_domains: None,
+            custom_equivalent_domains: enc_fields
+                .as_ref()
+                .and_then(|e| e.custom_equivalent_domains.clone()),
+            suggest_app_logins: enc_fields.as_ref().and_then(|e| e.suggest_app_logins),
+            trusted_app_packages: enc_fields
+                .as_ref()
+                .and_then(|e| e.trusted_app_packages.clone()),
+            rejected_app_packages: enc_fields
+                .as_ref()
+                .and_then(|e| e.rejected_app_packages.clone()),
             enrollment_policy: enc_fields
                 .as_ref()
                 .map(|e| e.enrollment_policy)
@@ -870,6 +885,10 @@ impl VaultHandle {
                 if names.is_empty() { None } else { Some(names) }
             },
             enrollment_policy: settings.enrollment_policy,
+            custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
+            suggest_app_logins: settings.suggest_app_logins,
+            trusted_app_packages: settings.trusted_app_packages.clone(),
+            rejected_app_packages: settings.rejected_app_packages.clone(),
         };
         let key = hkdf_derive::derive_settings_key(unlocked.root_key.as_bytes())
             .map_err(|e| VaultError::Metadata(format!("settings key derivation: {e}")))?;
@@ -961,6 +980,13 @@ impl VaultHandle {
             slug: settings.slug.clone(),
             device_names: Some(names),
             enrollment_policy: settings.enrollment_policy,
+            // The fold rewrite must carry every encrypted field or the
+            // migration would silently wipe them (settings.enc is the
+            // only store for these).
+            custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
+            suggest_app_logins: settings.suggest_app_logins,
+            trusted_app_packages: settings.trusted_app_packages.clone(),
+            rejected_app_packages: settings.rejected_app_packages.clone(),
         };
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
@@ -5194,6 +5220,9 @@ mod tests {
             subtitle: None,
             avatar_ext: None,
             custom_equivalent_domains: None,
+            suggest_app_logins: None,
+            trusted_app_packages: None,
+            rejected_app_packages: None,
             enrollment_policy: crate::vault::manifest::EnrollmentPolicy::Personal,
         };
         handle.save_settings(&settings).unwrap();

@@ -35,6 +35,14 @@ open class StubVault(
         return "[]"
     }
 
+    override suspend fun autofillAppTrust(packageName: String, domain: String) {
+        calls += "autofillAppTrust"
+    }
+
+    override suspend fun autofillAppReject(packageName: String, domain: String) {
+        calls += "autofillAppReject"
+    }
+
     override suspend fun shouldAutoLock(): Boolean {
         calls += "shouldAutoLock"
         return shouldLock

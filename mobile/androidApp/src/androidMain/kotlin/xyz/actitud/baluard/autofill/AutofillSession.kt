@@ -34,6 +34,18 @@ object AutofillSession {
         val favorite: Boolean,
     )
 
+    /** Path-B app-to-web suggestion: an untrusted candidate domain and
+     *  the entries that would match it after the user trusts the pairing. */
+    data class AppSuggestion(
+        val domain: String,
+        val matches: List<Match>,
+    )
+
+    data class QueryResult(
+        val matches: List<Match>,
+        val suggestions: List<AppSuggestion>,
+    )
+
     private var vault: MobileVault? = null
     private var activePath: String? = null
 
@@ -117,10 +129,37 @@ object AutofillSession {
      * passwords (plan D2); the runtime enforces the shape, this parser only
      * reads id/name/username/favorite.
      */
-    suspend fun matches(target: String): List<Match> {
-        val v = vault?.takeIf { it.isUnlocked() } ?: return emptyList()
-        val raw = runCatching { v.autofillQuery(target) }.getOrNull() ?: return emptyList()
-        val arr = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
+    suspend fun matches(target: String): List<Match> = query(target).matches
+
+    /**
+     * Full query result: direct/trusted matches plus the path-B app-to-web
+     * suggestions (untrusted domain candidates with candidate entries).
+     * Suggestions are empty unless the vault setting is on and the target
+     * is `androidapp://`.
+     */
+    suspend fun query(target: String): QueryResult {
+        val v = vault?.takeIf { it.isUnlocked() } ?: return QueryResult(emptyList(), emptyList())
+        val raw = runCatching { v.autofillQuery(target) }.getOrNull()
+            ?: return QueryResult(emptyList(), emptyList())
+        val obj = runCatching { JSONObject(raw) }.getOrNull()
+            ?: return QueryResult(emptyList(), emptyList())
+        return QueryResult(
+            matches = parseMatches(obj.optJSONArray("matches")),
+            suggestions = (obj.optJSONArray("app_suggestions") ?: JSONArray())
+                .let { arr ->
+                    (0 until arr.length()).mapNotNull { i ->
+                        val s = arr.optJSONObject(i) ?: return@mapNotNull null
+                        AppSuggestion(
+                            domain = s.optString("domain"),
+                            matches = parseMatches(s.optJSONArray("matches")),
+                        )
+                    }
+                },
+        )
+    }
+
+    private fun parseMatches(arr: JSONArray?): List<Match> {
+        arr ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             Match(
@@ -129,6 +168,23 @@ object AutofillSession {
                 username = o.opt("username") as? String,
                 favorite = o.optBoolean("favorite", false),
             )
+        }
+    }
+
+    /**
+     * Record a user TRUST decision for a (package, domain) pairing:
+     * web-saved logins for the domain may then fill inside that app.
+     */
+    suspend fun trustApp(packageName: String, domain: String) {
+        vault?.takeIf { it.isUnlocked() }?.let {
+            runCatching { it.autofillAppTrust(packageName, domain) }
+        }
+    }
+
+    /** Record a user REJECTION: the picker never suggests the pairing again. */
+    suspend fun rejectApp(packageName: String, domain: String) {
+        vault?.takeIf { it.isUnlocked() }?.let {
+            runCatching { it.autofillAppReject(packageName, domain) }
         }
     }
 
