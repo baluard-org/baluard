@@ -27,6 +27,9 @@ import xyz.actitud.baluard.platform.VaultRegistry
  * a plain-Views list of matching logins; the chosen id goes back through
  * [AutofillA11yBridge] and the service types it into the target app (plan
  * D10/D12). Plain Views only, no Compose in this process (D9).
+ * Fallback picker mode (zero-match popup, plan go-to-vault parity): same
+ * list over ALL logins; the chosen entry comes back as an
+ * EXTRA_AUTHENTICATION_RESULT dataset for the framework to fill.
  */
 class AutofillActivity : FragmentActivity() {
 
@@ -37,9 +40,11 @@ class AutofillActivity : FragmentActivity() {
         const val EXTRA_TARGET_PACKAGE = "baluard.autofill.extra.TARGET_PACKAGE"
         const val MODE_DATASETS = "datasets"
         const val MODE_A11Y_PICKER = "a11y_picker"
+        const val MODE_FALLBACK_PICK = "fallback_pick"
         private const val TAG = "BaluardAutofill"
     }
 
+    private var pickerMode: String = MODE_A11Y_PICKER
     private var pickerTarget: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,14 +64,16 @@ class AutofillActivity : FragmentActivity() {
 
         val mode = intent?.getStringExtra(EXTRA_MODE) ?: MODE_DATASETS
         val target = intent?.getStringExtra(EXTRA_TARGET)
+        android.util.Log.i("BaluardA11yDbg", "activity onCreate mode=$mode target=$target")
         if (target == null) {
             finish()
             return
         }
 
-        if (mode == MODE_A11Y_PICKER) {
+        if (mode == MODE_A11Y_PICKER || mode == MODE_FALLBACK_PICK) {
+            pickerMode = mode
             pickerTarget = target
-            startA11yPickerFlow(target)
+            startPickerFlow(target, all = mode == MODE_FALLBACK_PICK)
             return
         }
 
@@ -101,6 +108,7 @@ class AutofillActivity : FragmentActivity() {
         status.text = t("autofill.unlockHint")
         unlockThen(path) {
             AutofillSession.scope.launch {
+                android.util.Log.i("BaluardA11yDbg", "session unlocked, building response")
                 val response = AutofillResponseBuilder.filledResponse(
                     applicationContext,
                     fields,
@@ -110,6 +118,7 @@ class AutofillActivity : FragmentActivity() {
                     InlineStyle(AutofillInlineCache.specs, AutofillInlineCache.maxCount)
                         .takeIf { AutofillInlineCache.specs.isNotEmpty() },
                 ) ?: AutofillResponseBuilder.saveOnlyResponse(applicationContext, fields, target)
+                android.util.Log.i("BaluardA11yDbg", "response built, delivering")
                 runOnUiThread { deliverDatasetResponse(response) }
             }
         }
@@ -139,6 +148,7 @@ class AutofillActivity : FragmentActivity() {
                         failOnUiThread(t("autofill.unlockFailed"))
                         return@launch
                     }
+                    android.util.Log.i("BaluardA11yDbg", "session unlocked")
                     runOnUiThread { onUnlocked() }
                 }
             },
@@ -150,51 +160,49 @@ class AutofillActivity : FragmentActivity() {
         )
     }
 
-    // ── A11Y picker mode (Phase 6.5 tile flow, plan D10/D12) ──
+    // ── Picker modes (Phase 6.5 tile flow + zero-match fallback) ──
 
-    private fun startA11yPickerFlow(target: String) {
+    private fun startPickerFlow(target: String, all: Boolean) {
         AutofillSession.scope.launch {
             if (AutofillSession.ensureOpen()) {
                 // Session still inside its auto-lock window: no prompt.
-                runOnUiThread { showPicker(target) }
+                runOnUiThread { showList(target, all) }
             } else {
                 val path = VaultRegistry.loadActiveVault()
                 if (path == null) {
                     failOnUiThread(t("autofill.openAppToSetup"))
                     return@launch
                 }
-                runOnUiThread { unlockThen(path) { showPicker(target) } }
+                runOnUiThread { unlockThen(path) { showList(target, all) } }
             }
         }
     }
 
-    /** Plain-Views list of matching logins; selection rides the bridge. */
-    private fun showPicker(target: String) {
+    /**
+     * Plain-Views login list. [all] false = only entries matching the fill
+     * target (a11y tile flow); true = every login (zero-match fallback).
+     * A11Y selection rides the bridge; fallback selection returns a dataset
+     * response for the framework.
+     */
+    private fun showList(target: String, all: Boolean) {
         AutofillSession.scope.launch {
-            val matches = AutofillSession.matches(target)
+            val matches = if (all) AutofillSession.logins() else AutofillSession.matches(target)
             runOnUiThread {
                 statusView().visibility = View.GONE
                 findViewById<View>(R.id.autofill_progress).visibility = View.GONE
                 findViewById<View>(R.id.autofill_picker_scroll).visibility = View.VISIBLE
                 val list = findViewById<LinearLayout>(R.id.autofill_picker_list)
-                list.visibility = View.VISIBLE
                 if (matches.isEmpty()) {
                     list.addView(rowText(t("a11y.noMatches")))
-                } else {
-                    for (match in matches) {
-                        list.addView(
-                            entryRow(
-                                title = match.name,
-                                subtitle = match.username,
-                                onClick = {
-                                    AutofillA11yBridge.startPendingFill(
-                                        AutofillA11yBridge.PendingFill(match.id, target, targetPackage()),
-                                    )
-                                    finish()
-                                },
-                            ),
-                        )
-                    }
+                }
+                for (match in matches) {
+                    list.addView(
+                        entryRow(
+                            title = match.name,
+                            subtitle = match.username,
+                            onClick = { onPicked(target, all, match) },
+                        ),
+                    )
                 }
                 list.addView(
                     rowText(t("common.cancel")).apply {
@@ -203,6 +211,35 @@ class AutofillActivity : FragmentActivity() {
                     },
                 )
             }
+        }
+    }
+
+    private fun onPicked(target: String, all: Boolean, match: AutofillSession.Match) {
+        if (pickerMode == MODE_A11Y_PICKER) {
+            // Tile flow: hand the cipher id to the service via the bridge;
+            // the service types it into the target app.
+            AutofillA11yBridge.startPendingFill(
+                AutofillA11yBridge.PendingFill(match.id, target, targetPackage()),
+            )
+            finish()
+            return
+        }
+        // Fallback flow: build the response for the picked entry, copy its
+        // TOTP to the clipboard, and return it through
+        // EXTRA_AUTHENTICATION_RESULT.
+        AutofillSession.scope.launch {
+            val ids = intent?.getParcelableArrayListExtra<AutofillId>(EXTRA_IDS)
+            val fields = AutofillResponseBuilder.TargetFields(
+                usernameId = ids?.getOrNull(0),
+                passwordId = ids?.getOrNull(1),
+            )
+            val response = AutofillResponseBuilder.singleMatchResponse(applicationContext, fields, match)
+            if (response == null) {
+                failOnUiThread(t("autofill.unlockFailed"))
+                return@launch
+            }
+            AutofillResponseBuilder.copyTotpFor(applicationContext, match)
+            runOnUiThread { deliverDatasetResponse(response) }
         }
     }
 
@@ -244,6 +281,7 @@ class AutofillActivity : FragmentActivity() {
     // ── Dataset-mode result delivery ──
 
     private fun deliverDatasetResponse(response: android.service.autofill.FillResponse) {
+        android.util.Log.i("BaluardA11yDbg", "delivering dataset response via setResult")
         val result = Intent().putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, response)
         setResult(RESULT_OK, result)
         finish()

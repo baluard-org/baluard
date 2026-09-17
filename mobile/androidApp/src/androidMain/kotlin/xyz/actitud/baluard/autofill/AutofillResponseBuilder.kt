@@ -30,7 +30,7 @@ data class InlineStyle(val specs: List<InlinePresentationSpec>, val maxCount: In
 /**
  * Shared FillResponse construction for the service (direct path, session
  * already unlocked) and [AutofillActivity] (post-biometric path). One builder,
- * one presentation layout, identical save-info on every path (plan D7/D8).
+ * one presentation layout, save-info only where capture makes sense.
  *
  * Dataset shape (Agy review round 2): Chromium's native 3P autofill renderer
  * (Brave/Chrome 135+) only surfaces PER-FIELD presentations bound by
@@ -51,7 +51,8 @@ object AutofillResponseBuilder {
      * NOT rendered by Chromium's native path, so auth is a PER-DATASET
      * "Unlock Baluard" dataset: presentations-only fields (no values) plus
      * Dataset.setAuthentication pointing at [AutofillActivity], which runs
-     * the biometric unlock and returns the real filled response.
+     * the biometric unlock and returns the real filled response. No SaveInfo
+     * here: nothing has been submitted yet (device-pass finding).
      */
     fun authenticationResponse(context: Context, fields: TargetFields, target: String): FillResponse {
         val intent = Intent(context, AutofillActivity::class.java).apply {
@@ -82,13 +83,8 @@ object AutofillResponseBuilder {
             Dataset.Builder(views)
         }
 
-        // NO SaveInfo on the auth response (device-pass finding): Bitwarden's
-        // working auth dataset carries none, and a SaveInfo bound to
-        // value-less fields is the remaining delta between ours (invisible)
-        // and theirs (renders). Save capture lives on the filled/save-only
-        // responses instead.
         return FillResponse.Builder()
-            .addDataset(dataset.setId("baluard-unlock").setAuthentication(pending.intentSender).build())
+            .addDataset(dataset.setAuthentication(pending.intentSender).build())
             .build()
     }
 
@@ -97,15 +93,17 @@ object AutofillResponseBuilder {
      * field carries value + presentations bound to its autofill id. When
      * [inline] carries IME specs, the fields ALSO carry a keyboard chip
      * (never instead of the menu row); unsupported IMEs silently render the
-     * menu only. Returns null when the query yielded nothing, in which case
-     * the caller falls back to a save-only response so on-save capture still
-     * works.
+     * menu only. A final "Open Baluard" dataset is always appended
+     * (Bitwarden's go-to-vault parity): zero-match or wrong-match pages keep
+     * a one-tap path to the app. Returns null only when the query yielded
+     * nothing, in which case the caller falls back to [saveOnlyResponse].
      */
     suspend fun filledResponse(
         context: Context,
         fields: TargetFields,
         target: String,
         inline: InlineStyle? = null,
+        ignored: List<AutofillId> = emptyList(),
     ): FillResponse? {
         val matches = AutofillSession.matches(target)
         if (matches.isEmpty()) return null
@@ -119,7 +117,7 @@ object AutofillResponseBuilder {
             val (username, password) = AutofillSession.credential(match.id) ?: return@forEachIndexed
             val chip = inline?.let { inlineChipOrNull(context, it, index, match.name, username) }
             val views = datasetPresentation(context, match.name, username)
-            val ds = Dataset.Builder()
+            val ds = Dataset.Builder().setId("fill-" + match.id)
             var hasValue = false
 
             fun addField(id: AutofillId, value: String) {
@@ -149,27 +147,150 @@ object AutofillResponseBuilder {
             // Dataset.build() throws IllegalStateException with zero field
             // values (Agy finding #3): skip datasets that would be empty.
             if (hasValue) {
-                builder.addDataset(ds.setId("baluard-fill-$index").build())
+                builder.addDataset(ds.setId("fill-" + match.id).build())
             }
         }
-        return builder.setSaveInfo(saveInfo(fields)).build()
+
+        builder.addDataset(openBaluardDataset(context, fields, target).build())
+        return applyIgnored(builder.setSaveInfo(saveInfo(fields)), ignored).build()
     }
 
     /**
-     * Empty-but-saveable response: keeps on-save capture alive when nothing
-     * matches (plan D8: SaveInfo with FLAG_SAVE_ON_ALL_VIEWS_INVISIBLE, or
-     * onSaveRequest never fires once SPAs destroy the form).
+     * Zero-match fallback: save capture (SaveInfo) plus an "Open Baluard"
+     * auth dataset that opens the in-app picker - a wrong-match page is a
+     * one-tap recovery instead of a dead end (Bitwarden go-to-vault parity).
      */
-    fun saveOnlyResponse(context: Context, fields: TargetFields, target: String): FillResponse =
-        FillResponse.Builder()
+    fun saveOnlyResponse(
+        context: Context,
+        fields: TargetFields,
+        target: String,
+        ignored: List<AutofillId> = emptyList(),
+    ): FillResponse {
+        val builder = FillResponse.Builder()
+            .addDataset(openBaluardDataset(context, fields, target).build())
+        return applyIgnored(builder.setSaveInfo(saveInfo(fields)), ignored).build()
+    }
+
+    /**
+     * Response for one manually picked entry (fallback picker flow): the
+     * picker lists all logins, the chosen one is built here and returned via
+     * EXTRA_AUTHENTICATION_RESULT.
+     */
+    suspend fun singleMatchResponse(
+        context: Context,
+        fields: TargetFields,
+        match: AutofillSession.Match,
+        inline: InlineStyle? = null,
+    ): FillResponse? {
+        val (username, password) = AutofillSession.credential(match.id) ?: return null
+        val chip = inline?.let { inlineChipOrNull(context, it, 0, match.name, username) }
+        val views = datasetPresentation(context, match.name, username)
+        val ds = Dataset.Builder().setId("fill-" + match.id)
+        var hasValue = false
+
+        fun addField(id: AutofillId, value: String) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val presentations = Presentations.Builder()
+                    .setMenuPresentation(views)
+                    .setDialogPresentation(views)
+                    .apply { chip?.let { setInlinePresentation(it) } }
+                    .build()
+                ds.setField(
+                    id,
+                    Field.Builder()
+                        .setValue(AutofillValue.forText(value))
+                        .setPresentations(presentations)
+                        .build(),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                ds.setValue(id, AutofillValue.forText(value), views)
+                chip?.let { @Suppress("DEPRECATION") ds.setInlinePresentation(it) }
+            }
+            hasValue = true
+        }
+
+        if (fields.usernameId != null && username != null) addField(fields.usernameId, username)
+        if (fields.passwordId != null && password != null) addField(fields.passwordId, password)
+        if (!hasValue) return null
+        return FillResponse.Builder()
+            .addDataset(ds.setId("fill-" + match.id).build())
             .setSaveInfo(saveInfo(fields))
             .build()
+    }
 
-    private fun saveInfo(fields: TargetFields): SaveInfo {
-        val builder = SaveInfo.Builder(
-            SaveInfo.SAVE_DATA_TYPE_PASSWORD,
-            listOfNotNull(fields.usernameId, fields.passwordId).toTypedArray(),
+    /**
+     * TOTP auto-copy for the manually-picked entry (Bitwarden parity): after
+     * selection, the entry's code goes to the clipboard with a toast.
+     */
+    suspend fun copyTotpFor(context: Context, match: AutofillSession.Match) {
+        AutofillSession.totpCode(match.id)?.let { code ->
+            xyz.actitud.baluard.platform.copyToClipboard(code)
+            android.widget.Toast.makeText(
+                context,
+                t("a11y.totpCopied"),
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    /**
+     * "Open Baluard" auth dataset: presentations-only fields plus
+     * Dataset.setAuthentication into the fallback picker. Tapping it never
+     * fills; it opens Baluard's login list.
+     */
+    private fun openBaluardDataset(
+        context: Context,
+        fields: TargetFields,
+        target: String,
+    ): Dataset.Builder {
+        val views = openBaluardPresentation(context)
+        val intent = Intent(context, AutofillActivity::class.java).apply {
+            putExtra(AutofillActivity.EXTRA_MODE, AutofillActivity.MODE_FALLBACK_PICK)
+            putExtra(AutofillActivity.EXTRA_TARGET, target)
+            putParcelableArrayListExtra(AutofillActivity.EXTRA_IDS, ArrayList(fields.ids.toList()))
+        }
+        val pending = PendingIntent.getActivity(
+            context,
+            1002,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val dataset = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val presentations = Presentations.Builder().setMenuPresentation(views).build()
+            val b = Dataset.Builder()
+            for (id in fields.ids) {
+                b.setField(id, Field.Builder().setPresentations(presentations).build())
+            }
+            b
+        } else {
+            @Suppress("DEPRECATION")
+            Dataset.Builder(views)
+        }
+        return dataset.setAuthentication(pending.intentSender)
+    }
+
+    private fun applyIgnored(
+        builder: FillResponse.Builder,
+        ignored: List<AutofillId>,
+    ): FillResponse.Builder {
+        // setIgnoredIds is API 33+; below that the framework manages request
+        // churn itself.
+        if (ignored.isEmpty() || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return builder
+        return builder.setIgnoredIds(*ignored.toTypedArray())
+    }
+
+    /** Password required; username optional when both exist (Agy finding #4). */
+    private fun saveInfo(fields: TargetFields): SaveInfo {
+        val requiredId = fields.passwordId ?: fields.usernameId
+        val builder = requiredId?.let {
+            SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_PASSWORD, arrayOf(it))
+        } ?: SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_PASSWORD)
+        val optional = listOfNotNull(
+            fields.usernameId?.takeIf { fields.passwordId != null },
+            fields.passwordId,
+        ).toTypedArray()
+        if (optional.isNotEmpty()) builder.setOptionalIds(optional)
         return builder
             .setFlags(SaveInfo.FLAG_SAVE_ON_ALL_VIEWS_INVISIBLE)
             .build()
@@ -213,6 +334,13 @@ object AutofillResponseBuilder {
         RemoteViews(context.packageName, R.layout.autofill_dataset_item).apply {
             setTextViewText(R.id.autofill_item_title, t("login.biometricTitle"))
             setTextViewText(R.id.autofill_item_subtitle, t("autofill.unlockHint"))
+            setImageViewResource(R.id.autofill_item_icon, R.mipmap.ic_launcher)
+        }
+
+    private fun openBaluardPresentation(context: Context): RemoteViews =
+        RemoteViews(context.packageName, R.layout.autofill_dataset_item).apply {
+            setTextViewText(R.id.autofill_item_title, t("autofill.openBaluard"))
+            setTextViewText(R.id.autofill_item_subtitle, t("autofill.pickLogin"))
             setImageViewResource(R.id.autofill_item_icon, R.mipmap.ic_launcher)
         }
 

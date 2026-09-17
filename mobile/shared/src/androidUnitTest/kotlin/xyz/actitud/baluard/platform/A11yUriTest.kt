@@ -3,6 +3,7 @@ package xyz.actitud.baluard.platform
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** A11yUri: browser bar detection + normalization (plan A1). */
 class A11yUriTest {
@@ -50,6 +51,26 @@ class A11yUriTest {
         assertNull(A11yUri.fromBrowserBar("com.android.chrome:id/url_bar", "GitHub", null))
         assertNull(A11yUri.normalize("   "))
         assertNull(A11yUri.normalize(null))
+    }
+
+    @Test
+    fun browserUrlBarTableCoversExpandedSet() {
+        // Samsung Internet + Opera suffixes (device-config parity)
+        assertEquals(
+            "https://example.com",
+            A11yUri.fromBrowserBar("com.sec.android.app.sbrowser:id/location_bar_edit_text", "example.com", null),
+        )
+        assertEquals(
+            "https://example.com",
+            A11yUri.fromBrowserBar("com.opera.browser:id/url_field", " example.com ", null),
+        )
+        assertEquals(
+            "https://example.com",
+            A11yUri.fromBrowserBar("org.mozilla.firefox:id/url_bar", "example.com", null),
+        )
+        assertTrue(A11yUri.isUrlBar("com.android.chrome:id/url_bar"))
+        assertTrue(A11yUri.isUrlBar("org.mozilla.firefox:id/mozac_browser_toolbar_url_view"))
+        assertTrue(!A11yUri.isUrlBar("com.app:id/title"))
     }
 
     @Test

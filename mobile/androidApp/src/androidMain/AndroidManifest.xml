@@ -110,10 +110,13 @@
             android:name=".autofill.AutofillActivity"
             android:process=":autofill"
             android:exported="false"
-            android:noHistory="true"
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:theme="@style/Theme.Baluard.Autofill" />
+        <!-- noHistory intentionally ABSENT: the activity sets its result
+             asynchronously (fingerprint + unlock + response build); a
+             noHistory activity is destroyed on stop and the auth result
+             would never reach the autofill session. It finishes itself. -->
 
         <!-- Native lib: the Rust cdylib (libbaluard.so) is packaged per-ABI
              under jniLibs/<abi>/ by the host build (cargo-ndk or manual copy).
