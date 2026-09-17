@@ -456,4 +456,10 @@ internal val EN: Map<String, String> = mapOf(
     "settings.equivalentDomainsAdd" to "Add group",
     "settings.equivalentDomainsEmpty" to "No custom groups yet. Domains in a group autofill each other.",
     "settings.equivalentDomainsHint" to "Add groups of domains that share logins (e.g. your company portal and its public site).",
+    "settings.suggestAppLogins" to "Suggest web logins in apps",
+    "settings.suggestAppLoginsHint" to "After you trust an app once, logins saved for its website fill inside the app. You confirm every app.",
+    "settings.trustedAppsTitle" to "Trusted apps",
+    "autofill.appSuggests" to "Look like logins for",
+    "autofill.appTrust" to "Trust",
+    "autofill.appNotNow" to "Not now",
 )

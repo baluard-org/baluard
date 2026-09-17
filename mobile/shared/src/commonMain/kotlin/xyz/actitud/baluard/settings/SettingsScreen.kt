@@ -702,6 +702,111 @@ fun SettingsScreen(
                         )
                     }
 
+                    // App-to-web suggestions (path B trust-on-first-use):
+                    // web-saved logins may fill inside a native app after
+                    // the user trusts the (package, domain) pairing once.
+                    // Opt-in, default off.
+                    BaluardDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    var suggestAppLogins by remember(vaultPath) { mutableStateOf(false) }
+                    var trustedApps by remember(vaultPath) {
+                        mutableStateOf<List<Pair<String, String>>>(emptyList())
+                    }
+                    LaunchedEffect(vaultPath) {
+                        val json = runCatching { repo.getSettings(vault) }.getOrNull()
+                            ?: return@LaunchedEffect
+                        val obj = Json.parseToJsonElement(json) as? JsonObject
+                            ?: return@LaunchedEffect
+                        suggestAppLogins =
+                            (obj["suggest_app_logins"] as? JsonPrimitive)?.content == "true"
+                        trustedApps = (obj["trusted_app_packages"] as? JsonArray)?.mapNotNull { t ->
+                            val o = t as? JsonObject ?: return@mapNotNull null
+                            val p = (o["package"] as? JsonPrimitive)?.content
+                                ?: return@mapNotNull null
+                            val d = (o["domain"] as? JsonPrimitive)?.content
+                                ?: return@mapNotNull null
+                            p to d
+                        } ?: emptyList()
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = t("settings.suggestAppLogins"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                t("settings.suggestAppLoginsHint"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
+                        Switch(
+                            checked = suggestAppLogins,
+                            onCheckedChange = { on ->
+                                suggestAppLogins = on
+                                scope.launch {
+                                    repo.saveSettings(
+                                        vault,
+                                        buildJsonObject {
+                                            put("suggest_app_logins", JsonPrimitive(on))
+                                        }.toString(),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    if (suggestAppLogins && trustedApps.isNotEmpty()) {
+                        Text(
+                            t("settings.trustedAppsTitle"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        for ((index, pair) in trustedApps.withIndex()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = "${pair.first} / ${pair.second}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(onClick = {
+                                    val next = trustedApps.toMutableList().apply {
+                                        removeAt(index)
+                                    }
+                                    trustedApps = next
+                                    scope.launch {
+                                        repo.saveSettings(
+                                            vault,
+                                            buildJsonObject {
+                                                put(
+                                                    "trusted_app_packages",
+                                                    JsonArray(next.map { p ->
+                                                        buildJsonObject {
+                                                            put("package", JsonPrimitive(p.first))
+                                                            put("domain", JsonPrimitive(p.second))
+                                                        }
+                                                    }),
+                                                )
+                                            }.toString(),
+                                        )
+                                    }
+                                }) {
+                                    Text(t("common.delete"))
+                                }
+                            }
+                        }
+                    }
+
                     // Use accessibility (Phase 6.5): the quick-settings fill
                     // tile for apps that ignore normal autofill. Opt-in,
                     // default off, disclosed before enabling.

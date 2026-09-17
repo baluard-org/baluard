@@ -6,6 +6,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillManager
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -182,38 +183,127 @@ class AutofillActivity : FragmentActivity() {
 
     /**
      * Plain-Views login list. [all] false = only entries matching the fill
-     * target (a11y tile flow); true = every login (zero-match fallback).
-     * A11Y selection rides the bridge; fallback selection returns a dataset
-     * response for the framework.
+     * target (a11y tile flow); true = every login plus path-B app-to-web
+     * suggestion banners (zero-match fallback). A11Y selection rides the
+     * bridge; fallback selection returns a dataset response for the
+     * framework.
      */
     private fun showList(target: String, all: Boolean) {
         AutofillSession.scope.launch {
-            val matches = if (all) AutofillSession.logins() else AutofillSession.matches(target)
-            runOnUiThread {
-                statusView().visibility = View.GONE
-                findViewById<View>(R.id.autofill_progress).visibility = View.GONE
-                findViewById<View>(R.id.autofill_picker_scroll).visibility = View.VISIBLE
-                val list = findViewById<LinearLayout>(R.id.autofill_picker_list)
-                if (matches.isEmpty()) {
-                    list.addView(rowText(t("a11y.noMatches")))
-                }
-                for (match in matches) {
-                    list.addView(
-                        entryRow(
-                            title = match.name,
-                            subtitle = match.username,
-                            onClick = { onPicked(target, all, match) },
-                        ),
-                    )
-                }
-                list.addView(
-                    rowText(t("common.cancel")).apply {
-                        setOnClickListener { finish() }
-                        gravity = Gravity.CENTER
+            if (all) {
+                // Fallback picker: full list + untrusted app-to-web
+                // suggestions under their trust banner.
+                val result = AutofillSession.query(target)
+                val logins = AutofillSession.logins()
+                val suggestionIds = result.suggestions
+                    .flatMap { it.matches }
+                    .map { it.id }
+                    .toSet()
+                val rest = logins.filter { it.id !in suggestionIds }
+                runOnUiThread { renderList(target, rest, result.suggestions) }
+            } else {
+                val matches = AutofillSession.matches(target)
+                runOnUiThread { renderList(target, matches, emptyList()) }
+            }
+        }
+    }
+
+    private fun renderList(
+        target: String,
+        matches: List<AutofillSession.Match>,
+        suggestions: List<AutofillSession.AppSuggestion>,
+    ) {
+        statusView().visibility = View.GONE
+        findViewById<View>(R.id.autofill_progress).visibility = View.GONE
+        findViewById<View>(R.id.autofill_picker_scroll).visibility = View.VISIBLE
+        val list = findViewById<LinearLayout>(R.id.autofill_picker_list)
+        list.removeAllViews()
+        val pkg = targetPackage()
+        // Path-B trust banners: one per untrusted candidate domain. Tapping
+        // an entry fills but records nothing; only Trust / Not-now persist
+        // a decision (trust is explicit, never implied).
+        for (suggestion in suggestions) {
+            list.addView(
+                suggestionBanner(
+                    suggestion,
+                    onTrust = {
+                        if (pkg != null) {
+                            AutofillSession.scope.launch {
+                                AutofillSession.trustApp(pkg, suggestion.domain)
+                                showList(target, all = true)
+                            }
+                        }
                     },
+                    onNotNow = {
+                        if (pkg != null) {
+                            AutofillSession.scope.launch {
+                                AutofillSession.rejectApp(pkg, suggestion.domain)
+                                showList(target, all = true)
+                            }
+                        }
+                    },
+                ),
+            )
+            for (match in suggestion.matches) {
+                list.addView(
+                    entryRow(
+                        title = match.name,
+                        subtitle = match.username,
+                        onClick = { onPicked(target, all = true, match) },
+                    ),
                 )
             }
         }
+        if (matches.isEmpty() && suggestions.isEmpty()) {
+            list.addView(rowText(t("a11y.noMatches")))
+        }
+        for (match in matches) {
+            list.addView(
+                entryRow(
+                    title = match.name,
+                    subtitle = match.username,
+                    onClick = { onPicked(target, all = true, match) },
+                ),
+            )
+        }
+        list.addView(
+            rowText(t("common.cancel")).apply {
+                setOnClickListener { finish() }
+                gravity = Gravity.CENTER
+            },
+        )
+    }
+
+    /** Trust banner for one candidate domain: informative line plus
+     *  explicit Trust / Not-now actions. */
+    private fun suggestionBanner(
+        suggestion: AutofillSession.AppSuggestion,
+        onTrust: () -> Unit,
+        onNotNow: () -> Unit,
+    ): View {
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 32, 48, 16)
+        }
+        wrap.addView(TextView(this).apply {
+            text = "${t("autofill.appSuggests")} ${suggestion.domain}"
+            textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        buttons.addView(Button(this).apply {
+            text = t("autofill.appTrust")
+            setOnClickListener { onTrust() }
+        })
+        buttons.addView(Button(this).apply {
+            text = t("autofill.appNotNow")
+            setOnClickListener { onNotNow() }
+        })
+        wrap.addView(buttons)
+        return wrap
     }
 
     private fun onPicked(target: String, all: Boolean, match: AutofillSession.Match) {

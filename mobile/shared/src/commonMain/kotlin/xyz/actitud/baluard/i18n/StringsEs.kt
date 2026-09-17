@@ -461,4 +461,10 @@ internal val ES: Map<String, String> = mapOf(
     "settings.equivalentDomainsAdd" to "Añadir grupo",
     "settings.equivalentDomainsEmpty" to "Aún no hay grupos personalizados. Los dominios de un grupo se autocompletan entre sí.",
     "settings.equivalentDomainsHint" to "Añade grupos de dominios que comparten credenciales (p. ej. el portal de tu empresa y su sitio público).",
+    "settings.suggestAppLogins" to "Sugerir credenciales web en apps",
+    "settings.suggestAppLoginsHint" to "Tras confiar en una app una vez, las credenciales guardadas de su sitio web se autocompletan dentro de la app. Confirmas cada app.",
+    "settings.trustedAppsTitle" to "Apps de confianza",
+    "autofill.appSuggests" to "Parecen credenciales para",
+    "autofill.appTrust" to "Confiar",
+    "autofill.appNotNow" to "Ahora no",
 )

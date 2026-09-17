@@ -432,6 +432,67 @@ fn registrable_domain(host: &str) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+/// Registrable domain of a WEB uri (None for the androidapp:// scheme,
+/// unparseable input, or public-suffix hosts). The app-to-web matcher uses
+/// this so a package-derived domain can never equal a native-app entry URI.
+#[cfg(feature = "uri-match")]
+pub fn web_uri_registrable(raw: &str) -> Option<String> {
+    if is_androidapp(raw) {
+        return None;
+    }
+    let host = uri_host(raw)?;
+    registrable_domain(&host)
+}
+
+/// Common TLD labels accepted as the top label of a reversed package pair.
+/// A generation hint only: candidates still face the PSL registrable check
+/// and the user's explicit trust confirmation in the picker.
+#[cfg(feature = "uri-match")]
+const APP_TLD_HINTS: &[&str] = &[
+    "com", "org", "net", "int", "edu", "gov", "mil", "io", "dev", "app",
+    "ai", "co", "me", "tv", "xyz", "info", "cloud", "site", "online",
+    "tech", "store", "us", "ca", "mx", "br", "ar", "cl", "pe", "uk", "de",
+    "fr", "es", "pt", "it", "nl", "be", "ch", "at", "pl", "cz", "se", "no",
+    "dk", "fi", "ie", "gr", "ru", "ua", "tr", "jp", "kr", "cn", "hk", "tw",
+    "sg", "in", "au", "nz", "za", "il", "ae", "sa", "id", "th", "vn", "ph",
+    "my", "ng", "ke", "eg",
+];
+
+/// Reverse-label web-domain candidates for an Android package name
+/// (app-to-web matching, path B trust-on-first-use). `com.mybank.app`
+/// yields `mybank.com`: adjacent label pairs where the lower label is a
+/// known TLD and the pair is exactly a registrable domain per the PSL
+/// (rejects `com.br`-style public suffixes). Candidates are hints that
+/// widen what the PICKER may show after user trust; they never auto-match
+/// and never cross the androidapp:// scheme boundary in the matcher.
+#[cfg(feature = "uri-match")]
+pub fn app_domain_candidates(package: &str) -> Vec<String> {
+    let labels: Vec<String> = package
+        .split('.')
+        .map(|l| l.trim().to_ascii_lowercase())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if labels.len() < 2 {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = Vec::new();
+    for i in 0..labels.len() - 1 {
+        if !APP_TLD_HINTS.contains(&labels[i].as_str()) {
+            continue;
+        }
+        let cand = format!("{}.{}", labels[i + 1], labels[i]);
+        // Exactly a registrable domain: public-suffix pairs (com.br) and
+        // unknown-TLD guesses (app.mybank) fail this check.
+        if registrable_domain(&cand).as_deref() == Some(cand.as_str()) && !out.contains(&cand) {
+            out.push(cand);
+        }
+        if out.len() == 3 {
+            break;
+        }
+    }
+    out
+}
+
 /// Scheme + normalized authority + path/query. Lowercases scheme and host,
 /// strips default ports, collapses the root path to a trailing slash. None
 /// when the string carries no parseable authority (or is a bare host, which
@@ -2127,6 +2188,45 @@ mod tests {
         // Same-scheme pairs keep matching.
         assert!(M::Host.matches("androidapp://com.example", "androidapp://com.example"));
         assert!(M::Domain.matches("https://com.example", "https://www.com.example"));
+    }
+
+    #[test]
+    fn app_candidates_reverse_labels() {
+        use super::app_domain_candidates;
+        assert_eq!(app_domain_candidates("com.mybank.app"), vec!["mybank.com"]);
+        assert_eq!(app_domain_candidates("com.github.android"), vec!["github.com"]);
+        // br.com.mybank.app: com.br is a public suffix, app.mybank fails the
+        // TLD hint; only the real registrable survives.
+        assert_eq!(app_domain_candidates("br.com.mybank.app"), vec!["mybank.com"]);
+    }
+
+    #[test]
+    fn app_candidates_reject_garbage() {
+        use super::app_domain_candidates;
+        // Too short, empty, unknown TLDs.
+        assert!(app_domain_candidates("mybank").is_empty());
+        assert!(app_domain_candidates("").is_empty());
+        // First label not a known TLD: no valid pair.
+        assert!(app_domain_candidates("mybank.weirdtld").is_empty());
+        // com.weirdtld legitimately yields the com pair.
+        assert_eq!(app_domain_candidates("com.weirdtld"), vec!["weirdtld.com"]);
+        // org.mybank.weirdtld still yields the valid org pair.
+        assert_eq!(app_domain_candidates("org.mybank.weirdtld"), vec!["mybank.org"]);
+        // Deduped, capped.
+        let c = app_domain_candidates("com.example.com");
+        assert_eq!(c, vec!["example.com"]);
+    }
+
+    #[test]
+    fn web_registrable_rejects_app_scheme() {
+        use super::web_uri_registrable;
+        assert!(web_uri_registrable("androidapp://com.mybank.app").is_none());
+        assert_eq!(
+            web_uri_registrable("https://login.mybank.com/signin"),
+            Some("mybank.com".into())
+        );
+        assert_eq!(web_uri_registrable("mybank.com"), Some("mybank.com".into()));
+        assert!(web_uri_registrable("not a host").is_none());
     }
 
     #[test]

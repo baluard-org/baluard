@@ -863,6 +863,10 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -907,6 +911,10 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_add_cipher(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_archive_cipher(`ptr`: Pointer,`id`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_autofill_app_reject(`ptr`: Pointer,`package`: RustBuffer.ByValue,`domain`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_autofill_app_trust(`ptr`: Pointer,`package`: RustBuffer.ByValue,`domain`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_autofill_query(`ptr`: Pointer,`target`: RustBuffer.ByValue,
     ): Long
@@ -1196,6 +1204,10 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_app_reject(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_app_trust(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_query(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_create_folder(
@@ -1377,7 +1389,13 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher() != 4306.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_query() != 15695.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_app_reject() != 56312.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_app_trust() != 12209.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_autofill_query() != 51395.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_create_folder() != 29428.toShort()) {
@@ -2439,11 +2457,26 @@ public interface MobileVaultInterface {
     suspend fun `archiveCipher`(`id`: kotlin.String)
     
     /**
+     * Record a user REJECTION for a (package, domain) pairing: the picker
+     * never suggests the pairing again.
+     */
+    suspend fun `autofillAppReject`(`package`: kotlin.String, `domain`: kotlin.String)
+    
+    /**
+     * Record a user TRUST decision for a (package, domain) pairing
+     * (path B app-to-web matching). Web-saved logins for `domain` may
+     * then fill inside the native app `package`.
+     */
+    suspend fun `autofillAppTrust`(`package`: kotlin.String, `domain`: kotlin.String)
+    
+    /**
      * Autofill credential query (Phase 6, plan D1/D2/D4). Match vault
      * logins against a fill target: `https://...` for web fills,
-     * `androidapp://com.pkg` for native app fills. Returns a JSON array of
-     * `{id, name, username, favorite}` ranked favorites-first; passwords
-     * NEVER cross this boundary (fetch the chosen cipher via `get_cipher`).
+     * `androidapp://com.pkg` for native app fills. Returns a JSON object
+     * `{matches: [...], app_suggestions: [{domain, matches}]}` ranked
+     * favorites-first; passwords NEVER cross this boundary (fetch the
+     * chosen cipher via `get_cipher`). `app_suggestions` carries the
+     * path-B app-to-web flow (empty unless suggest_app_logins is on).
      */
     suspend fun `autofillQuery`(`target`: kotlin.String): kotlin.String
     
@@ -2825,11 +2858,66 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
+     * Record a user REJECTION for a (package, domain) pairing: the picker
+     * never suggests the pairing again.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `autofillAppReject`(`package`: kotlin.String, `domain`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_autofill_app_reject(
+                thisPtr,
+                FfiConverterString.lower(`package`),FfiConverterString.lower(`domain`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+        
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Record a user TRUST decision for a (package, domain) pairing
+     * (path B app-to-web matching). Web-saved logins for `domain` may
+     * then fill inside the native app `package`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `autofillAppTrust`(`package`: kotlin.String, `domain`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_autofill_app_trust(
+                thisPtr,
+                FfiConverterString.lower(`package`),FfiConverterString.lower(`domain`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+        
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * Autofill credential query (Phase 6, plan D1/D2/D4). Match vault
      * logins against a fill target: `https://...` for web fills,
-     * `androidapp://com.pkg` for native app fills. Returns a JSON array of
-     * `{id, name, username, favorite}` ranked favorites-first; passwords
-     * NEVER cross this boundary (fetch the chosen cipher via `get_cipher`).
+     * `androidapp://com.pkg` for native app fills. Returns a JSON object
+     * `{matches: [...], app_suggestions: [{domain, matches}]}` ranked
+     * favorites-first; passwords NEVER cross this boundary (fetch the
+     * chosen cipher via `get_cipher`). `app_suggestions` carries the
+     * path-B app-to-web flow (empty unless suggest_app_logins is on).
      */
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")

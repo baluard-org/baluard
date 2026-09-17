@@ -359,11 +359,40 @@ impl MobileVault {
 
     /// Autofill credential query (Phase 6, plan D1/D2/D4). Match vault
     /// logins against a fill target: `https://...` for web fills,
-    /// `androidapp://com.pkg` for native app fills. Returns a JSON array of
-    /// `{id, name, username, favorite}` ranked favorites-first; passwords
-    /// NEVER cross this boundary (fetch the chosen cipher via `get_cipher`).
+    /// `androidapp://com.pkg` for native app fills. Returns a JSON object
+    /// `{matches: [...], app_suggestions: [{domain, matches}]}` ranked
+    /// favorites-first; passwords NEVER cross this boundary (fetch the
+    /// chosen cipher via `get_cipher`). `app_suggestions` carries the
+    /// path-B app-to-web flow (empty unless suggest_app_logins is on).
     pub async fn autofill_query(&self, target: String) -> Result<String, BaluardError> {
         Ok(self.state.autofill_query(&target).await?)
+    }
+
+    /// Record a user TRUST decision for a (package, domain) pairing
+    /// (path B app-to-web matching). Web-saved logins for `domain` may
+    /// then fill inside the native app `package`.
+    pub async fn autofill_app_trust(
+        &self,
+        package: String,
+        domain: String,
+    ) -> Result<(), BaluardError> {
+        Ok(self
+            .state
+            .autofill_app_trust_set(&package, &domain, true)
+            .await?)
+    }
+
+    /// Record a user REJECTION for a (package, domain) pairing: the picker
+    /// never suggests the pairing again.
+    pub async fn autofill_app_reject(
+        &self,
+        package: String,
+        domain: String,
+    ) -> Result<(), BaluardError> {
+        Ok(self
+            .state
+            .autofill_app_trust_set(&package, &domain, false)
+            .await?)
     }
 
     /// Add a new cipher (JSON payload per the daemon wire format). Returns the
@@ -1294,7 +1323,7 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        let names: Vec<&str> = web
+        let names: Vec<&str> = web["matches"]
             .as_array()
             .unwrap()
             .iter()
@@ -1309,20 +1338,22 @@ mod tests {
             "unrelated entry must not match"
         );
 
-        // App target: package equality only.
+        // App target: package equality only; no suggestions without the
+        // suggest_app_logins setting.
         let app = serde_json::from_str::<serde_json::Value>(
             &vault
                 .autofill_query("androidapp://com.github.android".to_string())
                 .await
                 .unwrap(),
         )
-        .unwrap()
-        .as_array()
-        .unwrap()
-        .clone();
+        .unwrap();
         assert!(
-            app.is_empty(),
+            app["matches"].as_array().unwrap().is_empty(),
             "web URIs must never match app targets: {app:?}"
+        );
+        assert!(
+            app["app_suggestions"].as_array().unwrap().is_empty(),
+            "suggestions require the opt-in setting: {app:?}"
         );
 
         // Secret-absence invariant: passwords never in autofill output.
@@ -1348,6 +1379,133 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn autofill_app_to_web_trust_flow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let vault = create_vault(path, "pw".to_string(), "dev".to_string())
+            .await
+            .unwrap();
+        vault.unlock("pw".to_string()).await.unwrap();
+
+        let login = |name: &str, username: &str, password: &str, uris: serde_json::Value| {
+            serde_json::json!({
+                "name": name,
+                "kind": {"type": "login", "data": {
+                    "username": username,
+                    "password": password,
+                    "uris": uris,
+                    "totp_uri": null,
+                    "autofill_on_page_load": false,
+                    "password_revision_date": null,
+                    "favicon": null,
+                    "fido2_credentials": null
+                }}
+            })
+            .to_string()
+        };
+        vault
+            .add_cipher(login(
+                "MyBank",
+                "esteban",
+                "bank-secret",
+                serde_json::json!([{"uri": "https://login.mybank.com", "matchStrategy": "domain"}]),
+            ))
+            .await
+            .unwrap();
+
+        // Opt in, then query the native app: untrusted candidate surfaces
+        // as a suggestion, never as a match.
+        vault
+            .set_settings(r#"{"suggest_app_logins": true}"#.to_string())
+            .await
+            .unwrap();
+        let parse = |raw: String| serde_json::from_str::<serde_json::Value>(&raw).unwrap();
+        let q = parse(
+            vault
+                .autofill_query("androidapp://com.mybank.app".to_string())
+                .await
+                .unwrap(),
+        );
+        assert!(q["matches"].as_array().unwrap().is_empty());
+        let sug = q["app_suggestions"].as_array().unwrap();
+        assert_eq!(sug.len(), 1, "one candidate with matching entries: {q:?}");
+        assert_eq!(sug[0]["domain"], "mybank.com");
+        assert_eq!(sug[0]["matches"].as_array().unwrap().len(), 1);
+
+        // A lookalike package derives the same candidate but has its own
+        // (empty) trust scope: it can never inherit another app's trust.
+        let lookalike = parse(
+            vault
+                .autofill_query("androidapp://com.mybank.evil".to_string())
+                .await
+                .unwrap(),
+        );
+        assert!(lookalike["matches"].as_array().unwrap().is_empty());
+
+        // Reject: the pairing never surfaces again.
+        vault
+            .autofill_app_reject("com.mybank.app".to_string(), "mybank.com".to_string())
+            .await
+            .unwrap();
+        let q = parse(
+            vault
+                .autofill_query("androidapp://com.mybank.app".to_string())
+                .await
+                .unwrap(),
+        );
+        assert!(q["app_suggestions"].as_array().unwrap().is_empty());
+
+        // Trust (overrides the rejection): web entries flow into matches.
+        vault
+            .autofill_app_trust("com.mybank.app".to_string(), "mybank.com".to_string())
+            .await
+            .unwrap();
+        let q = parse(
+            vault
+                .autofill_query("androidapp://com.mybank.app".to_string())
+                .await
+                .unwrap(),
+        );
+        let names: Vec<&str> = q["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v["name"].as_str())
+            .collect();
+        assert_eq!(names, vec!["MyBank"], "trusted pair fills: {q:?}");
+        assert!(q["app_suggestions"].as_array().unwrap().is_empty());
+
+        // Trust is scoped per package: the lookalike never gets matches.
+        // It still sees the SUGGESTION (same candidate heuristic) — that is
+        // by design: the picker banner + explicit consent is the gate, and
+        // its trust decision is recorded separately from the real app's.
+        let lookalike = parse(
+            vault
+                .autofill_query("androidapp://com.mybank.evil".to_string())
+                .await
+                .unwrap(),
+        );
+        assert!(lookalike["matches"].as_array().unwrap().is_empty());
+        let lsug = lookalike["app_suggestions"].as_array().unwrap();
+        assert_eq!(lsug.len(), 1);
+        assert_eq!(lsug[0]["domain"], "mybank.com");
+
+        // Trust list survives a settings round-trip (git-synced payload).
+        let s = serde_json::from_str::<serde_json::Value>(
+            &vault.get_settings().await.unwrap(),
+        )
+        .unwrap();
+        assert_eq!(s["trusted_app_packages"][0]["domain"], "mybank.com");
+        assert_eq!(s["trusted_app_packages"][0]["package"], "com.mybank.app");
+
+        // Invalid domain folds fail closed.
+        assert!(vault
+            .autofill_app_trust("com.x".to_string(), "not a host".to_string())
+            .await
+            .is_err());
     }
 
     #[tokio::test]

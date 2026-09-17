@@ -210,6 +210,14 @@ pub enum TrashObjectType {
     Folder,
 }
 
+/// One (package, registrable domain) pairing for app-to-web matching
+/// (path B). Stored in VaultSettings trust/reject lists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppDomainTrust {
+    pub package: String,
+    pub domain: String,
+}
+
 /// Vault settings (stored encrypted in meta/settings.enc, last-write-wins).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VaultSettings {
@@ -233,6 +241,21 @@ pub struct VaultSettings {
     /// Synced via settings.enc; None = no custom groups defined.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_equivalent_domains: Option<Vec<Vec<String>>>,
+    /// App-to-web suggestion toggle (path B trust-on-first-use). When true,
+    /// native-app fills may surface web-saved logins whose registrable domain
+    /// matches a package-name-derived candidate, after the user explicitly
+    /// trusts the (package, domain) pairing. None/false = off (default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggest_app_logins: Option<bool>,
+    /// Trusted (package, registrable domain) pairs for app-to-web matching.
+    /// A trusted pair lets web-saved entries for `domain` fill inside the
+    /// native app `package`. Synced via settings.enc; auditable and per-vault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trusted_app_packages: Option<Vec<AppDomainTrust>>,
+    /// Rejected pairs: the picker never suggests these (package, domain)
+    /// pairings again. A later trust decision for the same pair overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejected_app_packages: Option<Vec<AppDomainTrust>>,
     /// Vault slug (machine-friendly identifier, e.g. "baluard-personal").
     /// Immutable after creation. Used as filesystem folder name, registry key, and git repo name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -289,6 +312,20 @@ pub struct EncryptedSettings {
     pub device_names: Option<std::collections::HashMap<String, String>>,
     /// Enrollment policy controls how a new device joins this vault.
     pub enrollment_policy: EnrollmentPolicy,
+    /// User-defined equivalent domain groups (Bitwarden parity). Each inner
+    /// vec is one group of registrable domains the user declares equivalent
+    /// for autofill matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_equivalent_domains: Option<Vec<Vec<String>>>,
+    /// App-to-web suggestion toggle (path B trust-on-first-use).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggest_app_logins: Option<bool>,
+    /// Trusted (package, registrable domain) pairs for app-to-web matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trusted_app_packages: Option<Vec<crate::vault::manifest::AppDomainTrust>>,
+    /// Rejected pairs: never suggest these pairings again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejected_app_packages: Option<Vec<crate::vault::manifest::AppDomainTrust>>,
 }
 
 /// Vault enrollment policy for new device joins.
