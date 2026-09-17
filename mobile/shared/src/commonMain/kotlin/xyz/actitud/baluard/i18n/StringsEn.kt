@@ -462,4 +462,5 @@ internal val EN: Map<String, String> = mapOf(
     "autofill.appSuggests" to "Look like logins for",
     "autofill.appTrust" to "Trust",
     "autofill.appNotNow" to "Not now",
+    "settings.rejectedAppsTitle" to "Blocked suggestions (delete to allow again)",
 )
