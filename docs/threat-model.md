@@ -63,9 +63,9 @@ The session token is a capability in the object-capability sense: it is the only
 - **Control**: IPC sockets are locked to `0600` permissions, allowing only the current user's process to connect. Peer credential verification (SO_PEERCRED on Linux, getpeereid on macOS) rejects connections from other UIDs. The Windows transport is unimplemented; a named-pipe DACL design is committed for that platform before any Windows release.
 - **R7-2 Enhancement**: After unlock, the daemon generates a random 256-bit session token. All subsequent requests for cipher data, sync operations, and device listing must include this token. Without it, the daemon rejects the request. This prevents any same-UID process from extracting secrets after unlock without having participated in the unlock exchange.
 
-### T3: JIT Autofill Hook Timing Attacks
-- **Threat**: Network attacker maps when mobile users autofill by observing quick `git fetch` spikes.
-- **Control**: JIT fetches check SHA delta against standard Git refs without revealing targeted credentials. JIT timing incorporates minor randomized network delay.
+### T3: Mobile Autofill Timing and Exfiltration Attacks
+- **Threat**: Network attacker maps when mobile users autofill credentials by observing network traffic or git fetch spikes during input focus.
+- **Control**: Mobile autofill is strictly offline-first. The autofill service resolves credentials purely from local storage on disk (`VaultState::autofill_query`) with no network calls or sync operations on the fill path.
 
 ### T4: Evicted Space Member (Offboarding Revocation)
 - **Threat**: Evicted member tries to decrypt new entries pushed to the Space.
@@ -140,6 +140,14 @@ The session token is a capability in the object-capability sense: it is the only
   * **Lock-all on unattended/device events.** Screen lock, system sleep / lid-close, and app-resign-active (Tauri window blur + OS suspend hooks) trigger an immediate lock of **every** currently-unlocked vault, not just the active one. This caps the multi-vault exposure the moment the device becomes unattended instead of waiting for each vault's idle timer. App quit locks all as well.
   * **Aggregate `mlock` budget monitoring.** Each unlocked vault mlocks its Root Key (64 B), SGK (32 B), and active Item Keys (32 B each). With N vaults the total mlocked footprint scales with N and can approach `RLIMIT_MEMLOCK` on low-default systems (older Linux defaults are 64 KB). The daemon logs total mlocked bytes across all open vaults at unlock time; `mlock` failure remains best-effort (logged, not fatal) per T6.
 - **Residual**: For the window a vault sits idle-but-unlocked, its keys are exposed to the same memory-interception vectors as a single-vault setup (T6/E). Multi-vault increases the *amount* of simultaneously-exposed material, not the strength of protection per key. Legibility control: settings surface the count of currently-unlocked vaults and their per-vault timers so the exposure is visible. See `docs/plan-git-providers-multi-vault.md` Phase 6.
+
+### T16: Mobile Autofill Process Isolation & Intent Spoofing
+- **Threat**: Untrusted Android apps intercept filled credentials, spoof save-login prompts via exported activities, or trigger OOM denial of service. Malicious apps could also craft custom URL schemes (`androidapp://`) to harvest web credentials.
+- **Control**:
+  * **Memory-capped process isolation**: `BaluardAutofillService` runs in a dedicated `:autofill` process. Unlocking executes `unlock_with_kek` using the Keystore-held biometric KEK, skipping the 64-256 MB Argon2id master KDF to prevent low-memory termination.
+  * **One-time save handoff token**: when saving new credentials, `onSaveRequest` generates a random single-use token (`AutofillSaveToken`) in app sandbox storage before launching `MainActivity`. Callers without the token cannot inject prefilled entries into the create form.
+  * **Scheme isolation**: `UriMatchStrategy::matches` strictly separates `androidapp://` URIs from web schemes (`https://`). An app cannot harvest credentials for a web domain by declaring an identical package name.
+  * **Accessibility fill bounds**: the quick-settings tile accessibility service operates strictly on user demand (no background overlay, no continuous screen monitoring), copies TOTP to clipboard instead of typing, and caps retries to 3 attempts per selection.
 
 ## 2. Platform Trust Boundaries
 

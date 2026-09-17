@@ -1,6 +1,6 @@
-# Mobile dev setup (macOS host build)
+# Mobile dev setup (macOS and Linux host build)
 
-Proven end-to-end on macOS 15 (Apple Silicon) through Rust cdylib compilation and Android APK generation.
+Proven end-to-end on macOS 15 (Apple Silicon) and Linux through Rust cdylib compilation and Android APK generation.
 `just android-apk` produces a functional debug APK for all 4 Android ABIs.
 
 > The earlier "Linux container proved the Rust side" note still holds; this doc
@@ -444,8 +444,7 @@ host cdylib + UniFFI binding regenerated and committed):
    `onError`/`onResult`; the real `AutofillService.onFillRequest` takes a
    `FillCallback` with `onSuccess(FillResponse?)` / `onFailure(CharSequence)`.
    **Fixed:** corrected the override signature + the three callback call sites to
-   the real `FillCallback` API. The body is still a Phase-6 TODO stub (returns an
-   empty `FillResponse`); real AssistStructure parsing + KEK-gated unlock land in Phase 6.
+   the real `FillCallback` API. Full AssistStructure parsing, KEK-gated unlock, and inline suggestions landed in Phase 6.
 
 **BUILD SUCCESSFUL (2026-07-30).** `just android-apk` produces
 `mobile/androidApp/build/outputs/apk/debug/androidApp-debug.apk` (~69 MB debug;

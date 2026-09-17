@@ -1,13 +1,13 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-09-16 (Mobile: desktop-parity edit/create, deep search over every field, TOTP + favicon fixes; Phase 6 Autofill next.)
+> Last updated: 2026-09-16 (Mobile: Android Phases 0-6 complete: autofill service, inline suggestions, save prompt, quick-settings accessibility tile, biometric KEK unlock; Phase 7 iOS next.)
 
 ---
 
 ## Current Frontier (read this first on session start)
 
-Active work: **mobile app (Android first)**, Phase 6 (Android Autofill Service). Phases 0 through 5 are complete.
+Active work: **mobile app (iOS next)**, Phase 7 (iOS AutoFill Credential Provider extension). Android Phases 0 through 6 are complete.
 
 | Wave / Phase | Work | State |
 |---|---|---|
@@ -18,9 +18,11 @@ Active work: **mobile app (Android first)**, Phase 6 (Android Autofill Service).
 | Phase 4 | Edge Cases: ConflictResolutionPanel, multi-vault switcher, settings | ✅ done |
 | Phase 5 | Release Polish: Material 3 brand theme, R8 rules, unit tests | ✅ done |
 | Parity polish | Mobile edit/create at desktop parity (URIs + match strategy, TOTP seed, custom fields Text/Hidden/Boolean/Linked, tags, folder, reprompt, configurable generator, card formatting + brand, exp-month/sex dropdowns, SSH keypair generation, favicon fetch-on-save), deep search over every field (password excluded, trash/archived excluded), TOTP card + settings fixes | ✅ done |
-| Phase 6 | Android Autofill Service (`AutofillService`, dataset provider, manual fallback) | ⏳ next |
+| Phase 6 | Android Autofill Service (`BaluardAutofillService`, inline suggestions, save handoff, biometric KEK unlock) | ✅ done |
+| Phase 6.5 | Android Accessibility Tile (`BaluardA11yTileService` + `BaluardAccessibilityService`, browser URL scraping) | ✅ done |
+| Phase 7 | iOS AutoFill Credential Provider extension (`ASCredentialProviderViewController`, shared UniFFI) | ⏳ next |
 
-Docs: `docs/plan-mobile-apps.md`, `docs/plan-mobile-onboarding.md`, `mobile/README.md`.
+Docs: `docs/plan-mobile-apps.md`, `docs/plan-android-autofill.md`, `docs/plan-android-accessibility-tile.md`, `mobile/README.md`.
 
 ---
 
@@ -35,7 +37,7 @@ Docs: `docs/plan-mobile-apps.md`, `docs/plan-mobile-onboarding.md`, `mobile/READ
 
 ## Current Status
 
-Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done**. **Mobile: Android Phases 0-5 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit at desktop parity, deep search, generator, TOTP, favicon opt-in, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build). Phase 6 Autofill next**.
+Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done**. **Mobile: Android Phases 0-6 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit at desktop parity, deep search, generator, TOTP, favicon opt-in, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build, Android Autofill Service with inline suggestions, save prompt, and quick-settings tile accessibility fill). Phase 7 iOS next**.
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
@@ -47,7 +49,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 - `/crates/baluard-nmh` - Native messaging host binary (browser extension bridge, stdio-JSON <-> varint-protobuf)
 - `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 8 cipher types, generator, TOTP, auto-lock, dark/light themes, i18n en/es, 38 components)
 - `/browser` - Chromium + Firefox MV3 extensions (shared codebase, two targets). KeePassXC-Browser-style bridge client. Paired companion model (rides the desktop's unlock state)
-- `/mobile` - Kotlin Multiplatform app (Compose UI + UniFFI integration; onboarding create + provider flows, vault list with type/tag/favorite filters + deep search, detail + edit for all 8 cipher types at desktop parity, generator, TOTP, settings incl. favicon opt-in, i18n EN/ES)
+- `/mobile` - Kotlin Multiplatform app (Compose UI + UniFFI integration; onboarding create + provider flows, vault list with type/tag/favorite filters + deep search, detail + edit for all 8 cipher types at desktop parity, generator, TOTP, settings incl. favicon opt-in, Android Autofill service with inline suggestions + save prompt, quick-settings tile accessibility fill, i18n EN/ES)
 - `/docs` - Architecture, design, threat model, plans, PRDs, ADRs
 
 ---
@@ -59,7 +61,8 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | `workspace` | Done | Rust workspace with baluard-core, baluard-runtime, baluard-uniffi, baluard-cli, baluard-daemon, baluard-nmh crates |
 | `baluard-runtime` | Done | Extracted in-process vault runtime: VaultHost, VaultState, AutoSyncHandle, PinEscrow, ProviderManager, RateLimiter |
 | `baluard-uniffi` | Done | UniFFI C-FFI / Kotlin Multiplatform / Swift bindings over baluard-runtime + baluard-core |
-| `mobile/android` | Done (Phases 0-5 + parity) | Compose Multiplatform Android client: onboarding (create + clone + device enrollment), home hub, filtered entry lists, deep search over every field (password excluded, trash/archived excluded), 8 cipher types detail/edit at desktop parity (URIs + match strategy, TOTP seed, custom fields Text/Hidden/Boolean/Linked, tags, folder, reprompt, generator knobs, card formatting + brand, SSH keypair generation, favicon fetch-on-save), generator, TOTP, biometric unlock ceremony, auto-lock, sync feedback, conflict resolution panel, multi-vault switcher, R8 release build. Phase 6 (Autofill) next |
+| `mobile/android` | Done (Phases 0-6 + parity) | Compose Multiplatform Android client: onboarding (create + clone + device enrollment), home hub, filtered entry lists, deep search over every field (password excluded, trash/archived excluded), 8 cipher types detail/edit at desktop parity (URIs + match strategy, TOTP seed, custom fields Text/Hidden/Boolean/Linked, tags, folder, reprompt, generator knobs, card formatting + brand, SSH keypair generation, favicon fetch-on-save), generator, TOTP, biometric unlock ceremony, auto-lock, sync feedback, conflict resolution panel, multi-vault switcher, R8 release build. System autofill service (`BaluardAutofillService`) with inline suggestions, response-level auth, save prompt (`AutofillSaveToken`), and quick-settings tile accessibility fill (`BaluardA11yTileService` + `BaluardAccessibilityService`). Phase 7 (iOS) next |
+| `core/autofill-matcher` | Done | `UriMatchStrategy::matches` in baluard-core (6 strategies, public-suffix eTLD+1, scheme isolation, trailing slash segment boundary). Batch query `VaultState::autofill_query` in baluard-runtime / baluard-uniffi (secret-absence invariant: no passwords in matching output) |
 | `proto/schemas` | Done | `vault.proto`, `space.proto`, `auth.proto`. Compiled by prost-build in daemon and CLI |
 | `crypto/aead` | Done | AES-256-GCM with strict AAD binding |
 | `crypto/webauthn` | Done (Phase 0+1) | FIDO2/WebAuthn ceremony via `passkey-rs` 0.5.x. ES256 only. `BaluardCredentialStore` (Arc<Mutex> mutation tracking), `PasskeyIndex` (in-vault passkey lookup), `CeremonyCache` (300s TTL, max 64 pending, FIFO eviction, OsRng challenges). Passkeys embedded in `LoginData::fido2_credentials`. |
@@ -255,8 +258,9 @@ Completed core, CLI, daemon, and desktop implementations.
 | **Phase 3** | Sync lifecycle: on_foreground pull, on_mutation push, sync indicator with feedback phases | **Done** |
 | **Phase 4** | Edge cases: ConflictResolutionPanel, multi-vault switcher, settings (remove-from-device, screenshot toggle) | **Done** |
 | **Phase 5** | Release polish: Material 3 brand theme, R8 shrinker rules, unit tests | **Done** |
-| **Phase 6** | Android Autofill Service (`AutofillService`, dataset provider, manual fallback) | **Next** |
-| **Phase 7** | iOS Autofill Credential Provider extension | **Pending** |
+| **Phase 6** | Android Autofill Service (`BaluardAutofillService`, inline suggestions, save handoff, biometric KEK unlock) | **Done** |
+| **Phase 6.5** | Android Accessibility Tile (`BaluardA11yTileService` + `BaluardAccessibilityService`, browser URL scraping) | **Done** |
+| **Phase 7** | iOS Autofill Credential Provider extension (`ASCredentialProviderViewController`, shared UniFFI) | **Next** |
 
 ### Nice to Have / Future
 
@@ -456,7 +460,7 @@ baluard/
 │   ├── shared/                    # 95% of code (popup SolidJS, service worker, content script, nmh wrapper, autofill, pair, vitest tests)
 │   ├── chrome/                    # Chrome MV3 wrapper
 │   └── firefox/                   # Firefox MV3 wrapper
-├── mobile/                       # Kotlin Multiplatform app (Compose Multiplatform UI, baluard-uniffi bindings; Phases 0-5 implemented, Phase 6 Autofill next)
+├── mobile/                       # Kotlin Multiplatform app (Compose Multiplatform UI, baluard-uniffi bindings; Phases 0-6 implemented, Phase 7 iOS next)
 │   ├── shared/                    # commonMain (UI + ViewModels + VaultRepository), androidMain, iosMain
 │   └── androidApp/                # Android entry point, resources, R8 release build
 ├── docs/                         # Architecture & design docs (index, arch, decisions, plans, PRDs, threat model, 2fa, post-quantum, brand, app icons)
