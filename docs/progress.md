@@ -261,16 +261,82 @@ Completed core, CLI, daemon, and desktop implementations.
 | **Phase 6** | Android Autofill Service (`BaluardAutofillService`, inline suggestions, save handoff, biometric KEK unlock) | **Done** |
 | **Phase 6.5** | Android Accessibility Tile (`BaluardA11yTileService` + `BaluardAccessibilityService`, browser URL scraping) | **Done** |
 | **Phase 7** | iOS Autofill Credential Provider extension (`ASCredentialProviderViewController`, shared UniFFI) | **Next** |
+| **Deferred: App-to-web matching** | Guess web domains from Android package names so web-saved logins also autofill inside native apps | **Blocked on Esteban decision** |
 
 ### Nice to Have / Future
 
 Features parked for the far future. Do not start without explicit confirmation.
 
-| Item | Description | Blocker |
-|------|-------------|---------|
-| Encrypted JSON export | Baluard-native format (Argon2id + AES-256-GCM). Git clone + recovery phrase already covers disaster recovery | Low priority, needs format documentation |
-| Additional import formats | Dashlane, Enpass, NordPass, Avast, Avira, Keeper, RoboForm, Myki, mSecure, Blur | Low priority parser work |
-| FIDO2 credential storage | **Done (Phase 0+1)**. Embedded in `LoginData::fido2_credentials: Option<Vec<PasskeyData>>`. ES256 only via `passkey-rs` 0.5.x. Daemon IPC: 7 routes. CLI: list/delete/rename. See `docs/plan-passkey-support.md`. | Phase 2+ (browser extension, mobile) |
+#### App-to-web domain matching (path B: trust-on-first-use)
+
+**Status:** design approved by Esteban, not yet built. Target: Android
+autofill (mobile/androidApp `:autofill` process), extendable to iOS in
+Phase 7.
+
+**Problem:** web-saved logins (e.g. `https://mybank.com`) do not
+autofill inside native apps (`com.mybank.app`) because the matcher
+enforces strict scheme isolation between `androidapp://` and `https://`
+targets. Bitwarden bridges this gap by crudely reversing the package
+name into a domain (`com.mybank.app` -> `mybank.com`), which is
+phishing-adjacent: a malicious app can name itself `com.mybank.evil`
+and receive the user's real mybank.com credentials.
+
+**Approved design: trust-on-first-use.**
+
+1. **Setting:** "Suggest web logins in native apps" — default OFF
+   (opt-in, consistent with Baluard's security-first posture). Stored
+   in vault settings (encrypted, git-synced) as
+   `suggest_app_logins: Option<bool>`.
+
+2. **Candidate generation:** when the setting is on and the fill
+   target is `androidapp://<package>`, parse the package labels:
+   - Reverse the first two labels: `com.mybank` -> `mybank.com`
+   - PSL-validate: the result must be a registrable domain
+   - Only reverse `com.<x>` and similar reverse-TLD patterns
+     (`com.github.android` -> also try `github.com` via label-skip)
+   - Candidates are hints, not matches: they only widen what the
+     picker shows, never auto-fill silently
+
+3. **Trust-on-first-use:** the first time an app requests fills for a
+   given candidate domain, the picker shows the matching entries with a
+   banner: "These look like logins for mybank.com. Trust this app?"
+   - User confirms -> persist `(package_name, registrable_domain)` in
+     a trust list (vault settings, encrypted + git-synced)
+   - User denies -> persist as rejected; never suggest again for that
+     package
+   - Trust is scoped per (package, domain) pair, not global
+
+4. **Matching extension:** after trust exists, the package's
+   registrable domain is added as a virtual equivalent group for that
+   package in `autofill_query`, so web-saved entries flow into native
+   app fills through the same pipeline as explicit `androidapp://` URIs.
+
+5. **Security boundaries:**
+   - Trust list is user-consented, never heuristic-auto-trusted
+   - Reversal candidates never cross the `androidapp://` vs `https://`
+     scheme boundary in the matcher itself; they only widen which
+     entries the PICKER shows (the user still confirms by tapping)
+   - The trust list is per-vault, git-synced, and auditable
+   - Package-name lookalikes (`com.mybank.evil`) are rejected: the
+     candidate's registrable domain must exactly equal the entry's
+     registrable domain
+
+6. **Implementation notes:**
+   - Candidate generation: `crates/baluard-core/src/types.rs` or a new
+     `crates/baluard-core/src/resources/app_domain_hints.json`
+   - Trust list: `VaultSettings.trusted_app_packages: Option<Vec<TrustedApp>>`
+     where `TrustedApp { package: String, domain: String }`
+   - Picker integration: `AutofillSession.matches()` gains a
+     `include_app_candidates` flag when the setting is on
+   - UI: the existing `AutofillActivity` picker shows a trust banner on
+     first encounter per package
+
+| Item | Blocker |
+|------|---------|
+| Setting + storage | None |
+| Candidate generation | None |
+| Trust UI | None |
+| Fill extension | Depends on trust list |
 
 ### Out of Scope (No Server)
 
