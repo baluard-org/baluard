@@ -9,20 +9,24 @@ package xyz.actitud.baluard.platform
 object A11yUri {
 
     /** Address-bar resource-id suffixes of the browsers we recognize. */
-    private val URL_BAR_SUFFIXES = listOf(
+    private val URL_BAR_NAMES = setOf(
         // Chromium family (Chrome, Chromium, Brave, Edge, Vivaldi)
-        "id/url_bar",
+        "url_bar",
         // Firefox family (Fenix/Mozac toolbar) - also GeckoView url_bar
         "mozac_browser_toolbar_url_view",
         // Opera
-        "id/url_field",
+        "url_field",
         // Samsung Internet
-        "id/location_bar_edit_text",
+        "location_bar_edit_text",
     )
 
-    /** Whether [viewIdResourceName] belongs to a known browser address bar. */
-    fun isUrlBar(viewIdResourceName: String?): Boolean =
-        viewIdResourceName != null && URL_BAR_SUFFIXES.any { viewIdResourceName.endsWith(it) }
+    /** Whether [viewIdResourceName] belongs to a known browser address bar.
+     *  Handles both bare idEntry names (autofill) and full view IDs (a11y). */
+    fun isUrlBar(viewIdResourceName: String?): Boolean {
+        if (viewIdResourceName == null) return false
+        val bare = viewIdResourceName.substringAfterLast('/')
+        return bare in URL_BAR_NAMES
+    }
 
     /**
      * The scraped URI when [viewIdResourceName] is a known address bar, else
@@ -36,8 +40,7 @@ object A11yUri {
         description: String?,
     ): String? {
         if (viewIdResourceName == null) return null
-        val isBar = URL_BAR_SUFFIXES.any { viewIdResourceName.endsWith(it) }
-        if (!isBar) return null
+        if (!isUrlBar(viewIdResourceName)) return null
         return normalize(text) ?: normalize(description)
     }
 

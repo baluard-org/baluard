@@ -452,4 +452,8 @@ internal val EN: Map<String, String> = mapOf(
     "a11y.toastNoFields" to "No login fields on this screen.",
     "a11y.noMatches" to "No saved logins for this app",
     "a11y.totpCopied" to "TOTP code copied",
+    "settings.equivalentDomainsTitle" to "Equivalent domains",
+    "settings.equivalentDomainsAdd" to "Add group",
+    "settings.equivalentDomainsEmpty" to "No custom groups yet. Domains in a group autofill each other.",
+    "settings.equivalentDomainsHint" to "Add groups of domains that share logins (e.g. your company portal and its public site).",
 )

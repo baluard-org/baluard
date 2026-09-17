@@ -273,6 +273,9 @@ class BaluardAutofillService : AutofillService() {
         // no username signal - the editable field above it becomes username.
         if (passwordId != null && usernameId == null && editableBeforePasswordId != null) {
             usernameId = editableBeforePasswordId
+            // A promoted username must not stay in the ignored list (Agy #2):
+            // setIgnoredIds would suppress the very field we intend to fill.
+            ignored.removeAll { it == usernameId }
         }
 
         if (usernameId == null && passwordId == null) return null

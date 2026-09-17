@@ -35,7 +35,8 @@ class AutofillActivity : FragmentActivity() {
 
     companion object {
         const val EXTRA_TARGET = "baluard.autofill.extra.TARGET"
-        const val EXTRA_IDS = "baluard.autofill.extra.IDS"
+        const val EXTRA_USERNAME_ID = "baluard.autofill.extra.USERNAME_ID"
+        const val EXTRA_PASSWORD_ID = "baluard.autofill.extra.PASSWORD_ID"
         const val EXTRA_MODE = "baluard.autofill.extra.MODE"
         const val EXTRA_TARGET_PACKAGE = "baluard.autofill.extra.TARGET_PACKAGE"
         const val MODE_DATASETS = "datasets"
@@ -78,10 +79,11 @@ class AutofillActivity : FragmentActivity() {
         }
 
         // ── Dataset mode (autofill framework response-level auth) ──
-        val ids = intent?.getParcelableArrayListExtra<AutofillId>(EXTRA_IDS)
+        val usernameId = intent?.getParcelableExtra<AutofillId>(EXTRA_USERNAME_ID)
+        val passwordId = intent?.getParcelableExtra<AutofillId>(EXTRA_PASSWORD_ID)
         val fields = AutofillResponseBuilder.TargetFields(
-            usernameId = ids?.getOrNull(0),
-            passwordId = ids?.getOrNull(1),
+            usernameId = usernameId,
+            passwordId = passwordId,
         )
         if (fields.usernameId == null && fields.passwordId == null) {
             finish()
@@ -228,10 +230,11 @@ class AutofillActivity : FragmentActivity() {
         // TOTP to the clipboard, and return it through
         // EXTRA_AUTHENTICATION_RESULT.
         AutofillSession.scope.launch {
-            val ids = intent?.getParcelableArrayListExtra<AutofillId>(EXTRA_IDS)
+            val usernameId = intent?.getParcelableExtra<AutofillId>(EXTRA_USERNAME_ID)
+            val passwordId = intent?.getParcelableExtra<AutofillId>(EXTRA_PASSWORD_ID)
             val fields = AutofillResponseBuilder.TargetFields(
-                usernameId = ids?.getOrNull(0),
-                passwordId = ids?.getOrNull(1),
+                usernameId = usernameId,
+                passwordId = passwordId,
             )
             val response = AutofillResponseBuilder.singleMatchResponse(applicationContext, fields, match)
             if (response == null) {
