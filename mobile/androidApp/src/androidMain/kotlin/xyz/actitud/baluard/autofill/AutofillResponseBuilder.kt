@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.service.autofill.Dataset
+import android.service.autofill.Field
 import android.service.autofill.FillResponse
 import android.graphics.drawable.Icon
 import android.service.autofill.InlinePresentation
@@ -30,6 +31,12 @@ data class InlineStyle(val specs: List<InlinePresentationSpec>, val maxCount: In
  * Shared FillResponse construction for the service (direct path, session
  * already unlocked) and [AutofillActivity] (post-biometric path). One builder,
  * one presentation layout, identical save-info on every path (plan D7/D8).
+ *
+ * Dataset shape (Agy review round 2): Chromium's native 3P autofill renderer
+ * (Brave/Chrome 135+) only surfaces PER-FIELD presentations bound by
+ * autofill id - dataset-level setValue + presentation is the legacy shape
+ * and renders nothing there. Every field carries menu + dialog + inline
+ * presentations from the same variant-locked views.
  */
 object AutofillResponseBuilder {
 
@@ -40,10 +47,11 @@ object AutofillResponseBuilder {
     }
 
     /**
-     * Response-level authentication (plan D6): pre-unlock we cannot know
-     * which logins match, so the whole response is gated behind one generic
-     * "Unlock Baluard" entry. The OS launches [AutofillActivity] on tap; the
-     * real datasets come back via EXTRA_AUTHENTICATION_RESULT.
+     * Locked-session response (plan D6). Response-level setAuthentication is
+     * NOT rendered by Chromium's native path, so auth is a PER-DATASET
+     * "Unlock Baluard" dataset: presentations-only fields (no values) plus
+     * Dataset.setAuthentication pointing at [AutofillActivity], which runs
+     * the biometric unlock and returns the real filled response.
      */
     fun authenticationResponse(context: Context, fields: TargetFields, target: String): FillResponse {
         val intent = Intent(context, AutofillActivity::class.java).apply {
@@ -56,19 +64,38 @@ object AutofillResponseBuilder {
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val views = unlockPresentation(context)
+
+        val dataset = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val presentations = Presentations.Builder()
+                .setMenuPresentation(views)
+                .setDialogPresentation(views)
+                .build()
+            val b = Dataset.Builder()
+            for (id in fields.ids) {
+                // Auth field: presentations only, no value.
+                b.setField(id, Field.Builder().setPresentations(presentations).build())
+            }
+            b
+        } else {
+            @Suppress("DEPRECATION")
+            Dataset.Builder(views)
+        }
+
         return FillResponse.Builder()
-            .setAuthentication(fields.ids, pending.intentSender, unlockPresentation(context))
+            .addDataset(dataset.setAuthentication(pending.intentSender).build())
             .setSaveInfo(saveInfo(fields))
             .build()
     }
 
     /**
-     * Direct datasets for an unlocked session. One dataset per match; values
-     * are only attached to ids the form actually has. When [inline] carries
-     * IME specs, each dataset ALSO carries a keyboard chip (never instead of
-     * the popup row); unsupported IMEs silently render the popup only.
-     * Returns null when the query yielded nothing, in which case the caller
-     * falls back to a save-only response so on-save capture still works.
+     * Direct datasets for an unlocked session. One dataset per match; each
+     * field carries value + presentations bound to its autofill id. When
+     * [inline] carries IME specs, the fields ALSO carry a keyboard chip
+     * (never instead of the menu row); unsupported IMEs silently render the
+     * menu only. Returns null when the query yielded nothing, in which case
+     * the caller falls back to a save-only response so on-save capture still
+     * works.
      */
     suspend fun filledResponse(
         context: Context,
@@ -87,19 +114,36 @@ object AutofillResponseBuilder {
         matches.forEachIndexed { index, match ->
             val (username, password) = AutofillSession.credential(match.id) ?: return@forEachIndexed
             val chip = inline?.let { inlineChipOrNull(context, it, index, match.name, username) }
-            val ds = datasetBuilder(context, match.name, username, chip)
+            val views = datasetPresentation(context, match.name, username)
+            val ds = Dataset.Builder()
             var hasValue = false
-            if (fields.usernameId != null && username != null) {
-                ds.setValue(fields.usernameId, AutofillValue.forText(username))
+
+            fun addField(id: AutofillId, value: String) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val presentations = Presentations.Builder()
+                        .setMenuPresentation(views)
+                        .setDialogPresentation(views)
+                        .apply { chip?.let { setInlinePresentation(it) } }
+                        .build()
+                    ds.setField(
+                        id,
+                        Field.Builder()
+                            .setValue(AutofillValue.forText(value))
+                            .setPresentations(presentations)
+                            .build(),
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    ds.setValue(id, AutofillValue.forText(value), views)
+                    chip?.let { @Suppress("DEPRECATION") ds.setInlinePresentation(it) }
+                }
                 hasValue = true
             }
-            if (fields.passwordId != null && password != null) {
-                ds.setValue(fields.passwordId, AutofillValue.forText(password))
-                hasValue = true
-            }
+
+            if (fields.usernameId != null && username != null) addField(fields.usernameId, username)
+            if (fields.passwordId != null && password != null) addField(fields.passwordId, password)
             // Dataset.build() throws IllegalStateException with zero field
-            // values (Agy finding #3): a username-only form fed by an entry
-            // with null username would crash. Skip empty datasets.
+            // values (Agy finding #3): skip datasets that would be empty.
             if (hasValue) {
                 builder.addDataset(ds.build())
             }
@@ -125,26 +169,6 @@ object AutofillResponseBuilder {
         return builder
             .setFlags(SaveInfo.FLAG_SAVE_ON_ALL_VIEWS_INVISIBLE)
             .build()
-    }
-
-    private fun datasetBuilder(
-        context: Context,
-        name: String,
-        username: String?,
-        chip: InlinePresentation?,
-    ): Dataset.Builder {
-        val views = datasetPresentation(context, name, username)
-        return when {
-            chip == null -> Dataset.Builder(views)
-            // Presentations is API 33+; 12L keeps the deprecated setter.
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> Dataset.Builder(
-                Presentations.Builder()
-                    .setMenuPresentation(views)
-                    .setInlinePresentation(chip)
-                    .build(),
-            )
-            else -> Dataset.Builder(views).setInlinePresentation(chip)
-        }
     }
 
     /**
