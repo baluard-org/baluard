@@ -50,6 +50,7 @@ class BaluardAutofillService : AutofillService() {
 
     companion object {
         private const val TAG = "BaluardAutofill"
+        private const val MAX_CONTAINER_DEPTH = 10
 
         // M10: onFailure messages can surface in system autofill diagnostics.
         // Static codes only; the real reason goes to logcat, never the callback.
@@ -230,33 +231,33 @@ class BaluardAutofillService : AutofillService() {
         for (i in 0 until structure.windowNodeCount) {
             val window = structure.getWindowNodeAt(i)
             walkNode(window.rootViewNode) { node ->
-                val kind = FieldHeuristics.classify(adapt(node))
+                // Material TextInputLayout redirection (Bitwarden parity):
+                // hint-carrying containers cannot accept values - redirect
+                // to the first text-autofillable descendant.
+                val container = isHintContainer(node)
+                val effective = if (container) firstTextDescendant(node) else node
+                val field = adapt(effective ?: node).let { fv ->
+                    if (container && node.hint != null) fv.copy(hint = node.hint) else fv
+                }
+                val kind = FieldHeuristics.classify(field)
+                val id = field.autofillId as? AutofillId
                 when (kind) {
                     FieldKind.Password -> {
                         if (passwordId == null) {
-                            passwordId = node.autofillId
+                            passwordId = id
                             // Prefer the password field's own web origin.
                             node.webDomain?.let { webDomain = it }
                         }
                     }
                     FieldKind.Username -> {
-                        if (usernameId == null) usernameId = node.autofillId
+                        if (usernameId == null) usernameId = id
                     }
-                    FieldKind.Other -> Unit
-                }
-                // Preceding-field promotion candidate: the editable input
-                // directly before the first password field (Bitwarden's
-                // updateForMissingUsernameFields parity).
-                if (passwordId == null && isEditableInput(node) &&
-                    (kind == FieldKind.Other || kind == FieldKind.Username)
-                ) {
-                    editableBeforePasswordId = node.autofillId
-                }
-                // Non-credential inputs go on the ignored list so the
-                // framework stops re-requesting on search bars, chat inputs,
-                // and similar (Agy finding #5).
-                if (kind == FieldKind.Other && node.autofillId != null && isEditableInput(node)) {
-                    node.autofillId?.let { ignored += it }
+                    FieldKind.Other -> {
+                        if (id != null && isEditableInput(effective ?: node)) {
+                            ignored += id
+                            if (passwordId == null) editableBeforePasswordId = id
+                        }
+                    }
                 }
                 // Browser address bar fallback (plan A1/D7 starter table):
                 // scrape when the page origin is missing.
@@ -285,6 +286,29 @@ class BaluardAutofillService : AutofillService() {
     private fun isEditableInput(node: AssistStructure.ViewNode): Boolean =
         node.autofillType != android.view.View.AUTOFILL_TYPE_NONE &&
             node.className?.toString()?.contains("EditText") == true
+
+    /**
+     * Hint-carrying container that cannot accept values itself (Material
+     * TextInputLayout pattern): redirects classification to its inner text
+     * field (Bitwarden findFirstAutofillableChild parity).
+     */
+    private fun isHintContainer(node: AssistStructure.ViewNode): Boolean =
+        node.autofillType == android.view.View.AUTOFILL_TYPE_NONE &&
+            node.childCount > 0 &&
+            (!node.hint.isNullOrBlank() || !node.autofillHints.isNullOrEmpty())
+
+    private fun firstTextDescendant(
+        node: AssistStructure.ViewNode,
+        depth: Int = 0,
+    ): AssistStructure.ViewNode? {
+        if (depth > MAX_CONTAINER_DEPTH) return null
+        for (i in 0 until node.childCount) {
+            val child = node.getChildAt(i) ?: continue
+            if (child.autofillType == android.view.View.AUTOFILL_TYPE_TEXT) return child
+            firstTextDescendant(child, depth + 1)?.let { return it }
+        }
+        return null
+    }
 
     private fun adapt(node: AssistStructure.ViewNode): FieldView {
         val attrs = node.htmlInfo?.attributes.orEmpty()
