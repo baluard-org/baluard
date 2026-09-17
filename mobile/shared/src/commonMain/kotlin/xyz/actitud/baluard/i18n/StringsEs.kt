@@ -430,6 +430,8 @@ internal val ES: Map<String, String> = mapOf(
 
     // Settings > Autofill (Phase 6, diseño como Bitwarden).
     "settings.autofillSection" to "Autofill",
+    "autofill.openBaluard" to "Abrir Baluard",
+    "autofill.pickLogin" to "Elige una credencial para rellenar",
     "settings.autofillServices" to "Servicios de autocompletar",
     "settings.autofillServicesHint" to "Permite que Baluard use tus credenciales guardadas para iniciar sesión en otras apps del dispositivo.",
     "settings.autofillSuggestions" to "Mostrar sugerencias de autocompletar",

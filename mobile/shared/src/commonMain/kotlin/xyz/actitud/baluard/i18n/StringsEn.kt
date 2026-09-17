@@ -425,6 +425,8 @@ internal val EN: Map<String, String> = mapOf(
 
     // Settings > Autofill (Phase 6, Bitwarden-parity layout).
     "settings.autofillSection" to "Autofill",
+    "autofill.openBaluard" to "Open Baluard",
+    "autofill.pickLogin" to "Choose a login to fill",
     "settings.autofillServices" to "Autofill services",
     "settings.autofillServicesHint" to "Allow Baluard to use your saved login information to sign in to other apps on your device.",
     "settings.autofillSuggestions" to "Display autofill suggestions",

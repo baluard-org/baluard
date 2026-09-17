@@ -12,9 +12,17 @@ object A11yUri {
     private val URL_BAR_SUFFIXES = listOf(
         // Chromium family (Chrome, Chromium, Brave, Edge, Vivaldi)
         "id/url_bar",
-        // Firefox family (Fenix/Mozac toolbar)
+        // Firefox family (Fenix/Mozac toolbar) - also GeckoView url_bar
         "mozac_browser_toolbar_url_view",
+        // Opera
+        "id/url_field",
+        // Samsung Internet
+        "id/location_bar_edit_text",
     )
+
+    /** Whether [viewIdResourceName] belongs to a known browser address bar. */
+    fun isUrlBar(viewIdResourceName: String?): Boolean =
+        viewIdResourceName != null && URL_BAR_SUFFIXES.any { viewIdResourceName.endsWith(it) }
 
     /**
      * The scraped URI when [viewIdResourceName] is a known address bar, else

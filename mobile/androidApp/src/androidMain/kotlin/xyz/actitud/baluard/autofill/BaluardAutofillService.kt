@@ -21,6 +21,7 @@ import xyz.actitud.baluard.platform.AutofillSavePrefill
 import xyz.actitud.baluard.platform.FieldHeuristics
 import xyz.actitud.baluard.platform.FieldKind
 import xyz.actitud.baluard.platform.FieldView
+import xyz.actitud.baluard.platform.platformLogE
 
 /**
  * Baluard Android Autofill Service (plan §3.7, Phase 6).
@@ -92,12 +93,18 @@ class BaluardAutofillService : AutofillService() {
                 val response = runBlocking {
                     AutofillSession.lockIfExpired()
                     if (AutofillSession.ensureOpen()) {
-                        AutofillResponseBuilder.filledResponse(applicationContext, form.fields, form.target, inline)
-                            ?: AutofillResponseBuilder.saveOnlyResponse(
-                                applicationContext,
-                                form.fields,
-                                form.target,
-                            )
+                        AutofillResponseBuilder.filledResponse(
+                            applicationContext,
+                            form.fields,
+                            form.target,
+                            inline,
+                            form.ignoredIds,
+                        ) ?: AutofillResponseBuilder.saveOnlyResponse(
+                            applicationContext,
+                            form.fields,
+                            form.target,
+                            form.ignoredIds,
+                        )
                     } else {
                         AutofillResponseBuilder.authenticationResponse(
                             applicationContext,
@@ -177,6 +184,16 @@ class BaluardAutofillService : AutofillService() {
             }
         }
 
+        // Compat-mode masked capture guard (Bitwarden SaveInfoBuilderImpl
+        // parity): browsers running in compatibility mode report bullet
+        // glyphs instead of the real password - saving those would store
+        // garbage. A real password can consist of those chars too, but then
+        // EVERY char matches one mask glyph, which never happens by chance.
+        if (password != null && password.all { it == '•' || it == '●' || it == '⋅' || it == '·' }) {
+            platformLogE(TAG, "compat-mode masked password capture; skipping password only")
+            password = null
+        }
+
         if (username == null && password == null) return null
         val target = FieldHeuristics.targetFor(packageName, webDomain)
         return AutofillSavePrefill(username, password, target)
@@ -187,6 +204,7 @@ class BaluardAutofillService : AutofillService() {
         val usernameId: AutofillId?,
         val passwordId: AutofillId?,
         val target: String,
+        val ignoredIds: List<AutofillId> = emptyList(),
     ) {
         val fields: AutofillResponseBuilder.TargetFields
             get() = AutofillResponseBuilder.TargetFields(usernameId, passwordId)
@@ -201,14 +219,19 @@ class BaluardAutofillService : AutofillService() {
         var usernameId: AutofillId? = null
         var passwordId: AutofillId? = null
         var webDomain: String? = null
+        var urlBarText: String? = null
+        // Last editable input-like field seen BEFORE the first password
+        // field: the preceding-field username promotion candidate.
+        var editableBeforePasswordId: AutofillId? = null
+        val ignored = mutableListOf<AutofillId>()
 
         val packageName = structure.activityComponent?.packageName
 
         for (i in 0 until structure.windowNodeCount) {
             val window = structure.getWindowNodeAt(i)
             walkNode(window.rootViewNode) { node ->
-                val field = adapt(node)
-                when (FieldHeuristics.classify(field)) {
+                val kind = FieldHeuristics.classify(adapt(node))
+                when (kind) {
                     FieldKind.Password -> {
                         if (passwordId == null) {
                             passwordId = node.autofillId
@@ -221,15 +244,47 @@ class BaluardAutofillService : AutofillService() {
                     }
                     FieldKind.Other -> Unit
                 }
+                // Preceding-field promotion candidate: the editable input
+                // directly before the first password field (Bitwarden's
+                // updateForMissingUsernameFields parity).
+                if (passwordId == null && isEditableInput(node) &&
+                    (kind == FieldKind.Other || kind == FieldKind.Username)
+                ) {
+                    editableBeforePasswordId = node.autofillId
+                }
+                // Non-credential inputs go on the ignored list so the
+                // framework stops re-requesting on search bars, chat inputs,
+                // and similar (Agy finding #5).
+                if (kind == FieldKind.Other && node.autofillId != null && isEditableInput(node)) {
+                    node.autofillId?.let { ignored += it }
+                }
+                // Browser address bar fallback (plan A1/D7 starter table):
+                // scrape when the page origin is missing.
+                if (urlBarText == null && xyz.actitud.baluard.platform.A11yUri.isUrlBar(node.idEntry)) {
+                    node.text?.toString()?.takeIf { it.isNotBlank() }?.let { urlBarText = it }
+                }
                 // WebView containers report the origin without being fields.
                 if (webDomain == null) node.webDomain?.let { webDomain = it }
             }
         }
 
+        // Preceding-field promotion (Bitwarden parity): password present but
+        // no username signal - the editable field above it becomes username.
+        if (passwordId != null && usernameId == null && editableBeforePasswordId != null) {
+            usernameId = editableBeforePasswordId
+        }
+
         if (usernameId == null && passwordId == null) return null
-        val target = FieldHeuristics.targetFor(packageName, webDomain) ?: return null
-        return Form(usernameId, passwordId, target)
+        val target = webDomain?.let { FieldHeuristics.targetFor(packageName, it) }
+            ?: urlBarText?.let { xyz.actitud.baluard.platform.A11yUri.normalize(it) }
+            ?: FieldHeuristics.targetFor(packageName, null)
+            ?: return null
+        return Form(usernameId, passwordId, target, ignored)
     }
+
+    private fun isEditableInput(node: AssistStructure.ViewNode): Boolean =
+        node.autofillType != android.view.View.AUTOFILL_TYPE_NONE &&
+            node.className?.toString()?.contains("EditText") == true
 
     private fun adapt(node: AssistStructure.ViewNode): FieldView {
         val attrs = node.htmlInfo?.attributes.orEmpty()

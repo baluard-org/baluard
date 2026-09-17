@@ -42,8 +42,15 @@ object AutofillSession {
      *  dispatchers; open/unlock/lock must not interleave. */
     private val mutationMutex = Mutex()
 
-    /** UI-facing async work runs here; never the main thread. */
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** UI-facing async work runs here; never the main thread. Temp crash
+     *  catcher (Brave device pass): uncaught coroutine failures were killing
+     *  the process silently after fingerprint. */
+    val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default +
+            kotlinx.coroutines.CoroutineExceptionHandler { _, e ->
+                android.util.Log.e("BaluardA11yDbg", "uncaught coroutine failure", e)
+            },
+    )
 
     /**
      * Open the last-active vault (main-app handoff via [VaultRegistry]'s
@@ -137,6 +144,19 @@ object AutofillSession {
         val username = o.opt("username") as? String
         val password = o.opt("password") as? String
         return username to password
+    }
+
+    /**
+     * All active login entries (id/name/username/favorite) regardless of any
+     * target - used by the manual-pick fallback picker (plan: go-to-vault
+     * parity). Passwords are never in the output.
+     */
+    suspend fun logins(): List<Match> {
+        val v = vault?.takeIf { it.isUnlocked() } ?: return emptyList()
+        val metas = runCatching { v.listCiphers() }.getOrDefault(emptyList())
+        return metas.filter { it.cipherType == "login" }.map {
+            Match(id = it.id, name = it.name, username = it.username, favorite = it.favorite)
+        }
     }
 
     /**
