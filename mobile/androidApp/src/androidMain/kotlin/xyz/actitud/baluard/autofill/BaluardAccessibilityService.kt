@@ -166,6 +166,7 @@ class BaluardAccessibilityService : AccessibilityService() {
         password: String?,
     ): Boolean {
         var usernameNode: AccessibilityNodeInfo? = null
+        var editableBeforePassword: AccessibilityNodeInfo? = null
         val passwordNodes = mutableListOf<AccessibilityNodeInfo>()
         walk(root) { node ->
             if (!node.isEditable) return@walk
@@ -176,6 +177,15 @@ class BaluardAccessibilityService : AccessibilityService() {
             if (usernameNode == null && kindOf(node) == FieldKind.Username) {
                 usernameNode = node
             }
+            // Preceding-field promotion (Bitwarden parity): when the form
+            // has password fields but no username signal, the editable node
+            // directly before the first password becomes the username.
+            if (usernameNode == null && passwordNodes.isEmpty()) {
+                editableBeforePassword = node
+            }
+        }
+        if (usernameNode == null && passwordNodes.isNotEmpty()) {
+            usernameNode = editableBeforePassword
         }
         var any = false
         if (username != null) {
