@@ -440,8 +440,11 @@ impl VaultHost {
                     );
                     // Warn when within 2x of the limit so the user can raise it
                     // (`ulimit -l` / /etc/security/limits.conf) before mlock
-                    // starts silently failing for new vaults.
-                    if (baseline as u64) * 2 >= rlim {
+                    // starts silently failing for new vaults. rlim is u32 on
+                    // 32-bit targets (armv7) and u64 elsewhere; the u128
+                    // comparison is a real widening on both, so clippy stays
+                    // quiet on either platform.
+                    if (baseline as u128) * 2 >= u128::from(rlim) {
                         log::warn!(
                             "[host] mlock baseline within 2x of RLIMIT_MEMLOCK ({rlim} B). \
                              Multi-vault mlock may silently fail; raise the limit \
