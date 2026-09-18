@@ -500,6 +500,22 @@ impl<'a> VaultCreator<'a> {
                 let marker = crate::vault::registry::BaluardMarker::new(vault_id, slug);
                 marker.write_to_vault(&path)?;
 
+                // Persist DeviceManager state (meta/devices.json) BEFORE the
+                // initial commit: the roster-snapshot rule verifies a root
+                // commit against its own tree, so the registry must be part
+                // of it (P2). The signing key (sealed privkey, written above)
+                // is already on disk, so init_repo's initial commit is signed.
+                let mut device_manager = DeviceManager::new();
+                device_manager.set_vault_path(&path);
+                device_manager.epoch = crate::keys::epoch::EpochInfo::new(1);
+                device_manager.epoch.activate().map_err(|e| {
+                    BaluardError::from(crate::error::KeyError::InvalidEpochState(e))
+                })?;
+                // H6 fix: sync registry so device_manager.is_enrolled() works
+                device_manager.registry = registry.clone();
+                // Persist DeviceManager state so VaultHandle::open() can reload it
+                device_manager.save_to_vault()?;
+
                 // Initialize Git Sync Repo if required
                 #[cfg(feature = "git-sync")]
                 if self.initialize_git {
@@ -518,17 +534,6 @@ impl<'a> VaultCreator<'a> {
                         "# Secrets - never push these\nmeta/device-privkey.json\nmeta/device-id\nmeta/kdf-attempts.json\n",
                     ).map_err(|e| BaluardError::from(VaultError::Corrupt(format!("Write gitignore: {e}"))))?;
                 }
-
-                let mut device_manager = DeviceManager::new();
-                device_manager.set_vault_path(&path);
-                device_manager.epoch = crate::keys::epoch::EpochInfo::new(1);
-                device_manager.epoch.activate().map_err(|e| {
-                    BaluardError::from(crate::error::KeyError::InvalidEpochState(e))
-                })?;
-                // H6 fix: sync registry so device_manager.is_enrolled() works
-                device_manager.registry = registry.clone();
-                // Persist DeviceManager state so VaultHandle::open() can reload it
-                device_manager.save_to_vault()?;
 
                 let handle = VaultHandle {
                     path: path.clone(),
@@ -820,6 +825,38 @@ mod tests {
 
         let binding = result.recovery_phrase.phrase();
         assert_eq!(binding.split(' ').count(), 24);
+    }
+
+    /// P2 ordering contract: the initial commit of a git-initialized vault
+    /// carries `meta/devices.json` in its tree AND an embedded signature, so
+    /// the roster-snapshot rule can verify it on any peer.
+    #[cfg(feature = "git-sync")]
+    #[test]
+    fn initial_commit_is_enrolled_and_signed() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("p2_vault");
+
+        let (_handle, _secrets) = VaultCreator::new(&path, "master-pass", "StandardDevice")
+            .kdf_profile(KdfProfile::MobileLow)
+            .initialize_git(true)
+            .execute()
+            .unwrap();
+
+        let repo = git2::Repository::open(&path).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+
+        // Registry is part of the root tree (roster-snapshot verifiable).
+        let tree = head.tree().unwrap();
+        assert!(
+            tree.get_path(std::path::Path::new("meta/devices.json"))
+                .is_ok(),
+            "initial commit must contain meta/devices.json"
+        );
+        // Root commit is signed (modern era at genesis).
+        assert!(
+            repo.extract_signature(&head.id(), None).is_ok(),
+            "initial commit must carry an embedded signature"
+        );
     }
 
     #[test]

@@ -159,6 +159,11 @@ pub enum SyncError {
     #[error("commit signature verification failed")]
     InvalidCommitSignature,
 
+    #[error(
+        "signing key unavailable: unsigned commits are refused; unlock Baluard on this device to restore sync"
+    )]
+    UnsignedCommitRefused,
+
     #[error("rollback detected on object {0}")]
     RollbackDetected(String),
 

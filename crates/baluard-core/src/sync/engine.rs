@@ -21,6 +21,8 @@ use crate::sync::state_machine::{SyncState, SyncStateMachine};
 use base64::Engine;
 
 /// Git sync engine wrapping git2-rs operations.
+/// Device roster for one commit: device UUID → Ed25519 verifying key bytes.
+type DeviceRoster = std::collections::BTreeMap<String, [u8; 32]>;
 #[cfg(feature = "git-sync")]
 pub struct SyncEngine {
     /// Path to the vault directory (= git workdir).
@@ -43,7 +45,10 @@ pub struct SyncEngine {
     /// RefCell for interior mutability (pull/push take &self for git2 borrow reasons).
     pub state_machine: RefCell<SyncStateMachine>,
     /// Device Ed25519 signing key (loaded from meta/device-privkey.json).
-    /// Used to sign all commits. None = unsigned commits (legacy compat).
+    /// Used to sign all commits. None = signing disabled: on an enrolled
+    /// vault (meta/devices.json present) commit creation fails closed
+    /// (UnsignedCommitRefused); only pre-enrollment local vaults fall back
+    /// to unsigned local commits.
     signing_key: Option<ed25519_dalek::SigningKey>,
 }
 
@@ -85,6 +90,9 @@ impl SyncEngine {
                 None
             }
         };
+        if let Some(ref key) = signing_key {
+            Self::warn_on_signing_key_mismatch(vault_path, device_id, key);
+        }
         Self {
             vault_path: vault_path.to_path_buf(),
             device_id: device_id.to_string(),
@@ -235,7 +243,30 @@ impl SyncEngine {
         };
 
         let parents: Vec<_> = parent_commits.iter().collect();
-        let commit_id = self.create_signed_commit(repo, &sig, COMMIT_MESSAGE, &tree, &parents)?;
+        let commit_id = match self.create_signed_commit(repo, &sig, COMMIT_MESSAGE, &tree, &parents)
+        {
+            Ok(id) => id,
+            Err(e) => {
+                // Refusal/rollback path: restore the index to HEAD so the
+                // staged residue can't poison the next pull's force-checkout
+                // or a retry after the signing key becomes available.
+                // reset_default with an empty pathspec is a no-op in git2-rs,
+                // so read the HEAD tree back into the index instead.
+                // Best-effort: the original error is what propagates.
+                if let Ok(head) = repo.head() {
+                    if let Ok(head_commit) = head.peel_to_commit() {
+                        if let Ok(head_tree) = head_commit.tree() {
+                            if let Ok(mut index) = repo.index() {
+                                if index.read_tree(&head_tree).is_ok() {
+                                    let _ = index.write();
+                                }
+                            }
+                        }
+                    }
+                }
+                return Err(e);
+            }
+        };
         // Record device activity (gitignored file) with the new commit sha.
         self.record_device_activity(&commit_id.to_string());
         // Update HEAD to point to the new commit
@@ -396,9 +427,40 @@ impl SyncEngine {
         "main".to_string()
     }
 
+    /// Enrolled-vault test for the unsigned-commit refusal: the registry
+    /// must be present in the commit's first-parent tree (or in the new
+    /// tree itself for the initial commit). The WORKTREE copy is deliberately
+    /// ignored: it is mutable state a local process can delete.
+    fn commit_line_is_enrolled(
+        _repo: &Repository,
+        tree: &git2::Tree<'_>,
+        parents: &[&git2::Commit<'_>],
+    ) -> bool {
+        let has_registry = |t: &git2::Tree| {
+            t.get_path(std::path::Path::new("meta/devices.json"))
+                .is_ok()
+        };
+        // Enrolled if the registry is in the new tree (root or genesis
+        // enrollment commit) OR in the first parent's tree (established
+        // line). Mirrors roster_for_commit's genesis rule: an enrollment
+        // commit must be signed even though its parent predates the
+        // registry.
+        if has_registry(tree) {
+            return true;
+        }
+        if let Some(first) = parents.first() {
+            if let Ok(parent_tree) = first.tree() {
+                return has_registry(&parent_tree);
+            }
+        }
+        false
+    }
+
     /// Create a commit with Ed25519 signature embedded in the git object.
-    /// If signing_key is available, uses commit_create_buffer + commit_signed.
-    /// Otherwise falls back to unsigned commit.
+    /// Uses commit_create_buffer + commit_signed. On an enrolled vault
+    /// (meta/devices.json present) a missing signing key is a hard error —
+    /// unsigned commits are never created (P2). Pre-enrollment local vaults
+    /// (no registry yet) keep the unsigned local path.
     fn create_signed_commit(
         &self,
         repo: &Repository,
@@ -424,6 +486,13 @@ impl SyncEngine {
                 .commit_signed(raw, &sig_field, None)
                 .map_err(|e| SyncError::Git(format!("commit_signed: {e}")))?;
             Ok(oid)
+        } else if Self::commit_line_is_enrolled(repo, tree, parents) {
+            // Enrolled vault (registry in the parent tree, or in this tree
+            // for the initial commit): refuse to create an unsigned commit —
+            // checked against TREES, not the mutable worktree, so deleting
+            // meta/devices.json locally cannot downgrade this vault to
+            // unsigned commits (P2).
+            Err(SyncError::UnsignedCommitRefused.into())
         } else {
             let oid = repo
                 .commit(Some("HEAD"), sig, sig, message, tree, parents)
@@ -1318,6 +1387,12 @@ impl SyncEngine {
                 "clone: {e}"
             )))
         })?;
+        // P2: verify the fetched history before handing it out. Any failure
+        // must not leave a checked-out unverified copy on disk.
+        if let Err(e) = Self::verify_fetched_history(&repo) {
+            let _ = std::fs::remove_dir_all(target);
+            return Err(e);
+        }
         Ok(repo)
     }
 
@@ -1429,6 +1504,11 @@ impl SyncEngine {
             }
             SyncError::Git(crate::sync::credentials::scrub_git_error(&msg))
         })?;
+        // P2: verify the fetched history before handing it out.
+        if let Err(e) = Self::verify_fetched_history(&repo) {
+            let _ = std::fs::remove_dir_all(target);
+            return Err(e);
+        }
         Ok(repo)
     }
 }
@@ -1566,6 +1646,13 @@ impl SyncEngine {
     /// The signature is embedded in the git commit object itself (gpgsig header).
     /// Returns number of verified commits. Returns error if any signature is invalid.
     /// Unsigned commits in the range cause an error (no backward compat for security).
+    ///
+    /// Roster-snapshot rule (P2): verifying keys are resolved per commit from
+    /// THAT commit's first-parent tree (`meta/devices.json`, UUID-keyed
+    /// DeviceRegistry), never from the worktree. A registry-rotation commit
+    /// is verified with the parent's roster (routine rotation signs with the
+    /// old key); commits after it use the new roster. Signatures bind to a
+    /// device id; member/role resolution lands with membership v2 (P7).
     pub fn verify_commit_signatures(
         &self,
         repo: &Repository,
@@ -1575,52 +1662,260 @@ impl SyncEngine {
             return Ok(0);
         }
 
-        // Load known device verifying keys: device_name → hex verifying key
-        let verifying_keys = Self::load_verifying_keys(&self.vault_path)?;
+        let ordered = Self::topo_order_commits(repo, new_oids)?;
 
-        let mut verified = 0;
-        for oid in new_oids {
-            // Extract signature and signed data from the commit object
-            let (sig_buf, content_buf) = repo
-                .extract_signature(oid, None)
-                .map_err(|_| SyncError::InvalidCommitSignature)?;
-
-            let sig_str = sig_buf.as_str().ok_or(SyncError::InvalidCommitSignature)?;
-            let signed_data = content_buf
-                .as_str()
-                .ok_or(SyncError::InvalidCommitSignature)?;
-
-            // Parse the signature: extract base64 between header/footer
-            let sig_b64 = Self::extract_b64_from_sig_field(sig_str)?;
-            let sig_bytes = base64::engine::general_purpose::STANDARD
-                .decode(sig_b64)
-                .map_err(|_| SyncError::InvalidCommitSignature)?;
-
-            // Find a verifying key that validates this signature
-            let mut found = false;
-            for vk_hex in verifying_keys.values() {
-                let vk_bytes: [u8; 32] = hex::decode(vk_hex)
-                    .map_err(|_| SyncError::InvalidCommitSignature)?
-                    .try_into()
-                    .map_err(|_| SyncError::InvalidCommitSignature)?;
-                if crate::sync::commit::verify_commit_signature(
-                    &vk_bytes,
-                    signed_data.as_bytes(),
-                    &sig_bytes,
-                )
-                .is_ok()
-                {
-                    found = true;
-                    break;
-                }
+        // Roster-snapshot rule: each commit is verified against the registry
+        // in its FIRST PARENT's tree (the pre-state). Genesis transition: a
+        // commit whose parent line predates enrollment but which itself
+        // introduces `meta/devices.json` verifies against its own tree (the
+        // enroll commit carries the registry it signed under). Root commits:
+        // own tree. Commits whose whole parent line predates enrollment are
+        // grandfathered (skipped) — they can only enter a pull as ancient
+        // merge second-parents. Rotation commits verify with the old key;
+        // commits after them see the new registry.
+        let mut roster_cache: std::collections::HashMap<git2::Oid, Option<DeviceRoster>> =
+            std::collections::HashMap::new();
+        for oid in &ordered {
+            let commit = repo
+                .find_commit(*oid)
+                .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
+            if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
+                self.verify_commit_against_roster(repo, *oid, &roster)?;
             }
-            if !found {
-                return Err(SyncError::InvalidCommitSignature.into());
-            }
-            verified += 1;
         }
 
-        Ok(verified)
+        Ok(ordered.len())
+    }
+
+    /// Verify an entire fetched history (clone path). Every commit is
+    /// checked with the roster-snapshot rule: pre-enrollment commits (no
+    /// registry on their parent line) are grandfathered; from the genesis
+    /// enrollment commit onward every commit must carry a valid signature
+    /// against the roster. A fully forged parallel history (registry
+    /// stripped, signatures stripped) is accepted as "pre-enrollment" — an
+    /// inherent TOFU limit at first clone, closed at pull time by head-anchored
+    /// verification and later by P8 revocation manifests.
+    fn verify_fetched_history(repo: &Repository) -> Result<(), BaluardError> {
+        let head = repo
+            .head()
+            .map_err(|e| SyncError::Git(format!("head: {e}")))?
+            .peel_to_commit()
+            .map_err(|e| SyncError::Git(format!("head peel: {e}")))?;
+
+        // Collect every commit root..HEAD (all parents — merge lines count).
+        let mut oids = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut stack = vec![head.id()];
+        while let Some(oid) = stack.pop() {
+            if !visited.insert(oid) {
+                continue;
+            }
+            let commit = repo
+                .find_commit(oid)
+                .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
+            oids.push(oid);
+            for i in 0..commit.parent_count() {
+                let pid = commit
+                    .parent_id(i)
+                    .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?;
+                stack.push(pid);
+            }
+        }
+        // Order parents-first so failures surface deterministically.
+        let ordered = Self::topo_order_commits(repo, &oids)?;
+        let mut roster_cache: std::collections::HashMap<git2::Oid, Option<DeviceRoster>> =
+            std::collections::HashMap::new();
+        for oid in &ordered {
+            let commit = repo
+                .find_commit(*oid)
+                .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
+            if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
+                Self::verify_commit_against_roster_static(repo, *oid, &roster)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Roster in force for one commit, per the snapshot rule. `None` = the
+    /// commit predates enrollment on its parent line (grandfathered).
+    fn roster_for_commit(
+        repo: &Repository,
+        commit: &git2::Commit<'_>,
+        cache: &mut std::collections::HashMap<git2::Oid, Option<DeviceRoster>>,
+    ) -> Result<Option<DeviceRoster>, BaluardError> {
+        let own = Self::roster_tree_lookup(repo, commit, cache)?;
+        if commit.parent_count() == 0 {
+            return Ok(own);
+        }
+        let parent = commit
+            .parent(0)
+            .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?;
+        let parent_roster = Self::roster_tree_lookup(repo, &parent, cache)?;
+        match (parent_roster, own) {
+            (Some(r), _) => Ok(Some(r)),
+            // Genesis enrollment transition: parent line predates the
+            // registry, this commit introduces it.
+            (None, Some(r)) => Ok(Some(r)),
+            (None, None) => Ok(None),
+        }
+    }
+
+    /// Parse `meta/devices.json` out of a commit's tree into a roster.
+    /// Returns `None` when the file is absent (pre-enrollment tree).
+    /// Present-but-unparseable is a hard error (tamper, fail closed).
+    /// Results are cached per blob id — a pull batch re-parses each
+    /// registry version once, not once per commit.
+    fn roster_tree_lookup(
+        repo: &Repository,
+        commit: &git2::Commit<'_>,
+        cache: &mut std::collections::HashMap<git2::Oid, Option<DeviceRoster>>,
+    ) -> Result<Option<DeviceRoster>, BaluardError> {
+        let tree = commit
+            .tree()
+            .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
+        let entry = match tree.get_path(std::path::Path::new("meta/devices.json")) {
+            Ok(entry) => entry,
+            Err(_) => return Ok(None),
+        };
+        let blob_id = entry.id();
+        if let Some(cached) = cache.get(&blob_id) {
+            return Ok(cached.clone());
+        }
+        let blob = repo
+            .find_blob(blob_id)
+            .map_err(|e| SyncError::Git(format!("read devices blob: {e}")))?;
+        let data = std::str::from_utf8(blob.content())
+            .map_err(|_| SyncError::Git("devices blob not UTF-8".into()))?;
+        let parsed = match serde_json::from_str::<crate::devices::DeviceRegistry>(data) {
+            Ok(reg) => {
+                let mut roster = std::collections::BTreeMap::new();
+                for (id, entry) in &reg.devices {
+                    if let Ok(bytes) = hex::decode(&entry.signing_public_key) {
+                        if let Ok(arr) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                            roster.insert(id.to_string(), arr);
+                        }
+                    }
+                }
+                Some(roster)
+            }
+            Err(e) => {
+                return Err(SyncError::Git(format!("parse devices blob: {e}")).into());
+            }
+        };
+        cache.insert(blob_id, parsed.clone());
+        Ok(parsed)
+    }
+
+    /// Order commits parents-first within the pulled batch so roster
+    /// inheritance sees every parent before its children.
+    fn topo_order_commits(repo: &Repository, oids: &[Oid]) -> Result<Vec<Oid>, BaluardError> {
+        use std::collections::{HashMap, HashSet};
+        let in_set: HashSet<Oid> = oids.iter().copied().collect();
+        let mut order = Vec::with_capacity(oids.len());
+        // 0 = unvisited, 1 = on stack (visiting), 2 = emitted.
+        let mut marks: HashMap<Oid, u8> = HashMap::with_capacity(oids.len());
+        // Iterative DFS: stack of (oid, next parent index to explore).
+        let mut stack: Vec<(Oid, usize)> = Vec::new();
+        for &start in oids {
+            if marks.contains_key(&start) {
+                continue;
+            }
+            marks.insert(start, 1);
+            stack.push((start, 0));
+            while let Some((oid, parent_idx)) = stack.pop() {
+                let commit = repo
+                    .find_commit(oid)
+                    .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
+                let parent_count = commit.parent_count();
+                let mut descended = false;
+                let mut idx = parent_idx;
+                while idx < parent_count {
+                    let parent_oid = commit
+                        .parent_id(idx)
+                        .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?;
+                    idx += 1;
+                    if !in_set.contains(&parent_oid) {
+                        continue;
+                    }
+                    match marks.get(&parent_oid) {
+                        None => {
+                            // Explore the child after this parent; park the
+                            // child frame with its resume index first.
+                            stack.push((oid, idx));
+                            marks.insert(parent_oid, 1);
+                            stack.push((parent_oid, 0));
+                            descended = true;
+                            break;
+                        }
+                        Some(1) => {
+                            return Err(
+                                SyncError::Git("commit cycle in pulled history".into()).into()
+                            );
+                        }
+                        Some(_) => {} // parent already emitted
+                    }
+                }
+                if descended {
+                    continue;
+                }
+                marks.insert(oid, 2);
+                order.push(oid);
+            }
+        }
+        Ok(order)
+    }
+
+    /// Verify one commit's embedded signature against the roster in force.
+    /// A match identifies the signing device; an empty roster or no match
+    /// fails closed with InvalidCommitSignature.
+    fn verify_commit_against_roster(
+        &self,
+        repo: &Repository,
+        oid: Oid,
+        roster: &DeviceRoster,
+    ) -> Result<(), BaluardError> {
+        Self::verify_commit_against_roster_static(repo, oid, roster)
+    }
+
+    /// Static variant used by the clone path (no engine instance needed —
+    /// verification is a property of the fetched history, not of the local
+    /// signing key).
+    fn verify_commit_against_roster_static(
+        repo: &Repository,
+        oid: Oid,
+        roster: &DeviceRoster,
+    ) -> Result<(), BaluardError> {
+        // Extract signature and signed data from the commit object
+        let (sig_buf, content_buf) = repo
+            .extract_signature(&oid, None)
+            .map_err(|_| SyncError::InvalidCommitSignature)?;
+
+        let sig_str = sig_buf.as_str().ok_or(SyncError::InvalidCommitSignature)?;
+        let signed_data = content_buf
+            .as_str()
+            .ok_or(SyncError::InvalidCommitSignature)?;
+
+        // Parse the signature: extract base64 between header/footer
+        let sig_b64 = Self::extract_b64_from_sig_field(sig_str)?;
+        let sig_bytes = base64::engine::general_purpose::STANDARD
+            .decode(sig_b64)
+            .map_err(|_| SyncError::InvalidCommitSignature)?;
+
+        // Find the roster key that validates this signature. The matching
+        // entry IS the signing device binding (consumed by the policy table
+        // once membership v2 lands).
+        for vk_bytes in roster.values() {
+            if crate::sync::commit::verify_commit_signature(
+                vk_bytes,
+                signed_data.as_bytes(),
+                &sig_bytes,
+            )
+            .is_ok()
+            {
+                return Ok(());
+            }
+        }
+        Err(SyncError::InvalidCommitSignature.into())
     }
 
     /// Extract base64 payload from the "-----BEGIN BALUARD SIGNATURE-----\n<b64>\n-----END BALUARD SIGNATURE-----" format.
@@ -1643,33 +1938,37 @@ impl SyncEngine {
         Ok(rest[..end_pos].to_string())
     }
 
-    /// Load device verifying keys from meta/device-registry.json.
-    fn load_verifying_keys(
+    /// Sanity-check the loaded signing key against this device's registry
+    /// entry (P2). A mismatch is logged but NOT fatal: the commit signature
+    /// carries no device claim, so binding is enforced pull-side by the
+    /// roster (a key absent from the roster is rejected on pull). Hard-
+    /// disabling here would wedge the legitimate rotation moment, where the
+    /// old key legitimately signs while the registry already lists the new.
+    fn warn_on_signing_key_mismatch(
         vault_path: &Path,
-    ) -> Result<std::collections::HashMap<String, String>, BaluardError> {
-        let registry_path = vault_path.join("meta/device-registry.json");
-        if !registry_path.exists() {
-            return Ok(std::collections::HashMap::new());
+        device_id: &str,
+        key: &ed25519_dalek::SigningKey,
+    ) {
+        let Ok(id) = uuid::Uuid::parse_str(device_id) else {
+            return;
+        };
+        let Ok(data) = std::fs::read_to_string(vault_path.join("meta/devices.json")) else {
+            return;
+        };
+        let Ok(reg) = serde_json::from_str::<crate::devices::DeviceRegistry>(&data) else {
+            return;
+        };
+        let Some(entry) = reg.devices.get(&id) else {
+            return;
+        };
+        let Ok(enrolled) = hex::decode(&entry.signing_public_key) else {
+            return;
+        };
+        if enrolled.as_slice() != key.verifying_key().as_bytes() {
+            eprintln!(
+                "warning: loaded signing key does not match enrolled device {id}; commits will still verify under the key's own roster entry"
+            );
         }
-        let data = std::fs::read_to_string(&registry_path)
-            .map_err(|e| SyncError::Git(format!("read registry: {e}")))?;
-        let reg: serde_json::Value = serde_json::from_str(&data)
-            .map_err(|e| SyncError::Git(format!("parse registry: {e}")))?;
-        let keys = reg["devices"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|d| {
-                        let name = d["name"].as_str()?.to_string();
-                        let pk = d["signing_public_key"].as_str()?.to_string();
-                        Some((name, pk))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-        Ok(keys)
     }
 }
 
@@ -2107,11 +2406,17 @@ mod tests {
         let (dir, engine) = make_test_repo();
         let repo = engine.init_repo().unwrap();
 
-        // Seed a tracked file + a devices registry so bump_device_epoch has a
-        // target to rewrite (the original bug source).
+        // Seed a tracked file + a real enrolled registry (production shape:
+        // an enrolled vault refuses unsigned commits) so bump_device_epoch
+        // has a target to rewrite (the original bug source).
         std::fs::write(dir.path().join("data.enc"), b"\x00\x01\x02").unwrap();
-        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
-        std::fs::write(dir.path().join("meta/devices.json"), b"{\"devices\":{}}").unwrap();
+        enroll_device(
+            dir.path(),
+            &uuid::Uuid::new_v4(),
+            &crate::crypto::signature::generate_ed25519_keypair().0,
+        );
+        // Recreate the engine so it loads the key written by enrollment.
+        let engine = SyncEngine::new(dir.path(), "test-device", None);
 
         engine.commit_all(&repo, "").unwrap();
 
@@ -2132,10 +2437,8 @@ mod tests {
     #[test]
     fn bump_device_epoch_matches_by_id_not_name() {
         let (dir, _engine) = make_test_repo();
-        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
-        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":7}").unwrap();
-
         let id = uuid::Uuid::new_v4();
+        let key = crate::crypto::signature::generate_ed25519_keypair().0;
         let mut reg = crate::devices::DeviceRegistry::new();
         reg.devices.insert(
             id,
@@ -2143,15 +2446,28 @@ mod tests {
                 device_id: id,
                 name: String::new(), // C5: stripped at rest
                 encryption_public_key: "aa".into(),
-                signing_public_key: "bb".into(),
+                signing_public_key: hex::encode(ed25519_dalek::VerifyingKey::from(&key).to_bytes()),
                 enrolled_at: 1,
                 enrolled_by: None,
                 last_seen_epoch: 0,
             },
         );
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":7}").unwrap();
         std::fs::write(
             dir.path().join("meta/devices.json"),
             serde_json::to_string(&reg).unwrap(),
+        )
+        .unwrap();
+        // The device's private key (plaintext legacy form, as ceremony output)
+        // so commits on this enrolled vault succeed.
+        let privkey_data = serde_json::json!({
+            "x25519_private": hex::encode([0u8; 32]),
+            "ed25519_private": hex::encode(key.to_bytes()),
+        });
+        std::fs::write(
+            dir.path().join("meta/device-privkey.json"),
+            serde_json::to_string_pretty(&privkey_data).unwrap(),
         )
         .unwrap();
 
@@ -2165,7 +2481,8 @@ mod tests {
         .unwrap();
         assert_eq!(after.devices[&id].last_seen_epoch, 7);
 
-        // An engine with a different (or placeholder) id leaves it alone.
+        // An engine with a different (or placeholder) id leaves the entry
+        // alone; it shares the key material so its commits still sign.
         let other = SyncEngine::new(dir.path(), "baluard-daemon", None);
         let repo2 = other.open_repo().unwrap();
         std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":9}").unwrap();
@@ -2198,32 +2515,59 @@ mod tests {
         assert!(clone_dir.path().join(".git").exists());
     }
 
-    /// Helper: set up Ed25519 signing key + verifying key for a test repo.
-    /// Uses a provided verifying key hex so both repos share the same keypair.
-    fn setup_signing_keys_with(dir: &std::path::Path, signing_key: &ed25519_dalek::SigningKey) {
+    /// Helper: enroll a device in the production registry format
+    /// (meta/devices.json, UUID-keyed DeviceRegistry) and write its
+    /// plaintext private key (legacy format, as vault ceremony output).
+    /// Mirrors what DeviceManager + handle.rs produce in production.
+    fn enroll_device(
+        dir: &std::path::Path,
+        device_id: &uuid::Uuid,
+        signing_key: &ed25519_dalek::SigningKey,
+    ) {
         let verifying = ed25519_dalek::VerifyingKey::from(signing_key);
+        let mut reg: crate::devices::DeviceRegistry = if dir.join("meta/devices.json").exists() {
+            serde_json::from_str(&std::fs::read_to_string(dir.join("meta/devices.json")).unwrap())
+                .unwrap()
+        } else {
+            crate::devices::DeviceRegistry::new()
+        };
+        reg.devices.insert(
+            *device_id,
+            crate::vault::manifest::DeviceEntry {
+                device_id: *device_id,
+                name: String::new(), // C5: names stripped at rest
+                encryption_public_key: hex::encode([0u8; 32]),
+                signing_public_key: hex::encode(verifying.to_bytes()),
+                enrolled_at: 1,
+                enrolled_by: None,
+                last_seen_epoch: 0,
+            },
+        );
+        std::fs::create_dir_all(dir.join("meta")).unwrap();
+        std::fs::write(
+            dir.join("meta/devices.json"),
+            serde_json::to_string_pretty(&reg).unwrap(),
+        )
+        .unwrap();
         let privkey_data = serde_json::json!({
             "x25519_private": hex::encode([0u8; 32]),
             "ed25519_private": hex::encode(signing_key.to_bytes()),
         });
-        std::fs::create_dir_all(dir.join("meta")).unwrap();
         std::fs::write(
             dir.join("meta/device-privkey.json"),
             serde_json::to_string_pretty(&privkey_data).unwrap(),
         )
         .unwrap();
-        let vk_hex = hex::encode(verifying.to_bytes());
-        let registry = serde_json::json!({
-            "devices": [
-                { "name": "test-device", "signing_public_key": vk_hex },
-                { "name": "clone-device", "signing_public_key": vk_hex },
-            ]
-        });
-        std::fs::write(
-            dir.join("meta/device-registry.json"),
-            serde_json::to_string_pretty(&registry).unwrap(),
-        )
-        .unwrap();
+    }
+
+    /// Compatibility shim for existing single-keypair tests: enroll the
+    /// given keypair under two stable device UUIDs so both sides verify.
+    fn setup_signing_keys_with(dir: &std::path::Path, signing_key: &ed25519_dalek::SigningKey) {
+        enroll_device(
+            dir,
+            &uuid::Uuid::parse_str("00000000-0000-0000-0000-00000000000a").unwrap(),
+            signing_key,
+        );
     }
 
     #[test]
@@ -2319,6 +2663,491 @@ mod tests {
         assert!(
             dir.path().join("b.enc").exists(),
             "b.enc not found after pull"
+        );
+    }
+
+    /// Clone `source` through a bare remote (file:// stands in for the
+    /// provider). The clone picks up the registry from the fetched tree;
+    /// no local enrollment is written before checkout.
+    fn make_clone(
+        _source_dir: &std::path::Path,
+        source_engine: &SyncEngine,
+        source_repo: &Repository,
+    ) -> (tempfile::TempDir, tempfile::TempDir, SyncEngine, Repository) {
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_bare(&remote_path).unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        source_engine
+            .add_remote(source_repo, "origin", &remote_url)
+            .unwrap();
+        source_engine.push(source_repo, "origin").unwrap();
+        let branch = SyncEngine::resolve_default_branch(source_repo);
+        let bare = Repository::open(&remote_path).unwrap();
+        bare.reference_symbolic(
+            "HEAD",
+            &format!("refs/heads/{branch}"),
+            true,
+            "set default branch",
+        )
+        .unwrap();
+
+        let clone_dir = tempfile::tempdir().unwrap();
+        let clone_engine = SyncEngine::new(clone_dir.path(), "clone-device", None);
+        let cloned = Repository::init(clone_dir.path()).unwrap();
+        clone_engine
+            .add_remote(&cloned, "origin", &remote_url)
+            .unwrap();
+        let mut remote = cloned.find_remote("origin").unwrap();
+        remote
+            .fetch(
+                &[&format!("refs/heads/{branch}:refs/remotes/origin/{branch}")],
+                None,
+                None,
+            )
+            .unwrap();
+        drop(remote);
+        let remote_commit = cloned
+            .find_reference(&format!("refs/remotes/origin/{branch}"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let tip = remote_commit.id();
+        drop(remote_commit);
+        cloned
+            .reference(&format!("refs/heads/{branch}"), tip, false, "clone")
+            .unwrap();
+        cloned.set_head(&format!("refs/heads/{branch}")).unwrap();
+        cloned
+            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        (remote_dir, clone_dir, clone_engine, cloned)
+    }
+
+    /// Re-point an enrolled device's registry entry at a new key
+    /// (read-modify-write on meta/devices.json only). Simulates an approved
+    /// enrollment or key rotation landing in the registry; the device's
+    /// private key file is untouched.
+    fn set_device_key(
+        dir: &std::path::Path,
+        device_id: &uuid::Uuid,
+        key: &ed25519_dalek::SigningKey,
+    ) {
+        let verifying = ed25519_dalek::VerifyingKey::from(key);
+        let mut reg: crate::devices::DeviceRegistry =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("meta/devices.json")).unwrap())
+                .unwrap();
+        if let Some(entry) = reg.devices.get_mut(device_id) {
+            entry.signing_public_key = hex::encode(verifying.to_bytes());
+        } else {
+            reg.devices.insert(
+                *device_id,
+                crate::vault::manifest::DeviceEntry {
+                    device_id: *device_id,
+                    name: String::new(),
+                    encryption_public_key: hex::encode([0u8; 32]),
+                    signing_public_key: hex::encode(verifying.to_bytes()),
+                    enrolled_at: 1,
+                    enrolled_by: None,
+                    last_seen_epoch: 0,
+                },
+            );
+        }
+        std::fs::write(
+            dir.join("meta/devices.json"),
+            serde_json::to_string_pretty(&reg).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// Production shape: two devices with DISTINCT keypairs. Device B joins
+    /// via the approval flow (an existing device enrolls B and pushes the
+    /// registry update before B's first commit), then both exchange
+    /// commits; each side must verify the other's signer.
+    #[test]
+    fn multi_device_pull_verifies_each_signer() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_b = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let id_b = uuid::Uuid::new_v4();
+
+        // Device A creates the vault, enrolled before first commit.
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let (_remote, clone_dir, clone_engine, cloned) = make_clone(dir.path(), &engine_a, &repo_a);
+
+        // Approval flow: A enrolls B (registry update, signed by A) and pushes.
+        enroll_device(dir.path(), &id_b, &key_b); // merged read-modify-write
+        engine_a.commit_all(&repo_a, "enroll device B").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        // B pulls the enrollment; verifies A's commit against the roster.
+        clone_engine.pull(&cloned, "origin").unwrap();
+
+        // B's approved enrollment lands in its registry view and its
+        // private key is present; B commits under its own key.
+        enroll_device(clone_dir.path(), &id_b, &key_b);
+        let engine_b = SyncEngine::new(clone_dir.path(), &id_b.to_string(), None);
+        std::fs::write(clone_dir.path().join("b.enc"), b"\xBB").unwrap();
+        engine_b.commit_all(&cloned, "device B change").unwrap();
+        engine_b.push(&cloned, "origin").unwrap();
+
+        // A pulls B's commit; B's distinct key must verify.
+        let result = engine_a.pull(&repo_a, "origin").unwrap();
+        assert!(matches!(
+            result,
+            PullResult::FastForward | PullResult::Merged
+        ));
+        assert!(dir.path().join("b.enc").exists());
+    }
+
+    /// A commit signed by a key absent from the roster is rejected on pull,
+    /// even when the pull's own history is otherwise healthy.
+    #[test]
+    fn pull_rejects_foreign_signed_commit() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+        let (_remote, clone_dir, _clone_engine, cloned) =
+            make_clone(dir.path(), &engine_a, &repo_a);
+
+        // A forger with their own key commits into A's repo. The key is
+        // loaded but NOT enrolled — the roster never learns it.
+        let key_f = crate::crypto::signature::generate_ed25519_keypair().0;
+        let forge_dir = tempfile::tempdir().unwrap();
+        let privkey = serde_json::json!({
+            "x25519_private": hex::encode([0u8; 32]),
+            "ed25519_private": hex::encode(key_f.to_bytes()),
+        });
+        std::fs::create_dir_all(forge_dir.path().join("meta")).unwrap();
+        std::fs::write(
+            forge_dir.path().join("meta/device-privkey.json"),
+            serde_json::to_string_pretty(&privkey).unwrap(),
+        )
+        .unwrap();
+        let forger = SyncEngine::new(forge_dir.path(), "forger", None);
+        std::fs::write(dir.path().join("stolen.enc"), b"\xCC").unwrap();
+        forger.commit_all(&repo_a, "forged").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        let err = SyncEngine::new(clone_dir.path(), "clone-device", None)
+            .pull(&cloned, "origin")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            BaluardError::Sync(SyncError::InvalidCommitSignature)
+        ));
+    }
+
+    /// A raw unsigned commit (provider-side or hand-crafted) is rejected on
+    /// pull — no unsigned fallback anywhere in the pulled range.
+    #[test]
+    fn pull_rejects_unsigned_commit() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+        let (_remote, clone_dir, _clone_engine, cloned) =
+            make_clone(dir.path(), &engine_a, &repo_a);
+
+        // Unsigned commit written straight through libgit2.
+        std::fs::write(dir.path().join("unsigned.enc"), b"\xDD").unwrap();
+        let mut index = repo_a.index().unwrap();
+        index
+            .add_path(std::path::Path::new("unsigned.enc"))
+            .unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo_a.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("unsigned", "u@b.local").unwrap();
+        let parent = repo_a.head().unwrap().peel_to_commit().unwrap();
+        repo_a
+            .commit(Some("HEAD"), &sig, &sig, "unsigned", &tree, &[&parent])
+            .unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        let err = SyncEngine::new(clone_dir.path(), "clone-device", None)
+            .pull(&cloned, "origin")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            BaluardError::Sync(SyncError::InvalidCommitSignature)
+        ));
+    }
+
+    /// On an enrolled vault, a missing signing key refuses commit creation
+    /// (P2: no unsigned fallback). Pre-enrollment local vaults still commit.
+    #[test]
+    fn enrolled_vault_refuses_unsigned_commit_creation() {
+        let id = uuid::Uuid::new_v4();
+        let (dir, engine) = make_test_repo();
+        // Enrolled (registry present) but no private key anywhere.
+        enroll_device(
+            dir.path(),
+            &id,
+            &crate::crypto::signature::generate_ed25519_keypair().0,
+        );
+        std::fs::remove_file(dir.path().join("meta/device-privkey.json")).unwrap();
+        std::fs::write(dir.path().join("x.enc"), b"\xEE").unwrap();
+        let err = match engine.init_repo() {
+            Err(e) => e,
+            Ok(_) => panic!("expected unsigned-commit refusal"),
+        };
+        assert!(matches!(
+            err,
+            BaluardError::Sync(SyncError::UnsignedCommitRefused)
+        ));
+    }
+
+    /// Rotation: the registry re-point and the old-key commit coexist (the
+    /// engine warns on the mismatch but keeps signing \u{2014} pull-side roster
+    /// verification is the hard gate).
+    #[test]
+    fn signing_key_mismatch_warns_but_does_not_block() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_other = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id, &key_a);
+        // Swap the privkey file for a different key; registry still says key_a.
+        let forged = serde_json::json!({
+            "x25519_private": hex::encode([0u8; 32]),
+            "ed25519_private": hex::encode(key_other.to_bytes()),
+        });
+        std::fs::write(
+            dir.path().join("meta/device-privkey.json"),
+            serde_json::to_string_pretty(&forged).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("x.enc"), b"\xEF").unwrap();
+        let engine = SyncEngine::new(dir.path(), &id.to_string(), None);
+        // Create-side: signing proceeds (mismatch warns only \u{2014} rotation needs
+        // this). Pull-side: peers REJECT the commit, because the hard gate is
+        // the roster and this key is not the enrolled one.
+        let repo = engine.init_repo().unwrap();
+        let oid = engine.commit_all(&repo, "mismatched key").unwrap();
+        assert!(engine.verify_commit_signatures(&repo, &[oid]).is_err());
+    }
+
+    /// Registry rotation: the rotation commit itself is signed with the OLD
+    /// key and verifies against the parent roster; a follow-up commit with
+    /// the old key AFTER the rotation is rejected (key-reuse attack).
+    #[test]
+    fn rotation_commit_signed_with_old_key_verifies_then_old_key_rejected() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_b_old = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_b_new = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let id_b = uuid::Uuid::new_v4();
+
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        enroll_device(dir.path(), &id_b, &key_b_old);
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+        let (_remote, clone_dir, clone_engine, cloned) = make_clone(dir.path(), &engine_a, &repo_a);
+
+        // B rotates: registry points at the new key, commit signed with OLD
+        // (the legitimate rotation moment: warn-only mismatch, still signs).
+        enroll_device(clone_dir.path(), &id_b, &key_b_old);
+        set_device_key(clone_dir.path(), &id_b, &key_b_new);
+        let engine_b = SyncEngine::new(clone_dir.path(), &id_b.to_string(), None);
+        std::fs::write(clone_dir.path().join("rot.enc"), b"\x01").unwrap();
+        engine_b.commit_all(&cloned, "rotate device B key").unwrap();
+        engine_b.push(&cloned, "origin").unwrap();
+
+        // A verifies the rotation commit (old key via parent roster).
+        engine_a.pull(&repo_a, "origin").unwrap();
+
+        // Old key signs AGAIN after the rotation: rejected.
+        std::fs::write(clone_dir.path().join("late.enc"), b"\x02").unwrap();
+        engine_b.commit_all(&cloned, "stale key reuse").unwrap();
+        engine_b.push(&cloned, "origin").unwrap();
+        let err = engine_a.pull(&repo_a, "origin").unwrap_err();
+        assert!(matches!(
+            err,
+            BaluardError::Sync(SyncError::InvalidCommitSignature)
+        ));
+        drop(clone_engine);
+    }
+
+    /// The old test-only fixture path (meta/device-registry.json, name-keyed
+    /// array) must be dead: keys present ONLY in that file verify nothing.
+    #[test]
+    fn legacy_registry_fixture_is_not_trusted() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+        let (_remote, clone_dir, _clone_engine, cloned) =
+            make_clone(dir.path(), &engine_a, &repo_a);
+
+        // Attacker seeds the legacy fixture with their key in the victim clone.
+        let key_f = crate::crypto::signature::generate_ed25519_keypair().0;
+        let vk_hex = hex::encode(ed25519_dalek::VerifyingKey::from(&key_f).to_bytes());
+        let legacy = serde_json::json!({
+            "devices": [ { "name": "attacker", "signing_public_key": vk_hex } ]
+        });
+        std::fs::write(
+            clone_dir.path().join("meta/device-registry.json"),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        // Forged commit signed with the legacy-only key.
+        let forge_dir = tempfile::tempdir().unwrap();
+        let privkey = serde_json::json!({
+            "x25519_private": hex::encode([0u8; 32]),
+            "ed25519_private": hex::encode(key_f.to_bytes()),
+        });
+        std::fs::create_dir_all(forge_dir.path().join("meta")).unwrap();
+        std::fs::write(
+            forge_dir.path().join("meta/device-privkey.json"),
+            serde_json::to_string_pretty(&privkey).unwrap(),
+        )
+        .unwrap();
+        let forger = SyncEngine::new(forge_dir.path(), "forger", None);
+        std::fs::write(dir.path().join("stolen.enc"), b"\xCC").unwrap();
+        forger.commit_all(&repo_a, "forged").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        let err = SyncEngine::new(clone_dir.path(), "clone-device", None)
+            .pull(&cloned, "origin")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            BaluardError::Sync(SyncError::InvalidCommitSignature)
+        ));
+    }
+
+    /// A vault enrolled AFTER unsigned history: the commit introducing the
+    /// registry verifies against its own tree (genesis transition), so the
+    /// pre-P2 cohort can adopt signing without a format break.
+    #[test]
+    fn pull_accepts_enrollment_transition_commit() {
+        let (dir, engine) = make_test_repo();
+        // Two UNSIGNED commits, no registry anywhere (legacy era).
+        std::fs::write(dir.path().join("old1.enc"), b"\x01").unwrap();
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("old2.enc"), b"\x02").unwrap();
+        engine.commit_all(&repo, "legacy change").unwrap();
+
+        let (_remote, clone_dir, _clone_engine, cloned) = make_clone(dir.path(), &engine, &repo);
+
+        // Enrollment lands (registry + signed commit signed with the key).
+        let key = crate::crypto::signature::generate_ed25519_keypair().0;
+        enroll_device(dir.path(), &uuid::Uuid::new_v4(), &key);
+        let engine = SyncEngine::new(dir.path(), "test-device", None);
+        std::fs::write(dir.path().join("new.enc"), b"\x03").unwrap();
+        engine.commit_all(&repo, "enroll + signed").unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        // Peer pulls the transition commit: must verify via the genesis rule.
+        let result = SyncEngine::new(clone_dir.path(), "clone-device", None)
+            .pull(&cloned, "origin")
+            .unwrap();
+        assert!(matches!(
+            result,
+            PullResult::FastForward | PullResult::Merged
+        ));
+    }
+
+    /// Cloning a SIGNED-era vault whose remote history was tampered with
+    /// (forged unsigned commit on top) must fail closed — the clone path is
+    /// no longer a verification bypass.
+    #[test]
+    fn clone_rejects_forged_commit_on_signed_vault() {
+        let key = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id, &key);
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let engine = SyncEngine::new(dir.path(), &id.to_string(), None);
+        let repo = engine.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_bare(&remote_path).unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine.add_remote(&repo, "origin", &remote_url).unwrap();
+        engine.push(&repo, "origin").unwrap();
+        let branch = SyncEngine::resolve_default_branch(&repo);
+        let bare = Repository::open(&remote_path).unwrap();
+        bare.reference_symbolic("HEAD", &format!("refs/heads/{branch}"), true, "head")
+            .unwrap();
+
+        // Forge an unsigned commit straight through libgit2 and push it.
+        std::fs::write(dir.path().join("forged.enc"), b"\xFF").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("forged.enc")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("forger", "f@b.local").unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "forged", &tree, &[&parent])
+            .unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        let clone_target = tempfile::tempdir().unwrap();
+        let err = match SyncEngine::clone_unchecked(&remote_url, clone_target.path()) {
+            Err(e) => e,
+            Ok(_) => panic!("clone must reject forged history"),
+        };
+        assert!(matches!(
+            err,
+            BaluardError::Sync(SyncError::InvalidCommitSignature)
+        ));
+    }
+
+    /// Deleting meta/devices.json from the WORKTREE cannot downgrade an
+    /// enrolled vault to unsigned commits: the refusal consults the parent
+    /// commit's tree, not mutable local files.
+    #[test]
+    fn unsigned_refusal_survives_worktree_tamper() {
+        let key = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id, &key);
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let engine = SyncEngine::new(dir.path(), &id.to_string(), None);
+        let repo = engine.init_repo().unwrap();
+
+        // Local adversary: strip the key source and the worktree registry.
+        std::fs::remove_file(dir.path().join("meta/device-privkey.json")).unwrap();
+        std::fs::remove_file(dir.path().join("meta/devices.json")).unwrap();
+        let engine = SyncEngine::new(dir.path(), &id.to_string(), None);
+        std::fs::write(dir.path().join("b.enc"), b"\xBB").unwrap();
+        let err = match engine.commit_all(&repo, "should refuse") {
+            Err(e) => e,
+            Ok(_) => panic!("expected unsigned-commit refusal despite worktree tamper"),
+        };
+        assert!(matches!(
+            err,
+            BaluardError::Sync(SyncError::UnsignedCommitRefused)
+        ));
+
+        // The refused commit left the index clean (no staged residue to
+        // poison the next pull's force-checkout).
+        let status = engine.status(&repo).unwrap();
+        assert_eq!(
+            status.staged, 0,
+            "refused commit must not leave staged changes"
         );
     }
 
