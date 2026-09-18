@@ -224,7 +224,7 @@
   },
   "settings": {
     "faviconLabel": "Exibir ícones de sites",
-    "faviconDesc": "Desativado por padrão. Ao ativar, solicita logotipos ao Google, revelando quais sites você salva. Apenas o primeiro site de cada item é enviado.",
+    "faviconDesc": "Desativado por padrão. Ao ativar, os logotipos são buscados em cada site e, se não houver, no Google. Ambos os serviços ficam sabendo quais sites você salva. Apenas o primeiro site de cada item é enviado.",
     "trayOnlyLabel": "Ocultar da barra de tarefas / Dock",
     "trayOnlyDesc": "Manter o Baluard apenas na bandeja do sistema. A janela continua acessível pelo ícone da bandeja; fechá-la oculta para a bandeja.",
     "trayOnlyEnabled": "Modo somente bandeja ativado",

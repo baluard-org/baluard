@@ -1731,8 +1731,19 @@ impl VaultState {
     }
 
     /// Fetch a favicon for a given domain/URI.
-    /// Payload: plain string (domain or full URI).
-    /// Returns base64-encoded PNG on success, or empty string if disabled/failed.
+    ///
+    /// Origin-first pipeline (Bitwarden-style, but site-before-Google:
+    /// the site only sees one anonymous hit and Google is only consulted
+    /// when the site publishes no icon):
+    /// 1. `https://{domain}/favicon.ico`, then `.png`, then `.jpg`
+    /// 2. scrape the page for `<link rel*="icon">` targets
+    /// 3. Google's favicon service as last resort
+    ///
+    /// Every hop passes an SSRF guard: private, loopback, link-local and
+    /// CGNAT addresses are refused by name and by DNS resolution, and
+    /// redirects must stay https + public. Payload: plain string (domain
+    /// or full URI). Returns JSON `{data, mime}` or empty string when
+    /// disabled or nothing was found.
     pub async fn fetch_favicon(&self, payload: &str) -> Result<String, String> {
         // Check if favicon fetching is enabled
         {
@@ -1748,51 +1759,79 @@ impl VaultState {
 
         // Extract domain from payload (could be full URI or bare domain)
         let domain = Self::extract_domain(payload.trim());
-        if domain.is_empty() {
+        if domain.is_empty() || !Self::host_fetchable_str(&domain) {
+            return Ok(String::new());
+        }
+        if !Self::host_resolves_public(&domain).await {
             return Ok(String::new());
         }
 
-        // C20 fix: fetch via the in-tree reqwest client instead of spawning
-        // `curl` (no argv exposure, no dependency on a system binary, proper
-        // TLS from the same stack the providers use). The domain rides as a
-        // percent-encoded query parameter (see `favicon_url`), so a domain
-        // containing '&' or '=' cannot inject extra query params.
-        let client = match reqwest::Client::builder()
+        let client = match Self::build_icon_client() {
+            Some(c) => c,
+            None => return Ok(String::new()),
+        };
+
+        // 1-3. Well-known static paths, cheapest probes first.
+        for path in Self::STATIC_ICON_PATHS {
+            let url = format!("https://{domain}{path}");
+            if let Some(icon) = Self::try_fetch_icon(&client, &url).await {
+                return Ok(icon);
+            }
+        }
+
+        // 4. Scrape the page for <link rel="...icon..."> targets.
+        for url in Self::scrape_icon_links(&client, &domain).await {
+            if let Some(icon) = Self::try_fetch_icon(&client, &url).await {
+                return Ok(icon);
+            }
+        }
+
+        // 5. Google's favicon service, last resort.
+        if let Some(icon) = Self::try_fetch_icon(&client, &Self::favicon_url(&domain)).await {
+            return Ok(icon);
+        }
+        Ok(String::new())
+    }
+
+    /// Well-known favicon paths, in probe order. favicon.ico stays first:
+    /// it is by far the most common.
+    const STATIC_ICON_PATHS: [&'static str; 3] = ["/favicon.ico", "/favicon.png", "/favicon.jpg"];
+
+    /// Shared HTTP client for icon fetching: short timeout, https-only
+    /// redirects, and every redirect hop re-checked against the plain-name
+    /// SSRF guard so a redirect cannot bounce into localhost or a private
+    /// range by name. (DNS is re-checked per candidate host by
+    /// [Self::host_resolves_public]; redirect hops to a public name that
+    /// resolves privately are out of scope for a client-side fetcher.)
+    fn build_icon_client() -> Option<reqwest::Client> {
+        reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
-            .redirect(reqwest::redirect::Policy::limited(10))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() > 5 {
+                    return attempt.error("too many redirects");
+                }
+                let url = attempt.url();
+                if url.scheme() != "https"
+                    || !Self::host_fetchable_str(url.host_str().unwrap_or(""))
+                {
+                    return attempt.stop();
+                }
+                attempt.follow()
+            }))
             .build()
-        {
-            Ok(c) => c,
-            Err(_) => return Ok(String::new()),
-        };
-        let data = match client.get(Self::favicon_url(&domain)).send().await {
-            Ok(resp) => match resp.bytes().await {
-                Ok(b) => b.to_vec(),
-                Err(_) => return Ok(String::new()),
-            },
-            Err(_) => return Ok(String::new()),
-        };
+            .ok()
+    }
 
-        // Validate it looks like image data (PNG/JPEG/ICO/WEBP magic bytes)
-        // and cap the size so a misbehaving endpoint can't push a huge blob
-        // into the cipher (which would inflate the envelope toward the XL tier).
-        if data.len() < 4 || data.len() > 16_384 {
-            return Ok(String::new());
+    /// One icon GET: returns base64 JSON when the response looks like a
+    /// supported image, None otherwise (a miss means the caller tries the
+    /// next candidate). Size cap keeps a misbehaving endpoint from pushing
+    /// a huge blob into the cipher envelope.
+    async fn try_fetch_icon(client: &reqwest::Client, url: &str) -> Option<String> {
+        let resp = client.get(url).send().await.ok()?;
+        let data = resp.bytes().await.ok()?;
+        if data.len() < 4 || data.len() > 16_384 || !Self::looks_like_image(&data) {
+            return None;
         }
-
-        // Accept PNG (89 50 4E 47), JPEG (FF D8 FF), ICO (00 00 01 00), or webp (52 49 46 46)
-        let is_image = (data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47)
-            || (data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
-            || (data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x01)
-            || (data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46);
-
-        if !is_image {
-            return Ok(String::new());
-        }
-
-        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
-
-        // Determine mime type from magic bytes
         let mime = if data[0] == 0x89 {
             "image/png"
         } else if data[0] == 0xFF {
@@ -1802,8 +1841,185 @@ impl VaultState {
         } else {
             "image/x-icon"
         };
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
+        Some(serde_json::json!({"data": b64, "mime": mime}).to_string())
+    }
 
-        Ok(serde_json::json!({"data": b64, "mime": mime}).to_string())
+    fn looks_like_image(data: &[u8]) -> bool {
+        data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) // PNG
+            || data.starts_with(&[0xFF, 0xD8, 0xFF]) // JPEG
+            || data.starts_with(&[0x00, 0x00, 0x01, 0x00]) // ICO
+            || data.starts_with(b"RIFF") // WEBP
+    }
+
+    /// Plain-name SSRF guard: rejects trivially internal targets —
+    /// localhost, dot-less LAN names, and private/loopback/link-local/CGNAT
+    /// IP literals. Public IP literals pass; DNS results are re-checked in
+    /// [Self::host_resolves_public].
+    fn host_fetchable_str(host: &str) -> bool {
+        let h = host.trim().trim_end_matches('.');
+        let h = h.trim_start_matches('[').trim_end_matches(']');
+        if h.is_empty() || !h.contains('.') {
+            return false;
+        }
+        match h.parse::<std::net::IpAddr>() {
+            Ok(ip) => !Self::ip_is_blocklisted(ip),
+            Err(_) => true,
+        }
+    }
+
+    /// DNS-layer guard: EVERY resolved address must be public. Resolution
+    /// failure fails closed.
+    async fn host_resolves_public(host: &str) -> bool {
+        let h = host.to_string();
+        tokio::task::spawn_blocking(move || {
+            use std::net::ToSocketAddrs;
+            match (h.as_str(), 443u16).to_socket_addrs() {
+                Ok(mut addrs) => addrs.all(|addr| !Self::ip_is_blocklisted(addr.ip())),
+                Err(_) => false,
+            }
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    /// Refuse address ranges that must never be contacted by a favicon
+    /// fetch: loopback, private, link-local, CGNAT (Tailscale and
+    /// friends), multicast/reserved, and IPv4-mapped IPv6 forms.
+    fn ip_is_blocklisted(ip: std::net::IpAddr) -> bool {
+        match ip {
+            std::net::IpAddr::V4(v4) => matches!(
+                v4.octets(),
+                [0, ..] // this-network
+                    | [10, ..] // private
+                    | [127, ..] // loopback
+                    | [169, 254, ..] // link-local
+                    | [172, 16..=31, ..] // private
+                    | [192, 168, ..] // private
+                    | [100, 64..=127, ..] // CGNAT
+                    | [192, 0, 0, _] // IETF protocol assignments
+                    | [198, 18..=19, ..] // benchmarking
+                    | [224..=255, ..] // multicast + reserved
+            ),
+            std::net::IpAddr::V6(v6) => {
+                if let Some(mapped) = v6.to_ipv4_mapped() {
+                    return Self::ip_is_blocklisted(std::net::IpAddr::V4(mapped));
+                }
+                v6.is_loopback()
+                    || matches!(v6.segments(), [0xfe80..=0xfebf, ..]) // link-local
+                    || matches!(v6.segments(), [0xfc00..=0xfdff, ..]) // ULA
+                    || v6.is_unspecified()
+            }
+        }
+    }
+
+    /// Fetch the site's landing page and extract `<link rel*="icon">`
+    /// targets, best-first: regular icons before apple-touch variants.
+    /// Bounded: pages over 256KB are skipped, at most 3 candidate URLs
+    /// come back, and every candidate must be https + fetchable by name.
+    async fn scrape_icon_links(client: &reqwest::Client, domain: &str) -> Vec<String> {
+        let page_url = format!("https://{domain}/");
+        let resp = match client.get(&page_url).send().await {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        let body = match resp.bytes().await {
+            Ok(b) => b,
+            Err(_) => return Vec::new(),
+        };
+        if body.len() > 262_144 {
+            return Vec::new();
+        }
+        let html = String::from_utf8_lossy(&body);
+        let base = match url::Url::parse(&page_url) {
+            Ok(u) => u,
+            Err(_) => return Vec::new(),
+        };
+        let mut plain: Vec<String> = Vec::new();
+        let mut apple: Vec<String> = Vec::new();
+        for (href, is_apple) in Self::icon_hrefs(&html) {
+            if plain.len() + apple.len() >= 3 {
+                break;
+            }
+            let Ok(absolute) = base.join(&href) else {
+                continue;
+            };
+            if absolute.scheme() != "https"
+                || !absolute
+                    .host_str()
+                    .map(Self::host_fetchable_str)
+                    .unwrap_or(false)
+            {
+                continue;
+            }
+            if is_apple {
+                apple.push(absolute.to_string());
+            } else {
+                plain.push(absolute.to_string());
+            }
+        }
+        plain.extend(apple);
+        plain
+    }
+
+    /// Hand-rolled `<link>` scan: no HTML parser dependency. Returns
+    /// (href, is_apple_touch) pairs in document order for tags whose rel
+    /// contains "icon". Attribute values are read from the ORIGINAL text;
+    /// only the matching uses a length-preserving lowercased copy.
+    fn icon_hrefs(html: &str) -> Vec<(String, bool)> {
+        let lower = html.to_ascii_lowercase();
+        let mut out = Vec::new();
+        let mut cursor = 0;
+        while let Some(found) = lower[cursor..].find("<link") {
+            let tag_start = cursor + found;
+            let Some(tag_end) = lower[tag_start..].find('>') else {
+                break;
+            };
+            let tag = &lower[tag_start..=tag_start + tag_end];
+            let orig = &html[tag_start..=tag_start + tag_end];
+            cursor = tag_start + tag_end + 1;
+            let Some(rel_val) = Self::tag_attr(tag, orig, "rel") else {
+                continue;
+            };
+            if !rel_val.contains("icon") {
+                continue;
+            }
+            let Some(href) = Self::tag_attr(tag, orig, "href") else {
+                continue;
+            };
+            let href = href.trim();
+            if href.is_empty() {
+                continue;
+            }
+            out.push((href.to_string(), rel_val.contains("apple")));
+        }
+        out
+    }
+
+    /// Best-effort attribute reader: `name="v"`, `name='v'`, `name=v`.
+    /// Attribute NAMES are matched case-insensitively on [tag_lower];
+    /// VALUES are sliced from [tag_orig] so their case survives. The two
+    /// strings must be byte-aligned slices of the same tag.
+    fn tag_attr(tag_lower: &str, tag_orig: &str, name: &str) -> Option<String> {
+        for quote in ['"', '\''] {
+            let pat = format!("{name}={quote}");
+            if let Some(p) = tag_lower.find(&pat) {
+                let start = p + pat.len();
+                let rest = &tag_lower[start..];
+                let end = rest.find(quote).unwrap_or(rest.len());
+                return Some(tag_orig[start..start + end].to_string());
+            }
+        }
+        let pat = format!("{name}=");
+        if let Some(p) = tag_lower.find(&pat) {
+            let start = p + pat.len();
+            let rest = &tag_lower[start..];
+            let end = rest
+                .find(|c: char| c.is_whitespace() || c == '>')
+                .unwrap_or(rest.len());
+            return Some(tag_orig[start..start + end].to_string());
+        }
+        None
     }
 
     /// Build the favicon-service URL with the domain percent-encoded as a
@@ -1814,7 +2030,7 @@ impl VaultState {
             .expect("static base URL always parses");
         url.query_pairs_mut()
             .append_pair("domain", domain)
-            .append_pair("sz", "32");
+            .append_pair("sz", "64");
         url.into()
     }
 
@@ -3928,7 +4144,7 @@ mod favicon_tests {
             pairs.next(),
             Some(("domain".into(), "evil.com&sz=64".into()))
         );
-        assert_eq!(pairs.next(), Some(("sz".into(), "32".into())));
+        assert_eq!(pairs.next(), Some(("sz".into(), "64".into())));
         assert_eq!(pairs.next(), None);
     }
 
@@ -3937,8 +4153,122 @@ mod favicon_tests {
         let url = VaultState::favicon_url("example.com");
         assert_eq!(
             url,
-            "https://www.google.com/s2/favicons?domain=example.com&sz=32"
+            "https://www.google.com/s2/favicons?domain=example.com&sz=64"
         );
+    }
+
+    /// SSRF guard: internal addresses must never be contactable, in any
+    /// notation (decimal, IPv4-mapped IPv6, bracketed literals).
+    #[test]
+    fn ip_blocklist_refuses_internal_ranges() {
+        let blocked = [
+            "0.0.0.0",
+            "10.1.2.3",
+            "127.0.0.1",
+            "169.254.1.1",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.1.1",
+            "100.64.0.1",
+            "198.18.0.1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::1",
+            "fe80::1",
+            "fc00::1",
+            "fd12:3456::1",
+            "::ffff:192.168.1.1",
+        ];
+        for s in blocked {
+            let ip: std::net::IpAddr = s.parse().expect("test ip parses");
+            assert!(
+                VaultState::ip_is_blocklisted(ip),
+                "{s} must be blocklisted"
+            );
+        }
+        let public = ["1.1.1.1", "8.8.8.8", "93.184.216.34", "2606:4700::1111"];
+        for s in public {
+            let ip: std::net::IpAddr = s.parse().expect("test ip parses");
+            assert!(
+                !VaultState::ip_is_blocklisted(ip),
+                "{s} must NOT be blocklisted"
+            );
+        }
+    }
+
+    /// Plain-name guard: LAN hostnames, localhost, and internal IP
+    /// literals are refused before any DNS or HTTP work. Real domains and
+    /// public IP literals pass.
+    #[test]
+    fn host_fetchable_str_rejects_internal_names() {
+        let refused = [
+            "localhost",
+            "LOCALHOST",
+            "localhost.",
+            "myserver",
+            "127.0.0.1",
+            "192.168.1.1",
+            "10.0.0.1",
+            "[::1]",
+            "::ffff:127.0.0.1",
+            "",
+        ];
+        for h in refused {
+            assert!(!VaultState::host_fetchable_str(h), "{h} must be refused");
+        }
+        let allowed = ["example.com", "sub.example.co.uk", "1.1.1.1"];
+        for h in allowed {
+            assert!(VaultState::host_fetchable_str(h), "{h} must be allowed");
+        }
+    }
+
+    /// Probe order is part of the design: ico, then png, then jpg.
+    #[test]
+    fn static_icon_paths_ordered() {
+        assert_eq!(
+            VaultState::STATIC_ICON_PATHS,
+            ["/favicon.ico", "/favicon.png", "/favicon.jpg"]
+        );
+    }
+
+    /// The <link> scan finds icon rels in document order, separates
+    /// apple-touch variants, reads hrefs from the original text (case
+    /// preserved), resolves nothing here (that is the caller's job), and
+    /// ignores non-icon links and tags without hrefs.
+    #[test]
+    fn icon_hrefs_extracts_icon_links_best_first() {
+        let html = concat!(
+            "<head>",
+            "<link rel=\"stylesheet\" href=\"style.css\">",
+            "<link rel=\"apple-touch-icon\" sizes=\"180x180\"",
+            " href=\"https://cdn.example.com/apple.png\">",
+            "<LINK REL='shortcut icon' HREF='/favicons/custom.ico'>",
+            "<link rel=\"icon\" type=\"image/png\" href=\"logo.png\">",
+            "<link rel=\"icon\">",
+            "</head>"
+        );
+        let found = VaultState::icon_hrefs(html);
+        assert_eq!(found.len(), 3, "icon links only: {found:?}");
+        assert!(found[0].1, "apple-touch first in document order");
+        assert_eq!(found[0].0, "https://cdn.example.com/apple.png");
+        assert!(!found[1].1, "shortcut icon is not apple");
+        assert_eq!(found[1].0, "/favicons/custom.ico");
+        assert!(!found[2].1);
+        assert_eq!(found[2].0, "logo.png");
+    }
+
+    /// Magic-byte validation gates every candidate response.
+    #[test]
+    fn looks_like_image_checks_magic_bytes() {
+        assert!(VaultState::looks_like_image(&[
+            0x89, 0x50, 0x4E, 0x47, 0x0D
+        ]));
+        assert!(VaultState::looks_like_image(&[0xFF, 0xD8, 0xFF, 0xE0]));
+        assert!(VaultState::looks_like_image(&[0x00, 0x00, 0x01, 0x00]));
+        assert!(VaultState::looks_like_image(b"RIFFxxxxWEBP"));
+        assert!(!VaultState::looks_like_image(b"<html>"));
+        assert!(!VaultState::looks_like_image(b"Not Found"));
+        assert!(!VaultState::looks_like_image(&[0x00, 0x01]));
     }
 }
 
