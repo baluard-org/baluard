@@ -216,6 +216,7 @@ fn diag_vault_add_with_explicit_path_registry() {
 
     // 10. Read daemon stderr and dump it.
     let _ = child.kill();
+    let _ = child.wait();
     let mut stderr_buf = String::new();
     let _ = daemon_stderr.read_to_string(&mut stderr_buf);
     eprintln!(

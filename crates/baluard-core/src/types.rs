@@ -317,12 +317,7 @@ impl UriMatchStrategy {
     /// the bundled global list (Bitwarden equivalent-domains parity). Custom
     /// groups widen Domain-strategy matches only; every other strategy and
     /// all fail-closed rules are unchanged.
-    pub fn matches_with(
-        &self,
-        uri: &str,
-        target: &str,
-        custom_groups: &[Vec<String>],
-    ) -> bool {
+    pub fn matches_with(&self, uri: &str, target: &str, custom_groups: &[Vec<String>]) -> bool {
         if self == &UriMatchStrategy::Never {
             return false;
         }
@@ -449,13 +444,11 @@ pub fn web_uri_registrable(raw: &str) -> Option<String> {
 /// and the user's explicit trust confirmation in the picker.
 #[cfg(feature = "uri-match")]
 const APP_TLD_HINTS: &[&str] = &[
-    "com", "org", "net", "int", "edu", "gov", "mil", "io", "dev", "app",
-    "ai", "co", "me", "tv", "xyz", "info", "cloud", "site", "online",
-    "tech", "store", "us", "ca", "mx", "br", "ar", "cl", "pe", "uk", "de",
-    "fr", "es", "pt", "it", "nl", "be", "ch", "at", "pl", "cz", "se", "no",
-    "dk", "fi", "ie", "gr", "ru", "ua", "tr", "jp", "kr", "cn", "hk", "tw",
-    "sg", "in", "au", "nz", "za", "il", "ae", "sa", "id", "th", "vn", "ph",
-    "my", "ng", "ke", "eg",
+    "com", "org", "net", "int", "edu", "gov", "mil", "io", "dev", "app", "ai", "co", "me", "tv",
+    "xyz", "info", "cloud", "site", "online", "tech", "store", "us", "ca", "mx", "br", "ar", "cl",
+    "pe", "uk", "de", "fr", "es", "pt", "it", "nl", "be", "ch", "at", "pl", "cz", "se", "no", "dk",
+    "fi", "ie", "gr", "ru", "ua", "tr", "jp", "kr", "cn", "hk", "tw", "sg", "in", "au", "nz", "za",
+    "il", "ae", "sa", "id", "th", "vn", "ph", "my", "ng", "ke", "eg",
 ];
 
 /// Reverse-label web-domain candidates for an Android package name
@@ -566,9 +559,7 @@ fn custom_groups_match(groups: &[Vec<String>], ra: &str, rb: &str) -> bool {
                 // Sanitize: strip scheme/path the user may have pasted
                 // (review finding #6), then fold to registrable domain.
                 let bare = uri_host(entry).unwrap_or_else(|| entry.to_ascii_lowercase());
-                registrable_domain(&bare)
-                    .unwrap_or_else(|| bare)
-                    == registrable
+                registrable_domain(&bare).unwrap_or(bare) == registrable
             })
         };
         covers(ra) && covers(rb)
@@ -2094,8 +2085,7 @@ mod tests {
     fn domain_strategy_custom_equivalent_groups() {
         // User-defined groups (Bitwarden equivalent-domains parity):
         // portal.mybank.org <-> mybank.com declared equivalent.
-        let groups: Vec<Vec<String>> =
-            vec![vec!["portal.mybank.org".into(), "mybank.com".into()]];
+        let groups: Vec<Vec<String>> = vec![vec!["portal.mybank.org".into(), "mybank.com".into()]];
         assert!(M::Domain.matches_with(
             "https://portal.mybank.org",
             "https://mybank.com/login",
@@ -2194,10 +2184,16 @@ mod tests {
     fn app_candidates_reverse_labels() {
         use super::app_domain_candidates;
         assert_eq!(app_domain_candidates("com.mybank.app"), vec!["mybank.com"]);
-        assert_eq!(app_domain_candidates("com.github.android"), vec!["github.com"]);
+        assert_eq!(
+            app_domain_candidates("com.github.android"),
+            vec!["github.com"]
+        );
         // br.com.mybank.app: com.br is a public suffix, app.mybank fails the
         // TLD hint; only the real registrable survives.
-        assert_eq!(app_domain_candidates("br.com.mybank.app"), vec!["mybank.com"]);
+        assert_eq!(
+            app_domain_candidates("br.com.mybank.app"),
+            vec!["mybank.com"]
+        );
     }
 
     #[test]
@@ -2211,7 +2207,10 @@ mod tests {
         // com.weirdtld legitimately yields the com pair.
         assert_eq!(app_domain_candidates("com.weirdtld"), vec!["weirdtld.com"]);
         // org.mybank.weirdtld still yields the valid org pair.
-        assert_eq!(app_domain_candidates("org.mybank.weirdtld"), vec!["mybank.org"]);
+        assert_eq!(
+            app_domain_candidates("org.mybank.weirdtld"),
+            vec!["mybank.org"]
+        );
         // Deduped, capped.
         let c = app_domain_candidates("com.example.com");
         assert_eq!(c, vec!["example.com"]);

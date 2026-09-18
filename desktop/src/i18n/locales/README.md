@@ -2,11 +2,12 @@
 
 ## How to add a new language
 
-1. Copy `_template.json` and rename it to your language code (e.g. `es.json`, `fr.json`, `de.json`, `pt-BR.json`)
+1. Copy `_template.json` and rename it to your language code (e.g. `es.json`, `fr.json`, `de.json`, `pt.json`)
 2. Translate only the **values** (right side of the colon). Keep all **keys** exactly as they are
 3. For plural forms, use `_plural` suffix (e.g. `entryCount` / `entryCount_plural`). The code picks based on count
 4. Variables like `{count}` are replaced at runtime. Keep them in your translation
-5. Submit a PR with your new file in this `locales/` directory
+5. See [docs/translations.md](../../../../docs/translations.md) for full instructions and parity testing
+6. Submit a PR with your new file in this `locales/` directory
 
 ## Supported languages
 
@@ -14,6 +15,7 @@
 |------|----------|
 | `en.json` | English (default) |
 | `es.json` | Spanish |
+| `pt.json` | Portuguese |
 
 ## Guidelines
 

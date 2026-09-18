@@ -395,7 +395,7 @@ impl VaultedDaemon {
 fn end_to_end_unlock_then_list() {
     let mut v = spawn_with_vault();
     // 1. vault.unlock with the master password.
-    let unlock_payload = serde_json::json!({
+    let _unlock_payload = serde_json::json!({
         "password": v.master_password,
     })
     .to_string();
@@ -484,7 +484,7 @@ fn end_to_end_unlock_then_add_cipher() {
 
 #[test]
 fn end_to_end_unauth_list_fails() {
-    let mut v = spawn_with_vault();
+    let v = spawn_with_vault();
     // Unlock so the daemon has a vault in the map.
     let unlock_payload = serde_json::json!({ "password": v.master_password }).to_string();
     v.request_with_token("vault.unlock", &unlock_payload);

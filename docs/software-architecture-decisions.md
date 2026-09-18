@@ -967,6 +967,18 @@ See `docs/plan-android-autofill.md` and `docs/plan-android-accessibility-tile.md
 
 **Accessibility fill tile fallback**: `BaluardA11yTileService` + `BaluardAccessibilityService` provide an opt-in fill flow for browsers and apps lacking standard autofill support. Scrapes browser URL bars, presents an in-process picker (`AutofillA11yBridge`), injects credentials via `ACTION_SET_TEXT`, copies TOTP to clipboard, and bounds retries to 3 attempts per selection.
 
+### D26. Domain Equivalence & App-to-Web Matching with Per-App Trust (2026-09-17; DONE)
+
+See `docs/plan-android-autofill.md` and `docs/progress.md` for background and verification.
+
+**Bundled domain equivalence groups**: `baluard-core` embeds Bitwarden equivalent domain groups (`crates/baluard-core/src/resources/global_equivalent_domains.json`). Under the `Domain` match strategy, entries for equivalent domains (for example, `google.com` and `youtube.com`) match bi-directionally without manual alias configuration.
+
+**User-defined custom equivalent domains**: users can configure custom equivalence groups in mobile Settings. Groups persist in `meta/settings.enc` as `custom_equivalent_domains: Option<Vec<Vec<String>>>`. Each entry is sanitized to strip pasted schemes and paths, then folded to its registrable domain. Matching via `UriMatchStrategy::matches_with` evaluates custom groups alongside global groups.
+
+**App-to-web matching with trust-on-first-use (Path B)**: native app fill targets (`androidapp://<package>`) cannot safely auto-match web credentials without risk from malicious package names. When `suggest_app_logins` is enabled, candidate domains are reversed from package labels (`com.mybank.app` -> `mybank.com`) and validated against public suffixes. Candidates surface under `app_suggestions` in `VaultState::autofill_query`.
+
+**Explicit trust boundary and isolation**: the first time a native app encounters matching web credentials, `AutofillActivity` presents an explicit trust banner ("Trust this app for <domain>?"). User decisions are recorded via `MobileVault::autofill_app_trust` or `autofill_app_reject` into `trusted_app_packages` or `rejected_app_packages` in `settings.enc`. Trust is scoped strictly per `(package, domain)` pair: package lookalikes (`com.mybank.evil`) cannot inherit trust from legitimate packages.
+
 ---
 
 ## Staged Implementation Roadmap

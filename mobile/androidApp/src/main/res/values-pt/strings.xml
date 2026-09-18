@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">Permite que o Baluard preencha campos de login em aplicativos onde o preenchimento automático normal não funciona. O Baluard lê os campos apenas quando você usa o atalho de preenchimento nas configurações rápidas e nunca armazena nem envia o que vê.</string>
+    <string name="a11y_service_label">Preenchimento por acessibilidade do Baluard</string>
+    <string name="a11y_tile_label">Preencher com Baluard</string>
+</resources>

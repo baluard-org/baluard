@@ -1,7 +1,7 @@
 # Baluard: Master Progress Document
 
 > Single source of truth for project state. Update after every work session.
-> Last updated: 2026-09-16 (Mobile: Android Phases 0-6 complete: autofill service, inline suggestions, save prompt, quick-settings accessibility tile, biometric KEK unlock; Phase 7 iOS next.)
+> Last updated: 2026-09-17 (Mobile: Android Phases 0-6 complete: autofill service, inline suggestions, save prompt, quick-settings accessibility tile, domain equivalence, app-to-web matching with per-app trust; Phase 7 iOS next.)
 
 ---
 
@@ -18,7 +18,7 @@ Active work: **mobile app (iOS next)**, Phase 7 (iOS AutoFill Credential Provide
 | Phase 4 | Edge Cases: ConflictResolutionPanel, multi-vault switcher, settings | ✅ done |
 | Phase 5 | Release Polish: Material 3 brand theme, R8 rules, unit tests | ✅ done |
 | Parity polish | Mobile edit/create at desktop parity (URIs + match strategy, TOTP seed, custom fields Text/Hidden/Boolean/Linked, tags, folder, reprompt, configurable generator, card formatting + brand, exp-month/sex dropdowns, SSH keypair generation, favicon fetch-on-save), deep search over every field (password excluded, trash/archived excluded), TOTP card + settings fixes | ✅ done |
-| Phase 6 | Android Autofill Service (`BaluardAutofillService`, inline suggestions, save handoff, biometric KEK unlock) | ✅ done |
+| Phase 6 | Android Autofill Service (`BaluardAutofillService`, inline suggestions, save handoff, domain equivalence, app-to-web trust matching, biometric KEK unlock) | ✅ done |
 | Phase 6.5 | Android Accessibility Tile (`BaluardA11yTileService` + `BaluardAccessibilityService`, browser URL scraping) | ✅ done |
 | Phase 7 | iOS AutoFill Credential Provider extension (`ASCredentialProviderViewController`, shared UniFFI) | ⏳ next |
 
@@ -37,7 +37,7 @@ Docs: `docs/plan-mobile-apps.md`, `docs/plan-android-autofill.md`, `docs/plan-an
 
 ## Current Status
 
-Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done**. **Mobile: Android Phases 0-6 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit at desktop parity, deep search, generator, TOTP, favicon opt-in, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build, Android Autofill Service with inline suggestions, save prompt, and quick-settings tile accessibility fill). Phase 7 iOS next**.
+Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, import/export, reprompt, password health, attachments, biometric unlock, linked custom fields, nested folders, archive entries. **Passkey support Phase 0+1 done**. **Mobile: Android Phases 0-6 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit at desktop parity, deep search, generator, TOTP, favicon opt-in, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build, Android Autofill Service with inline suggestions, save prompt, domain equivalence, app-to-web matching with per-app trust, and quick-settings tile accessibility fill). Phase 7 iOS next**.
 
 **Monorepo Structure**:
 - `/proto` - Shared Protobuf schemas (`vault.proto`, `space.proto`, `auth.proto`)
@@ -49,7 +49,7 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 - `/crates/baluard-nmh` - Native messaging host binary (browser extension bridge, stdio-JSON <-> varint-protobuf)
 - `/desktop` - SolidJS/Tailwind/Tauri v2 desktop app (full CRUD, 8 cipher types, generator, TOTP, auto-lock, dark/light themes, i18n en/es, 38 components)
 - `/browser` - Chromium + Firefox MV3 extensions (shared codebase, two targets). KeePassXC-Browser-style bridge client. Paired companion model (rides the desktop's unlock state)
-- `/mobile` - Kotlin Multiplatform app (Compose UI + UniFFI integration; onboarding create + provider flows, vault list with type/tag/favorite filters + deep search, detail + edit for all 8 cipher types at desktop parity, generator, TOTP, settings incl. favicon opt-in, Android Autofill service with inline suggestions + save prompt, quick-settings tile accessibility fill, i18n EN/ES)
+- `/mobile` - Kotlin Multiplatform app (Compose UI + UniFFI integration; onboarding create + provider flows, vault list with type/tag/favorite filters + deep search, detail + edit for all 8 cipher types at desktop parity, generator, TOTP, settings incl. favicon opt-in, Android Autofill service with inline suggestions, domain equivalence, app-to-web trust matching, save prompt, quick-settings tile accessibility fill, i18n EN/ES)
 - `/docs` - Architecture, design, threat model, plans, PRDs, ADRs
 
 ---
@@ -61,8 +61,8 @@ Full desktop feature set: CRUD, 8 cipher types, generator, TOTP, auto-lock, impo
 | `workspace` | Done | Rust workspace with baluard-core, baluard-runtime, baluard-uniffi, baluard-cli, baluard-daemon, baluard-nmh crates |
 | `baluard-runtime` | Done | Extracted in-process vault runtime: VaultHost, VaultState, AutoSyncHandle, PinEscrow, ProviderManager, RateLimiter |
 | `baluard-uniffi` | Done | UniFFI C-FFI / Kotlin Multiplatform / Swift bindings over baluard-runtime + baluard-core |
-| `mobile/android` | Done (Phases 0-6 + parity) | Compose Multiplatform Android client: onboarding (create + clone + device enrollment), home hub, filtered entry lists, deep search over every field (password excluded, trash/archived excluded), 8 cipher types detail/edit at desktop parity (URIs + match strategy, TOTP seed, custom fields Text/Hidden/Boolean/Linked, tags, folder, reprompt, generator knobs, card formatting + brand, SSH keypair generation, favicon fetch-on-save), generator, TOTP, biometric unlock ceremony, auto-lock, sync feedback, conflict resolution panel, multi-vault switcher, R8 release build. System autofill service (`BaluardAutofillService`) with inline suggestions, response-level auth, save prompt (`AutofillSaveToken`), and quick-settings tile accessibility fill (`BaluardA11yTileService` + `BaluardAccessibilityService`). Phase 7 (iOS) next |
-| `core/autofill-matcher` | Done | `UriMatchStrategy::matches` in baluard-core (6 strategies, public-suffix eTLD+1, scheme isolation, trailing slash segment boundary). Batch query `VaultState::autofill_query` in baluard-runtime / baluard-uniffi (secret-absence invariant: no passwords in matching output) |
+| `mobile/android` | Done (Phases 0-6 + parity) | Compose Multiplatform Android client: onboarding (create + clone + device enrollment), home hub, filtered entry lists, deep search over every field (password excluded, trash/archived excluded), 8 cipher types detail/edit at desktop parity (URIs + match strategy, TOTP seed, custom fields Text/Hidden/Boolean/Linked, tags, folder, reprompt, generator knobs, card formatting + brand, SSH keypair generation, favicon fetch-on-save), generator, TOTP, biometric unlock ceremony, auto-lock, sync feedback, conflict resolution panel, multi-vault switcher, R8 release build. System autofill service (`BaluardAutofillService`) with inline suggestions, response-level auth, split save prompt (`AutofillSaveToken`), domain equivalence (global + custom), app-to-web matching with per-app trust, and quick-settings tile accessibility fill (`BaluardA11yTileService` + `BaluardAccessibilityService`). Phase 7 (iOS) next |
+| `core/autofill-matcher` | Done | `UriMatchStrategy::matches` and `matches_with` in baluard-core (6 strategies, public-suffix eTLD+1, bundled Bitwarden global equivalent domains, custom equivalent groups, scheme isolation, trailing slash segment boundary). Batch query `VaultState::autofill_query` in baluard-runtime / baluard-uniffi returning `{matches, app_suggestions}` (secret-absence invariant: no passwords in matching output) |
 | `proto/schemas` | Done | `vault.proto`, `space.proto`, `auth.proto`. Compiled by prost-build in daemon and CLI |
 | `crypto/aead` | Done | AES-256-GCM with strict AAD binding |
 | `crypto/webauthn` | Done (Phase 0+1) | FIDO2/WebAuthn ceremony via `passkey-rs` 0.5.x. ES256 only. `BaluardCredentialStore` (Arc<Mutex> mutation tracking), `PasskeyIndex` (in-vault passkey lookup), `CeremonyCache` (300s TTL, max 64 pending, FIFO eviction, OsRng challenges). Passkeys embedded in `LoginData::fido2_credentials`. |
@@ -258,10 +258,10 @@ Completed core, CLI, daemon, and desktop implementations.
 | **Phase 3** | Sync lifecycle: on_foreground pull, on_mutation push, sync indicator with feedback phases | **Done** |
 | **Phase 4** | Edge cases: ConflictResolutionPanel, multi-vault switcher, settings (remove-from-device, screenshot toggle) | **Done** |
 | **Phase 5** | Release polish: Material 3 brand theme, R8 shrinker rules, unit tests | **Done** |
-| **Phase 6** | Android Autofill Service (`BaluardAutofillService`, inline suggestions, save handoff, biometric KEK unlock) | **Done** |
+| **Phase 6** | Android Autofill Service (`BaluardAutofillService`, inline suggestions, save handoff, domain equivalence, app-to-web trust matching, biometric KEK unlock) | **Done** |
 | **Phase 6.5** | Android Accessibility Tile (`BaluardA11yTileService` + `BaluardAccessibilityService`, browser URL scraping) | **Done** |
 | **Phase 7** | iOS Autofill Credential Provider extension (`ASCredentialProviderViewController`, shared UniFFI) | **Next** |
-| **Deferred: App-to-web matching** | Web-saved logins fill inside native apps via package-derived domain candidates + per-app trust (path B) | **Done** |
+| **App-to-web matching** | Web-saved logins fill inside native apps via package-derived domain candidates + per-app trust (path B) | **Done** |
 
 ### Nice to Have / Future
 
@@ -269,74 +269,45 @@ Features parked for the far future. Do not start without explicit confirmation.
 
 #### App-to-web domain matching (path B: trust-on-first-use)
 
-**Status:** Done. Shipped in `feat(mobile): app-to-web autofill matching
-with per-app trust` (da8f2ab). Target: Android autofill (mobile/androidApp
-`:autofill` process), extendable to iOS in Phase 7.
+**Status:** Done. Shipped in `feat(mobile): app-to-web autofill matching with per-app trust` (517b671). Target: Android autofill (mobile/androidApp `:autofill` process), extendable to iOS in Phase 7.
 
-**Problem:** web-saved logins (e.g. `https://mybank.com`) do not
-autofill inside native apps (`com.mybank.app`) because the matcher
-enforces strict scheme isolation between `androidapp://` and `https://`
-targets. Bitwarden bridges this gap by crudely reversing the package
-name into a domain (`com.mybank.app` -> `mybank.com`), which is
-phishing-adjacent: a malicious app can name itself `com.mybank.evil`
-and receive the user's real mybank.com credentials.
+**Problem:** web-saved logins (e.g. `https://mybank.com`) do not autofill inside native apps (`com.mybank.app`) because the matcher enforces strict scheme isolation between `androidapp://` and `https://` targets. Bitwarden bridges this gap by crudely reversing the package name into a domain (`com.mybank.app` -> `mybank.com`), which is phishing-adjacent: a malicious app can name itself `com.mybank.evil` and receive the user's real mybank.com credentials.
 
 **Approved design: trust-on-first-use.**
 
-1. **Setting:** "Suggest web logins in native apps" — default OFF
-   (opt-in, consistent with Baluard's security-first posture). Stored
-   in vault settings (encrypted, git-synced) as
-   `suggest_app_logins: Option<bool>`.
+1. **Setting:** "Suggest web logins in native apps" - default OFF (opt-in, consistent with Baluard's security-first posture). Stored in vault settings (encrypted, git-synced) as `suggest_app_logins: Option<bool>`.
 
-2. **Candidate generation:** when the setting is on and the fill
-   target is `androidapp://<package>`, parse the package labels:
+2. **Candidate generation:** when the setting is on and the fill target is `androidapp://<package>`, parse the package labels:
    - Reverse the first two labels: `com.mybank` -> `mybank.com`
    - PSL-validate: the result must be a registrable domain
-   - Only reverse `com.<x>` and similar reverse-TLD patterns
-     (`com.github.android` -> also try `github.com` via label-skip)
-   - Candidates are hints, not matches: they only widen what the
-     picker shows, never auto-fill silently
+   - Only reverse `com.<x>` and similar reverse-TLD patterns (`com.github.android` -> also try `github.com` via label-skip)
+   - Candidates are hints, not matches: they only widen what the picker shows, never auto-fill silently
 
-3. **Trust-on-first-use:** the first time an app requests fills for a
-   given candidate domain, the picker shows the matching entries with a
-   banner: "These look like logins for mybank.com. Trust this app?"
-   - User confirms -> persist `(package_name, registrable_domain)` in
-     a trust list (vault settings, encrypted + git-synced)
-   - User denies -> persist as rejected; never suggest again for that
-     package
+3. **Trust-on-first-use:** the first time an app requests fills for a given candidate domain, the picker shows the matching entries with a banner: "These look like logins for mybank.com. Trust this app?"
+   - User confirms -> persist `(package_name, registrable_domain)` in a trust list (vault settings, encrypted + git-synced)
+   - User denies -> persist as rejected; never suggest again for that package
    - Trust is scoped per (package, domain) pair, not global
 
-4. **Matching extension:** after trust exists, the package's
-   registrable domain is added as a virtual equivalent group for that
-   package in `autofill_query`, so web-saved entries flow into native
-   app fills through the same pipeline as explicit `androidapp://` URIs.
+4. **Matching extension:** after trust exists, the package's registrable domain is added as a virtual equivalent group for that package in `autofill_query`, so web-saved entries flow into native app fills through the same pipeline as explicit `androidapp://` URIs.
 
 5. **Security boundaries:**
    - Trust list is user-consented, never heuristic-auto-trusted
-   - Reversal candidates never cross the `androidapp://` vs `https://`
-     scheme boundary in the matcher itself; they only widen which
-     entries the PICKER shows (the user still confirms by tapping)
+   - Reversal candidates never cross the `androidapp://` vs `https://` scheme boundary in the matcher itself; they only widen which entries the PICKER shows (the user still confirms by tapping)
    - The trust list is per-vault, git-synced, and auditable
-   - Package-name lookalikes (`com.mybank.evil`) are rejected: the
-     candidate's registrable domain must exactly equal the entry's
-     registrable domain
+   - Package-name lookalikes (`com.mybank.evil`) are rejected: the candidate's registrable domain must exactly equal the entry's registrable domain
 
 6. **Implementation notes:**
-   - Candidate generation: `crates/baluard-core/src/types.rs` or a new
-     `crates/baluard-core/src/resources/app_domain_hints.json`
-   - Trust list: `VaultSettings.trusted_app_packages: Option<Vec<TrustedApp>>`
-     where `TrustedApp { package: String, domain: String }`
-   - Picker integration: `AutofillSession.matches()` gains a
-     `include_app_candidates` flag when the setting is on
-   - UI: the existing `AutofillActivity` picker shows a trust banner on
-     first encounter per package
+   - Candidate generation: `crates/baluard-core/src/types.rs` via `app_domain_candidates`
+   - Trust list: `VaultSettings.trusted_app_packages: Option<Vec<AppDomainTrust>>` and `rejected_app_packages: Option<Vec<AppDomainTrust>>` in `settings.enc`
+   - Picker integration: `VaultState::autofill_query` surfaces `{matches, app_suggestions}`
+   - UI: `AutofillActivity` shows trust prompt banner on first encounter per package and records decision via `autofill_app_trust` / `autofill_app_reject`
 
-| Item | Blocker |
-|------|---------|
-| Setting + storage | None |
-| Candidate generation | None |
-| Trust UI | None |
-| Fill extension | Depends on trust list |
+| Item | Status |
+|------|--------|
+| Setting + storage | **Done** |
+| Candidate generation | **Done** |
+| Trust UI | **Done** |
+| Fill extension | **Done** |
 
 ### Out of Scope (No Server)
 
@@ -487,7 +458,7 @@ Root key rotation generates new RootKey, re-encrypts all entries, wraps KEK only
 
 **Flags**: `--vault-path <dir>`, `--vault <slug>`, `--direct` (skip daemon), `--socket <path>`
 
-**Env vars**: `BALUARD_PASSWORD` (bypass TTY prompt for scripting), `BALUARD_DEBUG=1`, `BALUARD_LOG_DIR=<path>`
+**Env vars**: `BALUARD_PASSWORD` (bypass TTY prompt for scripting), `BALUARD_DEBUG=1`, `BALUARD_LOG_DIR=<path>`, `BALUARD_DISABLE_KEYRING=1` (hermetic test mode, routes keyring paths to fail-closed fallbacks)
 
 ---
 
@@ -504,6 +475,7 @@ baluard/
 │   │                                 # sync/{commit,conflict,credentials,engine,known_hosts,operations,state_machine}.rs
 │   │                                 # import/ + providers/{codeberg,github,gitlab,mod,token,types}.rs
 │   │                                 # bridge/{mod,pairing,token}.rs
+│   │                                 # resources/global_equivalent_domains.json
 │   │                                 # biometric.rs, device_manager.rs, devices.rs, emergency.rs, health.rs, integrity.rs, orgs.rs, recovery.rs, paths.rs, types.rs, error.rs, lib.rs
 │   ├── baluard-runtime/            # Shared vault-session runtime (hosted in-process by daemon, NMH, mobile)
 │   │   └── src/                    # host.rs, state.rs, autosync.rs, pin.rs, bridge.rs, rate_limit.rs, providers.rs, crypto.rs, lib.rs
@@ -528,7 +500,7 @@ baluard/
 │   └── firefox/                   # Firefox MV3 wrapper
 ├── mobile/                       # Kotlin Multiplatform app (Compose Multiplatform UI, baluard-uniffi bindings; Phases 0-6 implemented, Phase 7 iOS next)
 │   ├── shared/                    # commonMain (UI + ViewModels + VaultRepository), androidMain, iosMain
-│   └── androidApp/                # Android entry point, resources, R8 release build
+│   └── androidApp/                # Android host app (single-Activity, BaluardAutofillService, BaluardAccessibilityService, BaluardA11yTileService, AutofillActivity), resources, R8 release build
 ├── docs/                         # Architecture & design docs (index, arch, decisions, plans, PRDs, threat model, 2fa, post-quantum, brand, app icons)
 └── justfile                      # Build system (`just` recipes for build, test, lint, fmt, desktop, ext-*, android-*, app-icons, build-nmh, install-nmh-manifest, codesign)
 ```

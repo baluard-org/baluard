@@ -147,6 +147,7 @@ The session token is a capability in the object-capability sense: it is the only
   * **Memory-capped process isolation**: `BaluardAutofillService` runs in a dedicated `:autofill` process. Unlocking executes `unlock_with_kek` using the Keystore-held biometric KEK, skipping the 64-256 MB Argon2id master KDF to prevent low-memory termination.
   * **One-time save handoff token**: when saving new credentials, `onSaveRequest` generates a random single-use token (`AutofillSaveToken`) in app sandbox storage before launching `MainActivity`. Callers without the token cannot inject prefilled entries into the create form.
   * **Scheme isolation**: `UriMatchStrategy::matches` strictly separates `androidapp://` URIs from web schemes (`https://`). An app cannot harvest credentials for a web domain by declaring an identical package name.
+  * **App-to-web phishing protection**: Web credentials never auto-fill into native apps. When `suggest_app_logins` is enabled, package-derived candidate domains are validated against public suffixes and shown only as suggestions alongside an explicit trust confirmation. User decisions are bound per `(package, domain)` pair; package-name lookalikes (`com.mybank.evil`) cannot inherit trust from another app.
   * **Accessibility fill bounds**: the quick-settings tile accessibility service operates strictly on user demand (no background overlay, no continuous screen monitoring), copies TOTP to clipboard instead of typing, and caps retries to 3 attempts per selection.
 
 ## 2. Platform Trust Boundaries

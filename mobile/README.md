@@ -2,7 +2,7 @@
 
 Compose Multiplatform (Android + iOS) client for Baluard.
 
-**Status: Android Phases 0-6 implemented, edit/create at desktop parity.** The Rust FFI layer, Kotlin ViewModels, Compose UI, and system autofill framework are complete and verified. Verification on host builds includes Kotlin metadata compile and Android packaging via `just android-apk`. Phase 7 (iOS credential extension) and store packaging are next.
+**Status: Android Phases 0-6 implemented, edit/create at desktop parity.** The Rust FFI layer, Kotlin ViewModels, Compose UI, and system autofill framework (with domain equivalence and app-to-web matching) are complete and verified. Verification on host builds includes Kotlin metadata compile and Android packaging via `just android-apk`. Phase 7 (iOS credential extension) and store packaging are next.
 
 ## Structure
 
@@ -29,7 +29,7 @@ just android-bindings     # Regenerate UniFFI bindings
 - **Security**: Biometric unlock via BiometricPrompt ceremony, auto-lock on timer and backgrounding, screenshot protection toggle, and clipboard auto-clear.
 - **Sync & Conflict**: Manual sync button with explicit progress phases, pull-on-unlock, push-after-mutation, and inline conflict resolution panel.
 - **Multi-Vault**: Owner-prefixed vault slugs, per-vault clone directories, and home switch bar.
-- **Autofill**: System autofill provider via `BaluardAutofillService` in an isolated `:autofill` process. Inline IME suggestions with dropdown menu fallback, response-level authentication with transparent `AutofillActivity` biometric unlock, save prompt on submission prefilling the create form, and per-vault URI match strategy (Domain/Host/StartsWith/Exact/Regex/Never) with scheme isolation. Quick-settings tile accessibility fill (`BaluardA11yTileService` + `BaluardAccessibilityService`) for apps and browsers without standard autofill support.
+- **Autofill**: System autofill provider via `BaluardAutofillService` in an isolated `:autofill` process. Inline IME suggestions with dropdown menu fallback, response-level authentication with transparent `AutofillActivity` biometric unlock, save prompt on submission prefilling the create form, and per-vault URI match strategy (Domain/Host/StartsWith/Exact/Regex/Never) with scheme isolation. Domain equivalence support includes bundled Bitwarden global groups and custom user groups. App-to-web autofill matching provides candidate reversal with trust-on-first-use per-app confirmation. Quick-settings tile accessibility fill (`BaluardA11yTileService` + `BaluardAccessibilityService`) covers apps and browsers without standard autofill support.
 - **i18n**: English and Spanish translations.
 
 ## Pending Work

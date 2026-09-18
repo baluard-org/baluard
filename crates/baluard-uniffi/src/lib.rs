@@ -1494,18 +1494,18 @@ mod tests {
         assert_eq!(lsug[0]["domain"], "mybank.com");
 
         // Trust list survives a settings round-trip (git-synced payload).
-        let s = serde_json::from_str::<serde_json::Value>(
-            &vault.get_settings().await.unwrap(),
-        )
-        .unwrap();
+        let s = serde_json::from_str::<serde_json::Value>(&vault.get_settings().await.unwrap())
+            .unwrap();
         assert_eq!(s["trusted_app_packages"][0]["domain"], "mybank.com");
         assert_eq!(s["trusted_app_packages"][0]["package"], "com.mybank.app");
 
         // Invalid domain folds fail closed.
-        assert!(vault
-            .autofill_app_trust("com.x".to_string(), "not a host".to_string())
-            .await
-            .is_err());
+        assert!(
+            vault
+                .autofill_app_trust("com.x".to_string(), "not a host".to_string())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
