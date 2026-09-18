@@ -314,7 +314,7 @@ internal val ES: Map<String, String> = mapOf(
     "settings.wifiOnly" to "Sincronizar solo por Wi-Fi (orientativo)",
     "settings.security" to "Seguridad",
     "settings.favicons" to "Mostrar iconos de sitios web",
-    "settings.faviconsHint" to "Desactivado por defecto. Al activarlo, se piden los logos a Google, lo que revela qué sitios guardas. Solo se envía el primer sitio web de cada entrada.",
+    "settings.faviconsHint" to "Desactivado por defecto. Al activarlo, los logos se piden a cada sitio web y, si no hay, a Google. Ambos servicios saben qué sitios guardas. Solo se envía el primer sitio web de cada entrada.",
     "settings.autoLock" to "Bloqueo automático",
     "settings.autoLockHint" to "Bloquea la bóveda cuando la app vuelve de segundo plano tras más del tiempo elegido.",
     "settings.autoLock.immediately" to "Inmediatamente",
