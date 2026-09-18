@@ -176,6 +176,30 @@ impl SyncEngine {
         // entries. status() filters these paths regardless, so this is cosmetic
         // (keeps `git status` on the CLI honest too) rather than load-bearing.
         self.refresh_gitignore();
+        // P5b: the cipher index is local-only (gitignored, rebuilt from
+        // ciphers on demand). Repos that still track meta/index.enc drop it
+        // from the git index here — the disk file stays, history stays, but
+        // the per-CRUD rewrite stops riding every commit and conflicting on
+        // every concurrent multi-device sync. Best-effort: a failure here is
+        // the pre-P5b behavior, not a break.
+        let untrack = || -> Result<(), BaluardError> {
+            let mut idx = repo
+                .index()
+                .map_err(|e| SyncError::Git(format!("index: {e}")))?;
+            if idx
+                .get_path(std::path::Path::new("meta/index.enc"), 0)
+                .is_some()
+            {
+                idx.remove_path(std::path::Path::new("meta/index.enc"))
+                    .map_err(|e| SyncError::Git(format!("untrack index: {e}")))?;
+                idx.write()
+                    .map_err(|e| SyncError::Git(format!("untrack index write: {e}")))?;
+            }
+            Ok(())
+        };
+        if let Err(e) = untrack() {
+            eprintln!("warning: could not untrack meta/index.enc: {e}");
+        }
         Ok(repo)
     }
 
@@ -183,7 +207,13 @@ impl SyncEngine {
     /// Best-effort: logs a warning on failure.
     fn refresh_gitignore(&self) {
         let gitignore = self.vault_path.join(".gitignore");
-        const NEW_ENTRIES: &[&str] = &["meta/sync-head.json", "meta/sync-state.json"];
+        const NEW_ENTRIES: &[&str] = &[
+            "meta/sync-head.json",
+            "meta/sync-state.json",
+            // P5b: the cipher index is local-only bookkeeping.
+            "meta/index.enc",
+            "meta/index.enc.*",
+        ];
         let needs_update = match std::fs::read_to_string(&gitignore) {
             Ok(existing) => NEW_ENTRIES.iter().any(|e| !existing.contains(e)),
             Err(_) => true,
@@ -344,12 +374,21 @@ impl SyncEngine {
         // still have them tracked in HEAD until the next commit lands the
         // removal. Filtering them here keeps the sync badge honest in the
         // window between migration and next sync.
-        const LOCAL_ONLY: &[&str] = &["meta/sync-head.json", "meta/sync-state.json"];
+        const LOCAL_ONLY: &[&str] = &[
+            "meta/sync-head.json",
+            "meta/sync-state.json",
+            // P5b: untracking meta/index.enc on open shows a staged deletion
+            // against HEAD until the next commit — filter it from the dirty
+            // report like the other local-only bookkeeping. Shard files
+            // (index.enc.sN) need prefix matching, not exact.
+            "meta/index.enc",
+        ];
+        const LOCAL_ONLY_PREFIX: &str = "meta/index.enc.";
 
         let mut result = WorkTreeStatus::default();
         for entry in statuses.iter() {
             let path = std::str::from_utf8(entry.path_bytes()).unwrap_or("");
-            if LOCAL_ONLY.contains(&path) {
+            if LOCAL_ONLY.contains(&path) || path.starts_with(LOCAL_ONLY_PREFIX) {
                 continue;
             }
             let s = entry.status();
@@ -1130,6 +1169,25 @@ impl SyncEngine {
             .write()
             .map_err(|e| SyncError::Git(format!("index write: {e}")))?;
         Ok(true)
+    }
+
+    /// Delete the local-only index shards (best-effort). Called after any sync
+    /// operation that wrote cipher files directly through the engine (pull,
+    /// sync cycle) — those bypass the VaultHandle index-rebuild hooks, so the
+    /// cached index may no longer match disk. Deleting the shards is keyless
+    /// (no RootKey needed) and forces exactly one auto-heal rebuild at the next
+    /// list. AlreadyUpToDate pulls must NOT call this.
+    pub fn invalidate_local_index(vault_path: &std::path::Path) {
+        let meta = vault_path.join("meta");
+        let _ = std::fs::remove_file(meta.join("index.enc"));
+        if let Ok(entries) = std::fs::read_dir(&meta) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if name.to_string_lossy().starts_with("index.enc.s") {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
     }
 
     /// Read a file's content from a specific commit's tree.
@@ -2225,6 +2283,12 @@ meta/device_activity.json
 # Sync engine internals — local-only bookkeeping, never synced
 meta/sync-head.json
 meta/sync-state.json
+
+# Cipher lookup index — local-only, rebuilt from ciphers on demand (P5b).
+# Tracked copies caused constant multi-device conflicts: the index is
+# rewritten on every cipher CRUD on every device.
+meta/index.enc
+meta/index.enc.*
 
 # Build artifacts
 target/
