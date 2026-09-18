@@ -1771,26 +1771,33 @@ impl VaultState {
             None => return Ok(String::new()),
         };
 
-        // 1-3. Well-known static paths, cheapest probes first.
-        for path in Self::STATIC_ICON_PATHS {
-            let url = format!("https://{domain}{path}");
-            if let Some(icon) = Self::try_fetch_icon(&client, &url).await {
-                return Ok(icon);
+        // Overall deadline: a dead network must not stall the caller for
+        // the full sum of per-request timeouts (~40s sequential worst
+        // case). 12s covers the happy path (DNS + one 200 probe) with
+        // room for one fallback.
+        let crawl = async {
+            // 1-3. Well-known static paths, cheapest probes first.
+            for path in Self::STATIC_ICON_PATHS {
+                let url = format!("https://{domain}{path}");
+                if let Some(icon) = Self::try_fetch_icon(&client, &url).await {
+                    return Some(icon);
+                }
             }
-        }
 
-        // 4. Scrape the page for <link rel="...icon..."> targets.
-        for url in Self::scrape_icon_links(&client, &domain).await {
-            if let Some(icon) = Self::try_fetch_icon(&client, &url).await {
-                return Ok(icon);
+            // 4. Scrape the page for <link rel="...icon..."> targets.
+            for url in Self::scrape_icon_links(&client, &domain).await {
+                if let Some(icon) = Self::try_fetch_icon(&client, &url).await {
+                    return Some(icon);
+                }
             }
-        }
 
-        // 5. Google's favicon service, last resort.
-        if let Some(icon) = Self::try_fetch_icon(&client, &Self::favicon_url(&domain)).await {
-            return Ok(icon);
+            // 5. Google's favicon service, last resort.
+            Self::try_fetch_icon(&client, &Self::favicon_url(&domain)).await
+        };
+        match tokio::time::timeout(std::time::Duration::from_secs(12), crawl).await {
+            Ok(Some(icon)) => Ok(icon),
+            _ => Ok(String::new()),
         }
-        Ok(String::new())
     }
 
     /// Well-known favicon paths, in probe order. favicon.ico stays first:
@@ -1860,6 +1867,21 @@ impl VaultState {
         let h = host.trim().trim_end_matches('.');
         let h = h.trim_start_matches('[').trim_end_matches(']');
         if h.is_empty() || !h.contains('.') {
+            return false;
+        }
+        // Non-standard IP encodings (octal 0177.0.0.1, hex 0x7f.0.0.1):
+        // IpAddr::parse rejects them, the OS resolver accepts them. A
+        // zero-padded all-numeric label or any 0x label means the "host"
+        // is an encoded address, not a domain — refuse. Also covers the
+        // pure-decimal form via the dot check.
+        let looks_encoded = h.split('.').any(|part| {
+            part.starts_with("0x")
+                || part.starts_with("0X")
+                || (part.len() > 1
+                    && part.starts_with('0')
+                    && part.chars().all(|c| c.is_ascii_digit()))
+        });
+        if looks_encoded {
             return false;
         }
         match h.parse::<std::net::IpAddr>() {
@@ -1944,12 +1966,17 @@ impl VaultState {
             let Ok(absolute) = base.join(&href) else {
                 continue;
             };
-            if absolute.scheme() != "https"
-                || !absolute
-                    .host_str()
-                    .map(Self::host_fetchable_str)
-                    .unwrap_or(false)
-            {
+            if absolute.scheme() != "https" {
+                continue;
+            }
+            // Scraped targets are attacker-influenced content: the host
+            // must pass the plain-name guard AND resolve public (Review
+            // finding #1 — a dotted name like internal.corp passes the
+            // name guard but must never be fetched).
+            let Some(host) = absolute.host_str() else {
+                continue;
+            };
+            if !Self::host_fetchable_str(host) || !Self::host_resolves_public(host).await {
                 continue;
             }
             if is_apple {
@@ -1967,7 +1994,10 @@ impl VaultState {
     /// contains "icon". Attribute values are read from the ORIGINAL text;
     /// only the matching uses a length-preserving lowercased copy.
     fn icon_hrefs(html: &str) -> Vec<(String, bool)> {
-        let lower = html.to_ascii_lowercase();
+        // Comments first, removed from BOTH strings with identical ranges
+        // so the lower/orig byte alignment survives. A <link> inside
+        // <!-- --> is markup debris, never a live tag.
+        let (html, lower) = Self::strip_comments(html);
         let mut out = Vec::new();
         let mut cursor = 0;
         while let Some(found) = lower[cursor..].find("<link") {
@@ -1996,10 +2026,36 @@ impl VaultState {
         out
     }
 
+    /// Removes <!-- --> comments from [html] and returns the cleaned
+    /// original plus its length-preserving lowercase twin, byte-aligned.
+    fn strip_comments(html: &str) -> (String, String) {
+        let lower = html.to_ascii_lowercase();
+        let mut cleaned = String::with_capacity(html.len());
+        let mut cleaned_lower = String::with_capacity(html.len());
+        let mut cursor = 0;
+        while let Some(found) = lower[cursor..].find("<!--") {
+            let start = cursor + found;
+            let rest = &lower[start..];
+            match rest.find("-->") {
+                Some(len) => {
+                    cleaned.push_str(&html[cursor..start]);
+                    cleaned_lower.push_str(&lower[cursor..start]);
+                    cursor = start + len + 3;
+                }
+                None => break,
+            }
+        }
+        cleaned.push_str(&html[cursor..]);
+        cleaned_lower.push_str(&lower[cursor..]);
+        (cleaned, cleaned_lower)
+    }
+
     /// Best-effort attribute reader: `name="v"`, `name='v'`, `name=v`.
     /// Attribute NAMES are matched case-insensitively on [tag_lower];
     /// VALUES are sliced from [tag_orig] so their case survives. The two
-    /// strings must be byte-aligned slices of the same tag.
+    /// strings must be byte-aligned slices of the same tag. Slicing is
+    /// boundary-checked: a non-boundary offset (cannot happen with the
+    /// ASCII-lowercase invariant, but must never panic) yields None.
     fn tag_attr(tag_lower: &str, tag_orig: &str, name: &str) -> Option<String> {
         for quote in ['"', '\''] {
             let pat = format!("{name}={quote}");
@@ -2007,7 +2063,9 @@ impl VaultState {
                 let start = p + pat.len();
                 let rest = &tag_lower[start..];
                 let end = rest.find(quote).unwrap_or(rest.len());
-                return Some(tag_orig[start..start + end].to_string());
+                return tag_orig
+                    .get(start..start + end)
+                    .map(str::to_string);
             }
         }
         let pat = format!("{name}=");
@@ -2017,7 +2075,9 @@ impl VaultState {
             let end = rest
                 .find(|c: char| c.is_whitespace() || c == '>')
                 .unwrap_or(rest.len());
-            return Some(tag_orig[start..start + end].to_string());
+            return tag_orig
+                .get(start..start + end)
+                .map(str::to_string);
         }
         None
     }
@@ -2034,20 +2094,22 @@ impl VaultState {
         url.into()
     }
 
-    /// Extract domain from a URI or bare string.
+    /// Extract the fetchable host from a URI or bare string: strips
+    /// scheme, path/query/fragment, port, and userinfo (@). The host is
+    /// kept exactly as entered (www. is NOT stripped): origin probes must
+    /// hit the host the entry actually points at — many sites serve no
+    /// certificate on the apex.
     fn extract_domain(input: &str) -> String {
         let stripped = input
             .strip_prefix("https://")
             .or_else(|| input.strip_prefix("http://"))
             .unwrap_or(input);
 
-        // Remove path, query, fragment, port
+        // Remove path, query, fragment, port, userinfo
         let host = stripped.split('/').next().unwrap_or(stripped);
-        let host = host.split(':').next().unwrap_or(host);
         let host = host.split('?').next().unwrap_or(host);
-
-        // Remove leading www.
-        let host = host.strip_prefix("www.").unwrap_or(host);
+        let host = host.rsplit('@').next().unwrap_or(host);
+        let host = host.split(':').next().unwrap_or(host);
 
         host.to_lowercase()
     }
@@ -4255,6 +4317,43 @@ mod favicon_tests {
         assert_eq!(found[1].0, "/favicons/custom.ico");
         assert!(!found[2].1);
         assert_eq!(found[2].0, "logo.png");
+    }
+
+    /// Review fixes: userinfo stripped, www. preserved (probes must
+    /// hit the host the entry points at), encoded-IP forms refused.
+    #[test]
+    fn extract_domain_strips_userinfo_keeps_www() {
+        assert_eq!(
+            VaultState::extract_domain("https://admin@127.0.0.1/x"),
+            "127.0.0.1"
+        );
+        assert_eq!(
+            VaultState::extract_domain("https://www.example.com/a?b"),
+            "www.example.com"
+        );
+        assert_eq!(VaultState::extract_domain("example.com:8443/x"), "example.com");
+    }
+
+    #[test]
+    fn host_fetchable_str_rejects_encoded_ips() {
+        let refused = ["0177.0.0.1", "0x7f.0.0.1", "127.0.0.001"];
+        for h in refused {
+            assert!(!VaultState::host_fetchable_str(h), "{h} must be refused");
+        }
+        // Zero-prefixed but non-numeric labels are legitimate domains.
+        assert!(VaultState::host_fetchable_str("0cloud.com"));
+    }
+
+    /// Links inside HTML comments are markup debris, never live tags.
+    #[test]
+    fn icon_hrefs_ignores_commented_links() {
+        let html = concat!(
+            "<!-- <link rel=\"icon\" href=\"https://evil.example/favicon.ico\"> -->",
+            "<link rel=\"icon\" href=\"real.png\">"
+        );
+        let found = VaultState::icon_hrefs(html);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, "real.png");
     }
 
     /// Magic-byte validation gates every candidate response.
