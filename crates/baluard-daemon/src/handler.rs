@@ -155,104 +155,128 @@ fn err_response(msg: impl Into<String>) -> GatewayResponse {
     }
 }
 
-/// Actions that require a valid session token (post-unlock operations).
-/// vault.info is intentionally EXCLUDED: it reveals no secret data (just vault ID,
-/// device ID, lock state, cipher count) and is used as a pre-flight check by
-/// ensure_unlocked_daemon() which runs before the token is available.
-const TOKEN_REQUIRED_ACTIONS: &[&str] = &[
-    "vault.list",
-    "vault.list_full",
-    "vault.get",
-    "vault.add",
-    "vault.update",
-    "cipher.clone",
-    "cipher.totp_code",
-    "folder.list",
-    "folder.create",
-    "folder.rename",
-    "folder.delete",
-    "tag.list",
-    "tag.create",
-    "tag.rename",
-    "tag.delete",
-    "tag.rebuild_index",
-    "vault.delete",
-    "vault.devices",
-    "vault.trash.list",
-    "vault.trash.restore",
-    "vault.trash.purge",
-    "vault.archive",
-    "vault.unarchive",
-    "vault.list_archived",
-    "settings.get",
-    "settings.set",
-    "locale.save",
-    "favicon.get",
-    "sync.init",
-    "sync.remote",
-    "sync.push",
-    "sync.pull",
-    "sync.status",
-    "sync.log",
-    "vault.import",
-    "vault.export",
-    "vault.reprompt_verify",
-    "vault.health",
-    "vault.device_activity",
-    "vault.attach_upload",
-    "vault.attach_download",
-    "vault.attach_delete",
-    "vault.biometric_enable",
-    "vault.biometric_disable",
-    // Session PIN: enable/disable require an existing unlocked session
-    // (they take the master password to seed the KEK escrow). pin_unlock
-    // is an unlock primitive, NOT token-gated (see TOKEN_REQUIRED_ACTIONS
-    // note on biometric_unlock). pin_status is pre-unlock-safe (in-memory
-    // check) so it is also not token-gated.
-    "vault.pin_enable",
-    "vault.pin_disable",
-    "vault.avatar.get",
-    "vault.avatar.set",
-    "ssh.generate_key",
-    // Generator history
-    "generator.history_add",
-    "generator.history_list",
-    "generator.history_clear",
-    // Phase 1: passkey ceremony routes
-    "passkey.challenge_register",
-    "passkey.finish_register",
-    "passkey.challenge_assert",
-    "passkey.finish_assert",
-    "passkey.list",
-    "passkey.delete",
-    "passkey.rename",
+/// P6 default-deny: the per-vault dispatcher requires a valid session token
+/// for EVERY action except the ones listed here. The old allow-list posture
+/// (TOKEN_REQUIRED_ACTIONS) silently granted any NEW route added without a
+/// list entry; default-deny fails such routes closed instead.
+///
+/// Exempt = must work with no session token (pre-unlock or tokenless by
+/// nature), and reads no vault secret data:
+/// - `vault.lock`: locking is always safe and clears the token itself
+/// - `vault.info`: pre-flight check used before unlock (no secret data)
+/// - `vault.biometric_status` / `vault.pin_status`: pre-unlock-safe queries
+///   the login screen uses to show unlock options
+/// - Provider routes `provider.list` / `provider.connect_start` /
+///   `provider.connect_poll` / `provider.connect_pat` / `provider.status` /
+///   `provider.disconnect` / `provider.repos` / `provider.vault_repos`:
+///   keyring + providers.json operations used by the pre-unlock
+///   add-existing-vault flow (PAT connect, repo listing for clone/download,
+///   disconnect). They touch provider token state in the OS keyring, never
+///   vault secrets. These eight are exactly what the host dispatcher
+///   forwards through the tokenless sentinel (`SENTINEL_FORWARDED_ACTIONS`)
+///   — see that const's invariant.
+///
+/// Unlock primitives (`vault.biometric_unlock`, `vault.pin_unlock`) never
+/// reach this dispatcher — they are intercepted at host level (no token
+/// exists to check; their defenses are the OS biometric prompt and the PIN
+/// strike-out that nukes the escrow after MAX_PIN_FAILURES).
+const TOKEN_EXEMPT_ACTIONS: &[&str] = &[
+    "vault.lock",
+    "vault.info",
+    "vault.biometric_status",
+    "vault.pin_status",
+    "provider.list",
+    "provider.connect_start",
+    "provider.connect_poll",
+    "provider.connect_pat",
+    "provider.status",
+    "provider.disconnect",
     "provider.repos",
-    "provider.create_repo",
-    "provider.oauth_start_web",
-    "provider.oauth_status_web",
-    "vault.setup_sync",
-    "sync.status_json",
-    "sync.autosync_status",
-    "sync.disconnect",
-    // Focus-triggered pull: touches the on-disk repo, must be token-gated.
-    "sync.autosync_nudge_pull",
-    // Phase 2b: read paused-conflict metadata (file paths) and apply a
-    // verdict (writes a merge commit + pushes). Both must be token-gated.
-    "sync.conflict",
-    "sync.conflict.resolve",
-    // C4 fix: device.revoke triggers destructive rekey, must be token-gated
-    "device.revoke",
-    // M4/PR-2: recovery-phrase enrollment mutates the device registry and
-    // unwraps the Root Key. Must be token-gated to prevent same-UID abuse.
-    "vault.enroll_with_phrase",
-    // Note: vault.biometric_unlock is intentionally NOT token-gated because
-    // it's an unlock primitive (used when vault is locked, no token exists).
-    // Defense against same-UID abuse relies on OS keyring/biometric prompt.
-    // Session PIN: vault.pin_unlock is likewise an unlock primitive, NOT
-    // token-gated. Its only in-process defense is the attempt cap that nukes
-    // the KEK escrow after MAX_PIN_FAILURES wrong PINs.
-    // H1: password change requires existing session
-    "vault.change_password",
+    "provider.vault_repos",
+];
+
+/// Actions the host dispatcher forwards through the tokenless sentinel
+/// `VaultState` (pre-unlock provider onboarding). INVARIANT: every entry
+/// MUST be in `TOKEN_EXEMPT_ACTIONS` — the sentinel has no session token,
+/// so a gated action forwarded here would be rejected "Vault is locked" on
+/// every call. Enforced by `sentinel_forwarded_actions_are_exempt`.
+const SENTINEL_FORWARDED_ACTIONS: &[&str] = &[
+    "provider.list",
+    "provider.connect_start",
+    "provider.connect_poll",
+    "provider.connect_pat",
+    "provider.status",
+    "provider.disconnect",
+    "provider.repos",
+    "provider.vault_repos",
+];
+
+/// Host-only lifecycle actions. They are intercepted by
+/// `route_host_request` before `route_request` ever sees them; if one ever
+/// reaches the per-vault dispatcher anyway, routing is broken — reject
+/// loudly BEFORE the token gate so the tripwire message is not masked by a
+/// misleading "vault is locked" token error.
+const HOST_ONLY_ACTIONS: &[&str] = &[
+    "ping",
+    "vault.open",
+    "vault.unlock",
+    "vault.create",
+    "vault.active",
+    "vault.biometric_unlock",
+    "vault.pin_unlock",
+    "vault.clone_start",
+    "vault.clone_progress",
+    "vault.clone_finalize",
+];
+
+/// Default-deny gate for the per-vault dispatcher. Unknown actions require
+/// a token — that is the point of the inversion.
+fn action_requires_session_token(action: &str) -> bool {
+    !TOKEN_EXEMPT_ACTIONS.contains(&action)
+}
+
+/// Host-level actions, dispatched by `route_host_request` BEFORE any
+/// per-vault token check exists (pre-unlock surface: vault selection,
+/// open/unlock/create, provider onboarding, mobile bridge ceremony). The
+/// session token is PER-VAULT, so these routes cannot consult it; their
+/// protections are the 0600 socket + same-UID peer checks and, for the
+/// bridge, its own pairing ceremony (desktop-token / approval / secret
+/// gated per route — see `handle_bridge_host_route`). `vaults.list` staying
+/// pre-token is a documented limitation (plan-sharing.md §9.8): a shared OS
+/// account is not a security boundary. NOTE: `vaults.detach` is an
+/// unauthenticated destructive-capable admin route (its delete-from-disk
+/// arm is protected by slug-retyping + the `.baluard` marker check, not by
+/// a session token) — same socket-UID trust level.
+#[cfg(test)]
+const HOST_ACTIONS: &[&str] = &[
+    "ping",
+    "vault.active",
+    "vault.open",
+    "vault.unlock",
+    "vault.create",
+    "vault.biometric_unlock",
+    "vault.pin_unlock",
+    "vault.clone_start",
+    "vault.clone_progress",
+    "vault.clone_finalize",
+    "vaults.list",
+    "vaults.active",
+    "vaults.switch",
+    "vaults.set_active",
+    "vaults.close",
+    "vaults.detach",
+    "vaults.register_local",
+    "vaults.lock_all",
+    "vaults.on_app_blur",
+    "bridge.list",
+    "bridge.config",
+    "bridge.match",
+    "bridge.pair_start",
+    "bridge.pair_approve",
+    "bridge.pair_complete",
+    "bridge.pending",
+    "bridge.reauth",
+    "bridge.revoke",
 ];
 
 /// Actions that mutate vault data. Schedule cover commits after these.
@@ -921,9 +945,7 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
             let entry = match reg.remove(slug) {
                 Some(e) => e,
                 None => {
-                    return err_response(format!(
-                        "Vault '{slug}' is not registered in Baluard"
-                    ));
+                    return err_response(format!("Vault '{slug}' is not registered in Baluard"));
                 }
             };
             // Persist BEFORE `host.close`. If `save_locked` fails, the
@@ -950,14 +972,17 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
             if delete_from_disk {
                 let path = &entry_path;
                 if path.exists() {
-                    let marker_state = match baluard_core::vault::registry::BaluardMarker::read_from_vault(path) {
-                        Ok(Some(m)) if m.vault_id == entry_vault_id => MarkerCheck::Match,
-                        Ok(Some(m)) => MarkerCheck::Mismatch {
-                            on_disk: m.vault_id,
-                        },
-                        Ok(None) => MarkerCheck::Missing,
-                        Err(e) => MarkerCheck::Unreadable { error: e.to_string() },
-                    };
+                    let marker_state =
+                        match baluard_core::vault::registry::BaluardMarker::read_from_vault(path) {
+                            Ok(Some(m)) if m.vault_id == entry_vault_id => MarkerCheck::Match,
+                            Ok(Some(m)) => MarkerCheck::Mismatch {
+                                on_disk: m.vault_id,
+                            },
+                            Ok(None) => MarkerCheck::Missing,
+                            Err(e) => MarkerCheck::Unreadable {
+                                error: e.to_string(),
+                            },
+                        };
                     match marker_state {
                         MarkerCheck::Match => {}
                         MarkerCheck::Mismatch { on_disk } => {
@@ -1081,16 +1106,16 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
                 return err_response("Missing 'path' for vaults.register_local");
             };
             let path = std::path::PathBuf::from(path_str);
-            let marker =
-                match baluard_core::vault::registry::BaluardMarker::read_from_vault(&path) {
-                    Ok(Some(m)) => m,
-                    Ok(None) => {
-                        return err_response(
-                            "Not a Baluard vault: no .baluard marker found at the selected path",
-                        )
-                    }
-                    Err(e) => return err_response(format!("Failed to read marker: {e}")),
-                };
+            let marker = match baluard_core::vault::registry::BaluardMarker::read_from_vault(&path)
+            {
+                Ok(Some(m)) => m,
+                Ok(None) => {
+                    return err_response(
+                        "Not a Baluard vault: no .baluard marker found at the selected path",
+                    );
+                }
+                Err(e) => return err_response(format!("Failed to read marker: {e}")),
+            };
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -1182,32 +1207,25 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
 
         // Provider routes: split by whether they need a vault (NEW-1).
         //
-        // The UN-GATED provider routes (list / connect_* / status / disconnect)
-        // operate on the keyring + providers.json only — no vault needed. They
-        // run pre-unlock (first-run sync setup) via a sentinel VaultState that
-        // these arms never dereference. Without this they fell through to
-        // snapshot_target and failed with "No active vault" on a fresh
-        // install (H2).
+        // All eight SENTINEL_FORWARDED_ACTIONS operate on the keyring +
+        // providers.json only — no vault needed. They run pre-unlock
+        // (first-run sync setup, add-existing-vault clone/download) via a
+        // sentinel VaultState that these arms never dereference. Without
+        // this they fell through to snapshot_target and failed with "No
+        // active vault" on a fresh install (H2).
+        //
+        // INVARIANT (P6): every entry in SENTINEL_FORWARDED_ACTIONS must be
+        // in TOKEN_EXEMPT_ACTIONS — the sentinel has no session token, so a
+        // gated action forwarded here would be rejected "Vault is locked"
+        // on every call. Enforced by `sentinel_forwarded_actions_are_exempt`.
         //
         // The TOKEN-GATED provider routes (oauth_start_web / oauth_status_web
-        // / create_repo) DO require a vault — they're in
-        // TOKEN_REQUIRED_ACTIONS, so route_request checks the session token.
-        // Routing them through the tokenless sentinel would always reject
-        // them (NEW-1 regression). They fall through to snapshot_target so
-        // they resolve a real vault and check against ITS token.
-        // (Phase 4: repos / vault_repos were moved to the un-gated arm above
-        // because the clone/download flow lists repos before any unlock.)
-        "provider.list"
-        | "provider.connect_start"
-        | "provider.connect_poll"
-        | "provider.connect_pat"
-        | "provider.status"
-        | "provider.disconnect"
-        // Phase 4: repos / vault_repos are read-only provider operations
-        // (keyring token only, no vault state) and must work pre-unlock for
-        // the download-from-provider flow on a fresh device.
-        | "provider.repos"
-        | "provider.vault_repos" => {
+        // / create_repo) DO require a vault — default-deny checks the
+        // session token. Routing them through the tokenless sentinel would
+        // always reject them (NEW-1 regression). They fall through to
+        // snapshot_target so they resolve a real vault and check against ITS
+        // token.
+        a if SENTINEL_FORWARDED_ACTIONS.contains(&a) => {
             let sentinel = std::sync::Arc::new(VaultState::new(std::path::PathBuf::new()));
             return route_request(req, &sentinel).await;
         }
@@ -2866,8 +2884,20 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         !req.session_token.is_empty()
     );
 
-    // R7-2: Enforce session token on protected actions
-    if TOKEN_REQUIRED_ACTIONS.contains(&req.action.as_str()) {
+    // P6 default-deny: everything except TOKEN_EXEMPT_ACTIONS requires a
+    // valid session token. A vault-A token is rejected for a vault-B
+    // operation (per-vault constant-time compare in verify_session_token).
+    // Tripwire first: host-only actions must NEVER get here (they are
+    // intercepted by route_host_request). Checking before the token gate
+    // keeps the diagnostic honest — a routing bug surfaces as "reached
+    // route_request", not as a misleading "vault is locked".
+    if HOST_ONLY_ACTIONS.contains(&req.action.as_str()) {
+        return err_response(format!(
+            "INTERNAL: action '{}' reached route_request (should be handled at host level)",
+            req.action
+        ));
+    }
+    if action_requires_session_token(&req.action) {
         if let Err(e) = state.verify_session_token(&req.session_token).await {
             return err_response(e);
         }
@@ -2880,17 +2910,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
     state.touch_activity();
 
     let resp = match req.action.as_str() {
-        // L1: ping / vault.open / vault.unlock / vault.create / vault.active
-        // are intercepted by route_host_request before reaching here; their
-        // arms were removed to avoid confusion + a refactor hazard. Any of
-        // those actions arriving here means routing is broken — fail loudly.
-        "ping" | "vault.open" | "vault.unlock" | "vault.create" | "vault.active" => {
-            return err_response(format!(
-                "INTERNAL: action '{}' reached route_request (should be handled at host level)",
-                req.action
-            ));
-        }
-
+        // Host-only actions were already tripped by HOST_ONLY_ACTIONS above
+        // (before the token gate). Any further routing bug fails closed via
+        // the default-deny token check or the `_ =>` arm below.
         "vault.lock" => match state.lock().await {
             Ok(()) => ok_resp("locked", None),
             Err(e) => err_response(e),
@@ -4796,7 +4818,188 @@ fn verify_peer_uid(_stream: &UnixStream) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_repo_owner_name, repo_web_url_from_remote};
+    use super::{
+        HOST_ACTIONS, HOST_ONLY_ACTIONS, SENTINEL_FORWARDED_ACTIONS, TOKEN_EXEMPT_ACTIONS,
+        action_requires_session_token, parse_repo_owner_name, repo_web_url_from_remote,
+        route_request,
+    };
+    use crate::proto::GatewayRequest;
+    use crate::state::VaultState;
+
+    /// P6: default-deny means an UNLISTED action requires a session token.
+    /// This is the property that makes future routes safe by construction.
+    #[test]
+    fn unknown_action_requires_token() {
+        assert!(action_requires_session_token("vault.notes"));
+        assert!(action_requires_session_token("not.an.action"));
+        assert!(action_requires_session_token(""));
+    }
+
+    /// P6: every exempt action skips the gate; a pinned set of destructive
+    /// or secret-bearing actions stays gated (default-deny regression pins).
+    #[test]
+    fn exempt_and_gated_classification() {
+        for a in TOKEN_EXEMPT_ACTIONS {
+            assert!(!action_requires_session_token(a), "{a} must be exempt");
+        }
+        for a in [
+            "vault.get",
+            "vault.export",
+            "vault.trash.purge",
+            "vault.change_password",
+            "vault.enroll_with_phrase",
+            "settings.get",
+            "settings.set",
+            "sync.pull",
+            "sync.push",
+            "sync.conflict.resolve",
+            "passkey.list",
+            "passkey.delete",
+            "device.revoke",
+            "cipher.totp_code",
+        ] {
+            assert!(action_requires_session_token(a), "{a} must be gated");
+        }
+    }
+
+    /// P6 coverage (§8: every action in exactly one token list). Scans this
+    /// file's match-arm literals and asserts: (1) exempt and host lists are
+    /// disjoint, (2) every exempt entry is a real dispatchable arm, (3) no
+    /// host action leaked into the exempt list. Gated actions are
+    /// intentionally unlisted — default-deny covers them.
+    #[test]
+    fn token_lists_cover_all_dispatched_actions() {
+        let src = include_str!("handler.rs");
+        // Strip comments so example actions in docs don't pollute the scan.
+        let mut cleaned = String::with_capacity(src.len());
+        for line in src.lines() {
+            let cut = line.find("//").unwrap_or(line.len());
+            cleaned.push_str(&line[..cut]);
+            cleaned.push('\n');
+        }
+
+        // Collect string literals followed by `=>` or `|` (match arms).
+        let mut arms = std::collections::BTreeSet::new();
+        let parts: Vec<&str> = cleaned.split('"').collect();
+        for i in (1..parts.len()).step_by(2) {
+            let literal = parts[i];
+            let after = parts.get(i + 1).copied().unwrap_or("");
+            let trimmed = after.trim_start();
+            if trimmed.starts_with("=>") || trimmed.starts_with('|') {
+                arms.insert(literal.to_string());
+            }
+        }
+        assert!(!arms.is_empty(), "scan found no match arms — parser broken");
+
+        // Match-arm literals that are NOT IPC actions (provider names,
+        // status strings in provider-sync matches).
+        const NON_ACTIONS: &[&str] = &[
+            "code", "codeberg", "done", "failed", "github", "gitlab", "state",
+        ];
+
+        let exempt: std::collections::BTreeSet<&str> =
+            TOKEN_EXEMPT_ACTIONS.iter().copied().collect();
+        let host: std::collections::BTreeSet<&str> = HOST_ACTIONS.iter().copied().collect();
+
+        // (1) Disjoint: an action must not be both host-intercepted and
+        // per-vault exempt.
+        assert!(
+            exempt.is_disjoint(&host),
+            "EXEMPT and HOST_ACTIONS overlap: {:?}",
+            exempt.intersection(&host).collect::<Vec<_>>()
+        );
+
+        // (2) Every exempt entry is a real scanned arm (a typo would
+        // silently exempt nothing; a moved action leaves a stale entry).
+        for a in &exempt {
+            assert!(
+                arms.contains(*a),
+                "EXEMPT entry {a} is not a match arm in handler.rs"
+            );
+        }
+
+        // (3) Every host entry still exists in the dispatcher (typo guard).
+        for a in &host {
+            assert!(
+                src.contains(&format!("\"{a}\"")),
+                "HOST_ACTIONS entry {a} not found in handler.rs"
+            );
+        }
+
+        // (4) No action arm is exempt unless it is a vault-data-free or
+        // tokenless-by-nature route. Pin the exact exempt surface: an edit
+        // that adds to it must consciously update this test.
+        let expected_exempt: &[&str] = &[
+            "provider.connect_pat",
+            "provider.connect_poll",
+            "provider.connect_start",
+            "provider.list",
+            "provider.repos",
+            "provider.status",
+            "provider.disconnect",
+            "provider.vault_repos",
+            "vault.biometric_status",
+            "vault.info",
+            "vault.lock",
+            "vault.pin_status",
+        ];
+        let expected: std::collections::BTreeSet<&str> = expected_exempt.iter().copied().collect();
+        assert_eq!(
+            exempt, expected,
+            "TOKEN_EXEMPT_ACTIONS changed — every addition widens the pre-token surface; update this test with justification"
+        );
+
+        // (5) Non-action allowlist stays minimal and real.
+        for n in NON_ACTIONS {
+            assert!(
+                arms.contains(*n),
+                "NON_ACTIONS entry {n} is not a match arm"
+            );
+        }
+    }
+
+    /// P6 invariant: every action the host dispatcher forwards through the
+    /// tokenless sentinel VaultState MUST be exempt — the sentinel has no
+    /// session token, so a gated action forwarded there would fail with
+    /// "Vault is locked" on every call (this exact bug class was caught in
+    /// review for provider.connect_pat / disconnect / repos / vault_repos).
+    #[test]
+    fn sentinel_forwarded_actions_are_exempt() {
+        for a in SENTINEL_FORWARDED_ACTIONS {
+            assert!(
+                !action_requires_session_token(a),
+                "sentinel-forwarded action {a} is not exempt: pre-unlock calls would fail with 'Vault is locked'"
+            );
+        }
+    }
+
+    /// P6 tripwire ordering: a host-only action that reaches route_request
+    /// (routing bug) must fail with the INTERNAL tripwire, not a misleading
+    /// "vault is locked" token error — the tripwire precedes the token gate.
+    /// Also pins default-deny on the tokenless sentinel: a gated action with
+    /// no token is rejected, never silently executed.
+    #[tokio::test]
+    async fn host_only_action_trips_before_token_gate() {
+        let sentinel = std::sync::Arc::new(VaultState::new(std::path::PathBuf::new()));
+        for action in HOST_ONLY_ACTIONS {
+            let req = GatewayRequest {
+                action: (*action).to_string(),
+                ..Default::default()
+            };
+            let resp = route_request(req, &sentinel).await;
+            assert!(
+                !resp.success && resp.error_message.contains("INTERNAL"),
+                "host-only action {action} must trip the INTERNAL wire, got: {:?}",
+                resp.error_message
+            );
+        }
+        let req = GatewayRequest {
+            action: "vault.get".to_string(),
+            ..Default::default()
+        };
+        let resp = route_request(req, &sentinel).await;
+        assert!(!resp.success, "gated action without token must fail");
+    }
 
     /// C11: the exact attack strings the vault.create / clone slug gates
     /// must reject before the `vaults_dir().join(&slug)` path join.
