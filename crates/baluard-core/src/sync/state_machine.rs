@@ -86,6 +86,11 @@ impl SyncStateMachine {
         let path = vault_path.join("meta/sync-state.json");
         let data =
             serde_json::to_string_pretty(self).map_err(|e| format!("serialize state: {e}"))?;
+        // A vault synced before any meta/ file exists in its tree (fresh
+        // clone of a legacy-era history) has no meta/ dir yet.
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("create meta dir: {e}"))?;
+        }
         let tmp_path = path.with_extension("json.tmp");
         std::fs::write(&tmp_path, &data).map_err(|e| format!("write state tmp: {e}"))?;
         std::fs::rename(&tmp_path, &path).map_err(|e| format!("rename state into place: {e}"))?;
