@@ -224,7 +224,7 @@
   },
   "settings": {
     "faviconLabel": "Show website icons",
-    "faviconDesc": "Shows each entry's website logo. To fetch one, Baluard sends the website address to Google's icon service, which learns which sites you save here. Off by default. Only the first website of each entry is used.",
+    "faviconDesc": "Shows website logos for your saved entries. To fetch them, Baluard asks Google's icon service, which learns which sites you keep here. Off by default, and only the first website of each entry is ever sent.",
     "trayOnlyLabel": "Hide from Dock / Taskbar",
     "trayOnlyDesc": "Keep Baluard in the system tray only. The window stays reachable from the tray icon; closing it still hides to the tray.",
     "trayOnlyEnabled": "Tray-only mode on",
