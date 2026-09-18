@@ -19,6 +19,7 @@ Implications for contributors (human + agent):
 * **Breakage is not UX debt.** Wire-format, vault-format, and data breaks (old files undecryptable, size caps changed, storage reshaped) are acceptable any time and need no migration or shim. Do not weigh them as user-experience regressions when evaluating a change. The only evaluation axis is *ongoing ease of use* for non-technical users (flows, friction, confusion in the current experience).
 * **Security can push format breaks.** If a security fix requires breaking a format, route, or storage layout, do it: during alpha/beta, security outranks format stability. It never outranks ease of use: prefer designs that keep flows simple (warn instead of block, confirm instead of deny) and surface the tradeoff when they conflict.
 * **Still load-bearing (NOT "breakage"):** the crypto/security invariants in CODING STANDARDS (AES-256-GCM, Argon2id, X25519/Ed25519, HPKE, zeroize-on-drop, 0600 socket, token-gating). Those must not regress.
+* **Sharing (multi-user) is designed, not built.** `docs/plan-sharing.md` is the authoritative plan (identity-rooted Spaces, roles, collections, item sharing). Its **phase P prerequisites gate all sharing code**; do not build sharing features on the current single-user unlock/sync foundations.
 
 ## STRUCTURE
 ```
@@ -164,6 +165,7 @@ Share logs: paste the file contents or `zip logs/ logs.zip`.
 * **Passkey plan**: `docs/plan-passkey-support.md` (authoritative)
 * **Git provider app registration & tokens**: `docs/git-provider-apps-and-tokens.md`
 * **Git provider sync plan**: `docs/plan-git-providers-multi-vault.md`
+* **Sharing plan (Spaces, roles, collections, item sharing)**: `docs/plan-sharing.md` (authoritative, Rev 7.2; **phase P prerequisites gate all sharing work**)
 * **Post-quantum readiness**: `docs/post-quantum-readiness.md` (PQC status: data-at-rest PQ-safe, identity layer is the gap)
 * **Protobuf schemas**: `proto/`
 
@@ -303,6 +305,15 @@ System autofill provider (`BaluardAutofillService`) runs in an isolated `:autofi
 * **Codeberg endpoint**: use `/user/repos` (returns array directly). `/repos/list` does not exist; `/repos/search` wraps in `{ok, data}`.
 * **Linux package deps**: `bundle.linux` in `desktop/src-tauri/tauri.conf.json` declares deb/rpm runtime deps (webkit2gtk, gtk3, ayatana-appindicator, libgit2, openssl, libssh2; gnome-keyring as `recommends`). Deb soname package names (`libgtk-3-0t64`, `libgit2-1.9`, `libssl3t64`) drift between distro releases: verify them on the target-release builder before shipping (`apt-cache policy <pkg>`). `just sysdeps` is the build-time preflight; missing runtime services print the install command instead of auto-installing (AGENTS.md UX PRINCIPLES).
 * **Tray icon on Linux** needs `libayatana-appindicator` at build AND runtime (`tray-icon` crate links it via pkg-config `ayatana-appindicator3-0.1`).
+* **Commit-signature verification is dead code**: `load_verifying_keys` reads `meta/device-registry.json`, which only a test fixture writes — in production the verifier has an empty key set and rejects every commit once a second device pushes. Signing itself works. Repair = sharing plan P2.
+* **Rekey locks out survivor devices**: `revoke_device_and_rekey` writes a keywrap only for the acting device; `meta/rekey/<epoch>.txn` wraps for everyone but has NO consumer. Today, a device removal/rotation bricks every other enrolled device's unlock. Fix = sharing plan P3.
+* **Rotation coverage gaps**: rekey skips `meta/settings.enc`, `meta/emergency.json`, and the avatar; `rotate_root_key` skips attachments entirely. Fix = sharing plan P4.
+* **One master password per vault**: a single `meta/kek-canary.enc` + one KDF salt; `change_master_password` rewrites the shared canary. Multi-member Spaces require the identity-rooted pivot (sharing plan P1).
+* **Sync is single-writer today**: the conflict resolver rejects multi-file conflicts; `commit_all` stages everything dirty via `add_all("*")` and rewrites `meta/devices.json` on every commit. Sharing plan P5.
+* **`orgs.rs` is a library island**: zero callers anywhere. It becomes the Space-key-wrap engine in sharing plan P1.
+* **`vaults.*` daemon routes are not token-gated**, and `vaults.list` cannot be (login screen, pre-token). A shared OS account is not a security boundary (same UID, shared biometric enrollment).
+* **AES runs in software**: no hardware-AES feature flag is set (`aes 0.8.4` fixslice; ~25–40 MB/s class on mid-range mobile). Sharing plan P5 enables it.
+* **The index key derives from RootKey** (`derive_index_key`), not SGK — older docs say SGK. Index read failures are swallowed and the list silently degrades to a full scan. Spaces without a RootKey must generalize the derivation (sharing plan §4.3).
 
 ## UX PRINCIPLES
 * **Hide the machinery**: the user sees entries, folders, and a sync status dot. Never a git term, a crypto term, an epoch, a token, a socket, or an error code. If a flow cannot be explained without technical vocabulary, redesign the flow.
