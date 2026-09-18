@@ -196,7 +196,7 @@
   },
   "settings": {
     "faviconLabel": "Mostrar iconos de sitios web",
-    "faviconDesc": "Muestra los logos de los sitios web guardados. Para obtenerlos, Baluard consulta el servicio de iconos de Google, que sabrá qué sitios guardas aquí. Desactivado por defecto; solo se envía el primer sitio web de cada entrada.",
+    "faviconDesc": "Desactivado por defecto. Al activarlo, se piden los logos a Google, lo que revela qué sitios guardas. Solo se envía el primer sitio web de cada entrada.",
     "trayOnlyLabel": "Ocultar del Dock / barra de tareas",
     "trayOnlyDesc": "Mantiene Baluard solo en la bandeja del sistema. La ventana sigue accesible desde el icono de la bandeja; cerrarla la sigue ocultando ahí.",
     "trayOnlyEnabled": "Modo bandeja activado",
