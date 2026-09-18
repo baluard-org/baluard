@@ -19,6 +19,26 @@ pub struct DeviceRegistry {
 }
 
 impl DeviceRegistry {
+    /// Serialize with device entries sorted by UUID.
+    ///
+    /// The `devices` map is a HashMap whose serde iteration order is
+    /// randomized per process; a plain `to_string_pretty` therefore emits a
+    /// different byte order from every process, making git-tracked
+    /// `meta/devices.json` churn on every commit from a different device —
+    /// a guaranteed multi-writer conflict on the one file every device
+    /// shares (P5a). All writers must use this, and `bump_device_epoch`
+    /// skips the write entirely when the bytes are unchanged.
+    pub fn to_deterministic_json(&self) -> Result<String, serde_json::Error> {
+        // BTreeMap keyed by the UUID itself: Uuid is Ord and serde_json
+        // serializes map keys via Display, so ordering is stable without
+        // per-entry String allocations.
+        let sorted: std::collections::BTreeMap<&Uuid, &DeviceEntry> = self.devices.iter().collect();
+        serde_json::to_string_pretty(&serde_json::json!({
+            "version": self.version,
+            "devices": sorted,
+        }))
+    }
+
     pub fn new() -> Self {
         Self {
             version: 1,
@@ -179,6 +199,43 @@ mod tests {
             .unwrap();
         assert_eq!(reg.count(), 1);
         assert_eq!(entry.name, "MacBook");
+    }
+
+    /// P5a: identical registries built in different insertion orders must
+    /// serialize to identical bytes. The devices map is a HashMap — serde's
+    /// iteration order is randomized per process, so plain to_string_pretty
+    /// reordered the git-tracked devices.json on every write from a
+    /// different process and churned every sync commit.
+    #[test]
+    fn deterministic_json_regardless_of_insertion_order() {
+        let ids = [
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+        ];
+        let mut forward = DeviceRegistry::new();
+        for id in &ids {
+            forward
+                .enroll_with_id(*id, format!("dev-{id}"), [1u8; 32], [2u8; 32], None)
+                .unwrap();
+        }
+        let mut backward = DeviceRegistry::new();
+        for id in ids.iter().rev() {
+            backward
+                .enroll_with_id(*id, format!("dev-{id}"), [1u8; 32], [2u8; 32], None)
+                .unwrap();
+        }
+        let a = forward.to_deterministic_json().unwrap();
+        let b = backward.to_deterministic_json().unwrap();
+        assert_eq!(a, b, "insertion order must not change serialized bytes");
+
+        // Byte-identical means parse-identical: the writer stays loadable by
+        // every existing reader.
+        let reparsed: DeviceRegistry = serde_json::from_str(&a).unwrap();
+        assert_eq!(reparsed.devices.len(), 3);
+        for id in &ids {
+            assert_eq!(reparsed.devices[id].name, format!("dev-{id}"));
+        }
     }
 
     #[test]

@@ -999,7 +999,8 @@ impl VaultHandle {
         let enc_path = self.path.join("meta/settings.enc");
         self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
 
-        let stripped = serde_json::to_string_pretty(&reg)
+        let stripped = reg
+            .to_deterministic_json()
             .map_err(|e| VaultError::Metadata(format!("devices serialization: {e}")))?;
         super::write_vault_file(&reg_path, stripped.as_bytes())?;
         Ok(())

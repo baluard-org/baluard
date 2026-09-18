@@ -403,8 +403,17 @@ impl DeviceManagerStore for FileDeviceManagerStore {
         // We keep writing the legacy individual files for backward-compat with
         // existing readers and older vault formats, but the combined file is
         // the authoritative source on next load.
+        // Registry is embedded via its deterministic serialization (P5a) so
+        // the two files never disagree on byte order.
+        let registry_value: serde_json::Value = serde_json::from_str(
+            &state
+                .registry
+                .to_deterministic_json()
+                .map_err(|e| DeviceError::Keystore(format!("serialize registry: {e}")))?,
+        )
+        .map_err(|e| DeviceError::Keystore(format!("reparse registry: {e}")))?;
         let combined = serde_json::json!({
-            "registry": state.registry,
+            "registry": registry_value,
             "epoch": state.epoch,
             "seen_nonces": state.seen_nonces,
         });
@@ -413,9 +422,13 @@ impl DeviceManagerStore for FileDeviceManagerStore {
         let combined_path = meta.join("device-state.json");
         atomic_write(&combined_path, &combined_json)?;
 
-        // Save registry
+        // Save registry (P5a: deterministic entry order — see
+        // DeviceRegistry::to_deterministic_json; a randomized order here
+        // would fight the engine's writer and re-churn the tracked file).
         let registry_path = meta.join("devices.json");
-        let registry_json = serde_json::to_string_pretty(&state.registry)
+        let registry_json = state
+            .registry
+            .to_deterministic_json()
             .map_err(|e| DeviceError::Keystore(format!("serialize registry: {e}")))?;
         atomic_write(&registry_path, &registry_json)?;
 
