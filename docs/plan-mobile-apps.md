@@ -1,6 +1,6 @@
 # Plan: Mobile Apps (Android + iOS)
 
-> Status: Android Phases 0-6 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit at desktop parity, deep search, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build, Android Autofill Service with inline suggestions, save prompt, and quick-settings accessibility tile). Phase 7 (iOS credential extension) next. iOS platform-specific actuals pending.
+> Status: Android Phases 0-6 implemented with Compose Multiplatform + baluard-uniffi (onboarding, home hub, filtered entry lists, 8 cipher types, detail/edit at desktop parity, deep search, generator, TOTP, biometric ceremony, auto-lock, sync, conflict panel, multi-vault, R8 release build, Android Autofill Service with inline suggestions, save prompt, domain equivalence, app-to-web matching with per-app trust, and quick-settings accessibility tile). Phase 7 (iOS credential extension) next. iOS platform-specific actuals pending.
 > Scope: native Android + native iOS apps built on a shared Compose Multiplatform codebase, both consuming `baluard-runtime` + `baluard-core` in-process via UniFFI bindings. **No daemon process on mobile** (see §3.2). The mobile app is a **first-class vault client** (full offline access, full sync, biometric unlock), not a thin viewer.
 > Owner: Esteban. Builds on top of the desktop client (already shipped) and the browser extension (Phase 0+1 shipped).
 
@@ -821,10 +821,12 @@ Post-fix verification: autosync tests pass, full workspace gate verified.
 
 - Declare `BaluardAutofillService` in `AndroidManifest.xml`
 - Service implementation: handle `onFillRequest`, parse `AssistStructure`, query `VaultRepository` by URL match strategy. **Unlock via the biometric-gated KEK + `unlock_with_kek`** (never the master-password Argon2id KDF, the service is memory-capped, §3.2). No network sync on the `onFillRequest` hot path; query a local URL index.
-- Build `RemoteViews` presentation with credential list (simpler UI than main app, optimized for service cold start)
-- Handle `onSaveRequest` when user submits a login form elsewhere
+- Presentation modes: inline IME suggestions (`supportsInlineSuggestions`) and `RemoteViews` dropdown presentation with themed credential list (`autofill_dataset_item.xml`)
+- Domain equivalence: bundled Bitwarden global equivalent domains plus user-defined custom equivalent domain groups (`custom_equivalent_domains`)
+- App-to-web autofill matching with per-app trust (Path B): candidate domain reversal from package labels with in-process trust prompt in `AutofillActivity`
+- Handle `onSaveRequest` when user submits a login form elsewhere, with username/password split SaveInfo
 - Biometric prompt before filling (configurable, default ON)
-- "Add new cipher from autofill" flow
+- "Add new cipher from autofill" flow prefilling the create form via `AutofillSaveToken`
 
 **Acceptance criteria:**
 
@@ -836,9 +838,11 @@ Post-fix verification: autosync tests pass, full workspace gate verified.
 - [x] **Service unlock uses `unlock_with_kek` (biometric-gated KEK); the master-password Argon2id KDF never runs in the service process**
 - [x] No network sync on the `onFillRequest` hot path (local URL index only)
 - [x] Service cold start <500ms
+- [x] Domain equivalence matching for related domains (global + custom groups)
+- [x] App-to-web credential suggestions with explicit trust-on-first-use prompt
 - [x] Quick-settings tile accessibility fill (`BaluardA11yTileService` + `BaluardAccessibilityService`) for apps/browsers without Autofill API support (Phase 6.5)
 
-**Status:** Complete (2026-09-16). Android Autofill service and quick-settings accessibility fill implemented and verified.
+**Status:** Complete (2026-09-17). Android Autofill service, domain equivalence, app-to-web matching with per-app trust, and quick-settings accessibility fill implemented and verified.
 
 **Risk:** `AssistStructure` parsing is fragile across app implementations. Test against Chrome, banking apps, social media. Maintain a known-bad-app list.
 

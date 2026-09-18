@@ -708,10 +708,7 @@ impl VaultState {
                     .cmp(b["name"].as_str().unwrap_or(""))
             })
         });
-        let matched_ids: Vec<&str> = matched
-            .iter()
-            .filter_map(|v| v["id"].as_str())
-            .collect();
+        let matched_ids: Vec<&str> = matched.iter().filter_map(|v| v["id"].as_str()).collect();
         let app_suggestions: Vec<serde_json::Value> = match &app_ctx {
             Some(ctx) => ctx
                 .candidates
@@ -724,9 +721,7 @@ impl VaultState {
                         .map(|(j, _)| j)
                         .filter(|j| !matched_ids.contains(&j["id"].as_str().unwrap_or("")))
                         .collect();
-                    (!m.is_empty()).then(|| {
-                        serde_json::json!({"domain": c, "matches": m})
-                    })
+                    (!m.is_empty()).then(|| serde_json::json!({"domain": c, "matches": m}))
                 })
                 .collect(),
             None => Vec::new(),
@@ -758,17 +753,22 @@ impl VaultState {
         if package.is_empty() || package.contains("://") || package.contains('/') {
             return Err("Invalid package name".into());
         }
-        let domain = baluard_core::types::web_uri_registrable(domain)
-            .ok_or("Invalid domain")?;
+        let domain = baluard_core::types::web_uri_registrable(domain).ok_or("Invalid domain")?;
         let mut settings = handle.get_settings().map_err(|e| format!("{e}"))?;
         let pair = baluard_core::vault::manifest::AppDomainTrust {
             package: package.clone(),
             domain: domain.clone(),
         };
         let (add, remove) = if trust {
-            (&mut settings.trusted_app_packages, &mut settings.rejected_app_packages)
+            (
+                &mut settings.trusted_app_packages,
+                &mut settings.rejected_app_packages,
+            )
         } else {
-            (&mut settings.rejected_app_packages, &mut settings.trusted_app_packages)
+            (
+                &mut settings.rejected_app_packages,
+                &mut settings.trusted_app_packages,
+            )
         };
         let list = add.get_or_insert_with(Vec::new);
         list.retain(|p| p.package != package || p.domain != domain);
@@ -2274,7 +2274,7 @@ impl VaultState {
             match handle.get_cipher(meta.id) {
                 Ok(CipherRead::Decrypted(ref c)) => {
                     if let baluard_core::types::CipherKind::Login(ref data) = c.kind {
-                        if data.totp_uri.as_deref().map_or(false, |u| !u.is_empty()) {
+                        if data.totp_uri.as_deref().is_some_and(|u| !u.is_empty()) {
                             out.push(meta.clone());
                         }
                     }
@@ -3900,7 +3900,11 @@ fn app_match_context(
         .map(|t| t.domain.clone())
         .collect();
     let candidates = baluard_core::types::app_domain_candidates(pkg);
-    Some(AppMatchContext { trusted, rejected, candidates })
+    Some(AppMatchContext {
+        trusted,
+        rejected,
+        candidates,
+    })
 }
 
 struct AppMatchContext {

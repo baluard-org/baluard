@@ -1785,7 +1785,7 @@ async fn bridge_read_matches_page(
         return Err("unparseable page URL".to_string());
     }
     // Decrypted fetch: URI data lives inside the decrypted kind.
-    let cipher_json = state.get_cipher(id, true).await.map_err(|e| e)?;
+    let cipher_json = state.get_cipher(id, true).await?;
     let c: serde_json::Value =
         serde_json::from_str(&cipher_json).map_err(|e| format!("cipher parse: {e}"))?;
     let uris = c["kind"]["data"]["uris"]

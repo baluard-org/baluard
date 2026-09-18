@@ -452,7 +452,7 @@ mod tests {
             let json = format!(r#"{{"vault_timeout": "{input}"}}"#);
             let settings: VaultSettings = serde_json::from_str(&json).unwrap();
             assert_eq!(settings.vault_timeout.as_token(), stored);
-            let reserialized = serde_json::to_value(&settings.vault_timeout).unwrap();
+            let reserialized = serde_json::to_value(settings.vault_timeout).unwrap();
             assert_eq!(reserialized, serde_json::json!(stored));
         }
     }

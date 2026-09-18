@@ -16,7 +16,7 @@ import xyz.actitud.baluard.platform.platformLanguage
  * Interpolation: "{0}", "{1}", ... replaced with [args] in order.
  */
 object I18n {
-    /** Two-letter ISO code ("en", "es"). Initialized from the platform locale. */
+    /** Two-letter ISO code ("en", "es", "pt"). Initialized from the platform locale. */
     var language by mutableStateOf(platformLanguage())
         private set
 
@@ -39,4 +39,5 @@ fun t(key: String, vararg args: Any?): String = I18n.t(key, *args)
 private val DICTS: Map<String, Map<String, String>> = mapOf(
     "en" to EN,
     "es" to ES,
+    "pt" to PT,
 )

@@ -149,6 +149,7 @@ crates/baluard-core/     # All crypto, vault format, key lifecycle, git sync, pr
   src/orgs.rs          # Team sharing / RBAC
   src/recovery.rs      # BIP-39 recovery
   src/paths.rs         # Platform-correct base dirs (data, socket, logs, token)
+  src/resources/       # global_equivalent_domains.json (Bitwarden domain equivalence groups)
   src/types.rs         # CipherKind, CipherInput, CipherMeta, all data structs
   src/error.rs         # BaluardError enum
 crates/baluard-cli/      # Terminal client (clap)
@@ -187,7 +188,7 @@ browser/                # MV3 browser extensions (Chromium + Firefox, shared cod
   firefox/              # Firefox MV3 wrapper (manifest.extra.json)
 mobile/                 # Kotlin Multiplatform Compose app
   shared/               # Common UI, ViewModels, repository, and platform expect/actual
-  androidApp/           # Android host application (single-Activity Compose host, adaptive icons, R8 rules)
+  androidApp/           # Android host application (single-Activity, BaluardAutofillService, BaluardAccessibilityService, BaluardA11yTileService, AutofillActivity, adaptive icons, R8 rules)
 proto/                 # Protobuf schemas (compiled via prost)
 docs/                  # Architecture, design, plans, PRDs, threat model, post-quantum, 2fa, brand, app icons
 ```
@@ -202,7 +203,7 @@ docs/                  # Architecture, design, plans, PRDs, threat model, post-q
 ## Testing
 
 ```bash
-just test              # All tests
+just test              # All tests (runs with BALUARD_DISABLE_KEYRING=1 for hermetic execution)
 just test-core         # Core library only (crypto, vault, keys)
 just e2e               # Full daemon-mode smoke test
 ```

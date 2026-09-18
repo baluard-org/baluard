@@ -441,7 +441,7 @@ impl VaultHost {
                     // Warn when within 2x of the limit so the user can raise it
                     // (`ulimit -l` / /etc/security/limits.conf) before mlock
                     // starts silently failing for new vaults.
-                    if (baseline as u64) * 2 >= rlim as u64 {
+                    if (baseline as u64) * 2 >= rlim {
                         log::warn!(
                             "[host] mlock baseline within 2x of RLIMIT_MEMLOCK ({rlim} B). \
                              Multi-vault mlock may silently fail; raise the limit \

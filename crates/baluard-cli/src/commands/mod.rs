@@ -1423,7 +1423,7 @@ pub fn handle_enroll_with_phrase(
                     std::fs::set_permissions(&privkey_tmp, std::fs::Permissions::from_mode(0o600));
             }
             std::fs::rename(&privkey_tmp, &privkey_path)?;
-            let _ = baluard_core::vault::device_privkey::write_device_id(&path, result.device_id);
+            let _ = baluard_core::vault::device_privkey::write_device_id(path, result.device_id);
 
             println!(
                 "Device enrolled: {} ({})",
@@ -2887,7 +2887,7 @@ pub fn handle_passkey_rename(
 
 pub fn handle_vaults(action: &VaultAction, cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     match action {
-        VaultAction::Add { path, slug } => vaults_add(&path, slug.as_deref()),
+        VaultAction::Add { path, slug } => vaults_add(path, slug.as_deref()),
         VaultAction::List => vaults_list(cli),
         VaultAction::Switch { slug } => vaults_switch(slug, cli),
         VaultAction::Close { slug } => vaults_close(slug, cli),

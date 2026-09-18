@@ -13,7 +13,7 @@ baluard-nmh     -> Native messaging host (browser extension bridge, stdio-JSON <
 baluard-uniffi  -> UniFFI bindings consumed by Kotlin Multiplatform mobile app
 desktop/        -> Tauri v2 desktop app (SolidJS + Tailwind v4, 8 cipher types, generator, TOTP widget, switcher)
 browser/        -> MV3 browser extension for Chromium and Firefox (paired companion model)
-mobile/         -> Kotlin Multiplatform / Compose app for Android and iOS (home hub, filters, biometric, sync, autofill)
+mobile/        -> Kotlin Multiplatform / Compose app for Android and iOS (home hub, filters, biometric, sync, autofill, accessibility fill)
 ```
 
 ## Quick Start
@@ -50,6 +50,7 @@ For full documentation, see **[docs/index.md](docs/index.md)**.
 | [2FA Analysis](docs/2fa-analysis.md) | TOTP implementation, RFC 6238/4226 compliance |
 | [Dev Setup & Workflow](docs/dev-setup.md) | Prerequisites, build commands, architecture, testing, troubleshooting |
 | [Mobile Dev Setup](docs/mobile-dev-setup.md) | Android SDK, NDK, OpenJDK 17, and Gradle setup for mobile development |
+| [Translations & Localization](docs/translations.md) | Guide for adding and maintaining desktop and mobile language translations |
 | [Brand Guidelines](docs/brand-guidelines.md) | Color palette, design tokens, visual identity rules |
 | [Progress](docs/progress.md) | Implementation status and review history |
 

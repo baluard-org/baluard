@@ -1,6 +1,6 @@
 # Plan: Android Autofill (Phase 6)
 
-Status: implemented (2026-09-16). Authoritative requirements: `docs/plan-mobile-apps.md` §3.2, §3.7, Phase 6. All build phases complete and verified on hardware over wireless adb.
+Status: implemented (2026-09-17). Authoritative requirements: `docs/plan-mobile-apps.md` §3.2, §3.7, Phase 6. All build phases complete and verified on hardware over wireless adb.
 
 ## 0. Current state (audited)
 
@@ -20,21 +20,22 @@ Already exists, reuse as-is:
 Phase 6 implementation scope (completed):
 
 1. **`BaluardApplication`**: initializes context in both the main and `:autofill` processes.
-2. **URI matching engine in core**: `UriMatchStrategy::matches` in `baluard-core` with public-suffix eTLD+1 support and strict scheme isolation.
-3. **Autofill query batch endpoint**: `VaultState::autofill_query` in `baluard-runtime` / `baluard-uniffi` returning ranked match candidates without passwords.
-4. **Service implementation**: `BaluardAutofillService` with heuristics-based AssistStructure parsing, inline suggestions (Jetpack Autofill), dataset building, and save prompt handling.
-5. **`AutofillActivity`**: translucent trampoline host for `BiometricPrompt` with `CryptoObject` response-level authentication and a11y credential picker.
-6. **Session management**: `AutofillSession` with mutex-serialized lifecycle, KEK-only unlock (`unlock_with_kek`), and auto-lock tracking.
+2. **URI matching and equivalence engine in core**: `UriMatchStrategy::matches` and `matches_with` in `baluard-core` with public-suffix eTLD+1 support, bundled Bitwarden global equivalent domains, user-defined custom equivalent domain groups (`custom_equivalent_domains`), candidate domain reversal (`app_domain_candidates`), and strict scheme isolation.
+3. **Autofill query batch endpoint**: `VaultState::autofill_query` in `baluard-runtime` / `baluard-uniffi` returning `{matches, app_suggestions}` without passwords.
+4. **App-to-web matching with per-app trust**: opt-in `suggest_app_logins` setting with in-process trust prompt in `AutofillActivity` and persistence to `trusted_app_packages` / `rejected_app_packages`.
+5. **Service implementation**: `BaluardAutofillService` with heuristics-based AssistStructure parsing, inline suggestions (`supportsInlineSuggestions`), dataset building, and split save prompt handling.
+6. **`AutofillActivity`**: translucent trampoline host for `BiometricPrompt` with `CryptoObject` response-level authentication, app-to-web trust prompts, and a11y credential picker.
+7. **Session management**: `AutofillSession` with mutex-serialized lifecycle, KEK-only unlock (`unlock_with_kek`), and auto-lock tracking.
 
 ## 1. Architecture decisions
 
-D1. **Matching lives in Rust.** `UriMatchStrategy::matches(uri, target)` in `baluard-core/src/types.rs` (proptests over the strategy matrix), plus one batch FFI call `MobileVault.autofill_query(target) -> String` implemented in `baluard-runtime::VaultState`: decrypt logins, extract only `id, name, username, favorite, uris[]` with strategies, match, return ranked JSON. Kotlin does zero matching and never sees passwords during matching. iOS Phase 7 reuses the same engine for free.
+D1. **Matching lives in Rust.** `UriMatchStrategy::matches(uri, target)` and `matches_with(uri, target, custom_groups)` in `baluard-core/src/types.rs` (proptests over the strategy matrix), plus one batch FFI call `MobileVault.autofill_query(target) -> String` implemented in `baluard-runtime::VaultState`: decrypt logins, extract only `id, name, username, favorite, uris[]` with strategies, match, return ranked JSON object `{matches, app_suggestions}`. Kotlin does zero matching and never sees passwords during matching. iOS Phase 7 reuses the same engine.
 
 D2. **Passwords cross the FFI only on selection.** The chosen cipher is fetched via existing `get_cipher(id)` at fill time. `autofill_query` output never contains passwords.
 
 D3. **`domain` strategy needs a public-suffix list.** Host-equality is wrong for `co.uk` style suffixes. Add the pure-Rust `publicsuffix` crate (offline, ~200 KB compiled list) to `baluard-core` for eTLD+1 extraction. Fallback if rejected: v1 treats `domain` as host equality (conservative: misses matches, never offers wrong credentials) and we upgrade later.
 
-D4. **Native app targets match via package.** The service passes `androidapp://<package>` for native apps and the real `https://` URL (from `ViewNode.webDomain`) for browsers/webviews. `matches()` treats an `androidapp://` target as: package exact-equality against `androidapp://` entry URIs, else no match. Browser fills use the per-URI strategy.
+D4. **Native app targets match via package.** The service passes `androidapp://<package>` for native apps and the real `https://` URL (from `ViewNode.webDomain`) for browsers/webviews. `matches()` treats an `androidapp://` target as: package exact-equality against `androidapp://` entry URIs, else no match. Browser fills use the per-URI strategy. App-to-web matching (Path B) expands candidates only after explicit per-app user trust.
 
 D5. **Biometric is structurally mandatory in the service.** The KEK wrap key is auth-per-use (`AUTH_BIOMETRIC_STRONG`, 0-second window), so no KEK leaves the Keystore without a fresh prompt, and the master-password KDF is forbidden in this process (OOM invariant, plan §3.2). The plan's "biometric prompt before filling (configurable, default ON)" therefore lands as: the prompt gates session unlock; the configurable part is session lifetime (D6). Update the plan wording when Phase 6 closes.
 
@@ -42,7 +43,7 @@ D6. **Session = one unlocked `MobileVault` in the `:autofill` process.** Per-pro
 
 D6a. **Per-process lock states are independent by design.** Locking the main app does not lock the autofill session, and vice versa; both honor the same per-vault `vault_timeout` policy value. This matches user expectations set by every mainstream manager (browser extension and app sessions are also independent) but must be documented in-app (settings note) so "the vault is locked" never promises more than the process in front of the user.
 
-D7. **Picker UI = per-dataset RemoteViews**, one layout (`autofill_dataset_item.xml`: name + username, programmatic text from the shared `I18n` objects, no new res strings). Inline IME suggestions (`supportsInlineSuggestions`, API 30+) deferred to a v1.1 pass.
+D7. **Presentation modes = inline IME keyboard suggestions and dropdown RemoteViews.** The manifest declares `supportsInlineSuggestions="true"`. Datasets attach keyboard chips when enabled in Settings (default INLINE) in addition to themed RemoteViews menu items (`autofill_dataset_item.xml`).
 
 D8. **Save flow routes through the main app.** `FillResponse` carries `SaveInfo` (username + password) built with `FLAG_SAVE_ON_ALL_VIEWS_INVISIBLE`: most login forms destroy/hide the field hierarchy on submit (SPA redirects, view recycling), and without the flag `onSaveRequest` silently never fires. `onSaveRequest` parses committed values and launches the main-app task with extras; `App()` reads them and opens the edit screen prefilled as a new Login. Compose runs in the main process anyway; the `:autofill` process stays lean.
 
@@ -86,6 +87,5 @@ P6. **Device matrix + polish.** Chrome, Firefox, one banking app, one social app
 ## 5. Explicitly out of scope (v1)
 
 - TOTP codes in the autofill picker (desktop extension parity candidate, separate pass).
-- Inline IME suggestions (`supportsInlineSuggestions`).
 - Autofill of passkeys (`CredentialProviderService`, API 34): plan §10 marks platform credential-provider as v2+.
 - iOS: Phase 7 per plan, starts only on Esteban's signal; D1 keeps the matcher reusable.

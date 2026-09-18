@@ -178,13 +178,13 @@ pub fn set_token_encryption_key(key: [u8; 32]) {
 /// returned as-is and re-sealed when a key is available (lazy migration of
 /// pre-seal installs).
 fn read_token_file(path: &std::path::Path) -> Result<Vec<u8>, super::types::ProviderError> {
-    read_token_file_impl(path, token_enc_key()).and_then(|(data, migrate)| {
+    read_token_file_impl(path, token_enc_key()).map(|(data, migrate)| {
         if migrate {
             if let Some(k) = token_enc_key() {
                 let _ = store_token_file_impl(path, &data, Some(k));
             }
         }
-        Ok(data)
+        data
     })
 }
 

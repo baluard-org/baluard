@@ -295,6 +295,26 @@ fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {
     }
 }
 
+/// Decode a varint with overflow and bounds checking.
+fn decode_varint_checked(data: &[u8]) -> Result<(u64, usize)> {
+    let mut value: u64 = 0;
+    let mut shift: u32 = 0;
+    let mut i = 0;
+    while i < data.len() {
+        let byte = data[i];
+        value |= ((byte & 0x7F) as u64) << shift;
+        i += 1;
+        if byte & 0x80 == 0 {
+            return Ok((value, i));
+        }
+        shift += 7;
+        if shift >= 70 {
+            bail!("Varint overflow in response");
+        }
+    }
+    bail!("Incomplete varint in response (truncated)");
+}
+
 #[cfg(test)]
 mod c2_tests {
     use super::*;
@@ -338,24 +358,4 @@ mod c2_tests {
         // Fallback file must be gone after clear, not just empty.
         assert!(!token_file_path(sp.as_deref()).exists());
     }
-}
-
-/// Decode a varint with overflow and bounds checking.
-fn decode_varint_checked(data: &[u8]) -> Result<(u64, usize)> {
-    let mut value: u64 = 0;
-    let mut shift: u32 = 0;
-    let mut i = 0;
-    while i < data.len() {
-        let byte = data[i];
-        value |= ((byte & 0x7F) as u64) << shift;
-        i += 1;
-        if byte & 0x80 == 0 {
-            return Ok((value, i));
-        }
-        shift += 7;
-        if shift >= 70 {
-            bail!("Varint overflow in response");
-        }
-    }
-    bail!("Incomplete varint in response (truncated)");
 }

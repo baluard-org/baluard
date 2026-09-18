@@ -10,6 +10,7 @@
 import { describe, it, expect } from "vitest";
 import en from "../i18n/locales/en.json";
 import es from "../i18n/locales/es.json";
+import pt from "../i18n/locales/pt.json";
 
 // Mirror of flatten() in i18n/index.jsx. Kept local (not imported) so a test
 // failure points at the data, not at a runtime import path.
@@ -34,6 +35,15 @@ describe("i18n locale parity", () => {
     const missingInEs = [...enKeys].filter((k) => !esKeys.has(k));
     const missingInEn = [...esKeys].filter((k) => !enKeys.has(k));
     expect(missingInEs, `keys missing in es.json: ${missingInEs.join(", ")}`).toEqual([]);
+    expect(missingInEn, `keys missing in en.json: ${missingInEn.join(", ")}`).toEqual([]);
+  });
+
+  it("en.json and pt.json expose the same dot-path key set", () => {
+    const enKeys = new Set(Object.keys(flatten(en)));
+    const ptKeys = new Set(Object.keys(flatten(pt)));
+    const missingInPt = [...enKeys].filter((k) => !ptKeys.has(k));
+    const missingInEn = [...ptKeys].filter((k) => !enKeys.has(k));
+    expect(missingInPt, `keys missing in pt.json: ${missingInPt.join(", ")}`).toEqual([]);
     expect(missingInEn, `keys missing in en.json: ${missingInEn.join(", ")}`).toEqual([]);
   });
 });

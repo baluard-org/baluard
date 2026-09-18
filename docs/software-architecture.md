@@ -30,6 +30,7 @@ baluard/
 │   │       ├── orgs.rs         # Team sharing / RBAC
 │   │       ├── recovery.rs     # BIP-39 recovery
 │   │       ├── paths.rs        # Platform-correct base dirs (data, socket, logs, token)
+│   │       ├── resources/      # global_equivalent_domains.json (Bitwarden domain equivalence groups)
 │   │       ├── types.rs        # CipherKind, CipherInput, CipherMeta, all cipher data structs
 │   │       └── error.rs        # BaluardError enum
 │   ├── baluard-cli/              # CLI Client (clap): daemon-first with --direct fallback
@@ -70,7 +71,7 @@ baluard/
 │   └── firefox/                # Firefox MV3 wrapper (manifest.extra.json)
 ├── mobile/                     # Kotlin Multiplatform Mobile App (Compose UI + UniFFI integration)
 │   ├── shared/                 # Common Compose UI, ViewModels, repository, and platform implementations
-│   └── androidApp/             # Android host application (single-Activity, BaluardAutofillService, BaluardAccessibilityService, BaluardA11yTileService, adaptive icons, R8 rules)
+│   └── androidApp/             # Android host application (single-Activity, BaluardAutofillService, BaluardAccessibilityService, BaluardA11yTileService, AutofillActivity, adaptive icons, R8 rules)
 └── docs/                       # Architecture, design, plans, PRDs, threat model, post-quantum, 2fa, brand, app icons
 ```
 
@@ -127,8 +128,10 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 - **KMP UI**: Shared Android/iOS screens written in Compose Multiplatform.
 - **UniFFI Bindings**: `baluard-uniffi` exposes `baluard-runtime` and `baluard-core` to Kotlin and Swift without manual JNI boilerplate.
 - **In-process runtime**: The mobile app hosts the runtime directly in-process; no local daemon or socket layer.
-- **Isolated Autofill Service (`:autofill`)**: System autofill provider (`BaluardAutofillService`) runs in its own process. Unlocks via biometric-gated KEK (`unlock_with_kek`) to avoid the high-memory Argon2id KDF on memory-constrained service paths. Inline suggestions and dropdowns presentation.
-- **Offline-first fill path**: `onFillRequest` matches against local decrypted login metadata (`VaultState::autofill_query`) with no network calls or sync operations on the critical path.
+- **Isolated Autofill Service (`:autofill`)**: System autofill provider (`BaluardAutofillService`) runs in its own process. Unlocks via biometric-gated KEK (`unlock_with_kek`) to avoid the high-memory Argon2id KDF on memory-constrained service paths. Inline IME suggestions (`supportsInlineSuggestions`) and dropdown presentation.
+- **Offline-first fill path**: `onFillRequest` matches against local decrypted login metadata (`VaultState::autofill_query`) returning `{matches, app_suggestions}` with no network calls or sync operations on the critical path.
+- **Domain equivalence**: Bundled Bitwarden global equivalent domains plus user-defined custom equivalent domain groups (`custom_equivalent_domains`) expand matching across related domains.
+- **App-to-web matching with per-app trust**: Opt-in `suggest_app_logins` setting derives candidate domains from package labels and requests explicit user trust via `AutofillActivity`, persisting approvals in `trusted_app_packages`.
 - **Save handoff**: `onSaveRequest` routes new credential creation to the main app via a single-use token (`AutofillSaveToken`).
 - **Accessibility fill tile**: `BaluardA11yTileService` + `BaluardAccessibilityService` offer quick-settings tile fill for browsers and applications that do not support Android Autofill APIs.
 

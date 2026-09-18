@@ -213,7 +213,7 @@ fn split_blocks(raw: &[u8]) -> Vec<Vec<u8>> {
             break;
         };
         let end = start + end_rel + PEM_END.len();
-        out.push(rest[start..end].as_bytes().to_vec());
+        out.push(rest.as_bytes()[start..end].to_vec());
         rest = &rest[end..];
     }
     out

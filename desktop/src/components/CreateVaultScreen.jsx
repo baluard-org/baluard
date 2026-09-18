@@ -8,13 +8,14 @@ import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 
 const AVAILABLE_LOCALES = [
   { code: "en", label: "English" },
-  { code: "es", label: "Espa\u00f1ol" },
+  { code: "es", label: "Español" },
+  { code: "pt", label: "Português" },
 ];
 
 function detectOsLocale() {
   try {
     const lang = navigator.language?.split("-")[0];
-    if (lang === "en" || lang === "es") return lang;
+    if (lang === "en" || lang === "es" || lang === "pt") return lang;
   } catch {}
   return "en";
 }
