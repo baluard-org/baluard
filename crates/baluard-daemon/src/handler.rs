@@ -4359,9 +4359,16 @@ fn sync_pull(
             "Already up to date.".to_string()
         }
         baluard_core::sync::engine::PullResult::FastForward => {
+            // P5b: the pull wrote cipher files through the engine, bypassing
+            // VaultHandle's index-rebuild hooks. Invalidate the local-only
+            // index (keyless) so the next list rebuilds from disk.
+            baluard_core::sync::engine::SyncEngine::invalidate_local_index(vault_path);
             "Fast-forwarded to latest.".to_string()
         }
-        baluard_core::sync::engine::PullResult::Merged => "Merged remote changes.".to_string(),
+        baluard_core::sync::engine::PullResult::Merged => {
+            baluard_core::sync::engine::SyncEngine::invalidate_local_index(vault_path);
+            "Merged remote changes.".to_string()
+        }
         baluard_core::sync::engine::PullResult::Conflict { files, .. } => {
             let file_list = files.join(", ");
             return Err(format!(

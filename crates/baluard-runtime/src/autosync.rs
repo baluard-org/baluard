@@ -552,6 +552,10 @@ impl AutoSyncHandle {
                 g.conflicts_resolved = g.conflicts_resolved.saturating_add(conflicts);
                 g.last_sync = Some(now_secs());
                 g.state = AutoSyncState::Idle;
+                // P5b: the cycle wrote cipher files through the engine,
+                // bypassing VaultHandle's index-rebuild hooks. Invalidate the
+                // local-only index (keyless) so the next list rebuilds.
+                baluard_core::sync::engine::SyncEngine::invalidate_local_index(&self.vault_path);
             }
             Ok(Ok(Ok(SyncOutcome::Offline))) => {
                 g.state = AutoSyncState::Offline;
@@ -744,6 +748,15 @@ fn run_pull_only(
                 .resolve_conflict_keep_local(&repo, local_oid, remote_oid, &files)
                 .map(|_| true)
                 .map_err(|e| format!("conflict resolution failed: {e}"))
+        }
+        // P5b: the pull wrote cipher files through the engine, bypassing
+        // VaultHandle's index-rebuild hooks. Invalidate the local-only index
+        // (keyless) so the next list rebuilds from disk — but ONLY when
+        // content actually changed: an AlreadyUpToDate idle pull must not
+        // force a full O(N) re-decrypt at the next list.
+        Ok(PullResult::FastForward) | Ok(PullResult::Merged) => {
+            SyncEngine::invalidate_local_index(vault_path);
+            Ok(true)
         }
         Ok(_) => Ok(true),
         Err(ref e) if is_network_error(e) => Ok(false),

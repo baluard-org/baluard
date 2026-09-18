@@ -1576,18 +1576,35 @@ impl VaultHandle {
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
-        // Try reading from index.enc
-        let index_path = self.path.join("meta/index.enc");
-        if index_path.exists() {
-            if let Ok(index_key) =
-                crate::crypto::hkdf_derive::derive_index_key(unlocked.root_key.as_bytes())
+        // Try reading from the (possibly sharded) index. Missing or corrupt
+        // shards → None → auto-heal rebuild below.
+        if let Ok(index_key) =
+            crate::crypto::hkdf_derive::derive_index_key(unlocked.root_key.as_bytes())
+        {
+            if let Some((ciphers, skipped)) =
+                index::read_sharded(self.vault_id, &self.path.join("meta"), &index_key)
             {
-                if let Ok(envelope_bytes) = std::fs::read(&index_path) {
-                    if let Ok(ciphers) =
-                        index::decrypt_index(self.vault_id, &envelope_bytes, &index_key)
-                    {
-                        return Ok(ciphers);
+                // P5b staleness guard: the index is local-only, and pulled
+                // ciphers land on disk without touching it. A cheap directory
+                // scan detects disk/index divergence — SET equality, not just
+                // counts (an add+delete swap keeps counts equal). On mismatch
+                // fall through to the auto-heal rebuild instead of showing a
+                // stale list.
+                match self.list_cipher_ids() {
+                    Ok(mut disk_ids) => {
+                        let mut indexed: Vec<uuid::Uuid> = ciphers
+                            .iter()
+                            .map(|m| m.id)
+                            .chain(skipped.iter().copied())
+                            .collect();
+                        disk_ids.sort_unstable();
+                        indexed.sort_unstable();
+                        if disk_ids == indexed {
+                            return Ok(ciphers);
+                        }
                     }
+                    // Cannot scan — trust the index rather than showing nothing.
+                    Err(_) => return Ok(ciphers),
                 }
             }
         }
@@ -1595,6 +1612,7 @@ impl VaultHandle {
         // Auto-heal: rebuild index and save
         let ids = self.list_cipher_ids()?;
         let mut metas = Vec::with_capacity(ids.len());
+        let mut skipped: Vec<uuid::Uuid> = Vec::new();
 
         for id in ids {
             let file_path = self.path.join(format!("ciphers/{}.enc", id));
@@ -1619,6 +1637,7 @@ impl VaultHandle {
                     eprintln!(
                         "warning: cipher {id} at epoch {envelope_epoch} cannot be decrypted with held epoch {held_epoch}; skipping from index",
                     );
+                    skipped.push(id);
                     continue;
                 }
                 Err(e) => {
@@ -1626,6 +1645,7 @@ impl VaultHandle {
                     // than abort the whole index (graceful degradation), but
                     // keep this path noisy so it does not hide silent loss.
                     eprintln!("warning: cipher {id} skipped during index build: {e}");
+                    skipped.push(id);
                     continue;
                 }
             };
@@ -1652,18 +1672,19 @@ impl VaultHandle {
             });
         }
 
-        // Save healed index
+        // Save healed index (P5b: sharded, like rebuild_index)
         if let Ok(index_key) =
             crate::crypto::hkdf_derive::derive_index_key(unlocked.root_key.as_bytes())
         {
-            if let Ok(enc_bytes) =
-                index::encrypt_index(self.vault_id, &metas, &index_key, unlocked.current_epoch)
-            {
-                let tmp_path = index_path.with_extension("enc.tmp");
-                if std::fs::write(&tmp_path, enc_bytes).is_ok() {
-                    let _ = std::fs::rename(tmp_path, &index_path);
-                }
-            }
+            let index_dir = self.path.join("meta");
+            let _ = index::write_sharded(
+                self.vault_id,
+                &metas,
+                &index_key,
+                unlocked.current_epoch,
+                &index_dir,
+                &skipped,
+            );
         }
 
         Ok(metas)
@@ -3432,6 +3453,7 @@ impl VaultHandle {
 
         let ids = self.list_cipher_ids()?;
         let mut metas = Vec::with_capacity(ids.len());
+        let mut skipped: Vec<uuid::Uuid> = Vec::new();
 
         for id in ids {
             let file_path = self.path.join(format!("ciphers/{}.enc", id));
@@ -3456,6 +3478,7 @@ impl VaultHandle {
                     eprintln!(
                         "warning: cipher {id} at epoch {envelope_epoch} cannot be decrypted with held epoch {held_epoch}; skipping from index",
                     );
+                    skipped.push(id);
                     continue;
                 }
                 Err(e) => {
@@ -3463,6 +3486,7 @@ impl VaultHandle {
                     // than abort the whole index (graceful degradation), but
                     // keep this path noisy so it does not hide silent loss.
                     eprintln!("warning: cipher {id} skipped during index build: {e}");
+                    skipped.push(id);
                     continue;
                 }
             };
@@ -3490,15 +3514,20 @@ impl VaultHandle {
         }
 
         let index_key = hkdf_derive::derive_index_key(unlocked.root_key.as_bytes())?;
-        let enc_bytes =
-            index::encrypt_index(self.vault_id, &metas, &index_key, unlocked.current_epoch)?;
-
         let index_dir = self.path.join("meta");
         std::fs::create_dir_all(&index_dir)?;
-        let index_path = index_dir.join("index.enc");
-        let tmp_path = index_path.with_extension("enc.tmp");
-        super::write_vault_file(&tmp_path, &enc_bytes)?;
-        std::fs::rename(&tmp_path, &index_path)?;
+        // P5b: sharded write — deterministic shard boundaries, orphaned
+        // higher shards pruned, single-shard vaults byte-compatible with the
+        // legacy index.enc layout. `skipped` rides shard 0 so the reader's
+        // staleness check can compare like-for-like counts.
+        index::write_sharded(
+            self.vault_id,
+            &metas,
+            &index_key,
+            unlocked.current_epoch,
+            &index_dir,
+            &skipped,
+        )?;
 
         Ok(())
     }

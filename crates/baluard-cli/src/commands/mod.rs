@@ -1725,8 +1725,15 @@ pub fn handle_sync_clone_url(
 #[cfg(feature = "git-sync")]
 fn sync_init_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine =
-        baluard_core::sync::engine::SyncEngine::new(path, &first_device_id(vault_path), None);
+    // P2: enrolled vaults refuse unsigned commits — unlock to load the
+    // signing key (BALUARD_PASSWORD env or TTY prompt).
+    let handle = unlock_vault_direct(vault_path)?;
+    let seal = handle.devkey_seal();
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        path,
+        &first_device_id(vault_path),
+        seal.as_ref(),
+    );
     let repo = engine.init_repo()?;
     println!("Git repo initialized at {}", path.display());
     let log = engine.log(&repo, 1)?;
@@ -1750,8 +1757,14 @@ fn sync_remote_direct(vault_path: &str, url: &str) -> Result<(), Box<dyn std::er
 #[cfg(feature = "git-sync")]
 fn sync_push_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine =
-        baluard_core::sync::engine::SyncEngine::new(path, &first_device_id(vault_path), None);
+    // P2: committing requires the signing key — unlock first.
+    let handle = unlock_vault_direct(vault_path)?;
+    let seal = handle.devkey_seal();
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        path,
+        &first_device_id(vault_path),
+        seal.as_ref(),
+    );
     let repo = engine.open_repo()?;
     let status = engine.status(&repo)?;
     if status.is_dirty() {
@@ -1766,17 +1779,29 @@ fn sync_push_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> 
 #[cfg(feature = "git-sync")]
 fn sync_pull_direct(vault_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(vault_path);
-    let engine =
-        baluard_core::sync::engine::SyncEngine::new(path, &first_device_id(vault_path), None);
+    // P2: a pull may write a signed merge commit — unlock first. Also
+    // invalidate the local-only cipher index (keyless): pulled ciphers land
+    // on disk without touching it.
+    let handle = unlock_vault_direct(vault_path)?;
+    let seal = handle.devkey_seal();
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        path,
+        &first_device_id(vault_path),
+        seal.as_ref(),
+    );
     engine.recover_state()?;
     let repo = engine.open_repo()?;
     let result = engine.pull(&repo, "origin")?;
     match result {
         baluard_core::sync::engine::PullResult::AlreadyUpToDate => println!("Already up to date."),
         baluard_core::sync::engine::PullResult::FastForward => {
+            baluard_core::sync::engine::SyncEngine::invalidate_local_index(path);
             println!("Fast-forwarded to latest.")
         }
-        baluard_core::sync::engine::PullResult::Merged => println!("Merged remote changes."),
+        baluard_core::sync::engine::PullResult::Merged => {
+            baluard_core::sync::engine::SyncEngine::invalidate_local_index(path);
+            println!("Merged remote changes.")
+        }
         baluard_core::sync::engine::PullResult::Conflict { files, .. } => {
             let file_list = files.join(", ");
             return Err(format!("merge conflict in {file_list}. Resolution required.").into());
