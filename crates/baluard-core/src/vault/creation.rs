@@ -408,7 +408,7 @@ impl<'a> VaultCreator<'a> {
                 // Write Files
                 super::write_vault_file(
                     &path.join("meta/devices.json"),
-                    serde_json::to_string_pretty(&registry).unwrap().as_bytes(),
+                    registry.to_deterministic_json().unwrap().as_bytes(),
                 )?;
 
                 super::write_vault_file(
@@ -666,7 +666,7 @@ impl<'a> VaultCreator<'a> {
 
                 super::write_vault_file(
                     &registry_path,
-                    serde_json::to_string_pretty(&registry).unwrap().as_bytes(),
+                    registry.to_deterministic_json().unwrap().as_bytes(),
                 )?;
 
                 let wrapped_root_key =

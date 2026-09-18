@@ -637,9 +637,18 @@ impl SyncEngine {
         if let Some(entry) = reg.devices.get_mut(&device_id) {
             entry.last_seen_epoch = epoch;
         }
-        let Ok(json) = serde_json::to_string_pretty(&reg) else {
+        // P5a: deterministic serialization + skip-if-unchanged. devices.json
+        // is git-tracked and shared by every device; rewriting it with
+        // reordered (HashMap-serialized) or unchanged content churned the
+        // file on every commit from a different process — a guaranteed
+        // multi-writer conflict on the one file all devices touch. When the
+        // bytes are identical the commit carries no devices.json delta.
+        let Ok(json) = reg.to_deterministic_json() else {
             return;
         };
+        if json == data {
+            return;
+        }
         let tmp_path = reg_path.with_file_name(format!(
             "{}.tmp",
             reg_path.file_name().unwrap_or_default().to_string_lossy()
@@ -949,20 +958,45 @@ impl SyncEngine {
                     }
                 }
             }
-            repo.cleanup_state()
-                .map_err(|e| SyncError::Git(format!("cleanup: {e}")))?;
-            // Leave the state machine in Merging (NOT Idle): a conflict means a
-            // resolution commit must follow before the cycle can return to
-            // Idle. Pre-fix this called transition_state(Idle), which made the
-            // subsequent resolve_conflicts() -> transition_state(Idle) an
-            // invalid Idle->Idle transition and silently broke both the
-            // keep-local path and finalize_conflicts on any real conflict.
-            // The resolver / finalize path transitions Merging -> Idle.
-            return Ok(PullResult::Conflict {
-                files: conflicts,
-                local_oid,
-                remote_oid,
-            });
+
+            // P5a: a conflict confined to meta/devices.json is auto-resolved
+            // by registry union (union of devices, max last_seen_epoch per
+            // id, non-empty name preferred) instead of wedging the cycle in
+            // NeedsDecision — the runtime field-merge only speaks cipher
+            // files, and devices.json is plaintext so it needs no keys.
+            // Union (not keep-local) so both sides converge to the same
+            // superset instead of flapping. Membership correctness after a
+            // revocation is enforced at the crypto/policy layer, not by this
+            // file.
+            if conflicts.len() == 1 && conflicts[0] == "meta/devices.json" {
+                if self.union_merge_devices_conflict(repo, &mut index)? {
+                    // Resolved in the index; fall through to the normal
+                    // merge-commit path below.
+                } else {
+                    repo.cleanup_state()
+                        .map_err(|e| SyncError::Git(format!("cleanup: {e}")))?;
+                    return Ok(PullResult::Conflict {
+                        files: conflicts,
+                        local_oid,
+                        remote_oid,
+                    });
+                }
+            } else {
+                repo.cleanup_state()
+                    .map_err(|e| SyncError::Git(format!("cleanup: {e}")))?;
+                // Leave the state machine in Merging (NOT Idle): a conflict means a
+                // resolution commit must follow before the cycle can return to
+                // Idle. Pre-fix this called transition_state(Idle), which made the
+                // subsequent resolve_conflicts() -> transition_state(Idle) an
+                // invalid Idle->Idle transition and silently broke both the
+                // keep-local path and finalize_conflicts on any real conflict.
+                // The resolver / finalize path transitions Merging -> Idle.
+                return Ok(PullResult::Conflict {
+                    files: conflicts,
+                    local_oid,
+                    remote_oid,
+                });
+            }
         }
 
         // Create merge commit
@@ -1009,6 +1043,93 @@ impl SyncEngine {
             .map_err(|e| SyncError::Git(format!("cleanup after merge: {e}")))?;
         self.transition_state(SyncState::Idle)?;
         Ok(PullResult::Merged)
+    }
+
+    /// Auto-resolve a meta/devices.json merge conflict by registry union:
+    /// union of device entries, max `last_seen_epoch` per id (tie → ours),
+    /// non-empty name preferred. Writes the merged file to the worktree and
+    /// stages it, clearing the conflict. Returns false when the conflict
+    /// cannot be parsed (caller falls back to the standard Conflict flow —
+    /// fail visible, never fail silent).
+    fn union_merge_devices_conflict(
+        &self,
+        repo: &Repository,
+        index: &mut git2::Index,
+    ) -> Result<bool, BaluardError> {
+        const PATH: &str = "meta/devices.json";
+        let mut ours_blob = None;
+        let mut theirs_blob = None;
+        if let Ok(mut iter) = index.conflicts() {
+            while let Some(Ok(entry)) = iter.next() {
+                let path = entry
+                    .our
+                    .as_ref()
+                    .map(|e| String::from_utf8_lossy(&e.path).to_string())
+                    .unwrap_or_default();
+                if path == PATH {
+                    ours_blob = entry.our.as_ref().map(|e| e.id);
+                    theirs_blob = entry.their.as_ref().map(|e| e.id);
+                    break;
+                }
+            }
+        }
+        let (Some(ours_id), Some(theirs_id)) = (ours_blob, theirs_blob) else {
+            return Ok(false);
+        };
+        let parse_side = |id: git2::Oid| -> Option<crate::devices::DeviceRegistry> {
+            let blob = repo.find_blob(id).ok()?;
+            let data = std::str::from_utf8(blob.content()).ok()?;
+            serde_json::from_str(data).ok()
+        };
+        let (Some(ours), Some(theirs)) = (parse_side(ours_id), parse_side(theirs_id)) else {
+            return Ok(false);
+        };
+
+        // Union with deterministic preference rules.
+        let mut merged: std::collections::BTreeMap<
+            uuid::Uuid,
+            crate::vault::manifest::DeviceEntry,
+        > = std::collections::BTreeMap::new();
+        for (id, entry) in &ours.devices {
+            merged.insert(*id, entry.clone());
+        }
+        for (id, theirs_entry) in &theirs.devices {
+            match merged.get_mut(id) {
+                None => {
+                    merged.insert(*id, theirs_entry.clone());
+                }
+                Some(ours_entry) => {
+                    if theirs_entry.last_seen_epoch > ours_entry.last_seen_epoch {
+                        *ours_entry = theirs_entry.clone();
+                    } else if ours_entry.name.is_empty() && !theirs_entry.name.is_empty() {
+                        ours_entry.name = theirs_entry.name.clone();
+                    }
+                }
+            }
+        }
+        let mut out = crate::devices::DeviceRegistry::new();
+        out.version = ours.version.max(theirs.version);
+        out.devices = merged.into_iter().collect();
+
+        // Worktree + stage; add_path replaces the conflict stages with a
+        // stage-0 entry, marking the path resolved.
+        let path = std::path::Path::new(PATH);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(self.vault_path.join(parent))
+                .map_err(|e| SyncError::Git(format!("create meta dir for devices union: {e}")))?;
+        }
+        let json = out
+            .to_deterministic_json()
+            .map_err(|e| SyncError::Git(format!("serialize devices union: {e}")))?;
+        std::fs::write(self.vault_path.join(path), &json)
+            .map_err(|e| SyncError::Git(format!("write devices union: {e}")))?;
+        index
+            .add_path(path)
+            .map_err(|e| SyncError::Git(format!("stage devices union: {e}")))?;
+        index
+            .write()
+            .map_err(|e| SyncError::Git(format!("index write: {e}")))?;
+        Ok(true)
     }
 
     /// Read a file's content from a specific commit's tree.
@@ -2429,6 +2550,155 @@ mod tests {
             status.staged,
             status.unstaged
         );
+    }
+
+    /// P5a: once the registry bytes are stable, repeated commits from this
+    /// device carry NO devices.json delta — the bump skips the write when
+    /// the serialized bytes are unchanged. This kills the multi-writer
+    /// conflict where every device churned the one shared tracked file on
+    /// every commit.
+    #[test]
+    fn commit_does_not_churn_devices_json_when_epoch_unchanged() {
+        let key = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id, &key);
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":7}").unwrap();
+        std::fs::write(dir.path().join("a.enc"), b"\x01").unwrap();
+        let engine = SyncEngine::new(dir.path(), &id.to_string(), None);
+        let repo = engine.init_repo().unwrap();
+        engine.commit_all(&repo, "first").unwrap();
+
+        let before = std::fs::read(dir.path().join("meta/devices.json")).unwrap();
+
+        // Second commit: only a data change, epoch untouched.
+        std::fs::write(dir.path().join("b.enc"), b"\x02").unwrap();
+        let second = engine.commit_all(&repo, "second").unwrap();
+
+        let after = std::fs::read(dir.path().join("meta/devices.json")).unwrap();
+        assert_eq!(before, after, "bump must not rewrite an unchanged registry");
+
+        // Tree-level: the second commit must not touch meta/devices.json.
+        let parent = repo
+            .find_commit(second)
+            .unwrap()
+            .parent(0)
+            .unwrap()
+            .tree()
+            .unwrap();
+        let tree = repo.find_commit(second).unwrap().tree().unwrap();
+        let diff = repo
+            .diff_tree_to_tree(Some(&parent), Some(&tree), None)
+            .unwrap();
+        for delta in diff.deltas() {
+            let path = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            assert_ne!(
+                path, "meta/devices.json",
+                "commit churned devices.json with no epoch change"
+            );
+        }
+
+        // And when the epoch DOES change, the bump must land in the commit.
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":8}").unwrap();
+        let third = engine.commit_all(&repo, "epoch change").unwrap();
+        let parent = repo
+            .find_commit(third)
+            .unwrap()
+            .parent(0)
+            .unwrap()
+            .tree()
+            .unwrap();
+        let tree = repo.find_commit(third).unwrap().tree().unwrap();
+        let diff = repo
+            .diff_tree_to_tree(Some(&parent), Some(&tree), None)
+            .unwrap();
+        let touched: Vec<String> = diff
+            .deltas()
+            .filter_map(|d| d.new_file().path().map(|p| p.to_string_lossy().to_string()))
+            .collect();
+        assert!(
+            touched.iter().any(|p| p == "meta/devices.json"),
+            "epoch change must land the devices.json bump, touched: {touched:?}"
+        );
+    }
+
+    /// P5a: a merge conflict confined to meta/devices.json (here: the owner
+    /// removed a device entry while that device bumped its own epoch entry)
+    /// auto-resolves by registry union instead of wedging the sync cycle in
+    /// NeedsDecision — the runtime field-merge cannot handle non-cipher
+    /// files.
+    #[test]
+    fn devices_json_conflict_auto_resolves_by_union() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_b = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let id_b = uuid::Uuid::new_v4();
+
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        enroll_device(dir.path(), &id_b, &key_b);
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":7}").unwrap();
+        std::fs::write(dir.path().join("a.enc"), b"\x01").unwrap();
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let (_remote, clone_dir, _clone_engine, cloned) =
+            make_clone(dir.path(), &engine_a, &repo_a);
+
+        // Owner removes device B's registry entry (revocation flow) and pushes.
+        let mut reg: crate::devices::DeviceRegistry = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("meta/devices.json")).unwrap(),
+        )
+        .unwrap();
+        reg.devices.remove(&id_b);
+        std::fs::write(
+            dir.path().join("meta/devices.json"),
+            reg.to_deterministic_json().unwrap(),
+        )
+        .unwrap();
+        engine_a.commit_all(&repo_a, "remove device B").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        // Device B (unaware) bumps its own epoch entry and commits. Same file
+        // lines touched on both sides -> text conflict on pull. The clone
+        // needs B's private key material (gitignored, never synced).
+        enroll_device(clone_dir.path(), &id_b, &key_b);
+        std::fs::create_dir_all(clone_dir.path().join("meta")).unwrap();
+        std::fs::write(clone_dir.path().join("meta/epoch.json"), b"{\"epoch\":9}").unwrap();
+        let engine_b = SyncEngine::new(clone_dir.path(), &id_b.to_string(), None);
+        std::fs::write(clone_dir.path().join("b.enc"), b"\x02").unwrap();
+        engine_b.commit_all(&cloned, "device B epoch bump").unwrap();
+
+        // Pull must auto-resolve via union: Merged, both devices present,
+        // B's bumped epoch intact, merge commit written.
+        let result = engine_b.pull(&cloned, "origin").unwrap();
+        assert!(matches!(result, PullResult::Merged), "got {result:?}");
+
+        let reg_after: crate::devices::DeviceRegistry = serde_json::from_str(
+            &std::fs::read_to_string(clone_dir.path().join("meta/devices.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(reg_after.devices.contains_key(&id_a), "owner entry kept");
+        assert!(reg_after.devices.contains_key(&id_b), "union keeps B");
+        assert_eq!(reg_after.devices[&id_b].last_seen_epoch, 9);
+
+        let head = cloned.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(
+            head.parent_count(),
+            2,
+            "auto-resolve writes the merge commit"
+        );
+
+        // Worktree clean (C1 guard): the auto-resolve must not leave residue.
+        let status = engine_b.status(&cloned).unwrap();
+        assert!(!status.is_dirty(), "auto-resolve left the worktree dirty");
     }
 
     /// C5: bump_device_epoch finds this device's registry entry by UUID,
