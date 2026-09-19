@@ -1328,16 +1328,68 @@ impl VaultHandle {
 
     // ── Folder CRUD ──
 
-    /// List all folders (decrypts from meta/folders.enc, falls back to plaintext folders.json).
+    /// List all folders. P5b per-fact layout: one encrypted file per folder
+    /// (`meta/folders/<uuid>.enc`). Falls back to the legacy single-envelope
+    /// `meta/folders.enc`, then plaintext `folders.json` (migration on next
+    /// save).
     pub fn list_folders(&self) -> Result<Vec<crate::vault::manifest::Folder>, BaluardError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let key = hkdf_derive::derive_folders_key(unlocked.root_key.as_bytes())
+            .map_err(|e| VaultError::Metadata(format!("folders key derivation: {e}")))?;
+
+        // Per-fact layout: one file per folder, sorted by id for stable order.
+        // Foreign entries (temp files, dotfiles, junk) are skipped with a
+        // warning; reads NEVER delete anything — legacy migration happens on
+        // write only. An empty/invalid per-fact dir falls through to the
+        // legacy file rather than wiping it.
+        let dir = self.path.join("meta/folders");
+        if dir.exists() {
+            let mut folders = Vec::new();
+            let mut saw_valid_file = false;
+            for entry in std::fs::read_dir(&dir)
+                .map_err(|e| VaultError::Metadata(format!("folders listing: {e}")))?
+            {
+                let entry =
+                    entry.map_err(|e| VaultError::Metadata(format!("folders read: {e}")))?;
+                let path = entry.path();
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with('.') || !entry.file_type().map(|t| t.is_file()).unwrap_or(false)
+                {
+                    continue;
+                }
+                if path.extension().map(|e| e != "enc").unwrap_or(true) {
+                    continue;
+                }
+                let stem_ok = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|s| s.parse::<Uuid>().ok())
+                    .is_some();
+                if !stem_ok {
+                    continue;
+                }
+                saw_valid_file = true;
+                let data = std::fs::read(&path)?;
+                let envelope = crate::vault::envelope::deserialize(&data)?;
+                let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
+                let folder: crate::vault::manifest::Folder = serde_json::from_slice(&decrypted)
+                    .map_err(|e| VaultError::Metadata(format!("folder decrypt parse: {e}")))?;
+                folders.push(folder);
+            }
+            if saw_valid_file {
+                folders.sort_by_key(|f| f.id);
+                return Ok(folders);
+            }
+            // Zero valid files → treat as no per-fact layout; legacy below.
+        }
+
+        // Legacy single-envelope fallback.
         let enc_path = self.path.join("meta/folders.enc");
         if enc_path.exists() {
-            let unlocked = match &self.state {
-                VaultState::Unlocked(u) => u,
-                VaultState::Locked => return Err(VaultError::Locked.into()),
-            };
-            let key = hkdf_derive::derive_folders_key(unlocked.root_key.as_bytes())
-                .map_err(|e| VaultError::Metadata(format!("folders key derivation: {e}")))?;
             let data = std::fs::read(&enc_path)?;
             let envelope = crate::vault::envelope::deserialize(&data)?;
             let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
@@ -1359,7 +1411,12 @@ impl VaultHandle {
         Ok(Vec::new())
     }
 
-    /// Save folders to disk (encrypted, atomic write).
+    /// Save folders to disk (P5b per-fact layout: one encrypted file per
+    /// folder). Skip-if-unchanged: an identical folder entry is NOT rewritten
+    /// (random nonces would otherwise churn every file on every mutation —
+    /// the multi-writer conflict pattern P5 exists to kill). Orphaned files
+    /// from deleted folders are pruned. The legacy single-envelope and
+    /// plaintext files are removed once per-fact files exist.
     fn save_folders(&self, folders: &[crate::vault::manifest::Folder]) -> Result<(), BaluardError> {
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
@@ -1367,15 +1424,50 @@ impl VaultHandle {
         };
         let key = hkdf_derive::derive_folders_key(unlocked.root_key.as_bytes())
             .map_err(|e| VaultError::Metadata(format!("folders key derivation: {e}")))?;
-        let json = serde_json::to_vec(folders)
-            .map_err(|e| VaultError::Metadata(format!("folders serialization: {e}")))?;
-        let enc_path = self.path.join("meta/folders.enc");
-        self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
-        // Remove legacy plaintext file if it still exists
-        let json_path = self.path.join("meta/folders.json");
-        if json_path.exists() {
-            let _ = std::fs::remove_file(&json_path);
+        let dir = self.path.join("meta/folders");
+        std::fs::create_dir_all(&dir)?;
+
+        for folder in folders {
+            let json = serde_json::to_vec(folder)
+                .map_err(|e| VaultError::Metadata(format!("folder serialization: {e}")))?;
+            let path = dir.join(format!("{}.enc", folder.id));
+            let changed = match std::fs::read(&path) {
+                Ok(bytes) => match crate::vault::envelope::deserialize(&bytes)
+                    .map_err(BaluardError::from)
+                    .and_then(|envelope| {
+                        crate::crypto::aead::decrypt(&key, &envelope).map_err(BaluardError::from)
+                    }) {
+                    Ok(existing) => existing != json,
+                    Err(_) => true, // corrupt — rewrite
+                },
+                Err(_) => true, // new folder
+            };
+            if changed {
+                self.encrypt_and_write_meta(&key, &json, &path, unlocked.current_epoch)?;
+            }
         }
+
+        // Prune files whose folder no longer exists.
+        let keep: std::collections::HashSet<Uuid> = folders.iter().map(|f| f.id).collect();
+        for entry in std::fs::read_dir(&dir)
+            .map_err(|e| VaultError::Metadata(format!("folders prune listing: {e}")))?
+        {
+            let entry = entry.map_err(|e| VaultError::Metadata(format!("folders prune: {e}")))?;
+            let stem = entry
+                .path()
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string());
+            if let Ok(id) = stem.as_deref().unwrap_or("").parse::<Uuid>() {
+                if !keep.contains(&id) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+
+        // Migration: the per-fact dir is authoritative now; drop the legacy
+        // single-envelope and any stale plaintext.
+        let _ = std::fs::remove_file(self.path.join("meta/folders.enc"));
+        let _ = std::fs::remove_file(self.path.join("meta/folders.json"));
         Ok(())
     }
 
@@ -2308,17 +2400,69 @@ impl VaultHandle {
         Ok(validated)
     }
 
-    /// List all tags (decrypts from meta/tags.enc, falls back to plaintext tag_index.json).
-    /// Returns empty vec if index file is missing.
+    /// List all tags. P5b per-fact layout: one encrypted file per tag
+    /// (`meta/tags/<sha256(name) prefix>.enc`, name stored inside — the
+    /// filename is a digest, never user-controlled text). Falls back to the
+    /// legacy single-envelope `meta/tags.enc`, then plaintext
+    /// `tag_index.json`.
     pub fn list_tags(&self) -> Result<Vec<String>, BaluardError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let key = hkdf_derive::derive_tags_key(unlocked.root_key.as_bytes())
+            .map_err(|e| VaultError::Metadata(format!("tags key derivation: {e}")))?;
+
+        // Per-fact layout. Foreign entries (temp files, dotfiles, junk) are
+        // skipped; reads NEVER delete anything — legacy migration happens on
+        // write only. An empty/invalid per-fact dir falls through to the
+        // legacy file rather than wiping it.
+        let dir = self.path.join("meta/tags");
+        if dir.exists() {
+            let mut tags = Vec::new();
+            let mut saw_valid_file = false;
+            for entry in std::fs::read_dir(&dir)
+                .map_err(|e| VaultError::Metadata(format!("tags listing: {e}")))?
+            {
+                let entry = entry.map_err(|e| VaultError::Metadata(format!("tags read: {e}")))?;
+                let path = entry.path();
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with('.') || !entry.file_type().map(|t| t.is_file()).unwrap_or(false)
+                {
+                    continue;
+                }
+                if path.extension().map(|e| e != "enc").unwrap_or(true) {
+                    continue;
+                }
+                // Filenames are "<32-hex>.enc" (sha256(name) prefix).
+                let stem_ok = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+                    .unwrap_or(false);
+                if !stem_ok {
+                    continue;
+                }
+                saw_valid_file = true;
+                let data = std::fs::read(&path)?;
+                let envelope = crate::vault::envelope::deserialize(&data)?;
+                let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
+                let name: String = serde_json::from_slice(&decrypted)
+                    .map_err(|e| VaultError::Metadata(format!("tag decrypt parse: {e}")))?;
+                tags.push(name);
+            }
+            if saw_valid_file {
+                tags.sort();
+                tags.dedup();
+                return Ok(tags);
+            }
+            // Zero valid files → treat as no per-fact layout; legacy below.
+        }
+
+        // Legacy single-envelope fallback.
         let enc_path = self.path.join("meta/tags.enc");
         if enc_path.exists() {
-            let unlocked = match &self.state {
-                VaultState::Unlocked(u) => u,
-                VaultState::Locked => return Err(VaultError::Locked.into()),
-            };
-            let key = hkdf_derive::derive_tags_key(unlocked.root_key.as_bytes())
-                .map_err(|e| VaultError::Metadata(format!("tags key derivation: {e}")))?;
             let data = std::fs::read(&enc_path)?;
             let envelope = crate::vault::envelope::deserialize(&data)?;
             let decrypted = crate::crypto::aead::decrypt(&key, &envelope)?;
@@ -2390,23 +2534,60 @@ impl VaultHandle {
         Ok(())
     }
 
-    /// Encrypt and save tag index to meta/tags.enc (atomic write).
+    /// Save tag index (P5b per-fact layout: one encrypted file per tag,
+    /// filename = sha256(name) prefix — never user-controlled text; the name
+    /// is stored inside). Skip-if-unchanged kills the rewrite churn; removed
+    /// tags are pruned. Legacy single-envelope and plaintext files are
+    /// removed once per-fact files exist.
     fn save_tags_enc(&self, index: &crate::vault::manifest::TagIndex) -> Result<(), BaluardError> {
+        use sha2::{Digest, Sha256};
         let unlocked = match &self.state {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
         let key = hkdf_derive::derive_tags_key(unlocked.root_key.as_bytes())
             .map_err(|e| VaultError::Metadata(format!("tags key derivation: {e}")))?;
-        let json = serde_json::to_vec(index)
-            .map_err(|e| VaultError::Metadata(format!("tags serialization: {e}")))?;
-        let enc_path = self.path.join("meta/tags.enc");
-        self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
-        // Remove legacy plaintext file if it still exists
-        let json_path = self.path.join("meta/tag_index.json");
-        if json_path.exists() {
-            let _ = std::fs::remove_file(&json_path);
+        let dir = self.path.join("meta/tags");
+        std::fs::create_dir_all(&dir)?;
+
+        let mut keep: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for tag in &index.tags {
+            let digest = Sha256::digest(tag.as_bytes());
+            let file_name = format!("{}.enc", hex::encode(&digest[..16]));
+            keep.insert(file_name.clone());
+            let path = dir.join(&file_name);
+            let json = serde_json::to_vec(tag)
+                .map_err(|e| VaultError::Metadata(format!("tag serialization: {e}")))?;
+            let changed = match std::fs::read(&path) {
+                Ok(bytes) => match crate::vault::envelope::deserialize(&bytes)
+                    .map_err(BaluardError::from)
+                    .and_then(|envelope| {
+                        crate::crypto::aead::decrypt(&key, &envelope).map_err(BaluardError::from)
+                    }) {
+                    Ok(existing) => existing != json,
+                    Err(_) => true,
+                },
+                Err(_) => true,
+            };
+            if changed {
+                self.encrypt_and_write_meta(&key, &json, &path, unlocked.current_epoch)?;
+            }
         }
+
+        // Prune tags removed since the last save.
+        for entry in std::fs::read_dir(&dir)
+            .map_err(|e| VaultError::Metadata(format!("tags prune listing: {e}")))?
+        {
+            let entry = entry.map_err(|e| VaultError::Metadata(format!("tags prune: {e}")))?;
+            let name = entry.file_name();
+            if !keep.contains(&name.to_string_lossy().to_string()) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+
+        // Migration: per-fact dir is authoritative now.
+        let _ = std::fs::remove_file(self.path.join("meta/tags.enc"));
+        let _ = std::fs::remove_file(self.path.join("meta/tag_index.json"));
         Ok(())
     }
 
@@ -3796,6 +3977,94 @@ mod tests {
         let (dir, _password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
         assert!(handle.unlock("wrong-password").is_err());
+    }
+
+    /// P5c: folders and tags live as per-fact encrypted files. Two commits
+    /// touching different folders must not churn unrelated files (the
+    /// multi-writer conflict pattern P5 kills), and legacy layouts stay
+    /// readable.
+    #[test]
+    fn folders_tags_per_fact_layout_and_churn_skip() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Three folders -> three per-fact files, no legacy envelope.
+        let f1 = handle.create_folder("alpha").unwrap();
+        let _f2 = handle.create_folder("beta").unwrap();
+        let _f3 = handle.create_folder("gamma").unwrap();
+        let fdir = dir.path().join("meta/folders");
+        assert_eq!(std::fs::read_dir(&fdir).unwrap().count(), 3);
+        assert!(!dir.path().join("meta/folders.enc").exists());
+
+        handle.rename_folder(f1, "alpha-renamed").unwrap();
+
+        let names: Vec<String> = handle
+            .list_folders()
+            .unwrap()
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        assert!(names.contains(&"alpha-renamed".to_string()));
+
+        // Tags: per-fact files under meta/tags, pruned when the tag goes
+        // away via rebuild.
+        handle.create_tag("solo").unwrap();
+        let tdir = dir.path().join("meta/tags");
+        assert_eq!(std::fs::read_dir(&tdir).unwrap().count(), 1);
+        assert!(!dir.path().join("meta/tags.enc").exists());
+
+        // rebuild_tag_index derives tags from ciphers; "solo" is on none, so
+        // it prunes the per-fact file.
+        handle.rebuild_tag_index().unwrap();
+        assert_eq!(std::fs::read_dir(&tdir).unwrap().count(), 0);
+        assert!(handle.list_tags().unwrap().is_empty());
+    }
+
+    /// P5a/P5c: folders and tags dirs are local-tracked state that must be
+    /// committed (other devices need folder/tag lists), and the churn-skip
+    /// must keep unrelated per-fact files byte-identical across commits.
+    #[test]
+    fn folder_rename_touches_only_its_own_file() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let f1 = handle.create_folder("one").unwrap();
+        let f2 = handle.create_folder("two").unwrap();
+
+        let fdir = dir.path().join("meta/folders");
+        let file_for = |id: uuid::Uuid| fdir.join(format!("{id}.enc"));
+        let f2_before = std::fs::read(file_for(f2)).unwrap();
+
+        handle.rename_folder(f1, "one-renamed").unwrap();
+
+        // f2's file is byte-identical (skip-if-unchanged), f1's changed.
+        assert_eq!(
+            std::fs::read(file_for(f2)).unwrap(),
+            f2_before,
+            "untouched folder file must be byte-identical"
+        );
+        let one_meta: crate::vault::manifest::Folder = serde_json::from_slice(&{
+            let key = crate::crypto::hkdf_derive::derive_folders_key(
+                &handle_root_key_for_test(&handle).try_into().unwrap(),
+            )
+            .unwrap();
+            let envelope =
+                crate::vault::envelope::deserialize(&std::fs::read(file_for(f1)).unwrap()).unwrap();
+            crate::crypto::aead::decrypt(&key, &envelope).unwrap()
+        })
+        .unwrap();
+        assert_eq!(one_meta.name, "one-renamed");
+    }
+
+    /// Helper for tests: read the current root key bytes from an unlocked
+    /// handle.
+    fn handle_root_key_for_test(handle: &VaultHandle) -> Vec<u8> {
+        match &handle.state {
+            VaultState::Unlocked(u) => u.root_key.as_bytes().to_vec(),
+            VaultState::Locked => panic!("test handle must be unlocked"),
+        }
     }
 
     #[test]

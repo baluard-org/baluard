@@ -1,0 +1,8 @@
+# P5c: hardware AES on aarch64 (Apple Silicon, modern Android/iOS phones).
+# The aes crate gates its ARMv8 intrinsics behind this cfg and runtime-checks
+# CPU support (cpufeatures) with a soft-fixslice fallback, so devices without
+# the crypto extension stay safe. x86_64 AES-NI is runtime-autodetected by
+# default and needs no flag. NOTE: ignored if the RUSTFLAGS env var is set
+# (cargo rule: env overrides config files).
+[target.'cfg(all(target_arch = "aarch64", not(aes_force_soft)))']
+rustflags = ["--cfg", "aes_armv8"]

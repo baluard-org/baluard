@@ -2063,9 +2063,7 @@ impl VaultState {
                 let start = p + pat.len();
                 let rest = &tag_lower[start..];
                 let end = rest.find(quote).unwrap_or(rest.len());
-                return tag_orig
-                    .get(start..start + end)
-                    .map(str::to_string);
+                return tag_orig.get(start..start + end).map(str::to_string);
             }
         }
         let pat = format!("{name}=");
@@ -2075,9 +2073,7 @@ impl VaultState {
             let end = rest
                 .find(|c: char| c.is_whitespace() || c == '>')
                 .unwrap_or(rest.len());
-            return tag_orig
-                .get(start..start + end)
-                .map(str::to_string);
+            return tag_orig.get(start..start + end).map(str::to_string);
         }
         None
     }
@@ -4243,10 +4239,7 @@ mod favicon_tests {
         ];
         for s in blocked {
             let ip: std::net::IpAddr = s.parse().expect("test ip parses");
-            assert!(
-                VaultState::ip_is_blocklisted(ip),
-                "{s} must be blocklisted"
-            );
+            assert!(VaultState::ip_is_blocklisted(ip), "{s} must be blocklisted");
         }
         let public = ["1.1.1.1", "8.8.8.8", "93.184.216.34", "2606:4700::1111"];
         for s in public {
@@ -4331,7 +4324,10 @@ mod favicon_tests {
             VaultState::extract_domain("https://www.example.com/a?b"),
             "www.example.com"
         );
-        assert_eq!(VaultState::extract_domain("example.com:8443/x"), "example.com");
+        assert_eq!(
+            VaultState::extract_domain("example.com:8443/x"),
+            "example.com"
+        );
     }
 
     #[test]
