@@ -63,6 +63,10 @@ pub struct VaultHandle {
 }
 
 /// Vault lock state with key material.
+// large_enum_variant: UnlockedState legitimately carries ~200 B of key
+// material (RootKey, SGK, session/sync keys); boxing would add indirection
+// on every access for no real gain.
+#[allow(clippy::large_enum_variant)]
 pub enum VaultState {
     /// Vault is locked. No key material in memory.
     Locked,
@@ -90,6 +94,13 @@ pub struct UnlockedState {
     pub devkey_seal: [u8; 32],
     /// Current key epoch (read from RK canary or envelope).
     pub current_epoch: u64,
+    /// P1a: the per-human identity (cached unsealed while unlocked).
+    /// `None` until loaded (keystore/fallback) or when unavailable.
+    pub identity: Option<crate::vault::identity::IdentityKeys>,
+    /// P1a: the identity sealing wrap key (keystore-held random key or the
+    /// warned passphrase-derived fallback). Cached at unlock so
+    /// `rotate_identity` can re-seal. Zeroized on lock/drop.
+    pub identity_wrap_key: Option<zeroize::Zeroizing<[u8; 32]>>,
 }
 
 impl Drop for UnlockedState {
@@ -249,6 +260,10 @@ impl VaultHandle {
         match self.unlock_with_kek(&kek) {
             Ok(()) => {
                 self.clear_failed_attempts()?;
+                // P1a: the master password is available only on THIS path —
+                // use it for the warned passphrase-fallback identity seal
+                // (keystore mode already cached inside unlock_with_kek).
+                self.load_identity_cache(Some(master_password));
                 Ok(())
             }
             Err(e) => {
@@ -256,6 +271,152 @@ impl VaultHandle {
                 Err(e)
             }
         }
+    }
+
+    /// P1a: load the cached identity from `meta/identity.enc`.
+    ///
+    /// Sealing-key resolution by mode (from `meta/identity-meta.json`):
+    /// - keystore: the wrapping key lives in the OS keystore — loads with or
+    ///   without a password.
+    /// - passphrase: Argon2id over the master password with the dedicated
+    ///   identity salt — requires `master_password` (None on the PIN/quick
+    ///   unlock path: identity stays sealed until a full unlock; WARNED
+    ///   downgrade mode, see the module docs in vault/identity.rs).
+    ///
+    /// Failures are logged, never fatal: the identity is optional for every
+    /// pre-Space feature, and a corrupt identity must not block vault use.
+    fn load_identity_cache(&mut self, master_password: Option<&str>) {
+        let meta_path = self.path.join("meta/identity-meta.json");
+        let Ok(data) = std::fs::read_to_string(&meta_path) else {
+            return; // pre-P1a vault: no identity
+        };
+        let Ok(meta) = serde_json::from_str::<serde_json::Value>(&data) else {
+            eprintln!("warning: meta/identity-meta.json is corrupt; identity unavailable");
+            return;
+        };
+        let mode = meta["mode"].as_str().unwrap_or("");
+
+        let wrap_key: Option<zeroize::Zeroizing<[u8; 32]>> = match mode {
+            "keystore" => {
+                let key_name = meta["keystore_key"].as_str().unwrap_or("");
+                let keystore = crate::vault::creation::get_global_keystore();
+                let bytes = keystore.and_then(|ks| ks.get_secret(key_name).ok());
+                bytes
+                    .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+                    .map(zeroize::Zeroizing::new)
+            }
+            "passphrase" => {
+                let Some(pw) = master_password else {
+                    return; // quick-unlock path: identity stays sealed
+                };
+                let salt = meta["salt_hex"]
+                    .as_str()
+                    .and_then(|s| hex::decode(s).ok())
+                    .unwrap_or_default();
+                let params = crate::types::KdfParams {
+                    profile: crate::types::KdfProfile::MobileLow,
+                    memory_kib: meta["memory_kib"].as_u64().unwrap_or(8192) as u32,
+                    time_cost: meta["time_cost"].as_u64().unwrap_or(3) as u32,
+                    parallelism: 1,
+                    salt,
+                };
+                kdf::derive_kek(pw, &params)
+                    .ok()
+                    .map(zeroize::Zeroizing::new)
+            }
+            _ => None,
+        };
+        let Some(wrap_key) = wrap_key else {
+            return;
+        };
+
+        let Ok(sealed) = std::fs::read(self.path.join("meta/identity.enc")) else {
+            return;
+        };
+        match crate::vault::identity::open_identity(&wrap_key, &sealed) {
+            Ok(keys) => {
+                if let VaultState::Unlocked(u) = &mut self.state {
+                    u.identity = Some(keys);
+                    u.identity_wrap_key = Some(wrap_key);
+                }
+            }
+            Err(e) => {
+                eprintln!("warning: failed to open sealed identity: {e}");
+            }
+        }
+    }
+
+    /// P1a: the cached identity (`None` until loaded — see
+    /// `load_identity_cache`). Consumers in S1a+ (contact cards, Space
+    /// keywraps) treat `None` as "identity unavailable on this device".
+    pub fn identity(&self) -> Option<&crate::vault::identity::IdentityKeys> {
+        match &self.state {
+            VaultState::Unlocked(u) => u.identity.as_ref(),
+            VaultState::Locked => None,
+        }
+    }
+
+    /// P1a routine identity rotation: generate a new keypair, re-seal under
+    /// the same wrapping key, re-escrow under the recovery pubkey (read from
+    /// `meta/identity-meta.json` — the phrase itself is not needed). The old
+    /// keys drop (zeroized by their own Drop impls). Compromise-path
+    /// rotation (admin re-wrap + Space notice) lands with S1a.
+    pub fn rotate_identity(&mut self) -> Result<(), BaluardError> {
+        let (wrap_key, recovery_pub_hex) = {
+            let meta_path = self.path.join("meta/identity-meta.json");
+            let data = std::fs::read_to_string(&meta_path)
+                .map_err(|e| VaultError::Metadata(format!("reading identity meta: {e}")))?;
+            let meta: serde_json::Value = serde_json::from_str(&data)
+                .map_err(|e| VaultError::Metadata(format!("parse identity meta: {e}")))?;
+            let recovery_pub_hex = meta["recovery_pubkey_hex"]
+                .as_str()
+                .ok_or_else(|| {
+                    VaultError::Metadata("identity meta missing recovery pubkey".into())
+                })?
+                .to_string();
+            let wrap_key = match &self.state {
+                VaultState::Unlocked(u) => u.identity_wrap_key.clone(),
+                VaultState::Locked => None,
+            }
+            .ok_or_else(|| {
+                VaultError::Metadata(
+                    "identity wrap key unavailable; full master-password unlock required".into(),
+                )
+            })?;
+            (wrap_key, recovery_pub_hex)
+        };
+
+        let new_keys = crate::vault::identity::IdentityKeys::generate()?;
+        let sealed = crate::vault::identity::seal_identity(&wrap_key, &new_keys)?;
+        super::write_vault_file(&self.path.join("meta/identity.enc"), &sealed)?;
+
+        // Re-escrow: HPKE-wrap the new seed to the recovery pubkey so phrase
+        // recovery keeps restoring the CURRENT identity.
+        let recovery_pub: [u8; 32] = hex::decode(&recovery_pub_hex)
+            .map_err(|e| VaultError::Metadata(format!("recovery pubkey hex: {e}")))?
+            .try_into()
+            .map_err(|_| VaultError::Metadata("recovery pubkey wrong length".into()))?;
+        let (eph, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+            &new_keys.seed(),
+            &x25519_dalek::PublicKey::from(recovery_pub),
+        )?;
+        let escrow = serde_json::json!({
+            "ephemeral_public": hex::encode(eph),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        super::write_vault_file(
+            &self.path.join("meta/identity-escrow.json"),
+            serde_json::to_string_pretty(&escrow)
+                .map_err(|e| VaultError::Metadata(format!("escrow serialization: {e}")))?
+                .as_bytes(),
+        )?;
+
+        // Cache the new keys.
+        if let VaultState::Unlocked(u) = &mut self.state {
+            u.identity = Some(new_keys);
+        }
+        Ok(())
     }
 
     /// Unlock the vault using a pre-derived KEK, skipping the expensive
@@ -363,7 +524,14 @@ impl VaultHandle {
             devkey_seal,
             item_keys: HashMap::new(),
             current_epoch,
+            identity: None,
+            identity_wrap_key: None,
         });
+
+        // P1a: cache the identity when its sealing key is device-local (OS
+        // keystore mode). Passphrase-fallback mode caches in unlock() where
+        // the master password is still in scope.
+        self.load_identity_cache(None);
 
         // C1: lazily re-seal a legacy plaintext device-privkey file now that
         // the KEK is proven correct. Best-effort — a failure must not fail
@@ -4296,6 +4464,67 @@ mod tests {
         let recovered =
             emergency::recover_emergency_root_key(dir.path(), &contact_secret, &owner_vk).unwrap();
         assert_eq!(recovered.as_slice(), new_root.as_slice());
+    }
+
+    /// P1a: the identity is generated at creation, sealed in
+    /// meta/identity.enc (passphrase fallback on keystore-less test envs),
+    /// escrowed under the recovery pubkey, loads on unlock, and rotates
+    /// (new seed, escrow re-wrapped, sealed file rewritten).
+    #[test]
+    fn identity_lifecycle_seal_load_rotate() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+
+        // Locked: identity not cached yet.
+        assert!(handle.identity().is_none());
+
+        handle.unlock(&password).unwrap();
+
+        // Creation wrote the sealed identity + escrow + meta.
+        assert!(dir.path().join("meta/identity.enc").exists());
+        assert!(dir.path().join("meta/identity-escrow.json").exists());
+        assert!(dir.path().join("meta/identity-meta.json").exists());
+
+        // Loaded on unlock (passphrase-fallback mode in the keystore-less
+        // test environment).
+        let first_seed = handle.identity().unwrap().seed();
+        let seed_before = handle.identity().unwrap().seed();
+        assert_eq!(seed_before, first_seed);
+
+        // Rotate: new seed, escrow re-wrapped to the recovery pubkey.
+        handle.rotate_identity().unwrap();
+        let seed_after = handle.identity().unwrap().seed();
+        assert_ne!(seed_before, seed_after, "rotation must replace the seed");
+
+        // Locked + unlocked again: the NEW identity loads from disk.
+        handle.lock();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        assert_eq!(
+            handle.identity().unwrap().seed(),
+            seed_after,
+            "post-rotation identity must persist across lock/unlock"
+        );
+    }
+
+    /// P1a: the identity sealing key is NEVER the vault KEK. The sealed
+    /// identity does not open under the unlock-derived devkey seal subkey
+    /// (the KEK-derived seal that device-privkey.json uses), proving seal
+    /// independence.
+    #[test]
+    fn identity_seal_is_independent_of_kek_seal() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let kek_seal = handle
+            .devkey_seal()
+            .expect("unlocked handle must expose the devkey seal");
+        let sealed = std::fs::read(dir.path().join("meta/identity.enc")).unwrap();
+        assert!(
+            crate::vault::identity::open_identity(&kek_seal, &sealed).is_err(),
+            "identity must not be decryptable with the KEK-derived devkey seal"
+        );
     }
 
     /// P5c/P4: a blocked per-fact path makes save_folders fail — and the
