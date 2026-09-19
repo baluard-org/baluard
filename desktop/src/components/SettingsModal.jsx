@@ -590,6 +590,10 @@ export default function SettingsModal() {
                       <div class="text-[10px] text-[var(--color-muted)] font-bold">
                         {t("settings.promptQuickUnlock")}
                       </div>
+                      {/* P1d: explicit shared-enrollment warning before enabling */}
+                      <div class="text-[10px] text-[var(--color-warning)] leading-relaxed">
+                        {t("settings.quickUnlockSharedWarning")}
+                      </div>
                       <div class="flex items-center gap-2">
                         <input
                           type="password"
@@ -645,6 +649,10 @@ export default function SettingsModal() {
                     <div class="mt-3 p-3 bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-xl space-y-3">
                       <div class="text-[10px] text-[var(--color-warning)] font-bold">
                         {t("settings.pinWarning")}
+                      </div>
+                      {/* P1d: explicit shared-enrollment warning before enabling */}
+                      <div class="text-[10px] text-[var(--color-warning)] leading-relaxed">
+                        {t("settings.pinSharedWarning")}
                       </div>
                       <div class="space-y-2">
                         <input
