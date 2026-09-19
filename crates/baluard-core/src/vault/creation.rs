@@ -82,7 +82,11 @@ pub fn create_vault_ceremony(
     let device_id = Uuid::new_v4();
 
     // Step 5: HPKE-wrap Root Key with device public key
-    let wrapped_root_key = hpke_wrap::wrap_key(root_key.as_bytes(), &device_x25519_public)?;
+    let wrapped_root_key = hpke_wrap::wrap_key(
+        root_key.as_bytes(),
+        &device_x25519_public,
+        "root-key-keywrap",
+    )?;
 
     // Step 6: Derive Session + Sync keys from KEK
     let session_key = hkdf_derive::derive_session_key(&kek)?;
@@ -96,7 +100,11 @@ pub fn create_vault_ceremony(
     let recovery_x25519_secret =
         x25519_dalek::StaticSecret::from(<[u8; 32]>::try_from(&recovery_key[..32]).unwrap());
     let recovery_x25519_public = x25519_dalek::PublicKey::from(&recovery_x25519_secret);
-    let wrapped_recovery_key = hpke_wrap::wrap_key(root_key.as_bytes(), &recovery_x25519_public)?;
+    let wrapped_recovery_key = hpke_wrap::wrap_key(
+        root_key.as_bytes(),
+        &recovery_x25519_public,
+        "recovery-keywrap",
+    )?;
 
     // Step 8: Trust anchor fingerprint (SHA-256 of Root Key)
     let mut hasher = Sha256::new();
@@ -368,8 +376,11 @@ impl<'a> VaultCreator<'a> {
                 let device_x25519_public = x25519_dalek::PublicKey::from(&device_x25519_secret);
                 let device_ed25519_signing = ed25519_dalek::SigningKey::generate(&mut adapter);
 
-                let wrapped_root_key =
-                    hpke_wrap::wrap_key(root_key.as_bytes(), &device_x25519_public)?;
+                let wrapped_root_key = hpke_wrap::wrap_key(
+                    root_key.as_bytes(),
+                    &device_x25519_public,
+                    "root-key-keywrap",
+                )?;
 
                 let session_key = hkdf_derive::derive_session_key(&kek)?;
                 let sync_key = hkdf_derive::derive_sync_key(&kek)?;
@@ -383,8 +394,11 @@ impl<'a> VaultCreator<'a> {
                 );
                 recovery_key.zeroize();
                 let recovery_x25519_public = x25519_dalek::PublicKey::from(&recovery_x25519_secret);
-                let wrapped_recovery_key =
-                    hpke_wrap::wrap_key(root_key.as_bytes(), &recovery_x25519_public)?;
+                let wrapped_recovery_key = hpke_wrap::wrap_key(
+                    root_key.as_bytes(),
+                    &recovery_x25519_public,
+                    "recovery-keywrap",
+                )?;
 
                 let mut hasher = Sha256::new();
                 hasher.update(root_key.as_bytes());
@@ -515,6 +529,7 @@ impl<'a> VaultCreator<'a> {
                 let (escrow_eph, escrow_ct, escrow_tag) = crate::crypto::hpke_wrap::wrap_key(
                     &identity_keys.seed(),
                     &recovery_x25519_public,
+                    "identity-escrow",
                 )?;
                 let identity_escrow = serde_json::json!({
                     "ephemeral_public": hex::encode(escrow_eph),
@@ -683,6 +698,7 @@ impl<'a> VaultCreator<'a> {
                     &kw.encrypted_key,
                     &kw.tag,
                     &recovery_x25519_secret,
+                    "recovery-keywrap",
                 )?;
                 let root_key_arr: [u8; 64] = root_key_bytes.try_into().map_err(|_| {
                     BaluardError::from(VaultError::Corrupt(
@@ -732,8 +748,11 @@ impl<'a> VaultCreator<'a> {
                     registry.to_deterministic_json().unwrap().as_bytes(),
                 )?;
 
-                let wrapped_root_key =
-                    hpke_wrap::wrap_key(root_key.as_bytes(), &device_x25519_public)?;
+                let wrapped_root_key = hpke_wrap::wrap_key(
+                    root_key.as_bytes(),
+                    &device_x25519_public,
+                    "root-key-keywrap",
+                )?;
                 let keywrap_data = serde_json::json!({
                     "device_id": device_id.to_string(),
                     "ephemeral_public": hex::encode(wrapped_root_key.0),
@@ -806,6 +825,7 @@ impl<'a> VaultCreator<'a> {
                 let (escrow_eph, escrow_ct, escrow_tag) = crate::crypto::hpke_wrap::wrap_key(
                     &identity_keys.seed(),
                     &recovery_x25519_public,
+                    "identity-escrow",
                 )?;
                 let identity_escrow = serde_json::json!({
                     "ephemeral_public": hex::encode(escrow_eph),
@@ -979,8 +999,14 @@ mod tests {
         let result = create_vault_ceremony("test-password", KdfProfile::MobileLow).unwrap();
         let (eph_pub, ct, tag) = &result.wrapped_root_key;
 
-        let unwrapped =
-            hpke_wrap::unwrap_key(eph_pub, ct, tag, &result.device_x25519_secret).unwrap();
+        let unwrapped = hpke_wrap::unwrap_key(
+            eph_pub,
+            ct,
+            tag,
+            &result.device_x25519_secret,
+            "root-key-keywrap",
+        )
+        .unwrap();
         assert_eq!(unwrapped.as_slice(), result.root_key.as_bytes());
     }
 
@@ -994,7 +1020,14 @@ mod tests {
             <[u8; 32]>::try_from(&recovery_key_bytes[..32]).unwrap(),
         );
 
-        let unwrapped = hpke_wrap::unwrap_key(eph_pub, ct, tag, &recovery_x25519_secret).unwrap();
+        let unwrapped = hpke_wrap::unwrap_key(
+            eph_pub,
+            ct,
+            tag,
+            &recovery_x25519_secret,
+            "recovery-keywrap",
+        )
+        .unwrap();
         assert_eq!(unwrapped.as_slice(), result.root_key.as_bytes());
     }
 

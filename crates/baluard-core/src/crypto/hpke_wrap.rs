@@ -40,12 +40,16 @@ pub fn generate_x25519_keypair() -> (StaticSecret, PublicKey) {
 /// Wrap (encrypt) a key using HPKE with the recipient's X25519 public key.
 ///
 /// Uses DHKEM(X25519, HKDF-SHA256) + AES-256-GCM in Base mode (RFC 9180).
+/// `context` binds the wrap to its purpose and bindings (e.g.
+/// `"keywrap:{vault_id}:{device_id}"`) — a wrap produced under one context
+/// cannot be unwrapped under another (P7: wrap context binding).
 /// Returns: (ephemeral_public_key, encrypted_key, auth_tag).
-pub fn wrap_key(plaintext_key: &[u8], recipient_pub: &PublicKey) -> WrapResult {
+pub fn wrap_key(plaintext_key: &[u8], recipient_pub: &PublicKey, context: &str) -> WrapResult {
     let recip_pub_hpke =
         <X25519HkdfSha256 as hpke::kem::Kem>::PublicKey::from_bytes(recipient_pub.as_bytes())
             .map_err(|e| CryptoError::HpkeFailed(format!("recipient pubkey import: {e}")))?;
 
+    let aad = format!("baluard-keywrap/{context}");
     let mut rng = OsRng;
     let (encapped, ciphertext_with_tag) =
         hpke::single_shot_seal::<AesGcm256, HkdfSha256, X25519HkdfSha256, _>(
@@ -53,7 +57,7 @@ pub fn wrap_key(plaintext_key: &[u8], recipient_pub: &PublicKey) -> WrapResult {
             &recip_pub_hpke,
             b"baluard-hpke-wrap-v2",
             plaintext_key,
-            b"baluard-keywrap",
+            aad.as_bytes(),
             &mut rng,
         )
         .map_err(|e| CryptoError::HpkeFailed(format!("seal: {e}")))?;
@@ -77,11 +81,14 @@ pub fn wrap_key(plaintext_key: &[u8], recipient_pub: &PublicKey) -> WrapResult {
 }
 
 /// Unwrap (decrypt) a key using HPKE with the recipient's X25519 private key.
+/// `context` must match the context used at seal time — a mismatch fails the
+/// GCM tag check (P7: wrap context binding prevents transplants).
 pub fn unwrap_key(
     ephemeral_pub_bytes: &[u8],
     ciphertext: &[u8],
     tag: &[u8; 16],
     recipient_priv: &StaticSecret,
+    context: &str,
 ) -> Result<Vec<u8>, CryptoError> {
     if ephemeral_pub_bytes.len() != 32 {
         return Err(CryptoError::InvalidKeyLength {
@@ -105,13 +112,14 @@ pub fn unwrap_key(
     ct_with_tag.extend_from_slice(ciphertext);
     ct_with_tag.extend_from_slice(tag);
 
+    let aad = format!("baluard-keywrap/{context}");
     let plaintext = hpke::single_shot_open::<AesGcm256, HkdfSha256, X25519HkdfSha256>(
         &OpModeR::Base,
         &recip_priv_hpke,
         &encapped,
         b"baluard-hpke-wrap-v2",
         &ct_with_tag,
-        b"baluard-keywrap",
+        aad.as_bytes(),
     )
     .map_err(|e| CryptoError::UnwrapFailed(format!("HPKE open: {e}")))?;
 
@@ -127,8 +135,10 @@ mod tests {
         let (priv_key, pub_key) = generate_x25519_keypair();
         let secret_data = b"root-key-32-bytes-of-randomness!!"; // 32 bytes
 
-        let (eph_pub, ct, tag) = wrap_key(secret_data, &pub_key).unwrap();
-        let unwrapped = unwrap_key(&eph_pub, &ct, &tag, &priv_key).unwrap();
+        let (eph_pub, ct, tag) =
+            wrap_key(secret_data, &pub_key, "keywrap:test:vault:device").unwrap();
+        let unwrapped =
+            unwrap_key(&eph_pub, &ct, &tag, &priv_key, "keywrap:test:vault:device").unwrap();
 
         assert_eq!(unwrapped, secret_data);
     }
@@ -138,8 +148,22 @@ mod tests {
         let (_, pub_key) = generate_x25519_keypair();
         let (wrong_priv, _) = generate_x25519_keypair();
 
-        let (eph_pub, ct, tag) = wrap_key(b"secret-key-material", &pub_key).unwrap();
-        assert!(unwrap_key(&eph_pub, &ct, &tag, &wrong_priv).is_err());
+        let (eph_pub, ct, tag) = wrap_key(
+            b"secret-key-material",
+            &pub_key,
+            "keywrap:test:vault:device",
+        )
+        .unwrap();
+        assert!(
+            unwrap_key(
+                &eph_pub,
+                &ct,
+                &tag,
+                &wrong_priv,
+                "keywrap:test:vault:device"
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -147,7 +171,7 @@ mod tests {
         // Wire-shape guard: the encapped key must serialize to exactly the
         // 32-byte X25519 public key, matching the on-disk format.
         let (_, pub_key) = generate_x25519_keypair();
-        let (eph_pub, _ct, _tag) = wrap_key(b"any", &pub_key).unwrap();
+        let (eph_pub, _ct, _tag) = wrap_key(b"any", &pub_key, "test").unwrap();
         assert_eq!(eph_pub.len(), 32);
     }
 
@@ -157,8 +181,35 @@ mod tests {
         // single-bit flip in ct must fail the tag check, not unwrap to garbage.
         let (priv_key, pub_key) = generate_x25519_keypair();
         let secret = b"thirty-two-byte-root-key-xxxxxxx";
-        let (eph_pub, mut ct, tag) = wrap_key(secret, &pub_key).unwrap();
+        let (eph_pub, mut ct, tag) = wrap_key(secret, &pub_key, "test:tamper").unwrap();
         ct[0] ^= 0xff;
-        assert!(unwrap_key(&eph_pub, &ct, &tag, &priv_key).is_err());
+        assert!(unwrap_key(&eph_pub, &ct, &tag, &priv_key, "test:tamper").is_err());
+    }
+
+    /// P7: a wrap produced under one context must fail to unwrap under a
+    /// different context — this is the transplant-rejection guarantee.
+    #[test]
+    fn context_mismatch_fails() {
+        let (priv_key, pub_key) = generate_x25519_keypair();
+        let secret = b"root-key-material";
+        let (eph_pub, ct, tag) = wrap_key(secret, &pub_key, "keywrap:vault-a:device-1").unwrap();
+
+        // Same key, different context: must fail.
+        assert!(unwrap_key(&eph_pub, &ct, &tag, &priv_key, "keywrap:vault-a:device-2").is_err());
+
+        // Different purpose, same bindings: must also fail.
+        assert!(
+            unwrap_key(
+                &eph_pub,
+                &ct,
+                &tag,
+                &priv_key,
+                "identity-escrow:vault-a:device-1"
+            )
+            .is_err()
+        );
+
+        // Same context: must succeed.
+        assert!(unwrap_key(&eph_pub, &ct, &tag, &priv_key, "keywrap:vault-a:device-1").is_ok());
     }
 }

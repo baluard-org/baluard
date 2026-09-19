@@ -65,7 +65,11 @@ pub fn initiate_epoch_rotation(
 
     for (device_id, pub_bytes) in enrolled_device_pubs {
         let pub_key = x25519_dalek::PublicKey::from(*pub_bytes);
-        let (eph_pub, ct, tag) = hpke_wrap::wrap_key(new_root.as_bytes(), &pub_key)?;
+        let (eph_pub, ct, tag) = hpke_wrap::wrap_key(
+            new_root.as_bytes(),
+            &pub_key,
+            &format!("keywrap:rotation:{new_epoch}"),
+        )?;
         wrapped_keys.push(WrappedKeyEntry {
             device_id: *device_id,
             ephemeral_public: eph_pub,
@@ -117,6 +121,7 @@ mod tests {
             &entry.encrypted_key,
             &entry.tag,
             &priv1,
+            "keywrap:rotation:1",
         )
         .unwrap();
         assert_eq!(unwrapped, root_key.as_bytes());

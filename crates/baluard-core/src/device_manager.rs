@@ -1345,9 +1345,14 @@ impl DeviceManager {
         }
         tag.copy_from_slice(&tag_bytes);
 
-        // Step 4: HPKE-unwrap Root Key
-        let root_key_bytes =
-            crate::crypto::hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &recovery_x25519_secret)?;
+        // Step 4: HPKE-unwrap Root Key (P7: context-bound AAD)
+        let root_key_bytes = crate::crypto::hpke_wrap::unwrap_key(
+            &eph_pub,
+            &ct,
+            &tag,
+            &recovery_x25519_secret,
+            "recovery-keywrap",
+        )?;
         let rk_arr: [u8; 64] = root_key_bytes
             .try_into()
             .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?;
@@ -1381,8 +1386,11 @@ impl DeviceManager {
 
         // Step 9: Write keywrap for new device (M5 fix: vault must be usable on next open)
         let x25519_public = x25519_dalek::PublicKey::from(&x25519_secret);
-        let (eph_pub, ct, tag) =
-            crate::crypto::hpke_wrap::wrap_key(root_key.as_bytes(), &x25519_public)?;
+        let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+            root_key.as_bytes(),
+            &x25519_public,
+            "root-key-keywrap",
+        )?;
         let keywrap_data = serde_json::json!({
             "device_id": new_device_id.to_string(),
             "ephemeral_public": hex::encode(eph_pub),
@@ -1536,9 +1544,14 @@ impl DeviceManager {
         }
         tag.copy_from_slice(&tag_bytes);
 
-        // Step 4: HPKE-unwrap Root Key
-        let root_key_bytes =
-            crate::crypto::hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &recovery_x25519_secret)?;
+        // Step 4: HPKE-unwrap Root Key (P7: context-bound AAD)
+        let root_key_bytes = crate::crypto::hpke_wrap::unwrap_key(
+            &eph_pub,
+            &ct,
+            &tag,
+            &recovery_x25519_secret,
+            "recovery-keywrap",
+        )?;
         let rk_arr: [u8; 64] = root_key_bytes
             .try_into()
             .map_err(|_| DeviceError::Keystore("unwrapped root key not 64 bytes".into()))?;
@@ -1600,8 +1613,11 @@ impl DeviceManager {
         // secret the caller passed, whose public half is enrolled in the
         // registry — guaranteeing registry/keywrap/privkey consistency.
         let x25519_public = x25519_dalek::PublicKey::from(&x25519_secret);
-        let (eph_pub, ct, tag_out) =
-            crate::crypto::hpke_wrap::wrap_key(root_key.as_bytes(), &x25519_public)?;
+        let (eph_pub, ct, tag_out) = crate::crypto::hpke_wrap::wrap_key(
+            root_key.as_bytes(),
+            &x25519_public,
+            "root-key-keywrap",
+        )?;
         let keywrap_data = serde_json::json!({
             "device_id": payload.device_id.to_string(),
             "ephemeral_public": hex::encode(eph_pub),
@@ -2780,8 +2796,14 @@ mod tests {
         let mut tag = [0u8; 16];
         tag.copy_from_slice(&tag_bytes);
 
-        let unwrapped = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, &result.x25519_secret)
-            .expect("unwrap root key with returned private key");
+        let unwrapped = hpke_wrap::unwrap_key(
+            &eph_pub,
+            &ct,
+            &tag,
+            &result.x25519_secret,
+            "root-key-keywrap",
+        )
+        .expect("unwrap root key with returned private key");
 
         // Unwrapped root key must match the root key the method returned
         // (and that came from recovery.json, which was written by the
