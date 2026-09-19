@@ -11,6 +11,7 @@ pub mod creation;
 pub mod device_privkey;
 pub mod envelope;
 pub mod handle;
+pub mod identity;
 pub mod index;
 pub mod keywrap;
 pub mod manifest;

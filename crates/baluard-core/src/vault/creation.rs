@@ -483,6 +483,66 @@ impl<'a> VaultCreator<'a> {
                 super::write_vault_file(&path.join("meta/kek-canary.enc"), &kek_canary)?;
                 super::write_vault_file(&path.join("meta/rk-canary.enc"), &rk_canary)?;
 
+                // P1a: per-human identity — generated here, sealed under a
+                // wrapping key that is NEVER the vault KEK (OS keystore random
+                // key, or the WARNED Argon2id fallback on keystore-less
+                // systems), and HPKE-escrowed to the recovery pubkey so
+                // phrase recovery restores the identity.
+                let identity_keys = crate::vault::identity::IdentityKeys::generate()?;
+                let (identity_wrap_key, seal_mode, salt_hex) = match self.keystore {
+                    Some(keystore) => {
+                        let mut wrap_key = [0u8; 32];
+                        adapter.fill_bytes(&mut wrap_key);
+                        keystore.store_secret(&format!("identity:{vault_id}"), &wrap_key)?;
+                        (wrap_key, "keystore", None)
+                    }
+                    None => {
+                        // WARNED fallback (keystore-less systems): Argon2id
+                        // over the master password with a dedicated salt —
+                        // never the vault KEK. The downgrade is visible in
+                        // meta/identity-meta.json.
+                        let mut salt = [0u8; 32];
+                        adapter.fill_bytes(&mut salt);
+                        let mut params = kdf::create_params(KdfProfile::MobileLow);
+                        params.salt = salt.to_vec();
+                        let wrap_key = kdf::derive_kek(&self.password, &params)?;
+                        (wrap_key, "passphrase", Some(hex::encode(salt)))
+                    }
+                };
+                let identity_sealed =
+                    crate::vault::identity::seal_identity(&identity_wrap_key, &identity_keys)?;
+                super::write_vault_file(&path.join("meta/identity.enc"), &identity_sealed)?;
+                let (escrow_eph, escrow_ct, escrow_tag) = crate::crypto::hpke_wrap::wrap_key(
+                    &identity_keys.seed(),
+                    &recovery_x25519_public,
+                )?;
+                let identity_escrow = serde_json::json!({
+                    "ephemeral_public": hex::encode(escrow_eph),
+                    "encrypted_key": hex::encode(escrow_ct),
+                    "tag": hex::encode(escrow_tag),
+                });
+                super::write_vault_file(
+                    &path.join("meta/identity-escrow.json"),
+                    serde_json::to_string_pretty(&identity_escrow)
+                        .unwrap()
+                        .as_bytes(),
+                )?;
+                let identity_meta = serde_json::json!({
+                    "mode": seal_mode,
+                    "salt_hex": salt_hex,
+                    "memory_kib": kdf::create_params(KdfProfile::MobileLow).memory_kib,
+                    "time_cost": kdf::create_params(KdfProfile::MobileLow).time_cost,
+                    "parallelism": 1,
+                    "keystore_key": format!("identity:{vault_id}"),
+                    "recovery_pubkey_hex": hex::encode(recovery_x25519_public.as_bytes()),
+                });
+                super::write_vault_file(
+                    &path.join("meta/identity-meta.json"),
+                    serde_json::to_string_pretty(&identity_meta)
+                        .unwrap()
+                        .as_bytes(),
+                )?;
+
                 // Write .baluard marker file (vault detection, not secret).
                 // Required for discover_orphans / vaults.detach / registry
                 // self-heal. Always written: when a slug is set it is validated
@@ -553,6 +613,8 @@ impl<'a> VaultCreator<'a> {
                         devkey_seal,
                         item_keys: HashMap::new(),
                         current_epoch: 1,
+                        identity: Some(identity_keys),
+                        identity_wrap_key: Some(zeroize::Zeroizing::new(identity_wrap_key)),
                     }),
                 };
 
@@ -614,6 +676,7 @@ impl<'a> VaultCreator<'a> {
                     <[u8; 32]>::try_from(&recovery_key_bytes[..32]).unwrap(),
                 );
                 recovery_key_bytes.zeroize();
+                let recovery_x25519_public = x25519_dalek::PublicKey::from(&recovery_x25519_secret);
 
                 let root_key_bytes = hpke_wrap::unwrap_key(
                     &kw.ephemeral_public,
@@ -718,6 +781,56 @@ impl<'a> VaultCreator<'a> {
 
                 let vault_id = VaultHandle::derive_vault_id(&kdf_params);
 
+                // P1a: identity — same generation/seal/escrow as the other
+                // ceremony path.
+                let identity_keys = crate::vault::identity::IdentityKeys::generate()?;
+                let (identity_wrap_key, seal_mode, salt_hex) = match self.keystore {
+                    Some(keystore) => {
+                        let mut wrap_key = [0u8; 32];
+                        adapter.fill_bytes(&mut wrap_key);
+                        keystore.store_secret(&format!("identity:{vault_id}"), &wrap_key)?;
+                        (wrap_key, "keystore", None)
+                    }
+                    None => {
+                        let mut salt = [0u8; 32];
+                        adapter.fill_bytes(&mut salt);
+                        let mut params = kdf::create_params(KdfProfile::MobileLow);
+                        params.salt = salt.to_vec();
+                        let wrap_key = kdf::derive_kek(&self.password, &params)?;
+                        (wrap_key, "passphrase", Some(hex::encode(salt)))
+                    }
+                };
+                let identity_sealed =
+                    crate::vault::identity::seal_identity(&identity_wrap_key, &identity_keys)?;
+                super::write_vault_file(&path.join("meta/identity.enc"), &identity_sealed)?;
+                let (escrow_eph, escrow_ct, escrow_tag) = crate::crypto::hpke_wrap::wrap_key(
+                    &identity_keys.seed(),
+                    &recovery_x25519_public,
+                )?;
+                let identity_escrow = serde_json::json!({
+                    "ephemeral_public": hex::encode(escrow_eph),
+                    "encrypted_key": hex::encode(escrow_ct),
+                    "tag": hex::encode(escrow_tag),
+                });
+                super::write_vault_file(
+                    &path.join("meta/identity-escrow.json"),
+                    serde_json::to_string_pretty(&identity_escrow)
+                        .unwrap()
+                        .as_bytes(),
+                )?;
+                let identity_meta = serde_json::json!({
+                    "mode": seal_mode,
+                    "salt_hex": salt_hex,
+                    "keystore_key": format!("identity:{vault_id}"),
+                    "recovery_pubkey_hex": hex::encode(recovery_x25519_public.as_bytes()),
+                });
+                super::write_vault_file(
+                    &path.join("meta/identity-meta.json"),
+                    serde_json::to_string_pretty(&identity_meta)
+                        .unwrap()
+                        .as_bytes(),
+                )?;
+
                 let mut device_manager = DeviceManager::new();
                 device_manager.set_vault_path(&path);
                 device_manager.epoch = crate::keys::epoch::EpochInfo::new(1);
@@ -747,6 +860,8 @@ impl<'a> VaultCreator<'a> {
                         devkey_seal,
                         item_keys: HashMap::new(),
                         current_epoch: 1,
+                        identity: Some(identity_keys),
+                        identity_wrap_key: Some(zeroize::Zeroizing::new(identity_wrap_key)),
                     }),
                 };
 
