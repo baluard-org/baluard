@@ -3227,6 +3227,27 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(_) => err_response("sync.pull timed out".to_string()),
             }
         }
+        "sync.revoke" => {
+            refresh_connected_tokens_if_needed().await;
+            let vault_path = state.vault_path.clone();
+            let seal = state.devkey_seal().await;
+            let parsed: serde_json::Value = serde_json::from_str(&req.payload).unwrap_or_default();
+            let commit = parsed["commit"].as_str().unwrap_or("").to_string();
+            let reason = parsed["reason"].as_str().unwrap_or("").to_string();
+            let joined = tokio::time::timeout(
+                SYNC_OP_TIMEOUT,
+                tokio::task::spawn_blocking(move || {
+                    sync_revoke(&vault_path, seal.as_ref(), &commit, &reason)
+                }),
+            )
+            .await;
+            match joined {
+                Ok(Ok(Ok(msg))) => ok_resp(msg, token_str),
+                Ok(Ok(Err(e))) => err_response(e),
+                Ok(Err(e)) => err_response(format!("Task join: {e}")),
+                Err(_) => err_response("sync.revoke timed out".to_string()),
+            }
+        }
         "sync.status" => {
             let vault_path = state.vault_path.clone();
             let joined = tokio::time::timeout(
@@ -4388,6 +4409,29 @@ fn sync_pull(
     Ok(msg)
 }
 
+/// P8b: append a signed revocation entry + push the manifest (normal
+/// push — works under branch protection, never rewrites history).
+#[cfg(feature = "git-sync")]
+fn sync_revoke(
+    vault_path: &std::path::Path,
+    devkey_seal: Option<&[u8; 32]>,
+    commit: &str,
+    reason: &str,
+) -> Result<String, String> {
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        vault_path,
+        &first_device_id(vault_path),
+        devkey_seal,
+    );
+    engine.recover_state().map_err(|e| format!("{e}"))?;
+    let repo = engine.open_repo().map_err(|e| format!("{e}"))?;
+    let seq = engine
+        .append_revocation(&repo, commit, reason)
+        .map_err(|e| format!("{e}"))?;
+    engine.push(&repo, "origin").map_err(|e| format!("{e}"))?;
+    Ok(format!("Revoked {commit} (entry #{seq}). Manifest pushed."))
+}
+
 #[cfg(feature = "git-sync")]
 fn sync_status(vault_path: &std::path::Path) -> Result<String, String> {
     let engine =
@@ -4729,6 +4773,15 @@ fn sync_push(_p: &std::path::Path) -> Result<String, String> {
 }
 #[cfg(not(feature = "git-sync"))]
 fn sync_pull(_p: &std::path::Path) -> Result<String, String> {
+    Err("git-sync feature not enabled".into())
+}
+#[cfg(not(feature = "git-sync"))]
+fn sync_revoke(
+    _p: &std::path::Path,
+    _s: Option<&[u8; 32]>,
+    _c: &str,
+    _r: &str,
+) -> Result<String, String> {
     Err("git-sync feature not enabled".into())
 }
 #[cfg(not(feature = "git-sync"))]

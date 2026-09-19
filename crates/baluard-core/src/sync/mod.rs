@@ -11,6 +11,7 @@ pub mod conflict;
 pub mod credentials;
 pub mod known_hosts;
 pub mod operations;
+pub mod revocation;
 pub mod state_machine;
 #[cfg(feature = "git-sync")]
 pub mod tls;
