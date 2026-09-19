@@ -3304,6 +3304,26 @@ impl VaultHandle {
             staged_renames.push((tmp_path, file_path));
         }
 
+        // P4 remainder: re-encrypt the avatar. meta/avatar.enc is AES-GCM
+        // under the SGK-derived epoch-bound key; skipping it strands the
+        // avatar at the old epoch (avatar_get fails after rotation).
+        let avatar_path = self.path.join("meta/avatar.enc");
+        if avatar_path.exists() {
+            let old_avatar_key = self.derive_avatar_key();
+            let new_avatar_key = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
+                &new_root_key,
+                new_epoch,
+            )
+            .derive_avatar_key(new_epoch);
+            let blob = std::fs::read(&avatar_path)?;
+            let mut plaintext = crate::vault::avatar::decrypt_avatar(&old_avatar_key, &blob)?;
+            let new_blob = crate::vault::avatar::encrypt_avatar(&new_avatar_key, &plaintext)?;
+            plaintext.zeroize();
+            let avatar_tmp = avatar_path.with_extension("enc.tmp");
+            std::fs::write(&avatar_tmp, &new_blob)?;
+            staged_renames.push((avatar_tmp, avatar_path));
+        }
+
         // Phase 2: Update RK canary (staged)
         let rk_canary = super::canary::create_rk_canary(&new_root_key, self.vault_id, new_epoch)?;
         let canary_path = self.path.join("meta/rk-canary.enc");
@@ -3787,6 +3807,26 @@ impl VaultHandle {
             staged_renames.push((tmp_path, file_path));
         }
         drop(old_root);
+
+        // P4 remainder: re-encrypt the avatar. meta/avatar.enc is AES-GCM
+        // under the SGK-derived epoch-bound key; skipping it strands the
+        // avatar at the old epoch (avatar_get fails after rotation).
+        let avatar_path = self.path.join("meta/avatar.enc");
+        if avatar_path.exists() {
+            let old_avatar_key = self.derive_avatar_key();
+            let new_avatar_key = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
+                &new_root_key,
+                new_epoch,
+            )
+            .derive_avatar_key(new_epoch);
+            let blob = std::fs::read(&avatar_path)?;
+            let mut plaintext = crate::vault::avatar::decrypt_avatar(&old_avatar_key, &blob)?;
+            let new_blob = crate::vault::avatar::encrypt_avatar(&new_avatar_key, &plaintext)?;
+            plaintext.zeroize();
+            let avatar_tmp = avatar_path.with_extension("enc.tmp");
+            std::fs::write(&avatar_tmp, &new_blob)?;
+            staged_renames.push((avatar_tmp, avatar_path));
+        }
 
         // ── Update RK canary (staged) ──
         let rk_canary = super::canary::create_rk_canary(&new_root_key, self.vault_id, new_epoch)?;
@@ -5439,6 +5479,60 @@ mod tests {
     }
 
     // MISS-1: rotate_root_key re-encrypts all ciphers
+    // P4 remainder: the avatar envelope is SGK-epoch-bound; both rotation
+    // flows must re-encrypt it, or avatar_get fails after rotation.
+    fn write_test_avatar(
+        handle: &VaultHandle,
+        dir: &std::path::Path,
+    ) -> (Vec<u8>, Vec<u8>, [u8; 32]) {
+        let plaintext = b"fake-png-image-bytes".to_vec();
+        let old_key = handle.derive_avatar_key();
+        let blob = crate::vault::avatar::encrypt_avatar(&old_key, &plaintext).unwrap();
+        std::fs::write(dir.join("meta/avatar.enc"), &blob).unwrap();
+        (plaintext, blob, old_key)
+    }
+
+    #[test]
+    fn rotate_root_key_re_encrypts_avatar() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let (plaintext, old_blob, old_key) = write_test_avatar(&handle, dir.path());
+
+        let old_epoch = handle.unlocked().current_epoch;
+        handle.rotate_root_key().unwrap();
+        assert_eq!(handle.unlocked().current_epoch, old_epoch + 1);
+
+        let stored = std::fs::read(dir.path().join("meta/avatar.enc")).unwrap();
+        assert_ne!(stored, old_blob, "avatar blob must be re-encrypted");
+        let roundtrip =
+            crate::vault::avatar::decrypt_avatar(&handle.derive_avatar_key(), &stored).unwrap();
+        assert_eq!(roundtrip, plaintext);
+        assert!(
+            crate::vault::avatar::decrypt_avatar(&old_key, &stored).is_err(),
+            "stale-epoch key must not decrypt the avatar"
+        );
+    }
+
+    #[test]
+    fn revoke_device_and_rekey_re_encrypts_avatar() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let _dev2_id = enroll_second_device(&mut handle, dir.path(), &password);
+        let dev3_id = enroll_third_device(&mut handle, dir.path());
+        let (plaintext, old_blob, old_key) = write_test_avatar(&handle, dir.path());
+
+        handle.revoke_device_and_rekey(dev3_id).unwrap();
+
+        let stored = std::fs::read(dir.path().join("meta/avatar.enc")).unwrap();
+        assert_ne!(stored, old_blob, "avatar blob must be re-encrypted");
+        let roundtrip =
+            crate::vault::avatar::decrypt_avatar(&handle.derive_avatar_key(), &stored).unwrap();
+        assert_eq!(roundtrip, plaintext);
+        assert!(crate::vault::avatar::decrypt_avatar(&old_key, &stored).is_err());
+    }
+
     #[test]
     fn rotate_root_key_re_encrypts_ciphers() {
         let (dir, password) = create_test_vault();
