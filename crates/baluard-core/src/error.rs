@@ -167,6 +167,9 @@ pub enum SyncError {
     #[error("rollback detected on object {0}")]
     RollbackDetected(String),
 
+    #[error("revocation manifest invalid: {0}")]
+    RevocationInvalid(String),
+
     #[error("state machine error: {0}")]
     StateMachine(String),
 

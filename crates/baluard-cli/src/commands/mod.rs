@@ -1515,6 +1515,54 @@ pub fn handle_sync_pull(
     }
 }
 
+/// P8b: append a signed revocation entry for a bad commit and push it.
+#[cfg(feature = "git-sync")]
+pub fn handle_sync_revoke(
+    mode: ConnectMode,
+    vault_path: &str,
+    socket: Option<&str>,
+    commit: &str,
+    reason: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match mode {
+        ConnectMode::Daemon => {
+            let payload = serde_json::json!({ "commit": commit, "reason": reason }).to_string();
+            let resp = client::request_to("sync.revoke", &payload, socket)?;
+            if !resp.success {
+                return Err(resp.error_message.into());
+            }
+            println!("{}", resp.payload);
+            Ok(())
+        }
+        ConnectMode::Direct => sync_revoke_direct(vault_path, commit, reason),
+    }
+}
+
+#[cfg(feature = "git-sync")]
+fn sync_revoke_direct(
+    vault_path: &str,
+    commit: &str,
+    reason: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = Path::new(vault_path);
+    // Revocation commits are signed: unlock first (devkey seal).
+    let handle = unlock_vault_direct(vault_path)?;
+    let seal = handle.devkey_seal();
+    let engine = baluard_core::sync::engine::SyncEngine::new(
+        path,
+        &first_device_id(vault_path),
+        seal.as_ref(),
+    );
+    engine.recover_state()?;
+    let repo = engine.open_repo()?;
+    let seq = engine.append_revocation(&repo, commit, reason)?;
+    // Ride the normal push so the manifest reaches peers under branch
+    // protection (append-only, never a force-push).
+    engine.push(&repo, "origin")?;
+    println!("Revoked {commit} (entry #{seq}). Manifest pushed.");
+    Ok(())
+}
+
 pub fn handle_sync_status(
     mode: ConnectMode,
     vault_path: &str,

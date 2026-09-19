@@ -213,6 +213,8 @@ impl SyncEngine {
             // P5b: the cipher index is local-only bookkeeping.
             "meta/index.enc",
             "meta/index.enc.*",
+            // P8b: local revocation verification tracker.
+            "meta/revocations-verified.json",
         ];
         let needs_update = match std::fs::read_to_string(&gitignore) {
             Ok(existing) => NEW_ENTRIES.iter().any(|e| !existing.contains(e)),
@@ -382,6 +384,8 @@ impl SyncEngine {
             // report like the other local-only bookkeeping. Shard files
             // (index.enc.sN) need prefix matching, not exact.
             "meta/index.enc",
+            // P8b: local revocation verification tracker.
+            "meta/revocations-verified.json",
         ];
         const LOCAL_ONLY_PREFIX: &str = "meta/index.enc.";
 
@@ -909,7 +913,14 @@ impl SyncEngine {
 
         // Already up to date?
         if local_oid == remote_oid {
+            // P8b: even with no new commits, an unapplied manifest (landed
+            // during a conflicted pull that was resolved without a
+            // subsequent successful pull, or a local manifest commit) may
+            // still need its restore committed. Cheap when clean: one blob
+            // read.
+            let applied = self.apply_revocations(repo, &[])?;
             self.transition_state(SyncState::Idle)?;
+            let _ = applied;
             return Ok(PullResult::AlreadyUpToDate);
         }
 
@@ -950,7 +961,10 @@ impl SyncEngine {
             repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
                 .map_err(|e| SyncError::Git(format!("checkout head: {e}")))?;
 
-            self.save_last_head(&remote_oid.to_string())?;
+            // P8b: verify + apply revocations arriving in the pulled batch.
+            let (_, restore_oid) = self.apply_revocations(repo, &new_oids)?;
+
+            self.save_last_head(&restore_oid.unwrap_or(remote_oid).to_string())?;
             self.transition_state(SyncState::Idle)?;
             return Ok(PullResult::FastForward);
         }
@@ -1076,8 +1090,12 @@ impl SyncEngine {
         repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
             .map_err(|e| SyncError::Git(format!("checkout after merge: {e}")))?;
 
+        // P8b: verify + apply revocations arriving on the remote side of
+        // the merge.
+        let (_, restore_oid) = self.apply_revocations(repo, &remote_new_oids)?;
+
         // Track merge commit OID (not remote HEAD) for rollback detection
-        self.save_last_head(&merge_oid.to_string())?;
+        self.save_last_head(&restore_oid.unwrap_or(merge_oid).to_string())?;
         repo.cleanup_state()
             .map_err(|e| SyncError::Git(format!("cleanup after merge: {e}")))?;
         self.transition_state(SyncState::Idle)?;
@@ -1188,6 +1206,576 @@ impl SyncEngine {
                 }
             }
         }
+    }
+
+    // -------------------------------------------------------------------
+    // P8b: revocation manifests (append-only, branch-protection-safe)
+    // -------------------------------------------------------------------
+
+    /// Manifest blob id in a tree (`None` when the file is absent).
+    fn manifest_blob_id(tree: &git2::Tree<'_>) -> Option<Oid> {
+        tree.get_path(std::path::Path::new(
+            crate::sync::revocation::REVOCATIONS_PATH,
+        ))
+        .ok()
+        .map(|e| e.id())
+    }
+
+    /// Parse the manifest out of a commit's tree (`None` when absent).
+    /// Present-but-unparseable is a hard error (tamper, fail closed).
+    fn manifest_from_tree(
+        repo: &Repository,
+        tree: &git2::Tree<'_>,
+    ) -> Result<Option<crate::sync::revocation::RevocationManifest>, BaluardError> {
+        let Some(blob_id) = Self::manifest_blob_id(tree) else {
+            return Ok(None);
+        };
+        let blob = repo
+            .find_blob(blob_id)
+            .map_err(|e| SyncError::Git(format!("manifest blob: {e}")))?;
+        crate::sync::revocation::RevocationManifest::parse(blob.content())
+            .map(Some)
+            .map_err(|e| SyncError::RevocationInvalid(e).into())
+    }
+
+    /// Verify NEW entries introduced by one manifest-blob transition
+    /// against the roster snapshot in force at `commit` (first-parent
+    /// rule, same as P2 commit verification). Only the entries absent
+    /// from the parent manifest are checked: the file is append-only,
+    /// so old entries were verified when their version arrived, and a
+    /// later de-enrollment of their signer must never wedge pulls.
+    /// Tampered old bytes would surface as a blob-id change (→ new
+    /// transition → full re-verification).
+    fn verify_manifest_transition(
+        repo: &Repository,
+        commit_oid: Oid,
+        parent_manifest: Option<&crate::sync::revocation::RevocationManifest>,
+        child: &crate::sync::revocation::RevocationManifest,
+        roster_cache: &mut std::collections::HashMap<Oid, Option<DeviceRoster>>,
+    ) -> Result<(), BaluardError> {
+        use std::collections::HashSet;
+
+        // Append-only containment: every parent entry must survive in
+        // the child UNCHANGED (all signed fields byte-equal). Stripping
+        // an entry OR rewriting its fields is tamper.
+        if let Some(parent) = parent_manifest {
+            for old in &parent.entries {
+                let carried = child
+                    .entries
+                    .iter()
+                    .any(|new| new.commit == old.commit && new == old);
+                if !carried {
+                    return Err(SyncError::RevocationInvalid(format!(
+                        "manifest entry for commit {} was removed or altered — append-only violation",
+                        old.commit
+                    ))
+                    .into());
+                }
+            }
+        }
+
+        let parent_commits: HashSet<&str> = parent_manifest
+            .map(|p| p.entries.iter().map(|e| e.commit.as_str()).collect())
+            .unwrap_or_default();
+        let new_entries: Vec<&crate::sync::revocation::RevocationEntry> = child
+            .entries
+            .iter()
+            .filter(|e| !parent_commits.contains(e.commit.as_str()))
+            .collect();
+        if new_entries.is_empty() {
+            return Ok(());
+        }
+
+        let commit = repo
+            .find_commit(commit_oid)
+            .map_err(|e| SyncError::Git(format!("manifest commit: {e}")))?;
+        let Some(roster) = Self::roster_for_commit(repo, &commit, roster_cache)? else {
+            // Pre-enrollment line: no trust anchor, no shared threat.
+            // Entries there cannot be verified; fail closed anyway — a
+            // manifest version introduced before enrollment is tamper
+            // by construction (the feature postdates enrollment).
+            return Err(SyncError::RevocationInvalid(
+                "manifest introduced on a pre-enrollment history line".into(),
+            )
+            .into());
+        };
+        for entry in new_entries {
+            let Some(vk_bytes) = roster.get(&entry.device_id) else {
+                return Err(SyncError::RevocationInvalid(format!(
+                    "entry seq {}: device {} not in roster at introduction",
+                    entry.seq, entry.device_id
+                ))
+                .into());
+            };
+            let vk = ed25519_dalek::VerifyingKey::from_bytes(vk_bytes)
+                .map_err(|e| SyncError::RevocationInvalid(format!("roster key: {e}")))?;
+            entry.verify_signature(&vk).map_err(|e| {
+                SyncError::RevocationInvalid(format!("entry seq {}: {e}", entry.seq))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Walk the full history from `head_oid` and verify EVERY manifest
+    /// blob transition: append-only containment plus entry signatures
+    /// at each introduction point. Runs whenever the locally-verified
+    /// blob id does not match HEAD (arrival of a new version, cold
+    /// start, conflict-resolution merge that skipped the hook), and is
+    /// skipped entirely on the steady-state path (verified blob id
+    /// unchanged — git content addressing makes this sound).
+    fn walk_and_verify_manifest_history(
+        repo: &Repository,
+        head_oid: Oid,
+    ) -> Result<(), BaluardError> {
+        // Collect every commit reachable from HEAD (all parents).
+        let mut oids = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut stack = vec![head_oid];
+        while let Some(oid) = stack.pop() {
+            if !visited.insert(oid) {
+                continue;
+            }
+            let commit = repo
+                .find_commit(oid)
+                .map_err(|e| SyncError::Git(format!("manifest walk: {e}")))?;
+            oids.push(oid);
+            for i in 0..commit.parent_count() {
+                let pid = commit
+                    .parent_id(i)
+                    .map_err(|e| SyncError::Git(format!("manifest walk parent: {e}")))?;
+                stack.push(pid);
+            }
+        }
+        let ordered = Self::topo_order_commits(repo, &oids)?;
+        let mut roster_cache: std::collections::HashMap<Oid, Option<DeviceRoster>> =
+            std::collections::HashMap::new();
+        for oid in &ordered {
+            let commit = repo
+                .find_commit(*oid)
+                .map_err(|e| SyncError::Git(format!("manifest walk: {e}")))?;
+            let own_tree = commit
+                .tree()
+                .map_err(|e| SyncError::Git(format!("manifest walk tree: {e}")))?;
+            let own_blob = Self::manifest_blob_id(&own_tree);
+            if commit.parent_count() == 0 {
+                if let Some(manifest) = Self::manifest_from_tree(repo, &own_tree)? {
+                    Self::verify_manifest_transition(
+                        repo,
+                        *oid,
+                        None,
+                        &manifest,
+                        &mut roster_cache,
+                    )?;
+                }
+                continue;
+            }
+            let parent = commit
+                .parent(0)
+                .map_err(|e| SyncError::Git(format!("manifest walk parent: {e}")))?;
+            let parent_tree = parent
+                .tree()
+                .map_err(|e| SyncError::Git(format!("manifest walk parent tree: {e}")))?;
+            let parent_blob = Self::manifest_blob_id(&parent_tree);
+            match (parent_blob, own_blob) {
+                (Some(p), Some(o)) if p == o => continue, // no transition
+                (Some(_), None) => {
+                    return Err(SyncError::RevocationInvalid(
+                        "revocation manifest deleted — append-only violation".into(),
+                    )
+                    .into());
+                }
+                (None, None) => continue, // no manifest on this line
+                (parent_blob, Some(_)) => {
+                    let child = Self::manifest_from_tree(repo, &own_tree)?.unwrap_or_default();
+                    let parent_manifest = match parent_blob {
+                        Some(blob_id) => {
+                            let blob = repo
+                                .find_blob(blob_id)
+                                .map_err(|e| SyncError::Git(format!("manifest blob: {e}")))?;
+                            Some(
+                                crate::sync::revocation::RevocationManifest::parse(blob.content())
+                                    .map_err(SyncError::RevocationInvalid)?,
+                            )
+                        }
+                        None => None,
+                    };
+                    Self::verify_manifest_transition(
+                        repo,
+                        *oid,
+                        parent_manifest.as_ref(),
+                        &child,
+                        &mut roster_cache,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Local revocation verification tracker (gitignored, keyless):
+    /// the manifest blob id whose transitions were last verified plus
+    /// the revoked commits already planned/applied. Steady-state pulls
+    /// cost one file read instead of a history walk.
+    fn revocation_tracker_path(&self) -> std::path::PathBuf {
+        self.vault_path.join("meta/revocations-verified.json")
+    }
+
+    fn load_revocation_tracker(&self) -> RevocationTracker {
+        std::fs::read(self.revocation_tracker_path())
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_revocation_tracker(&self, tracker: &RevocationTracker) -> Result<(), BaluardError> {
+        let path = self.revocation_tracker_path();
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| SyncError::Git(format!("tracker dir: {e}")))?;
+        }
+        let json = serde_json::to_vec(tracker)
+            .map_err(|e| SyncError::Git(format!("tracker serialize: {e}")))?;
+        std::fs::write(&path, json).map_err(|e| SyncError::Git(format!("tracker write: {e}")))?;
+        Ok(())
+    }
+
+    /// Append a signed revocation entry for `commit_ref` and commit the
+    /// updated manifest (standard signed-commit path, so the manifest
+    /// commit itself is roster-verified at every peer). Refuses: unknown
+    /// commit, duplicate revocation, unenrolled device, no signing key.
+    /// Returns the new entry's sequence number.
+    pub fn append_revocation(
+        &self,
+        repo: &Repository,
+        commit_ref: &str,
+        reason: &str,
+    ) -> Result<u64, BaluardError> {
+        let target = repo
+            .revparse_single(commit_ref)
+            .and_then(|obj| obj.peel_to_commit())
+            .map_err(|e| {
+                SyncError::RevocationInvalid(format!("unknown commit {commit_ref}: {e}"))
+            })?;
+        let commit_hex = target.id().to_string();
+
+        let head_commit = repo
+            .head()
+            .and_then(|h| h.peel_to_commit())
+            .map_err(|e| SyncError::Git(format!("head: {e}")))?;
+        let head_tree = head_commit
+            .tree()
+            .map_err(|e| SyncError::Git(format!("head tree: {e}")))?;
+        let mut manifest = Self::manifest_from_tree(repo, &head_tree)?.unwrap_or_default();
+        if manifest.contains_commit(&commit_hex) {
+            return Err(SyncError::RevocationInvalid(format!(
+                "commit {commit_hex} already revoked"
+            ))
+            .into());
+        }
+
+        let signing_key = self
+            .signing_key
+            .as_ref()
+            .ok_or(SyncError::UnsignedCommitRefused)?;
+
+        // Roster from the HEAD TREE (not the worktree): an uncommitted
+        // devices.json edit must not fabricate or mask enrollment. The
+        // signer identity is the roster entry whose signing key matches
+        // the loaded key — identity and signature cannot disagree.
+        let roster_json: serde_json::Value = match head_tree
+            .get_path(std::path::Path::new("meta/devices.json"))
+            .ok()
+            .map(|e| repo.find_blob(e.id()))
+            .transpose()
+            .map_err(|e| SyncError::Git(format!("roster blob: {e}")))?
+        {
+            Some(blob) => serde_json::from_slice(blob.content())
+                .map_err(|e| SyncError::RevocationInvalid(format!("roster parse: {e}")))?,
+            None => {
+                return Err(SyncError::RevocationInvalid(
+                    "no device roster at HEAD; cannot revoke".into(),
+                )
+                .into());
+            }
+        };
+        use ed25519_dalek::Signer;
+        let signing_key_hex = hex::encode(signing_key.verifying_key().to_bytes());
+        let device_id = roster_json["devices"]
+            .as_object()
+            .and_then(|devices| {
+                devices.iter().find_map(|(id, entry)| {
+                    (entry["signing_public_key"].as_str() == Some(signing_key_hex.as_str()))
+                        .then(|| id.clone())
+                })
+            })
+            .ok_or_else(|| {
+                SyncError::RevocationInvalid(
+                    "signing key not enrolled in the roster at HEAD; cannot revoke".into(),
+                )
+            })?;
+
+        let mut entry = crate::sync::revocation::RevocationEntry {
+            seq: manifest.next_seq(),
+            commit: commit_hex,
+            reason: reason.to_string(),
+            revoked_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            device_id,
+            sig: String::new(),
+        };
+        entry.sig = base64::engine::general_purpose::STANDARD
+            .encode(signing_key.sign(&entry.signed_payload()).to_bytes());
+        manifest.entries.push(entry);
+
+        let manifest_path = self
+            .vault_path
+            .join(crate::sync::revocation::REVOCATIONS_PATH);
+        if let Some(dir) = manifest_path.parent() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| SyncError::Git(format!("manifest dir: {e}")))?;
+        }
+        let json = manifest.to_json().map_err(SyncError::RevocationInvalid)?;
+        std::fs::write(&manifest_path, json)
+            .map_err(|e| SyncError::Git(format!("manifest write: {e}")))?;
+
+        let oid = self.commit_all(repo, "")?;
+        self.save_last_head(&oid.to_string())?;
+
+        // Self-heal: the revoking device buries the bad content locally
+        // too (the entry was written and signed by this device).
+        self.apply_revocations(repo, &[])?;
+        Ok(manifest.entries.last().map(|e| e.seq).unwrap_or(1))
+    }
+
+    /// Apply revocation manifests after a pull (any outcome).
+    ///
+    /// Verification is tracker-driven: the local tracker records the
+    /// manifest blob id whose history transitions were last verified.
+    /// On any mismatch (new version, cold start, a conflict-resolution
+    /// merge that skipped the hook) the FULL history is walked and every
+    /// manifest transition is checked — append-only containment plus
+    /// entry signatures at each introduction point (fail closed). On
+    /// the steady state (same blob id) this costs one file read; git
+    /// content addressing makes the skip sound.
+    ///
+    /// Application: for each revoked commit still carrying its bad
+    /// content at HEAD (head blob == revoked blob, and different from
+    /// the first-parent blob), the affected paths are restored from the
+    /// first-parent tree and committed with a targeted (path-scoped)
+    /// signed commit — uncommitted worktree changes are never swept in.
+    /// Paths already superseded by later commits are left alone:
+    /// hash-based revocation cannot follow data flow (documented
+    /// boundary — policy-layer content rules come later).
+    ///
+    /// Returns (restored path count, restore commit oid when created).
+    pub fn apply_revocations(
+        &self,
+        repo: &Repository,
+        new_oids: &[Oid],
+    ) -> Result<(usize, Option<Oid>), BaluardError> {
+        // Kept for signature compatibility; verification is tracker-driven
+        // so it also covers up-to-date pulls after conflict resolutions.
+        let _ = new_oids;
+
+        let head_commit = repo
+            .head()
+            .and_then(|h| h.peel_to_commit())
+            .map_err(|e| SyncError::Git(format!("head: {e}")))?;
+        let head_tree = head_commit
+            .tree()
+            .map_err(|e| SyncError::Git(format!("head tree: {e}")))?;
+        let head_blob = Self::manifest_blob_id(&head_tree);
+        let manifest = Self::manifest_from_tree(repo, &head_tree)?;
+
+        // 1. Verification (skipped only when this exact blob version was
+        // already verified locally). Runs even for an EMPTY or deleted
+        // manifest when a verified version existed — stripping entries
+        // or deleting the file is an append-only violation the walk
+        // must catch.
+        let mut tracker = self.load_revocation_tracker();
+        let head_blob_str = head_blob.map(|o| o.to_string()).unwrap_or_default();
+        if head_blob.is_none() && tracker.blob.is_empty() {
+            return Ok((0, None)); // vault never had a manifest
+        }
+        if tracker.blob != head_blob_str {
+            Self::walk_and_verify_manifest_history(repo, head_commit.id())?;
+            tracker.blob = head_blob_str;
+            self.save_revocation_tracker(&tracker)?;
+        }
+        let Some(manifest) = manifest else {
+            return Ok((0, None));
+        };
+
+        // 2. Restore plan over not-yet-applied revocations.
+        let mut plan: Vec<(String, Option<(Oid, i32)>)> = Vec::new();
+        let mut newly_applied: Vec<String> = Vec::new();
+        for entry in &manifest.entries {
+            if tracker.applied.iter().any(|c| c == &entry.commit) {
+                continue;
+            }
+            newly_applied.push(entry.commit.clone());
+            let Ok(rev_oid) = Oid::from_str(&entry.commit) else {
+                continue; // malformed hex cannot pass shape validation
+            };
+            let Ok(rc) = repo.find_commit(rev_oid) else {
+                continue; // not in this repo's object store (other branch)
+            };
+            if rc.parent_count() == 0 {
+                continue; // genesis commit: no clean parent to restore from
+            }
+            let parent_tree = rc
+                .parent(0)
+                .and_then(|p| p.tree())
+                .map_err(|e| SyncError::Git(format!("revoked parent: {e}")))?;
+            let revoked_tree = rc
+                .tree()
+                .map_err(|e| SyncError::Git(format!("revoked tree: {e}")))?;
+            let diff = repo
+                .diff_tree_to_tree(Some(&parent_tree), Some(&revoked_tree), None)
+                .map_err(|e| SyncError::Git(format!("revocation diff: {e}")))?;
+            for delta in diff.deltas() {
+                let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) else {
+                    continue;
+                };
+                if !Self::repo_path_is_safe(path) {
+                    return Err(SyncError::RevocationInvalid(format!(
+                        "revoked commit touches unsafe path {}",
+                        path.display()
+                    ))
+                    .into());
+                }
+                let path_str = path.to_string_lossy().to_string();
+                if plan.iter().any(|(p, _)| p == &path_str) {
+                    continue;
+                }
+                // Restore only paths where HEAD still carries exactly the
+                // revoked content and it was not already neutralized.
+                let parent_entry = parent_tree.get_path(path).ok();
+                let revoked_entry = revoked_tree.get_path(path).ok();
+                let head_entry = head_tree.get_path(path).ok();
+                let ids_equal =
+                    |a: &Option<git2::TreeEntry>, b: &Option<git2::TreeEntry>| match (a, b) {
+                        (Some(x), Some(y)) => x.id() == y.id(),
+                        (None, None) => true,
+                        _ => false,
+                    };
+                if ids_equal(&head_entry, &parent_entry) {
+                    continue; // already restored
+                }
+                if !ids_equal(&head_entry, &revoked_entry) {
+                    continue; // superseded by later legitimate commits
+                }
+                plan.push((path_str, parent_entry.map(|e| (e.id(), e.filemode()))));
+            }
+        }
+        if plan.is_empty() {
+            if !newly_applied.is_empty() {
+                tracker.applied.extend(newly_applied);
+                self.save_revocation_tracker(&tracker)?;
+            }
+            return Ok((0, None));
+        }
+
+        // 3. Apply to the worktree (vault-rest permission invariant:
+        // 0600, executables 0700).
+        let restored = plan.len();
+        for (path_str, clean) in &plan {
+            let abs = self.vault_path.join(path_str);
+            match clean {
+                Some((blob_id, mode)) => {
+                    let blob = repo
+                        .find_blob(*blob_id)
+                        .map_err(|e| SyncError::Git(format!("restore blob: {e}")))?;
+                    if let Some(dir) = abs.parent() {
+                        std::fs::create_dir_all(dir)
+                            .map_err(|e| SyncError::Git(format!("restore dir: {e}")))?;
+                    }
+                    std::fs::write(&abs, blob.content())
+                        .map_err(|e| SyncError::Git(format!("restore write: {e}")))?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let perm = if *mode == 0o100755 { 0o700 } else { 0o600 };
+                        let _ =
+                            std::fs::set_permissions(&abs, std::fs::Permissions::from_mode(perm));
+                    }
+                }
+                None => {
+                    let _ = std::fs::remove_file(&abs);
+                }
+            }
+        }
+
+        // 4. Targeted, signed restore commit — only the affected paths
+        // are staged, so uncommitted worktree changes stay untouched.
+        let plan_paths: Vec<String> = plan.iter().map(|(p, _)| p.clone()).collect();
+        let restore_oid = self.commit_paths(repo, &plan_paths)?;
+
+        tracker.applied.extend(newly_applied);
+        self.save_revocation_tracker(&tracker)?;
+        self.save_last_head(&restore_oid.to_string())?;
+        // Restored cipher files bypassed the VaultHandle index hooks; the
+        // keyless invalidation forces one rebuild so stale metadata (same
+        // ids, old content) is never served after a restore.
+        Self::invalidate_local_index(&self.vault_path);
+        Ok((restored, Some(restore_oid)))
+    }
+
+    /// Vault-relative repo paths are safe when every component is a
+    /// normal name: no absolute prefixes, no `..` traversal.
+    fn repo_path_is_safe(rel: &std::path::Path) -> bool {
+        if rel.is_absolute() {
+            return false;
+        }
+        rel.components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+    }
+
+    /// Commit exactly `paths` (targeted staging) with the standard
+    /// signed-commit path. Unlike commit_all this never sweeps unrelated
+    /// worktree changes and never touches the device epoch.
+    fn commit_paths(&self, repo: &Repository, paths: &[String]) -> Result<Oid, BaluardError> {
+        let mut index = repo
+            .index()
+            .map_err(|e| SyncError::Git(format!("index: {e}")))?;
+        for p in paths {
+            let rel = std::path::Path::new(p);
+            let abs = self.vault_path.join(p);
+            if abs.exists() {
+                index
+                    .add_path(rel)
+                    .map_err(|e| SyncError::Git(format!("add {}: {e}", p)))?;
+            } else if index.get_path(rel, 0).is_some() {
+                index
+                    .remove_path(rel)
+                    .map_err(|e| SyncError::Git(format!("remove {}: {e}", p)))?;
+            }
+        }
+        index
+            .write()
+            .map_err(|e| SyncError::Git(format!("index write: {e}")))?;
+        let tree_id = index
+            .write_tree()
+            .map_err(|e| SyncError::Git(format!("write_tree: {e}")))?;
+        let tree = repo
+            .find_tree(tree_id)
+            .map_err(|e| SyncError::Git(format!("find_tree: {e}")))?;
+        let sig = git2::Signature::now("Baluard User", "vault@baluard.local")
+            .map_err(|e| SyncError::Git(format!("signature: {e}")))?;
+        let parent = repo
+            .head()
+            .and_then(|h| h.peel_to_commit())
+            .map_err(|e| SyncError::Git(format!("head: {e}")))?;
+        let oid = self.create_signed_commit(repo, &sig, COMMIT_MESSAGE, &tree, &[&parent])?;
+        let branch = Self::resolve_default_branch(repo);
+        repo.reference(&format!("refs/heads/{branch}"), oid, true, "vault update")
+            .map_err(|e| SyncError::Git(format!("update HEAD: {e}")))?;
+        repo.set_head(&format!("refs/heads/{branch}"))
+            .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
+        self.record_device_activity(&oid.to_string());
+        Ok(oid)
     }
 
     /// Read a file's content from a specific commit's tree.
@@ -1690,6 +2278,17 @@ impl SyncEngine {
         }
         Ok(repo)
     }
+}
+
+/// Local revocation verification tracker shape (gitignored, keyless).
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct RevocationTracker {
+    /// Hex blob id of the last verified manifest version.
+    #[serde(default)]
+    blob: String,
+    /// Revoked commit hexes already planned or applied locally.
+    #[serde(default)]
+    applied: Vec<String>,
 }
 
 /// Validate that a git URL uses an allowed scheme.
@@ -2289,6 +2888,9 @@ meta/sync-state.json
 # rewritten on every cipher CRUD on every device.
 meta/index.enc
 meta/index.enc.*
+
+# P8b: local revocation verification tracker (blob id + applied list).
+meta/revocations-verified.json
 
 # Build artifacts
 target/
@@ -4346,5 +4948,364 @@ mod tests {
             "KeepLocal resolver must still be invoked on conflict"
         );
         assert_eq!(outcome, SyncCycleOutcome::Synced { conflicts: 1 });
+    }
+
+    // -------------------------------------------------------------------
+    // P8b: revocation manifests
+    // -------------------------------------------------------------------
+
+    const TEST_DEVICE: &str = "00000000-0000-0000-0000-00000000000a";
+
+    fn make_enrolled_repo() -> (tempfile::TempDir, SyncEngine, Repository) {
+        let signing_key = crate::crypto::signature::generate_ed25519_keypair().0;
+        let dir = tempfile::tempdir().unwrap();
+        setup_signing_keys_with(dir.path(), &signing_key);
+        let engine = SyncEngine::new(dir.path(), TEST_DEVICE, None);
+        std::fs::write(dir.path().join("cipher.enc"), b"v1").unwrap();
+        let repo = engine.init_repo().unwrap();
+        (dir, engine, repo)
+    }
+
+    fn push_to_new_bare(engine: &SyncEngine, repo: &Repository) -> (tempfile::TempDir, String) {
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_bare(&remote_path).unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine.add_remote(repo, "origin", &remote_url).unwrap();
+        engine.push(repo, "origin").unwrap();
+        let branch = SyncEngine::resolve_default_branch(repo);
+        let bare = Repository::open(&remote_path).unwrap();
+        bare.reference_symbolic(
+            "HEAD",
+            &format!("refs/heads/{branch}"),
+            true,
+            "set default branch",
+        )
+        .unwrap();
+        (remote_dir, remote_url)
+    }
+
+    #[test]
+    fn revocation_append_and_refusals() {
+        let (_dir, engine, repo) = make_enrolled_repo();
+        std::fs::write(_dir.path().join("cipher.enc"), b"smuggled").unwrap();
+        let smuggled = engine.commit_all(&repo, "").unwrap();
+
+        // Unknown commit refused.
+        let err = engine
+            .append_revocation(&repo, &"f".repeat(40), "nope")
+            .unwrap_err();
+        assert!(err.to_string().contains("revocation manifest invalid"));
+
+        // Happy path: seq 1, manifest committed.
+        let seq = engine
+            .append_revocation(&repo, &smuggled.to_string(), "smuggled content")
+            .unwrap();
+        assert_eq!(seq, 1);
+        let manifest: crate::sync::revocation::RevocationManifest = serde_json::from_str(
+            &std::fs::read_to_string(_dir.path().join(crate::sync::revocation::REVOCATIONS_PATH))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.entries.len(), 1);
+        assert_eq!(manifest.entries[0].commit, smuggled.to_string());
+
+        // Duplicate refused.
+        let err = engine
+            .append_revocation(&repo, &smuggled.to_string(), "again")
+            .unwrap_err();
+        assert!(err.to_string().contains("already revoked"));
+    }
+
+    #[test]
+    fn revocation_restores_smuggled_content_on_pull() {
+        let (src_dir, engine, repo) = make_enrolled_repo();
+        let (_remote_dir, remote_url) = push_to_new_bare(&engine, &repo);
+
+        // Clone BEFORE the bad content arrives.
+        let clone_dir = tempfile::tempdir().unwrap();
+        setup_signing_keys_with(
+            clone_dir.path(),
+            &crate::crypto::signature::generate_ed25519_keypair().0,
+        );
+        let clone_engine = SyncEngine::new(clone_dir.path(), TEST_DEVICE, None);
+        let cloned = Repository::init(clone_dir.path()).unwrap();
+        clone_engine
+            .add_remote(&cloned, "origin", &remote_url)
+            .unwrap();
+        let branch = SyncEngine::resolve_default_branch(&repo);
+        {
+            let mut remote = cloned.find_remote("origin").unwrap();
+            remote
+                .fetch(
+                    &[&format!("refs/heads/{branch}:refs/remotes/origin/{branch}")],
+                    None,
+                    None,
+                )
+                .unwrap();
+        }
+        let tip = cloned
+            .find_reference(&format!("refs/remotes/origin/{branch}"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        cloned
+            .reference(&format!("refs/heads/{branch}"), tip, false, "clone")
+            .unwrap();
+        cloned.set_head(&format!("refs/heads/{branch}")).unwrap();
+        cloned
+            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        assert_eq!(
+            std::fs::read(clone_dir.path().join("cipher.enc")).unwrap(),
+            b"v1"
+        );
+
+        // Compromised device pushes smuggled content.
+        std::fs::write(src_dir.path().join("cipher.enc"), b"smuggled").unwrap();
+        std::fs::write(src_dir.path().join("contraband.enc"), b"bad").unwrap();
+        let smuggled = engine.commit_all(&repo, "").unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        // Admin revokes it; manifest commit rides a normal push.
+        let seq = engine
+            .append_revocation(&repo, &smuggled.to_string(), "smuggled")
+            .unwrap();
+        assert_eq!(seq, 1);
+        engine.push(&repo, "origin").unwrap();
+
+        // Clone pulls: FF arrives with bad commit + manifest; restore fires.
+        let result = clone_engine.pull(&cloned, "origin").unwrap();
+        assert!(matches!(
+            result,
+            crate::sync::engine::PullResult::FastForward
+        ));
+        assert_eq!(
+            std::fs::read(clone_dir.path().join("cipher.enc")).unwrap(),
+            b"v1",
+            "smuggled cipher content must be restored to the pre-commit state"
+        );
+        assert!(
+            !clone_dir.path().join("contraband.enc").exists(),
+            "file added by the revoked commit must be removed"
+        );
+        // The manifest itself survives (append-only, tracked).
+        assert!(
+            clone_dir
+                .path()
+                .join(crate::sync::revocation::REVOCATIONS_PATH)
+                .exists()
+        );
+
+        // Source self-heals on an up-to-date pull too.
+        let result = engine.pull(&repo, "origin").unwrap();
+        assert!(matches!(
+            result,
+            crate::sync::engine::PullResult::AlreadyUpToDate
+        ));
+        assert!(!src_dir.path().join("contraband.enc").exists());
+        assert_eq!(
+            std::fs::read(src_dir.path().join("cipher.enc")).unwrap(),
+            b"v1"
+        );
+
+        // Idempotent: after pushing the restore, another pull must not
+        // create any further commit.
+        engine.push(&repo, "origin").unwrap();
+        let head_before = repo.head().unwrap().peel_to_commit().unwrap().id();
+        engine.pull(&repo, "origin").unwrap();
+        let head_after = repo.head().unwrap().peel_to_commit().unwrap().id();
+        assert_eq!(head_before, head_after, "re-apply must be a no-op");
+
+        // Restored files keep the vault-rest permission invariant. The
+        // SOURCE's cipher.enc was written by the restore path; the clone's
+        // copy arrived via a normal checkout of the pushed restore commit
+        // (checkout perms are a pre-existing layer, not the restore's).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(src_dir.path().join("cipher.enc"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "restored cipher must be 0600");
+        }
+    }
+
+    #[test]
+    fn revocation_manifest_strip_attack_fails_pull() {
+        let (src_dir, engine, repo) = make_enrolled_repo();
+        let (_remote_dir, remote_url) = push_to_new_bare(&engine, &repo);
+
+        std::fs::write(src_dir.path().join("cipher.enc"), b"smuggled").unwrap();
+        let smuggled = engine.commit_all(&repo, "").unwrap();
+        engine.push(&repo, "origin").unwrap();
+        engine
+            .append_revocation(&repo, &smuggled.to_string(), "smuggled")
+            .unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        // Clone with a cold tracker, pull everything once (verified).
+        let clone_dir = tempfile::tempdir().unwrap();
+        setup_signing_keys_with(
+            clone_dir.path(),
+            &crate::crypto::signature::generate_ed25519_keypair().0,
+        );
+        let clone_engine = SyncEngine::new(clone_dir.path(), TEST_DEVICE, None);
+        let cloned = Repository::init(clone_dir.path()).unwrap();
+        clone_engine
+            .add_remote(&cloned, "origin", &remote_url)
+            .unwrap();
+        let branch = SyncEngine::resolve_default_branch(&repo);
+        {
+            let mut remote = cloned.find_remote("origin").unwrap();
+            remote
+                .fetch(
+                    &[&format!("refs/heads/{branch}:refs/remotes/origin/{branch}")],
+                    None,
+                    None,
+                )
+                .unwrap();
+        }
+        let tip = cloned
+            .find_reference(&format!("refs/remotes/origin/{branch}"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        cloned
+            .reference(&format!("refs/heads/{branch}"), tip, false, "clone")
+            .unwrap();
+        cloned.set_head(&format!("refs/heads/{branch}")).unwrap();
+        cloned
+            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        clone_engine.pull(&cloned, "origin").unwrap();
+
+        // Attacker (enrolled device) strips the entry in a NEW commit
+        // (valid commit signature, forged manifest version).
+        let manifest_path = src_dir
+            .path()
+            .join(crate::sync::revocation::REVOCATIONS_PATH);
+        let manifest: crate::sync::revocation::RevocationManifest =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        assert_eq!(manifest.entries.len(), 1);
+        let stripped = crate::sync::revocation::RevocationManifest { entries: vec![] };
+        std::fs::write(&manifest_path, stripped.to_json().unwrap()).unwrap();
+        engine.commit_all(&repo, "").unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        // The peer must refuse the pull: entries cannot disappear.
+        let err = clone_engine.pull(&cloned, "origin").unwrap_err();
+        assert!(err.to_string().contains("append-only violation"));
+    }
+
+    #[test]
+    fn revocation_signer_identity_derived_from_key_not_argument() {
+        // Two devices enrolled; the privkey FILE ends up holding the LAST
+        // enrolled key (B). append_revocation must tag the entry with B's
+        // roster id (the key's owner), never the engine's device id or
+        // the lexically-first roster entry.
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_b = crate::crypto::signature::generate_ed25519_keypair().0;
+        let uuid_a = uuid::Uuid::parse_str("00000000-0000-0000-0000-00000000000a").unwrap();
+        let uuid_b = uuid::Uuid::parse_str("00000000-0000-0000-0000-00000000000b").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        enroll_device(dir.path(), &uuid_a, &key_a);
+        enroll_device(dir.path(), &uuid_b, &key_b);
+        let engine = SyncEngine::new(dir.path(), TEST_DEVICE, None);
+        std::fs::write(dir.path().join("cipher.enc"), b"v1").unwrap();
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("cipher.enc"), b"smuggled").unwrap();
+        let smuggled = engine.commit_all(&repo, "").unwrap();
+
+        let seq = engine
+            .append_revocation(&repo, &smuggled.to_string(), "test")
+            .unwrap();
+        let manifest: crate::sync::revocation::RevocationManifest = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join(crate::sync::revocation::REVOCATIONS_PATH))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(seq, 1);
+        assert_eq!(manifest.entries[0].device_id, uuid_b.to_string());
+    }
+
+    #[test]
+    fn revocation_tampered_entry_fails_pull() {
+        let (src_dir, engine, repo) = make_enrolled_repo();
+        let (_remote_dir, remote_url) = push_to_new_bare(&engine, &repo);
+
+        std::fs::write(src_dir.path().join("cipher.enc"), b"smuggled").unwrap();
+        let smuggled = engine.commit_all(&repo, "").unwrap();
+        engine.push(&repo, "origin").unwrap();
+        engine
+            .append_revocation(&repo, &smuggled.to_string(), "original reason")
+            .unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        // Clone setup (same shape as the roundtrip test).
+        let clone_dir = tempfile::tempdir().unwrap();
+        setup_signing_keys_with(
+            clone_dir.path(),
+            &crate::crypto::signature::generate_ed25519_keypair().0,
+        );
+        let clone_engine = SyncEngine::new(clone_dir.path(), TEST_DEVICE, None);
+        let cloned = Repository::init(clone_dir.path()).unwrap();
+        clone_engine
+            .add_remote(&cloned, "origin", &remote_url)
+            .unwrap();
+        let branch = SyncEngine::resolve_default_branch(&repo);
+        {
+            let mut remote = cloned.find_remote("origin").unwrap();
+            remote
+                .fetch(
+                    &[&format!("refs/heads/{branch}:refs/remotes/origin/{branch}")],
+                    None,
+                    None,
+                )
+                .unwrap();
+        }
+        let tip = cloned
+            .find_reference(&format!("refs/remotes/origin/{branch}"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        cloned
+            .reference(&format!("refs/heads/{branch}"), tip, false, "clone")
+            .unwrap();
+        cloned.set_head(&format!("refs/heads/{branch}")).unwrap();
+        cloned
+            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        // Clone fetched after every push, so local==remote: the up-to-date
+        // path must still self-heal the smuggled content.
+        let base_pull = clone_engine.pull(&cloned, "origin").unwrap();
+        assert!(matches!(
+            base_pull,
+            crate::sync::engine::PullResult::AlreadyUpToDate
+        ));
+        // First pull already restored the content.
+        assert_eq!(
+            std::fs::read(clone_dir.path().join("cipher.enc")).unwrap(),
+            b"v1"
+        );
+
+        // Retroactive tamper: rewrite an entry's reason in a NEW commit
+        // (commit signature stays valid — the ENTRY signature breaks).
+        let manifest_path = src_dir
+            .path()
+            .join(crate::sync::revocation::REVOCATIONS_PATH);
+        let mut raw = std::fs::read_to_string(&manifest_path).unwrap();
+        raw = raw.replace("original reason", "evil rewrite");
+        std::fs::write(&manifest_path, raw).unwrap();
+        engine.commit_all(&repo, "").unwrap();
+        engine.push(&repo, "origin").unwrap();
+
+        // Clone's next pull must fail closed on the unforgeable entry.
+        let err = clone_engine.pull(&cloned, "origin").unwrap_err();
+        assert!(err.to_string().contains("revocation manifest invalid"));
     }
 }

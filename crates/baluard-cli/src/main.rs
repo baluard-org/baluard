@@ -411,6 +411,15 @@ enum SyncAction {
     Push,
     /// Pull remote changes.
     Pull,
+    /// Revoke a bad commit via an append-only signed manifest (works
+    /// under branch protection; never rewrites history).
+    Revoke {
+        /// Commit hash to revoke.
+        commit: String,
+        /// Why this commit is being revoked.
+        #[arg(short, long)]
+        reason: String,
+    },
     /// Show sync status.
     Status,
     /// Show commit log.
@@ -1187,6 +1196,13 @@ fn main() {
             SyncAction::Pull => {
                 commands::handle_sync_pull(mode, &vault_path, cli.socket.as_deref())
             }
+            SyncAction::Revoke { commit, reason } => commands::handle_sync_revoke(
+                mode,
+                &vault_path,
+                cli.socket.as_deref(),
+                &commit,
+                &reason,
+            ),
             SyncAction::Status => {
                 commands::handle_sync_status(mode, &vault_path, cli.socket.as_deref())
             }
