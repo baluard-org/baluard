@@ -399,6 +399,7 @@ impl VaultHandle {
         let (eph, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
             &new_keys.seed(),
             &x25519_dalek::PublicKey::from(recovery_pub),
+            "identity-escrow",
         )?;
         let escrow = serde_json::json!({
             "ephemeral_public": hex::encode(eph),
@@ -466,6 +467,7 @@ impl VaultHandle {
                     &parsed_kw.encrypted_key,
                     &parsed_kw.tag,
                     &privs.x25519,
+                    "root-key-keywrap",
                 )?;
                 let rk_bytes: [u8; 64] = unwrapped
                     .try_into()
@@ -613,8 +615,11 @@ impl VaultHandle {
         let x25519_public = x25519_dalek::PublicKey::from(&privkeys.x25519);
 
         // Step 5: HPKE re-wrap Root Key with new session key
-        let (eph_pub, ct, tag) =
-            crate::crypto::hpke_wrap::wrap_key(root_key.as_bytes(), &x25519_public)?;
+        let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+            root_key.as_bytes(),
+            &x25519_public,
+            "root-key-keywrap",
+        )?;
         let keywrap_data = serde_json::json!({
             "device_id": self.device_id.to_string(),
             "ephemeral_public": hex::encode(eph_pub),
@@ -3258,8 +3263,11 @@ impl VaultHandle {
             }
         };
         let x25519_public = x25519_dalek::PublicKey::from(&privkeys.x25519);
-        let (eph_pub, ct, tag) =
-            crate::crypto::hpke_wrap::wrap_key(new_root_key.as_bytes(), &x25519_public)?;
+        let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+            new_root_key.as_bytes(),
+            &x25519_public,
+            "root-key-keywrap",
+        )?;
         let keywrap_data = serde_json::json!({
             "device_id": self.device_id.to_string(),
             "ephemeral_public": hex::encode(eph_pub),
@@ -3366,8 +3374,11 @@ impl VaultHandle {
                     VaultError::Corrupt("invalid emergency contact pubkey length".into())
                 })?;
                 let contact = x25519_dalek::PublicKey::from(contact_bytes);
-                let (eph_pub, ct, tag) =
-                    crate::crypto::hpke_wrap::wrap_key(new_root_key.as_bytes(), &contact)?;
+                let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+                    new_root_key.as_bytes(),
+                    &contact,
+                    "emergency-escrow",
+                )?;
                 config.wrapped_root_key = crate::orgs::WrappedKeyBundle {
                     ephemeral_pub: hex::encode(eph_pub),
                     ciphertext: hex::encode(ct),
@@ -3497,8 +3508,11 @@ impl VaultHandle {
             .map_err(|_| VaultError::Corrupt("recovery pubkey wrong length".into()))?;
 
         let pubkey = x25519_dalek::PublicKey::from(pubkey_bytes);
-        let (eph_pub, ct, tag) =
-            crate::crypto::hpke_wrap::wrap_key(new_root_key.as_bytes(), &pubkey)?;
+        let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+            new_root_key.as_bytes(),
+            &pubkey,
+            "root-key-keywrap",
+        )?;
 
         // Update the JSON in-place
         json["ephemeral_public"] = serde_json::Value::String(hex::encode(eph_pub));
@@ -3692,7 +3706,8 @@ impl VaultHandle {
 
         // ── Write keywrap for current device (staged) ──
         let x25519_public = x25519_dalek::PublicKey::from(&privkeys.x25519);
-        let (eph_pub, ct, tag) = hpke_wrap::wrap_key(new_root_key.as_bytes(), &x25519_public)?;
+        let (eph_pub, ct, tag) =
+            hpke_wrap::wrap_key(new_root_key.as_bytes(), &x25519_public, "root-key-keywrap")?;
         let keywrap_data = serde_json::json!({
             "device_id": self.device_id.to_string(),
             "ephemeral_public": hex::encode(eph_pub),
@@ -3798,8 +3813,11 @@ impl VaultHandle {
                     VaultError::Corrupt("invalid emergency contact pubkey length".into())
                 })?;
                 let contact = x25519_dalek::PublicKey::from(contact_bytes);
-                let (eph_pub, ct, tag) =
-                    crate::crypto::hpke_wrap::wrap_key(new_root_key.as_bytes(), &contact)?;
+                let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+                    new_root_key.as_bytes(),
+                    &contact,
+                    "emergency-escrow",
+                )?;
                 config.wrapped_root_key = crate::orgs::WrappedKeyBundle {
                     ephemeral_pub: hex::encode(eph_pub),
                     ciphertext: hex::encode(ct),
@@ -5600,8 +5618,12 @@ mod tests {
 
         // Write keywrap for dev2
         let unlocked = handle.unlocked();
-        let (eph, ct, tag) =
-            crate::crypto::hpke_wrap::wrap_key(unlocked.root_key.as_bytes(), &dev2_x_pub).unwrap();
+        let (eph, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+            unlocked.root_key.as_bytes(),
+            &dev2_x_pub,
+            "root-key-keywrap",
+        )
+        .unwrap();
         let _ = unlocked;
         let kw = serde_json::json!({
             "device_id": dev2_id.to_string(),
@@ -5730,8 +5752,12 @@ mod tests {
 
         // Write keywrap for dev2
         let unlocked = handle.unlocked();
-        let (eph, ct, tag) =
-            crate::crypto::hpke_wrap::wrap_key(unlocked.root_key.as_bytes(), &dev2_x_pub).unwrap();
+        let (eph, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+            unlocked.root_key.as_bytes(),
+            &dev2_x_pub,
+            "root-key-keywrap",
+        )
+        .unwrap();
         let _ = unlocked;
         let kw = serde_json::json!({
             "device_id": dev2_id.to_string(),

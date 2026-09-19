@@ -97,7 +97,7 @@ pub fn setup_emergency_access(
     pub_key_bytes.copy_from_slice(contact_pubkey_bytes);
     let pub_key = PublicKey::from(pub_key_bytes);
 
-    let (eph_pub, ct, tag) = hpke_wrap::wrap_key(root_key, &pub_key)?;
+    let (eph_pub, ct, tag) = hpke_wrap::wrap_key(root_key, &pub_key, "emergency-escrow")?;
 
     let wrapped_root_key = crate::orgs::WrappedKeyBundle {
         ephemeral_pub: hex::encode(eph_pub),
@@ -223,7 +223,8 @@ pub fn recover_emergency_root_key(
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&tag_bytes);
 
-    let decrypted = hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, contact_privkey)?;
+    let decrypted =
+        hpke_wrap::unwrap_key(&eph_pub, &ct, &tag, contact_privkey, "emergency-escrow")?;
 
     if decrypted.len() != 64 {
         return Err(VaultError::Corrupt("decrypted key is invalid length".into()).into());
