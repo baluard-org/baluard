@@ -2963,7 +2963,7 @@ impl VaultHandle {
         // sweeps staged .tmp files (ciphers, canary, keywrap) and leaves the
         // marker in place for VaultHandle::open to reconcile. Without this, a
         // crash mid-rename-loop left a mixed-epoch vault with no recovery.
-        let mut _guard = RotationGuard::new(&self.path, &pending_marker);
+        let mut _guard = RotationGuard::new(&self.path);
 
         // Phase 1: Re-encrypt all ciphers to .tmp files (staged)
         let mut staged_renames: Vec<(PathBuf, PathBuf)> = Vec::new();
@@ -2984,7 +2984,49 @@ impl VaultHandle {
                 VaultState::Locked => return Err(VaultError::Locked.into()),
             };
             let mut existing = self.try_decrypt_cipher_with_root_key(&old_root, &file)?;
-            drop(old_root);
+            let old_item_key = Self::derive_item_key_from_root(&old_root, *cipher_id, old_epoch);
+            let new_item_key =
+                Self::derive_item_key_from_root(&new_root_key, *cipher_id, new_epoch);
+
+            // P4: re-encrypt attachment blobs with the new item key (mirrors
+            // revoke_device_and_rekey). Attachments live outside the cipher
+            // envelope; skipping them strands every blob at the old epoch.
+            for attach_meta in &existing.attachments {
+                let attach_dir = self
+                    .path
+                    .join("entries")
+                    .join(cipher_id.to_string())
+                    .join("attachments");
+                let attach_path = attach_dir.join(format!("{}.enc", attach_meta.id));
+                if !attach_path.exists() {
+                    continue;
+                }
+                let enc_blob = std::fs::read(&attach_path)?;
+                let attach_uuid: Uuid = attach_meta
+                    .id
+                    .parse()
+                    .map_err(|e| VaultError::Corrupt(format!("attachment id not a uuid: {e}")))?;
+                let mut plaintext = crate::vault::attachment::decrypt_attachment(
+                    self.vault_id,
+                    *cipher_id,
+                    attach_uuid,
+                    old_item_key.as_bytes(),
+                    &enc_blob,
+                )?;
+                let new_enc = crate::vault::attachment::encrypt_attachment(
+                    self.vault_id,
+                    *cipher_id,
+                    attach_uuid,
+                    new_item_key.as_bytes(),
+                    &plaintext,
+                    new_epoch,
+                    existing.update_seq,
+                )?;
+                plaintext.zeroize();
+                let attach_tmp = attach_path.with_extension("enc.tmp");
+                std::fs::write(&attach_tmp, &new_enc)?;
+                staged_renames.push((attach_tmp, attach_path));
+            }
 
             let input = CipherInput {
                 name: existing.name.clone(),
@@ -3016,6 +3058,7 @@ impl VaultHandle {
             // previously skipped this, leaving every secret in freed heap
             // after a routine non-revocation rotation).
             Self::zeroize_decrypted_cipher(&mut existing);
+            drop(old_root);
 
             // Write to .tmp path (staged)
             let tmp_path = file_path.with_extension("enc.tmp");
@@ -3076,11 +3119,20 @@ impl VaultHandle {
         // 3. Commit keywrap last (point of no return)
         std::fs::rename(&keywrap_tmp, &keywrap_path)?;
 
-        // Read folders/tags/profile with OLD root key before swap
-        let old_folders = self.list_folders().ok();
-        let old_tags = self.list_tags().ok();
-        let old_profile = self.load_profile().ok();
-        let old_activity = self.load_activity_enc().ok();
+        // Read folders/tags/profile/settings/generator history with OLD root
+        // key before swap (P4: settings and generator history joined the
+        // coverage set — both are root-key-derived and unreadable after the
+        // swap without an explicit re-encrypt).
+        // P4: these reads PROPAGATE failures -- `.ok()` silently skipped an
+        // artifact whose read failed, stranding it at the old epoch after the
+        // swap with no error reported. Missing files already return
+        // Ok(empty) inside the readers; `.ok()` is not needed.
+        let old_folders = self.list_folders()?;
+        let old_tags = self.list_tags()?;
+        let old_profile = self.load_profile()?;
+        let old_activity = self.load_activity_enc()?;
+        let old_settings = self.get_settings()?;
+        let old_generator = self.load_generator_history()?;
 
         // Phase 5: Swap Root Key and update epoch via DeviceManager lifecycle
         match &mut self.state {
@@ -3108,34 +3160,71 @@ impl VaultHandle {
             self.device_manager.notify_rotation_committed(new_epoch, vp);
         }
 
-        // Re-encrypt folders/tags/profile with NEW root key
-        if let Some(folders) = old_folders {
-            let _ = self.save_folders(&folders);
-        }
-        if let Some(tags) = old_tags {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let index = crate::vault::manifest::TagIndex {
-                tags,
-                updated_at: now,
-            };
-            let _ = self.save_tags_enc(&index);
-        }
-        if let Some(profile) = old_profile {
-            let _ = self.save_profile(&profile);
-        }
-        if let Some(activity) = old_activity {
-            let _ = self.save_activity_enc(&activity);
-        }
+        // Re-encrypt folders/tags/profile/settings/generator history with the
+        // NEW root key. P4: failures PROPAGATE — a silent failure here
+        // stranded the artifact at the old epoch, unreadable after the swap.
+        // On failure the .rotation-pending marker is intentionally left in
+        // place (the guard is not disarmed on error paths below): the vault
+        // stays flagged incomplete until finalize_rotation reconciles.
+        self.save_folders(&old_folders)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let index = crate::vault::manifest::TagIndex {
+            tags: old_tags,
+            updated_at: now,
+        };
+        self.save_tags_enc(&index)?;
+        self.save_profile(&old_profile)?;
+        self.save_activity_enc(&old_activity)?;
+        self.save_settings(&old_settings)?;
+        self.save_generator_history(&old_generator)?;
 
-        // Clean up rotation-pending marker (disarm guard first)
-        _guard.disarm();
-        let _ = std::fs::remove_file(self.path.join("meta/.rotation-pending"));
+        // P4: re-wrap the emergency escrow to the NEW root key. The old
+        // escrow hands emergency recovery a stale key whose canary check
+        // fails — silently breaking emergency access after any rotation.
+        // Skipped when emergency access is not configured or is revoked.
+        // This runs BEFORE the rotation state is cleared: any failure here
+        // propagates with the .rotation-pending marker still on disk, so the
+        // next open warns that the rotation did not complete cleanly.
+        if let Some(mut config) = crate::emergency::load_emergency_config(&self.path)? {
+            if !matches!(config.status, crate::emergency::EmergencyStatus::Revoked) {
+                let contact_bytes: [u8; 32] = config
+                    .trusted_contact_pubkey
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| {
+                    VaultError::Corrupt("invalid emergency contact pubkey length".into())
+                })?;
+                let contact = x25519_dalek::PublicKey::from(contact_bytes);
+                let (eph_pub, ct, tag) =
+                    crate::crypto::hpke_wrap::wrap_key(new_root_key.as_bytes(), &contact)?;
+                config.wrapped_root_key = crate::orgs::WrappedKeyBundle {
+                    ephemeral_pub: hex::encode(eph_pub),
+                    ciphertext: hex::encode(ct),
+                    tag: hex::encode(tag),
+                };
+                let seal = self.devkey_seal();
+                let privkeys = load_device_privkeys(&self.path, self.device_id, seal.as_ref())?;
+                crate::emergency::sign_status(
+                    &mut config,
+                    &privkeys.ed25519,
+                    &self.vault_id.to_string(),
+                )?;
+                crate::emergency::save_emergency_config(&self.path, &config)?;
+            }
+        }
 
         // H4 fix: re-wrap recovery key with new Root Key (propagate error)
         Self::rewrap_recovery_key(&self.path, &new_root_key)?;
+
+        // Success: only now clear the rotation state. Every fallible step
+        // above propagated its error while the guard was still armed, so a
+        // failure leaves the marker on disk and the next open warns that the
+        // rotation did not complete cleanly.
+        _guard.disarm();
+        std::fs::remove_file(self.path.join("meta/.rotation-pending"))?;
 
         Ok(())
     }
@@ -3309,7 +3398,7 @@ impl VaultHandle {
             serde_json::to_string_pretty(&pending_data).unwrap(),
         )?;
         let _ = std::fs::set_permissions(&pending_marker, std::fs::Permissions::from_mode(0o600));
-        let mut _guard = RotationGuard::new(&self.path, &pending_marker);
+        let mut _guard = RotationGuard::new(&self.path);
 
         // ── Commit: revoke in registry and get new root key ──
         let mut result = self
@@ -3464,11 +3553,20 @@ impl VaultHandle {
             .join(format!("meta/keywrap/{target_device_id}.json"));
         let _ = std::fs::remove_file(&revoked_keywrap);
 
-        // Read folders/tags/profile with OLD root key before swap
-        let old_folders = self.list_folders().ok();
-        let old_tags = self.list_tags().ok();
-        let old_profile = self.load_profile().ok();
-        let old_activity = self.load_activity_enc().ok();
+        // Read folders/tags/profile/settings/generator history with OLD root
+        // key before swap (P4: settings and generator history joined the
+        // coverage set — both are root-key-derived and unreadable after the
+        // swap without an explicit re-encrypt).
+        // P4: these reads PROPAGATE failures -- `.ok()` silently skipped an
+        // artifact whose read failed, stranding it at the old epoch after the
+        // swap with no error reported. Missing files already return
+        // Ok(empty) inside the readers; `.ok()` is not needed.
+        let old_folders = self.list_folders()?;
+        let old_tags = self.list_tags()?;
+        let old_profile = self.load_profile()?;
+        let old_activity = self.load_activity_enc()?;
+        let old_settings = self.get_settings()?;
+        let old_generator = self.load_generator_history()?;
 
         // ── Update in-memory state ──
         match &mut self.state {
@@ -3495,34 +3593,68 @@ impl VaultHandle {
             self.device_manager.notify_rotation_committed(new_epoch, vp);
         }
 
-        // Re-encrypt folders/tags/profile with NEW root key
-        if let Some(folders) = old_folders {
-            let _ = self.save_folders(&folders);
-        }
-        if let Some(tags) = old_tags {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let index = crate::vault::manifest::TagIndex {
-                tags,
-                updated_at: now,
-            };
-            let _ = self.save_tags_enc(&index);
-        }
-        if let Some(profile) = old_profile {
-            let _ = self.save_profile(&profile);
-        }
-        if let Some(activity) = old_activity {
-            let _ = self.save_activity_enc(&activity);
-        }
+        // Re-encrypt folders/tags/profile/settings/generator history with the
+        // NEW root key. P4: failures PROPAGATE — a silent failure here
+        // stranded the artifact at the old epoch, unreadable after the swap.
+        // On failure the .rotation-pending marker is intentionally left in
+        // place (the guard is not disarmed on error paths below): the vault
+        // stays flagged incomplete until finalize_rotation reconciles.
+        self.save_folders(&old_folders)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let index = crate::vault::manifest::TagIndex {
+            tags: old_tags,
+            updated_at: now,
+        };
+        self.save_tags_enc(&index)?;
+        self.save_profile(&old_profile)?;
+        self.save_activity_enc(&old_activity)?;
+        self.save_settings(&old_settings)?;
+        self.save_generator_history(&old_generator)?;
 
-        // Clean up rotation-pending marker (disarm guard first)
-        _guard.disarm();
-        let _ = std::fs::remove_file(&pending_marker);
+        // P4: re-wrap the emergency escrow to the NEW root key. The old
+        // escrow hands emergency recovery a stale key whose canary check
+        // fails — silently breaking emergency access after any rotation.
+        // Skipped when emergency access is not configured or is revoked.
+        // Runs BEFORE the rotation state is cleared: any failure here
+        // propagates with the .rotation-pending marker still on disk.
+        if let Some(mut config) = crate::emergency::load_emergency_config(&self.path)? {
+            if !matches!(config.status, crate::emergency::EmergencyStatus::Revoked) {
+                let contact_bytes: [u8; 32] = config
+                    .trusted_contact_pubkey
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| {
+                    VaultError::Corrupt("invalid emergency contact pubkey length".into())
+                })?;
+                let contact = x25519_dalek::PublicKey::from(contact_bytes);
+                let (eph_pub, ct, tag) =
+                    crate::crypto::hpke_wrap::wrap_key(new_root_key.as_bytes(), &contact)?;
+                config.wrapped_root_key = crate::orgs::WrappedKeyBundle {
+                    ephemeral_pub: hex::encode(eph_pub),
+                    ciphertext: hex::encode(ct),
+                    tag: hex::encode(tag),
+                };
+                let seal = self.devkey_seal();
+                let privkeys = load_device_privkeys(&self.path, self.device_id, seal.as_ref())?;
+                crate::emergency::sign_status(
+                    &mut config,
+                    &privkeys.ed25519,
+                    &self.vault_id.to_string(),
+                )?;
+                crate::emergency::save_emergency_config(&self.path, &config)?;
+            }
+        }
 
         // H4 fix: re-wrap recovery key with new Root Key (propagate error)
         Self::rewrap_recovery_key(&self.path, &new_root_key)?;
+
+        // Success: only now clear the rotation state (same ordering rationale
+        // as rotate_root_key — the marker must survive any failure).
+        _guard.disarm();
+        std::fs::remove_file(&pending_marker)?;
 
         Ok(result)
     }
@@ -3747,19 +3879,20 @@ impl VaultHandle {
     }
 }
 
-/// RAII guard: on drop, removes all .tmp files in vault dirs and the rotation-pending marker.
-/// Disarm with `disarm()` after successful commit.
+/// RAII guard: on drop (still armed — i.e. the rotation failed or panicked),
+/// sweeps all .tmp files in the vault dirs but KEEPS the rotation-pending
+/// marker so `VaultHandle::open` warns that a rotation did not complete.
+/// Disarm with `disarm()` only after a successful commit, then remove the
+/// marker explicitly.
 struct RotationGuard {
     vault_path: PathBuf,
-    pending_marker: PathBuf,
     armed: bool,
 }
 
 impl RotationGuard {
-    fn new(vault_path: &Path, pending_marker: &Path) -> Self {
+    fn new(vault_path: &Path) -> Self {
         Self {
             vault_path: vault_path.to_path_buf(),
-            pending_marker: pending_marker.to_path_buf(),
             armed: true,
         }
     }
@@ -3773,7 +3906,10 @@ impl Drop for RotationGuard {
         if !self.armed {
             return;
         }
-        let _ = std::fs::remove_file(&self.pending_marker);
+        // NOTE: the pending marker is deliberately KEPT — an armed drop means
+        // the rotation failed or panicked, and the next open must warn that
+        // the vault may be in a mixed-epoch state (P4: an incomplete rotation
+        // must never look complete).
         // Sweep flat dirs
         for dir_name in &["ciphers", "trash"] {
             remove_tmp_files(&self.vault_path.join(dir_name));
@@ -3977,6 +4113,252 @@ mod tests {
         let (dir, _password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
         assert!(handle.unlock("wrong-password").is_err());
+    }
+
+    /// P4: rotate_root_key must re-encrypt EVERY root-key-derived artifact —
+    /// settings, generator history, attachments, and the emergency escrow
+    /// joined the pre-existing folders/tags/profile/activity coverage. After
+    /// rotation, all of them must be readable at the new epoch, and the
+    /// emergency escrow must unwrap to the NEW root key.
+    #[test]
+    fn rotation_covers_all_artifacts() {
+        use crate::emergency;
+        use crate::types::{GeneratorHistoryEntry, GeneratorKind, GeneratorParams};
+        use x25519_dalek::PublicKey;
+
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let vault_id_str = handle.vault_id.to_string();
+        let device_id = handle.device_id;
+        let seal = handle.devkey_seal();
+        let old_epoch = match &handle.state {
+            VaultState::Unlocked(u) => u.current_epoch,
+            VaultState::Locked => panic!("locked"),
+        };
+        let old_root = handle_root_key_for_test(&handle);
+
+        // Folder + tag + settings + generator history + profile.
+        let _folder_id = handle.create_folder("folders-f").unwrap();
+        handle.create_tag("art-tag").unwrap();
+        let mut settings = handle.get_settings().unwrap();
+        settings.lang = Some("es".to_string());
+        handle.save_settings(&settings).unwrap();
+        handle
+            .add_generator_history_entry(GeneratorHistoryEntry {
+                value: "gen-pw".into(),
+                kind: GeneratorKind::Password,
+                params: GeneratorParams {
+                    length: 20,
+                    upper: true,
+                    numbers: true,
+                    symbols: false,
+                    separator: None,
+                },
+                created_at: 1_700_000_000,
+            })
+            .unwrap();
+        handle
+            .save_profile(&crate::vault::manifest::UserProfile {
+                display_name: Some("P5c Tester".into()),
+                subtitle: None,
+                avatar_ext: None,
+            })
+            .unwrap();
+
+        // Cipher with one attachment blob on disk.
+        let attach_uuid = uuid::Uuid::new_v4();
+        let cipher_id = handle
+            .add_cipher(&crate::types::CipherInput {
+                name: "with-attach".into(),
+                folder_id: None,
+                kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+                favorite: false,
+                reprompt: false,
+                notes: None,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+                attachments: vec![crate::vault::attachment::AttachmentMeta {
+                    id: attach_uuid.to_string(),
+                    filename: "secret.txt".into(),
+                    size: 8,
+                    encrypted_size: 0,
+                    mime_type: "text/plain".into(),
+                    created_at: 0,
+                }],
+                archived: false,
+                tags: vec![],
+            })
+            .unwrap();
+        let old_item_key = VaultHandle::derive_item_key_from_root(
+            &crate::keys::hierarchy::RootKey::from_bytes(old_root.clone().try_into().unwrap()),
+            cipher_id,
+            old_epoch,
+        );
+        let attach_dir = dir
+            .path()
+            .join("entries")
+            .join(cipher_id.to_string())
+            .join("attachments");
+        std::fs::create_dir_all(&attach_dir).unwrap();
+        let attach_blob = crate::vault::attachment::encrypt_attachment(
+            handle.vault_id,
+            cipher_id,
+            attach_uuid,
+            old_item_key.as_bytes(),
+            b"filedata",
+            old_epoch,
+            1,
+        )
+        .unwrap();
+        std::fs::write(attach_dir.join(format!("{attach_uuid}.enc")), attach_blob).unwrap();
+
+        // Emergency access armed with a contact key we hold the private half of.
+        let mut contact_secret_bytes = [0u8; 32];
+        rand::Rng::fill(&mut rand::thread_rng(), &mut contact_secret_bytes);
+        let contact_secret = x25519_dalek::StaticSecret::from(contact_secret_bytes);
+        let contact_pub = PublicKey::from(&contact_secret);
+        emergency::setup_emergency_access(
+            dir.path(),
+            "trust@example.com",
+            contact_pub.as_bytes(),
+            0,
+            &old_root.clone().try_into().unwrap(),
+            &vault_id_str,
+            &load_device_privkeys(dir.path(), device_id, seal.as_ref())
+                .unwrap()
+                .ed25519,
+        )
+        .unwrap();
+        // Recovery requires owner-approved status (verify against pinned key).
+        emergency::approve_emergency_request(
+            dir.path(),
+            &load_device_privkeys(dir.path(), device_id, seal.as_ref())
+                .unwrap()
+                .ed25519,
+            &vault_id_str,
+        )
+        .unwrap();
+
+        // ── Rotate ──
+        handle.rotate_root_key().unwrap();
+
+        let new_root = handle_root_key_for_test(&handle);
+        assert_ne!(new_root, old_root);
+        let new_epoch = match &handle.state {
+            VaultState::Unlocked(u) => u.current_epoch,
+            VaultState::Locked => panic!("locked"),
+        };
+        assert_eq!(new_epoch, old_epoch + 1);
+
+        // Metadata artifacts readable at the new epoch.
+        assert!(
+            handle
+                .list_folders()
+                .unwrap()
+                .iter()
+                .any(|f| f.name == "folders-f")
+        );
+        assert!(handle.list_tags().unwrap().contains(&"art-tag".to_string()));
+        assert_eq!(handle.get_settings().unwrap().lang, Some("es".to_string()));
+        let history = handle.load_generator_history().unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].value, "gen-pw");
+        assert_eq!(
+            handle.load_profile().unwrap().display_name,
+            Some("P5c Tester".to_string())
+        );
+
+        // Attachment blob decrypts with the NEW item key.
+        let new_item_key = VaultHandle::derive_item_key_from_root(
+            &crate::keys::hierarchy::RootKey::from_bytes(new_root.clone().try_into().unwrap()),
+            cipher_id,
+            new_epoch,
+        );
+        let enc_blob = std::fs::read(attach_dir.join(format!("{attach_uuid}.enc"))).unwrap();
+        let plaintext = crate::vault::attachment::decrypt_attachment(
+            handle.vault_id,
+            cipher_id,
+            attach_uuid,
+            new_item_key.as_bytes(),
+            &enc_blob,
+        )
+        .unwrap();
+        assert_eq!(plaintext.as_slice(), b"filedata");
+
+        // Emergency escrow unwraps to the NEW root key.
+        let owner_vk = load_device_privkeys(dir.path(), device_id, seal.as_ref())
+            .unwrap()
+            .ed25519
+            .verifying_key();
+        let recovered =
+            emergency::recover_emergency_root_key(dir.path(), &contact_secret, &owner_vk).unwrap();
+        assert_eq!(recovered.as_slice(), new_root.as_slice());
+    }
+
+    /// P5c/P4: a blocked per-fact path makes save_folders fail — and the
+    /// failure PROPAGATES to every caller (P4 never swallows metadata save
+    /// errors).
+    #[test]
+    fn save_folders_blocked_path_fails() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let folder_id = handle.create_folder("changed").unwrap();
+
+        // Make the folder's per-fact FILE path a directory: any save that
+        // must rewrite it fails (atomic rename onto a directory), and the
+        // failure PROPAGATES out of save_folders (P4: never silently strand
+        // an artifact at the old epoch).
+        let folder_file = dir
+            .path()
+            .join("meta/folders")
+            .join(format!("{folder_id}.enc"));
+        std::fs::remove_file(&folder_file).unwrap();
+        std::fs::create_dir_all(&folder_file).unwrap();
+
+        let changed = crate::vault::manifest::Folder {
+            id: folder_id,
+            name: "changed-v2".into(),
+            parent_id: None,
+            icon: None,
+        };
+        let err = handle.save_folders(&[changed]).unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("directory"),
+            "expected the blocked-path save failure, got: {err}"
+        );
+    }
+
+    /// P4: a pre-swap metadata READ failure aborts the rotation BEFORE the
+    /// point of no return, with the .rotation-pending marker left on disk
+    /// (the armed RotationGuard keeps it — an incomplete rotation must never
+    /// look complete).
+    #[test]
+    fn rotation_propagates_metadata_failure() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let folder_id = handle.create_folder("doomed").unwrap();
+
+        // Corrupt the folder's per-fact file: the pre-swap list_folders()
+        // read propagates the decrypt failure, aborting the rotation before
+        // the keywrap swap. (get_settings is error-tolerant by design, so
+        // settings corruption would NOT abort — folders do.)
+        let folder_file = dir
+            .path()
+            .join("meta/folders")
+            .join(format!("{folder_id}.enc"));
+        std::fs::write(&folder_file, b"not-a-valid-envelope").unwrap();
+
+        let err = handle.rotate_root_key().unwrap_err();
+        assert!(
+            dir.path().join("meta/.rotation-pending").exists(),
+            "aborted rotation must leave the pending marker"
+        );
+        assert!(!err.to_string().is_empty());
     }
 
     /// P5c: folders and tags live as per-fact encrypted files. Two commits

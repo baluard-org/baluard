@@ -234,13 +234,16 @@ mod tests {
 
     #[test]
     fn passphrase_word_count() {
+        // "|" cannot appear in a wordlist word (ASCII a-z), so splitting on
+        // it counts words exactly — unlike "-", which appears inside four
+        // hyphenated EFF entries and made this assertion randomly fail.
         let opts = PassphraseOptions {
             word_count: 7,
-            separator: "-".into(),
+            separator: "|".into(),
             ..Default::default()
         };
         let pp = generate_passphrase(&opts).unwrap();
-        assert_eq!(pp.split('-').count(), 7, "7 words joined by '-'");
+        assert_eq!(pp.split('|').count(), 7, "7 words joined by '|'");
     }
 
     #[test]
@@ -314,8 +317,10 @@ mod tests {
         let es: usize = BIP39_ES.lines().filter(|l| !l.is_empty()).count();
         // EFF short 2.0 is 1296 (1295 unique after dedup); BIP-39 ES is 2048.
         // Merged EFF lists (large + short, deduplicated, 40 Spanish-shared
-        // entries removed) are exactly 8,192.
-        assert_eq!(en, 8192, "EFF-EN count {en}");
+        // entries removed) were exactly 8,192; P5c removed the 4 hyphenated
+        // entries (passphrase separator collisions) → 8,188. Entropy loss:
+        // ~0.07 bits on a 7-word passphrase — negligible.
+        assert_eq!(en, 8188, "EFF-EN count {en}");
         // BIP-39 (2,048) + RAE/DLE additions = 8,192.
         assert_eq!(es, 8192, "ES count");
     }

@@ -247,7 +247,11 @@ fn status_payload(config: &EmergencyConfig) -> Vec<u8> {
 }
 
 /// Sign the current status with the owner's Ed25519 device key.
-fn sign_status(
+/// The signature covers `status || vault_id` only — NOT the
+/// `wrapped_root_key` (that is bound by HPKE to the contact pubkey).
+/// `pub(crate)`: also used by the rotation rewrap, which must re-sign after
+/// swapping the wrapped key so the pinned-key verification stays valid.
+pub(crate) fn sign_status(
     config: &mut EmergencyConfig,
     owner_signing_key: &ed25519_dalek::SigningKey,
     vault_id: &str,
