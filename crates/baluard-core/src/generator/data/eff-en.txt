@@ -2085,7 +2085,6 @@ drizzly
 drone
 drool
 droop
-drop-down
 dropbox
 dropkick
 droplet
@@ -2642,7 +2641,6 @@ feel
 feigned
 feisty
 feline
-felt-tip
 feminine
 feminism
 feminist
@@ -6989,7 +6987,6 @@ syringes
 syrup
 system
 systemize
-t-shirt
 tabasco
 tabby
 tableful
@@ -8156,7 +8153,6 @@ yiddish
 yield
 yin
 yippee
-yo-yo
 yodel
 yoga
 yogurt
