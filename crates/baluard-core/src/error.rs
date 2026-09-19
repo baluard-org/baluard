@@ -170,6 +170,9 @@ pub enum SyncError {
     #[error("revocation manifest invalid: {0}")]
     RevocationInvalid(String),
 
+    #[error("policy violation: device {device} may not write {path}")]
+    PolicyViolation { device: String, path: String },
+
     #[error("state machine error: {0}")]
     StateMachine(String),
 

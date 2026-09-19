@@ -2458,7 +2458,8 @@ impl SyncEngine {
                 .find_commit(*oid)
                 .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
             if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
-                self.verify_commit_against_roster(repo, *oid, &roster)?;
+                let signer = self.verify_commit_against_roster(repo, *oid, &roster)?;
+                Self::check_commit_paths(repo, &commit, &roster, &signer)?;
             }
         }
 
@@ -2508,7 +2509,8 @@ impl SyncEngine {
                 .find_commit(*oid)
                 .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
             if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
-                Self::verify_commit_against_roster_static(repo, *oid, &roster)?;
+                let signer = Self::verify_commit_against_roster_static(repo, *oid, &roster)?;
+                Self::check_commit_paths(repo, &commit, &roster, &signer)?;
             }
         }
         Ok(())
@@ -2644,15 +2646,62 @@ impl SyncEngine {
     }
 
     /// Verify one commit's embedded signature against the roster in force.
-    /// A match identifies the signing device; an empty roster or no match
-    /// fails closed with InvalidCommitSignature.
+    /// A match identifies the signing device, returned so the P7 net-diff
+    /// check can resolve the signer's policy role; an empty roster or no
+    /// match fails closed with InvalidCommitSignature.
     fn verify_commit_against_roster(
         &self,
         repo: &Repository,
         oid: Oid,
         roster: &DeviceRoster,
-    ) -> Result<(), BaluardError> {
+    ) -> Result<String, BaluardError> {
         Self::verify_commit_against_roster_static(repo, oid, roster)
+    }
+
+    /// P7: every path a REGULAR commit touches must be admitted by the
+    /// signer's policy row (first-match table, deny by default). Merge
+    /// commits are exempt here — P8a owns the merge-residue rule.
+    fn check_commit_paths(
+        repo: &Repository,
+        commit: &git2::Commit<'_>,
+        roster: &DeviceRoster,
+        signer: &str,
+    ) -> Result<(), BaluardError> {
+        if commit.parent_count() > 1 {
+            return Ok(());
+        }
+        // Pre-S1a: devices.json carries no roles; roster membership IS the
+        // role (admin-equivalent). S1a replaces this resolver.
+        let role = if roster.contains_key(signer) {
+            crate::sync::policy::CommitRole::Admin
+        } else {
+            crate::sync::policy::CommitRole::PendingJoiner
+        };
+        let tree = commit
+            .tree()
+            .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
+        let parent_tree = if commit.parent_count() == 1 {
+            Some(
+                commit
+                    .parent(0)
+                    .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?
+                    .tree()
+                    .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?,
+            )
+        } else {
+            None
+        };
+        let diff = repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
+            .map_err(|e| SyncError::Git(format!("net diff: {e}")))?;
+        for delta in diff.deltas() {
+            let candidates = [delta.new_file().path(), delta.old_file().path()];
+            for path in candidates.into_iter().flatten() {
+                crate::sync::policy::authorize(signer, role, &path.to_string_lossy())
+                    .map_err(BaluardError::from)?;
+            }
+        }
+        Ok(())
     }
 
     /// Static variant used by the clone path (no engine instance needed —
@@ -2662,7 +2711,7 @@ impl SyncEngine {
         repo: &Repository,
         oid: Oid,
         roster: &DeviceRoster,
-    ) -> Result<(), BaluardError> {
+    ) -> Result<String, BaluardError> {
         // Extract signature and signed data from the commit object
         let (sig_buf, content_buf) = repo
             .extract_signature(&oid, None)
@@ -2680,9 +2729,9 @@ impl SyncEngine {
             .map_err(|_| SyncError::InvalidCommitSignature)?;
 
         // Find the roster key that validates this signature. The matching
-        // entry IS the signing device binding (consumed by the policy table
-        // once membership v2 lands).
-        for vk_bytes in roster.values() {
+        // entry IS the signing device binding; the P7 net-diff check
+        // resolves the signer's policy row from it.
+        for (device_id, vk_bytes) in roster {
             if crate::sync::commit::verify_commit_signature(
                 vk_bytes,
                 signed_data.as_bytes(),
@@ -2690,7 +2739,7 @@ impl SyncEngine {
             )
             .is_ok()
             {
-                return Ok(());
+                return Ok(device_id.clone());
             }
         }
         Err(SyncError::InvalidCommitSignature.into())
@@ -3292,6 +3341,50 @@ mod tests {
             touched.iter().any(|p| p == "meta/devices.json"),
             "epoch change must land the devices.json bump, touched: {touched:?}"
         );
+    }
+
+    /// P7: a pulled commit touching a path no policy row covers is
+    /// refused with deny-by-default semantics (same rejection class as a
+    /// bad signature): the pull aborts and HEAD stays put.
+    #[test]
+    fn pull_refuses_commit_touching_uncovered_path() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine_a) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":7}").unwrap();
+        // Recreate the engine so it loads the key written by enrollment.
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+        engine_a.commit_all(&repo_a, "seed").unwrap();
+
+        let (_remote, clone_dir, _clone_engine, cloned) =
+            make_clone(dir.path(), &engine_a, &repo_a);
+        let head_before = cloned.head().unwrap().peel_to_commit().unwrap().id();
+
+        // A second device so the clone can act as its own engine.
+        let key_b = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_b = uuid::Uuid::new_v4();
+        enroll_device(clone_dir.path(), &id_b, &key_b);
+        let engine_b = SyncEngine::new(clone_dir.path(), &id_b.to_string(), None);
+
+        // Device A commits a file in a directory no policy row covers.
+        std::fs::create_dir_all(dir.path().join("unknown")).unwrap();
+        std::fs::write(dir.path().join("unknown/x.enc"), b"\x01").unwrap();
+        engine_a.commit_all(&repo_a, "smuggled path").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        let result = engine_b.pull(&cloned, "origin");
+        assert!(
+            matches!(
+                &result,
+                Err(BaluardError::Sync(SyncError::PolicyViolation { .. }))
+            ),
+            "expected policy violation, got {result:?}"
+        );
+        let head_after = cloned.head().unwrap().peel_to_commit().unwrap().id();
+        assert_eq!(head_after, head_before, "refused pull must not move HEAD");
     }
 
     /// P5a: a merge conflict confined to meta/devices.json (here: the owner
