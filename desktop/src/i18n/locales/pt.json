@@ -259,6 +259,8 @@
     "autolockDesc": "Bloqueia automaticamente o cofre após um período de inatividade.",
     "quickUnlockLongDesc": "Armazene credenciais de forma segura no chaveiro do SO usando biometria (impressão digital/rosto) ou código PIN.",
     "quickUnlockNoReadGate": "Neste dispositivo, qualquer programa em execução como seu usuário pode ler a senha mestra armazenada sem solicitação prévia. Mantenha o Desbloqueio Rápido ativado apenas se confiar neste dispositivo.",
+    "quickUnlockSharedWarning": "Aviso: qualquer pessoa com biometria registrada neste dispositivo poderá desbloquear este cofre.",
+    "pinSharedWarning": "Aviso: qualquer pessoa que consiga desbloquear a tela deste dispositivo poderá desbloquear este cofre com este PIN.",
     "unsupported": "Não suportado",
     "enabled": "Ativado",
     "disabled": "Desativado",

@@ -231,6 +231,8 @@
     "autolockDesc": "Bloquea automáticamente la bóveda después de un período de inactividad.",
     "quickUnlockLongDesc": "Guarda las credenciales de forma segura en el llavero del sistema usando la biometría del dispositivo (huella/rostro) o código PIN.",
     "quickUnlockNoReadGate": "En este dispositivo, cualquier programa ejecutado con tu usuario puede leer la contraseña maestra guardada sin pedir confirmación. Mantén el desbloqueo rápido activado solo si confías en este dispositivo.",
+    "quickUnlockSharedWarning": "Advertencia: cualquier persona cuyos datos biométricos estén registrados en este dispositivo podrá desbloquear esta bóveda.",
+    "pinSharedWarning": "Advertencia: cualquier persona que pueda desbloquear la pantalla de este dispositivo podrá desbloquear esta bóveda con este PIN.",
     "unsupported": "No compatible",
     "enabled": "Activado",
     "disabled": "Desactivado",

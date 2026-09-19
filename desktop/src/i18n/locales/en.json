@@ -259,6 +259,8 @@
     "autolockDesc": "Automatically locks the vault after a period of inactivity.",
     "quickUnlockLongDesc": "Store credentials securely in OS Keychain using device biometrics (fingerprint/face) or PIN code.",
     "quickUnlockNoReadGate": "On this device, any program running as your user can read the stored master password without a prompt. Keep Quick Unlock enabled only if you trust this device.",
+    "quickUnlockSharedWarning": "Warning: anyone whose biometrics are enrolled on this device will be able to unlock this vault.",
+    "pinSharedWarning": "Warning: anyone who can unlock this device's screen will be able to unlock this vault with this PIN.",
     "unsupported": "Unsupported",
     "enabled": "Enabled",
     "disabled": "Disabled",

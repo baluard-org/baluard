@@ -584,6 +584,38 @@ mod tests {
         assert!(matches!(err, SwitchError::UnknownSlug(s) if s == "ghost"));
     }
 
+    /// P1c: lock_all must cascade the full chokepoint (generation bump +
+    /// token death) across every open vault, and must complete without
+    /// holding the host lock across per-vault locks (no deadlock under a
+    /// deadline).
+    #[tokio::test]
+    async fn lock_all_cascades_generation_and_tokens() {
+        let host = VaultHost::new();
+        for slug in ["alpha", "beta"] {
+            let state = Arc::new(VaultState::new(PathBuf::from(format!("/tmp/{slug}"))));
+            // Simulate an unlocked session: mint a token at the current
+            // generation (same fields the unlock path stamps).
+            state.test_mint_session_token(&format!("tok-{slug}")).await;
+            host.insert(slug.to_string(), state).await;
+        }
+
+        let locked = tokio::time::timeout(std::time::Duration::from_secs(2), host.lock_all())
+            .await
+            .expect("lock_all must not deadlock");
+        assert_eq!(locked, 2, "both open vaults must lock");
+
+        for slug in ["alpha", "beta"] {
+            let state = host.get(slug).await.expect("vault still registered");
+            assert!(
+                state
+                    .verify_session_token(&format!("tok-{slug}"))
+                    .await
+                    .is_err(),
+                "token for {slug} must be dead after lock_all"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn close_clears_active_in_one_critical_section() {
         let host = VaultHost::new();

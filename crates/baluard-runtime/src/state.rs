@@ -74,6 +74,13 @@ pub struct VaultState {
     /// H6 fix: Timestamp when session token was created (epoch seconds).
     /// Token expires after SESSION_TOKEN_TTL_SECONDS.
     session_token_created: AtomicU64,
+    /// P1c: Lock generation counter. Bumped on every `lock()`; the session
+    /// token is only valid while its mint-time generation matches. Even if
+    /// a future lock path forgets to clear the token, a stale token dies
+    /// here (defense in depth for the lock chokepoint cascade).
+    session_generation: AtomicU64,
+    /// P1c: Generation at which the current token was minted (0 = none).
+    session_token_generation: AtomicU64,
     /// Last activity timestamp (seconds since epoch). Updated on every IPC request.
     last_activity: AtomicU64,
     /// Cover commit scheduler handle. Cancelled on lock.
@@ -107,6 +114,8 @@ impl VaultState {
             inner: RwLock::new(None),
             session_token: RwLock::new(None),
             session_token_created: AtomicU64::new(0),
+            session_generation: AtomicU64::new(0),
+            session_token_generation: AtomicU64::new(0),
             last_activity: AtomicU64::new(0),
             cover_timer: RwLock::new(None),
             cover_pending: std::sync::atomic::AtomicBool::new(false),
@@ -361,6 +370,10 @@ impl VaultState {
         // R7-2: Generate session token on unlock
         let mut token_guard = self.session_token.write().await;
         *token_guard = Some(generate_session_token());
+        self.session_token_generation.store(
+            self.session_generation.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
         self.session_token_created.store(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -426,6 +439,11 @@ impl VaultState {
 
     /// Lock the vault, zeroizing keys in memory. Clears the session token.
     pub async fn lock(&self) -> Result<(), String> {
+        // P1c: bump the lock generation FIRST — any in-flight or forgotten
+        // token minted at the previous generation dies here even if a
+        // future code path forgets the explicit clear below (defense in
+        // depth for the lock chokepoint cascade).
+        self.session_generation.fetch_add(1, Ordering::Relaxed);
         // Stop cover timer + auto-sync first
         self.stop_cover_timer().await;
         self.autosync.deactivate().await;
@@ -440,6 +458,7 @@ impl VaultState {
         let mut token_guard = self.session_token.write().await;
         *token_guard = None;
         self.session_token_created.store(0, Ordering::Relaxed);
+        self.session_token_generation.store(0, Ordering::Relaxed);
         Ok(())
     }
 
@@ -525,6 +544,10 @@ impl VaultState {
         drop(guard);
         let mut token_guard = self.session_token.write().await;
         *token_guard = Some(generate_session_token());
+        self.session_token_generation.store(
+            self.session_generation.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
         self.session_token_created.store(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -3291,6 +3314,10 @@ impl VaultState {
                 drop(guard);
                 let mut token_guard = self.session_token.write().await;
                 *token_guard = Some(generate_session_token());
+                self.session_token_generation.store(
+                    self.session_generation.load(Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
                 self.session_token_created.store(
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -3927,6 +3954,10 @@ impl VaultState {
         let token = generate_session_token();
         let mut token_guard = self.session_token.write().await;
         *token_guard = Some(token.clone());
+        self.session_token_generation.store(
+            self.session_generation.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
         self.session_token_created.store(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -3963,8 +3994,23 @@ impl VaultState {
                 // Expired: clear token and reject
                 *self.session_token.write().await = None;
                 self.session_token_created.store(0, Ordering::Relaxed);
+                self.session_token_generation.store(0, Ordering::Relaxed);
                 return Err("Session token expired. Re-unlock the vault.".into());
             }
+        }
+
+        // P1c: generation check. A token minted at generation G is only
+        // valid while the vault is still at generation G. `lock()` bumps
+        // the generation, so a stale token dies here even if a code path
+        // ever forgets the explicit clear (defense in depth).
+        if self.session_token_generation.load(Ordering::Relaxed)
+            != self.session_generation.load(Ordering::Relaxed)
+        {
+            // Stale generation: the token is dead; clear the residue.
+            *self.session_token.write().await = None;
+            self.session_token_created.store(0, Ordering::Relaxed);
+            self.session_token_generation.store(0, Ordering::Relaxed);
+            return Err("Vault was locked and re-unlocked. Re-unlock required.".into());
         }
 
         let guard = self.session_token.read().await;
@@ -3982,6 +4028,26 @@ impl VaultState {
     /// Get the current session token (for embedding in unlock/create responses).
     pub async fn get_session_token(&self) -> Option<String> {
         self.session_token.read().await.clone()
+    }
+
+    /// Test-only: mint a session token exactly like the unlock paths do
+    /// (token + creation time + current generation stamp), without needing
+    /// a real unlocked vault. Lets host-level tests exercise the P1c
+    /// chokepoint cascade.
+    #[cfg(test)]
+    pub(crate) async fn test_mint_session_token(&self, token: &str) {
+        *self.session_token.write().await = Some(token.to_string());
+        self.session_token_generation.store(
+            self.session_generation.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        self.session_token_created.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -4401,5 +4467,145 @@ mod totp_meta_tests {
 
         state.archive_cipher(&id).await.unwrap();
         assert!(state.list_totp_meta().await.unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod session_token_tests {
+    use super::VaultState;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    async fn mint(state: &VaultState, token: &str) {
+        // Mirror the unlock-path mint (same fields, same ordering contract).
+        *state.session_token.write().await = Some(token.to_string());
+        state.session_token_generation.store(
+            state.session_generation.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        state.session_token_created.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            Ordering::Relaxed,
+        );
+    }
+
+    /// P1c: a fresh state has no token; verify fails closed with the
+    /// locked-vault message.
+    #[tokio::test]
+    async fn verify_fails_closed_when_no_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = VaultState::new(dir.path().to_path_buf());
+        let err = state.verify_session_token("whatever").await.unwrap_err();
+        assert!(err.contains("locked"), "got: {err}");
+    }
+
+    /// P1c: lock() bumps the generation. A token re-injected at the OLD
+    /// generation is dead even though the explicit clear was bypassed —
+    /// the defense-in-depth property of the chokepoint cascade.
+    #[tokio::test]
+    async fn lock_generation_kills_stale_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = VaultState::new(dir.path().to_path_buf());
+        let gen0 = state.session_generation.load(Ordering::Relaxed);
+
+        mint(&state, "token-g0").await;
+        state.verify_session_token("token-g0").await.unwrap();
+
+        state.lock().await.unwrap();
+        assert_eq!(
+            state.session_generation.load(Ordering::Relaxed),
+            gen0 + 1,
+            "lock must bump the generation"
+        );
+        // Normal path: lock cleared the token.
+        assert!(state.verify_session_token("token-g0").await.is_err());
+
+        // Bug-class simulation: a future lock path forgets the clear and
+        // the old token resurfaces. Generation mismatch must kill it.
+        *state.session_token.write().await = Some("token-g0".to_string());
+        let err = state.verify_session_token("token-g0").await.unwrap_err();
+        assert!(
+            err.contains("locked and re-unlocked"),
+            "stale-generation token must be rejected: {err}"
+        );
+        // The residue was cleared by the check itself.
+        assert!(state.session_token.read().await.is_none());
+    }
+
+    /// P1c: a token minted at the CURRENT generation verifies; the same
+    /// string minted at a different generation does not.
+    #[tokio::test]
+    async fn remint_at_current_generation_verifies() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = VaultState::new(dir.path().to_path_buf());
+
+        mint(&state, "tok-a").await;
+        state.verify_session_token("tok-a").await.unwrap();
+
+        state.lock().await.unwrap();
+        mint(&state, "tok-b").await;
+        state.verify_session_token("tok-b").await.unwrap();
+        assert!(state.verify_session_token("tok-a").await.is_err());
+
+        // A second lock invalidates tok-b too (monotonic cascade).
+        state.lock().await.unwrap();
+        assert!(state.verify_session_token("tok-b").await.is_err());
+    }
+
+    /// P1c plan rule: the lock cascade must NEVER await the sync
+    /// cycle_lock (it is held across 60s network spawn_blocking calls
+    /// whose timeouts do not cancel the blocking task). Holding
+    /// cycle_lock must not delay lock().
+    #[tokio::test]
+    async fn lock_does_not_await_cycle_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = VaultState::new(dir.path().to_path_buf());
+
+        let cycle = state.autosync.cycle_lock_guard().await;
+        let locked = tokio::time::timeout(Duration::from_secs(2), state.lock()).await;
+        drop(cycle);
+        assert!(
+            locked.is_ok(),
+            "lock() deadlocked behind cycle_lock — the chokepoint must not await it"
+        );
+        locked.unwrap().unwrap();
+    }
+
+    /// P1c regression: the REAL mint paths (create_vault, unlock) must
+    /// stamp the mint generation. Without the stamps, the first
+    /// token-gated call after a re-unlock wipes the session (review finding:
+    /// "locked out on the very first request after re-unlocking"). Runs
+    /// hermetically under BALUARD_DISABLE_KEYRING=1 (just test); skips
+    /// elsewhere to avoid a headless keyring probe hang.
+    #[tokio::test]
+    async fn real_unlock_mints_generation_stamped_token() {
+        if !baluard_core::keyring_disabled() {
+            eprintln!("skipping: set BALUARD_DISABLE_KEYRING=1 to run hermetically");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let state = VaultState::new(dir.path().to_path_buf());
+        state
+            .create_vault(r#"{"password":"test-pass-123","profile":"mobile_low"}"#)
+            .await
+            .unwrap();
+
+        // Creation mint is stamped: the echoed token verifies.
+        let tok = state.get_session_token().await.unwrap();
+        state.verify_session_token(&tok).await.unwrap();
+
+        state.lock().await.unwrap();
+        assert!(state.verify_session_token(&tok).await.is_err());
+
+        // Re-unlock via the REAL master-password path; the new token must
+        // verify on the first gated call (this is exactly what unstamped
+        // mint sites broke).
+        state.unlock("test-pass-123").await.unwrap();
+        let tok2 = state.get_session_token().await.unwrap();
+        assert_ne!(tok, tok2, "re-unlock must mint a fresh token");
+        state.verify_session_token(&tok2).await.unwrap();
     }
 }
