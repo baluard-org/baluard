@@ -3511,7 +3511,7 @@ impl VaultHandle {
         let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
             new_root_key.as_bytes(),
             &pubkey,
-            "root-key-keywrap",
+            "recovery-keywrap",
         )?;
 
         // Update the JSON in-place

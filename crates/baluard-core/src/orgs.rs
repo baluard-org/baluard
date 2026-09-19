@@ -93,7 +93,7 @@ pub fn add_member(
     pub_key_bytes.copy_from_slice(x25519_pub_bytes);
     let pub_key = PublicKey::from(pub_key_bytes);
 
-    let (eph_pub, ct, tag) = hpke_wrap::wrap_key(group_key, &pub_key, "member-keywrap:org")?;
+    let (eph_pub, ct, tag) = hpke_wrap::wrap_key(group_key, &pub_key, "member-keywrap")?;
 
     let bundle = WrappedKeyBundle {
         ephemeral_pub: hex::encode(eph_pub),
@@ -135,15 +135,13 @@ pub fn remove_member(vault_path: &Path, device_id: Uuid) -> Result<[u8; 32], Bal
         pub_key_bytes.copy_from_slice(&member.x25519_public_key);
         let pub_key = PublicKey::from(pub_key_bytes);
 
-        let (eph_pub, ct, tag) =
-            hpke_wrap::wrap_key(&new_group_key, &pub_key, "member-keywrap:org-rotation").map_err(
-                |e| {
-                    VaultError::Crypto(format!(
-                        "failed to wrap key for member {}: {}",
-                        member.email, e
-                    ))
-                },
-            )?;
+        let (eph_pub, ct, tag) = hpke_wrap::wrap_key(&new_group_key, &pub_key, "member-keywrap")
+            .map_err(|e| {
+                VaultError::Crypto(format!(
+                    "failed to wrap key for member {}: {}",
+                    member.email, e
+                ))
+            })?;
 
         let bundle = WrappedKeyBundle {
             ephemeral_pub: hex::encode(eph_pub),
