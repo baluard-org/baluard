@@ -480,33 +480,44 @@ impl VaultHandle {
             match attempt_unwrap(self.device_id) {
                 Ok(rk) => (rk, self.device_id),
                 Err(primary_err) => {
-                    let keywrap_dir = self.path.join("meta/keywrap");
-                    let mut healed = None;
-                    if keywrap_dir.exists() {
-                        if let Ok(entries) = std::fs::read_dir(&keywrap_dir) {
-                            for entry in entries.flatten() {
-                                let name = entry.file_name().to_string_lossy().to_string();
-                                if let Some(id_str) = name.strip_suffix(".json") {
-                                    if let Ok(candidate_id) = Uuid::parse_str(id_str) {
-                                        if candidate_id != self.device_id {
-                                            if let Ok(rk) = attempt_unwrap(candidate_id) {
-                                                healed = Some((rk, candidate_id));
-                                                break;
+                    // P3: prefer this device's fresh wrap from the committed
+                    // rekey transaction (its own keywrap file is stale or
+                    // missing after a rotation by another device) BEFORE the
+                    // F1 cross-device heal: a survivor must not silently
+                    // adopt another device's identity while its own wrap is
+                    // recoverable.
+                    if let Some(rk) = self.adopt_rekey_txn_root(&devkey_seal) {
+                        (rk, self.device_id)
+                    } else {
+                        let keywrap_dir = self.path.join("meta/keywrap");
+                        let mut healed = None;
+                        if keywrap_dir.exists() {
+                            if let Ok(entries) = std::fs::read_dir(&keywrap_dir) {
+                                for entry in entries.flatten() {
+                                    let name = entry.file_name().to_string_lossy().to_string();
+                                    if let Some(id_str) = name.strip_suffix(".json") {
+                                        if let Ok(candidate_id) = Uuid::parse_str(id_str) {
+                                            if candidate_id != self.device_id {
+                                                if let Ok(rk) = attempt_unwrap(candidate_id) {
+                                                    healed = Some((rk, candidate_id));
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    if let Some((rk, healed_id)) = healed {
-                        self.device_id = healed_id;
-                        let _ =
-                            crate::vault::device_privkey::write_device_id(&self.path, healed_id);
-                        (rk, healed_id)
-                    } else {
-                        return Err(primary_err);
+                        if let Some((rk, healed_id)) = healed {
+                            self.device_id = healed_id;
+                            let _ = crate::vault::device_privkey::write_device_id(
+                                &self.path, healed_id,
+                            );
+                            (rk, healed_id)
+                        } else {
+                            return Err(primary_err);
+                        }
                     }
                 }
             }
@@ -1955,6 +1966,60 @@ impl VaultHandle {
         Ok(metas)
     }
 
+    /// P3: adopt this device's fresh Root Key wrap from the committed rekey
+    /// transaction for the CURRENT epoch (`meta/rekey/<epoch>.txn`).
+    ///
+    /// A survivor of a rotation committed by another device holds a stale
+    /// (revocation flow) keywrap; the transaction distributed with the
+    /// rotation carries an HPKE wrap of the new Root Key for every remaining
+    /// enrolled device. Adoption is epoch-bound (file name == transaction
+    /// epoch == current canary epoch) and fail-closed: any mismatch returns
+    /// None and the original unlock error stands.
+    fn adopt_rekey_txn_root(&self, devkey_seal: &[u8; 32]) -> Option<RootKey> {
+        let epoch = self.determine_current_epoch();
+        if epoch == 0 {
+            return None;
+        }
+        let txn_path = self.path.join(format!("meta/rekey/{epoch}.txn"));
+        let txn_json = std::fs::read_to_string(&txn_path).ok()?;
+        let tx: crate::keys::rotation::RekeyTransaction = serde_json::from_str(&txn_json).ok()?;
+        if tx.new_epoch != epoch {
+            return None;
+        }
+        let entry = tx
+            .wrapped_root_keys
+            .iter()
+            .find(|e| e.device_id == self.device_id)?;
+        let privs = load_device_privkeys(&self.path, self.device_id, Some(devkey_seal)).ok()?;
+        let unwrapped = hpke_wrap::unwrap_key(
+            &entry.ephemeral_public,
+            &entry.encrypted_key,
+            &entry.tag,
+            &privs.x25519,
+            &format!("keywrap:rotation:{epoch}"),
+        )
+        .ok()?;
+        let rk_bytes: [u8; 64] = unwrapped.try_into().ok()?;
+        let rk = RootKey::from_bytes(rk_bytes);
+        self.verify_root_key(&rk).ok()?;
+
+        // Persist the adopted wrap so the next unlock takes the fast path.
+        let kw = serde_json::json!({
+            "device_id": self.device_id.to_string(),
+            "ephemeral_public": hex::encode(&entry.ephemeral_public),
+            "encrypted_key": hex::encode(&entry.encrypted_key),
+            "tag": hex::encode(entry.tag),
+        });
+        super::write_vault_file(
+            &self
+                .path
+                .join(format!("meta/keywrap/{}.json", self.device_id)),
+            serde_json::to_string_pretty(&kw).unwrap().as_bytes(),
+        )
+        .ok()?;
+        Some(rk)
+    }
+
     /// Verify root key by decrypting the Root Key canary.
     /// The canary is stored at vault creation as AES-256-GCM("baluard-rk-ok")
     /// encrypted with a key derived from Root Key.
@@ -3085,7 +3150,7 @@ impl VaultHandle {
     /// 1. Generate new Root Key
     /// 2. Re-encrypt all ciphers (active + trash) to .tmp files
     /// 3. Update RK canary with new Root Key
-    /// 4. Write new keywrap file for this device
+    /// 4. Write new keywrap files for every enrolled device
     /// 5. Rename all .tmp -> final (single pass)
     /// 6. Transition epoch via DeviceManager lifecycle
     /// 7. Zeroize old Root Key
@@ -3282,6 +3347,31 @@ impl VaultHandle {
             &keywrap_tmp,
             serde_json::to_string_pretty(&keywrap_data).unwrap(),
         )?;
+
+        // P3: wrap the new Root Key for every OTHER enrolled device so
+        // survivors unlock on next pull. Without this, a routine rotation
+        // bricks every other device (their keywrap files still wrap the
+        // retired root key). Staged with the rest; failures propagate.
+        for (dev_id, dev_pub) in &self.device_manager.registry.encryption_public_keys() {
+            if *dev_id == self.device_id {
+                continue;
+            }
+            let (dev_eph, dev_ct, dev_tag) = crate::crypto::hpke_wrap::wrap_key(
+                new_root_key.as_bytes(),
+                &x25519_dalek::PublicKey::from(*dev_pub),
+                "root-key-keywrap",
+            )?;
+            let dev_data = serde_json::json!({
+                "device_id": dev_id.to_string(),
+                "ephemeral_public": hex::encode(dev_eph),
+                "encrypted_key": hex::encode(dev_ct),
+                "tag": hex::encode(dev_tag),
+            });
+            let dev_path = self.path.join(format!("meta/keywrap/{dev_id}.json"));
+            let dev_tmp = dev_path.with_extension("json.tmp");
+            std::fs::write(&dev_tmp, serde_json::to_string_pretty(&dev_data).unwrap())?;
+            staged_renames.push((dev_tmp, dev_path));
+        }
 
         // Phase 4: Atomic commit - rename all .tmp -> final
         // Order matters for crash safety: ciphers first, canary second, keywrap last.
@@ -5589,6 +5679,267 @@ mod tests {
 
         let metas = handle.list_cipher_meta().unwrap();
         assert_eq!(metas.len(), 1);
+    }
+
+    // ── P3: keywrap distribution + rekey-txn adoption ──
+
+    /// Enroll a second device the way a real two-device vault looks:
+    /// registry entry, current-epoch keywrap file, and dev2's own local
+    /// state (sealed private keys + local device-id file) so the vault
+    /// can be re-opened AS dev2.
+    fn enroll_second_device(
+        handle: &mut VaultHandle,
+        dir: &std::path::Path,
+        password: &str,
+    ) -> (uuid::Uuid, x25519_dalek::StaticSecret) {
+        let dev2_id = uuid::Uuid::new_v4();
+        let dev2_ed = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+        let dev2_x = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let dev2_x_pub = x25519_dalek::PublicKey::from(&dev2_x);
+        handle
+            .device_manager
+            .registry
+            .enroll_with_id(
+                dev2_id,
+                "device-2".into(),
+                dev2_x_pub.to_bytes(),
+                dev2_ed.verifying_key().to_bytes(),
+                Some(handle.device_id),
+            )
+            .unwrap();
+        handle.sync_registry_from_device_manager();
+
+        let root = handle.unlocked().root_key.clone();
+        let (eph, ct, tag) =
+            crate::crypto::hpke_wrap::wrap_key(root.as_bytes(), &dev2_x_pub, "root-key-keywrap")
+                .unwrap();
+        let kw = serde_json::json!({
+            "device_id": dev2_id.to_string(),
+            "ephemeral_public": hex::encode(eph),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        std::fs::write(
+            dir.join(format!("meta/keywrap/{dev2_id}.json")),
+            serde_json::to_string_pretty(&kw).unwrap(),
+        )
+        .unwrap();
+
+        let kek = kdf::derive_kek(password, &handle.kdf_params).unwrap();
+        let seal = hkdf_derive::derive_devkey_seal_key(&kek).unwrap();
+        let inner = serde_json::json!({
+            "x25519_private": hex::encode(dev2_x.to_bytes()),
+            "ed25519_private": hex::encode(dev2_ed.to_bytes()),
+        })
+        .to_string();
+        crate::vault::device_privkey::seal_file(
+            &dir.join("meta/device-privkey.json"),
+            &inner,
+            &seal,
+            Some(dev2_id),
+        )
+        .unwrap();
+        crate::vault::device_privkey::write_device_id(dir, dev2_id).unwrap();
+        (dev2_id, dev2_x)
+    }
+
+    /// Enroll a bare third device (registry + keywrap file only). It never
+    /// unlocks in-process; it exists so a revocation leaves a survivor
+    /// behind (revoking the second device would leave none).
+    fn enroll_third_device(handle: &mut VaultHandle, dir: &std::path::Path) -> uuid::Uuid {
+        let dev3_id = uuid::Uuid::new_v4();
+        let dev3_ed = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+        let dev3_x = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let dev3_x_pub = x25519_dalek::PublicKey::from(&dev3_x);
+        handle
+            .device_manager
+            .registry
+            .enroll_with_id(
+                dev3_id,
+                "device-3".into(),
+                dev3_x_pub.to_bytes(),
+                dev3_ed.verifying_key().to_bytes(),
+                Some(handle.device_id),
+            )
+            .unwrap();
+        handle.sync_registry_from_device_manager();
+        let root = handle.unlocked().root_key.clone();
+        let (eph, ct, tag) =
+            crate::crypto::hpke_wrap::wrap_key(root.as_bytes(), &dev3_x_pub, "root-key-keywrap")
+                .unwrap();
+        let kw = serde_json::json!({
+            "device_id": dev3_id.to_string(),
+            "ephemeral_public": hex::encode(eph),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        std::fs::write(
+            dir.join(format!("meta/keywrap/{dev3_id}.json")),
+            serde_json::to_string_pretty(&kw).unwrap(),
+        )
+        .unwrap();
+        dev3_id
+    }
+
+    // A survivor that pulls a repo rotated by another device must unlock
+    // via the committed rekey transaction, keeping its OWN device id.
+    // Pre-fix, the transaction had no consumer: the survivor's stale
+    // keywrap failed the canary check and unlock either bricked (real
+    // machines) or silently adopted another device's identity via the F1
+    // heal (this shared-dir simulation).
+    #[test]
+    fn rekey_txn_adopted_on_survivor_unlock() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let (dev2_id, _dev2_x) = enroll_second_device(&mut handle, dir.path(), &password);
+        let dev3_id = enroll_third_device(&mut handle, dir.path());
+
+        let input = CipherInput {
+            name: "Secret".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("user".into()),
+                password: Some("pass123".into()),
+                ..Default::default()
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+            reprompt: false,
+        };
+        let cipher_id = handle.add_cipher(&input).unwrap();
+
+        let old_epoch = handle.unlocked().current_epoch;
+        let result = handle.revoke_device_and_rekey(dev3_id).unwrap();
+        let new_epoch = result.new_epoch;
+        assert_ne!(new_epoch, old_epoch);
+
+        // Revocation removed the target's keywrap; the survivor's is now
+        // stale (still wraps the retired root key).
+        assert!(
+            !dir.path()
+                .join(format!("meta/keywrap/{dev3_id}.json"))
+                .exists()
+        );
+        assert!(
+            dir.path()
+                .join(format!("meta/keywrap/{dev2_id}.json"))
+                .exists()
+        );
+
+        // The committed transaction carries a fresh wrap for the survivor.
+        let txn_path = dir.path().join(format!("meta/rekey/{new_epoch}.txn"));
+        assert!(
+            txn_path.exists(),
+            "rekey txn must be committed for survivors"
+        );
+        let tx: crate::keys::rotation::RekeyTransaction =
+            serde_json::from_str(&std::fs::read_to_string(&txn_path).unwrap()).unwrap();
+        assert_eq!(tx.new_epoch, new_epoch);
+        assert!(tx.wrapped_root_keys.iter().any(|e| e.device_id == dev2_id));
+
+        // Simulate the survivor pulling the rotated repo and unlocking.
+        drop(handle);
+        let mut survivor = VaultHandle::open(dir.path()).unwrap();
+        assert_eq!(survivor.device_id, dev2_id);
+        survivor.unlock(&password).unwrap();
+        // Adoption must keep the survivor's OWN identity (pre-fix, the F1
+        // heal silently re-targeted the unlock at the actor's device).
+        assert_eq!(
+            survivor.device_id, dev2_id,
+            "unlock must not adopt another device's identity"
+        );
+        assert_eq!(survivor.unlocked().current_epoch, new_epoch);
+        // Adoption persisted the survivor's keywrap for the fast path.
+        assert!(
+            dir.path()
+                .join(format!("meta/keywrap/{dev2_id}.json"))
+                .exists()
+        );
+        match survivor.get_cipher(cipher_id).unwrap() {
+            CipherRead::Decrypted(c) => assert_eq!(c.name, "Secret"),
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+    }
+
+    // Routine rotation distributes fresh keywraps to every enrolled
+    // device, not just the actor. Without this, a plain rotate_root_key
+    // bricks every other device on next pull.
+    #[test]
+    fn rotate_root_key_distributes_keywraps_to_all_devices() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let (dev2_id, dev2_x) = enroll_second_device(&mut handle, dir.path(), &password);
+
+        let old_epoch = handle.unlocked().current_epoch;
+        handle.rotate_root_key().unwrap();
+        let new_epoch = handle.unlocked().current_epoch;
+        assert_eq!(new_epoch, old_epoch + 1);
+
+        let kw_path = dir.path().join(format!("meta/keywrap/{dev2_id}.json"));
+        assert!(
+            kw_path.exists(),
+            "rotation must write a keywrap for every enrolled device"
+        );
+        let parsed =
+            crate::vault::keywrap::parse_keywrap_json(&std::fs::read_to_string(&kw_path).unwrap())
+                .unwrap();
+        let unwrapped = crate::crypto::hpke_wrap::unwrap_key(
+            &parsed.ephemeral_public,
+            &parsed.encrypted_key,
+            &parsed.tag,
+            &dev2_x,
+            "root-key-keywrap",
+        )
+        .unwrap();
+        let expected = handle.unlocked().root_key.as_bytes();
+        assert_eq!(&unwrapped[..], &expected[..]);
+    }
+
+    // Adoption is fail-closed: no committed txn for the current epoch, or
+    // a txn whose content does not match its epoch binding, must never
+    // unlock the vault.
+    #[test]
+    fn rekey_txn_adoption_fails_closed() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let (dev2_id, _) = enroll_second_device(&mut handle, dir.path(), &password);
+        let dev3_id = enroll_third_device(&mut handle, dir.path());
+        let actor_id = handle.device_id;
+        let result = handle.revoke_device_and_rekey(dev3_id).unwrap();
+        let new_epoch = result.new_epoch;
+        let txn_path = dir.path().join(format!("meta/rekey/{new_epoch}.txn"));
+        let txn_json = std::fs::read_to_string(&txn_path).unwrap();
+        drop(handle);
+
+        // Keep the F1 heal from impersonating the actor: a real survivor
+        // cannot unwrap another device's keywrap, so the actor's keywrap
+        // file must not offer a heal path in this shared-dir simulation.
+        std::fs::remove_file(dir.path().join(format!("meta/keywrap/{actor_id}.json"))).unwrap();
+
+        // Case 1: txn missing (never synced) -> survivor stays locked out.
+        std::fs::remove_file(&txn_path).unwrap();
+        let mut survivor = VaultHandle::open(dir.path()).unwrap();
+        assert_eq!(survivor.device_id, dev2_id);
+        assert!(survivor.unlock(&password).is_err());
+        drop(survivor);
+
+        // Case 2: txn present but content does not match its file name
+        // (tampered or partially synced) -> fail closed.
+        let mut tx: crate::keys::rotation::RekeyTransaction =
+            serde_json::from_str(&txn_json).unwrap();
+        tx.new_epoch += 1;
+        std::fs::write(&txn_path, serde_json::to_string_pretty(&tx).unwrap()).unwrap();
+        let mut survivor = VaultHandle::open(dir.path()).unwrap();
+        assert!(survivor.unlock(&password).is_err());
     }
 
     #[test]
