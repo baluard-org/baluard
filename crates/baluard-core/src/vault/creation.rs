@@ -437,6 +437,8 @@ impl<'a> VaultCreator<'a> {
                     role: crate::vault::members::MemberRole::Owner,
                     trust: crate::vault::members::TrustLevel::SelfTrust,
                     identity_signing_pubkey: None,
+                    identity_signing_pubkey_previous: None,
+                    identity_rotation_signature: None,
                     identity_rotated_at: None,
                 };
                 crate::vault::members::write_member(&path, &owner_member)?;
