@@ -134,6 +134,34 @@ pub fn bind_to_owner(vault_path: &Path, device_id: Uuid) -> Result<(), BaluardEr
     Ok(())
 }
 
+/// Role of `device_id`'s member, from the on-disk directory. `None` when
+/// unbound or legacy (no member directory).
+pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<MemberRole> {
+    let dir = vault_path.join(MEMBERS_DIR);
+    let entries = std::fs::read_dir(&dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".json") {
+            continue;
+        }
+        let binding = entry
+            .path()
+            .join("devices")
+            .join(format!("{device_id}.json"));
+        if !binding.exists() {
+            continue;
+        }
+        if let Ok(json) = std::fs::read_to_string(entry.path()) {
+            if let Ok(member) = serde_json::from_str::<MemberFile>(&json) {
+                if member.id.to_string() == name.trim_end_matches(".json") {
+                    return Some(member.role);
+                }
+            }
+        }
+    }
+    None
+}
+
 // ── S1a-2: join ceremony (invite → introduce → approve) ──
 //
 // Thin offline variant of the §4.1 join queue: the owner mints a
@@ -147,6 +175,8 @@ pub fn bind_to_owner(vault_path: &Path, device_id: Uuid) -> Result<(), BaluardEr
 
 use base64::Engine as _;
 use sha2::{Digest, Sha256};
+use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 /// Owner-side one-time invite (travels out-of-band inside the code; the
 /// repo-side pending file records only the secret hash).
@@ -352,15 +382,15 @@ pub fn create_introduction(
     rand::rngs::OsRng.fill_bytes(&mut salt);
     kdf_params.salt = salt.to_vec();
 
-    let kek = crate::crypto::kdf::derive_kek(password, &kdf_params)?;
-    let session_key = crate::crypto::hkdf_derive::derive_session_key(&kek)?;
+    let kek = Zeroizing::new(crate::crypto::kdf::derive_kek(password, &kdf_params)?);
+    let session_key = Zeroizing::new(crate::crypto::hkdf_derive::derive_session_key(&kek)?);
     let kek_canary = super::canary::create_kek_canary(&session_key, vault_id)?;
-    let devkey_seal = crate::crypto::hkdf_derive::derive_devkey_seal_key(&kek)?;
+    let devkey_seal = Zeroizing::new(crate::crypto::hkdf_derive::derive_devkey_seal_key(&kek)?);
 
     // Seal the member's device private keys under their OWN kek-derived
     // seal subkey: their password never touches the founding device's
     // vault-level material.
-    let inner = serde_json::json!({
+    let mut inner = serde_json::json!({
         "device_id": device_id.to_string(),
         "x25519_private": hex::encode(x25519_secret.to_bytes()),
         "ed25519_private": hex::encode(ed25519_signing.to_bytes()),
@@ -372,6 +402,7 @@ pub fn create_introduction(
         &devkey_seal,
         Some(device_id),
     )?;
+    inner.zeroize();
     super::device_privkey::write_device_id(vault_path, device_id)?;
 
     let unlock = MemberUnlock {

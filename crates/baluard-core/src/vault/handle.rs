@@ -247,6 +247,19 @@ impl VaultHandle {
     ///
     /// Note: In CLI mode, the device X25519 private key is stored in the
     /// keywrap JSON for simplicity. In production, this lives in OS keystore.
+    fn assert_can_manage_members(&self) -> Result<(), BaluardError> {
+        match crate::vault::members::member_role_for_device(&self.path, self.device_id) {
+            Some(crate::vault::members::MemberRole::Owner)
+            | Some(crate::vault::members::MemberRole::Admin) => Ok(()),
+            Some(_) => Err(VaultError::InvalidOperation(
+                "only the owner or an admin can manage members".into(),
+            )
+            .into()),
+            // Legacy vault (no member directory): the founder manages.
+            None => Ok(()),
+        }
+    }
+
     /// S1a-2: mint a one-time member invite (owner side). The returned
     /// code travels out-of-band; the repo-side pending file records only
     /// the role and the secret hash. Consumed at approval.
@@ -257,6 +270,7 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
+        self.assert_can_manage_members()?;
         crate::vault::members::create_invite(&self.path, self.vault_id, role)
     }
 
@@ -271,6 +285,7 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
+        self.assert_can_manage_members()?;
         let intro = crate::vault::members::Introduction::decode(intro_code)?;
         if intro.vault_id != self.vault_id {
             return Err(VaultError::InvalidOperation(
@@ -353,7 +368,19 @@ impl VaultHandle {
             let kek = kdf::derive_kek(master_password, &member.kdf_params)?;
             let canary = hex::decode(&member.kek_canary)
                 .map_err(|_| VaultError::Corrupt("member canary".into()))?;
-            return self.unlock_with_member_canary(&kek, canary);
+            // Failed attempts record against the same counter as the
+            // master-password path: brute-force protection applies to
+            // member passwords too.
+            return match self.unlock_with_member_canary(&kek, canary) {
+                Ok(()) => {
+                    self.clear_failed_attempts()?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = self.record_failed_attempt();
+                    Err(e)
+                }
+            };
         }
 
         // Step 1: Derive KEK (expensive Argon2id)
@@ -566,16 +593,24 @@ impl VaultHandle {
         // Step 3: Verify KEK is correct by decrypting the KEK canary
         // Canary plaintext MUST equal b"baluard-kek-ok" — this catches wrong passwords
         // even when AES-GCM doesn't fail (cosmically unlikely but defense-in-depth).
-        // Member unlocks (S1a-2) verify their own device-local canary.
-        match canary_override {
-            Some(canary) => super::canary::verify_kek_canary(&session_key, &canary)?,
-            None => {
-                if self.path.join("meta/kek-canary.enc").exists() {
-                    let canary_data = std::fs::read(self.path.join("meta/kek-canary.enc"))
-                        .map_err(|e| VaultError::Metadata(format!("reading kek canary: {e}")))?;
-                    super::canary::verify_kek_canary(&session_key, &canary_data)?;
+        // Member devices (S1a-2) verify their own device-local canary.
+        let canary_data = match canary_override {
+            Some(canary) => canary,
+            None => match crate::vault::members::load_member_unlock(&self.path, self.device_id)? {
+                Some(member) => hex::decode(&member.kek_canary)
+                    .map_err(|_| VaultError::Corrupt("member canary".into()))?,
+                None => {
+                    if self.path.join("meta/kek-canary.enc").exists() {
+                        std::fs::read(self.path.join("meta/kek-canary.enc"))
+                            .map_err(|e| VaultError::Metadata(format!("reading kek canary: {e}")))?
+                    } else {
+                        Vec::new()
+                    }
                 }
-            }
+            },
+        };
+        if !canary_data.is_empty() {
+            super::canary::verify_kek_canary(&session_key, &canary_data)?;
         }
 
         // Step 4: HPKE-decapsulate Root Key using device private key (keyring or file).
@@ -3100,6 +3135,12 @@ impl VaultHandle {
             if candidates.contains(&local_id) {
                 return Ok(local_id);
             }
+            // S1a-2: a pending member device (introduced, awaiting the
+            // approval keywrap) records a local identity that is not yet
+            // in the keywrap directory. Keep it — the approval commit
+            // ships the keywrap and unlock proceeds then. Never adopt
+            // another device's id over a recorded local identity.
+            return Ok(local_id);
         }
 
         // F1 fix: match local device public key against devices.json registry per device
@@ -5964,6 +6005,14 @@ mod tests {
         )
         .unwrap();
 
+        // Pre-approval: the joiner can open the clone; the local device
+        // identity survives and unlock fails clearly (no keywrap yet).
+        let mut early = VaultHandle::open(&joiner_path).unwrap();
+        let intro = crate::vault::members::Introduction::decode(&intro_code).unwrap();
+        assert_eq!(early.device_id, intro.device_id);
+        assert!(early.unlock("member-pass").is_err());
+        drop(early);
+
         // Owner: approve (enrolls the device, wraps the Root Key to it,
         // writes the member record + binding with the invite's role).
         handle.approve_join(&intro_code).unwrap();
@@ -5976,6 +6025,13 @@ mod tests {
         engine_j.pull(&repo_j, "origin").unwrap();
         let mut joiner = VaultHandle::open(&joiner_path).unwrap();
         assert_ne!(joiner.device_id, handle.device_id);
+        // Wrong password records a failed attempt (brute-force protection
+        // covers member passwords too); the correct one still works.
+        assert!(joiner.unlock("wrong-pass").is_err());
+        assert!(
+            joiner_path.join("meta/kdf-attempts.json").exists(),
+            "failed member unlock attempts must record"
+        );
         joiner.unlock("member-pass").unwrap();
 
         // Member writes a cipher; the owner pulls and the role-aware

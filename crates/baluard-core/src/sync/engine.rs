@@ -3050,6 +3050,29 @@ impl SyncEngine {
                     .verify_checkpoint(object_id, vk)
                     .map_err(|_| deny())?;
             }
+            // Containment: an honest update never drops or downgrades a
+            // known checkpoint (an empty manifest would neuter rollback
+            // detection).
+            let old_id = delta.old_file().id();
+            if !old_id.is_zero() {
+                if let Ok(old_blob) = repo.find_blob(old_id) {
+                    if let Ok(old_manifest) = serde_json::from_slice::<
+                        crate::integrity::IntegrityManifest,
+                    >(old_blob.content())
+                    {
+                        for (object_id, old_cp) in &old_manifest.checkpoints {
+                            match manifest.checkpoints.get(object_id) {
+                                Some(cp)
+                                    if cp.device_id == old_cp.device_id && cp.seq >= old_cp.seq => {
+                                }
+                                _ => return Err(deny()),
+                            }
+                        }
+                    }
+                    // An unparseable OLD manifest: the new one is fully
+                    // verified above on its own merits; keep going.
+                }
+            }
             return Ok(());
         }
         if path == "meta/devices.json"
@@ -3095,6 +3118,9 @@ impl SyncEngine {
         let Ok(signer_id) = uuid::Uuid::parse_str(signer) else {
             return false;
         };
+        if old_reg.version != new_reg.version {
+            return false;
+        }
         if old_reg.devices.len() != new_reg.devices.len() {
             return false;
         }
