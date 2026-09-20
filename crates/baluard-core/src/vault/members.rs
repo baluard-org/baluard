@@ -72,6 +72,22 @@ pub struct MemberFile {
     /// (rotation is visible and contestable per §4.1).
     #[serde(default)]
     pub identity_rotated_at: Option<u64>,
+    /// S1a-5: member reset marker (§5.F-8, scenario L: device gone AND
+    /// phrase gone). Present = the row is tombstoned: its identity is
+    /// dead (see the cleared identity fields), its bindings resolve to
+    /// nothing, and `successor` is the fresh row the re-join ceremony
+    /// adopts. Tombstones are admin-authored; entries are preserved.
+    #[serde(default)]
+    pub reset: Option<MemberReset>,
+}
+
+/// S1a-5: reset provenance on a tombstoned member row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberReset {
+    /// The successor member row created by the reset.
+    pub successor: Uuid,
+    /// Unix seconds at reset time.
+    pub at: u64,
 }
 
 /// Device-to-member binding. Presence of this file = the device belongs
@@ -168,8 +184,73 @@ pub fn identity_rotation_payload(
     payload
 }
 
+/// S1a-5: member reset (§5.F-8, scenario L: device gone AND phrase
+/// gone). Tombstones `old_member_id` (identity cleared, previous-key
+/// set so contact reconciliation resets the dial, bindings dead) and
+/// creates the successor row (fresh id, same display name + role,
+/// trust back at Channel for re-verification). Returns the successor
+/// id and a one-time reset invite bound to it: approval flows through
+/// the NORMAL join ceremony but binds the successor row instead of
+/// minting a new one. Entries are untouched. Actor gating (admin+,
+/// not-self, not-owner) is the caller's job.
+pub fn reset_member(
+    vault_path: &Path,
+    vault_id: Uuid,
+    old_member_id: Uuid,
+) -> Result<(Uuid, String), BaluardError> {
+    let deny = |msg: &str| BaluardError::from(VaultError::InvalidOperation(msg.to_string()));
+    let path = vault_path
+        .join(MEMBERS_DIR)
+        .join(format!("{old_member_id}.json"));
+    let data = std::fs::read_to_string(&path).map_err(|_| deny("member not found"))?;
+    let mut old: MemberFile =
+        serde_json::from_str(&data).map_err(|e| deny(&format!("member record unreadable: {e}")))?;
+    if old.reset.is_some() {
+        return Err(deny("member is already reset"));
+    }
+    if old.role == MemberRole::Owner {
+        return Err(deny(
+            "the owner row cannot be reset (use ownership transfer)",
+        ));
+    }
+    let successor_id = Uuid::new_v4();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Tombstone: clear the identity so no client treats the old key as
+    // current; park it in `previous` so stale-contact reconciliation
+    // downgrades address book entries that still carry it.
+    old.identity_signing_pubkey_previous = old.identity_signing_pubkey.take();
+    old.identity_rotation_signature = None;
+    old.reset = Some(MemberReset {
+        successor: successor_id,
+        at: now,
+    });
+    super::write_vault_file(
+        &path,
+        serde_json::to_string_pretty(&old).unwrap().as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write tombstone: {e}"))))?;
+    let successor = MemberFile {
+        id: successor_id,
+        display_name: old.display_name.clone(),
+        role: old.role,
+        trust: TrustLevel::Channel,
+        identity_signing_pubkey: None,
+        identity_signing_pubkey_previous: None,
+        identity_rotation_signature: None,
+        identity_rotated_at: None,
+        reset: None,
+    };
+    write_member(vault_path, &successor)?;
+    let code = create_invite(vault_path, vault_id, old.role, Some(successor_id))?;
+    Ok((successor_id, code))
+}
+
 /// Role of `device_id`'s member, from the on-disk directory. `None` when
-/// unbound or legacy (no member directory).
+/// unbound, legacy (no member directory), or bound to a TOMBSTONED row
+/// (S1a-5: reset kills the member's device bindings).
 pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<MemberRole> {
     let dir = vault_path.join(MEMBERS_DIR);
     let entries = std::fs::read_dir(&dir).ok()?;
@@ -187,7 +268,8 @@ pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<Memb
         }
         if let Ok(json) = std::fs::read_to_string(entry.path()) {
             if let Ok(member) = serde_json::from_str::<MemberFile>(&json) {
-                if member.id.to_string() == name.trim_end_matches(".json") {
+                if member.id.to_string() == name.trim_end_matches(".json") && member.reset.is_none()
+                {
                     return Some(member.role);
                 }
             }
@@ -197,7 +279,8 @@ pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<Memb
 }
 
 /// The member file for the member `device_id` is bound to, plus its
-/// on-disk path. `None` when unbound or legacy (no member directory).
+/// on-disk path. `None` when unbound, legacy (no member directory), or
+/// bound to a tombstoned row.
 pub(crate) fn member_file_for_device(
     vault_path: &Path,
     device_id: Uuid,
@@ -219,13 +302,24 @@ pub(crate) fn member_file_for_device(
         }
         if let Ok(json) = std::fs::read_to_string(entry.path()) {
             if let Ok(member) = serde_json::from_str::<MemberFile>(&json) {
-                if member.id.to_string() == stem {
+                if member.id.to_string() == stem && member.reset.is_none() {
                     return Some((entry.path(), member));
                 }
             }
         }
     }
     None
+}
+
+/// S1a-5: one member row by id.
+pub fn member_file_by_id(vault_path: &Path, member_id: Uuid) -> Option<MemberFile> {
+    let json = std::fs::read_to_string(
+        vault_path
+            .join(MEMBERS_DIR)
+            .join(format!("{member_id}.json")),
+    )
+    .ok()?;
+    serde_json::from_str(&json).ok()
 }
 
 /// S1a-4: record the member's current identity signing pubkey and the
@@ -318,6 +412,11 @@ pub struct PendingInviteFile {
     pub invite_id: Uuid,
     pub role: MemberRole,
     pub secret_hash: String,
+    /// S1a-5: member reset invites name the successor row the approval
+    /// must bind (display name + role are admin-fixed; the joiner
+    /// cannot rename themselves through the introduction).
+    #[serde(default)]
+    pub target_member: Option<Uuid>,
 }
 
 /// Joiner-side self-introduction (§4.1 join queue, offline thin
@@ -414,10 +513,13 @@ fn sha256_hex(data: &[u8]) -> String {
 /// Owner: mint a one-time invite. Returns the invite code
 /// (out-of-band). The repo-side pending record carries the role and the
 /// secret hash; it is consumed at approval (single-use).
+/// `target_member` (S1a-5) is set on reset invites: approval binds that
+/// existing successor row instead of minting a new member.
 pub fn create_invite(
     vault_path: &Path,
     vault_id: Uuid,
     role: MemberRole,
+    target_member: Option<Uuid>,
 ) -> Result<String, BaluardError> {
     let mut secret = [0u8; 32];
     use rand::RngCore;
@@ -430,6 +532,7 @@ pub fn create_invite(
         // Hash of the hex-encoded secret (the exact string carriers in
         // the code present at introduction — same domain on both sides).
         secret_hash: sha256_hex(secret_hex.as_bytes()),
+        target_member,
     };
     let dir = vault_path.join(INVITES_DIR);
     std::fs::create_dir_all(&dir)

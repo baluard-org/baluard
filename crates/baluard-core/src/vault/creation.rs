@@ -440,6 +440,7 @@ impl<'a> VaultCreator<'a> {
                     identity_signing_pubkey_previous: None,
                     identity_rotation_signature: None,
                     identity_rotated_at: None,
+                    reset: None,
                 };
                 crate::vault::members::write_member(&path, &owner_member)?;
                 crate::vault::members::write_device_binding(
