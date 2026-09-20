@@ -247,9 +247,114 @@ impl VaultHandle {
     ///
     /// Note: In CLI mode, the device X25519 private key is stored in the
     /// keywrap JSON for simplicity. In production, this lives in OS keystore.
+    /// S1a-2: mint a one-time member invite (owner side). The returned
+    /// code travels out-of-band; the repo-side pending file records only
+    /// the role and the secret hash. Consumed at approval.
+    pub fn invite_create(
+        &mut self,
+        role: crate::vault::members::MemberRole,
+    ) -> Result<String, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        crate::vault::members::create_invite(&self.path, self.vault_id, role)
+    }
+
+    /// S1a-2: approve a joiner's introduction (owner side, unlocked).
+    /// Verifies the code against the repo-side pending invite, enrolls
+    /// the joiner's device, wraps the Root Key to the joiner's device
+    /// key (P3-style keywrap), and writes the member record + binding
+    /// with the invite's role. The artifacts reach the joiner through
+    /// the normal sync cycle; the joiner unlocks with their own password
+    /// via their device-local member unlock material.
+    pub fn approve_join(&mut self, intro_code: &str) -> Result<Uuid, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let intro = crate::vault::members::Introduction::decode(intro_code)?;
+        if intro.vault_id != self.vault_id {
+            return Err(VaultError::InvalidOperation(
+                "introduction is for a different vault".into(),
+            )
+            .into());
+        }
+        let invite = crate::vault::members::consume_pending_invite(
+            &self.path,
+            intro.invite_id,
+            &intro.secret,
+        )?;
+
+        // Enroll the joiner's device: the registry gates signatures, the
+        // member record gates roles.
+        let enc_bytes: [u8; 32] = hex::decode(&intro.encryption_public_key)
+            .map_err(|_| VaultError::Corrupt("intro encryption key".into()))?
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("intro encryption key length".into()))?;
+        let sig_bytes: [u8; 32] = hex::decode(&intro.signing_public_key)
+            .map_err(|_| VaultError::Corrupt("intro signing key".into()))?
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("intro signing key length".into()))?;
+        self.device_manager.registry.enroll_with_id(
+            intro.device_id,
+            intro.display_name.clone(),
+            enc_bytes,
+            sig_bytes,
+            Some(self.device_id),
+        )?;
+        self.sync_registry_from_device_manager();
+        self.device_manager.auto_save_result()?;
+
+        // Wrap the Root Key to the joiner's device key (their transport
+        // seat: read until the approval ships this keywrap).
+        let root = &self.unlocked().root_key;
+        let recipient = x25519_dalek::PublicKey::from(enc_bytes);
+        let (eph, ct, tag) = hpke_wrap::wrap_key(root.as_bytes(), &recipient, "root-key-keywrap")?;
+        let keywrap = serde_json::json!({
+            "device_id": intro.device_id.to_string(),
+            "ephemeral_public": hex::encode(eph),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
+        });
+        super::write_vault_file(
+            &self
+                .path
+                .join(format!("meta/keywrap/{}.json", intro.device_id)),
+            serde_json::to_string_pretty(&keywrap).unwrap().as_bytes(),
+        )?;
+
+        // Member record + binding, admin-authored, role from the invite.
+        // Approval IS the trust act (Level 3 replaces the code check).
+        let member = crate::vault::members::MemberFile {
+            id: uuid::Uuid::new_v4(),
+            display_name: intro.display_name.clone(),
+            role: invite.role,
+            trust: crate::vault::members::TrustLevel::Verified,
+        };
+        crate::vault::members::write_member(&self.path, &member)?;
+        crate::vault::members::write_device_binding(
+            &self.path,
+            &crate::vault::members::DeviceBinding {
+                device_id: intro.device_id,
+                member_id: member.id,
+            },
+        )?;
+        Ok(member.id)
+    }
+
     pub fn unlock(&mut self, master_password: &str) -> Result<(), BaluardError> {
         // Step 0: Rate limit check
         self.check_attempt_rate_limit()?;
+
+        // S1a-2: member devices unlock with their own password material
+        // (device-local meta/member-unlock.json); the vault-level KDF
+        // params and kek-canary belong to the founding device's password.
+        if let Some(member) = crate::vault::members::load_member_unlock(&self.path, self.device_id)?
+        {
+            let kek = kdf::derive_kek(master_password, &member.kdf_params)?;
+            let canary = hex::decode(&member.kek_canary)
+                .map_err(|_| VaultError::Corrupt("member canary".into()))?;
+            return self.unlock_with_member_canary(&kek, canary);
+        }
 
         // Step 1: Derive KEK (expensive Argon2id)
         let kek = kdf::derive_kek(master_password, &self.kdf_params)?;
@@ -433,6 +538,25 @@ impl VaultHandle {
     ///
     /// No key material crosses IPC. `kek` is zeroized by the caller when done.
     pub fn unlock_with_kek(&mut self, kek: &[u8; 32]) -> Result<(), BaluardError> {
+        self.unlock_tail(kek, None)
+    }
+
+    /// S1a-2: member unlock tail — the KEK-canary check runs against the
+    /// member's own canary (device-local member-unlock.json) instead of
+    /// the founding device's vault-level canary.
+    pub fn unlock_with_member_canary(
+        &mut self,
+        kek: &[u8; 32],
+        member_canary: Vec<u8>,
+    ) -> Result<(), BaluardError> {
+        self.unlock_tail(kek, Some(member_canary))
+    }
+
+    fn unlock_tail(
+        &mut self,
+        kek: &[u8; 32],
+        canary_override: Option<Vec<u8>>,
+    ) -> Result<(), BaluardError> {
         // Step 2: Derive session + sync keys, plus the device-privkey seal
         // subkey (C1). The subkey, never the KEK, is retained post-unlock.
         let session_key = hkdf_derive::derive_session_key(kek)?;
@@ -442,10 +566,16 @@ impl VaultHandle {
         // Step 3: Verify KEK is correct by decrypting the KEK canary
         // Canary plaintext MUST equal b"baluard-kek-ok" — this catches wrong passwords
         // even when AES-GCM doesn't fail (cosmically unlikely but defense-in-depth).
-        if self.path.join("meta/kek-canary.enc").exists() {
-            let canary_data = std::fs::read(self.path.join("meta/kek-canary.enc"))
-                .map_err(|e| VaultError::Metadata(format!("reading kek canary: {e}")))?;
-            super::canary::verify_kek_canary(&session_key, &canary_data)?;
+        // Member unlocks (S1a-2) verify their own device-local canary.
+        match canary_override {
+            Some(canary) => super::canary::verify_kek_canary(&session_key, &canary)?,
+            None => {
+                if self.path.join("meta/kek-canary.enc").exists() {
+                    let canary_data = std::fs::read(self.path.join("meta/kek-canary.enc"))
+                        .map_err(|e| VaultError::Metadata(format!("reading kek canary: {e}")))?;
+                    super::canary::verify_kek_canary(&session_key, &canary_data)?;
+                }
+            }
         }
 
         // Step 4: HPKE-decapsulate Root Key using device private key (keyring or file).
@@ -5782,6 +5912,135 @@ mod tests {
 
         let metas = handle.list_cipher_meta().unwrap();
         assert_eq!(metas.len(), 1);
+    }
+
+    // ── S1a-2: join ceremony tracer ──
+
+    use crate::error::SyncError as TestSyncError;
+
+    /// Thin end-to-end walking skeleton: invite → introduction →
+    /// approval → sync → member unlock (own password) → member write →
+    /// owner-side role verification. Every layer is real (git transport,
+    /// member KDF material, role enforcement); the surface is
+    /// intentionally CLI-thin.
+    #[test]
+    fn member_join_tracer_end_to_end() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+
+        // Owner: invite an editor. The code travels out-of-band.
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Editor)
+            .unwrap();
+
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // Ship the pending invite to the joiner (thin tracer: a normal
+        // sync cycle instead of the provider grant of the full join
+        // queue).
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+
+        // Joiner: clone the vault, introduce with the code + own password.
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+
+        // Owner: approve (enrolls the device, wraps the Root Key to it,
+        // writes the member record + binding with the invite's role).
+        handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve join").unwrap();
+
+        // Joiner: pull the approval artifacts and unlock with their OWN
+        // password.
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        assert_ne!(joiner.device_id, handle.device_id);
+        joiner.unlock("member-pass").unwrap();
+
+        // Member writes a cipher; the owner pulls and the role-aware
+        // verification admits the Editor's cipher write.
+        let input = CipherInput {
+            name: "FromMember".into(),
+            folder_id: None,
+            kind: crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("member".into()),
+                password: Some("pw".into()),
+                ..Default::default()
+            }),
+            favorite: false,
+            notes: None,
+            custom_fields: vec![],
+            created_at: None,
+            password_history: vec![],
+            attachments: vec![],
+            archived: false,
+            tags: vec![],
+            reprompt: false,
+        };
+        let cid = joiner.add_cipher(&input).unwrap();
+        let joiner_seal = joiner.devkey_seal();
+        let engine_j2 = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner.device_id.to_string(),
+            joiner_seal.as_ref(),
+        );
+        engine_j2.commit_all(&repo_j, "member cipher").unwrap();
+
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .unwrap();
+        engine_o.pull(&repo_o, "joiner").unwrap();
+        let merged_oid = repo_o.head().unwrap().peel_to_commit().unwrap().id();
+        assert!(
+            engine_o
+                .verify_commit_signatures(&repo_o, &[merged_oid])
+                .is_ok(),
+            "member editor cipher commit must verify"
+        );
+
+        // The member still reads what they wrote after the round trip.
+        match joiner.get_cipher(cid).unwrap() {
+            CipherRead::Decrypted(c) => assert_eq!(c.name, "FromMember"),
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+
+        // Role refusal: the member's meta write is refused ON PULL
+        // (meta catch-all is Admin) — the owner fetches the commit and
+        // the verification walk rejects it before any merge/checkout.
+        std::fs::write(joiner_path.join("meta/epoch.json"), b"{\"epoch\":9}").unwrap();
+        engine_j2.commit_all(&repo_j, "member meta").unwrap();
+        let head_before = repo_o.head().unwrap().peel_to_commit().unwrap().id();
+        let pulled_meta = engine_o.pull(&repo_o, "joiner");
+        assert!(
+            matches!(
+                &pulled_meta,
+                Err(BaluardError::Sync(TestSyncError::PolicyViolation { .. }))
+            ),
+            "member meta push must be refused on pull, got {pulled_meta:?}"
+        );
+        let head_after = repo_o.head().unwrap().peel_to_commit().unwrap().id();
+        assert_eq!(head_after, head_before, "refused pull must not move HEAD");
     }
 
     // ── P3: keywrap distribution + rekey-txn adoption ──
