@@ -2767,9 +2767,10 @@ impl SyncEngine {
                     ));
                     return -1;
                 }
-                // S1a-5: a tombstoned row resolves no role and no
-                // bindings — the reset killed the member's device seats.
-                if member_file.reset.is_some() {
+                // S1a-5/S1a-6: a tombstoned row (reset OR removal)
+                // resolves no role and no bindings — the member's device
+                // seats are dead.
+                if member_file.reset.is_some() || member_file.removed.is_some() {
                     tombstoned.insert(member_file.id.to_string());
                     return 0;
                 }
@@ -3275,9 +3276,14 @@ impl SyncEngine {
         let (Some(old_member), Some(new_member)) = (parse(&old), parse(&new)) else {
             return Err(deny());
         };
-        // S1a-5: a tombstoned row is dead — no self-service deltas of any
-        // kind (revival requires an admin-authored reset-join approval).
-        if old_member.reset.is_some() || new_member.reset.is_some() {
+        // S1a-5/S1a-6: a tombstoned row (reset OR removal) is dead — no
+        // self-service deltas of any kind (revival requires an
+        // admin-authored approval).
+        if old_member.reset.is_some()
+            || new_member.reset.is_some()
+            || old_member.removed.is_some()
+            || new_member.removed.is_some()
+        {
             return Err(deny());
         }
         let own = member.and_then(|m| uuid::Uuid::parse_str(m).ok());
