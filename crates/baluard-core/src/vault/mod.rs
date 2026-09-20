@@ -15,6 +15,7 @@ pub mod identity;
 pub mod index;
 pub mod keywrap;
 pub mod manifest;
+pub mod members;
 pub mod padding;
 pub mod registry;
 pub mod slug;
