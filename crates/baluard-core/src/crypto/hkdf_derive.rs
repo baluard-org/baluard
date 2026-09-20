@@ -22,6 +22,7 @@ const PROFILE_INFO: &[u8] = b"baluard-profile-v1";
 const SETTINGS_INFO: &[u8] = b"baluard-settings-v1";
 const ACTIVITY_INFO: &[u8] = b"baluard-activity-v1";
 const GENERATOR_HISTORY_INFO: &[u8] = b"baluard-generator-history-v1";
+const CONTACTS_INFO: &[u8] = b"baluard-contacts-v1";
 
 /// Derive a 32-byte Session Key from KEK.
 ///
@@ -120,6 +121,19 @@ pub fn derive_activity_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError>
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
     let mut key = [0u8; 32];
     hkdf.expand(ACTIVITY_INFO, &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
+/// Derive a 32-byte Contacts Key from Root Key.
+///
+/// Contacts Key encrypts the local address book (meta/contacts.enc).
+/// S1a-3 artifact: covered by rotation like the other RootKey-derived
+/// metadata keys.
+pub fn derive_contacts_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, root_key);
+    let mut key = [0u8; 32];
+    hkdf.expand(CONTACTS_INFO, &mut key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }

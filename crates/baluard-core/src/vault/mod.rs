@@ -7,6 +7,7 @@ pub mod attachment;
 pub mod avatar;
 pub mod canary;
 pub mod cipher;
+pub mod contacts;
 pub mod creation;
 pub mod device_privkey;
 pub mod envelope;

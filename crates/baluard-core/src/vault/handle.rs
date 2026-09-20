@@ -21,7 +21,9 @@ use crate::types::{Cipher, CipherInput, KdfParams, Tier};
 use crate::vault::cipher;
 use crate::vault::index;
 
+use base64::Engine as _;
 use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 /// Vault session state.
 /// Collect a folder ID and all its descendant folder IDs.
@@ -260,6 +262,108 @@ impl VaultHandle {
         }
     }
 
+    // ── S1a-3: contact cards + trust dial ──
+
+    fn contacts_key(&self) -> Result<[u8; 32], BaluardError> {
+        crate::crypto::hkdf_derive::derive_contacts_key(self.unlocked().root_key.as_bytes())
+            .map_err(BaluardError::from)
+    }
+
+    fn load_contacts(&self) -> Result<Vec<crate::vault::contacts::ContactEntry>, BaluardError> {
+        crate::vault::contacts::load_contacts(&self.path, &self.contacts_key()?)
+    }
+
+    fn save_contacts(
+        &self,
+        entries: &[crate::vault::contacts::ContactEntry],
+    ) -> Result<(), BaluardError> {
+        crate::vault::contacts::save_contacts(&self.path, &self.contacts_key()?, entries)
+    }
+
+    /// S1a-3: export this vault member's identity-signed contact card
+    /// (out-of-band code). Requires the identity to be available on this
+    /// device.
+    pub fn contact_card_create(&self) -> Result<String, BaluardError> {
+        let identity = self.identity().ok_or_else(|| {
+            VaultError::InvalidOperation("identity not available on this device".into())
+        })?;
+        let vk_hex = hex::encode(identity.signing_key().verifying_key().as_bytes());
+        let display_name = self
+            .load_profile()
+            .ok()
+            .and_then(|p| p.display_name)
+            .unwrap_or_else(|| "unnamed".into());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let card = crate::vault::contacts::SignedContactCard::sign(
+            &display_name,
+            &vk_hex,
+            now,
+            identity.signing_key(),
+        )?;
+        let code_bytes = serde_json::to_vec(&card)
+            .map_err(|e| VaultError::Metadata(format!("encode card: {e}")))?;
+        Ok(base64::engine::general_purpose::URL_SAFE.encode(code_bytes))
+    }
+
+    /// S1a-3: import a joiner's contact card from their introduction
+    /// code. Signature is verified against the card's own identity key;
+    /// the entry lands at Channel (Level 1) until the code check.
+    pub fn contacts_import_intro(
+        &mut self,
+        intro_code: &str,
+    ) -> Result<crate::vault::contacts::ContactTrust, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let intro = crate::vault::members::Introduction::decode(intro_code)?;
+        let Some(card) = intro.contact_card else {
+            return Err(VaultError::InvalidOperation(
+                "introduction carries no contact card".into(),
+            )
+            .into());
+        };
+        card.verify()?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        crate::vault::contacts::upsert_contact(
+            &self.path,
+            &self.contacts_key()?,
+            &card.card,
+            crate::vault::contacts::ContactTrust::Channel,
+            now,
+        )
+    }
+
+    /// S1a-3: record the Level 2 code check — both sides displayed the
+    /// verification code and confirmed the match. Upgrades the contact
+    /// to Verified.
+    pub fn contacts_mark_verified(
+        &mut self,
+        identity_signing_pubkey: &str,
+    ) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        crate::vault::contacts::mark_verified(
+            &self.path,
+            &self.contacts_key()?,
+            identity_signing_pubkey,
+        )
+    }
+
+    /// S1a-3: address book contents (People screen, thin).
+    pub fn contacts_list(&self) -> Result<Vec<crate::vault::contacts::ContactEntry>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.load_contacts()
+    }
+
     /// S1a-2: mint a one-time member invite (owner side). The returned
     /// code travels out-of-band; the repo-side pending file records only
     /// the role and the secret hash. Consumed at approval.
@@ -292,6 +396,40 @@ impl VaultHandle {
                 "introduction is for a different vault".into(),
             )
             .into());
+        }
+        // Trust dial (S1a-3): peek the invite role BEFORE consuming — a
+        // failed gate leaves the invite intact for retry after the code
+        // check. Roles above Editor require the joiner's contact card to
+        // be Verified in the address book (Level 2 code check);
+        // Editor/Viewer invites need no card.
+        let invite = crate::vault::members::read_pending_invite(&self.path, intro.invite_id)?;
+        let elevated = matches!(
+            invite.role,
+            crate::vault::members::MemberRole::Admin | crate::vault::members::MemberRole::Owner
+        );
+        if elevated {
+            let Some(card) = intro.contact_card.as_ref() else {
+                return Err(VaultError::InvalidOperation(
+                    "elevated roles require the joiner's contact card".into(),
+                )
+                .into());
+            };
+            card.verify()?;
+            let key = self.contacts_key()?;
+            match crate::vault::contacts::contact_trust(
+                &self.path,
+                &key,
+                &card.card.identity_signing_pubkey,
+            ) {
+                Some(crate::vault::contacts::ContactTrust::Verified) => {}
+                _ => {
+                    return Err(VaultError::InvalidOperation(
+                        "elevated roles require a verified contact (run the Level 2 code check first)"
+                            .into(),
+                    )
+                    .into());
+                }
+            }
         }
         let invite = crate::vault::members::consume_pending_invite(
             &self.path,
@@ -368,19 +506,29 @@ impl VaultHandle {
             let kek = kdf::derive_kek(master_password, &member.kdf_params)?;
             let canary = hex::decode(&member.kek_canary)
                 .map_err(|_| VaultError::Corrupt("member canary".into()))?;
+            let devkey_seal_m = Zeroizing::new(hkdf_derive::derive_devkey_seal_key(&kek)?);
             // Failed attempts record against the same counter as the
             // master-password path: brute-force protection applies to
             // member passwords too.
-            return match self.unlock_with_member_canary(&kek, canary) {
-                Ok(()) => {
-                    self.clear_failed_attempts()?;
-                    Ok(())
+            let result = self.unlock_with_member_canary(&kek, canary);
+            if result.is_ok() {
+                self.clear_failed_attempts()?;
+                // S1a-3: open the member's own identity (sealed under
+                // their devkey seal) into the unlocked state so
+                // contact-card signing works on member devices too.
+                if let Some(sealed_hex) = member.identity_seed_sealed.as_deref() {
+                    if let Ok(sealed) = hex::decode(sealed_hex) {
+                        if let Ok(keys) =
+                            crate::vault::identity::open_identity(&devkey_seal_m, &sealed)
+                        {
+                            self.unlocked_mut().identity = Some(keys);
+                        }
+                    }
                 }
-                Err(e) => {
-                    let _ = self.record_failed_attempt();
-                    Err(e)
-                }
-            };
+                return Ok(());
+            }
+            let _ = self.record_failed_attempt();
+            return Err(result.err().unwrap());
         }
 
         // Step 1: Derive KEK (expensive Argon2id)
@@ -3597,6 +3745,8 @@ impl VaultHandle {
         let old_activity = self.load_activity_enc()?;
         let old_settings = self.get_settings()?;
         let old_generator = self.load_generator_history()?;
+        // S1a-3: the address book is RootKey-derived — read pre-swap.
+        let old_contacts = self.load_contacts()?;
 
         // Phase 5: Swap Root Key and update epoch via DeviceManager lifecycle
         match &mut self.state {
@@ -3644,6 +3794,8 @@ impl VaultHandle {
         self.save_activity_enc(&old_activity)?;
         self.save_settings(&old_settings)?;
         self.save_generator_history(&old_generator)?;
+        // S1a-3: address book re-encrypted under the new contacts key.
+        self.save_contacts(&old_contacts)?;
 
         // P4: re-wrap the emergency escrow to the NEW root key. The old
         // escrow hands emergency recovery a stale key whose canary check
@@ -4060,6 +4212,8 @@ impl VaultHandle {
         let old_activity = self.load_activity_enc()?;
         let old_settings = self.get_settings()?;
         let old_generator = self.load_generator_history()?;
+        // S1a-3: the address book is RootKey-derived — read pre-swap.
+        let old_contacts = self.load_contacts()?;
 
         // ── Update in-memory state ──
         match &mut self.state {
@@ -4106,6 +4260,8 @@ impl VaultHandle {
         self.save_activity_enc(&old_activity)?;
         self.save_settings(&old_settings)?;
         self.save_generator_history(&old_generator)?;
+        // S1a-3: address book re-encrypted under the new contacts key.
+        self.save_contacts(&old_contacts)?;
 
         // P4: re-wrap the emergency escrow to the NEW root key. The old
         // escrow hands emergency recovery a stale key whose canary check

@@ -200,9 +200,10 @@ pub struct PendingInviteFile {
 
 /// Joiner-side self-introduction (§4.1 join queue, offline thin
 /// variant): exported as a code and presented to an admin for async
-/// approval. Carries the joiner's device public keys and a proof of the
-/// invite secret. No vault secrets exist on the joiner's device yet —
-/// the approval ships the keywrap via the normal sync cycle.
+/// approval. Carries the joiner's device public keys, a proof of the
+/// invite secret, and (S1a-3) their identity-signed contact card. No
+/// vault secrets exist on the joiner's device yet — the approval ships
+/// the keywrap via the normal sync cycle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Introduction {
     pub vault_id: Uuid,
@@ -212,6 +213,9 @@ pub struct Introduction {
     pub encryption_public_key: String,
     pub signing_public_key: String,
     pub display_name: String,
+    /// S1a-3: the joiner's identity-signed contact card (trust dial).
+    #[serde(default)]
+    pub contact_card: Option<crate::vault::contacts::SignedContactCard>,
 }
 
 impl Introduction {
@@ -234,6 +238,11 @@ pub struct MemberUnlock {
     pub kdf_params: crate::types::KdfParams,
     /// Hex-encoded KEK canary for the member's own password.
     pub kek_canary: String,
+    /// S1a-3: the member's own identity seed, sealed under their
+    /// kek-derived devkey seal (domain member-identity-v1). Device-local
+    /// tracer substitution for the identity-rooted model.
+    #[serde(default)]
+    pub identity_seed_sealed: Option<String>,
 }
 
 fn b64_encode(data: &[u8]) -> String {
@@ -287,6 +296,21 @@ pub fn create_invite(
         secret: secret_hex,
     };
     Ok(b64_encode(serde_json::to_string(&code).unwrap().as_bytes()))
+}
+
+/// Read (peek) the pending invite WITHOUT consuming it. Consumption is
+/// `consume_pending_invite`.
+pub fn read_pending_invite(
+    vault_path: &Path,
+    invite_id: Uuid,
+) -> Result<PendingInviteFile, BaluardError> {
+    let path = vault_path
+        .join(INVITES_DIR)
+        .join(format!("{invite_id}.json"));
+    let data = std::fs::read_to_string(&path)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("pending invite: {e}"))))?;
+    serde_json::from_str(&data)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("pending invite: {e}"))))
 }
 
 /// Verify + consume the pending invite for one introduction.
@@ -366,9 +390,13 @@ pub fn create_introduction(
     }
 
     // Fresh device keys + member-local KDF material (fresh salt): the
-    // member's password is independent of the founding device's.
+    // member's password is independent of the founding device's. The
+    // joiner also generates their own identity (S1a-3) — the card signed
+    // by it is the trust-dial credential.
     let (x25519_secret, x25519_public) = crate::crypto::hpke_wrap::generate_x25519_keypair();
     let (ed25519_signing, ed25519_verifying) = crate::crypto::signature::generate_ed25519_keypair();
+    let identity = crate::vault::identity::IdentityKeys::generate()?;
+    let identity_vk_hex = hex::encode(identity.signing_key().verifying_key().as_bytes());
     let device_id = Uuid::new_v4();
 
     let mut kdf_params: crate::types::KdfParams = {
@@ -386,6 +414,13 @@ pub fn create_introduction(
     let session_key = Zeroizing::new(crate::crypto::hkdf_derive::derive_session_key(&kek)?);
     let kek_canary = super::canary::create_kek_canary(&session_key, vault_id)?;
     let devkey_seal = Zeroizing::new(crate::crypto::hkdf_derive::derive_devkey_seal_key(&kek)?);
+
+    // Seal the member's identity seed under the same devkey seal so the
+    // identity survives lock/unlock on this device.
+    let identity_seed_sealed = hex::encode(crate::vault::identity::seal_identity(
+        &devkey_seal,
+        &identity,
+    )?);
 
     // Seal the member's device private keys under their OWN kek-derived
     // seal subkey: their password never touches the founding device's
@@ -409,6 +444,7 @@ pub fn create_introduction(
         device_id,
         kdf_params,
         kek_canary: hex::encode(&kek_canary),
+        identity_seed_sealed: Some(identity_seed_sealed),
     };
     super::write_vault_file(
         &vault_path.join("meta/member-unlock.json"),
@@ -424,6 +460,15 @@ pub fn create_introduction(
         encryption_public_key: hex::encode(x25519_public.as_bytes()),
         signing_public_key: hex::encode(ed25519_verifying.as_bytes()),
         display_name: device_name.to_string(),
+        contact_card: Some(crate::vault::contacts::SignedContactCard::sign(
+            device_name,
+            &identity_vk_hex,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            identity.signing_key(),
+        )?),
     };
     Ok(b64_encode(
         serde_json::to_string(&intro).unwrap().as_bytes(),
