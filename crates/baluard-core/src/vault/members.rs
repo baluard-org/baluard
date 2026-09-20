@@ -19,6 +19,11 @@ use crate::error::{BaluardError, VaultError};
 
 pub const MEMBERS_DIR: &str = "meta/members";
 
+/// Owner-side pending invites live OUTSIDE the member directory: the
+/// strict member-shape validator would reject their two-segment shape,
+/// and they are admin working state, not member data.
+pub const INVITES_DIR: &str = "meta/invites";
+
 /// Member role. Rank order mirrors sync::policy::CommitRole.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -127,4 +132,269 @@ pub fn bind_to_owner(vault_path: &Path, device_id: Uuid) -> Result<(), BaluardEr
         )?;
     }
     Ok(())
+}
+
+// ── S1a-2: join ceremony (invite → introduce → approve) ──
+//
+// Thin offline variant of the §4.1 join queue: the owner mints a
+// one-time invite code (secret travels out-of-band; only its hash is
+// stored repo-side), the joiner clones + introduces (a code carrying
+// their device public keys and a proof of the invite secret), and an
+// admin approves asynchronously — which wraps the Root Key to the
+// joiner's device and ships the member record via the normal sync
+// cycle. No provider API involved; transport staging (P8c) slots in
+// here later.
+
+use base64::Engine as _;
+use sha2::{Digest, Sha256};
+
+/// Owner-side one-time invite (travels out-of-band inside the code; the
+/// repo-side pending file records only the secret hash).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InviteCode {
+    pub vault_id: Uuid,
+    pub invite_id: Uuid,
+    pub role: MemberRole,
+    /// Random 32 bytes, hex. Proven at introduction; only its hash is
+    /// stored repo-side.
+    pub secret: String,
+}
+
+/// Repo-side pending invite record (admin-owned file).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingInviteFile {
+    pub invite_id: Uuid,
+    pub role: MemberRole,
+    pub secret_hash: String,
+}
+
+/// Joiner-side self-introduction (§4.1 join queue, offline thin
+/// variant): exported as a code and presented to an admin for async
+/// approval. Carries the joiner's device public keys and a proof of the
+/// invite secret. No vault secrets exist on the joiner's device yet —
+/// the approval ships the keywrap via the normal sync cycle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Introduction {
+    pub vault_id: Uuid,
+    pub invite_id: Uuid,
+    pub secret: String,
+    pub device_id: Uuid,
+    pub encryption_public_key: String,
+    pub signing_public_key: String,
+    pub display_name: String,
+}
+
+impl Introduction {
+    /// Decode an introduction code (base64url JSON).
+    pub fn decode(code: &str) -> Result<Self, BaluardError> {
+        let bytes = b64_decode(code)?;
+        let json = std::str::from_utf8(&bytes)
+            .map_err(|e| BaluardError::from(VaultError::Metadata(format!("bad code: {e}"))))?;
+        serde_json::from_str(json)
+            .map_err(|e| BaluardError::from(VaultError::Metadata(format!("bad code: {e}"))))
+    }
+}
+
+/// Device-local member unlock material (meta/member-unlock.json,
+/// gitignored): the member's own KDF params + KEK canary. The member's
+/// password never touches the founding device's vault-level material.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberUnlock {
+    pub device_id: Uuid,
+    pub kdf_params: crate::types::KdfParams,
+    /// Hex-encoded KEK canary for the member's own password.
+    pub kek_canary: String,
+}
+
+fn b64_encode(data: &[u8]) -> String {
+    base64::engine::general_purpose::URL_SAFE.encode(data)
+}
+
+fn b64_decode(s: &str) -> Result<Vec<u8>, BaluardError> {
+    base64::engine::general_purpose::URL_SAFE
+        .decode(s)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("bad code: {e}"))))
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
+}
+
+/// Owner: mint a one-time invite. Returns the invite code
+/// (out-of-band). The repo-side pending record carries the role and the
+/// secret hash; it is consumed at approval (single-use).
+pub fn create_invite(
+    vault_path: &Path,
+    vault_id: Uuid,
+    role: MemberRole,
+) -> Result<String, BaluardError> {
+    let mut secret = [0u8; 32];
+    use rand::RngCore;
+    rand::rngs::OsRng.fill_bytes(&mut secret);
+    let invite_id = Uuid::new_v4();
+    let secret_hex = hex::encode(secret);
+    let pending = PendingInviteFile {
+        invite_id,
+        role,
+        // Hash of the hex-encoded secret (the exact string carriers in
+        // the code present at introduction — same domain on both sides).
+        secret_hash: sha256_hex(secret_hex.as_bytes()),
+    };
+    let dir = vault_path.join(INVITES_DIR);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("pending dir: {e}"))))?;
+    super::write_vault_file(
+        &dir.join(format!("{invite_id}.json")),
+        serde_json::to_string_pretty(&pending).unwrap().as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write pending invite: {e}"))))?;
+    let code = InviteCode {
+        vault_id,
+        invite_id,
+        role,
+        secret: secret_hex,
+    };
+    Ok(b64_encode(serde_json::to_string(&code).unwrap().as_bytes()))
+}
+
+/// Verify + consume the pending invite for one introduction.
+/// Single-use: a wrong secret is NOT consumed (typo can retry); a
+/// correct one is.
+pub fn consume_pending_invite(
+    vault_path: &Path,
+    invite_id: Uuid,
+    secret: &str,
+) -> Result<PendingInviteFile, BaluardError> {
+    let path = vault_path
+        .join(INVITES_DIR)
+        .join(format!("{invite_id}.json"));
+    let data = std::fs::read_to_string(&path)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("pending invite: {e}"))))?;
+    let pending: PendingInviteFile = serde_json::from_str(&data)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("pending invite: {e}"))))?;
+    if pending.secret_hash != sha256_hex(secret.as_bytes()) {
+        return Err(BaluardError::from(VaultError::Metadata(format!(
+            "introduction secret does not match the invite (stored {}, got {}) — file: {}",
+            pending.secret_hash,
+            sha256_hex(secret.as_bytes()),
+            path.display()
+        ))));
+    }
+    std::fs::remove_file(&path)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("consume invite: {e}"))))?;
+    Ok(pending)
+}
+
+/// Device-local member unlock material for `device_id`, if this device
+/// is a member device (meta/member-unlock.json, gitignored).
+pub fn load_member_unlock(
+    vault_path: &Path,
+    device_id: Uuid,
+) -> Result<Option<MemberUnlock>, BaluardError> {
+    let path = vault_path.join("meta/member-unlock.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let data = std::fs::read_to_string(&path).map_err(|e| {
+        BaluardError::from(VaultError::Metadata(format!("read member unlock: {e}")))
+    })?;
+    let unlock: MemberUnlock = serde_json::from_str(&data).map_err(|e| {
+        BaluardError::from(VaultError::Metadata(format!("parse member unlock: {e}")))
+    })?;
+    if unlock.device_id != device_id {
+        return Ok(None);
+    }
+    Ok(Some(unlock))
+}
+
+/// Joiner: introduce yourself to a cloned vault. Verifies the invite
+/// code against the repo-side pending record, then writes DEVICE-LOCAL
+/// unlock material (own password, own device keys, own KDF salt). No
+/// vault secrets exist on this device yet — the owner's approval ships
+/// the keywrap via the normal sync cycle. Returns the introduction code
+/// for the owner to approve.
+pub fn create_introduction(
+    vault_path: &Path,
+    code: &str,
+    password: &str,
+    device_name: &str,
+) -> Result<String, BaluardError> {
+    let code_bytes = b64_decode(code)?;
+    let invite_json = std::str::from_utf8(&code_bytes)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("bad code: {e}"))))?;
+    let invite: InviteCode = serde_json::from_str(invite_json)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("bad code: {e}"))))?;
+    consume_pending_invite(vault_path, invite.invite_id, &invite.secret)?;
+
+    let vault_id = crate::vault::handle::VaultHandle::vault_id_for_path(vault_path)?;
+    if vault_id != invite.vault_id {
+        return Err(BaluardError::from(VaultError::Metadata(
+            "invite is for a different vault".into(),
+        )));
+    }
+
+    // Fresh device keys + member-local KDF material (fresh salt): the
+    // member's password is independent of the founding device's.
+    let (x25519_secret, x25519_public) = crate::crypto::hpke_wrap::generate_x25519_keypair();
+    let (ed25519_signing, ed25519_verifying) = crate::crypto::signature::generate_ed25519_keypair();
+    let device_id = Uuid::new_v4();
+
+    let mut kdf_params: crate::types::KdfParams = {
+        let raw = std::fs::read_to_string(vault_path.join("meta/kdf-params.json"))
+            .map_err(|e| BaluardError::from(VaultError::Metadata(format!("kdf params: {e}"))))?;
+        serde_json::from_str(&raw)
+            .map_err(|e| BaluardError::from(VaultError::Metadata(format!("kdf params: {e}"))))?
+    };
+    let mut salt = [0u8; 32];
+    use rand::RngCore;
+    rand::rngs::OsRng.fill_bytes(&mut salt);
+    kdf_params.salt = salt.to_vec();
+
+    let kek = crate::crypto::kdf::derive_kek(password, &kdf_params)?;
+    let session_key = crate::crypto::hkdf_derive::derive_session_key(&kek)?;
+    let kek_canary = super::canary::create_kek_canary(&session_key, vault_id)?;
+    let devkey_seal = crate::crypto::hkdf_derive::derive_devkey_seal_key(&kek)?;
+
+    // Seal the member's device private keys under their OWN kek-derived
+    // seal subkey: their password never touches the founding device's
+    // vault-level material.
+    let inner = serde_json::json!({
+        "device_id": device_id.to_string(),
+        "x25519_private": hex::encode(x25519_secret.to_bytes()),
+        "ed25519_private": hex::encode(ed25519_signing.to_bytes()),
+    })
+    .to_string();
+    crate::vault::device_privkey::seal_file(
+        &vault_path.join("meta/device-privkey.json"),
+        &inner,
+        &devkey_seal,
+        Some(device_id),
+    )?;
+    super::device_privkey::write_device_id(vault_path, device_id)?;
+
+    let unlock = MemberUnlock {
+        device_id,
+        kdf_params,
+        kek_canary: hex::encode(&kek_canary),
+    };
+    super::write_vault_file(
+        &vault_path.join("meta/member-unlock.json"),
+        serde_json::to_string_pretty(&unlock).unwrap().as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write member unlock: {e}"))))?;
+
+    let intro = Introduction {
+        vault_id: invite.vault_id,
+        invite_id: invite.invite_id,
+        secret: invite.secret,
+        device_id,
+        encryption_public_key: hex::encode(x25519_public.as_bytes()),
+        signing_public_key: hex::encode(ed25519_verifying.as_bytes()),
+        display_name: device_name.to_string(),
+    };
+    Ok(b64_encode(
+        serde_json::to_string(&intro).unwrap().as_bytes(),
+    ))
 }

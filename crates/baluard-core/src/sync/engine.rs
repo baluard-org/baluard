@@ -227,6 +227,8 @@ impl SyncEngine {
         const NEW_ENTRIES: &[&str] = &[
             "meta/sync-head.json",
             "meta/sync-state.json",
+            // S1a-2: per-member unlock material is device-local.
+            "meta/member-unlock.json",
             // P5b: the cipher index is local-only bookkeeping.
             "meta/index.enc",
             "meta/index.enc.*",
@@ -2476,7 +2478,7 @@ impl SyncEngine {
                 .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
             if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
                 let signer = self.verify_commit_against_roster(repo, *oid, &roster)?;
-                Self::check_commit_paths(repo, &commit, &signer)?;
+                Self::check_commit_paths(repo, &commit, &roster, &signer)?;
             }
         }
 
@@ -2527,7 +2529,7 @@ impl SyncEngine {
                 .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
             if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
                 let signer = Self::verify_commit_against_roster_static(repo, *oid, &roster)?;
-                Self::check_commit_paths(repo, &commit, &signer)?;
+                Self::check_commit_paths(repo, &commit, &roster, &signer)?;
             }
         }
         Ok(())
@@ -2860,6 +2862,7 @@ impl SyncEngine {
     fn check_commit_paths(
         repo: &Repository,
         commit: &git2::Commit<'_>,
+        roster: &DeviceRoster,
         signer: &str,
     ) -> Result<(), BaluardError> {
         // S1a: resolve the signer's role from the member directory
@@ -2914,7 +2917,7 @@ impl SyncEngine {
                 .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
                 .map_err(|e| SyncError::Git(format!("net diff: {e}")))?;
             for delta in diff.deltas() {
-                Self::check_delta_path(repo, &delta, signer, member_id, role)?;
+                Self::check_delta_path(repo, &delta, roster, signer, member_id, role)?;
             }
         }
         if commit.parent_count() == 2 {
@@ -2996,7 +2999,7 @@ impl SyncEngine {
                 .diff_tree_to_tree(Some(&expected), Some(&tree), None)
                 .map_err(|e| SyncError::Git(format!("merge residue diff: {e}")))?;
             for delta in residue_diff.deltas() {
-                Self::check_delta_path(repo, &delta, signer, member_id, role)?;
+                Self::check_delta_path(repo, &delta, roster, signer, member_id, role)?;
             }
         }
         Ok(())
@@ -3010,6 +3013,7 @@ impl SyncEngine {
     fn check_delta_path(
         repo: &Repository,
         delta: &git2::DiffDelta,
+        roster: &DeviceRoster,
         signer: &str,
         member: Option<&str>,
         role: crate::sync::policy::CommitRole,
@@ -3018,6 +3022,36 @@ impl SyncEngine {
             return Ok(());
         };
         let path = path.to_string_lossy().to_string();
+        // The integrity manifest rides every commit and is
+        // self-authenticating: every checkpoint must verify against its
+        // signing device's roster key. Role is irrelevant — a non-admin
+        // updating their own signed checkpoints is legitimate, and a
+        // forged or deleted manifest refuses.
+        if path == "meta/integrity.json" {
+            let deny = || {
+                SyncError::PolicyViolation {
+                    device: signer.to_string(),
+                    path: path.clone(),
+                }
+                .into()
+            };
+            let new_id = delta.new_file().id();
+            if new_id.is_zero() {
+                return Err(deny());
+            }
+            let blob = repo.find_blob(new_id).map_err(|_| deny())?;
+            let manifest: crate::integrity::IntegrityManifest =
+                serde_json::from_slice(blob.content()).map_err(|_| deny())?;
+            for (object_id, cp) in &manifest.checkpoints {
+                let Some(vk) = roster.get(&cp.device_id) else {
+                    return Err(deny());
+                };
+                manifest
+                    .verify_checkpoint(object_id, vk)
+                    .map_err(|_| deny())?;
+            }
+            return Ok(());
+        }
         if path == "meta/devices.json"
             && role.rank() < crate::sync::policy::CommitRole::Admin.rank()
         {
@@ -3298,6 +3332,7 @@ const GITIGNORE_CONTENT: &str = "\
 # Secrets and private keys (CLI mode)
 meta/device-privkey.json
 meta/device-id
+meta/member-unlock.json
 meta/kdf-attempts.json
 meta/git-credentials.json
 
