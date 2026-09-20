@@ -1,18 +1,25 @@
-//! P7: the path-glob -> role policy table (plan §4.4) and its matcher.
+//! P7 + P8a + S1a-1: the path-glob -> role policy table (plan §4.4) and
+//! its matcher.
 //!
-//! The net-diff checker in `engine.rs` evaluates every path a regular
-//! commit touches against this table; the first matching row decides and
-//! an unmatched path is denied (deny by default). Merge commits are
-//! exempt until P8a defines the merge-residue rule.
+//! The net-diff checker in `engine.rs` evaluates every path a commit
+//! touches against this table; the first matching row decides and an
+//! unmatched path is denied (deny by default). Regular commits check
+//! their first-parent diff, merge commits check their residue against
+//! the recomputed expected merge (P8a), and conflicted paths are
+//! attributed to the merger outright.
 //!
-//! Pre-S1a reality: `meta/devices.json` carries no roles, so every roster
-//! device resolves to [`CommitRole::Admin`] (admin-equivalent). The table
-//! and the checker land now; S1a only replaces the role resolver.
+//! Role resolution (S1a-1): the device-to-member bindings and member
+//! files in `meta/members/**` are parsed per commit with the
+//! roster-snapshot rule; a commit tree without a member directory is a
+//! legacy vault and stays admin-equivalent; a strict vault treats an
+//! unbound device as a pending joiner.
 //!
 //! Patterns are forward-slash segment lists. Segment syntax: a literal
 //! segment, `*` (exactly one segment), `**` (only as the last segment;
-//! matches any remainder, including empty), and `{self}` (exactly one
-//! segment equal to the signer's device id).
+//! matches any remainder, including empty), and `{member}` (exactly one
+//! segment equal to the signer's MEMBER id, resolved from the device
+//! binding snapshot — never the raw device id, so a device can only
+//! write inside its own member's devices subtree).
 
 use crate::error::SyncError;
 
@@ -81,15 +88,15 @@ struct PolicyRow {
 }
 
 /// Ordered table: the FIRST matching row decides. Rows run from the most
-/// specific (self-service subtree) to the least (meta catch-all, root
-/// files).
+/// specific (self-service devices subtree) to the least (meta catch-all,
+/// root files). Member FILES (role assignment) are admin-only — only the
+/// devices subtree of a member is self-service (device lifecycle is
+/// all-roles per §5.A).
 const TABLE: &[PolicyRow] = &[
-    // Self-service: a member's own subtree (devices, pending, requests).
     PolicyRow {
-        pattern: "meta/members/{self}/**",
+        pattern: "meta/members/{member}/devices/**",
         required: RequiredRole::Any,
     },
-    // Someone else's member subtree, and Space-level settings.
     PolicyRow {
         pattern: "meta/members/**",
         required: RequiredRole::Admin,
@@ -154,7 +161,7 @@ const TABLE: &[PolicyRow] = &[
     },
 ];
 
-fn pattern_matches(pattern: &[&str], path: &[&str], signer: &str) -> bool {
+fn pattern_matches(pattern: &[&str], path: &[&str], member: Option<&str>) -> bool {
     let mut pat = pattern;
     let mut segs = path;
     loop {
@@ -168,11 +175,11 @@ fn pattern_matches(pattern: &[&str], path: &[&str], signer: &str) -> bool {
                 pat = &pat[1..];
                 segs = &segs[1..];
             }
-            (Some(&"{self}"), Some(&seg)) if seg == signer => {
+            (Some(&"{member}"), Some(&seg)) if member == Some(seg) => {
                 pat = &pat[1..];
                 segs = &segs[1..];
             }
-            (Some(&p), Some(&seg)) if p == seg && p != "{self}" => {
+            (Some(&p), Some(&seg)) if p == seg && p != "{member}" => {
                 pat = &pat[1..];
                 segs = &segs[1..];
             }
@@ -182,8 +189,15 @@ fn pattern_matches(pattern: &[&str], path: &[&str], signer: &str) -> bool {
 }
 
 /// Evaluate the table for one written path. The first matching row
-/// decides; an unmatched path is denied (deny by default).
-pub fn authorize(signer: &str, role: CommitRole, path: &str) -> Result<(), SyncError> {
+/// decides; an unmatched path is denied (deny by default). `member` is
+/// the signer's member id from the binding snapshot (`None` = unbound
+/// device, which can never satisfy a `{member}` segment).
+pub fn authorize(
+    signer: &str,
+    member: Option<&str>,
+    role: CommitRole,
+    path: &str,
+) -> Result<(), SyncError> {
     let deny = || SyncError::PolicyViolation {
         device: signer.to_string(),
         path: path.to_string(),
@@ -191,7 +205,7 @@ pub fn authorize(signer: &str, role: CommitRole, path: &str) -> Result<(), SyncE
     let segs: Vec<&str> = path.split('/').collect();
     for row in TABLE {
         let pattern: Vec<&str> = row.pattern.split('/').collect();
-        if pattern_matches(&pattern, &segs, signer) {
+        if pattern_matches(&pattern, &segs, member) {
             return if row.required.admits(role) {
                 Ok(())
             } else {
@@ -206,28 +220,48 @@ pub fn authorize(signer: &str, role: CommitRole, path: &str) -> Result<(), SyncE
 mod tests {
     use super::*;
 
-    const A: &str = "11111111-1111-1111-1111-111111111111";
-    const B: &str = "22222222-2222-2222-2222-222222222222";
+    const DA: &str = "11111111-1111-1111-1111-111111111111"; // device A
+    const MA: &str = "33333333-3333-3333-3333-333333333333"; // DA's member
+    const MB: &str = "44444444-4444-4444-4444-444444444444"; // another member
 
     #[test]
-    fn self_member_subtree_any_role() {
-        let own = format!("meta/members/{A}/devices/d.json");
-        authorize(A, CommitRole::Viewer, &own).unwrap();
-        authorize(A, CommitRole::PendingJoiner, &own).unwrap();
+    fn own_member_devices_subtree_any_role() {
+        let own = format!("meta/members/{MA}/devices/{DA}.json");
+        authorize(DA, Some(MA), CommitRole::Viewer, &own).unwrap();
+        authorize(DA, Some(MA), CommitRole::PendingJoiner, &own).unwrap();
 
-        // Another member's subtree needs Admin: Viewer denied, Admin ok.
-        let other = format!("meta/members/{B}/devices/d.json");
-        assert!(authorize(A, CommitRole::Viewer, &other).is_err());
-        authorize(A, CommitRole::Admin, &other).unwrap();
+        // Another member's subtree needs Admin — the {member} segment
+        // only matches the signer's own member id.
+        let other = format!("meta/members/{MB}/devices/{DA}.json");
+        assert!(authorize(DA, Some(MA), CommitRole::Viewer, &other).is_err());
+        authorize(DA, Some(MA), CommitRole::Admin, &other).unwrap();
     }
 
     #[test]
-    fn pending_joiner_covered_only_by_any_rows() {
-        let own = format!("meta/members/{A}/pending/join.json");
-        authorize(A, CommitRole::PendingJoiner, &own).unwrap();
-        assert!(authorize(A, CommitRole::PendingJoiner, "ciphers/x.enc").is_err());
-        let other = format!("meta/members/{B}/pending/join.json");
-        assert!(authorize(A, CommitRole::PendingJoiner, &other).is_err());
+    fn unbound_device_writes_nothing() {
+        // No binding (member = None): the {member} segment can never
+        // match, so an unbound device is held to the PendingJoiner rank:
+        // even its own-shaped subtree is denied, and nothing else is in
+        // reach for a PendingJoiner anyway.
+        let own = format!("meta/members/{MA}/devices/{DA}.json");
+        assert!(authorize(DA, None, CommitRole::PendingJoiner, &own).is_err());
+        assert!(authorize(DA, None, CommitRole::Viewer, &own).is_err());
+    }
+
+    #[test]
+    fn member_files_are_admin_only() {
+        // A member FILE (role assignment) is never self-service — the
+        // {member} row only covers the devices subtree.
+        let own_file = format!("meta/members/{MA}.json");
+        assert!(authorize(DA, Some(MA), CommitRole::Viewer, &own_file).is_err());
+        assert!(authorize(DA, Some(MA), CommitRole::Editor, &own_file).is_err());
+        // A device-named member file is still a member file: writing it
+        // as a non-admin is refused even though the segment equals the
+        // device id (the escalation attempt from the review round).
+        let escalate = format!("meta/members/{DA}.json");
+        assert!(authorize(DA, Some(MA), CommitRole::Editor, &escalate).is_err());
+        // Owners/admins manage members.
+        authorize(DA, Some(MA), CommitRole::Admin, &own_file).unwrap();
     }
 
     #[test]
@@ -239,11 +273,11 @@ mod tests {
             "meta/tags/t.enc",
             "entries/x/attachments/a.enc",
         ] {
-            authorize(A, CommitRole::Editor, path).unwrap();
+            authorize(DA, Some(MA), CommitRole::Editor, path).unwrap();
         }
-        assert!(authorize(A, CommitRole::Editor, "meta/devices.json").is_err());
-        assert!(authorize(A, CommitRole::Editor, "meta/settings.enc").is_err());
-        assert!(authorize(A, CommitRole::Editor, "meta/rekey/2.txn").is_err());
+        assert!(authorize(DA, Some(MA), CommitRole::Editor, "meta/devices.json").is_err());
+        assert!(authorize(DA, Some(MA), CommitRole::Editor, "meta/settings.enc").is_err());
+        assert!(authorize(DA, Some(MA), CommitRole::Editor, "meta/rekey/2.txn").is_err());
     }
 
     #[test]
@@ -255,33 +289,39 @@ mod tests {
             "meta/avatar.enc",
             "meta/revocations.json",
         ] {
-            authorize(A, CommitRole::Admin, path).unwrap();
+            authorize(DA, Some(MA), CommitRole::Admin, path).unwrap();
         }
         // The meta catch-all stays Admin: an Editor cannot smuggle writes
         // into unlisted meta paths.
-        assert!(authorize(A, CommitRole::Editor, "meta/revocations.json").is_err());
-        authorize(A, CommitRole::Owner, "meta/nested/deeper").unwrap();
+        assert!(authorize(DA, Some(MA), CommitRole::Editor, "meta/revocations.json").is_err());
+        authorize(DA, Some(MA), CommitRole::Owner, "meta/nested/deeper").unwrap();
     }
 
     #[test]
     fn deny_by_default_unmatched_paths() {
-        assert!(authorize(A, CommitRole::Owner, "unknown/x.enc").is_err());
-        assert!(authorize(A, CommitRole::Owner, "a/b/c.enc").is_err());
+        assert!(authorize(DA, Some(MA), CommitRole::Owner, "unknown/x.enc").is_err());
+        assert!(authorize(DA, Some(MA), CommitRole::Owner, "a/b/c.enc").is_err());
     }
 
     #[test]
     fn glob_precision() {
-        // {self} matches the exact signer segment only; the literal
-        // "{self}" directory is nobody's subtree.
-        authorize(A, CommitRole::Viewer, &format!("meta/members/{A}/x")).unwrap();
-        assert!(authorize(A, CommitRole::Viewer, "meta/members/{self}/x").is_err());
+        // {member} matches the signer's member segment only; the literal
+        // "{member}" directory is nobody's subtree.
+        authorize(
+            DA,
+            Some(MA),
+            CommitRole::Viewer,
+            &format!("meta/members/{MA}/devices/x"),
+        )
+        .unwrap();
+        assert!(authorize(DA, Some(MA), CommitRole::Viewer, "meta/members/{member}/x").is_err());
         // Row isolation: the folders row must not swallow sibling names.
-        assert!(authorize(A, CommitRole::Editor, "meta/foldersx/a.enc").is_err());
-        authorize(A, CommitRole::Admin, "meta/foldersx/a.enc").unwrap();
+        assert!(authorize(DA, Some(MA), CommitRole::Editor, "meta/foldersx/a.enc").is_err());
+        authorize(DA, Some(MA), CommitRole::Admin, "meta/foldersx/a.enc").unwrap();
         // `*` is exactly one segment.
-        authorize(A, CommitRole::Admin, "loose.enc").unwrap();
-        assert!(authorize(A, CommitRole::Admin, "loose.enc/inner").is_err());
+        authorize(DA, Some(MA), CommitRole::Admin, "loose.enc").unwrap();
+        assert!(authorize(DA, Some(MA), CommitRole::Admin, "loose.enc/inner").is_err());
         // `**` requires its prefix.
-        assert!(authorize(A, CommitRole::Viewer, "trashf/x.enc").is_err());
+        assert!(authorize(DA, Some(MA), CommitRole::Viewer, "trashf/x.enc").is_err());
     }
 }
