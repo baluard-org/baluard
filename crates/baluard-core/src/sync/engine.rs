@@ -23,8 +23,13 @@ use base64::Engine;
 /// Git sync engine wrapping git2-rs operations.
 /// Device roster for one commit: device UUID → Ed25519 verifying key bytes.
 type DeviceRoster = std::collections::BTreeMap<String, [u8; 32]>;
-/// S1a: resolved member role per device UUID for one commit.
-type MemberRoles = std::collections::BTreeMap<String, crate::sync::policy::CommitRole>;
+/// S1a: resolved member state per commit: device UUID -> role, plus
+/// device UUID -> member id (drives {member} path segments).
+#[derive(Debug, Clone)]
+struct MemberSnapshot {
+    roles: std::collections::BTreeMap<String, crate::sync::policy::CommitRole>,
+    member_of: std::collections::BTreeMap<String, String>,
+}
 #[cfg(feature = "git-sync")]
 pub struct SyncEngine {
     /// Path to the vault directory (= git workdir).
@@ -2598,29 +2603,33 @@ impl SyncEngine {
         Ok(parsed)
     }
 
-    /// S1a: member role table for one commit: device UUID -> CommitRole,
-    /// resolved from `meta/members/**` in the commit's own tree. `None`
-    /// when the tree has no member directory (legacy vault,
-    /// admin-equivalent). Present-but-unparseable files are a hard error
-    /// (tamper, fail closed), mirroring the roster rule.
+    /// S1a: resolved member state for one commit: device UUID -> role,
+    /// plus device UUID -> member id (for {member} path segments).
+    /// `None` when the tree has no member directory (legacy vault,
+    /// admin-equivalent). Present-but-unparseable or shape-violating
+    /// files are a hard error (tamper, fail closed), mirroring the
+    /// roster rule.
     fn members_tree_lookup(
         repo: &Repository,
         commit: &git2::Commit<'_>,
-        cache: &mut std::collections::HashMap<git2::Oid, Option<MemberRoles>>,
-    ) -> Result<Option<MemberRoles>, BaluardError> {
+        cache: &mut std::collections::HashMap<git2::Oid, Option<MemberSnapshot>>,
+    ) -> Result<Option<MemberSnapshot>, BaluardError> {
         let tree = commit
             .tree()
             .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
-        if tree
-            .get_path(std::path::Path::new(crate::vault::members::MEMBERS_DIR))
-            .is_err()
-        {
+        let Ok(members_entry) =
+            tree.get_path(std::path::Path::new(crate::vault::members::MEMBERS_DIR))
+        else {
             return Ok(None);
-        }
-        let tree_id = tree.id();
-        if let Some(cached) = cache.get(&tree_id) {
+        };
+        // Cache by the SUBTREE id: the root tree id changes on every
+        // commit, but the member subtree only changes when membership
+        // does — a pull batch hits the cache for every unrelated commit.
+        let subtree_id = members_entry.id();
+        if let Some(cached) = cache.get(&subtree_id) {
             return Ok(cached.clone());
         }
+        let members_prefix = format!("{}/", crate::vault::members::MEMBERS_DIR);
         let mut role_by_member: std::collections::BTreeMap<
             String,
             crate::sync::policy::CommitRole,
@@ -2628,7 +2637,6 @@ impl SyncEngine {
         let mut member_by_device: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
         let mut parse_err: Option<String> = None;
-        let prefix = format!("{}/", crate::vault::members::MEMBERS_DIR);
         tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
             if parse_err.is_some() {
                 return -1;
@@ -2639,11 +2647,25 @@ impl SyncEngine {
             let Some(name) = entry.name() else {
                 return 0;
             };
-            let path = std::path::Path::new(root).join(name);
-            let path_str = path.to_string_lossy().to_string();
-            let Some(rel) = path_str.strip_prefix(&prefix) else {
+            // String concat, never Path::join: the host separator must
+            // not leak into POSIX git tree paths (Windows). git2 walk
+            // roots are &str POSIX paths.
+            let root_str = root;
+            let path_str = if root_str.is_empty() {
+                name.to_string()
+            } else if let Some(stripped) = root_str.strip_suffix('/') {
+                format!("{stripped}/{name}")
+            } else {
+                format!("{root_str}/{name}")
+            };
+            let Some(rel) = path_str.strip_prefix(&members_prefix) else {
                 return 0;
             };
+            if !rel.ends_with(".json") {
+                // Non-member artifacts (e.g. .DS_Store) are inert: role
+                // data comes only from validated .json files.
+                return 0;
+            }
             let Ok(obj) = entry.to_object(repo) else {
                 parse_err = Some(format!("read {path_str}"));
                 return -1;
@@ -2655,31 +2677,58 @@ impl SyncEngine {
                 parse_err = Some(format!("{path_str}: not UTF-8"));
                 return -1;
             };
-            if rel.contains('/') {
-                // Device binding: <member>/devices/<device>.json
-                match serde_json::from_str::<crate::vault::members::DeviceBinding>(data) {
-                    Ok(b) => {
-                        member_by_device.insert(b.device_id.to_string(), b.member_id.to_string());
-                    }
+            let rel_parts: Vec<&str> = rel.split('/').collect();
+            if rel_parts.len() == 1 {
+                // Member file: <member_id>.json. The filename must agree
+                // with the id inside, or the registry is tampered.
+                let member_file: crate::vault::members::MemberFile =
+                    match serde_json::from_str(data) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            parse_err = Some(format!("parse member {path_str}: {e}"));
+                            return -1;
+                        }
+                    };
+                let stem = rel_parts[0].strip_suffix(".json").unwrap_or(rel_parts[0]);
+                if member_file.id.to_string() != stem {
+                    parse_err = Some(format!(
+                        "member file {path_str}: filename does not match id {}",
+                        member_file.id
+                    ));
+                    return -1;
+                }
+                role_by_member.insert(
+                    member_file.id.to_string(),
+                    crate::sync::policy::CommitRole::from(member_file.role),
+                );
+            } else if rel_parts.len() == 3 && rel_parts[1] == "devices" {
+                // Device binding: <member_id>/devices/<device_id>.json.
+                // Directory and filename must agree with the payload, so
+                // a binding cannot be forged into (or moved between)
+                // someone else's member subtree.
+                let binding: crate::vault::members::DeviceBinding = match serde_json::from_str(data)
+                {
+                    Ok(b) => b,
                     Err(e) => {
                         parse_err = Some(format!("parse binding {path_str}: {e}"));
                         return -1;
                     }
+                };
+                let member_dir = rel_parts[0];
+                let device_stem = rel_parts[2].strip_suffix(".json").unwrap_or(rel_parts[2]);
+                if binding.member_id.to_string() != member_dir
+                    || binding.device_id.to_string() != device_stem
+                {
+                    parse_err = Some(format!(
+                        "binding {path_str}: filename/dir do not match payload"
+                    ));
+                    return -1;
                 }
+                member_by_device
+                    .insert(binding.device_id.to_string(), binding.member_id.to_string());
             } else {
-                // Member file: <member>.json
-                match serde_json::from_str::<crate::vault::members::MemberFile>(data) {
-                    Ok(m) => {
-                        role_by_member.insert(
-                            m.id.to_string(),
-                            crate::sync::policy::CommitRole::from(m.role),
-                        );
-                    }
-                    Err(e) => {
-                        parse_err = Some(format!("parse member {path_str}: {e}"));
-                        return -1;
-                    }
-                }
+                parse_err = Some(format!("unexpected member file shape: {path_str}"));
+                return -1;
             }
             0
         })
@@ -2687,25 +2736,31 @@ impl SyncEngine {
         if let Some(e) = parse_err {
             return Err(SyncError::Git(format!("member directory: {e}")).into());
         }
-        let mut table: MemberRoles = std::collections::BTreeMap::new();
+        let mut roles: std::collections::BTreeMap<String, crate::sync::policy::CommitRole> =
+            std::collections::BTreeMap::new();
+        let mut member_of: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
         for (device, member) in &member_by_device {
+            member_of.insert(device.clone(), member.clone());
             if let Some(role) = role_by_member.get(member) {
-                table.insert(device.clone(), *role);
+                roles.insert(device.clone(), *role);
             }
         }
-        cache.insert(tree_id, Some(table.clone()));
-        Ok(Some(table))
+        let snapshot = Some(MemberSnapshot { roles, member_of });
+        cache.insert(subtree_id, snapshot.clone());
+        Ok(snapshot)
     }
 
-    /// S1a: member role table per commit, same snapshot rule as the
-    /// roster: the FIRST parent's table when present, else the commit's
-    /// own (genesis, when this commit introduces the directory).
-    /// `None` = no member directory on either side (legacy vault).
+    /// S1a: member snapshot per commit, same snapshot rule as the
+    /// roster: the FIRST parent's snapshot when present, else the
+    /// commit's own (genesis, when this commit introduces the
+    /// directory). `None` = no member directory on either side (legacy
+    /// vault).
     fn member_table_for_commit(
         repo: &Repository,
         commit: &git2::Commit<'_>,
-        cache: &mut std::collections::HashMap<git2::Oid, Option<MemberRoles>>,
-    ) -> Result<Option<MemberRoles>, BaluardError> {
+        cache: &mut std::collections::HashMap<git2::Oid, Option<MemberSnapshot>>,
+    ) -> Result<Option<MemberSnapshot>, BaluardError> {
         let own = Self::members_tree_lookup(repo, commit, cache)?;
         if commit.parent_count() == 0 {
             return Ok(own);
@@ -2813,12 +2868,17 @@ impl SyncEngine {
         // devices as pending joiners.
         let members =
             Self::member_table_for_commit(repo, commit, &mut std::collections::HashMap::new())?;
-        let role = match members.as_ref() {
-            Some(table) => table
-                .get(signer)
-                .copied()
-                .unwrap_or(crate::sync::policy::CommitRole::PendingJoiner),
-            None => crate::sync::policy::CommitRole::Admin,
+        let (role, member_id) = match members.as_ref() {
+            Some(snapshot) => {
+                let role = snapshot
+                    .roles
+                    .get(signer)
+                    .copied()
+                    .unwrap_or(crate::sync::policy::CommitRole::PendingJoiner);
+                let member = snapshot.member_of.get(signer).map(String::as_str);
+                (role, member)
+            }
+            None => (crate::sync::policy::CommitRole::Admin, None),
         };
         if commit.parent_count() > 2 {
             return Err(
@@ -2854,7 +2914,7 @@ impl SyncEngine {
                 .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
                 .map_err(|e| SyncError::Git(format!("net diff: {e}")))?;
             for delta in diff.deltas() {
-                Self::check_delta_path(repo, &delta, signer, role)?;
+                Self::check_delta_path(repo, &delta, signer, member_id, role)?;
             }
         }
         if commit.parent_count() == 2 {
@@ -2922,7 +2982,7 @@ impl SyncEngine {
                         .map_err(|e| SyncError::Git(format!("strip conflict: {e}")))?;
                 }
                 for p in &conflicted {
-                    crate::sync::policy::authorize(signer, role, &p.to_string_lossy())
+                    crate::sync::policy::authorize(signer, member_id, role, &p.to_string_lossy())
                         .map_err(BaluardError::from)?;
                 }
             }
@@ -2936,7 +2996,7 @@ impl SyncEngine {
                 .diff_tree_to_tree(Some(&expected), Some(&tree), None)
                 .map_err(|e| SyncError::Git(format!("merge residue diff: {e}")))?;
             for delta in residue_diff.deltas() {
-                Self::check_delta_path(repo, &delta, signer, role)?;
+                Self::check_delta_path(repo, &delta, signer, member_id, role)?;
             }
         }
         Ok(())
@@ -2951,6 +3011,7 @@ impl SyncEngine {
         repo: &Repository,
         delta: &git2::DiffDelta,
         signer: &str,
+        member: Option<&str>,
         role: crate::sync::policy::CommitRole,
     ) -> Result<(), BaluardError> {
         let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) else {
@@ -2977,7 +3038,7 @@ impl SyncEngine {
             }
             .into());
         }
-        crate::sync::policy::authorize(signer, role, &path).map_err(BaluardError::from)
+        crate::sync::policy::authorize(signer, member, role, &path).map_err(BaluardError::from)
     }
 
     /// S1a: registry deltas by a non-admin must be this device's own
@@ -3007,10 +3068,10 @@ impl SyncEngine {
             let Some(new_entry) = new_reg.devices.get(id) else {
                 return false;
             };
-            if old_entry.name != new_entry.name
-                || old_entry.encryption_public_key != new_entry.encryption_public_key
+            if old_entry.encryption_public_key != new_entry.encryption_public_key
                 || old_entry.signing_public_key != new_entry.signing_public_key
                 || old_entry.enrolled_by != new_entry.enrolled_by
+                || old_entry.enrolled_at != new_entry.enrolled_at
             {
                 return false;
             }
