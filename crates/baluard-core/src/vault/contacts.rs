@@ -229,27 +229,37 @@ pub fn reconcile_stale_contacts(
     if !vault_path.join(crate::vault::members::MEMBERS_DIR).exists() {
         return Ok(Vec::new());
     }
-    let current: std::collections::BTreeSet<String> =
-        std::fs::read_dir(vault_path.join(crate::vault::members::MEMBERS_DIR))?
-            .flatten()
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".json"))
-            .filter_map(|e| {
-                std::fs::read_to_string(e.path())
-                    .ok()
-                    .and_then(|json| {
-                        serde_json::from_str::<crate::vault::members::MemberFile>(&json).ok()
-                    })
-                    .and_then(|m| m.identity_signing_pubkey)
-            })
-            .collect();
+    // Scope the reset to real rotations: a pubkey is "rotated out" only
+    // if some member record lists it as previous AND no record carries it
+    // as current. External (non-member) contacts are never touched.
+    let mut current: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut rotated_out: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(vault_path.join(crate::vault::members::MEMBERS_DIR))?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".json") {
+            continue;
+        }
+        if let Ok(json) = std::fs::read_to_string(entry.path()) {
+            if let Ok(member) = serde_json::from_str::<crate::vault::members::MemberFile>(&json) {
+                if let Some(cur) = &member.identity_signing_pubkey {
+                    current.insert(cur.clone());
+                }
+                if let Some(prev) = &member.identity_signing_pubkey_previous {
+                    rotated_out.insert(prev.clone());
+                }
+            }
+        }
+    }
     let mut entries = load_contacts(vault_path, contacts_key)?;
     let mut downgraded = Vec::new();
     for entry in &mut entries {
+        let pubkey = &entry.card.identity_signing_pubkey;
         if entry.trust == ContactTrust::Verified
-            && !current.contains(&entry.card.identity_signing_pubkey)
+            && rotated_out.contains(pubkey)
+            && !current.contains(pubkey)
         {
             entry.trust = ContactTrust::Channel;
-            downgraded.push(entry.card.identity_signing_pubkey.clone());
+            downgraded.push(pubkey.clone());
         }
     }
     if !downgraded.is_empty() {

@@ -58,6 +58,15 @@ pub struct MemberFile {
     /// on records written before this field existed.
     #[serde(default)]
     pub identity_signing_pubkey: Option<String>,
+    /// S1a-4: the pubkey this one replaced at the last rotation (hex).
+    /// Links the rotation to its predecessor so stale-contact
+    /// reconciliation can scope the trust reset to real rotations.
+    #[serde(default)]
+    pub identity_signing_pubkey_previous: Option<String>,
+    /// S1a-4: hex Ed25519 signature by the NEW identity key over the
+    /// rotation payload — proof of possession of the new key.
+    #[serde(default)]
+    pub identity_rotation_signature: Option<String>,
     /// S1a-4: unix timestamp of the last identity rotation, if any.
     /// Clients surface this so contact re-verification can happen
     /// (rotation is visible and contestable per §4.1).
@@ -143,6 +152,22 @@ pub fn bind_to_owner(vault_path: &Path, device_id: Uuid) -> Result<(), BaluardEr
     Ok(())
 }
 
+/// Canonical rotation payload: signed by the NEW identity key at
+/// rotation; verified at pull by the structural member-record rule.
+pub fn identity_rotation_payload(
+    member_id: &Uuid,
+    new_pubkey: &str,
+    previous_pubkey: &str,
+) -> Vec<u8> {
+    let mut payload = b"baluard-identity-rotate-v1\n".to_vec();
+    payload.extend_from_slice(member_id.as_bytes());
+    payload.push(b'\n');
+    payload.extend_from_slice(new_pubkey.as_bytes());
+    payload.push(b'\n');
+    payload.extend_from_slice(previous_pubkey.as_bytes());
+    payload
+}
+
 /// Role of `device_id`'s member, from the on-disk directory. `None` when
 /// unbound or legacy (no member directory).
 pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<MemberRole> {
@@ -173,7 +198,7 @@ pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<Memb
 
 /// The member file for the member `device_id` is bound to, plus its
 /// on-disk path. `None` when unbound or legacy (no member directory).
-fn member_file_for_device(
+pub(crate) fn member_file_for_device(
     vault_path: &Path,
     device_id: Uuid,
 ) -> Option<(std::path::PathBuf, MemberFile)> {
@@ -205,16 +230,21 @@ fn member_file_for_device(
 
 /// S1a-4: record the member's current identity signing pubkey and the
 /// rotation timestamp. Self-service: any bound member updates their own
-/// record (policy table row `meta/members/<own_id>/**`). No-op on
-/// legacy vaults without a member directory.
+/// record (policy table row `meta/members/<own_id>/**`). The delta is
+/// only admitted at verification when `rotation_signature` proves
+/// possession of the NEW identity key. No-op on legacy vaults.
 pub fn set_member_identity(
     vault_path: &Path,
     device_id: Uuid,
     identity_signing_pubkey: &str,
+    previous_pubkey: Option<&str>,
+    rotation_signature: &str,
     rotated_at: u64,
 ) -> Result<(), BaluardError> {
     if let Some((path, mut member)) = member_file_for_device(vault_path, device_id) {
         member.identity_signing_pubkey = Some(identity_signing_pubkey.to_string());
+        member.identity_signing_pubkey_previous = previous_pubkey.map(|s| s.to_string());
+        member.identity_rotation_signature = Some(rotation_signature.to_string());
         member.identity_rotated_at = Some(rotated_at);
         super::write_vault_file(
             &path,
@@ -247,6 +277,11 @@ pub fn load_member_unlock(
         return Ok(None);
     }
     Ok(Some(unlock))
+}
+
+/// The identity signing pubkey recorded for `device_id`'s member.
+pub fn identity_pubkey_for_device(vault_path: &Path, device_id: Uuid) -> Option<String> {
+    member_file_for_device(vault_path, device_id).and_then(|(_, m)| m.identity_signing_pubkey)
 }
 
 // ── S1a-2: join ceremony (invite → introduce → approve) ──
