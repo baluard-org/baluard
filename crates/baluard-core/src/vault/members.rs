@@ -54,6 +54,15 @@ pub struct MemberFile {
     pub display_name: String,
     pub role: MemberRole,
     pub trust: TrustLevel,
+    /// S1a-4: the member's current identity signing pubkey (hex). `None`
+    /// on records written before this field existed.
+    #[serde(default)]
+    pub identity_signing_pubkey: Option<String>,
+    /// S1a-4: unix timestamp of the last identity rotation, if any.
+    /// Clients surface this so contact re-verification can happen
+    /// (rotation is visible and contestable per §4.1).
+    #[serde(default)]
+    pub identity_rotated_at: Option<u64>,
 }
 
 /// Device-to-member binding. Presence of this file = the device belongs
@@ -160,6 +169,84 @@ pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<Memb
         }
     }
     None
+}
+
+/// The member file for the member `device_id` is bound to, plus its
+/// on-disk path. `None` when unbound or legacy (no member directory).
+fn member_file_for_device(
+    vault_path: &Path,
+    device_id: Uuid,
+) -> Option<(std::path::PathBuf, MemberFile)> {
+    let dir = vault_path.join(MEMBERS_DIR);
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(stem) = name.strip_suffix(".json") else {
+            continue;
+        };
+        // Bindings live at meta/members/<member_id>/devices/<device_id>.json.
+        let binding = vault_path
+            .join(MEMBERS_DIR)
+            .join(stem)
+            .join("devices")
+            .join(format!("{device_id}.json"));
+        if !binding.exists() {
+            continue;
+        }
+        if let Ok(json) = std::fs::read_to_string(entry.path()) {
+            if let Ok(member) = serde_json::from_str::<MemberFile>(&json) {
+                if member.id.to_string() == stem {
+                    return Some((entry.path(), member));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// S1a-4: record the member's current identity signing pubkey and the
+/// rotation timestamp. Self-service: any bound member updates their own
+/// record (policy table row `meta/members/<own_id>/**`). No-op on
+/// legacy vaults without a member directory.
+pub fn set_member_identity(
+    vault_path: &Path,
+    device_id: Uuid,
+    identity_signing_pubkey: &str,
+    rotated_at: u64,
+) -> Result<(), BaluardError> {
+    if let Some((path, mut member)) = member_file_for_device(vault_path, device_id) {
+        member.identity_signing_pubkey = Some(identity_signing_pubkey.to_string());
+        member.identity_rotated_at = Some(rotated_at);
+        super::write_vault_file(
+            &path,
+            serde_json::to_string_pretty(&member).unwrap().as_bytes(),
+        )
+        .map_err(|e| {
+            BaluardError::from(VaultError::Metadata(format!("update member identity: {e}")))
+        })?;
+    }
+    Ok(())
+}
+
+/// Device-local member unlock material for `device_id`, if this device
+/// is a member device (meta/member-unlock.json, gitignored).
+pub fn load_member_unlock(
+    vault_path: &Path,
+    device_id: Uuid,
+) -> Result<Option<MemberUnlock>, BaluardError> {
+    let path = vault_path.join("meta/member-unlock.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let data = std::fs::read_to_string(&path).map_err(|e| {
+        BaluardError::from(VaultError::Metadata(format!("read member unlock: {e}")))
+    })?;
+    let unlock: MemberUnlock = serde_json::from_str(&data).map_err(|e| {
+        BaluardError::from(VaultError::Metadata(format!("parse member unlock: {e}")))
+    })?;
+    if unlock.device_id != device_id {
+        return Ok(None);
+    }
+    Ok(Some(unlock))
 }
 
 // ── S1a-2: join ceremony (invite → introduce → approve) ──
@@ -369,26 +456,50 @@ pub fn consume_pending_invite(
     Ok(pending)
 }
 
-/// Device-local member unlock material for `device_id`, if this device
-/// is a member device (meta/member-unlock.json, gitignored).
-pub fn load_member_unlock(
+/// The member id `device_id` is bound to (scans device bindings).
+/// `None` when unbound or legacy (no member directory).
+pub fn member_id_for_device(vault_path: &Path, device_id: Uuid) -> Option<Uuid> {
+    let dir = vault_path.join(MEMBERS_DIR);
+    let entries = std::fs::read_dir(&dir).ok()?;
+    for entry in entries.flatten() {
+        let binding = entry
+            .path()
+            .join("devices")
+            .join(format!("{device_id}.json"));
+        if !binding.exists() {
+            continue;
+        }
+        if let Ok(json) = std::fs::read_to_string(binding) {
+            if let Ok(b) = serde_json::from_str::<DeviceBinding>(&json) {
+                return Some(b.member_id);
+            }
+        }
+    }
+    None
+}
+
+/// Update the device-local member unlock file's sealed identity seed
+/// after an identity rotation. No-op when the file is absent.
+pub fn update_member_unlock_identity_seed(
     vault_path: &Path,
-    device_id: Uuid,
-) -> Result<Option<MemberUnlock>, BaluardError> {
+    sealed_hex: &str,
+) -> Result<(), BaluardError> {
     let path = vault_path.join("meta/member-unlock.json");
     if !path.exists() {
-        return Ok(None);
+        return Ok(());
     }
     let data = std::fs::read_to_string(&path).map_err(|e| {
         BaluardError::from(VaultError::Metadata(format!("read member unlock: {e}")))
     })?;
-    let unlock: MemberUnlock = serde_json::from_str(&data).map_err(|e| {
+    let mut unlock: MemberUnlock = serde_json::from_str(&data).map_err(|e| {
         BaluardError::from(VaultError::Metadata(format!("parse member unlock: {e}")))
     })?;
-    if unlock.device_id != device_id {
-        return Ok(None);
-    }
-    Ok(Some(unlock))
+    unlock.identity_seed_sealed = Some(sealed_hex.to_string());
+    super::write_vault_file(
+        &path,
+        serde_json::to_string_pretty(&unlock).unwrap().as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write member unlock: {e}"))))
 }
 
 /// Joiner: introduce yourself to a cloned vault. Verifies the invite

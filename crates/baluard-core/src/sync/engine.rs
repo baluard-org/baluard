@@ -2729,8 +2729,9 @@ impl SyncEngine {
                 member_by_device
                     .insert(binding.device_id.to_string(), binding.member_id.to_string());
             } else {
-                parse_err = Some(format!("unexpected member file shape: {path_str}"));
-                return -1;
+                // Other artifacts in a member's own subtree (identity
+                // escrow, requests) are not role data — skip them.
+                return 0;
             }
             0
         })
@@ -3022,6 +3023,35 @@ impl SyncEngine {
             return Ok(());
         };
         let path = path.to_string_lossy().to_string();
+        // S1a-4: member records (flat meta/members/<id>.json) written by a
+        // non-admin signer: only the signer's OWN record, and only the
+        // identity-rotation fields may change. Role, display name, and
+        // trust are admin-owned; identity fields are self-service
+        // (rotation visibility).
+        if let Some(stem) = path
+            .strip_prefix("meta/members/")
+            .filter(|p| p.ends_with(".json") && !p[..p.len() - 5].contains('/'))
+            .map(|p| &p[..p.len() - 5])
+        {
+            if role.rank() < crate::sync::policy::CommitRole::Admin.rank() {
+                let own_member = member.and_then(|m| uuid::Uuid::parse_str(m).ok());
+                let file_id = uuid::Uuid::parse_str(stem).ok();
+                match (own_member, file_id) {
+                    (Some(own), Some(file)) if own == file => {
+                        return Self::check_member_record_identity_delta(
+                            repo, delta, signer, member, role,
+                        );
+                    }
+                    _ => {
+                        return Err(SyncError::PolicyViolation {
+                            device: signer.to_string(),
+                            path: path.clone(),
+                        }
+                        .into());
+                    }
+                }
+            }
+        }
         // The integrity manifest rides every commit and is
         // self-authenticating: every checkpoint must verify against its
         // signing device's roster key. Role is irrelevant — a non-admin
@@ -3096,6 +3126,66 @@ impl SyncEngine {
             .into());
         }
         crate::sync::policy::authorize(signer, member, role, &path).map_err(BaluardError::from)
+    }
+
+    /// S1a-4: a non-admin member's own record delta is allowed iff ONLY
+    /// the identity-rotation fields changed (identity_signing_pubkey,
+    /// identity_rotated_at). Role, display name, trust, and id are
+    /// admin-owned. The new identity pubkey must be hex-32.
+    #[allow(clippy::needless_pass_by_value)]
+    fn check_member_record_identity_delta(
+        repo: &Repository,
+        delta: &git2::DiffDelta,
+        signer: &str,
+        member: Option<&str>,
+        role: crate::sync::policy::CommitRole,
+    ) -> Result<(), BaluardError> {
+        debug_assert!(
+            role.rank() < crate::sync::policy::CommitRole::Admin.rank(),
+            "structural member-record rule is non-admin only"
+        );
+        let _ = role;
+        let deny = || {
+            SyncError::PolicyViolation {
+                device: signer.to_string(),
+                path: "meta/members".to_string(),
+            }
+            .into()
+        };
+        let blob = |oid: git2::Oid| -> Option<Vec<u8>> {
+            if oid.is_zero() {
+                return None;
+            }
+            repo.find_blob(oid).ok().map(|b| b.content().to_vec())
+        };
+        let (Some(old), Some(new)) = (blob(delta.old_file().id()), blob(delta.new_file().id()))
+        else {
+            return Err(deny());
+        };
+        let parse = |bytes: &[u8]| -> Option<crate::vault::members::MemberFile> {
+            serde_json::from_str(std::str::from_utf8(bytes).ok()?).ok()
+        };
+        let (Some(old_member), Some(new_member)) = (parse(&old), parse(&new)) else {
+            return Err(deny());
+        };
+        let own = member.and_then(|m| uuid::Uuid::parse_str(m).ok());
+        if old_member.id != new_member.id
+            || Some(new_member.id) != own
+            || old_member.display_name != new_member.display_name
+            || old_member.role != new_member.role
+            || old_member.trust != new_member.trust
+        {
+            return Err(deny());
+        }
+        match new_member
+            .identity_signing_pubkey
+            .as_deref()
+            .map(hex::decode)
+        {
+            Some(Ok(key)) if key.len() == 32 => {}
+            _ => return Err(deny()),
+        }
+        Ok(())
     }
 
     /// S1a: registry deltas by a non-admin must be this device's own
