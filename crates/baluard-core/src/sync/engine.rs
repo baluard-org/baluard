@@ -2658,18 +2658,21 @@ impl SyncEngine {
         Self::verify_commit_against_roster_static(repo, oid, roster)
     }
 
-    /// P7: every path a REGULAR commit touches must be admitted by the
-    /// signer's policy row (first-match table, deny by default). Merge
-    /// commits are exempt here — P8a owns the merge-residue rule.
+    /// P7 + P8a: every path a commit touches must be admitted by the
+    /// signer's policy row (first-match table, deny by default). For a
+    /// regular commit that is the first-parent diff (root commits diff
+    /// against the empty tree). For a merge commit it is the RESIDUE: the
+    /// difference between the actual tree and the recomputed merge of the
+    /// two parents over their merge base — an honest merger's residue is
+    /// empty; conflicted paths are attributed to the merger outright
+    /// (a resolution is authored content). Octopus merges are never
+    /// produced by this vault and are refused outright.
     fn check_commit_paths(
         repo: &Repository,
         commit: &git2::Commit<'_>,
         roster: &DeviceRoster,
         signer: &str,
     ) -> Result<(), BaluardError> {
-        if commit.parent_count() > 1 {
-            return Ok(());
-        }
         // Pre-S1a: devices.json carries no roles; roster membership IS the
         // role (admin-equivalent). S1a replaces this resolver.
         let role = if roster.contains_key(signer) {
@@ -2677,29 +2680,112 @@ impl SyncEngine {
         } else {
             crate::sync::policy::CommitRole::PendingJoiner
         };
+        if commit.parent_count() > 2 {
+            return Err(
+                SyncError::Git("octopus merges are not produced by this vault".into()).into(),
+            );
+        }
         let tree = commit
             .tree()
             .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
-        let parent_tree = if commit.parent_count() == 1 {
+        let diff_parent = if commit.parent_count() >= 1 {
             Some(
                 commit
                     .parent(0)
-                    .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?
-                    .tree()
-                    .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?,
+                    .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?,
             )
         } else {
             None
         };
+        let parent_tree = match &diff_parent {
+            Some(p) => Some(
+                p.tree()
+                    .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?,
+            ),
+            None => None,
+        };
+        let mut residue: Vec<String> = Vec::new();
         let diff = repo
             .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
             .map_err(|e| SyncError::Git(format!("net diff: {e}")))?;
         for delta in diff.deltas() {
             let candidates = [delta.new_file().path(), delta.old_file().path()];
             for path in candidates.into_iter().flatten() {
-                crate::sync::policy::authorize(signer, role, &path.to_string_lossy())
-                    .map_err(BaluardError::from)?;
+                residue.push(path.to_string_lossy().to_string());
             }
+        }
+        if commit.parent_count() == 2 {
+            // P8a: recompute the expected merge from the parents over their
+            // merge base; anything in the actual tree beyond it is the
+            // merger's residue. Conflict resolutions are attributed to the
+            // merger outright, so they are stripped from the expected index
+            // and their paths pre-seeded into the residue set.
+            let p1 = diff_parent.as_ref().expect("two parents, first held");
+            let p2 = commit
+                .parent(1)
+                .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?;
+            let base = repo
+                .merge_base(p1.id(), p2.id())
+                .map_err(|e| SyncError::Git(format!("merge base: {e}")))?;
+            let base_tree = repo
+                .find_commit(base)
+                .map_err(|e| SyncError::Git(format!("walk base: {e}")))?
+                .tree()
+                .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
+            let p1_tree = p1
+                .tree()
+                .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
+            let p2_tree = p2
+                .tree()
+                .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
+            let mut idx = repo
+                .merge_trees(&base_tree, &p1_tree, &p2_tree, None)
+                .map_err(|e| SyncError::Git(format!("recompute merge: {e}")))?;
+            if idx.has_conflicts() {
+                let mut conflicted: Vec<std::path::PathBuf> = Vec::new();
+                for entry in idx
+                    .conflicts()
+                    .map_err(|e| SyncError::Git(format!("conflicts: {e}")))?
+                    .filter_map(|r| r.ok())
+                {
+                    for e in [entry.our, entry.their, entry.ancestor]
+                        .into_iter()
+                        .flatten()
+                    {
+                        // IndexEntry.path is raw bytes; vault paths are
+                        // controlled ASCII (uuid.enc shapes).
+                        conflicted
+                            .push(PathBuf::from(String::from_utf8_lossy(&e.path).to_string()));
+                    }
+                }
+                conflicted.sort();
+                conflicted.dedup();
+                for p in &conflicted {
+                    idx.remove_all([p.as_path()], None)
+                        .map_err(|e| SyncError::Git(format!("strip conflict: {e}")))?;
+                }
+                for p in &conflicted {
+                    residue.push(p.to_string_lossy().to_string());
+                }
+            }
+            let expected_oid = idx
+                .write_tree_to(repo)
+                .map_err(|e| SyncError::Git(format!("expected tree: {e}")))?;
+            let expected = repo
+                .find_tree(expected_oid)
+                .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
+            let residue_diff = repo
+                .diff_tree_to_tree(Some(&expected), Some(&tree), None)
+                .map_err(|e| SyncError::Git(format!("merge residue diff: {e}")))?;
+            for delta in residue_diff.deltas() {
+                let candidates = [delta.new_file().path(), delta.old_file().path()];
+                for path in candidates.into_iter().flatten() {
+                    residue.push(path.to_string_lossy().to_string());
+                }
+            }
+        }
+        for path in &residue {
+            crate::sync::policy::authorize(signer, role, path).map_err(BaluardError::from)?;
         }
         Ok(())
     }
@@ -3340,6 +3426,176 @@ mod tests {
         assert!(
             touched.iter().any(|p| p == "meta/devices.json"),
             "epoch change must land the devices.json bump, touched: {touched:?}"
+        );
+    }
+
+    // ── P8a: merge-residue rule ──
+
+    /// Build a tree from an optional base plus flat (name, bytes) entries.
+    fn tree_with<'r>(
+        repo: &'r git2::Repository,
+        base: Option<&git2::Tree<'_>>,
+        files: &[(&str, &[u8])],
+    ) -> Result<git2::Tree<'r>, BaluardError> {
+        let mut tb = repo
+            .treebuilder(base)
+            .map_err(|e| SyncError::Git(format!("treebuilder: {e}")))?;
+        for (name, content) in files {
+            let blob = repo
+                .blob(content)
+                .map_err(|e| SyncError::Git(format!("blob: {e}")))?;
+            tb.insert(name, blob, 0o100644)
+                .map_err(|e| SyncError::Git(format!("insert {name}: {e}")))?;
+        }
+        let oid = tb
+            .write()
+            .map_err(|e| SyncError::Git(format!("treebuilder write: {e}")))?;
+        let tree = repo
+            .find_tree(oid)
+            .map_err(|e| SyncError::Git(format!("find tree: {e}")));
+        Ok(tree?)
+    }
+
+    /// Fixture: enrolled repo with divergent lines from a shared base.
+    /// c1 = {a.enc, b.enc}; c2 = {a.enc=v2}; returns (repo, engine, c1, c2).
+    fn divergent_repo(
+        v1: &[u8],
+        v2: &[u8],
+    ) -> Result<
+        (
+            tempfile::TempDir,
+            SyncEngine,
+            git2::Repository,
+            git2::Oid,
+            git2::Oid,
+        ),
+        BaluardError,
+    > {
+        let key = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id = uuid::Uuid::new_v4();
+        let (dir, _) = make_test_repo();
+        enroll_device(dir.path(), &id, &key);
+        let engine = SyncEngine::new(dir.path(), &id.to_string(), None);
+        let repo = engine.init_repo().unwrap();
+        std::fs::write(dir.path().join("a.enc"), v1).unwrap();
+        engine.commit_all(&repo, "base").unwrap();
+        let c0 = repo.head().unwrap().peel_to_commit().unwrap().id();
+
+        std::fs::write(dir.path().join("b.enc"), b"line1").unwrap();
+        engine.commit_all(&repo, "line1").unwrap();
+        let c1 = repo.head().unwrap().peel_to_commit().unwrap().id();
+
+        {
+            let c0_commit = repo.find_commit(c0).unwrap();
+            repo.reset(c0_commit.as_object(), git2::ResetType::Hard, None)
+                .unwrap();
+        }
+        std::fs::write(dir.path().join("a.enc"), v2).unwrap();
+        std::fs::write(dir.path().join("c.enc"), b"c2c").unwrap();
+        engine.commit_all(&repo, "line2").unwrap();
+        let c2 = repo.head().unwrap().peel_to_commit().unwrap().id();
+        Ok((dir, engine, repo, c1, c2))
+    }
+
+    /// P8a: an honest merge (content exactly equal to the recomputed
+    /// merge of both parents) carries no residue and must verify.
+    #[test]
+    fn honest_merge_carries_no_residue() {
+        let (_dir, engine, repo, c1, c2) = divergent_repo(b"v1", b"v2").unwrap();
+        let _ = repo.find_commit(c1).unwrap().tree().unwrap();
+        // Conflicting a.enc: both lines touched it; the resolution picks
+        // v1 and keeps line 2's unique c.enc.
+        let resolution = tree_with(
+            &repo,
+            Some(&repo.find_commit(c1).unwrap().tree().unwrap()),
+            &[("a.enc", b"v1"), ("c.enc", b"c2c")],
+        )
+        .unwrap();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        let c1_commit = repo.find_commit(c1).unwrap();
+        let c2_commit = repo.find_commit(c2).unwrap();
+        let merge = engine
+            .create_signed_commit(&repo, &sig, "merge", &resolution, &[&c1_commit, &c2_commit])
+            .unwrap();
+        let verified = engine.verify_commit_signatures(&repo, &[merge]);
+        assert!(verified.is_ok(), "honest merge must verify: {verified:?}");
+    }
+
+    /// P8a: content beyond the recomputed merge is the merger's residue
+    /// and a path no policy row covers must refuse the whole commit.
+    #[test]
+    fn smuggled_merge_residue_refused() {
+        let (_dir, engine, repo, c1, c2) = divergent_repo(b"v1", b"v2").unwrap();
+        // Non-conflicted lines (b.enc / c.enc): honest expected merge plus
+        // a smuggled nested file that no policy row covers.
+        let c1_commit = repo.find_commit(c1).unwrap();
+        let c2_commit = repo.find_commit(c2).unwrap();
+        let c_enc = c2_commit
+            .tree()
+            .unwrap()
+            .get_path(std::path::Path::new("c.enc"))
+            .unwrap()
+            .id();
+        let inner = tree_with(&repo, None, &[("smug.enc", b"\xff")]).unwrap();
+        let mut tb = repo.treebuilder(Some(&c1_commit.tree().unwrap())).unwrap();
+        tb.insert("c.enc", c_enc, 0o100644).unwrap();
+        tb.insert("unknown", inner.id(), 0o040000).unwrap();
+        let tree = repo.find_tree(tb.write().unwrap()).unwrap();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        let merge = engine
+            .create_signed_commit(&repo, &sig, "merge", &tree, &[&c1_commit, &c2_commit])
+            .unwrap();
+        let verified = engine.verify_commit_signatures(&repo, &[merge]);
+        assert!(
+            matches!(
+                &verified,
+                Err(BaluardError::Sync(SyncError::PolicyViolation { .. }))
+            ),
+            "smuggled merge residue must be refused, got {verified:?}"
+        );
+    }
+
+    /// P8a: a merger's conflict resolution is residue attributed to the
+    /// signer. An admitted resolution (editor-scope path, admin-equivalent
+    /// roster) passes; smuggled extra content on the same merge refuses.
+    #[test]
+    fn conflicted_resolution_attributed_to_merger() {
+        let (_dir, engine, repo, c1, c2) = divergent_repo(b"v1", b"v2").unwrap();
+        // Both lines rewrote a.enc -> merge_trees conflicts; the merge tree
+        // resolves it to v1 and keeps line 2's unique c.enc.
+        let honest = tree_with(
+            &repo,
+            Some(&repo.find_commit(c1).unwrap().tree().unwrap()),
+            &[("a.enc", b"v1"), ("c.enc", b"c2c")],
+        )
+        .unwrap();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        let c1_commit = repo.find_commit(c1).unwrap();
+        let c2_commit = repo.find_commit(c2).unwrap();
+        let merge = engine
+            .create_signed_commit(&repo, &sig, "merge", &honest, &[&c1_commit, &c2_commit])
+            .unwrap();
+        let verified = engine.verify_commit_signatures(&repo, &[merge]);
+        assert!(
+            verified.is_ok(),
+            "resolved conflict must verify: {verified:?}"
+        );
+
+        // Same conflicted merge plus a smuggled uncovered file.
+        let inner = tree_with(&repo, None, &[("smug.enc", b"\xff")]).unwrap();
+        let mut tb = repo.treebuilder(Some(&honest)).unwrap();
+        tb.insert("unknown", inner.id(), 0o040000).unwrap();
+        let smug_tree = repo.find_tree(tb.write().unwrap()).unwrap();
+        let merge2 = engine
+            .create_signed_commit(&repo, &sig, "merge2", &smug_tree, &[&c1_commit, &c2_commit])
+            .unwrap();
+        let verified2 = engine.verify_commit_signatures(&repo, &[merge2]);
+        assert!(
+            matches!(
+                &verified2,
+                Err(BaluardError::Sync(SyncError::PolicyViolation { .. }))
+            ),
+            "smuggled content on a conflicted merge must refuse, got {verified2:?}"
         );
     }
 
