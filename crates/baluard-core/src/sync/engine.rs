@@ -3185,6 +3185,38 @@ impl SyncEngine {
             Some(Ok(key)) if key.len() == 32 => {}
             _ => return Err(deny()),
         }
+        // S1a-4 review: proof of possession of the NEW identity key plus
+        // previous-key linkage. Without these, a member could claim an
+        // arbitrary (or another member's rotated-out) pubkey and suppress
+        // the stale-contact trust reset.
+        let Some(new_pub) = new_member.identity_signing_pubkey.as_deref() else {
+            return Err(deny());
+        };
+        let Some(sig_hex) = new_member.identity_rotation_signature.as_deref() else {
+            return Err(deny());
+        };
+        let prev = new_member
+            .identity_signing_pubkey_previous
+            .as_deref()
+            .unwrap_or("");
+        let payload =
+            crate::vault::members::identity_rotation_payload(&new_member.id, new_pub, prev);
+        let vk_bytes: [u8; 32] = hex::decode(new_pub)
+            .map_err(|_| deny())?
+            .try_into()
+            .map_err(|_| deny())?;
+        let vk =
+            crate::crypto::signature::verifying_key_from_bytes(&vk_bytes).map_err(|_| deny())?;
+        let sig_bytes = hex::decode(sig_hex).map_err(|_| deny())?;
+        let sig = ed25519_dalek::Signature::from_slice(&sig_bytes).map_err(|_| deny())?;
+        crate::crypto::signature::verify(&vk, &payload, &sig).map_err(|_| deny())?;
+        // Continuity: the claimed previous key must be the one this
+        // record carried before the rotation.
+        if new_member.identity_signing_pubkey_previous.as_deref()
+            != old_member.identity_signing_pubkey.as_deref()
+        {
+            return Err(deny());
+        }
         Ok(())
     }
 

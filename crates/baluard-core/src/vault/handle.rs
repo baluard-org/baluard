@@ -564,6 +564,8 @@ impl VaultHandle {
             role: invite.role,
             trust: crate::vault::members::TrustLevel::Verified,
             identity_signing_pubkey: identity_pub,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
             identity_rotated_at: None,
         };
         crate::vault::members::write_member(&self.path, &member)?;
@@ -838,7 +840,28 @@ impl VaultHandle {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        crate::vault::members::set_member_identity(&self.path, self.device_id, &vk_hex, now)?;
+        // S1a-4 review: sign the rotation payload with the NEW identity
+        // key (proof of possession) and record the replaced key so the
+        // structural rule can enforce previous-key continuity.
+        let previous_vk =
+            crate::vault::members::identity_pubkey_for_device(&self.path, self.device_id);
+        let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .ok_or_else(|| VaultError::InvalidOperation("device is not a vault member".into()))?;
+        let rotation_payload = crate::vault::members::identity_rotation_payload(
+            &member_id,
+            &vk_hex,
+            previous_vk.as_deref().unwrap_or(""),
+        );
+        use ed25519_dalek::Signer;
+        let rotation_sig = hex::encode(new_keys.signing_key().sign(&rotation_payload).to_bytes());
+        crate::vault::members::set_member_identity(
+            &self.path,
+            self.device_id,
+            &vk_hex,
+            previous_vk.as_deref(),
+            &rotation_sig,
+            now,
+        )?;
         if let VaultState::Unlocked(u) = &mut self.state {
             u.identity = Some(new_keys);
         }
