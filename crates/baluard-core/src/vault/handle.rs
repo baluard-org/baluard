@@ -13,6 +13,7 @@ use uuid::Uuid;
 use crate::crypto::hkdf_derive;
 use crate::crypto::hpke_wrap;
 use crate::crypto::kdf;
+use crate::crypto::signature;
 use crate::device_manager::DeviceManager;
 use crate::devices::DeviceRegistry;
 use crate::error::{BaluardError, VaultError};
@@ -308,6 +309,37 @@ impl VaultHandle {
         Ok(base64::engine::general_purpose::URL_SAFE.encode(code_bytes))
     }
 
+    /// S1a-3: import a standalone contact card code (out-of-band card
+    /// exchange, not tied to a join). Signature is verified against the
+    /// card's own identity key; the entry lands at Channel until the
+    /// code check.
+    pub fn contacts_import_card(
+        &mut self,
+        card_code: &str,
+    ) -> Result<crate::vault::contacts::ContactTrust, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let code_bytes = base64::engine::general_purpose::URL_SAFE
+            .decode(card_code)
+            .map_err(|e| VaultError::Metadata(format!("bad card code: {e}")))?;
+        let card: crate::vault::contacts::SignedContactCard =
+            serde_json::from_slice(&code_bytes)
+                .map_err(|e| VaultError::Metadata(format!("bad card code: {e}")))?;
+        card.verify()?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        crate::vault::contacts::upsert_contact(
+            &self.path,
+            &self.contacts_key()?,
+            &card.card,
+            crate::vault::contacts::ContactTrust::Channel,
+            now,
+        )
+    }
+
     /// S1a-3: import a joiner's contact card from their introduction
     /// code. Signature is verified against the card's own identity key;
     /// the entry lands at Channel (Level 1) until the code check.
@@ -415,6 +447,37 @@ impl VaultHandle {
                 .into());
             };
             card.verify()?;
+            // The card alone proves nothing about the DEVICE claiming the
+            // role: the introduction must be signed by the card's
+            // identity key over the device-key payload, binding the two.
+            let Some(identity_sig) = intro.identity_signature.as_ref() else {
+                return Err(VaultError::InvalidOperation(
+                    "elevated roles require an identity-signed introduction".into(),
+                )
+                .into());
+            };
+            let payload = crate::vault::members::Introduction::identity_sign_payload(
+                intro.invite_id,
+                intro.device_id,
+                &intro.encryption_public_key,
+                &intro.signing_public_key,
+                &card.card.identity_signing_pubkey,
+            );
+            let vk_bytes: [u8; 32] = hex::decode(&card.card.identity_signing_pubkey)
+                .map_err(|_| VaultError::Corrupt("contact pubkey hex".into()))?
+                .try_into()
+                .map_err(|_| VaultError::Corrupt("contact pubkey length".into()))?;
+            let vk = signature::verifying_key_from_bytes(&vk_bytes)
+                .map_err(|_| VaultError::Corrupt("contact pubkey invalid".into()))?;
+            let sig_bytes = hex::decode(identity_sig)
+                .map_err(|_| VaultError::Corrupt("identity signature hex".into()))?;
+            let sig = ed25519_dalek::Signature::from_slice(&sig_bytes)
+                .map_err(|_| VaultError::Corrupt("identity signature length".into()))?;
+            signature::verify(&vk, &payload, &sig).map_err(|_| {
+                VaultError::InvalidOperation(
+                    "introduction identity signature does not match the contact card".into(),
+                )
+            })?;
             let key = self.contacts_key()?;
             match crate::vault::contacts::contact_trust(
                 &self.path,
@@ -518,10 +581,12 @@ impl VaultHandle {
                 // contact-card signing works on member devices too.
                 if let Some(sealed_hex) = member.identity_seed_sealed.as_deref() {
                     if let Ok(sealed) = hex::decode(sealed_hex) {
-                        if let Ok(keys) =
-                            crate::vault::identity::open_identity(&devkey_seal_m, &sealed)
-                        {
-                            self.unlocked_mut().identity = Some(keys);
+                        match crate::vault::identity::open_identity(&devkey_seal_m, &sealed) {
+                            Ok(keys) => self.unlocked_mut().identity = Some(keys),
+                            // Non-fatal: unlock succeeds; contact-card
+                            // signing is unavailable until the identity
+                            // is restored.
+                            Err(e) => eprintln!("warning: could not restore member identity: {e}"),
                         }
                     }
                 }
@@ -6253,6 +6318,121 @@ mod tests {
         );
         let head_after = repo_o.head().unwrap().peel_to_commit().unwrap().id();
         assert_eq!(head_after, head_before, "refused pull must not move HEAD");
+    }
+
+    /// S1a-3: the trust dial bites at approval. An Admin invite is
+    /// refused until the joiner's contact card is imported AND verified
+    /// (Level 2 code check), and the introduction must carry an identity
+    /// signature binding the device keys to the verified card. After the
+    /// code check the approval succeeds and the Admin's meta writes are
+    /// admitted (contrast with the Editor refusal in the S1a-2 tracer).
+    #[test]
+    fn member_join_trust_dial_enforced() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Admin)
+            .unwrap();
+
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+
+        // Gate 1: Admin role, card NOT imported yet → refused, invite
+        // stays pending (retryable).
+        let refused = handle.approve_join(&intro_code);
+        assert!(
+            refused.is_err(),
+            "unverified admin join must be refused: {refused:?}"
+        );
+
+        // Owner imports the joiner's card (Level 1: Channel), runs the
+        // code check (both sides derive the same code), marks Verified.
+        let trust = handle.contacts_import_intro(&intro_code).unwrap();
+        assert_eq!(
+            trust,
+            crate::vault::contacts::ContactTrust::Channel,
+            "import lands at Channel"
+        );
+        let intro = crate::vault::members::Introduction::decode(&intro_code).unwrap();
+        let card = intro.contact_card.as_ref().unwrap();
+        let owner_view =
+            crate::vault::contacts::load_contacts(&owner_path, &handle.contacts_key().unwrap())
+                .unwrap();
+        let imported = owner_view
+            .iter()
+            .find(|e| e.card.identity_signing_pubkey == card.card.identity_signing_pubkey)
+            .unwrap();
+        assert_eq!(
+            imported.card.verification_code(),
+            card.card.verification_code(),
+            "code check must derive the same code on both sides"
+        );
+        handle
+            .contacts_mark_verified(&card.card.identity_signing_pubkey)
+            .unwrap();
+
+        // Gate 2: verified contact → approval succeeds.
+        let member_id = handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve join").unwrap();
+
+        // Joiner pulls, unlocks, and their ADMIN meta write is admitted
+        // (contrast with the Editor refusal in member_roles_enforced).
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        std::fs::write(joiner_path.join("meta/epoch.json"), b"{\"epoch\":5}").unwrap();
+        let joiner_seal = joiner.devkey_seal();
+        let engine_j2 = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner.device_id.to_string(),
+            joiner_seal.as_ref(),
+        );
+        engine_j2.commit_all(&repo_j, "admin meta").unwrap();
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .unwrap();
+        engine_o.pull(&repo_o, "joiner").unwrap();
+        let merged = repo_o.head().unwrap().peel_to_commit().unwrap().id();
+        assert!(
+            engine_o
+                .verify_commit_signatures(&repo_o, &[merged])
+                .is_ok(),
+            "admin meta write must verify"
+        );
+
+        // Member record carries the invite's role.
+        let member_file = owner_path
+            .join("meta/members")
+            .join(format!("{member_id}.json"));
+        let record: crate::vault::members::MemberFile =
+            serde_json::from_str(&std::fs::read_to_string(&member_file).unwrap()).unwrap();
+        assert_eq!(record.role, crate::vault::members::MemberRole::Admin);
     }
 
     // ── P3: keywrap distribution + rekey-txn adoption ──
