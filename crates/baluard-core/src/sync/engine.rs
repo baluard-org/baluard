@@ -2688,30 +2688,37 @@ impl SyncEngine {
         let tree = commit
             .tree()
             .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
-        let diff_parent = if commit.parent_count() >= 1 {
-            Some(
-                commit
-                    .parent(0)
-                    .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?,
-            )
-        } else {
-            None
-        };
-        let parent_tree = match &diff_parent {
-            Some(p) => Some(
-                p.tree()
-                    .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?,
-            ),
-            None => None,
-        };
         let mut residue: Vec<String> = Vec::new();
-        let diff = repo
-            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
-            .map_err(|e| SyncError::Git(format!("net diff: {e}")))?;
-        for delta in diff.deltas() {
-            let candidates = [delta.new_file().path(), delta.old_file().path()];
-            for path in candidates.into_iter().flatten() {
-                residue.push(path.to_string_lossy().to_string());
+        if commit.parent_count() <= 1 {
+            // Regular commit: the first-parent diff is the author's edit
+            // (root commits diff against the empty tree). NEVER applied to
+            // merges: the other parent's clean content is not the
+            // merger's authorship, and first-parent attribution would not
+            // be parent-order invariant.
+            let diff_parent = if commit.parent_count() == 1 {
+                Some(
+                    commit
+                        .parent(0)
+                        .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?,
+                )
+            } else {
+                None
+            };
+            let parent_tree = match &diff_parent {
+                Some(p) => Some(
+                    p.tree()
+                        .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?,
+                ),
+                None => None,
+            };
+            let diff = repo
+                .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
+                .map_err(|e| SyncError::Git(format!("net diff: {e}")))?;
+            for delta in diff.deltas() {
+                let candidates = [delta.new_file().path(), delta.old_file().path()];
+                for path in candidates.into_iter().flatten() {
+                    residue.push(path.to_string_lossy().to_string());
+                }
             }
         }
         if commit.parent_count() == 2 {
@@ -2720,7 +2727,9 @@ impl SyncEngine {
             // merger's residue. Conflict resolutions are attributed to the
             // merger outright, so they are stripped from the expected index
             // and their paths pre-seeded into the residue set.
-            let p1 = diff_parent.as_ref().expect("two parents, first held");
+            let p1 = commit
+                .parent(0)
+                .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?;
             let p2 = commit
                 .parent(1)
                 .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?;
@@ -2752,16 +2761,28 @@ impl SyncEngine {
                         .into_iter()
                         .flatten()
                     {
-                        // IndexEntry.path is raw bytes; vault paths are
-                        // controlled ASCII (uuid.enc shapes).
-                        conflicted
-                            .push(PathBuf::from(String::from_utf8_lossy(&e.path).to_string()));
+                        // IndexEntry.path is raw bytes. A non-UTF-8 path
+                        // cannot be matched back onto the index: refuse
+                        // with a clear error instead of a generic
+                        // GIT_EUNMERGED at write_tree time.
+                        conflicted.push(match String::from_utf8(e.path.clone()) {
+                            Ok(s) => std::path::PathBuf::from(s),
+                            Err(_) => {
+                                return Err(
+                                    SyncError::Git("conflicted path is not UTF-8".into()).into()
+                                );
+                            }
+                        });
                     }
                 }
                 conflicted.sort();
                 conflicted.dedup();
                 for p in &conflicted {
-                    idx.remove_all([p.as_path()], None)
+                    // Exact removal: remove_all treats its argument as a
+                    // glob/directory pathspec and would also strip
+                    // non-conflicted entries under a conflicted directory.
+                    // A conflicted path has no stage-0 entry to remove.
+                    idx.conflict_remove(p.as_path())
                         .map_err(|e| SyncError::Git(format!("strip conflict: {e}")))?;
                 }
                 for p in &conflicted {
@@ -3456,11 +3477,14 @@ mod tests {
         Ok(tree?)
     }
 
-    /// Fixture: enrolled repo with divergent lines from a shared base.
-    /// c1 = {a.enc, b.enc}; c2 = {a.enc=v2}; returns (repo, engine, c1, c2).
+    /// Fixture: enrolled repo with divergent lines from a shared base
+    /// ({a.enc: base}). Line 1 always adds b.enc; line 2 always adds
+    /// c.enc. `line1_a`/`line2_a` rewrite a.enc on that line (v1 / v2):
+    /// both true = a real 3-way conflict on a.enc; both false = clean
+    /// disjoint merge. Returns (dir, engine, repo, c1, c2).
     fn divergent_repo(
-        v1: &[u8],
-        v2: &[u8],
+        line1_a: bool,
+        line2_a: bool,
     ) -> Result<
         (
             tempfile::TempDir,
@@ -3477,11 +3501,14 @@ mod tests {
         enroll_device(dir.path(), &id, &key);
         let engine = SyncEngine::new(dir.path(), &id.to_string(), None);
         let repo = engine.init_repo().unwrap();
-        std::fs::write(dir.path().join("a.enc"), v1).unwrap();
+        std::fs::write(dir.path().join("a.enc"), b"base").unwrap();
         engine.commit_all(&repo, "base").unwrap();
         let c0 = repo.head().unwrap().peel_to_commit().unwrap().id();
 
         std::fs::write(dir.path().join("b.enc"), b"line1").unwrap();
+        if line1_a {
+            std::fs::write(dir.path().join("a.enc"), b"v1").unwrap();
+        }
         engine.commit_all(&repo, "line1").unwrap();
         let c1 = repo.head().unwrap().peel_to_commit().unwrap().id();
 
@@ -3490,8 +3517,10 @@ mod tests {
             repo.reset(c0_commit.as_object(), git2::ResetType::Hard, None)
                 .unwrap();
         }
-        std::fs::write(dir.path().join("a.enc"), v2).unwrap();
         std::fs::write(dir.path().join("c.enc"), b"c2c").unwrap();
+        if line2_a {
+            std::fs::write(dir.path().join("a.enc"), b"v2").unwrap();
+        }
         engine.commit_all(&repo, "line2").unwrap();
         let c2 = repo.head().unwrap().peel_to_commit().unwrap().id();
         Ok((dir, engine, repo, c1, c2))
@@ -3501,14 +3530,13 @@ mod tests {
     /// merge of both parents) carries no residue and must verify.
     #[test]
     fn honest_merge_carries_no_residue() {
-        let (_dir, engine, repo, c1, c2) = divergent_repo(b"v1", b"v2").unwrap();
-        let _ = repo.find_commit(c1).unwrap().tree().unwrap();
-        // Conflicting a.enc: both lines touched it; the resolution picks
-        // v1 and keeps line 2's unique c.enc.
+        let (_dir, engine, repo, c1, c2) = divergent_repo(true, true).unwrap();
+        // Both lines rewrote a.enc -> merge_trees really conflicts; the
+        // merge tree resolves it to v1 and keeps line 2's unique c.enc.
         let resolution = tree_with(
             &repo,
             Some(&repo.find_commit(c1).unwrap().tree().unwrap()),
-            &[("a.enc", b"v1"), ("c.enc", b"c2c")],
+            &[("c.enc", b"c2c")],
         )
         .unwrap();
         let sig = git2::Signature::now("t", "t@example.com").unwrap();
@@ -3525,7 +3553,7 @@ mod tests {
     /// and a path no policy row covers must refuse the whole commit.
     #[test]
     fn smuggled_merge_residue_refused() {
-        let (_dir, engine, repo, c1, c2) = divergent_repo(b"v1", b"v2").unwrap();
+        let (_dir, engine, repo, c1, c2) = divergent_repo(false, false).unwrap();
         // Non-conflicted lines (b.enc / c.enc): honest expected merge plus
         // a smuggled nested file that no policy row covers.
         let c1_commit = repo.find_commit(c1).unwrap();
@@ -3560,13 +3588,13 @@ mod tests {
     /// roster) passes; smuggled extra content on the same merge refuses.
     #[test]
     fn conflicted_resolution_attributed_to_merger() {
-        let (_dir, engine, repo, c1, c2) = divergent_repo(b"v1", b"v2").unwrap();
-        // Both lines rewrote a.enc -> merge_trees conflicts; the merge tree
-        // resolves it to v1 and keeps line 2's unique c.enc.
+        let (_dir, engine, repo, c1, c2) = divergent_repo(true, true).unwrap();
+        // Both lines rewrote a.enc -> merge_trees really conflicts; the
+        // merge tree resolves it to v1 and keeps line 2's unique c.enc.
         let honest = tree_with(
             &repo,
             Some(&repo.find_commit(c1).unwrap().tree().unwrap()),
-            &[("a.enc", b"v1"), ("c.enc", b"c2c")],
+            &[("c.enc", b"c2c")],
         )
         .unwrap();
         let sig = git2::Signature::now("t", "t@example.com").unwrap();
