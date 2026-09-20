@@ -480,7 +480,6 @@ impl VaultHandle {
         &mut self,
         member_ids: &[uuid::Uuid],
     ) -> Result<MemberRemovalReport, BaluardError> {
-        use crate::device_manager::DeviceActivityIndex;
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
@@ -494,6 +493,21 @@ impl VaultHandle {
         let actor_member = crate::vault::members::member_id_for_device(&self.path, self.device_id);
 
         // ── Pre-flight: validate everything before any mutation ──
+        // S1a-6 review: the offboarding rotation's own preconditions are
+        // checked HERE, before any row/seam mutation — otherwise a
+        // rotation failure would strand tombstoned rows + deleted
+        // keywraps with the Root Key unrotated, and a retry would be
+        // refused as "already tombstoned".
+        if !self.device_manager.writes_allowed() {
+            return Err(VaultError::Corrupt(
+                "rotation in progress, use finalize_rotation()".into(),
+            )
+            .into());
+        }
+        {
+            let seal_key = self.devkey_seal();
+            load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())?;
+        }
         let mut seen = std::collections::BTreeSet::new();
         for id in member_ids {
             if !seen.insert(*id) {
@@ -527,7 +541,12 @@ impl VaultHandle {
 
         // ── Offboard: tombstone rows, strike seats, rotate once ──
         let mut removed_members = Vec::new();
-        let mut removed_devices = Vec::new();
+        let mut removed_devices_set = std::collections::BTreeSet::new();
+        // S1a-6 review: prune the ENCRYPTED activity index (not just the
+        // legacy plaintext) — DeviceActivityIndex::remove_device would
+        // otherwise create an empty plaintext file that shadows the real
+        // activity.enc history on the next load.
+        let mut activity = self.load_activity_enc()?;
         for id in member_ids {
             let devices = crate::vault::members::remove_member(&self.path, *id)?;
             removed_members.push(*id);
@@ -536,11 +555,12 @@ impl VaultHandle {
                     continue; // defense in depth: the actor's own seat stays
                 }
                 let _ = self.device_manager.registry.revoke(device);
-                let _ = DeviceActivityIndex::remove_device(&self.path, &device);
+                activity.devices.remove(&device.to_string());
                 let _ = std::fs::remove_file(self.path.join(format!("meta/keywrap/{device}.json")));
-                removed_devices.push(device);
+                removed_devices_set.insert(device);
             }
         }
+        self.save_activity_enc(&activity)?;
         self.sync_registry_from_device_manager();
         self.device_manager.auto_save_result()?;
         self.rotate_root_key()?;
@@ -550,7 +570,7 @@ impl VaultHandle {
         };
         Ok(MemberRemovalReport {
             removed_members,
-            removed_devices,
+            removed_devices: removed_devices_set.into_iter().collect(),
             new_epoch,
         })
     }
@@ -723,7 +743,7 @@ impl VaultHandle {
                         "reset invite names a successor row that does not exist".into(),
                     )
                 })?;
-            if row.reset.is_some() {
+            if row.reset.is_some() || row.removed.is_some() {
                 return Err(VaultError::InvalidOperation(
                     "reset invite names a tombstoned row".into(),
                 )
@@ -981,15 +1001,16 @@ impl VaultHandle {
         // is admin-only and identity artifacts are per-member state).
         // Founder/legacy devices keep the meta/ paths.
         let member_scoped = crate::vault::members::member_id_for_device(&self.path, self.device_id);
-        // S1a-5: a tombstoned member cannot rotate — the row is dead
-        // (their commits are refused at verification anyway).
+        // S1a-5/S1a-6: a tombstoned member (reset OR removal) cannot
+        // rotate — the row is dead (their commits are refused at
+        // verification anyway).
         if let Some(m) = member_scoped {
-            if crate::vault::members::member_file_by_id(&self.path, m)
-                .and_then(|row| row.reset)
-                .is_some()
-            {
+            let tombstoned = crate::vault::members::member_file_by_id(&self.path, m)
+                .map(|row| row.reset.is_some() || row.removed.is_some())
+                .unwrap_or(false);
+            if tombstoned {
                 return Err(VaultError::InvalidOperation(
-                    "this member row is reset; re-join with the admin's new invite".into(),
+                    "this member row is tombstoned; re-join with the admin's new invite".into(),
                 )
                 .into());
             }
@@ -7217,19 +7238,79 @@ mod tests {
         joiner.unlock("member-pass").unwrap();
         let joiner_device = joiner.device_id;
 
+        // Two more members: C joins the batch removal, D survives it
+        // (proves survivor re-key adoption + unlock after the rotation).
+        let mut members = vec![old_member_id];
+        let mut identities = vec![old_identity.clone()];
+        let mut member_devices = vec![joiner_device];
+        for name in ["MemberC", "MemberD"] {
+            let code_n = handle
+                .invite_create(crate::vault::members::MemberRole::Editor)
+                .unwrap();
+            engine_o.commit_all(&repo_o, "invite").unwrap();
+            let path_n = temp.path().join(name.to_lowercase());
+            git2::Repository::clone(owner_path.to_str().unwrap(), &path_n).unwrap();
+            let intro_n = crate::vault::members::create_introduction(
+                &path_n,
+                &code_n,
+                &format!("pass-{name}"),
+                name,
+            )
+            .unwrap();
+            let decoded = crate::vault::members::Introduction::decode(&intro_n).unwrap();
+            identities.push(
+                decoded
+                    .contact_card
+                    .as_ref()
+                    .unwrap()
+                    .card
+                    .identity_signing_pubkey
+                    .clone(),
+            );
+            handle.contacts_import_intro(&intro_n).unwrap();
+            handle
+                .contacts_mark_verified(identities.last().unwrap())
+                .unwrap();
+            let id_n = handle.approve_join(&intro_n).unwrap();
+            members.push(id_n);
+            // The approval ships the keywrap: commit BEFORE the member
+            // pulls, or their unlock finds no keywrap on their clone.
+            engine_o.commit_all(&repo_o, "approve join").unwrap();
+            let engine_n =
+                crate::sync::engine::SyncEngine::new(&path_n, &name.to_lowercase(), None);
+            let repo_n = engine_n.open_repo().unwrap();
+            engine_n.pull(&repo_n, "origin").unwrap();
+            let mut handle_n = VaultHandle::open(&path_n).unwrap();
+            handle_n.unlock(&format!("pass-{name}")).unwrap();
+            member_devices.push(handle_n.device_id);
+        }
+        let member_c = members[1];
+        let d_path = temp.path().join("memberd");
+        engine_o.commit_all(&repo_o, "members joined").unwrap();
+
         // Gates: Editor cannot remove; empty batch, owner row, unknown
-        // member all refused.
+        // member, duplicate entries all refused.
         assert!(joiner.member_remove(&[owner_member_id]).is_err());
         assert!(handle.member_remove(&[]).is_err());
         assert!(handle.member_remove(&[owner_member_id]).is_err());
         assert!(handle.member_remove(&[uuid::Uuid::new_v4()]).is_err());
+        let unknown = uuid::Uuid::new_v4();
+        assert!(handle.member_remove(&[unknown, unknown]).is_err());
 
-        // Offboard in one batch call.
-        let report = handle.member_remove(&[old_member_id]).unwrap();
-        assert_eq!(report.removed_members, vec![old_member_id]);
+        // Offboard A + C in one batch call.
+        let report = handle.member_remove(&[old_member_id, member_c]).unwrap();
+        assert_eq!(report.removed_members, vec![old_member_id, member_c]);
+        // Double removal + re-removal refused.
+        assert!(handle.member_remove(&[old_member_id]).is_err());
+        assert!(handle.member_remove(&[unknown]).is_err());
         assert!(
-            report.removed_devices.contains(&joiner_device),
-            "the member's device seat must be struck"
+            report.removed_devices.contains(&joiner_device)
+                && report.removed_devices.contains(&member_devices[1]),
+            "both removed members' device seats must be struck"
+        );
+        assert!(
+            !report.removed_devices.contains(&member_devices[2]),
+            "the survivor's seat must be untouched"
         );
 
         // Row tombstoned: terminal marker, identity cleared, dead key
@@ -7261,17 +7342,31 @@ mod tests {
             }
         }
 
-        engine_o.commit_all(&repo_o, "remove member").unwrap();
+        engine_o.commit_all(&repo_o, "remove members").unwrap();
 
-        // Contact dial reset.
-        let downgraded = handle.reconcile_stale_member_contacts().unwrap();
-        assert_eq!(downgraded, vec![old_identity]);
+        // Contact dial reset for BOTH removed members (walk order is not
+        // deterministic — compare as sets). The survivor's Channel entry
+        // never downgrades.
+        let mut downgraded = handle.reconcile_stale_member_contacts().unwrap();
+        downgraded.sort();
+        let mut expected = vec![identities[0].clone(), identities[1].clone()];
+        expected.sort();
+        assert_eq!(downgraded, expected, "both dead identities must reset");
 
-        // The removed member's device syncs the removal (admin-signed)
+        // The removed members' devices sync the removal (admin-signed)
         // and then can no longer unlock: keywrap gone, epoch moved.
         engine_j.pull(&repo_j, "origin").unwrap();
         let mut joiner_after = VaultHandle::open(&joiner_path).unwrap();
         assert!(joiner_after.unlock("member-pass").is_err());
+
+        // The SURVIVOR's device pulls the removal and unlocks with its
+        // own password: the P3 re-key staged its new keywrap before the
+        // rotation committed, and its member canary is unaffected.
+        let engine_d = crate::sync::engine::SyncEngine::new(&d_path, "memberd", None);
+        let repo_d = engine_d.open_repo().unwrap();
+        engine_d.pull(&repo_d, "origin").unwrap();
+        let mut survivor = VaultHandle::open(&d_path).unwrap();
+        survivor.unlock("pass-MemberD").unwrap();
 
         // Stale-clone rogue commit: refused at the honest client.
         let joiner_seal = joiner.devkey_seal();

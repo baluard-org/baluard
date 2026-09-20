@@ -212,8 +212,8 @@ pub fn reset_member(
     let data = std::fs::read_to_string(&path).map_err(|_| deny("member not found"))?;
     let mut old: MemberFile =
         serde_json::from_str(&data).map_err(|e| deny(&format!("member record unreadable: {e}")))?;
-    if old.reset.is_some() {
-        return Err(deny("member is already reset"));
+    if old.reset.is_some() || old.removed.is_some() {
+        return Err(deny("member is already tombstoned"));
     }
     if old.role == MemberRole::Owner {
         return Err(deny(
