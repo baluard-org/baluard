@@ -396,6 +396,18 @@ impl VaultHandle {
         self.load_contacts()
     }
 
+    /// S1a-4: reconcile the address book against member identity records
+    /// after a sync. A Verified contact whose pubkey no longer matches
+    /// its member's current identity (the member rotated) drops to
+    /// Channel — the trust reset that makes rotation visible and
+    /// contestable. Returns the downgraded identity pubkeys.
+    pub fn reconcile_stale_member_contacts(&mut self) -> Result<Vec<String>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        crate::vault::contacts::reconcile_stale_contacts(&self.path, &self.contacts_key()?)
+    }
+
     /// S1a-2: mint a one-time member invite (owner side). The returned
     /// code travels out-of-band; the repo-side pending file records only
     /// the role and the secret hash. Consumed at approval.
@@ -540,11 +552,19 @@ impl VaultHandle {
 
         // Member record + binding, admin-authored, role from the invite.
         // Approval IS the trust act (Level 3 replaces the code check).
+        // The joiner's contact card pubkey is recorded as their identity
+        // signing key (S1a-4: rotation visibility keys off this field).
+        let identity_pub = intro
+            .contact_card
+            .as_ref()
+            .map(|c| c.card.identity_signing_pubkey.clone());
         let member = crate::vault::members::MemberFile {
             id: uuid::Uuid::new_v4(),
             display_name: intro.display_name.clone(),
             role: invite.role,
             trust: crate::vault::members::TrustLevel::Verified,
+            identity_signing_pubkey: identity_pub,
+            identity_rotated_at: None,
         };
         crate::vault::members::write_member(&self.path, &member)?;
         crate::vault::members::write_device_binding(
@@ -576,6 +596,11 @@ impl VaultHandle {
             let result = self.unlock_with_member_canary(&kek, canary);
             if result.is_ok() {
                 self.clear_failed_attempts()?;
+                // S1a-4: member devices can rotate their identity too —
+                // expose the wrap key to rotate_identity.
+                if let VaultState::Unlocked(u) = &mut self.state {
+                    u.identity_wrap_key = Some(devkey_seal_m.clone());
+                }
                 // S1a-3: open the member's own identity (sealed under
                 // their devkey seal) into the unlocked state so
                 // contact-card signing works on member devices too.
@@ -675,7 +700,20 @@ impl VaultHandle {
             return;
         };
 
-        let Ok(sealed) = std::fs::read(self.path.join("meta/identity.enc")) else {
+        // S1a-4: prefer the member-scoped sealed identity when this device
+        // is a bound member — identity rotation writes there; the legacy
+        // meta/identity.enc path remains for founder/legacy vaults.
+        let sealed = match crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .map(|m| {
+                self.path
+                    .join(crate::vault::members::MEMBERS_DIR)
+                    .join(m.to_string())
+                    .join("identity.enc")
+            }) {
+            Some(p) if p.exists() => std::fs::read(&p).ok(),
+            _ => std::fs::read(self.path.join("meta/identity.enc")).ok(),
+        };
+        let Some(sealed) = sealed else {
             return;
         };
         match crate::vault::identity::open_identity(&wrap_key, &sealed) {
@@ -731,9 +769,31 @@ impl VaultHandle {
             (wrap_key, recovery_pub_hex)
         };
 
+        // S1a-4: member devices store identity artifacts member-scoped
+        // (meta/members/<m>/), never in the synced meta/ root (meta/**
+        // is admin-only and identity artifacts are per-member state).
+        // Founder/legacy devices keep the meta/ paths.
+        let member_scoped = crate::vault::members::member_id_for_device(&self.path, self.device_id);
+        let identity_path = match member_scoped {
+            Some(m) => self
+                .path
+                .join(crate::vault::members::MEMBERS_DIR)
+                .join(m.to_string())
+                .join("identity.enc"),
+            None => self.path.join("meta/identity.enc"),
+        };
+        let escrow_path = match member_scoped {
+            Some(m) => self
+                .path
+                .join(crate::vault::members::MEMBERS_DIR)
+                .join(m.to_string())
+                .join("identity-escrow.json"),
+            None => self.path.join("meta/identity-escrow.json"),
+        };
+
         let new_keys = crate::vault::identity::IdentityKeys::generate()?;
         let sealed = crate::vault::identity::seal_identity(&wrap_key, &new_keys)?;
-        super::write_vault_file(&self.path.join("meta/identity.enc"), &sealed)?;
+        super::write_vault_file(&identity_path, &sealed)?;
 
         // Re-escrow: HPKE-wrap the new seed to the recovery pubkey so phrase
         // recovery keeps restoring the CURRENT identity.
@@ -752,13 +812,33 @@ impl VaultHandle {
             "tag": hex::encode(tag),
         });
         super::write_vault_file(
-            &self.path.join("meta/identity-escrow.json"),
+            &escrow_path,
             serde_json::to_string_pretty(&escrow)
                 .map_err(|e| VaultError::Metadata(format!("escrow serialization: {e}")))?
                 .as_bytes(),
         )?;
 
-        // Cache the new keys.
+        // S1a-4: member devices update their device-local sealed identity
+        // seed so the rotation persists across lock/unlock.
+        if member_scoped.is_some() {
+            crate::vault::members::update_member_unlock_identity_seed(
+                &self.path,
+                &hex::encode(crate::vault::identity::seal_identity(&wrap_key, &new_keys)?),
+            )?;
+        }
+
+        // Cache the new keys. S1a-4: identity rotation must be visible —
+        // record the new identity pubkey + rotation timestamp in the
+        // member record (self-service write; the commit ships it to every
+        // client, whose contact reconciliation downgrades stale Verified
+        // entries — the trust reset). No-op on legacy vaults without
+        // member records.
+        let vk_hex = hex::encode(new_keys.signing_key().verifying_key().as_bytes());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        crate::vault::members::set_member_identity(&self.path, self.device_id, &vk_hex, now)?;
         if let VaultState::Unlocked(u) = &mut self.state {
             u.identity = Some(new_keys);
         }
@@ -6433,6 +6513,129 @@ mod tests {
         let record: crate::vault::members::MemberFile =
             serde_json::from_str(&std::fs::read_to_string(&member_file).unwrap()).unwrap();
         assert_eq!(record.role, crate::vault::members::MemberRole::Admin);
+    }
+
+    /// S1a-4: identity rotation is visible and triggers the trust reset.
+    /// The joiner rotates their identity; the member record carries the
+    /// new pubkey + rotation timestamp, and the owner's address book
+    /// entry for the OLD identity downgrades to Channel on reconcile.
+    #[test]
+    fn member_identity_rotation_resets_trust() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+
+        // Genesis: owner member record carries the creation identity vk.
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Editor)
+            .unwrap();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        let intro = crate::vault::members::Introduction::decode(&intro_code).unwrap();
+        let joiner_old_identity = intro
+            .contact_card
+            .as_ref()
+            .unwrap()
+            .card
+            .identity_signing_pubkey
+            .clone();
+
+        let trust = handle.contacts_import_intro(&intro_code).unwrap();
+        assert_eq!(trust, crate::vault::contacts::ContactTrust::Channel);
+        handle.contacts_mark_verified(&joiner_old_identity).unwrap();
+        handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve join").unwrap();
+
+        // Joiner pulls approval, unlocks, rotates their identity.
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        let old_identity_vk = joiner.identity().unwrap().signing_key().verifying_key();
+        assert_eq!(
+            hex::encode(old_identity_vk.as_bytes()),
+            joiner_old_identity,
+            "member record identity must match the introduced card"
+        );
+        joiner.rotate_identity().unwrap();
+        let new_identity_vk = hex::encode(
+            joiner
+                .identity()
+                .unwrap()
+                .signing_key()
+                .verifying_key()
+                .as_bytes(),
+        );
+        assert_ne!(new_identity_vk, joiner_old_identity);
+
+        // Rotation ships via sync; the owner reconciles on next sync:
+        // the joiner's stale Verified contact drops to Channel.
+        let joiner_seal = joiner.devkey_seal();
+        let joiner_device = joiner.device_id;
+        drop(joiner);
+        let engine_j_signed = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner_device.to_string(),
+            joiner_seal.as_ref(),
+        );
+        engine_j_signed
+            .commit_all(&repo_j, "identity rotation")
+            .unwrap();
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .unwrap();
+        engine_o.pull(&repo_o, "joiner").unwrap();
+        let downgraded = handle.reconcile_stale_member_contacts().unwrap();
+        assert_eq!(
+            downgraded,
+            vec![joiner_old_identity],
+            "stale Verified contact must downgrade to Channel"
+        );
+
+        // The member record carries the NEW identity pubkey.
+        let mut found: Option<crate::vault::members::MemberFile> = None;
+        for entry in std::fs::read_dir(owner_path.join("meta/members"))
+            .unwrap()
+            .flatten()
+        {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".json") {
+                continue;
+            }
+            if let Ok(record) = serde_json::from_str::<crate::vault::members::MemberFile>(
+                &std::fs::read_to_string(entry.path()).unwrap(),
+            ) {
+                if record.identity_signing_pubkey.as_deref() == Some(new_identity_vk.as_str()) {
+                    found = Some(record);
+                    break;
+                }
+            }
+        }
+        let member_record = found.expect("member record must carry the rotated identity");
+        assert!(member_record.identity_rotated_at.is_some());
     }
 
     // ── P3: keywrap distribution + rekey-txn adoption ──

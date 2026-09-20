@@ -428,11 +428,16 @@ impl<'a> VaultCreator<'a> {
                 // S1a: owner membership + founding-device binding, written
                 // with the registry BEFORE the initial commit so the
                 // roster-snapshot rule resolves roles from the root tree.
+                // The identity vk is recorded after the identity is
+                // generated below (rotation visibility keys off it).
+                let owner_member_id = uuid::Uuid::new_v4();
                 let owner_member = crate::vault::members::MemberFile {
-                    id: uuid::Uuid::new_v4(),
+                    id: owner_member_id,
                     display_name: self.display_name.clone().unwrap_or_else(|| "Owner".into()),
                     role: crate::vault::members::MemberRole::Owner,
                     trust: crate::vault::members::TrustLevel::SelfTrust,
+                    identity_signing_pubkey: None,
+                    identity_rotated_at: None,
                 };
                 crate::vault::members::write_member(&path, &owner_member)?;
                 crate::vault::members::write_device_binding(
@@ -575,6 +580,28 @@ impl<'a> VaultCreator<'a> {
                         .unwrap()
                         .as_bytes(),
                 )?;
+
+                // S1a-4: record the owner's identity signing pubkey in the
+                // member record (rotation visibility keys off this field).
+                // The member file was written before the identity was
+                // generated; rewrite it with the vk now — still before the
+                // initial commit, so the root tree carries it.
+                let mut owner_member: crate::vault::members::MemberFile = serde_json::from_str(
+                    &std::fs::read_to_string(
+                        path.join("meta/members")
+                            .join(format!("{owner_member_id}.json")),
+                    )
+                    .map_err(|e| {
+                        BaluardError::from(VaultError::Metadata(format!("read owner member: {e}")))
+                    })?,
+                )
+                .map_err(|e| {
+                    BaluardError::from(VaultError::Metadata(format!("parse owner member: {e}")))
+                })?;
+                owner_member.identity_signing_pubkey = Some(hex::encode(
+                    identity_keys.signing_key().verifying_key().as_bytes(),
+                ));
+                crate::vault::members::write_member(&path, &owner_member)?;
 
                 // Write .baluard marker file (vault detection, not secret).
                 // Required for discover_orphans / vaults.detach / registry

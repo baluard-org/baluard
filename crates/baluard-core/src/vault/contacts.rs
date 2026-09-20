@@ -217,6 +217,47 @@ pub fn upsert_contact(
     Ok(floor)
 }
 
+/// Downgrade address book entries whose pubkey no longer matches any
+/// member's current identity (the member rotated). Verified entries
+/// drop to Channel — the plan's trust reset: the member must re-issue a
+/// card and re-run the code check. Returns the downgraded pubkeys.
+/// No-op on legacy vaults (no member directory).
+pub fn reconcile_stale_contacts(
+    vault_path: &Path,
+    contacts_key: &[u8; 32],
+) -> Result<Vec<String>, BaluardError> {
+    if !vault_path.join(crate::vault::members::MEMBERS_DIR).exists() {
+        return Ok(Vec::new());
+    }
+    let current: std::collections::BTreeSet<String> =
+        std::fs::read_dir(vault_path.join(crate::vault::members::MEMBERS_DIR))?
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".json"))
+            .filter_map(|e| {
+                std::fs::read_to_string(e.path())
+                    .ok()
+                    .and_then(|json| {
+                        serde_json::from_str::<crate::vault::members::MemberFile>(&json).ok()
+                    })
+                    .and_then(|m| m.identity_signing_pubkey)
+            })
+            .collect();
+    let mut entries = load_contacts(vault_path, contacts_key)?;
+    let mut downgraded = Vec::new();
+    for entry in &mut entries {
+        if entry.trust == ContactTrust::Verified
+            && !current.contains(&entry.card.identity_signing_pubkey)
+        {
+            entry.trust = ContactTrust::Channel;
+            downgraded.push(entry.card.identity_signing_pubkey.clone());
+        }
+    }
+    if !downgraded.is_empty() {
+        save_contacts(vault_path, contacts_key, &entries)?;
+    }
+    Ok(downgraded)
+}
+
 /// The recorded trust for an identity pubkey, if the contact is known.
 pub fn contact_trust(
     vault_path: &Path,

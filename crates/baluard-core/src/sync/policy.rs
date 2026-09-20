@@ -93,10 +93,15 @@ struct PolicyRow {
 /// devices subtree of a member is self-service (device lifecycle is
 /// all-roles per §5.A).
 const TABLE: &[PolicyRow] = &[
+    // Self-service: a member's own subtree (device lifecycle, identity
+    // rotation artifacts). §4.4 own_id/** any role; member RECORDS
+    // (role/trust assignment) stay admin-only — the engine's structural
+    // rule permits identity-field-only record updates.
     PolicyRow {
-        pattern: "meta/members/{member}/devices/**",
+        pattern: "meta/members/{member}/**",
         required: RequiredRole::Any,
     },
+    // Other members' records, and Space-level settings.
     PolicyRow {
         pattern: "meta/members/**",
         required: RequiredRole::Admin,
@@ -109,15 +114,7 @@ const TABLE: &[PolicyRow] = &[
         pattern: "meta/collections/**",
         required: RequiredRole::Admin,
     },
-    // Device/rotation admin surface.
-    PolicyRow {
-        pattern: "meta/devices.json",
-        required: RequiredRole::Admin,
-    },
-    PolicyRow {
-        pattern: "meta/epoch.json",
-        required: RequiredRole::Admin,
-    },
+    // Rotation artifacts (rekey txns, acks) are admin surface.
     PolicyRow {
         pattern: "meta/rekey/**",
         required: RequiredRole::Admin,
@@ -149,7 +146,7 @@ const TABLE: &[PolicyRow] = &[
         required: RequiredRole::Editor,
     },
     // meta catch-all: canaries, settings, profile, kdf params, emergency,
-    // avatar, revocation manifests, integrity state.
+    // avatar, revocation manifests, integrity state, epoch.
     PolicyRow {
         pattern: "meta/**",
         required: RequiredRole::Admin,
