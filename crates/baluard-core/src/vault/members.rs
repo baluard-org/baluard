@@ -216,9 +216,37 @@ pub struct Introduction {
     /// S1a-3: the joiner's identity-signed contact card (trust dial).
     #[serde(default)]
     pub contact_card: Option<crate::vault::contacts::SignedContactCard>,
+    /// S1a-3: Ed25519 signature by the card's identity key over the
+    /// device-key payload — binds the introduced device keys to the
+    /// verified identity. Required for elevated-role approvals.
+    #[serde(default)]
+    pub identity_signature: Option<String>,
 }
 
 impl Introduction {
+    /// Canonical payload binding the introduced device keys to the
+    /// contact card's identity key (signed by the identity at
+    /// introduction; verified at approval for elevated roles).
+    pub fn identity_sign_payload(
+        invite_id: Uuid,
+        device_id: Uuid,
+        encryption_public_key: &str,
+        signing_public_key: &str,
+        identity_signing_pubkey: &str,
+    ) -> Vec<u8> {
+        let mut payload = b"baluard-intro-v1\n".to_vec();
+        payload.extend_from_slice(invite_id.as_bytes());
+        payload.push(b'\n');
+        payload.extend_from_slice(device_id.as_bytes());
+        payload.push(b'\n');
+        payload.extend_from_slice(encryption_public_key.as_bytes());
+        payload.push(b'\n');
+        payload.extend_from_slice(signing_public_key.as_bytes());
+        payload.push(b'\n');
+        payload.extend_from_slice(identity_signing_pubkey.as_bytes());
+        payload
+    }
+
     /// Decode an introduction code (base64url JSON).
     pub fn decode(code: &str) -> Result<Self, BaluardError> {
         let bytes = b64_decode(code)?;
@@ -469,6 +497,22 @@ pub fn create_introduction(
                 .as_secs(),
             identity.signing_key(),
         )?),
+        // S1a-3: the identity key signs the device-key payload, binding
+        // the introduced device to the verified identity (the gate for
+        // elevated roles).
+        identity_signature: {
+            use ed25519_dalek::Signer;
+            let payload = crate::vault::members::Introduction::identity_sign_payload(
+                invite.invite_id,
+                device_id,
+                &hex::encode(x25519_public.as_bytes()),
+                &hex::encode(ed25519_verifying.as_bytes()),
+                &identity_vk_hex,
+            );
+            Some(hex::encode(
+                identity.signing_key().sign(&payload).to_bytes(),
+            ))
+        },
     };
     Ok(b64_encode(
         serde_json::to_string(&intro).unwrap().as_bytes(),

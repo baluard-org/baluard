@@ -45,8 +45,8 @@ pub struct ContactCard {
 impl ContactCard {
     fn payload(&self) -> Vec<u8> {
         // Domain-separated canonical encoding: field order is fixed and
-        // delimiters are newlines (name is the only free-text field and
-        // cannot contain raw newlines — enforced at creation).
+        // the name is the only free-text field — control characters are
+        // rejected at sign time so it cannot shift field boundaries.
         let mut payload = b"baluard-contact-v1\n".to_vec();
         payload.extend_from_slice(self.display_name.as_bytes());
         payload.push(b'\n');
@@ -77,13 +77,20 @@ pub struct SignedContactCard {
 }
 
 impl SignedContactCard {
-    /// Sign a card with the member's identity signing key.
+    /// Sign a card with the member's identity signing key. Display names
+    /// containing control characters (newlines) are refused: the payload
+    /// is newline-delimited and the name flows into UI lists.
     pub fn sign(
         display_name: &str,
         identity_signing_pubkey: &str,
         created_at: u64,
         signing_key: &ed25519_dalek::SigningKey,
     ) -> Result<Self, BaluardError> {
+        if display_name.contains(['\n', '\r']) {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "display name must not contain newlines".into(),
+            )));
+        }
         let card = ContactCard {
             display_name: display_name.to_string(),
             identity_signing_pubkey: identity_signing_pubkey.to_string(),
