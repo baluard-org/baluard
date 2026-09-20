@@ -115,6 +115,15 @@ impl Drop for UnlockedState {
     }
 }
 
+/// Offboarding report for a batch member removal (S1a-6).
+#[derive(Debug, Clone)]
+pub struct MemberRemovalReport {
+    pub removed_members: Vec<uuid::Uuid>,
+    pub removed_devices: Vec<uuid::Uuid>,
+    /// Root Key epoch after the offboarding rotation.
+    pub new_epoch: u64,
+}
+
 impl VaultHandle {
     /// Open a vault from disk (locked state).
     /// Reads metadata files but does NOT decrypt anything.
@@ -457,6 +466,95 @@ impl VaultHandle {
         crate::vault::members::reset_member(&self.path, self.vault_id, member_id)
     }
 
+    /// S1a-6: member removal + offboarding (§4.2, scenario J; the
+    /// boundary S1a-5 documented). Admin-only batch: tombstones each
+    /// member row (terminal, entries preserved), strikes their devices
+    /// from the registry, deletes their keywraps and activity entries,
+    /// then rotates the Root Key once — survivors are re-keyed via the
+    /// P3 keywrap staging, the removed devices' wrapped copies die.
+    /// Pre-flight refusals: locked vault, non-admin actor, owner rows,
+    /// the actor's own member, unknown or already-tombstoned rows.
+    /// Provider seat removal is confirmed separately (S1b collaborator
+    /// ops) — this call is repo-side only.
+    pub fn member_remove(
+        &mut self,
+        member_ids: &[uuid::Uuid],
+    ) -> Result<MemberRemovalReport, BaluardError> {
+        use crate::device_manager::DeviceActivityIndex;
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        if member_ids.is_empty() {
+            return Err(VaultError::InvalidOperation(
+                "member_remove needs at least one member".into(),
+            )
+            .into());
+        }
+        self.assert_can_manage_members()?;
+        let actor_member = crate::vault::members::member_id_for_device(&self.path, self.device_id);
+
+        // ── Pre-flight: validate everything before any mutation ──
+        let mut seen = std::collections::BTreeSet::new();
+        for id in member_ids {
+            if !seen.insert(*id) {
+                return Err(VaultError::InvalidOperation(
+                    "duplicate member in removal batch".into(),
+                )
+                .into());
+            }
+            if actor_member == Some(*id) {
+                return Err(VaultError::InvalidOperation(
+                    "removing your own member row would lock you out".into(),
+                )
+                .into());
+            }
+            let Some(row) = crate::vault::members::member_file_by_id(&self.path, *id) else {
+                return Err(VaultError::InvalidOperation(format!("member {id} not found")).into());
+            };
+            if row.role == crate::vault::members::MemberRole::Owner {
+                return Err(VaultError::InvalidOperation(
+                    "the owner row cannot be removed (transfer ownership first)".into(),
+                )
+                .into());
+            }
+            if row.reset.is_some() || row.removed.is_some() {
+                return Err(VaultError::InvalidOperation(format!(
+                    "member {id} is already tombstoned"
+                ))
+                .into());
+            }
+        }
+
+        // ── Offboard: tombstone rows, strike seats, rotate once ──
+        let mut removed_members = Vec::new();
+        let mut removed_devices = Vec::new();
+        for id in member_ids {
+            let devices = crate::vault::members::remove_member(&self.path, *id)?;
+            removed_members.push(*id);
+            for device in devices {
+                if device == self.device_id {
+                    continue; // defense in depth: the actor's own seat stays
+                }
+                let _ = self.device_manager.registry.revoke(device);
+                let _ = DeviceActivityIndex::remove_device(&self.path, &device);
+                let _ = std::fs::remove_file(self.path.join(format!("meta/keywrap/{device}.json")));
+                removed_devices.push(device);
+            }
+        }
+        self.sync_registry_from_device_manager();
+        self.device_manager.auto_save_result()?;
+        self.rotate_root_key()?;
+        let new_epoch = match &self.state {
+            VaultState::Unlocked(u) => u.current_epoch,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        Ok(MemberRemovalReport {
+            removed_members,
+            removed_devices,
+            new_epoch,
+        })
+    }
+
     /// S1a-2: approve a joiner's introduction (owner side, unlocked).
     /// Verifies the code against the repo-side pending invite, enrolls
     /// the joiner's device, wraps the Root Key to the joiner's device
@@ -671,6 +769,7 @@ impl VaultHandle {
                 identity_rotation_signature: None,
                 identity_rotated_at: None,
                 reset: None,
+                removed: None,
             };
             crate::vault::members::write_member(&self.path, &member)?;
             member
@@ -7036,6 +7135,194 @@ mod tests {
         engine_o
             .pull(&repo_o, "joiner2")
             .expect("the successor member's commits must be accepted");
+    }
+
+    // ── S1a-6: batch removal + offboarding (§4.2, scenario J) ──
+
+    /// Departure/eviction: the admin removes a member in one batch call.
+    /// The row is tombstoned (terminal), the device seat is struck from
+    /// the registry, the keywrap is deleted, the Root Key rotates once
+    /// (survivors re-keyed via P3 staging), the contact dial resets, the
+    /// removed device can no longer unlock, and its stale commits are
+    /// refused. Entries are preserved across the rotation.
+    #[test]
+    fn member_removal_offboards_end_to_end() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let owner_member_id = crate::vault::members::owner_member_id(&owner_path).unwrap();
+
+        let cipher_id = {
+            let input = crate::types::CipherInput {
+                name: "pre-removal-entry".into(),
+                folder_id: None,
+                kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+                favorite: false,
+                reprompt: false,
+                notes: None,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+                archived: false,
+                tags: vec![],
+                attachments: vec![],
+            };
+            handle.add_cipher(&input).unwrap()
+        };
+
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Editor)
+            .unwrap();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        let intro = crate::vault::members::Introduction::decode(&intro_code).unwrap();
+        let old_identity = intro
+            .contact_card
+            .as_ref()
+            .unwrap()
+            .card
+            .identity_signing_pubkey
+            .clone();
+        handle.contacts_import_intro(&intro_code).unwrap();
+        handle.contacts_mark_verified(&old_identity).unwrap();
+        let old_member_id = handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve join").unwrap();
+
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        let joiner_device = joiner.device_id;
+
+        // Gates: Editor cannot remove; empty batch, owner row, unknown
+        // member all refused.
+        assert!(joiner.member_remove(&[owner_member_id]).is_err());
+        assert!(handle.member_remove(&[]).is_err());
+        assert!(handle.member_remove(&[owner_member_id]).is_err());
+        assert!(handle.member_remove(&[uuid::Uuid::new_v4()]).is_err());
+
+        // Offboard in one batch call.
+        let report = handle.member_remove(&[old_member_id]).unwrap();
+        assert_eq!(report.removed_members, vec![old_member_id]);
+        assert!(
+            report.removed_devices.contains(&joiner_device),
+            "the member's device seat must be struck"
+        );
+
+        // Row tombstoned: terminal marker, identity cleared, dead key
+        // parked in previous for the contact reset.
+        let row = crate::vault::members::member_file_by_id(&owner_path, old_member_id).unwrap();
+        assert!(row.removed.is_some());
+        assert_eq!(row.identity_signing_pubkey, None);
+        assert_eq!(
+            row.identity_signing_pubkey_previous.as_deref(),
+            Some(old_identity.as_str())
+        );
+
+        // Seat revoked everywhere: registry, keywrap.
+        assert!(!handle.device_manager.registry.is_enrolled(&joiner_device));
+        assert!(
+            !owner_path
+                .join(format!("meta/keywrap/{joiner_device}.json"))
+                .exists()
+        );
+
+        // Entries preserved across the offboarding rotation.
+        let read = handle.get_cipher(cipher_id).unwrap();
+        match read {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.name, "pre-removal-entry")
+            }
+            CipherRead::Locked(_) => {
+                panic!("owner vault must stay unlocked through the rotation")
+            }
+        }
+
+        engine_o.commit_all(&repo_o, "remove member").unwrap();
+
+        // Contact dial reset.
+        let downgraded = handle.reconcile_stale_member_contacts().unwrap();
+        assert_eq!(downgraded, vec![old_identity]);
+
+        // The removed member's device syncs the removal (admin-signed)
+        // and then can no longer unlock: keywrap gone, epoch moved.
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner_after = VaultHandle::open(&joiner_path).unwrap();
+        assert!(joiner_after.unlock("member-pass").is_err());
+
+        // Stale-clone rogue commit: refused at the honest client.
+        let joiner_seal = joiner.devkey_seal();
+        drop(joiner);
+        let engine_j_signed = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner_device.to_string(),
+            joiner_seal.as_ref(),
+        );
+        engine_j_signed
+            .commit_all(&repo_j, "edit after removal")
+            .unwrap();
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .unwrap();
+        let head_before = repo_o.head().unwrap().peel_to_commit().unwrap().id();
+        // Refusal layer note: removal strikes the device from the
+        // REGISTRY, so the rogue commit usually dies at signature
+        // attribution (signer not in roster) before the sticky tombstone
+        // policy denial can fire. Either layer is a valid refusal; the
+        // reset test covers the policy-denial layer with the registry
+        // left intact.
+        let rogue_err = engine_o
+            .pull(&repo_o, "joiner")
+            .expect_err("the removed member's commit must be refused");
+        let rogue_err = rogue_err.to_string().to_lowercase();
+        assert!(
+            rogue_err.contains("policy") || rogue_err.contains("signature"),
+            "refusal must be policy or roster-layer, got: {rogue_err}"
+        );
+        let head_after = repo_o.head().unwrap().peel_to_commit().unwrap().id();
+        assert_eq!(head_before, head_after, "HEAD must not move on refusal");
+
+        // Owner still healthy after the rotation: another cipher lands.
+        handle
+            .add_cipher(&crate::types::CipherInput {
+                name: "post-removal-entry".into(),
+                folder_id: None,
+                kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+                favorite: false,
+                reprompt: false,
+                notes: None,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+                archived: false,
+                tags: vec![],
+                attachments: vec![],
+            })
+            .unwrap();
+        engine_o.commit_all(&repo_o, "owner continues").unwrap();
     }
 
     // ── P3: keywrap distribution + rekey-txn adoption ──

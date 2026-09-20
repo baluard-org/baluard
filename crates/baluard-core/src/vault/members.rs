@@ -79,6 +79,13 @@ pub struct MemberFile {
     /// adopts. Tombstones are admin-authored; entries are preserved.
     #[serde(default)]
     pub reset: Option<MemberReset>,
+    /// S1a-6: removal marker (departure/eviction). Same tombstone
+    /// semantics as `reset` but terminal — no successor exists, the
+    /// member's devices are struck from the registry, their keywraps
+    /// are deleted, and the Root Key rotates so their wrapped copy is
+    /// dead. Value = unix seconds at removal.
+    #[serde(default)]
+    pub removed: Option<u64>,
 }
 
 /// S1a-5: reset provenance on a tombstoned member row.
@@ -242,10 +249,67 @@ pub fn reset_member(
         identity_rotation_signature: None,
         identity_rotated_at: None,
         reset: None,
+        removed: None,
     };
     write_member(vault_path, &successor)?;
     let code = create_invite(vault_path, vault_id, old.role, Some(successor_id))?;
     Ok((successor_id, code))
+}
+
+/// S1a-6: tombstone a member row for REMOVAL (departure/eviction).
+/// Terminal — unlike `reset_member` there is no successor. Clears the
+/// identity (dead key parked in `previous` so contact reconciliation
+/// resets the dial) and returns the device ids bound to the member so
+/// the caller can strike them from the registry, delete their keywraps,
+/// and rotate the Root Key. Bindings stay on disk (inert: the row
+/// resolves no role and no bindings). Entries are preserved. Actor
+/// gating is the caller's job.
+pub fn remove_member(vault_path: &Path, member_id: Uuid) -> Result<Vec<Uuid>, BaluardError> {
+    let deny = |msg: &str| BaluardError::from(VaultError::InvalidOperation(msg.to_string()));
+    let path = vault_path
+        .join(MEMBERS_DIR)
+        .join(format!("{member_id}.json"));
+    let data = std::fs::read_to_string(&path).map_err(|_| deny("member not found"))?;
+    let mut member: MemberFile =
+        serde_json::from_str(&data).map_err(|e| deny(&format!("member record unreadable: {e}")))?;
+    if member.reset.is_some() || member.removed.is_some() {
+        return Err(deny("member is already tombstoned"));
+    }
+    if member.role == MemberRole::Owner {
+        return Err(deny(
+            "the owner row cannot be removed (transfer ownership first)",
+        ));
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    member.identity_signing_pubkey_previous = member.identity_signing_pubkey.take();
+    member.identity_rotation_signature = None;
+    member.removed = Some(now);
+    super::write_vault_file(
+        &path,
+        serde_json::to_string_pretty(&member).unwrap().as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write removal: {e}"))))?;
+    // Collect the member's device ids (bindings stay on disk, inert).
+    let mut devices = Vec::new();
+    let devices_dir = vault_path
+        .join(MEMBERS_DIR)
+        .join(member_id.to_string())
+        .join("devices");
+    if let Ok(entries) = std::fs::read_dir(&devices_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Some(stem) = name.strip_suffix(".json") else {
+                continue;
+            };
+            if let Ok(id) = Uuid::parse_str(stem) {
+                devices.push(id);
+            }
+        }
+    }
+    Ok(devices)
 }
 
 /// Role of `device_id`'s member, from the on-disk directory. `None` when
@@ -271,7 +335,10 @@ pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<Memb
         }
         if let Ok(json) = std::fs::read_to_string(entry.path()) {
             if let Ok(member) = serde_json::from_str::<MemberFile>(&json) {
-                if member.id.to_string() == stem && member.reset.is_none() {
+                if member.id.to_string() == stem
+                    && member.reset.is_none()
+                    && member.removed.is_none()
+                {
                     return Some(member.role);
                 }
             }
@@ -304,7 +371,10 @@ pub(crate) fn member_file_for_device(
         }
         if let Ok(json) = std::fs::read_to_string(entry.path()) {
             if let Ok(member) = serde_json::from_str::<MemberFile>(&json) {
-                if member.id.to_string() == stem && member.reset.is_none() {
+                if member.id.to_string() == stem
+                    && member.reset.is_none()
+                    && member.removed.is_none()
+                {
                     return Some((entry.path(), member));
                 }
             }
