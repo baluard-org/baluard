@@ -256,11 +256,14 @@ pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<Memb
     let entries = std::fs::read_dir(&dir).ok()?;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.ends_with(".json") {
+        // Bindings live at meta/members/<member_id>/devices/<device_id>.json
+        // — resolve the member DIRECTORY from the row file's stem, never
+        // join under the file itself.
+        let Some(stem) = name.strip_suffix(".json") else {
             continue;
-        }
-        let binding = entry
-            .path()
+        };
+        let binding = dir
+            .join(stem)
             .join("devices")
             .join(format!("{device_id}.json"));
         if !binding.exists() {
@@ -268,8 +271,7 @@ pub fn member_role_for_device(vault_path: &Path, device_id: Uuid) -> Option<Memb
         }
         if let Ok(json) = std::fs::read_to_string(entry.path()) {
             if let Ok(member) = serde_json::from_str::<MemberFile>(&json) {
-                if member.id.to_string() == name.trim_end_matches(".json") && member.reset.is_none()
-                {
+                if member.id.to_string() == stem && member.reset.is_none() {
                     return Some(member.role);
                 }
             }
