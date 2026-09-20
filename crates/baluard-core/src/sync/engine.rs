@@ -2506,6 +2506,21 @@ impl SyncEngine {
                 }
             }
         }
+        // S1a-5: pre-scan the batch's own trees so a tombstone arriving
+        // in the SAME pull as the rogue commits it denies is enforced
+        // regardless of topo order within the batch.
+        {
+            let mut own_cache: std::collections::HashMap<git2::Oid, Option<MemberSnapshot>> =
+                std::collections::HashMap::new();
+            for oid in &ordered {
+                let Ok(commit) = repo.find_commit(*oid) else {
+                    continue;
+                };
+                if let Ok(Some(own)) = Self::members_tree_lookup(repo, &commit, &mut own_cache) {
+                    sticky_tombstoned.extend(own.tombstoned.iter().cloned());
+                }
+            }
+        }
         for oid in &ordered {
             let commit = repo
                 .find_commit(*oid)
@@ -2561,6 +2576,20 @@ impl SyncEngine {
         // no seeding needed when every ancestor is visited anyway.
         let mut sticky_tombstoned: std::collections::BTreeSet<String> =
             std::collections::BTreeSet::new();
+        // S1a-5: pre-scan the batch's own trees so a tombstone arriving
+        // must hold regardless of topo order within the fetched history.
+        {
+            let mut own_cache: std::collections::HashMap<git2::Oid, Option<MemberSnapshot>> =
+                std::collections::HashMap::new();
+            for oid in &ordered {
+                let Ok(commit) = repo.find_commit(*oid) else {
+                    continue;
+                };
+                if let Ok(Some(own)) = Self::members_tree_lookup(repo, &commit, &mut own_cache) {
+                    sticky_tombstoned.extend(own.tombstoned.iter().cloned());
+                }
+            }
+        }
         for oid in &ordered {
             let commit = repo
                 .find_commit(*oid)
@@ -2925,13 +2954,17 @@ impl SyncEngine {
         // devices as pending joiners.
         let members =
             Self::member_table_for_commit(repo, commit, &mut std::collections::HashMap::new())?;
-        // S1a-5: resets stick forward through the walk. A stale clone's
-        // commits predate the tombstone in git ancestry, so the
-        // first-parent snapshot alone would still admit them; the walk
-        // threads every tombstone it has seen (seeded from local head
-        // ancestry on pull) and denies tombstoned signers outright.
-        if let Some(snapshot) = members.as_ref() {
-            sticky_tombstoned.extend(snapshot.tombstoned.iter().cloned());
+        // S1a-5: resets stick forward through the walk. Harvest from the
+        // commit's OWN tree, not the first-parent snapshot — the
+        // tombstone commit itself resolves its roles from its parent.
+        // (Walk loops additionally pre-scan the whole batch, so commit
+        // order within a batch cannot matter.)
+        {
+            let mut own_cache: std::collections::HashMap<git2::Oid, Option<MemberSnapshot>> =
+                std::collections::HashMap::new();
+            if let Ok(Some(own)) = Self::members_tree_lookup(repo, commit, &mut own_cache) {
+                sticky_tombstoned.extend(own.tombstoned.iter().cloned());
+            }
         }
         let (role, member_id) = match members.as_ref() {
             Some(snapshot) => {
@@ -2945,14 +2978,19 @@ impl SyncEngine {
             }
             None => (crate::sync::policy::CommitRole::Admin, None),
         };
+        // S1a-5: a tombstoned signer is denied OUTRIGHT — a role
+        // downgrade alone would not cover merge commits, whose empty-
+        // residue path skips per-path checks entirely.
         let member_tombstoned = member_id
             .map(|m| sticky_tombstoned.contains(m))
             .unwrap_or(false);
-        let (role, member_id) = if member_tombstoned {
-            (crate::sync::policy::CommitRole::PendingJoiner, None)
-        } else {
-            (role, member_id)
-        };
+        if member_tombstoned {
+            return Err(SyncError::PolicyViolation {
+                device: signer.to_string(),
+                path: "meta/members".to_string(),
+            }
+            .into());
+        }
         if commit.parent_count() > 2 {
             return Err(
                 SyncError::Git("octopus merges are not produced by this vault".into()).into(),

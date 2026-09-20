@@ -251,6 +251,14 @@ impl VaultHandle {
     /// Note: In CLI mode, the device X25519 private key is stored in the
     /// keywrap JSON for simplicity. In production, this lives in OS keystore.
     fn assert_can_manage_members(&self) -> Result<(), BaluardError> {
+        // Legacy vault (no member directory): the founder manages.
+        if !self.path.join(crate::vault::members::MEMBERS_DIR).exists() {
+            return Ok(());
+        }
+        // Strict vault: the device's OWN binding decides. Unbound =
+        // pending joiner = refused (fail closed; the review round on
+        // S1a-5 caught the None->legacy fallback admitting unbound
+        // devices on strict vaults).
         match crate::vault::members::member_role_for_device(&self.path, self.device_id) {
             Some(crate::vault::members::MemberRole::Owner)
             | Some(crate::vault::members::MemberRole::Admin) => Ok(()),
@@ -258,8 +266,9 @@ impl VaultHandle {
                 "only the owner or an admin can manage members".into(),
             )
             .into()),
-            // Legacy vault (no member directory): the founder manages.
-            None => Ok(()),
+            None => {
+                Err(VaultError::InvalidOperation("this device is not a vault member".into()).into())
+            }
         }
     }
 
@@ -473,8 +482,27 @@ impl VaultHandle {
         // be Verified in the address book (Level 2 code check);
         // Editor/Viewer invites need no card.
         let invite = crate::vault::members::read_pending_invite(&self.path, intro.invite_id)?;
+        // S1a-5: reset invites gate on the SUCCESSOR row's role, not the
+        // invite's — a stale or tampered invite must not downgrade the
+        // gate below what the admin-fixed row carries.
+        let target_row_role = invite
+            .target_member
+            .and_then(|t| crate::vault::members::member_file_by_id(&self.path, t))
+            .map(|row| row.role);
+        let effective_role = target_row_role.unwrap_or(invite.role);
+        // S1a-5: an invite whose role disagrees with the admin-fixed
+        // successor row is stale or tampered — refuse BEFORE consuming
+        // so the invite survives for the admin to correct.
+        if let Some(row_role) = target_row_role {
+            if invite.role != row_role {
+                return Err(VaultError::InvalidOperation(
+                    "reset invite role does not match the successor row".into(),
+                )
+                .into());
+            }
+        }
         let elevated = matches!(
-            invite.role,
+            effective_role,
             crate::vault::members::MemberRole::Admin | crate::vault::members::MemberRole::Owner
         );
         if elevated {
@@ -600,6 +628,16 @@ impl VaultHandle {
             if row.reset.is_some() {
                 return Err(VaultError::InvalidOperation(
                     "reset invite names a tombstoned row".into(),
+                )
+                .into());
+            }
+            // S1a-5 review: an already-identified successor cannot be
+            // re-bound — a second approval would overwrite the identity
+            // without any rotation proof. (The role check ran at the
+            // peek stage: refusal there leaves the invite retryable.)
+            if row.identity_signing_pubkey.is_some() {
+                return Err(VaultError::InvalidOperation(
+                    "successor row already joined; issue a new reset".into(),
                 )
                 .into());
             }
@@ -6804,6 +6842,16 @@ mod tests {
         let mut joiner = VaultHandle::open(&joiner_path).unwrap();
         joiner.unlock("member-pass").unwrap();
 
+        // S1a-5 review: the manage-members gate must actually resolve
+        // roles on strict vaults — an Editor cannot mint invites,
+        // approve joins, or reset members.
+        assert!(
+            joiner
+                .invite_create(crate::vault::members::MemberRole::Viewer)
+                .is_err()
+        );
+        assert!(joiner.member_reset(old_member_id).is_err());
+
         // Gates: no owner reset, no unknown reset, no self reset.
         assert!(handle.member_reset(owner_member_id).is_err());
         assert!(handle.member_reset(uuid::Uuid::new_v4()).is_err());
@@ -6907,6 +6955,37 @@ mod tests {
             .card
             .identity_signing_pubkey
             .clone();
+
+        // S1a-5 review: an invite whose role disagrees with the
+        // admin-fixed successor row is refused (stale/tampered invite),
+        // and the invite is consumed by the refusal.
+        let invite_path = owner_path.join("meta/invites").join(format!(
+            "{}.json",
+            crate::vault::members::Introduction::decode(&intro2_code)
+                .unwrap()
+                .invite_id
+        ));
+        let invite_json = std::fs::read_to_string(&invite_path).unwrap();
+        let mut invite_val: serde_json::Value = serde_json::from_str(&invite_json).unwrap();
+        invite_val["role"] = serde_json::json!("viewer");
+        std::fs::write(
+            &invite_path,
+            serde_json::to_string_pretty(&invite_val).unwrap(),
+        )
+        .unwrap();
+        let mismatch = handle.approve_join(&intro2_code).unwrap_err();
+        assert!(
+            mismatch.to_string().contains("does not match"),
+            "expected role-mismatch refusal, got: {mismatch}"
+        );
+        // The refusal ran pre-consume: restore the role and the invite
+        // still works.
+        invite_val["role"] = serde_json::json!("editor");
+        std::fs::write(
+            &invite_path,
+            serde_json::to_string_pretty(&invite_val).unwrap(),
+        )
+        .unwrap();
         let bound = handle.approve_join(&intro2_code).unwrap();
         assert_eq!(bound, successor_id, "approval must bind the successor row");
         engine_o.commit_all(&repo_o, "approve reset join").unwrap();
