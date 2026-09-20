@@ -425,6 +425,24 @@ impl<'a> VaultCreator<'a> {
                     registry.to_deterministic_json().unwrap().as_bytes(),
                 )?;
 
+                // S1a: owner membership + founding-device binding, written
+                // with the registry BEFORE the initial commit so the
+                // roster-snapshot rule resolves roles from the root tree.
+                let owner_member = crate::vault::members::MemberFile {
+                    id: uuid::Uuid::new_v4(),
+                    display_name: self.display_name.clone().unwrap_or_else(|| "Owner".into()),
+                    role: crate::vault::members::MemberRole::Owner,
+                    trust: crate::vault::members::TrustLevel::SelfTrust,
+                };
+                crate::vault::members::write_member(&path, &owner_member)?;
+                crate::vault::members::write_device_binding(
+                    &path,
+                    &crate::vault::members::DeviceBinding {
+                        device_id,
+                        member_id: owner_member.id,
+                    },
+                )?;
+
                 super::write_vault_file(
                     &path.join("meta/kdf-params.json"),
                     serde_json::to_string_pretty(&kdf_params)
@@ -748,6 +766,11 @@ impl<'a> VaultCreator<'a> {
                     registry.to_deterministic_json().unwrap().as_bytes(),
                 )?;
 
+                // S1a: the joining device is the same human as the owner:
+                // bind it to the owner member (no-op on legacy vaults
+                // without a member directory).
+                crate::vault::members::bind_to_owner(&path, device_id)?;
+
                 let wrapped_root_key = hpke_wrap::wrap_key(
                     root_key.as_bytes(),
                     &device_x25519_public,
@@ -960,6 +983,47 @@ mod tests {
 
         let binding = result.recovery_phrase.phrase();
         assert_eq!(binding.split(' ').count(), 24);
+    }
+
+    /// S1a: vault creation writes the owner member file + founding-device
+    /// binding before the initial commit, so the roster-snapshot rule
+    /// resolves roles from the root tree.
+    #[test]
+    fn creation_writes_owner_membership() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("s1a_vault");
+
+        let (_handle, secrets) = VaultCreator::new(&path, "master-pass", "StandardDevice")
+            .kdf_profile(KdfProfile::MobileLow)
+            .initialize_git(true)
+            .execute()
+            .unwrap();
+
+        // On-disk: owner member file + device binding.
+        let members_dir = path.join("meta/members");
+        let entries: Vec<_> = std::fs::read_dir(&members_dir).unwrap().flatten().collect();
+        let member_files: Vec<_> = entries
+            .iter()
+            .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
+            .collect();
+        assert_eq!(member_files.len(), 1, "exactly one owner member file");
+        let member: crate::vault::members::MemberFile =
+            serde_json::from_str(&std::fs::read_to_string(member_files[0].path()).unwrap())
+                .unwrap();
+        assert_eq!(member.role, crate::vault::members::MemberRole::Owner);
+        let binding_path = members_dir
+            .join(member.id.to_string())
+            .join("devices")
+            .join(format!("{}.json", secrets.device_id));
+        assert!(binding_path.exists(), "founding device must be bound");
+
+        // In-tree: the initial commit carries the member directory.
+        let repo = git2::Repository::open(&path).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        head.tree()
+            .unwrap()
+            .get_path(std::path::Path::new("meta/members"))
+            .expect("initial commit must carry meta/members");
     }
 
     /// P2 ordering contract: the initial commit of a git-initialized vault

@@ -28,13 +28,24 @@ pub enum CommitRole {
 }
 
 impl CommitRole {
-    fn rank(self) -> u8 {
+    pub(crate) fn rank(self) -> u8 {
         match self {
             CommitRole::Owner => 4,
             CommitRole::Admin => 3,
             CommitRole::Editor => 2,
             CommitRole::Viewer => 1,
             CommitRole::PendingJoiner => 0,
+        }
+    }
+}
+
+impl From<crate::vault::members::MemberRole> for CommitRole {
+    fn from(r: crate::vault::members::MemberRole) -> Self {
+        match r {
+            crate::vault::members::MemberRole::Owner => CommitRole::Owner,
+            crate::vault::members::MemberRole::Admin => CommitRole::Admin,
+            crate::vault::members::MemberRole::Editor => CommitRole::Editor,
+            crate::vault::members::MemberRole::Viewer => CommitRole::Viewer,
         }
     }
 }

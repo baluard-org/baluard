@@ -1404,6 +1404,10 @@ impl DeviceManager {
             &serde_json::to_string_pretty(&keywrap_data).unwrap(),
         )?;
 
+        // S1a: bind the recovered device to the owner member (no-op on
+        // legacy vaults without a member directory).
+        crate::vault::members::bind_to_owner(&vault_path, new_device_id)?;
+
         // Step 10: Remove old keywrap files (evicted devices)
         if let Ok(entries) = std::fs::read_dir(&keywrap_dir) {
             for entry in entries.flatten() {
@@ -1630,6 +1634,10 @@ impl DeviceManager {
             &keywrap_dir.join(format!("{}.json", payload.device_id)),
             &serde_json::to_string_pretty(&keywrap_data).unwrap(),
         )?;
+
+        // S1a: bind the phrase-enrolled device to the owner member (no-op
+        // on legacy vaults without a member directory).
+        crate::vault::members::bind_to_owner(&vault_path, payload.device_id)?;
 
         // Peer review fix: device-privkey.json is the CALLER's responsibility.
         // The method returns the private keys in RecoveryResult; the caller

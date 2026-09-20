@@ -23,6 +23,8 @@ use base64::Engine;
 /// Git sync engine wrapping git2-rs operations.
 /// Device roster for one commit: device UUID → Ed25519 verifying key bytes.
 type DeviceRoster = std::collections::BTreeMap<String, [u8; 32]>;
+/// S1a: resolved member role per device UUID for one commit.
+type MemberRoles = std::collections::BTreeMap<String, crate::sync::policy::CommitRole>;
 #[cfg(feature = "git-sync")]
 pub struct SyncEngine {
     /// Path to the vault directory (= git workdir).
@@ -78,6 +80,16 @@ impl SyncEngine {
     /// commit signing. Pass the subkey from the unlocked handle when
     /// available; `None` falls back to the OS keyring (and legacy plaintext
     /// files) — a sealed file without a key means unsigned commits.
+    /// Test/multi-device fixture helper: override the signing key loaded
+    /// from the (single, per-vault) privkey file. Production devices each
+    /// hold their own key material; a shared-directory simulation needs
+    /// per-engine keys to sign as distinct devices.
+    #[cfg(test)]
+    pub(crate) fn with_signing_key(mut self, key: ed25519_dalek::SigningKey) -> Self {
+        self.signing_key = Some(key);
+        self
+    }
+
     pub fn new(vault_path: &Path, device_id: &str, devkey_seal: Option<&[u8; 32]>) -> Self {
         let last_remote_head = Self::load_last_head(vault_path);
         let credential_config = CredentialConfig::load(vault_path);
@@ -2459,7 +2471,7 @@ impl SyncEngine {
                 .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
             if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
                 let signer = self.verify_commit_against_roster(repo, *oid, &roster)?;
-                Self::check_commit_paths(repo, &commit, &roster, &signer)?;
+                Self::check_commit_paths(repo, &commit, &signer)?;
             }
         }
 
@@ -2510,7 +2522,7 @@ impl SyncEngine {
                 .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
             if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
                 let signer = Self::verify_commit_against_roster_static(repo, *oid, &roster)?;
-                Self::check_commit_paths(repo, &commit, &roster, &signer)?;
+                Self::check_commit_paths(repo, &commit, &signer)?;
             }
         }
         Ok(())
@@ -2584,6 +2596,129 @@ impl SyncEngine {
         };
         cache.insert(blob_id, parsed.clone());
         Ok(parsed)
+    }
+
+    /// S1a: member role table for one commit: device UUID -> CommitRole,
+    /// resolved from `meta/members/**` in the commit's own tree. `None`
+    /// when the tree has no member directory (legacy vault,
+    /// admin-equivalent). Present-but-unparseable files are a hard error
+    /// (tamper, fail closed), mirroring the roster rule.
+    fn members_tree_lookup(
+        repo: &Repository,
+        commit: &git2::Commit<'_>,
+        cache: &mut std::collections::HashMap<git2::Oid, Option<MemberRoles>>,
+    ) -> Result<Option<MemberRoles>, BaluardError> {
+        let tree = commit
+            .tree()
+            .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
+        if tree
+            .get_path(std::path::Path::new(crate::vault::members::MEMBERS_DIR))
+            .is_err()
+        {
+            return Ok(None);
+        }
+        let tree_id = tree.id();
+        if let Some(cached) = cache.get(&tree_id) {
+            return Ok(cached.clone());
+        }
+        let mut role_by_member: std::collections::BTreeMap<
+            String,
+            crate::sync::policy::CommitRole,
+        > = std::collections::BTreeMap::new();
+        let mut member_by_device: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        let mut parse_err: Option<String> = None;
+        let prefix = format!("{}/", crate::vault::members::MEMBERS_DIR);
+        tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+            if parse_err.is_some() {
+                return -1;
+            }
+            if entry.kind() != Some(git2::ObjectType::Blob) {
+                return 0;
+            }
+            let Some(name) = entry.name() else {
+                return 0;
+            };
+            let path = std::path::Path::new(root).join(name);
+            let path_str = path.to_string_lossy().to_string();
+            let Some(rel) = path_str.strip_prefix(&prefix) else {
+                return 0;
+            };
+            let Ok(obj) = entry.to_object(repo) else {
+                parse_err = Some(format!("read {path_str}"));
+                return -1;
+            };
+            let Ok(blob) = obj.into_blob() else {
+                return 0;
+            };
+            let Ok(data) = std::str::from_utf8(blob.content()) else {
+                parse_err = Some(format!("{path_str}: not UTF-8"));
+                return -1;
+            };
+            if rel.contains('/') {
+                // Device binding: <member>/devices/<device>.json
+                match serde_json::from_str::<crate::vault::members::DeviceBinding>(data) {
+                    Ok(b) => {
+                        member_by_device.insert(b.device_id.to_string(), b.member_id.to_string());
+                    }
+                    Err(e) => {
+                        parse_err = Some(format!("parse binding {path_str}: {e}"));
+                        return -1;
+                    }
+                }
+            } else {
+                // Member file: <member>.json
+                match serde_json::from_str::<crate::vault::members::MemberFile>(data) {
+                    Ok(m) => {
+                        role_by_member.insert(
+                            m.id.to_string(),
+                            crate::sync::policy::CommitRole::from(m.role),
+                        );
+                    }
+                    Err(e) => {
+                        parse_err = Some(format!("parse member {path_str}: {e}"));
+                        return -1;
+                    }
+                }
+            }
+            0
+        })
+        .map_err(|e| SyncError::Git(format!("member walk: {e}")))?;
+        if let Some(e) = parse_err {
+            return Err(SyncError::Git(format!("member directory: {e}")).into());
+        }
+        let mut table: MemberRoles = std::collections::BTreeMap::new();
+        for (device, member) in &member_by_device {
+            if let Some(role) = role_by_member.get(member) {
+                table.insert(device.clone(), *role);
+            }
+        }
+        cache.insert(tree_id, Some(table.clone()));
+        Ok(Some(table))
+    }
+
+    /// S1a: member role table per commit, same snapshot rule as the
+    /// roster: the FIRST parent's table when present, else the commit's
+    /// own (genesis, when this commit introduces the directory).
+    /// `None` = no member directory on either side (legacy vault).
+    fn member_table_for_commit(
+        repo: &Repository,
+        commit: &git2::Commit<'_>,
+        cache: &mut std::collections::HashMap<git2::Oid, Option<MemberRoles>>,
+    ) -> Result<Option<MemberRoles>, BaluardError> {
+        let own = Self::members_tree_lookup(repo, commit, cache)?;
+        if commit.parent_count() == 0 {
+            return Ok(own);
+        }
+        let parent = commit
+            .parent(0)
+            .map_err(|e| SyncError::Git(format!("walk parent: {e}")))?;
+        let parent_table = Self::members_tree_lookup(repo, &parent, cache)?;
+        match (parent_table, own) {
+            (Some(m), _) => Ok(Some(m)),
+            (None, Some(m)) => Ok(Some(m)),
+            (None, None) => Ok(None),
+        }
     }
 
     /// Order commits parents-first within the pulled batch so roster
@@ -2670,15 +2805,20 @@ impl SyncEngine {
     fn check_commit_paths(
         repo: &Repository,
         commit: &git2::Commit<'_>,
-        roster: &DeviceRoster,
         signer: &str,
     ) -> Result<(), BaluardError> {
-        // Pre-S1a: devices.json carries no roles; roster membership IS the
-        // role (admin-equivalent). S1a replaces this resolver.
-        let role = if roster.contains_key(signer) {
-            crate::sync::policy::CommitRole::Admin
-        } else {
-            crate::sync::policy::CommitRole::PendingJoiner
+        // S1a: resolve the signer's role from the member directory
+        // snapshot (first-parent rule). Legacy vaults (no meta/members
+        // subtree) stay admin-equivalent; strict vaults treat unbound
+        // devices as pending joiners.
+        let members =
+            Self::member_table_for_commit(repo, commit, &mut std::collections::HashMap::new())?;
+        let role = match members.as_ref() {
+            Some(table) => table
+                .get(signer)
+                .copied()
+                .unwrap_or(crate::sync::policy::CommitRole::PendingJoiner),
+            None => crate::sync::policy::CommitRole::Admin,
         };
         if commit.parent_count() > 2 {
             return Err(
@@ -2688,7 +2828,6 @@ impl SyncEngine {
         let tree = commit
             .tree()
             .map_err(|e| SyncError::Git(format!("walk tree: {e}")))?;
-        let mut residue: Vec<String> = Vec::new();
         if commit.parent_count() <= 1 {
             // Regular commit: the first-parent diff is the author's edit
             // (root commits diff against the empty tree). NEVER applied to
@@ -2715,10 +2854,7 @@ impl SyncEngine {
                 .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
                 .map_err(|e| SyncError::Git(format!("net diff: {e}")))?;
             for delta in diff.deltas() {
-                let candidates = [delta.new_file().path(), delta.old_file().path()];
-                for path in candidates.into_iter().flatten() {
-                    residue.push(path.to_string_lossy().to_string());
-                }
+                Self::check_delta_path(repo, &delta, signer, role)?;
             }
         }
         if commit.parent_count() == 2 {
@@ -2786,7 +2922,8 @@ impl SyncEngine {
                         .map_err(|e| SyncError::Git(format!("strip conflict: {e}")))?;
                 }
                 for p in &conflicted {
-                    residue.push(p.to_string_lossy().to_string());
+                    crate::sync::policy::authorize(signer, role, &p.to_string_lossy())
+                        .map_err(BaluardError::from)?;
                 }
             }
             let expected_oid = idx
@@ -2799,16 +2936,89 @@ impl SyncEngine {
                 .diff_tree_to_tree(Some(&expected), Some(&tree), None)
                 .map_err(|e| SyncError::Git(format!("merge residue diff: {e}")))?;
             for delta in residue_diff.deltas() {
-                let candidates = [delta.new_file().path(), delta.old_file().path()];
-                for path in candidates.into_iter().flatten() {
-                    residue.push(path.to_string_lossy().to_string());
-                }
+                Self::check_delta_path(repo, &delta, signer, role)?;
             }
         }
-        for path in &residue {
-            crate::sync::policy::authorize(signer, role, path).map_err(BaluardError::from)?;
-        }
         Ok(())
+    }
+
+    /// One diff delta = one path's authorization. `meta/devices.json`
+    /// gets a structural rule for non-admins: the only permitted delta is
+    /// this device's own registry bump (last_seen_epoch on its own entry)
+    /// — the per-commit epoch bump must not wedge lower roles, while
+    /// adding, removing, or rekeying registry entries stays admin-only.
+    fn check_delta_path(
+        repo: &Repository,
+        delta: &git2::DiffDelta,
+        signer: &str,
+        role: crate::sync::policy::CommitRole,
+    ) -> Result<(), BaluardError> {
+        let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) else {
+            return Ok(());
+        };
+        let path = path.to_string_lossy().to_string();
+        if path == "meta/devices.json"
+            && role.rank() < crate::sync::policy::CommitRole::Admin.rank()
+        {
+            let blob_bytes = |oid: git2::Oid| -> Option<Vec<u8>> {
+                if oid.is_zero() {
+                    return None;
+                }
+                repo.find_blob(oid).ok().map(|b| b.content().to_vec())
+            };
+            let old = blob_bytes(delta.old_file().id());
+            let new = blob_bytes(delta.new_file().id());
+            if Self::registry_delta_is_own_bump(old.as_deref(), new.as_deref(), signer) {
+                return Ok(());
+            }
+            return Err(SyncError::PolicyViolation {
+                device: signer.to_string(),
+                path,
+            }
+            .into());
+        }
+        crate::sync::policy::authorize(signer, role, &path).map_err(BaluardError::from)
+    }
+
+    /// S1a: registry deltas by a non-admin must be this device's own
+    /// last_seen_epoch bump. Any addition, removal, key change, name
+    /// change, or another device's bump refuses.
+    fn registry_delta_is_own_bump(old: Option<&[u8]>, new: Option<&[u8]>, signer: &str) -> bool {
+        let (Some(old), Some(new)) = (old, new) else {
+            return false;
+        };
+        let (Ok(old_reg), Ok(new_reg)) = (
+            serde_json::from_str::<crate::devices::DeviceRegistry>(
+                std::str::from_utf8(old).unwrap_or(""),
+            ),
+            serde_json::from_str::<crate::devices::DeviceRegistry>(
+                std::str::from_utf8(new).unwrap_or(""),
+            ),
+        ) else {
+            return false;
+        };
+        let Ok(signer_id) = uuid::Uuid::parse_str(signer) else {
+            return false;
+        };
+        if old_reg.devices.len() != new_reg.devices.len() {
+            return false;
+        }
+        for (id, old_entry) in &old_reg.devices {
+            let Some(new_entry) = new_reg.devices.get(id) else {
+                return false;
+            };
+            if old_entry.name != new_entry.name
+                || old_entry.encryption_public_key != new_entry.encryption_public_key
+                || old_entry.signing_public_key != new_entry.signing_public_key
+                || old_entry.enrolled_by != new_entry.enrolled_by
+            {
+                return false;
+            }
+            if *id != signer_id && old_entry.last_seen_epoch != new_entry.last_seen_epoch {
+                return false;
+            }
+        }
+        new_reg.devices.contains_key(&signer_id)
     }
 
     /// Static variant used by the clone path (no engine instance needed —
@@ -3624,6 +3834,103 @@ mod tests {
                 Err(BaluardError::Sync(SyncError::PolicyViolation { .. }))
             ),
             "smuggled content on a conflicted merge must refuse, got {verified2:?}"
+        );
+    }
+
+    /// S1a: with a member directory present, roles bite. An editor-bound
+    /// device may write ciphers/ but not meta/; the owner's meta writes
+    /// pass. Written fail-first: pre-wiring the member directory was
+    /// ignored and every write verified as admin-equivalent.
+    #[test]
+    fn member_roles_enforced_on_pull() {
+        let key_owner = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_editor = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_owner = uuid::Uuid::new_v4();
+        let id_editor = uuid::Uuid::new_v4();
+        let member_owner = uuid::Uuid::new_v4();
+        let member_editor = uuid::Uuid::new_v4();
+
+        let (dir, _) = make_test_repo();
+        enroll_device(dir.path(), &id_owner, &key_owner);
+        enroll_device(dir.path(), &id_editor, &key_editor);
+
+        let mf = |id: uuid::Uuid, name: &str, role: &str| {
+            serde_json::json!({
+                "id": id.to_string(),
+                "display_name": name,
+                "role": role,
+                "trust": "self",
+            })
+        };
+        std::fs::create_dir_all(dir.path().join("meta/members")).unwrap();
+        std::fs::write(
+            dir.path().join(format!("meta/members/{member_owner}.json")),
+            mf(member_owner, "Owner", "owner").to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path()
+                .join(format!("meta/members/{member_editor}.json")),
+            mf(member_editor, "Editor", "editor").to_string(),
+        )
+        .unwrap();
+        for (m, d) in [(member_owner, id_owner), (member_editor, id_editor)] {
+            let p = dir.path().join(format!("meta/members/{m}/devices"));
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(
+                p.join(format!("{d}.json")),
+                serde_json::json!({
+                    "device_id": d.to_string(),
+                    "member_id": m.to_string(),
+                })
+                .to_string(),
+            )
+            .unwrap();
+        }
+
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":1}").unwrap();
+        std::fs::create_dir_all(dir.path().join("ciphers")).unwrap();
+        std::fs::write(dir.path().join("ciphers/seed.enc"), b"\x01").unwrap();
+        let engine_owner =
+            SyncEngine::new(dir.path(), &id_owner.to_string(), None).with_signing_key(key_owner);
+        let repo = engine_owner.init_repo().unwrap();
+        engine_owner.commit_all(&repo, "seed").unwrap();
+
+        let engine_editor =
+            SyncEngine::new(dir.path(), &id_editor.to_string(), None).with_signing_key(key_editor);
+
+        // Editor writes a cipher: admitted (Editor write scope).
+        std::fs::write(dir.path().join("ciphers/new.enc"), b"\x02").unwrap();
+        engine_editor.commit_all(&repo, "editor cipher").unwrap();
+        let oid_cipher = repo.head().unwrap().peel_to_commit().unwrap().id();
+        let verified_cipher = engine_owner.verify_commit_signatures(&repo, &[oid_cipher]);
+        assert!(
+            verified_cipher.is_ok(),
+            "editor cipher write must verify: {verified_cipher:?}"
+        );
+
+        // Editor writes meta/: refused (meta catch-all is Admin).
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":2}").unwrap();
+        engine_editor.commit_all(&repo, "editor meta").unwrap();
+        let oid_meta = repo.head().unwrap().peel_to_commit().unwrap().id();
+        let verified = engine_owner.verify_commit_signatures(&repo, &[oid_meta]);
+        assert!(
+            matches!(
+                &verified,
+                Err(BaluardError::Sync(SyncError::PolicyViolation { .. }))
+            ),
+            "editor meta write must be refused, got {verified:?}"
+        );
+
+        // Owner writes meta/: admitted.
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":3}").unwrap();
+        engine_owner.commit_all(&repo, "owner meta").unwrap();
+        let oid_owner_meta = repo.head().unwrap().peel_to_commit().unwrap().id();
+        let verified_owner = engine_owner.verify_commit_signatures(&repo, &[oid_owner_meta]);
+        assert!(
+            verified_owner.is_ok(),
+            "owner meta write must verify: {verified_owner:?}"
         );
     }
 
