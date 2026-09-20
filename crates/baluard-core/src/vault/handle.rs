@@ -2004,11 +2004,16 @@ impl VaultHandle {
         self.verify_root_key(&rk).ok()?;
 
         // Persist the adopted wrap so the next unlock takes the fast path.
+        // Re-wrap the root key under "root-key-keywrap" so attempt_unwrap
+        // can decrypt it without requiring meta/rekey/<epoch>.txn.
+        let pub_x25519 = x25519_dalek::PublicKey::from(&privs.x25519);
+        let (eph_pub, ct, tag) =
+            hpke_wrap::wrap_key(rk.as_bytes(), &pub_x25519, "root-key-keywrap").ok()?;
         let kw = serde_json::json!({
             "device_id": self.device_id.to_string(),
-            "ephemeral_public": hex::encode(&entry.ephemeral_public),
-            "encrypted_key": hex::encode(&entry.encrypted_key),
-            "tag": hex::encode(entry.tag),
+            "ephemeral_public": hex::encode(eph_pub),
+            "encrypted_key": hex::encode(ct),
+            "tag": hex::encode(tag),
         });
         super::write_vault_file(
             &self
@@ -3309,12 +3314,14 @@ impl VaultHandle {
         // avatar at the old epoch (avatar_get fails after rotation).
         let avatar_path = self.path.join("meta/avatar.enc");
         if avatar_path.exists() {
-            let old_avatar_key = self.derive_avatar_key();
-            let new_avatar_key = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
-                &new_root_key,
-                new_epoch,
-            )
-            .derive_avatar_key(new_epoch);
+            let old_avatar_key = zeroize::Zeroizing::new(self.derive_avatar_key());
+            let new_avatar_key = zeroize::Zeroizing::new(
+                crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
+                    &new_root_key,
+                    new_epoch,
+                )
+                .derive_avatar_key(new_epoch),
+            );
             let blob = std::fs::read(&avatar_path)?;
             let mut plaintext = crate::vault::avatar::decrypt_avatar(&old_avatar_key, &blob)?;
             let new_blob = crate::vault::avatar::encrypt_avatar(&new_avatar_key, &plaintext)?;
@@ -3813,12 +3820,14 @@ impl VaultHandle {
         // avatar at the old epoch (avatar_get fails after rotation).
         let avatar_path = self.path.join("meta/avatar.enc");
         if avatar_path.exists() {
-            let old_avatar_key = self.derive_avatar_key();
-            let new_avatar_key = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
-                &new_root_key,
-                new_epoch,
-            )
-            .derive_avatar_key(new_epoch);
+            let old_avatar_key = zeroize::Zeroizing::new(self.derive_avatar_key());
+            let new_avatar_key = zeroize::Zeroizing::new(
+                crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
+                    &new_root_key,
+                    new_epoch,
+                )
+                .derive_avatar_key(new_epoch),
+            );
             let blob = std::fs::read(&avatar_path)?;
             let mut plaintext = crate::vault::avatar::decrypt_avatar(&old_avatar_key, &blob)?;
             let new_blob = crate::vault::avatar::encrypt_avatar(&new_avatar_key, &plaintext)?;
@@ -5957,6 +5966,19 @@ mod tests {
                 .exists()
         );
         match survivor.get_cipher(cipher_id).unwrap() {
+            CipherRead::Decrypted(c) => assert_eq!(c.name, "Secret"),
+            CipherRead::Locked(_) => panic!("expected decrypted"),
+        }
+
+        // Fast path: subsequent unlock must succeed using the persisted
+        // keywrap even if the rekey transaction file is removed.
+        drop(survivor);
+        std::fs::remove_file(&txn_path).unwrap();
+        let mut survivor2 = VaultHandle::open(dir.path()).unwrap();
+        assert_eq!(survivor2.device_id, dev2_id);
+        survivor2.unlock(&password).unwrap();
+        assert_eq!(survivor2.unlocked().current_epoch, new_epoch);
+        match survivor2.get_cipher(cipher_id).unwrap() {
             CipherRead::Decrypted(c) => assert_eq!(c.name, "Secret"),
             CipherRead::Locked(_) => panic!("expected decrypted"),
         }
