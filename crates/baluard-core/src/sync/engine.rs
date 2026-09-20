@@ -29,6 +29,10 @@ type DeviceRoster = std::collections::BTreeMap<String, [u8; 32]>;
 struct MemberSnapshot {
     roles: std::collections::BTreeMap<String, crate::sync::policy::CommitRole>,
     member_of: std::collections::BTreeMap<String, String>,
+    /// S1a-5: member ids tombstoned by a reset in THIS tree. Their role
+    /// and bindings are already absent (below); the set rides the
+    /// snapshot so verification walks can enforce resets stickily.
+    tombstoned: std::collections::BTreeSet<String>,
 }
 #[cfg(feature = "git-sync")]
 pub struct SyncEngine {
@@ -2472,13 +2476,43 @@ impl SyncEngine {
         // commits after them see the new registry.
         let mut roster_cache: std::collections::HashMap<git2::Oid, Option<DeviceRoster>> =
             std::collections::HashMap::new();
+        // S1a-5: seed the sticky tombstone set from local head ancestry —
+        // tombstones already in local history must outlive the batch
+        // boundary (a stale clone's rogue commit arrives in a LATER pull
+        // than the reset commit).
+        let mut sticky_tombstoned: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        if let Ok(head) = repo.head().and_then(|h| h.peel_to_commit()) {
+            let mut seed_cache: std::collections::HashMap<git2::Oid, Option<MemberSnapshot>> =
+                std::collections::HashMap::new();
+            let mut visited = std::collections::HashSet::new();
+            let mut stack = vec![head.id()];
+            while let Some(oid) = stack.pop() {
+                if !visited.insert(oid) {
+                    continue;
+                }
+                let Ok(ancestor) = repo.find_commit(oid) else {
+                    continue;
+                };
+                if let Ok(Some(snapshot)) =
+                    Self::members_tree_lookup(repo, &ancestor, &mut seed_cache)
+                {
+                    sticky_tombstoned.extend(snapshot.tombstoned.iter().cloned());
+                }
+                for i in 0..ancestor.parent_count() {
+                    if let Ok(pid) = ancestor.parent_id(i) {
+                        stack.push(pid);
+                    }
+                }
+            }
+        }
         for oid in &ordered {
             let commit = repo
                 .find_commit(*oid)
                 .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
             if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
                 let signer = self.verify_commit_against_roster(repo, *oid, &roster)?;
-                Self::check_commit_paths(repo, &commit, &roster, &signer)?;
+                Self::check_commit_paths(repo, &commit, &roster, &signer, &mut sticky_tombstoned)?;
             }
         }
 
@@ -2523,13 +2557,17 @@ impl SyncEngine {
         let ordered = Self::topo_order_commits(repo, &oids)?;
         let mut roster_cache: std::collections::HashMap<git2::Oid, Option<DeviceRoster>> =
             std::collections::HashMap::new();
+        // S1a-5: the full-history walk collects tombstones as it goes —
+        // no seeding needed when every ancestor is visited anyway.
+        let mut sticky_tombstoned: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
         for oid in &ordered {
             let commit = repo
                 .find_commit(*oid)
                 .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
             if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
                 let signer = Self::verify_commit_against_roster_static(repo, *oid, &roster)?;
-                Self::check_commit_paths(repo, &commit, &roster, &signer)?;
+                Self::check_commit_paths(repo, &commit, &roster, &signer, &mut sticky_tombstoned)?;
             }
         }
         Ok(())
@@ -2638,6 +2676,7 @@ impl SyncEngine {
         > = std::collections::BTreeMap::new();
         let mut member_by_device: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
+        let mut tombstoned: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         let mut parse_err: Option<String> = None;
         tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
             if parse_err.is_some() {
@@ -2699,6 +2738,12 @@ impl SyncEngine {
                     ));
                     return -1;
                 }
+                // S1a-5: a tombstoned row resolves no role and no
+                // bindings — the reset killed the member's device seats.
+                if member_file.reset.is_some() {
+                    tombstoned.insert(member_file.id.to_string());
+                    return 0;
+                }
                 role_by_member.insert(
                     member_file.id.to_string(),
                     crate::sync::policy::CommitRole::from(member_file.role),
@@ -2739,6 +2784,9 @@ impl SyncEngine {
         if let Some(e) = parse_err {
             return Err(SyncError::Git(format!("member directory: {e}")).into());
         }
+        // Drop bindings that point at tombstoned rows (walk order makes
+        // the row's tombstone flag visible only after the full walk).
+        member_by_device.retain(|_, member| !tombstoned.contains(member));
         let mut roles: std::collections::BTreeMap<String, crate::sync::policy::CommitRole> =
             std::collections::BTreeMap::new();
         let mut member_of: std::collections::BTreeMap<String, String> =
@@ -2749,7 +2797,11 @@ impl SyncEngine {
                 roles.insert(device.clone(), *role);
             }
         }
-        let snapshot = Some(MemberSnapshot { roles, member_of });
+        let snapshot = Some(MemberSnapshot {
+            roles,
+            member_of,
+            tombstoned,
+        });
         cache.insert(subtree_id, snapshot.clone());
         Ok(snapshot)
     }
@@ -2865,6 +2917,7 @@ impl SyncEngine {
         commit: &git2::Commit<'_>,
         roster: &DeviceRoster,
         signer: &str,
+        sticky_tombstoned: &mut std::collections::BTreeSet<String>,
     ) -> Result<(), BaluardError> {
         // S1a: resolve the signer's role from the member directory
         // snapshot (first-parent rule). Legacy vaults (no meta/members
@@ -2872,6 +2925,14 @@ impl SyncEngine {
         // devices as pending joiners.
         let members =
             Self::member_table_for_commit(repo, commit, &mut std::collections::HashMap::new())?;
+        // S1a-5: resets stick forward through the walk. A stale clone's
+        // commits predate the tombstone in git ancestry, so the
+        // first-parent snapshot alone would still admit them; the walk
+        // threads every tombstone it has seen (seeded from local head
+        // ancestry on pull) and denies tombstoned signers outright.
+        if let Some(snapshot) = members.as_ref() {
+            sticky_tombstoned.extend(snapshot.tombstoned.iter().cloned());
+        }
         let (role, member_id) = match members.as_ref() {
             Some(snapshot) => {
                 let role = snapshot
@@ -2883,6 +2944,14 @@ impl SyncEngine {
                 (role, member)
             }
             None => (crate::sync::policy::CommitRole::Admin, None),
+        };
+        let member_tombstoned = member_id
+            .map(|m| sticky_tombstoned.contains(m))
+            .unwrap_or(false);
+        let (role, member_id) = if member_tombstoned {
+            (crate::sync::policy::CommitRole::PendingJoiner, None)
+        } else {
+            (role, member_id)
         };
         if commit.parent_count() > 2 {
             return Err(
@@ -3168,6 +3237,11 @@ impl SyncEngine {
         let (Some(old_member), Some(new_member)) = (parse(&old), parse(&new)) else {
             return Err(deny());
         };
+        // S1a-5: a tombstoned row is dead — no self-service deltas of any
+        // kind (revival requires an admin-authored reset-join approval).
+        if old_member.reset.is_some() || new_member.reset.is_some() {
+            return Err(deny());
+        }
         let own = member.and_then(|m| uuid::Uuid::parse_str(m).ok());
         if old_member.id != new_member.id
             || Some(new_member.id) != own

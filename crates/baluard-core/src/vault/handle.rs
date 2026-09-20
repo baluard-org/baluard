@@ -419,7 +419,33 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
-        crate::vault::members::create_invite(&self.path, self.vault_id, role)
+        crate::vault::members::create_invite(&self.path, self.vault_id, role, None)
+    }
+
+    /// S1a-5: member reset (§5.F-8 / scenario L — "tablet died, phrase
+    /// gone", the #1 family ticket). Admin-only, never on the owner row,
+    /// never on yourself. Tombstones the old row (identity dead,
+    /// bindings inert, contacts reconcile to Channel) and returns the
+    /// successor member id plus a one-time reset invite code: the member
+    /// rejoins through the normal ceremony (introduce → approve) and the
+    /// approval binds the successor row. Entries are preserved.
+    pub fn member_reset(
+        &mut self,
+        member_id: uuid::Uuid,
+    ) -> Result<(uuid::Uuid, String), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        if crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            == Some(member_id)
+        {
+            return Err(VaultError::InvalidOperation(
+                "resetting your own member row would lock you out".into(),
+            )
+            .into());
+        }
+        crate::vault::members::reset_member(&self.path, self.vault_id, member_id)
     }
 
     /// S1a-2: approve a joiner's introduction (owner side, unlocked).
@@ -554,21 +580,63 @@ impl VaultHandle {
         // Approval IS the trust act (Level 3 replaces the code check).
         // The joiner's contact card pubkey is recorded as their identity
         // signing key (S1a-4: rotation visibility keys off this field).
+        // S1a-5 reset invites bind the EXISTING successor row: display
+        // name and role are admin-fixed at reset time (the introduction
+        // cannot rename the member), the fresh identity comes from the
+        // introduction's card, and trust stays at Channel — the reset
+        // dial state until re-verification (elevated roles re-verified
+        // at the gate above).
         let identity_pub = intro
             .contact_card
             .as_ref()
             .map(|c| c.card.identity_signing_pubkey.clone());
-        let member = crate::vault::members::MemberFile {
-            id: uuid::Uuid::new_v4(),
-            display_name: intro.display_name.clone(),
-            role: invite.role,
-            trust: crate::vault::members::TrustLevel::Verified,
-            identity_signing_pubkey: identity_pub,
-            identity_signing_pubkey_previous: None,
-            identity_rotation_signature: None,
-            identity_rotated_at: None,
+        let member = if let Some(target) = invite.target_member {
+            let mut row =
+                crate::vault::members::member_file_by_id(&self.path, target).ok_or_else(|| {
+                    VaultError::InvalidOperation(
+                        "reset invite names a successor row that does not exist".into(),
+                    )
+                })?;
+            if row.reset.is_some() {
+                return Err(VaultError::InvalidOperation(
+                    "reset invite names a tombstoned row".into(),
+                )
+                .into());
+            }
+            if elevated {
+                row.trust = crate::vault::members::TrustLevel::Verified;
+            }
+            row.identity_signing_pubkey = identity_pub;
+            row.identity_signing_pubkey_previous = None;
+            row.identity_rotation_signature = None;
+            row.identity_rotated_at = None;
+            let path = self
+                .path
+                .join(crate::vault::members::MEMBERS_DIR)
+                .join(format!("{}.json", row.id));
+            super::write_vault_file(
+                &path,
+                serde_json::to_string_pretty(&row).unwrap().as_bytes(),
+            )
+            .map_err(|e| {
+                BaluardError::from(VaultError::Metadata(format!("write successor: {e}")))
+            })?;
+            row
+        } else {
+            let member = crate::vault::members::MemberFile {
+                id: uuid::Uuid::new_v4(),
+                display_name: intro.display_name.clone(),
+                role: invite.role,
+                trust: crate::vault::members::TrustLevel::Verified,
+                identity_signing_pubkey: identity_pub,
+                identity_signing_pubkey_previous: None,
+                identity_rotation_signature: None,
+                identity_rotated_at: None,
+                reset: None,
+            };
+            crate::vault::members::write_member(&self.path, &member)?;
+            member
         };
-        crate::vault::members::write_member(&self.path, &member)?;
         crate::vault::members::write_device_binding(
             &self.path,
             &crate::vault::members::DeviceBinding {
@@ -776,6 +844,19 @@ impl VaultHandle {
         // is admin-only and identity artifacts are per-member state).
         // Founder/legacy devices keep the meta/ paths.
         let member_scoped = crate::vault::members::member_id_for_device(&self.path, self.device_id);
+        // S1a-5: a tombstoned member cannot rotate — the row is dead
+        // (their commits are refused at verification anyway).
+        if let Some(m) = member_scoped {
+            if crate::vault::members::member_file_by_id(&self.path, m)
+                .and_then(|row| row.reset)
+                .is_some()
+            {
+                return Err(VaultError::InvalidOperation(
+                    "this member row is reset; re-join with the admin's new invite".into(),
+                )
+                .into());
+            }
+        }
         let identity_path = match member_scoped {
             Some(m) => self
                 .path
@@ -6659,6 +6740,223 @@ mod tests {
         }
         let member_record = found.expect("member record must carry the rotated identity");
         assert!(member_record.identity_rotated_at.is_some());
+    }
+
+    // ── S1a-5: member reset (§5.F-8 / scenario L) ──
+
+    /// "Tablet died AND the recovery phrase is gone": the admin
+    /// tombstones the member row and mints a reset invite bound to a
+    /// fresh successor row. The old device's stale-clone commits are
+    /// refused at pull (sticky tombstone), the old contact entry drops
+    /// to Channel, and the member rejoins through the normal ceremony
+    /// into the successor row. Entries are preserved.
+    #[test]
+    fn member_reset_reissues_identity_end_to_end() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let owner_member_id = crate::vault::members::owner_member_id(&owner_path).unwrap();
+
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Editor)
+            .unwrap();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        let intro = crate::vault::members::Introduction::decode(&intro_code).unwrap();
+        let old_identity = intro
+            .contact_card
+            .as_ref()
+            .unwrap()
+            .card
+            .identity_signing_pubkey
+            .clone();
+        handle.contacts_import_intro(&intro_code).unwrap();
+        handle.contacts_mark_verified(&old_identity).unwrap();
+        let old_member_id = handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve join").unwrap();
+
+        // The member pulls the approval and unlocks: alive and working.
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+
+        // Gates: no owner reset, no unknown reset, no self reset.
+        assert!(handle.member_reset(owner_member_id).is_err());
+        assert!(handle.member_reset(uuid::Uuid::new_v4()).is_err());
+        let (successor_id, reset_code) = handle.member_reset(old_member_id).unwrap();
+        // Double reset refused.
+        assert!(handle.member_reset(old_member_id).is_err());
+
+        // The tombstone ships: old row dead, successor row waiting.
+        engine_o.commit_all(&repo_o, "member reset").unwrap();
+        let old_row = crate::vault::members::member_file_by_id(&owner_path, old_member_id).unwrap();
+        {
+            let reset = old_row.reset.as_ref().unwrap();
+            assert_eq!(reset.successor, successor_id);
+            let successor =
+                crate::vault::members::member_file_by_id(&owner_path, reset.successor).unwrap();
+            assert_eq!(successor.display_name, old_row.display_name);
+            assert_eq!(successor.role, old_row.role);
+            assert_eq!(
+                successor.trust,
+                crate::vault::members::TrustLevel::Channel,
+                "successor starts at Channel: re-verification required"
+            );
+            assert!(successor.identity_signing_pubkey.is_none());
+            assert_eq!(
+                old_row.identity_signing_pubkey, None,
+                "tombstone clears the current identity"
+            );
+            assert_eq!(
+                old_row.identity_signing_pubkey_previous.as_deref(),
+                Some(old_identity.as_str()),
+                "tombstone parks the dead key in previous so contacts reset"
+            );
+        }
+        assert_ne!(successor_id, old_member_id);
+
+        // The OLD device goes rogue: it edits a cipher from its stale
+        // clone and pushes. Every honest client must refuse the pull —
+        // the tombstone from local history sticks through the walk even
+        // though the rogue commit's own ancestry predates the reset.
+        joiner
+            .add_cipher(&crate::types::CipherInput {
+                name: "rogue-after-reset".into(),
+                folder_id: None,
+                kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+                favorite: false,
+                reprompt: false,
+                notes: None,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+                archived: false,
+                tags: vec![],
+                attachments: vec![],
+            })
+            .unwrap();
+        let joiner_seal = joiner.devkey_seal();
+        let joiner_device = joiner.device_id;
+        drop(joiner);
+        let engine_j_signed = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner_device.to_string(),
+            joiner_seal.as_ref(),
+        );
+        engine_j_signed
+            .commit_all(&repo_j, "rogue edit after reset")
+            .unwrap();
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .unwrap();
+        let head_before = repo_o.head().unwrap().peel_to_commit().unwrap().id();
+        let rogue_err = engine_o
+            .pull(&repo_o, "joiner")
+            .expect_err("the tombstoned member's rogue commit must be refused");
+        assert!(
+            rogue_err.to_string().to_lowercase().contains("policy"),
+            "refusal must be the policy denial, got: {rogue_err}"
+        );
+        let head_after = repo_o.head().unwrap().peel_to_commit().unwrap().id();
+        assert_eq!(head_before, head_after, "HEAD must not move on refusal");
+
+        // Trust reset: the dead identity's contact entry drops to Channel.
+        let downgraded = handle.reconcile_stale_member_contacts().unwrap();
+        assert_eq!(downgraded, vec![old_identity]);
+
+        // Re-join: a fresh device uses the reset invite; the approval
+        // binds the successor row (admin-fixed name/role, fresh identity).
+        let joiner2_path = temp.path().join("joiner2");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner2_path).unwrap();
+        let intro2_code = crate::vault::members::create_introduction(
+            &joiner2_path,
+            &reset_code,
+            "member-pass2",
+            "MemberDevice2",
+        )
+        .unwrap();
+        let intro2 = crate::vault::members::Introduction::decode(&intro2_code).unwrap();
+        let new_identity = intro2
+            .contact_card
+            .as_ref()
+            .unwrap()
+            .card
+            .identity_signing_pubkey
+            .clone();
+        let bound = handle.approve_join(&intro2_code).unwrap();
+        assert_eq!(bound, successor_id, "approval must bind the successor row");
+        engine_o.commit_all(&repo_o, "approve reset join").unwrap();
+        let successor_row =
+            crate::vault::members::member_file_by_id(&owner_path, successor_id).unwrap();
+        assert_eq!(
+            successor_row.identity_signing_pubkey.as_deref(),
+            Some(new_identity.as_str())
+        );
+
+        // The new device pulls the approval, unlocks with its OWN
+        // password, edits a cipher, and the owner accepts the pull.
+        let engine_j2 = crate::sync::engine::SyncEngine::new(&joiner2_path, "joiner2", None);
+        let repo_j2 = engine_j2.open_repo().unwrap();
+        engine_j2.pull(&repo_j2, "origin").unwrap();
+        let mut joiner2 = VaultHandle::open(&joiner2_path).unwrap();
+        joiner2.unlock("member-pass2").unwrap();
+        joiner2
+            .add_cipher(&crate::types::CipherInput {
+                name: "after-reset-entry".into(),
+                folder_id: None,
+                kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
+                favorite: false,
+                reprompt: false,
+                notes: None,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+                archived: false,
+                tags: vec![],
+                attachments: vec![],
+            })
+            .unwrap();
+        let j2_seal = joiner2.devkey_seal();
+        let j2_device = joiner2.device_id;
+        drop(joiner2);
+        let engine_j2_signed = crate::sync::engine::SyncEngine::new(
+            &joiner2_path,
+            &j2_device.to_string(),
+            j2_seal.as_ref(),
+        );
+        engine_j2_signed
+            .commit_all(&repo_j2, "member rejoined")
+            .unwrap();
+        repo_o
+            .remote("joiner2", joiner2_path.to_str().unwrap())
+            .unwrap();
+        engine_o
+            .pull(&repo_o, "joiner2")
+            .expect("the successor member's commits must be accepted");
     }
 
     // ── P3: keywrap distribution + rekey-txn adoption ──
