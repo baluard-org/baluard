@@ -768,6 +768,13 @@ async fn sharing_routes_reject_when_locked() {
             .await
             .is_err()
     );
+    assert!(state.members_reset("{}").await.is_err());
+    assert!(
+        state
+            .members_transfer(r#"{"member_id":"00000000-0000-0000-0000-000000000001"}"#)
+            .await
+            .is_err()
+    );
 }
 
 /// P8c-2: removal pre-flight — a member with a transport seat on a
