@@ -833,7 +833,25 @@ pub fn list_requests(vault_path: &Path) -> Result<(Vec<JoinRequest>, usize), Bal
     let mut out = Vec::new();
     let mut malformed = 0usize;
     for stem in req_ids {
-        let Ok(json) = std::fs::read_to_string(dir.join(format!("{stem}.json"))) else {
+        // S1a-8 review: non-UUID stems are malformed — parsing them to
+        // Uuid::nil() would list unmanageable entries (nil.json does not
+        // exist, so they could never be approved or denied).
+        let Ok(req_id) = Uuid::parse_str(&stem) else {
+            malformed += 1;
+            continue;
+        };
+        let path = dir.join(format!("{stem}.json"));
+        // S1a-8 review: the size cap is enforced on READ too — the file
+        // is git-tracked, so an oversized blob can arrive via pull.
+        if std::fs::metadata(&path)
+            .map(|m| m.len())
+            .unwrap_or(u64::MAX)
+            > REQUEST_MAX_BYTES as u64
+        {
+            malformed += 1;
+            continue;
+        }
+        let Ok(json) = std::fs::read_to_string(&path) else {
             malformed += 1;
             continue;
         };
@@ -845,7 +863,7 @@ pub fn list_requests(vault_path: &Path) -> Result<(Vec<JoinRequest>, usize), Bal
             .map(|p| p.secret_hash == sha256_hex(intro.secret.as_bytes()))
             .unwrap_or(false);
         out.push(JoinRequest {
-            req_id: Uuid::parse_str(&stem).unwrap_or_default(),
+            req_id,
             invite_id: intro.invite_id,
             device_id: intro.device_id,
             display_name: intro.display_name.clone(),
@@ -858,6 +876,17 @@ pub fn list_requests(vault_path: &Path) -> Result<(Vec<JoinRequest>, usize), Bal
 /// Read one queued request back as an Introduction (approval input).
 pub fn read_request(vault_path: &Path, req_id: Uuid) -> Result<Introduction, BaluardError> {
     let path = vault_path.join(REQUESTS_DIR).join(format!("{req_id}.json"));
+    // S1a-8 review: same read-side cap as listing — the file is
+    // git-tracked, so an oversized blob can arrive via pull.
+    if std::fs::metadata(&path)
+        .map(|m| m.len())
+        .unwrap_or(u64::MAX)
+        > REQUEST_MAX_BYTES as u64
+    {
+        return Err(BaluardError::from(VaultError::InvalidOperation(
+            "introduction too large".into(),
+        )));
+    }
     let data = std::fs::read_to_string(&path).map_err(|_| {
         BaluardError::from(VaultError::InvalidOperation("request not found".into()))
     })?;
