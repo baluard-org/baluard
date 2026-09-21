@@ -471,6 +471,37 @@ pub fn member_file_by_id(vault_path: &Path, member_id: Uuid) -> Option<MemberFil
     serde_json::from_str(&json).ok()
 }
 
+/// §4.8-1: every member row for the People surface. Walks the directory
+/// (row files only — the per-member `devices/` subtrees are skipped).
+/// Malformed rows are skipped inert: the directory is git-synced and a
+/// corrupt foreign row must not blind the whole People screen.
+pub fn list_members(vault_path: &Path) -> Result<Vec<MemberFile>, BaluardError> {
+    let dir = vault_path.join(MEMBERS_DIR);
+    let mut members = Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        // No directory = legacy vault (pre-S1a): empty directory, the UI
+        // shows the owner-only state.
+        Err(_) => return Ok(members),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        if let Ok(json) = std::fs::read_to_string(&path) {
+            if let Ok(member) = serde_json::from_str::<MemberFile>(&json) {
+                members.push(member);
+            }
+        }
+    }
+    members.sort_by(|a, b| b.id.as_bytes().cmp(a.id.as_bytes()));
+    Ok(members)
+}
+
 /// S1a-4: record the member's current identity signing pubkey and the
 /// rotation timestamp. Self-service: any bound member updates their own
 /// record (policy table row `meta/members/<own_id>/**`). The delta is
@@ -1073,4 +1104,65 @@ pub fn create_introduction(
     Ok(b64_encode(
         serde_json::to_string(&intro).unwrap().as_bytes(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// §4.8-1: the People listing walks row files only — device binding
+    /// subtrees and junk files are skipped, rows sort deterministically,
+    /// and a missing directory (legacy vault) is an empty list.
+    #[test]
+    fn list_members_walks_rows_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path();
+        let id_a = uuid::Uuid::new_v4();
+        let id_b = uuid::Uuid::new_v4();
+        let row = |id: uuid::Uuid, name: &str| {
+            serde_json::json!({
+                "id": id.to_string(),
+                "display_name": name,
+                "role": "editor",
+                "trust": "channel",
+            })
+        };
+        std::fs::create_dir_all(
+            vault.join("meta/members/00000000-0000-0000-0000-00000000000/devices"),
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join(format!("meta/members/{id_a}.json")),
+            row(id_a, "Alice").to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join(format!("meta/members/{id_b}.json")),
+            row(id_b, "Bob").to_string(),
+        )
+        .unwrap();
+        // Device binding subtree + junk must not appear as rows.
+        std::fs::write(
+            vault.join(
+                "meta/members/00000000-0000-0000-0000-00000000000/devices/11111111-1111-1111-1111-111111111111.json",
+            ),
+            "{}",
+        )
+        .unwrap();
+        std::fs::write(vault.join("meta/members/notes.txt"), "junk").unwrap();
+
+        let members = list_members(vault).unwrap();
+        assert_eq!(members.len(), 2);
+        // Deterministic order (id bytes descending).
+        let ids: Vec<Uuid> = members.iter().map(|m| m.id).collect();
+        assert_eq!(ids, {
+            let mut sorted = ids.clone();
+            sorted.sort_by(|a, b| b.as_bytes().cmp(a.as_bytes()));
+            sorted
+        });
+
+        // Legacy vault: no directory at all.
+        let empty = tempfile::tempdir().unwrap();
+        assert!(list_members(empty.path()).unwrap().is_empty());
+    }
 }

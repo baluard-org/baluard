@@ -2133,6 +2133,149 @@ impl VaultState {
         host.to_lowercase()
     }
 
+    // ── §4.8-1: sharing surfaces (People + join queue + activity) ──
+    // All routes token-gated by the daemon's default-deny gate (none are
+    // in TOKEN_EXEMPT_ACTIONS); mutating ones are listed in
+    // COVER_MUTATION_ACTIONS so autosync ships the artifacts.
+
+    /// People surface: every member row. Legacy vaults (no member
+    /// directory) return an empty list — the UI shows owner-only state.
+    pub async fn members_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let members =
+            baluard_core::vault::members::list_members(&handle.path).map_err(|e| e.to_string())?;
+        let rows: Vec<serde_json::Value> = members
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "id": m.id.to_string(),
+                    "display_name": m.display_name,
+                    "role": m.role,
+                    "trust": m.trust,
+                    "reset": m.reset.is_some(),
+                    "removed": m.removed.is_some(),
+                    "identity_rotated_at": m.identity_rotated_at,
+                })
+            })
+            .collect();
+        serde_json::to_string(&rows).map_err(|e| e.to_string())
+    }
+
+    /// Mint a one-time invite code for the given role. The pending
+    /// invite record ships to the repo via autosync (COVER_MUTATION).
+    pub async fn members_invite(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let role = match v["role"].as_str() {
+            Some("owner") => baluard_core::vault::members::MemberRole::Owner,
+            Some("admin") => baluard_core::vault::members::MemberRole::Admin,
+            Some("viewer") => baluard_core::vault::members::MemberRole::Viewer,
+            _ => baluard_core::vault::members::MemberRole::Editor,
+        };
+        let code = handle.invite_create(role).map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "code": code }).to_string())
+    }
+
+    /// Join queue: well-shaped staged requests plus the malformed count.
+    pub async fn requests_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let (requests, malformed) = handle.join_queue_list().map_err(|e| e.to_string())?;
+        let rows: Vec<serde_json::Value> = requests
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "req_id": r.req_id.to_string(),
+                    "invite_id": r.invite_id.to_string(),
+                    "device_id": r.device_id.to_string(),
+                    "display_name": r.display_name,
+                    "secret_ok": r.secret_ok,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "requests": rows, "malformed": malformed }).to_string())
+    }
+
+    /// Approve a queued request through the standard verification path.
+    /// Consumed only on success — refusals stay queued for retry.
+    pub async fn requests_approve(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let req_id = uuid::Uuid::parse_str(v["req_id"].as_str().ok_or("missing req_id")?)
+            .map_err(|e| e.to_string())?;
+        let member_id = handle
+            .approve_queued_join(req_id)
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "member_id": member_id.to_string() }).to_string())
+    }
+
+    /// Deny (drop) a queued request.
+    pub async fn requests_deny(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let req_id = uuid::Uuid::parse_str(v["req_id"].as_str().ok_or("missing req_id")?)
+            .map_err(|e| e.to_string())?;
+        handle.deny_queued_join(req_id).map_err(|e| e.to_string())?;
+        Ok("{}".into())
+    }
+
+    /// Activity surface: the sharing event log (human sentences),
+    /// newest last.
+    pub async fn activity_events(&self, payload: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).unwrap_or_default();
+        let limit = v["limit"].as_u64().unwrap_or(100).min(500) as usize;
+        let events = handle.share_events(limit).map_err(|e| e.to_string())?;
+        let rows: Vec<serde_json::Value> = events
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "seq": e.seq,
+                    "at": e.at,
+                    "kind": e.kind,
+                    "detail": e.detail,
+                })
+            })
+            .collect();
+        serde_json::to_string(&rows).map_err(|e| e.to_string())
+    }
+
+    /// Activity surface: this device's local refusal log lines.
+    pub async fn activity_refusals(&self, payload: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).unwrap_or_default();
+        let limit = v["limit"].as_u64().unwrap_or(50).min(200) as usize;
+        let lines = handle.refusal_log(limit);
+        serde_json::to_string(&lines).map_err(|e| e.to_string())
+    }
+
     /// Add a new cipher. Requires vault to be unlocked.
     pub async fn add_cipher(&self, payload: &str) -> Result<String, String> {
         let mut guard = self.inner.write().await;
