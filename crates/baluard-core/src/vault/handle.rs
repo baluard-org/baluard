@@ -575,6 +575,35 @@ impl VaultHandle {
         })
     }
 
+    /// S1a-7: ownership transfer (§4.2, first-class action). Owner-only:
+    /// the actor's member row must BE the current Owner row. Demotes the
+    /// old owner to Admin, promotes the successor to Owner with
+    /// SelfTrust; exactly one Owner row before and after, both writes in
+    /// one commit. Provider repo transfer + adopt semantics stay with
+    /// the provider layer (S1b collaborator ops) — this is the vault-
+    /// side role change.
+    pub fn transfer_ownership(&mut self, new_member_id: uuid::Uuid) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let actor_member = crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .ok_or_else(|| {
+                VaultError::InvalidOperation("this device is not a vault member".into())
+            })?;
+        let Some(old_member_id) = crate::vault::members::owner_member_id(&self.path) else {
+            return Err(
+                VaultError::InvalidOperation("this vault has no owner member row".into()).into(),
+            );
+        };
+        if actor_member != old_member_id {
+            return Err(VaultError::InvalidOperation(
+                "only the owner can transfer ownership".into(),
+            )
+            .into());
+        }
+        crate::vault::members::transfer_ownership(&self.path, old_member_id, new_member_id)
+    }
+
     /// S1a-2: approve a joiner's introduction (owner side, unlocked).
     /// Verifies the code against the repo-side pending invite, enrolls
     /// the joiner's device, wraps the Root Key to the joiner's device
@@ -7418,6 +7447,121 @@ mod tests {
             })
             .unwrap();
         engine_o.commit_all(&repo_o, "owner continues").unwrap();
+    }
+
+    // ── S1a-7: ownership transfer (§4.2, first-class action) ──
+
+    /// Ownership transfer is a role change on TWO member records in one
+    /// commit: the old owner is demoted (kept as Admin), the successor is
+    /// promoted with SelfTrust, and exactly one Owner row exists before
+    /// and after. Only the OWNER can transfer; a tombstoned successor is
+    /// refused; the demoted old owner cannot transfer until ownership
+    /// comes back.
+    #[test]
+    fn ownership_transfer_end_to_end() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let old_owner_id = crate::vault::members::owner_member_id(&owner_path).unwrap();
+
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // Join one successor (C) and one throwaway member (D, removed to
+        // prove the tombstoned-target gate).
+        let mut members = Vec::new();
+        for (name, pass) in [("MemberC", "pass-C"), ("MemberD", "pass-D")] {
+            let code_n = handle
+                .invite_create(crate::vault::members::MemberRole::Editor)
+                .unwrap();
+            engine_o.commit_all(&repo_o, "invite").unwrap();
+            let path_n = temp.path().join(name.to_lowercase());
+            git2::Repository::clone(owner_path.to_str().unwrap(), &path_n).unwrap();
+            let intro_n =
+                crate::vault::members::create_introduction(&path_n, &code_n, pass, name).unwrap();
+            let id_n = handle.approve_join(&intro_n).unwrap();
+            members.push((id_n, path_n.clone(), pass));
+            engine_o.commit_all(&repo_o, "approve join").unwrap();
+            // Each member pulls their approval before unlocking: the
+            // keywrap ships in the approve commit.
+            let engine_n =
+                crate::sync::engine::SyncEngine::new(&path_n, &name.to_lowercase(), None);
+            let repo_n = engine_n.open_repo().unwrap();
+            engine_n.pull(&repo_n, "origin").unwrap();
+            let mut handle_n = VaultHandle::open(&path_n).unwrap();
+            handle_n.unlock(pass).unwrap();
+        }
+        let (member_c_id, c_path, c_pass) = members[0].clone();
+        let member_d_id = members[1].0;
+
+        // Gates: unknown target, self-target, non-owner actor, tombstoned
+        // target.
+        assert!(handle.transfer_ownership(uuid::Uuid::new_v4()).is_err());
+        assert!(handle.transfer_ownership(old_owner_id).is_err());
+        let mut c_handle = VaultHandle::open(&c_path).unwrap();
+        c_handle.unlock(c_pass).unwrap();
+        assert!(c_handle.transfer_ownership(old_owner_id).is_err());
+        handle.member_remove(&[member_d_id]).unwrap();
+        assert!(handle.transfer_ownership(member_d_id).is_err());
+
+        // The transfer: old owner demoted to Admin, successor promoted
+        // with SelfTrust, exactly one Owner row.
+        handle.transfer_ownership(member_c_id).unwrap();
+        assert_eq!(
+            crate::vault::members::owner_member_id(&owner_path),
+            Some(member_c_id),
+            "exactly one Owner row, and it is the successor"
+        );
+        let old_row = crate::vault::members::member_file_by_id(&owner_path, old_owner_id).unwrap();
+        assert_eq!(old_row.role, crate::vault::members::MemberRole::Admin);
+        let new_row = crate::vault::members::member_file_by_id(&owner_path, member_c_id).unwrap();
+        assert_eq!(new_row.role, crate::vault::members::MemberRole::Owner);
+        assert_eq!(new_row.trust, crate::vault::members::TrustLevel::SelfTrust);
+
+        // The demoted old owner cannot transfer (disk-backed role).
+        assert!(handle.transfer_ownership(member_c_id).is_err());
+
+        engine_o.commit_all(&repo_o, "transfer ownership").unwrap();
+
+        // The new owner pulls, unlocks, and transfers back — the gate
+        // follows the records, not the device. Commits from C's device
+        // need the device signing key (per-engine signing, S1a-4 rule).
+        let c_seal = c_handle.devkey_seal();
+        let c_device = c_handle.device_id;
+        let engine_c = crate::sync::engine::SyncEngine::new(&c_path, "memberc", None);
+        let repo_c = engine_c.open_repo().unwrap();
+        engine_c.pull(&repo_c, "origin").unwrap();
+        c_handle.transfer_ownership(old_owner_id).unwrap();
+        assert_eq!(
+            crate::vault::members::owner_member_id(&c_path),
+            Some(old_owner_id),
+            "flip-back restores the single Owner invariant"
+        );
+        drop(c_handle);
+        let engine_c_signed =
+            crate::sync::engine::SyncEngine::new(&c_path, &c_device.to_string(), c_seal.as_ref());
+        engine_c_signed
+            .commit_all(&repo_c, "transfer back")
+            .unwrap();
+
+        // The old owner pulls the flip-back and is Owner again.
+        repo_o.remote("c", c_path.to_str().unwrap()).unwrap();
+        engine_o.pull(&repo_o, "c").unwrap();
+        assert_eq!(
+            crate::vault::members::owner_member_id(&owner_path),
+            Some(old_owner_id)
+        );
     }
 
     // ── P3: keywrap distribution + rekey-txn adoption ──
