@@ -166,7 +166,9 @@ export default function PeopleTab() {
             </div>
           </div>
           <Show when={seatError()}>
-            <p class="mt-2 text-[10px] text-amber-500">{seatError()}</p>
+            <p class="mt-2 text-[10px] text-amber-500">
+              {t("people.seatErrorPrefix")} {seatError()}
+            </p>
           </Show>
         </Show>
       </section>

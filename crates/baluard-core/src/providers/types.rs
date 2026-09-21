@@ -1040,6 +1040,16 @@ mod tests {
             split_owner_repo(Provider::Codeberg, "git@codeberg.org:o/r.git"),
             Some(("o".into(), "r".into()))
         );
+        // ssh:// URL with a userinfo + port.
+        assert_eq!(
+            split_owner_repo(Provider::GitHub, "ssh://git@github.com:22/o/r.git"),
+            Some(("o".into(), "r".into()))
+        );
+        // Trailing slash tolerated.
+        assert_eq!(
+            split_owner_repo(Provider::GitHub, "https://github.com/o/r/"),
+            Some(("o".into(), "r".into()))
+        );
         // GitLab nested subgroups: everything but the last segment is the
         // owner path.
         assert_eq!(
