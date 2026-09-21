@@ -18,7 +18,6 @@ const ROLE_STYLES = {
 };
 
 const TRUST_KEYS = {
-  self: "people.trustSelf",
   channel: "people.trustChannel",
   verified: "people.trustVerified",
   admin: "people.trustAdmin",
@@ -97,7 +96,6 @@ export default function PeopleTab() {
     try {
       await daemon("requests.approve", { req_id: reqId });
       toastSuccess(t("people.approved"));
-      setInviteCode(null);
       await reloadAll();
     } catch (e) {
       toastError(sanitizeError(e, t));
@@ -229,9 +227,15 @@ export default function PeopleTab() {
                 >
                   {t(`people.role_${m.role}`)}
                 </span>
-                <span class="text-[10px] text-[var(--color-muted)]">
-                  {t(TRUST_KEYS[m.trust] || "people.trustChannel")}
-                </span>
+                {/* Self-trust is the owner's own anchor identity — the role
+                    chip already says Owner, and the dial measures how well
+                    YOU verified THEM, which does not apply to the owner
+                    row. Rendering nothing avoids the "You" inversion. */}
+                <Show when={m.trust !== "self"}>
+                  <span class="text-[10px] text-[var(--color-muted)]">
+                    {t(TRUST_KEYS[m.trust] || "people.trustChannel")}
+                  </span>
+                </Show>
               </li>
             )}
           </For>

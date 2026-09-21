@@ -2174,11 +2174,17 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".into());
         }
         let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        // Fail closed on role parsing: a typo'd or missing role must NEVER
+        // silently become an Editor invite (write seat + keywrap).
         let role = match v["role"].as_str() {
-            Some("owner") => baluard_core::vault::members::MemberRole::Owner,
             Some("admin") => baluard_core::vault::members::MemberRole::Admin,
+            Some("editor") => baluard_core::vault::members::MemberRole::Editor,
             Some("viewer") => baluard_core::vault::members::MemberRole::Viewer,
-            _ => baluard_core::vault::members::MemberRole::Editor,
+            _ => {
+                return Err(
+                    "invalid or missing 'role'; expected 'admin', 'editor', or 'viewer'".into(),
+                );
+            }
         };
         let code = handle.invite_create(role).map_err(|e| e.to_string())?;
         Ok(serde_json::json!({ "code": code }).to_string())

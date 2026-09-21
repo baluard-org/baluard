@@ -637,7 +637,6 @@
     "role_admin": "Admin",
     "role_editor": "Editor",
     "role_viewer": "Viewer",
-    "trustSelf": "You",
     "trustChannel": "Identity received",
     "trustVerified": "Identity verified",
     "trustAdmin": "Trusted by admin",
