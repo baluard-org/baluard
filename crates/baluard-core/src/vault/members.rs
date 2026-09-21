@@ -570,9 +570,14 @@ pub fn join_status(vault_path: &Path) -> (bool, bool) {
     let Some(unlock) = unlock else {
         return (false, false);
     };
+    // Approval means FULLY synced: the device keywrap AND the member row
+    // binding the device must both be present. Keywrap alone is not
+    // enough — unlock would open the vault but commits would fail
+    // verification as a PendingJoiner.
     let approved = vault_path
         .join(format!("meta/keywrap/{}.json", unlock.device_id))
-        .exists();
+        .exists()
+        && member_file_for_device(vault_path, unlock.device_id).is_some();
     (true, approved)
 }
 
@@ -1213,9 +1218,53 @@ mod tests {
         std::fs::write(vault.join("meta/member-unlock.json"), unlock.to_string()).unwrap();
         assert_eq!(join_status(vault), (true, false));
 
-        // Approval artifacts arrive via sync: the device keywrap.
+        // Approval artifacts arrive via sync: the device keywrap AND the
+        // member row + binding. Keywrap alone is not "approved".
         std::fs::create_dir_all(vault.join("meta/keywrap")).unwrap();
         std::fs::write(vault.join(format!("meta/keywrap/{device_id}.json")), "{}").unwrap();
+        assert_eq!(join_status(vault), (true, false));
+
+        let member_id = uuid::Uuid::new_v4();
+        let member = serde_json::json!({
+            "id": member_id.to_string(),
+            "display_name": "Joiner",
+            "role": "editor",
+            "trust": "channel",
+        });
+        std::fs::create_dir_all(vault.join("meta/members")).unwrap();
+        std::fs::write(
+            vault.join(format!("meta/members/{member_id}.json")),
+            member.to_string(),
+        )
+        .unwrap();
+        assert_eq!(join_status(vault), (true, false));
+        std::fs::create_dir_all(
+            vault
+                .join("meta/members")
+                .join(member_id.to_string())
+                .join("devices"),
+        )
+        .unwrap();
+        std::fs::write(
+            vault
+                .join("meta/members")
+                .join(member_id.to_string())
+                .join("devices")
+                .join(format!("{device_id}.json")),
+            "{}",
+        )
+        .unwrap();
         assert_eq!(join_status(vault), (true, true));
+    }
+
+    /// A corrupt member-unlock file reads as "not introduced" — the join
+    /// flow stays at the start instead of hanging or erroring.
+    #[test]
+    fn join_status_corrupt_unlock_file_is_not_introduced() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path();
+        std::fs::create_dir_all(vault.join("meta")).unwrap();
+        std::fs::write(vault.join("meta/member-unlock.json"), "{broken").unwrap();
+        assert_eq!(join_status(vault), (false, false));
     }
 }

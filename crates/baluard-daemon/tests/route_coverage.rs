@@ -19,11 +19,14 @@
 #![allow(dead_code)]
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use baluard_core::types::{CipherInput, CipherKind, LoginData, LoginUri};
 use baluard_core::vault::creation::VaultCreator;
+use baluard_core::vault::registry::{VaultEntry, VaultRegistry};
+use baluard_daemon::handler::route_host_request;
 use baluard_daemon::host::VaultHost;
+use baluard_daemon::proto::GatewayRequest;
 use baluard_daemon::state::VaultState;
 
 const MASTER: &str = "test-master-password-123";
@@ -747,4 +750,166 @@ async fn sharing_routes_reject_when_locked() {
     assert!(state.requests_list().await.is_err());
     assert!(state.activity_events("{}").await.is_err());
     assert!(state.activity_refusals("{}").await.is_err());
+}
+
+// ── §4.8-2: join flow routes (wire-level through route_host_request) ──
+// The join handlers resolve slugs via the GLOBAL registry file, so tests
+// serialise on JOIN_REG and sandbox BALUARD_DATA_DIR (same pattern as
+// phase6_detach.rs).
+static JOIN_REG: Mutex<()> = Mutex::new(());
+
+fn join_request(action: &str, payload: serde_json::Value) -> GatewayRequest {
+    GatewayRequest {
+        action: action.to_string(),
+        payload: payload.to_string(),
+        session_token: String::new(),
+        slug: String::new(),
+    }
+}
+
+#[tokio::test]
+async fn join_introduce_validates_consumes_and_polls() {
+    let _guard = JOIN_REG.lock().unwrap();
+    let _sandbox = sandboxed_host_env();
+    // Real vault with an owner genesis and a live editor invite.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_path_buf();
+    let (mut handle, _secrets) = VaultCreator::new(&path, MASTER, "join-flow")
+        .execute()
+        .expect("vault creation");
+    handle.unlock(MASTER).unwrap();
+    let vault_id = handle.vault_id;
+    let code = handle
+        .invite_create(baluard_core::vault::members::MemberRole::Editor)
+        .expect("invite");
+    drop(handle);
+
+    // Register the vault (clone-finalize equivalent). The registry key is
+    // the NORMALIZED slug — registry_vault_path normalizes before lookup.
+    let slug = baluard_core::vault::slug::normalize_slug("join-flow");
+    let mut reg = VaultRegistry::default();
+    reg.add(VaultEntry {
+        slug: slug.clone(),
+        display_name: slug.clone(),
+        path: path.clone(),
+        provider: None,
+        remote_url: None,
+        last_synced: None,
+        last_opened: None,
+        vault_id,
+    })
+    .expect("add entry");
+    reg.save_locked().expect("save registry");
+    // Drop the registry lock before any await (sandboxed data dir already
+    // isolates this test's registry file).
+    drop(_guard);
+
+    let host = Arc::new(VaultHost::new());
+
+    // Missing fields fail closed (this payload has slug only → the code
+    // check fires first).
+    let resp = route_host_request(
+        join_request("join.introduce", serde_json::json!({"slug": slug})),
+        &host,
+    )
+    .await;
+    assert!(!resp.success);
+    assert!(
+        resp.error_message.contains("'code'"),
+        "{}",
+        resp.error_message
+    );
+
+    // Unknown slug fails.
+    let resp = route_host_request(
+        join_request(
+            "join.introduce",
+            serde_json::json!({
+                "slug": "baluard-nope",
+                "code": code,
+                "password": "joiner-pass-123",
+                "device_name": "d"
+            }),
+        ),
+        &host,
+    )
+    .await;
+    assert!(!resp.success);
+    assert!(
+        resp.error_message.contains("Unknown vault"),
+        "{}",
+        resp.error_message
+    );
+
+    // Newline device name fails closed.
+    let resp = route_host_request(
+        join_request(
+            "join.introduce",
+            serde_json::json!({
+                "slug": slug,
+                "code": code,
+                "password": "joiner-pass-123",
+                "device_name": "line1\nline2"
+            }),
+        ),
+        &host,
+    )
+    .await;
+    assert!(!resp.success);
+
+    // Happy path: introduction consumes the invite and returns the
+    // intro code for the admin.
+    let resp = route_host_request(
+        join_request(
+            "join.introduce",
+            serde_json::json!({
+                "slug": slug,
+                "code": code,
+                "password": "joiner-pass-123",
+                "device_name": "Joiner Device"
+            }),
+        ),
+        &host,
+    )
+    .await;
+    assert!(
+        resp.success,
+        "err: {} / payload: {}",
+        resp.error_message, resp.payload
+    );
+    let payload: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert!(
+        !payload["intro_code"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
+
+    // Re-introducing the consumed invite fails.
+    let resp = route_host_request(
+        join_request(
+            "join.introduce",
+            serde_json::json!({
+                "slug": slug,
+                "code": code,
+                "password": "joiner-pass-123",
+                "device_name": "Joiner Device"
+            }),
+        ),
+        &host,
+    )
+    .await;
+    assert!(!resp.success);
+
+    // Poll: introduced, not approved (no keywrap shipped yet; the vault
+    // has no remote, and the tolerated pull failure keeps status stable).
+    let resp = route_host_request(
+        join_request("join.poll", serde_json::json!({"slug": slug})),
+        &host,
+    )
+    .await;
+    assert!(resp.success, "{}", resp.payload);
+    let payload: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert_eq!(payload["introduced"], true);
+    assert_eq!(payload["approved"], false);
 }

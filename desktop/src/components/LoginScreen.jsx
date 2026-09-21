@@ -55,8 +55,27 @@ export default function LoginScreen() {
   const [joinDeviceName, setJoinDeviceName] = createSignal("");
   const [introCode, setIntroCode] = createSignal("");
   const [joinBusy, setJoinBusy] = createSignal(false);
+  // Slug captured at introduction time: polling must never float to
+  // another vault if the user switches the active vault mid-wait.
+  const [joinSlug, setJoinSlug] = createSignal("");
   let joinTimer;
   let pollInFlight = false;
+
+  function stopJoinPolling() {
+    if (joinTimer) clearInterval(joinTimer);
+    joinTimer = undefined;
+  }
+
+  function exitJoinMode() {
+    stopJoinPolling();
+    setJoinMode(false);
+    setJoinState("form");
+    setJoinCode("");
+    setJoinPassword("");
+    setJoinConfirm("");
+    setIntroCode("");
+    setJoinSlug("");
+  }
 
   function effectiveSlug() {
     return auth.switchTarget() ?? switcher.activeSlug();
@@ -88,7 +107,9 @@ export default function LoginScreen() {
         }),
       );
       setIntroCode(res.intro_code);
+      setJoinSlug(slug);
       setJoinState("waiting");
+      stopJoinPolling();
       pollApproval();
       joinTimer = setInterval(pollApproval, 10000);
     } catch (err) {
@@ -100,19 +121,22 @@ export default function LoginScreen() {
 
   async function pollApproval() {
     if (pollInFlight) return;
-    const slug = effectiveSlug();
+    const slug = joinSlug();
     if (!slug) return;
     pollInFlight = true;
     try {
       const res = JSON.parse(await daemon("join.poll", { slug }));
       if (res.approved) {
-        clearInterval(joinTimer);
+        stopJoinPolling();
         // Reuse the standard unlock path: feed the chosen password into
         // the login field and run the normal machinery (canary-override
-        // member unlock). The signal copies are wiped immediately.
+        // member unlock). The signal copies are wiped immediately. On
+        // failure the join UI closes — the user lands on the normal
+        // login form and can unlock with their password.
         if (passwordRef) passwordRef.value = joinPassword();
         setJoinPassword("");
         setJoinConfirm("");
+        setJoinMode(false);
         const ok = await auth.unlock(t);
         if (!ok) toastError(t("join.unlockFailed"));
       }
@@ -123,7 +147,7 @@ export default function LoginScreen() {
     }
   }
 
-  onCleanup(() => clearInterval(joinTimer));
+  onCleanup(() => stopJoinPolling());
 
   async function handleUnlock() {
     if (bruteLock() || auth.status() === "unlocking") return;
@@ -379,7 +403,7 @@ export default function LoginScreen() {
 
         <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4 space-y-2">
           <button
-            onClick={() => setJoinMode(!joinMode())}
+            onClick={() => (joinMode() ? exitJoinMode() : setJoinMode(true))}
             class="block w-full text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
           >
             {joinMode() ? t("join.backToLogin") : t("join.joinLink")}
