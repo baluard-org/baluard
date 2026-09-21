@@ -142,14 +142,26 @@ pub fn write_device_binding(
 pub fn owner_member_id(vault_path: &Path) -> Option<Uuid> {
     let dir = vault_path.join(MEMBERS_DIR);
     let entries = std::fs::read_dir(&dir).ok()?;
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !name.ends_with(".json") {
-            continue;
-        }
-        if let Ok(json) = std::fs::read_to_string(entry.path()) {
+    // S1a-7 review: SORTED scan (an abnormal two-owner state from a
+    // mid-transfer crash resolves deterministically on every device)
+    // and tombstoned rows never resolve (a reset/removed row cannot
+    // own).
+    let mut stems: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.strip_suffix(".json").map(|s| s.to_string())
+        })
+        .collect();
+    stems.sort();
+    for stem in stems {
+        if let Ok(json) = std::fs::read_to_string(dir.join(format!("{stem}.json"))) {
             if let Ok(member) = serde_json::from_str::<MemberFile>(&json) {
-                if member.role == MemberRole::Owner {
+                if member.role == MemberRole::Owner
+                    && member.id.to_string() == stem
+                    && member.reset.is_none()
+                    && member.removed.is_none()
+                {
                     return Some(member.id);
                 }
             }
@@ -350,12 +362,12 @@ pub fn transfer_ownership(
     if new.reset.is_some() || new.removed.is_some() {
         return Err(deny("successor row is tombstoned"));
     }
-    old.role = MemberRole::Admin;
-    super::write_vault_file(
-        &old_path,
-        serde_json::to_string_pretty(&old).unwrap().as_bytes(),
-    )
-    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("demote owner: {e}"))))?;
+    // S1a-7 review: PROMOTE first, demote second. A crash between the
+    // two writes must never leave ZERO owners (vault bricked); promote-
+    // first leaves TWO owners at worst — an abnormal-but-recoverable
+    // state the transfer gate tolerates (an owner-role actor can re-run,
+    // which demotes the second owner). Each file write is atomic
+    // (tmp+rename); the two-file window closes when the commit lands.
     new.role = MemberRole::Owner;
     new.trust = TrustLevel::SelfTrust;
     super::write_vault_file(
@@ -363,6 +375,17 @@ pub fn transfer_ownership(
         serde_json::to_string_pretty(&new).unwrap().as_bytes(),
     )
     .map_err(|e| BaluardError::from(VaultError::Metadata(format!("promote owner: {e}"))))?;
+    old.role = MemberRole::Admin;
+    // S1a-7 review: a demoted owner must not keep SelfTrust — repeated
+    // transfers would otherwise accumulate SelfTrust Admin rows.
+    if old.trust == TrustLevel::SelfTrust {
+        old.trust = TrustLevel::Verified;
+    }
+    super::write_vault_file(
+        &old_path,
+        serde_json::to_string_pretty(&old).unwrap().as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("demote owner: {e}"))))?;
     Ok(())
 }
 
@@ -647,6 +670,15 @@ pub fn create_invite(
     role: MemberRole,
     target_member: Option<Uuid>,
 ) -> Result<String, BaluardError> {
+    // S1a-7 review: an Owner invite would mint a SECOND owner row at
+    // approval, violating the single-owner invariant. Ownership changes
+    // go through transfer_ownership only. (Reset invites never carry
+    // Owner either — the owner row cannot be reset.)
+    if role == MemberRole::Owner {
+        return Err(BaluardError::from(VaultError::InvalidOperation(
+            "ownership cannot be invited; use transfer_ownership".into(),
+        )));
+    }
     let mut secret = [0u8; 32];
     use rand::RngCore;
     rand::rngs::OsRng.fill_bytes(&mut secret);
