@@ -23,7 +23,10 @@ export default function TypedConfirmModal(props) {
   let dialogRef;
   const [typed, setTyped] = createSignal("");
 
-  const matches = () => typed().trim() === props.confirmWord;
+  const matches = () =>
+    props.confirmWord != null &&
+    props.confirmWord !== "" &&
+    typed().trim() === props.confirmWord;
 
   return (
     <Transition name="fade">
