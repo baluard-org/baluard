@@ -558,6 +558,24 @@ pub fn identity_pubkey_for_device(vault_path: &Path, device_id: Uuid) -> Option<
     member_file_for_device(vault_path, device_id).and_then(|(_, m)| m.identity_signing_pubkey)
 }
 
+/// §4.8-2: the joiner-side flow state. `introduced` = this device has
+/// run the introduction (device-local member unlock material exists);
+/// `approved` = the admin's approval artifacts reached this clone (the
+/// device's Root Key keywrap landed via sync). Pure filesystem checks —
+/// no keys, no unlock attempt — so the desktop can poll it cheaply.
+pub fn join_status(vault_path: &Path) -> (bool, bool) {
+    let unlock = std::fs::read_to_string(vault_path.join("meta/member-unlock.json"))
+        .ok()
+        .and_then(|data| serde_json::from_str::<MemberUnlock>(&data).ok());
+    let Some(unlock) = unlock else {
+        return (false, false);
+    };
+    let approved = vault_path
+        .join(format!("meta/keywrap/{}.json", unlock.device_id))
+        .exists();
+    (true, approved)
+}
+
 // ── S1a-2: join ceremony (invite → introduce → approve) ──
 //
 // Thin offline variant of the §4.1 join queue: the owner mints a
@@ -1166,5 +1184,38 @@ mod tests {
         // Legacy vault: no directory at all.
         let empty = tempfile::tempdir().unwrap();
         assert!(list_members(empty.path()).unwrap().is_empty());
+    }
+
+    /// §4.8-2: the joiner-side status checks. introduced = device-local
+    /// member unlock material present; approved = the sync-shipped keywrap
+    /// for THAT device landed. Nothing introduced = both false.
+    #[test]
+    fn join_status_tracks_introduction_and_approval() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path();
+
+        // Fresh clone, nothing done yet.
+        assert_eq!(join_status(vault), (false, false));
+
+        // Introduction done: unlock material with a device id.
+        let device_id = uuid::Uuid::new_v4();
+        let unlock = serde_json::json!({
+            "device_id": device_id.to_string(),
+            "kdf_params": {
+                "memory_kib": 19456,
+                "time_cost": 2,
+                "parallelism": 1,
+                "salt": "aabb",
+            },
+            "kek_canary": "deadbeef",
+        });
+        std::fs::create_dir_all(vault.join("meta")).unwrap();
+        std::fs::write(vault.join("meta/member-unlock.json"), unlock.to_string()).unwrap();
+        assert_eq!(join_status(vault), (true, false));
+
+        // Approval artifacts arrive via sync: the device keywrap.
+        std::fs::create_dir_all(vault.join("meta/keywrap")).unwrap();
+        std::fs::write(vault.join(format!("meta/keywrap/{device_id}.json")), "{}").unwrap();
+        assert_eq!(join_status(vault), (true, true));
     }
 }

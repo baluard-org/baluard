@@ -1,4 +1,4 @@
-import { Show, createSignal, createEffect } from "solid-js";
+import { Show, createSignal, createEffect, onCleanup } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
@@ -9,6 +9,7 @@ import { sanitizeError } from "../lib/utils.js";
 import { IconLock, IconFingerprint, IconSpinner, IconBaluardLogo } from "./Icon.jsx";
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 import VaultSwitcher from "./VaultSwitcher.jsx";
+import CopyButton from "./CopyButton.jsx";
 
 export default function LoginScreen() {
   const auth = useAuth();
@@ -41,6 +42,88 @@ export default function LoginScreen() {
   const [bruteLock, setBruteLock] = createSignal(false);
   const [pinValue, setPinValue] = createSignal("");
   const [pinBusy, setPinBusy] = createSignal(false);
+
+  // §4.8-2: join-side flow. The joiner cloned the shared vault (existing
+  // clone flow), picked their OWN password, and waits for the admin's
+  // approval. The password lives only in these signals and is wiped as
+  // soon as the unlock attempt runs.
+  const [joinMode, setJoinMode] = createSignal(false);
+  const [joinState, setJoinState] = createSignal("form"); // form | waiting
+  const [joinCode, setJoinCode] = createSignal("");
+  const [joinPassword, setJoinPassword] = createSignal("");
+  const [joinConfirm, setJoinConfirm] = createSignal("");
+  const [joinDeviceName, setJoinDeviceName] = createSignal("");
+  const [introCode, setIntroCode] = createSignal("");
+  const [joinBusy, setJoinBusy] = createSignal(false);
+  let joinTimer;
+  let pollInFlight = false;
+
+  function effectiveSlug() {
+    return auth.switchTarget() ?? switcher.activeSlug();
+  }
+
+  async function doIntroduce(e) {
+    e.preventDefault();
+    const slug = effectiveSlug();
+    if (!slug) {
+      toastError(t("join.noVault"));
+      return;
+    }
+    if (joinPassword().length < 8) {
+      toastError(t("join.passwordShort"));
+      return;
+    }
+    if (joinPassword() !== joinConfirm()) {
+      toastError(t("join.passwordMismatch"));
+      return;
+    }
+    setJoinBusy(true);
+    try {
+      const res = JSON.parse(
+        await daemon("join.introduce", {
+          slug,
+          code: joinCode().trim(),
+          password: joinPassword(),
+          device_name: joinDeviceName().trim() || "My device",
+        }),
+      );
+      setIntroCode(res.intro_code);
+      setJoinState("waiting");
+      pollApproval();
+      joinTimer = setInterval(pollApproval, 10000);
+    } catch (err) {
+      toastError(sanitizeError(err, t));
+    } finally {
+      setJoinBusy(false);
+    }
+  }
+
+  async function pollApproval() {
+    if (pollInFlight) return;
+    const slug = effectiveSlug();
+    if (!slug) return;
+    pollInFlight = true;
+    try {
+      const res = JSON.parse(await daemon("join.poll", { slug }));
+      if (res.approved) {
+        clearInterval(joinTimer);
+        // Reuse the standard unlock path: feed the chosen password into
+        // the login field and run the normal machinery (canary-override
+        // member unlock). The signal copies are wiped immediately.
+        if (passwordRef) passwordRef.value = joinPassword();
+        setJoinPassword("");
+        setJoinConfirm("");
+        const ok = await auth.unlock(t);
+        if (!ok) toastError(t("join.unlockFailed"));
+      }
+    } catch {
+      // Offline or transient: keep waiting.
+    } finally {
+      pollInFlight = false;
+    }
+  }
+
+  onCleanup(() => clearInterval(joinTimer));
 
   async function handleUnlock() {
     if (bruteLock() || auth.status() === "unlocking") return;
@@ -92,6 +175,7 @@ export default function LoginScreen() {
           </Show>
         </div>
 
+        <Show when={!joinMode()}>
         <form onSubmit={(e) => { e.preventDefault(); handleUnlock(); }} class="login-screen__form space-y-4">
           <div>
             <input
@@ -212,8 +296,94 @@ export default function LoginScreen() {
             </div>
           </Show>
         </form>
+        </Show>
 
-        <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4">
+        {/* §4.8-2: join-side flow — invite code in, intro code back, wait
+            for the admin's approval, then unlock with the chosen password. */}
+        <Show when={joinMode()}>
+          <Show
+            when={joinState() === "waiting"}
+            fallback={
+              <form onSubmit={doIntroduce} class="login-screen__form space-y-4">
+                <div>
+                  <label class="text-[10px] font-bold text-[var(--color-muted)] uppercase tracking-wide">{t("join.codeLabel")}</label>
+                  <textarea
+                    value={joinCode()}
+                    onInput={(e) => setJoinCode(e.currentTarget.value)}
+                    rows="3"
+                    class="w-full mt-1 px-3 py-2.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text)] font-mono outline-none focus:border-[var(--color-primary)] resize-none"
+                    placeholder={t("join.codePlaceholder")}
+                  />
+                </div>
+                <div>
+                  <label class="text-[10px] font-bold text-[var(--color-muted)] uppercase tracking-wide">{t("join.passwordLabel")}</label>
+                  <input
+                    type="password"
+                    value={joinPassword()}
+                    onInput={(e) => setJoinPassword(e.currentTarget.value)}
+                    autocomplete="new-password"
+                    class="w-full mt-1 px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                  />
+                </div>
+                <div>
+                  <label class="text-[10px] font-bold text-[var(--color-muted)] uppercase tracking-wide">{t("join.passwordConfirmLabel")}</label>
+                  <input
+                    type="password"
+                    value={joinConfirm()}
+                    onInput={(e) => setJoinConfirm(e.currentTarget.value)}
+                    autocomplete="new-password"
+                    class="w-full mt-1 px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                  />
+                </div>
+                <div>
+                  <label class="text-[10px] font-bold text-[var(--color-muted)] uppercase tracking-wide">{t("join.nameLabel")}</label>
+                  <input
+                    value={joinDeviceName()}
+                    onInput={(e) => setJoinDeviceName(e.currentTarget.value)}
+                    maxlength="64"
+                    class="w-full mt-1 px-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+                    placeholder={t("join.namePlaceholder")}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={joinBusy() || !joinCode().trim()}
+                  class="w-full py-3.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-text)] font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Show when={joinBusy()}>
+                    <IconSpinner class="w-4 h-4" />
+                  </Show>
+                  {t("join.sendRequest")}
+                </button>
+              </form>
+            }
+          >
+            <div class="text-center space-y-4">
+              <IconSpinner class="w-8 h-8 mx-auto text-[var(--color-primary)]" />
+              <div>
+                <p class="text-sm font-bold text-[var(--color-text)]">{t("join.waitingTitle")}</p>
+                <p class="text-xs text-[var(--color-muted)] mt-1">{t("join.waitingHint")}</p>
+              </div>
+              <div class="p-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-left">
+                <p class="text-[10px] text-[var(--color-muted)] mb-1">{t("join.introHint")}</p>
+                <div class="flex items-center gap-2">
+                  <code class="text-[10px] text-[var(--color-text)] break-all flex-1 font-mono">
+                    {introCode()}
+                  </code>
+                  <CopyButton value={introCode()} />
+                </div>
+              </div>
+            </div>
+          </Show>
+        </Show>
+
+        <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4 space-y-2">
+          <button
+            onClick={() => setJoinMode(!joinMode())}
+            class="block w-full text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+          >
+            {joinMode() ? t("join.backToLogin") : t("join.joinLink")}
+          </button>
           <button
             onClick={() => auth.setStatus("welcome")}
             class="login-screen__create-btn text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"

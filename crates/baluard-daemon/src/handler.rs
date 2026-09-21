@@ -227,6 +227,8 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     "vault.clone_start",
     "vault.clone_progress",
     "vault.clone_finalize",
+    "join.introduce",
+    "join.poll",
 ];
 
 /// Default-deny gate for the per-vault dispatcher. Unknown actions require
@@ -259,6 +261,8 @@ const HOST_ACTIONS: &[&str] = &[
     "vault.clone_start",
     "vault.clone_progress",
     "vault.clone_finalize",
+    "join.introduce",
+    "join.poll",
     "vaults.list",
     "vaults.active",
     "vaults.switch",
@@ -1248,6 +1252,18 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     }
     if req.action.as_str() == "vault.open" {
         return handle_vault_open(req, host).await;
+    }
+    // §4.8-2 join flow: host-level like the clone routes. A joiner's vault
+    // is opened but NEVER unlocked until the admin approves; introduce and
+    // poll operate on the vault directory without any session token (they
+    // mint no token and read no decrypted secrets — the artifacts they
+    // touch are the joiner's own encrypted member-unlock file and the
+    // sync-shipped keywrap presence).
+    if req.action.as_str() == "join.introduce" {
+        return handle_join_introduce(req, host).await;
+    }
+    if req.action.as_str() == "join.poll" {
+        return handle_join_poll(req, host).await;
     }
     // Biometric unlock is a host-level lifecycle op: it mints a session
     // token (via state.unlock internally) and the desktop files that token
@@ -2548,6 +2564,87 @@ static CLONE_JOBS: std::sync::LazyLock<
 /// `TOKEN_REQUIRED_ACTIONS`. The slug comes from `provider.vault_repos`
 /// (the `.baluard` marker carries it), avoiding a temp-dir dance.
 #[cfg(feature = "git-sync")]
+/// §4.8-2: run the joiner's introduction on an already-cloned vault.
+/// Payload: `{ slug, code, password, device_name }`. Consumes the invite
+/// locally, generates the joiner's device keys + member unlock material
+/// (their own password, independent KDF salt) + identity, and returns the
+/// intro code the joiner hands back to the admin out-of-band. Host-level:
+/// the joiner has no session token (their vault never unlocked yet) and
+/// the route reads no decrypted secrets.
+async fn handle_join_introduce(req: GatewayRequest, _host: &SharedVaultHost) -> GatewayResponse {
+    let v: serde_json::Value = match serde_json::from_str(&req.payload) {
+        Ok(v) => v,
+        Err(e) => return err_response(format!("Invalid join payload: {e}")),
+    };
+    let Some(slug) = v["slug"].as_str().map(str::to_string) else {
+        return err_response("Missing 'slug' in join payload".to_string());
+    };
+    let Some(code) = v["code"].as_str().map(str::to_string) else {
+        return err_response("Missing 'code' in join payload".to_string());
+    };
+    let Some(password) = v["password"].as_str().map(str::to_string) else {
+        return err_response("Missing 'password' in join payload".to_string());
+    };
+    let Some(device_name) = v["device_name"].as_str().map(str::to_string) else {
+        return err_response("Missing 'device_name' in join payload".to_string());
+    };
+    if device_name.contains(['\n', '\r']) {
+        return err_response("device name must not contain newlines".to_string());
+    }
+    let Some(path) = registry_vault_path(&slug) else {
+        return err_response(format!("Unknown vault: {slug}"));
+    };
+    match baluard_core::vault::members::create_introduction(&path, &code, &password, &device_name) {
+        Ok(intro_code) => {
+            let payload = serde_json::json!({ "intro_code": intro_code });
+            ok_resp(payload.to_string(), None)
+        }
+        Err(e) => err_response(e.to_string()),
+    }
+}
+
+/// §4.8-2: poll the join flow state. Payload: `{ slug }`. Pulls the
+/// remote (tolerant: offline leaves the previous status) so the admin's
+/// approval artifacts arrive, then reports `{ introduced, approved }`
+/// from pure filesystem checks (member unlock material + keywrap
+/// presence). Host-level, same trust level as the clone progress route.
+async fn handle_join_poll(req: GatewayRequest, _host: &SharedVaultHost) -> GatewayResponse {
+    let v: serde_json::Value = match serde_json::from_str(&req.payload) {
+        Ok(v) => v,
+        Err(e) => return err_response(format!("Invalid join payload: {e}")),
+    };
+    let Some(slug) = v["slug"].as_str().map(str::to_string) else {
+        return err_response("Missing 'slug' in join payload".to_string());
+    };
+    let Some(path) = registry_vault_path(&slug) else {
+        return err_response(format!("Unknown vault: {slug}"));
+    };
+
+    // Pull best-effort: the joiner has no roster seat yet, so their
+    // engine cannot sign anything — pull is fetch + verify + checkout,
+    // which needs no keys. Failures (offline, no remote) keep the last
+    // known status.
+    let engine = baluard_core::sync::engine::SyncEngine::new(&path, "join-poll", None);
+    if let Ok(repo) = engine.open_repo() {
+        let _ = engine.pull(&repo, "origin");
+    }
+
+    let (introduced, approved) = baluard_core::vault::members::join_status(&path);
+    let payload = serde_json::json!({ "introduced": introduced, "approved": approved });
+    ok_resp(payload.to_string(), None)
+}
+
+/// Resolve a slug to its on-disk vault path via the local registry
+/// (works for never-unlocked joiner clones that were not opened into
+/// the host map).
+fn registry_vault_path(slug: &str) -> Option<std::path::PathBuf> {
+    let slug = baluard_core::vault::slug::normalize_slug(slug);
+    let reg = baluard_core::vault::registry::VaultRegistry::load_locked().ok()?;
+    let entry = reg.get(&slug)?;
+    let path = entry.path.clone();
+    if path.exists() { Some(path) } else { None }
+}
+
 async fn handle_vault_clone_start(req: GatewayRequest, _host: &SharedVaultHost) -> GatewayResponse {
     if req.payload.is_empty() {
         return err_response("Missing clone JSON in payload".to_string());
