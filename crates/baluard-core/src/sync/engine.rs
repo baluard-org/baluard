@@ -878,7 +878,300 @@ impl SyncEngine {
             .id();
         self.save_last_head(&pushed_oid.to_string())?;
 
+        // S1b-3: announce the pushed head on the gossip side branch.
+        // Best-effort by contract: a missed announcement only delays
+        // rollback detection, and the next push re-announces (the announce
+        // skips when the remote tip already carries this head). Failing the
+        // push here would trade safe data for telemetry.
+        if let Err(e) = self.announce_head(repo, remote_name) {
+            let _ = e; // advisory channel; retried on the next cycle
+        }
+
         Ok(())
+    }
+
+    /// S1b-3: announce the current main head on the `baluard-gossip`
+    /// side branch (rollback detection, plan security note 10). Requires
+    /// a signing key — pre-enrollment vaults skip silently. The gossip
+    /// commit carries the announced head as a second parent so the
+    /// announced history stays reachable from the branch: a fresh clone
+    /// of a rolled-back vault receives the rewound main AND the proof a
+    /// later head existed. Never touches HEAD or the worktree.
+    fn announce_head(&self, repo: &Repository, remote_name: &str) -> Result<(), BaluardError> {
+        use super::gossip::{GOSSIP_BRANCH, GOSSIP_DIR, HeadAnnouncement};
+        let Some(signing_key) = self.signing_key.clone() else {
+            return Ok(());
+        };
+        let branch_ref = format!("refs/heads/{GOSSIP_BRANCH}");
+        let remote_ref = format!("refs/remotes/{remote_name}/{GOSSIP_BRANCH}");
+
+        // Refresh the remote gossip view best-effort (absent branch =
+        // first announcement ever; network failure = stale tip, the push
+        // below fails non-ff and the next cycle retries).
+        if let Ok(mut remote) = repo.find_remote(remote_name) {
+            let mut fetch_opts = FetchOptions::new();
+            let callbacks = crate::sync::credentials::build_callbacks(&self.credential_config);
+            fetch_opts.remote_callbacks(callbacks);
+            let refspec =
+                format!("refs/heads/{GOSSIP_BRANCH}:refs/remotes/{remote_name}/{GOSSIP_BRANCH}");
+            let _ = remote.fetch(&[&refspec], Some(&mut fetch_opts), None);
+        }
+
+        let head_commit = repo
+            .head()
+            .map_err(|e| SyncError::Git(format!("head: {e}")))?
+            .peel_to_commit()
+            .map_err(|e| SyncError::Git(format!("peel: {e}")))?;
+        let tip = repo
+            .find_reference(&remote_ref)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok());
+
+        // Already announced this head? Nothing to do.
+        if let Some(tip) = &tip {
+            if let Ok(existing) = Self::gossip_own_announcement(repo, tip, &self.device_id) {
+                if existing.head == head_commit.id().to_string() {
+                    return Ok(());
+                }
+            }
+        }
+
+        let vault_tag = self.root_commit_oid(repo)?;
+        let ann = HeadAnnouncement::sign(
+            &vault_tag,
+            &self.device_id,
+            &head_commit.id().to_string(),
+            crate::providers::types::now_secs(),
+            &signing_key,
+        );
+        let ann_json = serde_json::to_vec_pretty(&ann)
+            .map_err(|e| SyncError::Git(format!("gossip serialize: {e}")))?;
+
+        // Build the gossip tree without touching the worktree: copy the
+        // tip tree, replace our own file (per-device files never conflict).
+        let tip_tree = tip.as_ref().and_then(|c| c.tree().ok());
+        let mut heads_tb = match tip_tree
+            .as_ref()
+            .and_then(|t| t.get_path(Path::new(GOSSIP_DIR)).ok())
+        {
+            Some(entry) => {
+                let subtree = repo
+                    .find_tree(entry.id())
+                    .map_err(|e| SyncError::Git(format!("gossip heads tree: {e}")))?;
+                repo.treebuilder(Some(&subtree))
+            }
+            None => repo.treebuilder(None),
+        }
+        .map_err(|e| SyncError::Git(format!("gossip heads treebuilder: {e}")))?;
+        let blob_id = repo
+            .blob(&ann_json)
+            .map_err(|e| SyncError::Git(format!("gossip blob: {e}")))?;
+        heads_tb
+            .insert(
+                format!("{}.json", self.device_id),
+                blob_id,
+                git2::FileMode::Blob.into(),
+            )
+            .map_err(|e| SyncError::Git(format!("gossip insert: {e}")))?;
+        let heads_id = heads_tb
+            .write()
+            .map_err(|e| SyncError::Git(format!("gossip heads write: {e}")))?;
+        let mut outer = repo
+            .treebuilder(tip_tree.as_ref())
+            .map_err(|e| SyncError::Git(format!("gossip treebuilder: {e}")))?;
+        outer
+            .insert(GOSSIP_DIR, heads_id, git2::FileMode::Tree.into())
+            .map_err(|e| SyncError::Git(format!("gossip outer insert: {e}")))?;
+        let tree_id = outer
+            .write()
+            .map_err(|e| SyncError::Git(format!("gossip tree write: {e}")))?;
+        let tree = repo
+            .find_tree(tree_id)
+            .map_err(|e| SyncError::Git(format!("gossip find tree: {e}")))?;
+
+        // Parents: previous gossip tip + the announced head (the head
+        // parent keeps announced history reachable for fresh clones).
+        let mut parents: Vec<&git2::Commit<'_>> = Vec::new();
+        if let Some(tip) = &tip {
+            parents.push(tip);
+        }
+        let head_is_new = tip
+            .as_ref()
+            .map(|t| {
+                !repo
+                    .graph_descendant_of(t.id(), head_commit.id())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(true);
+        if head_is_new {
+            parents.push(&head_commit);
+        }
+
+        let sig = git2::Signature::now("baluard-gossip", "gossip@baluard.local")
+            .map_err(|e| SyncError::Git(format!("gossip sig: {e}")))?;
+        // Signing key present (checked above) — the signed path commits
+        // WITHOUT updating any ref; the unsigned fallback would move HEAD
+        // onto the gossip commit, so it must never run here.
+        let oid = self.create_signed_commit(
+            repo,
+            &sig,
+            &format!("gossip: announce {}", &head_commit.id().to_string()[..12]),
+            &tree,
+            &parents,
+        )?;
+        repo.reference(&branch_ref, oid, true, "gossip announce")
+            .map_err(|e| SyncError::Git(format!("gossip ref: {e}")))?;
+
+        // Fast-forward push of the side branch (non-force: a concurrent
+        // publisher wins, we retry next cycle).
+        let mut remote = repo
+            .find_remote(remote_name)
+            .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
+        let mut push_options = PushOptions::new();
+        let callbacks = crate::sync::credentials::build_callbacks(&self.credential_config);
+        push_options.remote_callbacks(callbacks);
+        remote
+            .push(
+                &[&format!("{branch_ref}:{branch_ref}")],
+                Some(&mut push_options),
+            )
+            .map_err(|e| classify_remote_err("gossip push", &e))?;
+        Ok(())
+    }
+
+    /// S1b-3: rollback detection — every head announcement on the gossip
+    /// branch must be contained in the fetched main history. A contained
+    /// violation means main moved backwards under the fleet. Deny-only
+    /// channel: gossip can refuse a pull, never admit content. Unknown
+    /// announcing devices (offboarding, stale gossip) are SKIPPED — a
+    /// removed device's old true announcements must not wedge survivors,
+    /// and unverifiable files carry zero enforcement power anyway.
+    fn check_head_gossip(
+        repo: &Repository,
+        remote_name: &str,
+        target_oid: Oid,
+    ) -> Result<(), BaluardError> {
+        use super::gossip::{GOSSIP_BRANCH, GOSSIP_DIR, HeadAnnouncement};
+        let remote_ref = format!("refs/remotes/{remote_name}/{GOSSIP_BRANCH}");
+        let Ok(reference) = repo.find_reference(&remote_ref) else {
+            return Ok(()); // no gossip yet (bootstrap)
+        };
+        let Ok(tip) = reference.peel_to_commit() else {
+            return Ok(());
+        };
+        let tree = tip
+            .tree()
+            .map_err(|e| SyncError::Git(format!("gossip tip tree: {e}")))?;
+        let Ok(heads_entry) = tree.get_path(Path::new(GOSSIP_DIR)) else {
+            return Ok(());
+        };
+        let heads_tree = repo
+            .find_tree(heads_entry.id())
+            .map_err(|e| SyncError::Git(format!("gossip heads: {e}")))?;
+
+        let target_commit = repo
+            .find_commit(target_oid)
+            .map_err(|e| SyncError::Git(format!("gossip target: {e}")))?;
+        let vault_tag = Self::root_commit_oid_from(repo, target_oid)?;
+        let mut roster_cache: std::collections::HashMap<git2::Oid, Option<DeviceRoster>> =
+            std::collections::HashMap::new();
+        let roster =
+            Self::roster_tree_lookup(repo, &target_commit, &mut roster_cache)?.unwrap_or_default();
+
+        for entry in heads_tree.iter() {
+            let Ok(blob) = repo.find_blob(entry.id()) else {
+                continue; // non-file entry
+            };
+            let ann: HeadAnnouncement = serde_json::from_slice(blob.content())
+                .map_err(|_| SyncError::Git("gossip: malformed announcement file".into()))?;
+            // Identity = whichever roster key verifies the signature (the
+            // announcing device string is display-only). No roster key
+            // verifies → unenforceable, skip: a removed device's stale
+            // true announcements must not wedge survivors, and an
+            // unverifiable file carries zero enforcement power anyway
+            // (gossip is deny-only — it can refuse a pull, never admit
+            // content).
+            let mut verified_device: Option<String> = None;
+            for (device, pubkey) in &roster {
+                if ann.verify(&vault_tag, pubkey).is_ok() {
+                    verified_device = Some(device.clone());
+                    break;
+                }
+            }
+            let Some(device) = verified_device else {
+                continue;
+            };
+            let Ok(oid) = git2::Oid::from_str(&ann.head) else {
+                return Err(SyncError::Git(format!(
+                    "gossip: device {device} announced malformed oid"
+                ))
+                .into());
+            };
+            // Announced head absent from the object store: pruned by a
+            // migrate or never fetched — cannot judge, skip.
+            let Ok(announced) = repo.find_commit(oid) else {
+                continue;
+            };
+            if announced.id() == target_oid
+                || repo
+                    .graph_descendant_of(target_oid, announced.id())
+                    .unwrap_or(false)
+            {
+                continue;
+            }
+            return Err(SyncError::RollbackDetected(format!(
+                "device {} announced head {} which is missing from the fetched history",
+                device,
+                &ann.head[..12]
+            ))
+            .into());
+        }
+        Ok(())
+    }
+
+    /// Read this device's own announcement file from a gossip tip.
+    fn gossip_own_announcement(
+        repo: &Repository,
+        tip: &git2::Commit<'_>,
+        device_id: &str,
+    ) -> Result<super::gossip::HeadAnnouncement, BaluardError> {
+        use super::gossip::GOSSIP_DIR;
+        let tree = tip
+            .tree()
+            .map_err(|e| SyncError::Git(format!("gossip tip tree: {e}")))?;
+        let entry = tree
+            .get_path(&Path::new(GOSSIP_DIR).join(format!("{device_id}.json")))
+            .map_err(|e| SyncError::Git(format!("gossip own file: {e}")))?;
+        let blob = repo
+            .find_blob(entry.id())
+            .map_err(|e| SyncError::Git(format!("gossip own blob: {e}")))?;
+        serde_json::from_slice(blob.content())
+            .map_err(|e| SyncError::Git(format!("gossip own parse: {e}")).into())
+    }
+
+    /// Root commit oid of HEAD's first-parent line — the stable vault tag
+    /// bound into every announcement signature.
+    fn root_commit_oid(&self, repo: &Repository) -> Result<String, BaluardError> {
+        let head = repo
+            .head()
+            .map_err(|e| SyncError::Git(format!("head: {e}")))?
+            .peel_to_commit()
+            .map_err(|e| SyncError::Git(format!("peel: {e}")))?;
+        Self::root_commit_oid_from(repo, head.id())
+    }
+
+    fn root_commit_oid_from(repo: &Repository, mut oid: Oid) -> Result<String, BaluardError> {
+        loop {
+            let commit = repo
+                .find_commit(oid)
+                .map_err(|e| SyncError::Git(format!("gossip root walk: {e}")))?;
+            if commit.parent_count() == 0 {
+                return Ok(oid.to_string());
+            }
+            oid = commit
+                .parent_id(0)
+                .map_err(|e| SyncError::Git(format!("gossip root parent: {e}")))?;
+        }
     }
 
     /// Pull from remote: fetch + merge (with "ours" strategy for non-conflicting merges).
@@ -943,6 +1236,19 @@ impl SyncEngine {
 
             (r_oid, l_oid)
         }; // fetch_opts dropped here, releasing credential borrow
+
+        // S1b-3: rollback detection via head gossip — runs BEFORE any
+        // state decision; an announced head missing from the fetched main
+        // history refuses the pull outright. Recorded to the local
+        // refusal log (S1b-1) like every other refusal.
+        if let Err(e) = Self::check_head_gossip(repo, remote_name, remote_oid) {
+            Self::record_refusal(
+                &self.vault_path,
+                &remote_oid.to_string()[..12],
+                &e.to_string(),
+            );
+            return Err(e);
+        }
 
         // Already up to date?
         if local_oid == remote_oid {
@@ -2193,6 +2499,12 @@ impl SyncEngine {
             let _ = std::fs::remove_dir_all(target);
             return Err(e);
         }
+        // S1b-3: rollback detection — a fresh clone is exactly the victim a
+        // rollback targets; the gossip branch rides the wildcard fetch.
+        if let Err(e) = Self::check_head_gossip(&repo, "origin", cloned_head_oid(&repo)?) {
+            let _ = std::fs::remove_dir_all(target);
+            return Err(e);
+        }
         Ok(repo)
     }
 
@@ -2309,8 +2621,22 @@ impl SyncEngine {
             let _ = std::fs::remove_dir_all(target);
             return Err(e);
         }
+        // S1b-3: rollback detection on the provider-clone path too.
+        if let Err(e) = Self::check_head_gossip(&repo, "origin", cloned_head_oid(&repo)?) {
+            let _ = std::fs::remove_dir_all(target);
+            return Err(e);
+        }
         Ok(repo)
     }
+}
+
+/// S1b-3 helper: the cloned HEAD commit oid for gossip containment checks.
+fn cloned_head_oid(repo: &git2::Repository) -> Result<git2::Oid, BaluardError> {
+    repo.head()
+        .map_err(|e| SyncError::Git(format!("head: {e}")))?
+        .peel_to_commit()
+        .map(|c| c.id())
+        .map_err(|e| SyncError::Git(format!("peel: {e}")).into())
 }
 
 /// Local revocation verification tracker shape (gitignored, keyless).
@@ -6435,5 +6761,175 @@ mod tests {
         // Clone's next pull must fail closed on the unforgeable entry.
         let err = clone_engine.pull(&cloned, "origin").unwrap_err();
         assert!(err.to_string().contains("revocation manifest invalid"));
+    }
+
+    /// S1b-3: a rolled-back main is refused when the gossip branch still
+    /// carries an announcement of the discarded head. The announcement
+    /// rides a side branch a force-push of main does not touch, and the
+    /// announced commit is reachable FROM it — so even a fresh clone of
+    /// the rolled-back vault receives the proof a later head existed.
+    #[test]
+    fn gossip_rollback_refused_on_fresh_clone() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine0) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine_a = SyncEngine::new(dir.path(), "device-a", None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_bare(&remote_path).unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
+
+        // Two pushes: each announces its head on the gossip branch.
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine_a.commit_all(&repo_a, "c1").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+        std::fs::write(dir.path().join("two.enc"), b"\x02").unwrap();
+        engine_a.commit_all(&repo_a, "c2").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        // The gossip branch now exists on the remote and names H2 (the
+        // current main head).
+        let bare = Repository::open(&remote_path).unwrap();
+        assert!(bare.find_reference("refs/heads/baluard-gossip").is_ok());
+        let h2 = repo_a.head().unwrap().peel_to_commit().unwrap().id();
+
+        // Attack: force-rewind REMOTE main to H1 (HEAD~1). The gossip
+        // branch is untouched — the evidence survives.
+        let branch = SyncEngine::resolve_default_branch(&repo_a);
+        let h1 = repo_a
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .parent(0)
+            .unwrap()
+            .id();
+        repo_a
+            .reference(
+                &format!("refs/heads/{branch}"),
+                h1,
+                true,
+                "simulated rollback",
+            )
+            .unwrap();
+        let mut remote = repo_a.find_remote("origin").unwrap();
+        let mut push_opts = PushOptions::new();
+        push_opts.remote_callbacks(crate::sync::credentials::build_callbacks(
+            &engine_a.credential_config,
+        ));
+        remote
+            .push(
+                &[&format!("+refs/heads/{branch}:refs/heads/{branch}")],
+                Some(&mut push_opts),
+            )
+            .unwrap();
+
+        // Victim: a FRESH clone of the rolled-back remote (wildcard fetch
+        // like engine.clone — receives main@H1 AND the gossip branch).
+        let vdir = tempfile::tempdir().unwrap();
+        let vpath = vdir.path().join("victim");
+        let victim = Repository::clone(&remote_url, &vpath).unwrap();
+        drop(victim);
+        let vengine = SyncEngine::new(&vpath, "victim", None);
+        let vrepo = vengine.open_repo().unwrap();
+        assert_eq!(
+            vrepo.head().unwrap().peel_to_commit().unwrap().id(),
+            h1,
+            "victim starts on the rewound head"
+        );
+
+        // The pull must refuse: H2 is announced and not contained in H1.
+        let err = vengine.pull(&vrepo, "origin").unwrap_err();
+        assert!(
+            err.to_string().contains("rollback detected"),
+            "expected rollback refusal, got: {err}"
+        );
+        // HEAD unmoved.
+        let vrepo2 = vengine.open_repo().unwrap();
+        assert_eq!(h2.to_string().len(), 40);
+        assert_eq!(vrepo2.head().unwrap().peel_to_commit().unwrap().id(), h1);
+        // The refusal was recorded locally (S1b-1 integration).
+        let log = std::fs::read_to_string(vpath.join("meta/refusals.log")).unwrap();
+        assert!(log.contains("refused commit"), "log: {log}");
+    }
+
+    /// S1b-3: a tampered announcement (signature by a non-roster key)
+    /// carries zero enforcement power — it must NOT block pulls. Gossip
+    /// is deny-only; unverifiable files are inert by design.
+    #[test]
+    fn gossip_unverifiable_announcement_is_inert() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine0) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine_a = SyncEngine::new(dir.path(), "device-a", None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_bare(&remote_path).unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine_a.commit_all(&repo_a, "c1").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        // Forge a gossip branch: announcement signed by a key that is NOT
+        // in the roster, naming a fake head.
+        let bare = Repository::open(&remote_path).unwrap();
+        let fake_head = repo_a.head().unwrap().peel_to_commit().unwrap().id();
+        let forge_key = crate::crypto::signature::generate_ed25519_keypair().0;
+        let ann = crate::sync::gossip::HeadAnnouncement::sign(
+            &engine_a.root_commit_oid(&repo_a).unwrap(),
+            "ghost",
+            &fake_head.to_string(),
+            1,
+            &forge_key,
+        );
+        let blob_id = bare
+            .blob(serde_json::to_vec(&ann).unwrap().as_slice())
+            .unwrap();
+        let mut heads_tb = bare.treebuilder(None).unwrap();
+        heads_tb
+            .insert("ghost.json", blob_id, git2::FileMode::Blob.into())
+            .unwrap();
+        let heads_id = heads_tb.write().unwrap();
+        let mut outer = bare.treebuilder(None).unwrap();
+        outer
+            .insert("heads", heads_id, git2::FileMode::Tree.into())
+            .unwrap();
+        let tree_id = outer.write().unwrap();
+        // Parent the forged gossip commit on the real main head so the
+        // fake "announced" head is reachable (adversary modeling).
+        let tip_tree = bare.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("ghost", "g@b.local").unwrap();
+        let main_tip = bare
+            .find_reference("refs/heads/main")
+            .or_else(|_| bare.find_reference("refs/heads/master"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let gossip_oid = bare
+            .commit(None, &sig, &sig, "forged", &tip_tree, &[&main_tip])
+            .unwrap();
+        bare.reference("refs/heads/baluard-gossip", gossip_oid, true, "forge")
+            .unwrap();
+        assert_ne!(gossip_oid, fake_head);
+
+        // A pull over this remote must SUCCEED — the forged announcement
+        // names a contained head and cannot verify against any roster
+        // key, so it is inert.
+        let vdir = tempfile::tempdir().unwrap();
+        let vpath = vdir.path().join("victim");
+        Repository::clone(&remote_url, &vpath).unwrap();
+        let vengine = SyncEngine::new(&vpath, "victim", None);
+        let vrepo = vengine.open_repo().unwrap();
+        vengine.pull(&vrepo, "origin").unwrap();
     }
 }
