@@ -620,6 +620,7 @@
     "usernamePlaceholder": "Their git username (so they can download the vault) — optional",
     "seatErrorPrefix": "Could not grant download access:",
     "remove": "Remove",
+    "remove": "Remove",
     "reset": "Reset",
     "transfer": "Transfer",
     "removeTitle": "Remove member",
@@ -684,5 +685,17 @@
     "passwordShort": "Use at least 8 characters for your password.",
     "passwordMismatch": "The passwords do not match.",
     "unlockFailed": "Approved, but the unlock failed. Try unlocking with your password."
+  },
+  "notices": {
+    "title": "Needs attention",
+    "resetPendingText": "{name} was reset and is waiting to re-join — send them a new invite.",
+    "staleInviteText": "{count} invite(s) have likely expired — create a new one.",
+    "malformedRequestsText": "{count} join request(s) could not be read.",
+    "checkAccess": "Check download access",
+    "transportTitle": "Download access",
+    "status_active": "Has access",
+    "status_invited": "Invite waiting",
+    "status_none": "No access",
+    "status_unknown": "Unknown"
   }
 }

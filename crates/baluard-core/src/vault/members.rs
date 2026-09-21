@@ -632,6 +632,12 @@ pub struct PendingInviteFile {
     /// = no transport seat managed (vault synced some other way).
     #[serde(default)]
     pub transport_username: Option<String>,
+    /// Screen 6: unix seconds at creation — invites older than the
+    /// provider's acceptance window surface as "likely expired" notices
+    /// (re-invite = plain re-add). `0` on records written before this
+    /// field existed (never treated as stale).
+    #[serde(default)]
+    pub created_at: u64,
 }
 
 /// Joiner-side self-introduction (§4.1 join queue, offline thin
@@ -768,6 +774,7 @@ pub fn create_invite(
         secret_hash: sha256_hex(secret_hex.as_bytes()),
         target_member,
         transport_username,
+        created_at: crate::providers::types::now_secs(),
     };
     let dir = vault_path.join(INVITES_DIR);
     std::fs::create_dir_all(&dir)
@@ -799,6 +806,33 @@ pub fn read_pending_invite(
         .map_err(|e| BaluardError::from(VaultError::Metadata(format!("pending invite: {e}"))))?;
     serde_json::from_str(&data)
         .map_err(|e| BaluardError::from(VaultError::Metadata(format!("pending invite: {e}"))))
+}
+
+/// Screen 6: every unconsumed pending invite, oldest first. Powers the
+/// stale-invite notice (an invite past the provider's acceptance window
+/// surfaces as "likely expired — re-invite"). Malformed files are
+/// skipped inert: they are admin-authored, and a corrupt foreign copy
+/// must not blind the notices surface.
+pub fn list_pending_invites(vault_path: &Path) -> Result<Vec<PendingInviteFile>, BaluardError> {
+    let dir = vault_path.join(INVITES_DIR);
+    let mut invites = Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(invites),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        if let Ok(json) = std::fs::read_to_string(&path) {
+            if let Ok(invite) = serde_json::from_str::<PendingInviteFile>(&json) {
+                invites.push(invite);
+            }
+        }
+    }
+    invites.sort_by_key(|i| i.created_at);
+    Ok(invites)
 }
 
 /// Verify + consume the pending invite for one introduction.

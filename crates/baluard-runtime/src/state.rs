@@ -2307,6 +2307,121 @@ impl VaultState {
         Ok("{}".into())
     }
 
+    /// Screen 6: aggregated actionable notices for the People surface.
+    /// Filesystem-derived notices (reset-pending members, stale invites,
+    /// malformed join requests) are always current; transport seat checks
+    /// run only when `refresh_transport` is true — network I/O, executed
+    /// WITHOUT the vault lock (P8c-1 lesson), bounded by client timeouts.
+    pub async fn notices_list(&self, payload: &str) -> Result<String, String> {
+        let v = serde_json::from_str(payload).unwrap_or(serde_json::Value::Null);
+        let refresh_transport = v["refresh_transport"].as_bool().unwrap_or(false);
+
+        let (members, invites, malformed, pending_requests, vault_id) = {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault is locked")?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked. Unlock first.".into());
+            }
+            let members = baluard_core::vault::members::list_members(&handle.path)
+                .map_err(|e| e.to_string())?;
+            let invites = baluard_core::vault::members::list_pending_invites(&handle.path)
+                .map_err(|e| e.to_string())?;
+            let (requests, malformed) = handle.join_queue_list().map_err(|e| e.to_string())?;
+            let pending_requests = requests.len();
+            (
+                members,
+                invites,
+                malformed,
+                pending_requests,
+                handle.vault_id,
+            )
+        };
+
+        let mut notices = Vec::new();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let stale_cutoff = now.saturating_sub(7 * 24 * 3600);
+
+        // Reset-pending members: the tombstone clears from the notices
+        // once the successor row has a device binding (the re-join
+        // happened) — otherwise every reset would nag forever.
+        for m in &members {
+            if let Some(reset) = &m.reset {
+                let devices_dir = self
+                    .vault_path
+                    .join("meta/members")
+                    .join(reset.successor.to_string())
+                    .join("devices");
+                let rejoined = std::fs::read_dir(&devices_dir)
+                    .map(|d| d.count() > 0)
+                    .unwrap_or(false);
+                if !rejoined {
+                    notices.push(serde_json::json!({
+                        "kind": "reset_pending",
+                        "name": m.display_name,
+                    }));
+                }
+            }
+        }
+        // Stale invites: GitHub invitations expire after 7 days; an
+        // expired one is simply absent server-side, so "likely expired"
+        // is the honest framing. Old records without created_at (0) are
+        // never treated as stale.
+        let stale_count = invites
+            .iter()
+            .filter(|i| i.created_at != 0 && i.created_at < stale_cutoff)
+            .count();
+        if stale_count > 0 {
+            notices.push(serde_json::json!({
+                "kind": "stale_invite",
+                "count": stale_count,
+            }));
+        }
+        // Unreadable join requests: inert but worth surfacing.
+        if malformed > 0 {
+            notices.push(serde_json::json!({
+                "kind": "malformed_requests",
+                "count": malformed,
+            }));
+        }
+
+        // Transport seat statuses (optional network; best-effort).
+        let mut transport = Vec::new();
+        if refresh_transport {
+            if let Some((provider, owner, repo)) = self.vault_transport_coords(vault_id) {
+                let usernames: std::collections::BTreeSet<String> = members
+                    .iter()
+                    .filter(|m| m.transport_username.is_some())
+                    .filter_map(|m| m.transport_username.clone())
+                    .filter(|u| !u.trim().is_empty())
+                    .collect();
+                for username in usernames {
+                    let status = match crate::providers::collaborator_status(
+                        provider, &owner, &repo, &username,
+                    )
+                    .await
+                    {
+                        Ok(s) => s.to_string(),
+                        Err(e) => format!("unknown: {e}"),
+                    };
+                    transport.push(serde_json::json!({
+                        "username": username,
+                        "status": status,
+                    }));
+                }
+            }
+        }
+
+        Ok(serde_json::json!({
+            "notices": notices,
+            "pending_requests": pending_requests,
+            "transport": transport,
+        })
+        .to_string())
+    }
+
     /// Join queue: well-shaped staged requests plus the malformed count.
     pub async fn requests_list(&self) -> Result<String, String> {
         let guard = self.inner.read().await;

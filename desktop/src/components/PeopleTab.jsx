@@ -45,6 +45,8 @@ export default function PeopleTab() {
   const [removeOverride, setRemoveOverride] = createSignal(false);
   const [lastRemoveError, setLastRemoveError] = createSignal(null);
   const [resetCode, setResetCode] = createSignal(null);
+  const [notices, setNotices] = createSignal([]);
+  const [transport, setTransport] = createSignal([]);
 
   async function loadMembers() {
     try {
@@ -80,9 +82,22 @@ export default function PeopleTab() {
     }
   }
 
+  async function loadNotices(refreshTransport) {
+    try {
+      const data = JSON.parse(
+        await daemon("notices.list", { refresh_transport: refreshTransport }),
+      );
+      setNotices(Array.isArray(data.notices) ? data.notices : []);
+      setTransport(Array.isArray(data.transport) ? data.transport : []);
+    } catch {
+      setNotices([]);
+      setTransport([]);
+    }
+  }
+
   async function reloadAll() {
     setBusy(true);
-    await Promise.all([loadMembers(), loadRequests(), loadActivity()]);
+    await Promise.all([loadMembers(), loadRequests(), loadActivity(), loadNotices(false)]);
     setBusy(false);
   }
 
@@ -203,6 +218,24 @@ export default function PeopleTab() {
             <code class="text-xs text-[var(--color-text)] break-all flex-1 font-mono">{resetCode()}</code>
             <CopyButton value={resetCode()} />
           </div>
+        </section>
+      </Show>
+
+      {/* Screen 6: notices — things that need the owner's attention. */}
+      <Show when={notices().length > 0}>
+        <section class="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
+          <h3 class="text-sm font-bold text-[var(--color-text)] mb-2">{t("notices.title")}</h3>
+          <ul class="space-y-1.5">
+            <For each={notices()}>
+              {(n) => (
+                <li class="text-xs text-[var(--color-text)]">
+                  {t(`notices.${n.kind}Text`)
+                    .replace("{name}", n.name || "")
+                    .replace("{count}", n.count != null ? String(n.count) : "")}
+                </li>
+              )}
+            </For>
+          </ul>
         </section>
       </Show>
 
@@ -379,14 +412,48 @@ export default function PeopleTab() {
       <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">
         <div class="flex items-center justify-between mb-3">
           <h3 class="text-sm font-bold text-[var(--color-text)]">{t("people.activityTitle")}</h3>
-          <button
-            onClick={reloadAll}
-            disabled={busy()}
-            class="text-[10px] font-bold text-[var(--color-primary)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
-          >
-            {t("people.refresh")}
-          </button>
+          <div class="flex items-center gap-3">
+            <button
+              onClick={() => loadNotices(true)}
+              disabled={busy()}
+              class="text-[10px] font-bold text-[var(--color-primary)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+            >
+              {t("notices.checkAccess")}
+            </button>
+            <button
+              onClick={reloadAll}
+              disabled={busy()}
+              class="text-[10px] font-bold text-[var(--color-primary)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+            >
+              {t("people.refresh")}
+            </button>
+          </div>
         </div>
+        <Show when={transport().length > 0}>
+          <div class="mb-3 p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+            <p class="text-[10px] font-bold text-[var(--color-muted)] uppercase mb-1.5">
+              {t("notices.transportTitle")}
+            </p>
+            <ul class="space-y-1">
+              <For each={transport()}>
+                {(row) => (
+                  <li class="text-xs text-[var(--color-text)] flex gap-2 items-center">
+                    <span class="font-mono text-[var(--color-muted)]">{row.username}</span>
+                    <span
+                      class={`text-[10px] font-bold border rounded-full px-2 py-0.5 ${
+                        row.status === "active"
+                          ? "text-green-400 border-green-400/30"
+                          : "text-amber-500 border-amber-500/30"
+                      }`}
+                    >
+                      {t(`notices.status_${row.status.split(":")[0]}`)}
+                    </span>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </div>
+        </Show>
         <Show
           when={events().length > 0}
           fallback={<p class="text-xs text-[var(--color-muted)]">{t("people.activityEmpty")}</p>}
