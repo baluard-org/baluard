@@ -645,5 +645,23 @@
     "activityEmpty": "Nothing has happened yet.",
     "refusalsTitle": "Rejected changes on this device",
     "refresh": "Refresh"
+  },
+  "join": {
+    "joinLink": "Joining a shared vault?",
+    "backToLogin": "Back to unlock",
+    "noVault": "Select the shared vault first (add it via its clone link).",
+    "codeLabel": "Invite code",
+    "codePlaceholder": "Paste the invite code you received",
+    "passwordLabel": "Choose your password",
+    "passwordConfirmLabel": "Confirm your password",
+    "nameLabel": "A name the owner will recognize",
+    "namePlaceholder": "My device",
+    "sendRequest": "Send join request",
+    "waitingTitle": "Waiting for approval",
+    "waitingHint": "Send the request below to the vault owner. This screen unlocks automatically once they approve.",
+    "introHint": "Your join request — copy and send it to the owner",
+    "passwordShort": "Use at least 8 characters for your password.",
+    "passwordMismatch": "The passwords do not match.",
+    "unlockFailed": "Approved, but the unlock failed. Try unlocking with your password."
   }
 }

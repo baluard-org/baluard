@@ -645,5 +645,23 @@
     "activityEmpty": "Nada aconteceu ainda.",
     "refusalsTitle": "Mudanças rejeitadas neste dispositivo",
     "refresh": "Atualizar"
+  },
+  "join": {
+    "joinLink": "Foi convidado para um cofre compartilhado?",
+    "backToLogin": "Voltar ao desbloqueio",
+    "noVault": "Selecione primeiro o cofre compartilhado (adicione-o pelo link de clonagem).",
+    "codeLabel": "Código de convite",
+    "codePlaceholder": "Cole o código de convite que você recebeu",
+    "passwordLabel": "Escolha sua senha",
+    "passwordConfirmLabel": "Confirme sua senha",
+    "nameLabel": "Um nome que o proprietário reconheça",
+    "namePlaceholder": "Meu dispositivo",
+    "sendRequest": "Enviar pedido",
+    "waitingTitle": "Aguardando aprovação",
+    "waitingHint": "Envie o pedido abaixo ao proprietário. Esta tela desbloqueia automaticamente quando ele aprovar.",
+    "introHint": "Seu pedido de acesso — copie e envie ao proprietário",
+    "passwordShort": "Use pelo menos 8 caracteres para sua senha.",
+    "passwordMismatch": "As senhas não coincidem.",
+    "unlockFailed": "Aprovado, mas o desbloqueio falhou. Tente desbloquear com sua senha."
   }
 }
