@@ -607,6 +607,63 @@ impl VaultHandle {
         crate::vault::members::transfer_ownership(&self.path, old_member_id, new_member_id)
     }
 
+    /// S1a-8: stage a received introduction into the repo-backed join
+    /// queue (meta/requests/). The admin received the intro code
+    /// out-of-band; staging makes the handoff listable, deniable, and
+    /// auditable. Admin-gated.
+    pub fn join_queue_submit(&mut self, intro_code: &str) -> Result<uuid::Uuid, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let intro = crate::vault::members::Introduction::decode(intro_code)?;
+        if intro.vault_id != self.vault_id {
+            return Err(VaultError::InvalidOperation(
+                "introduction is for a different vault".into(),
+            )
+            .into());
+        }
+        crate::vault::members::submit_request(&self.path, &intro)
+    }
+
+    /// S1a-8: list queued join requests. Returns the well-shaped
+    /// requests (secret state included) plus a count of malformed files
+    /// (skipped, inert until denied). Admin-gated.
+    pub fn join_queue_list(
+        &self,
+    ) -> Result<(Vec<crate::vault::members::JoinRequest>, usize), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::members::list_requests(&self.path)
+    }
+
+    /// S1a-8: approve a queued request through the STANDARD approval
+    /// path (all verification — secret, elevated-role dial gate,
+    /// identity binding — happens there). The request file is consumed
+    /// only on success: a refused approval stays queued for retry.
+    pub fn approve_queued_join(&mut self, req_id: uuid::Uuid) -> Result<Uuid, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let intro = crate::vault::members::read_request(&self.path, req_id)?;
+        let code = intro.encode()?;
+        let member_id = self.approve_join(&code)?;
+        crate::vault::members::consume_request(&self.path, req_id)?;
+        Ok(member_id)
+    }
+
+    /// S1a-8: deny (drop) a queued request. Admin-gated.
+    pub fn deny_queued_join(&mut self, req_id: uuid::Uuid) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::members::consume_request(&self.path, req_id)
+    }
+
     /// S1a-2: approve a joiner's introduction (owner side, unlocked).
     /// Verifies the code against the repo-side pending invite, enrolls
     /// the joiner's device, wraps the Root Key to the joiner's device
@@ -7587,6 +7644,134 @@ mod tests {
         // covered the removal tombstone).
         handle.member_reset(member_c_id).unwrap();
         assert!(handle.transfer_ownership(member_c_id).is_err());
+    }
+
+    // ── S1a-8: repo-backed join queue ──
+
+    /// The intro handoff becomes repo state: the admin stages received
+    /// introductions into meta/requests/, lists them (secret check,
+    /// malformed skipped + counted), approves through the STANDARD
+    /// verification path (request consumed only on success), denies the
+    /// rest. Unbound devices are refused queue access; a wrong-secret
+    /// request lists as suspect and fails approval without being
+    /// consumed; an elevated-gate refusal also leaves the request
+    /// queued for retry.
+    #[test]
+    fn join_queue_end_to_end() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // Editor invite + introduction (the code travels out-of-band).
+        let code1 = handle
+            .invite_create(crate::vault::members::MemberRole::Editor)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro1 = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code1,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+
+        // Empty queue before staging.
+        assert_eq!(handle.join_queue_list().unwrap(), (Vec::new(), 0));
+
+        // Stage + verify the queue entry (secret matches the live
+        // invite).
+        let req1 = handle.join_queue_submit(&intro1).unwrap();
+        let (queued, malformed) = handle.join_queue_list().unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(malformed, 0);
+        assert_eq!(queued[0].req_id, req1);
+        assert!(queued[0].secret_ok);
+        assert_eq!(queued[0].display_name, "MemberDevice");
+
+        // Unbound devices have no queue access (fail-closed member gate).
+        let joiner = VaultHandle::open(&joiner_path).unwrap();
+        assert!(joiner.join_queue_list().is_err());
+
+        // A malformed file in the requests dir is inert + counted.
+        let req_dir = owner_path.join("meta/requests");
+        std::fs::write(
+            req_dir.join("deadbeef-0000-0000-0000-000000000000.json"),
+            "{junk",
+        )
+        .unwrap();
+        let (_, malformed) = handle.join_queue_list().unwrap();
+        assert_eq!(malformed, 1);
+
+        // Approve through the queue: full standard verification, request
+        // consumed on success.
+        let member_id = handle.approve_queued_join(req1).unwrap();
+        engine_o.commit_all(&repo_o, "approve queued join").unwrap();
+        assert_eq!(handle.join_queue_list().unwrap(), (Vec::new(), 1));
+
+        // The approved member is a real member: pulls, unlocks.
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        assert_eq!(
+            crate::vault::members::member_id_for_device(&owner_path, joiner.device_id),
+            Some(member_id)
+        );
+
+        // Wrong-secret request: lists as suspect, approval fails, request
+        // stays queued.
+        let mut bad = crate::vault::members::Introduction::decode(&intro1).unwrap();
+        bad.secret = "deadbeef".into();
+        let req_bad = handle.join_queue_submit(&bad.encode().unwrap()).unwrap();
+        let (queued, _) = handle.join_queue_list().unwrap();
+        let bad_entry = queued.iter().find(|q| q.req_id == req_bad).unwrap();
+        assert!(!bad_entry.secret_ok, "tampered secret must flag suspect");
+        assert!(handle.approve_queued_join(req_bad).is_err());
+        assert!(
+            !handle.join_queue_list().unwrap().0.is_empty(),
+            "refused request stays queued"
+        );
+        handle.deny_queued_join(req_bad).unwrap();
+
+        // Elevated gate through the queue: an Admin invite without a
+        // verified card refuses, and the request stays queued for retry.
+        let code3 = handle
+            .invite_create(crate::vault::members::MemberRole::Admin)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite 3").unwrap();
+        let joiner3_path = temp.path().join("joiner3");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner3_path).unwrap();
+        let intro3 = crate::vault::members::create_introduction(
+            &joiner3_path,
+            &code3,
+            "member-pass3",
+            "MemberDevice3",
+        )
+        .unwrap();
+        let req3 = handle.join_queue_submit(&intro3).unwrap();
+        assert!(handle.approve_queued_join(req3).is_err());
+        assert!(
+            !handle.join_queue_list().unwrap().0.is_empty(),
+            "elevated-gate refusal leaves the request queued"
+        );
+        handle.deny_queued_join(req3).unwrap();
+        assert_eq!(handle.join_queue_list().unwrap(), (Vec::new(), 1));
     }
 
     // ── P3: keywrap distribution + rekey-txn adoption ──
