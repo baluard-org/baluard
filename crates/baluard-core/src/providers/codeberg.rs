@@ -32,6 +32,10 @@ impl CodebergProvider {
     pub fn with_config(config: ProviderConfig) -> Self {
         let http = reqwest::Client::builder()
             .user_agent(format!("Baluard/{}", env!("CARGO_PKG_VERSION")))
+            // P8c-2 review: reqwest defaults to NO timeout — a hung forge
+            // connection would wedge the caller (sync, seat strikes) forever.
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         Self { http, config }

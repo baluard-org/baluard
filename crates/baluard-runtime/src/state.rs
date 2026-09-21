@@ -2370,24 +2370,21 @@ impl VaultState {
         }
         let offline_override = v["offline_override"].as_bool().unwrap_or(false);
 
-        // Pre-flight capture under a READ lock: the seats to strike,
-        // before any mutation.
+        // Pre-flight capture under a READ lock: authorization, batch
+        // validation, and the seats to strike — via the SAME precheck
+        // member_remove runs, so strikes can never happen for an
+        // unauthorized caller or an invalid batch (a Viewer must not be
+        // able to strip a member's repo access).
         let (vault_id, usernames) = {
             let guard = self.inner.read().await;
             let handle = guard.as_ref().ok_or("Vault is locked")?;
             if !handle.is_unlocked() {
                 return Err("Vault is locked. Unlock first.".into());
             }
-            let rows = baluard_core::vault::members::list_members(&handle.path)
+            let usernames = handle
+                .member_remove_precheck(&ids)
                 .map_err(|e| e.to_string())?;
-            let wanted: std::collections::HashSet<uuid::Uuid> = ids.iter().copied().collect();
-            let names: Vec<String> = rows
-                .iter()
-                .filter(|m| wanted.contains(&m.id))
-                .filter_map(|m| m.transport_username.clone())
-                .filter(|u| !u.trim().is_empty())
-                .collect();
-            (handle.vault_id, names)
+            (handle.vault_id, usernames)
         };
 
         // Strike seats before the rotation. A failure refuses the whole
@@ -2398,11 +2395,17 @@ impl VaultState {
         if !usernames.is_empty() {
             if let Some((provider, owner, repo)) = self.vault_transport_coords(vault_id) {
                 for username in &usernames {
-                    match crate::providers::remove_collaborator(provider, &owner, &repo, username)
-                        .await
-                    {
-                        Ok(()) => seats_struck.push(username.clone()),
-                        Err(e) => seat_failures.push(format!("{username}: {e}")),
+                    // P8c-2 review: the strike is bounded even if the
+                    // provider client hangs — an unbounded call would
+                    // wedge the route forever.
+                    let strike =
+                        crate::providers::remove_collaborator(provider, &owner, &repo, username);
+                    match tokio::time::timeout(std::time::Duration::from_secs(20), strike).await {
+                        Ok(Ok(())) => seats_struck.push(username.clone()),
+                        Ok(Err(e)) => seat_failures.push(format!("{username}: {e}")),
+                        Err(_) => {
+                            seat_failures.push(format!("{username}: provider strike timed out"))
+                        }
                     }
                 }
             }
@@ -2423,11 +2426,26 @@ impl VaultState {
             }
             handle.member_remove(&ids).map_err(|e| e.to_string())?
         };
+        // P8c-2 review: a member added between the pre-flight and the
+        // rotation would be offboarded with a seat no one struck —
+        // surface the gap for the notices surface instead of hiding it.
+        let mut unstruck_seats: Vec<String> = report
+            .transport_usernames
+            .iter()
+            .filter(|u| {
+                !seats_struck.contains(u)
+                    && !seat_failures
+                        .iter()
+                        .any(|f| f.starts_with(format!("{u}: ").as_str()))
+            })
+            .cloned()
+            .collect();
+        unstruck_seats.extend(seat_failures.clone());
         Ok(serde_json::json!({
             "removed": report.removed_members,
             "new_epoch": report.new_epoch,
             "seats_struck": seats_struck,
-            "seat_failures": seat_failures,
+            "unstruck_seats": unstruck_seats,
         })
         .to_string())
     }
