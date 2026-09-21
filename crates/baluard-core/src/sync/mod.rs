@@ -9,6 +9,7 @@
 pub mod commit;
 pub mod conflict;
 pub mod credentials;
+pub mod gossip;
 pub mod known_hosts;
 pub mod operations;
 pub mod policy;
