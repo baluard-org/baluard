@@ -576,31 +576,34 @@ impl VaultHandle {
     }
 
     /// S1a-7: ownership transfer (§4.2, first-class action). Owner-only:
-    /// the actor's member row must BE the current Owner row. Demotes the
-    /// old owner to Admin, promotes the successor to Owner with
-    /// SelfTrust; exactly one Owner row before and after, both writes in
-    /// one commit. Provider repo transfer + adopt semantics stay with
-    /// the provider layer (S1b collaborator ops) — this is the vault-
-    /// side role change.
+    /// the actor's member row must carry the Owner role (disk-backed).
+    /// Demotes the old owner to Admin, promotes the successor to Owner
+    /// with SelfTrust; exactly one Owner row once the commit lands.
+    /// Provider repo transfer + adopt semantics stay with the provider
+    /// layer (S1b collaborator ops) — this is the vault-side role
+    /// change.
     pub fn transfer_ownership(&mut self, new_member_id: uuid::Uuid) -> Result<(), BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        let actor_member = crate::vault::members::member_id_for_device(&self.path, self.device_id)
-            .ok_or_else(|| {
-                VaultError::InvalidOperation("this device is not a vault member".into())
-            })?;
-        let Some(old_member_id) = crate::vault::members::owner_member_id(&self.path) else {
-            return Err(
-                VaultError::InvalidOperation("this vault has no owner member row".into()).into(),
-            );
-        };
-        if actor_member != old_member_id {
+        // S1a-7 review: gate on the ACTOR'S OWN role (disk-backed), not
+        // on owner_member_id equality — in the abnormal two-owner state
+        // (crash between the transfer's two writes) owner_member_id
+        // resolves arbitrarily, and an equality gate would strand the
+        // recovery. An owner-role actor can always re-run the transfer,
+        // which demotes the extra owner.
+        let actor_role = crate::vault::members::member_role_for_device(&self.path, self.device_id);
+        if actor_role != Some(crate::vault::members::MemberRole::Owner) {
             return Err(VaultError::InvalidOperation(
                 "only the owner can transfer ownership".into(),
             )
             .into());
         }
+        let Some(old_member_id) = crate::vault::members::owner_member_id(&self.path) else {
+            return Err(
+                VaultError::InvalidOperation("this vault has no owner member row".into()).into(),
+            );
+        };
         crate::vault::members::transfer_ownership(&self.path, old_member_id, new_member_id)
     }
 
@@ -629,6 +632,14 @@ impl VaultHandle {
         // be Verified in the address book (Level 2 code check);
         // Editor/Viewer invites need no card.
         let invite = crate::vault::members::read_pending_invite(&self.path, intro.invite_id)?;
+        // S1a-7 review: Owner invites are unmintable — refuse any that
+        // predate that rule (defense in depth at approval too).
+        if invite.role == crate::vault::members::MemberRole::Owner {
+            return Err(VaultError::InvalidOperation(
+                "ownership cannot be invited; use transfer_ownership".into(),
+            )
+            .into());
+        }
         // S1a-5: reset invites gate on the SUCCESSOR row's role, not the
         // invite's — a stale or tampered invite must not downgrade the
         // gate below what the admin-fixed row carries.
@@ -7506,7 +7517,7 @@ mod tests {
         let member_d_id = members[1].0;
 
         // Gates: unknown target, self-target, non-owner actor, tombstoned
-        // target.
+        // target, locked handle, Owner-role invites unmintable.
         assert!(handle.transfer_ownership(uuid::Uuid::new_v4()).is_err());
         assert!(handle.transfer_ownership(old_owner_id).is_err());
         let mut c_handle = VaultHandle::open(&c_path).unwrap();
@@ -7514,6 +7525,13 @@ mod tests {
         assert!(c_handle.transfer_ownership(old_owner_id).is_err());
         handle.member_remove(&[member_d_id]).unwrap();
         assert!(handle.transfer_ownership(member_d_id).is_err());
+        let mut locked = VaultHandle::open(&owner_path).unwrap();
+        assert!(locked.transfer_ownership(member_c_id).is_err());
+        assert!(
+            handle
+                .invite_create(crate::vault::members::MemberRole::Owner)
+                .is_err()
+        );
 
         // The transfer: old owner demoted to Admin, successor promoted
         // with SelfTrust, exactly one Owner row.
@@ -7529,8 +7547,10 @@ mod tests {
         assert_eq!(new_row.role, crate::vault::members::MemberRole::Owner);
         assert_eq!(new_row.trust, crate::vault::members::TrustLevel::SelfTrust);
 
-        // The demoted old owner cannot transfer (disk-backed role).
+        // The demoted old owner cannot transfer (disk-backed role), and
+        // an Admin cannot remove the new Owner row.
         assert!(handle.transfer_ownership(member_c_id).is_err());
+        assert!(handle.member_remove(&[member_c_id]).is_err());
 
         engine_o.commit_all(&repo_o, "transfer ownership").unwrap();
 
@@ -7562,6 +7582,11 @@ mod tests {
             crate::vault::members::owner_member_id(&owner_path),
             Some(old_owner_id)
         );
+
+        // A RESET-tombstoned row is also refused as a successor (D above
+        // covered the removal tombstone).
+        handle.member_reset(member_c_id).unwrap();
+        assert!(handle.transfer_ownership(member_c_id).is_err());
     }
 
     // ── P3: keywrap distribution + rekey-txn adoption ──
