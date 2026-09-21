@@ -625,6 +625,15 @@ impl Introduction {
         serde_json::from_str(json)
             .map_err(|e| BaluardError::from(VaultError::Metadata(format!("bad code: {e}"))))
     }
+
+    /// Re-encode an introduction as a code (base64url JSON). Round-trips
+    /// with [`Introduction::decode`] — the S1a-8 join queue uses this to
+    /// feed staged requests through the standard approval path.
+    pub fn encode(&self) -> Result<String, BaluardError> {
+        let json = serde_json::to_vec(self)
+            .map_err(|e| BaluardError::from(VaultError::Metadata(format!("encode intro: {e}"))))?;
+        Ok(b64_encode(&json))
+    }
 }
 
 /// Device-local member unlock material (meta/member-unlock.json,
@@ -750,6 +759,117 @@ pub fn consume_pending_invite(
     std::fs::remove_file(&path)
         .map_err(|e| BaluardError::from(VaultError::Metadata(format!("consume invite: {e}"))))?;
     Ok(pending)
+}
+
+// ── S1a-8: repo-backed join queue ──
+
+/// Join requests live at `meta/requests/<req_id>.json` (git-tracked):
+/// staged Introduction files awaiting an async admin decision. The admin
+/// stages the intro they received out-of-band; the queue makes the
+/// handoff listable, deniable, and auditable (the request rides history)
+/// instead of living in a command's stdout.
+pub const REQUESTS_DIR: &str = "meta/requests";
+
+/// Hard cap on one staged request file. A real Introduction is a few KB
+/// (keys + card + signature); anything larger is junk or abuse.
+pub const REQUEST_MAX_BYTES: usize = 64 * 1024;
+
+/// One queued introduction, as surfaced to the admin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequest {
+    pub req_id: Uuid,
+    pub invite_id: Uuid,
+    pub device_id: Uuid,
+    pub display_name: String,
+    /// Whether the request's secret matches a live pending invite's
+    /// hash. Display-only: approval re-verifies through the standard
+    /// path regardless.
+    pub secret_ok: bool,
+}
+
+/// Stage a received introduction into the join queue. Admin-side: the
+/// caller received the intro code out-of-band. Newline names are
+/// rejected (payload discipline — the canonical payloads are
+/// newline-delimited, S1a-3).
+pub fn submit_request(vault_path: &Path, intro: &Introduction) -> Result<Uuid, BaluardError> {
+    if intro.display_name.contains(['\n', '\r']) {
+        return Err(BaluardError::from(VaultError::InvalidOperation(
+            "introduction display name contains newlines".into(),
+        )));
+    }
+    let bytes = serde_json::to_vec_pretty(intro)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("encode request: {e}"))))?;
+    if bytes.len() > REQUEST_MAX_BYTES {
+        return Err(BaluardError::from(VaultError::InvalidOperation(
+            "introduction too large".into(),
+        )));
+    }
+    let req_id = Uuid::new_v4();
+    let dir = vault_path.join(REQUESTS_DIR);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("requests dir: {e}"))))?;
+    super::write_vault_file(&dir.join(format!("{req_id}.json")), &bytes)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write request: {e}"))))?;
+    Ok(req_id)
+}
+
+/// List queued requests (sorted by req_id — deterministic for UIs).
+/// Malformed files are skipped and COUNTED, never listed: junk in the
+/// requests dir is inert until an admin denies it. `secret_ok` checks
+/// the request's secret against the live pending invite's hash.
+pub fn list_requests(vault_path: &Path) -> Result<(Vec<JoinRequest>, usize), BaluardError> {
+    let dir = vault_path.join(REQUESTS_DIR);
+    if !dir.exists() {
+        return Ok((Vec::new(), 0));
+    }
+    let mut req_ids: Vec<String> = std::fs::read_dir(&dir)?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.strip_suffix(".json").map(|s| s.to_string())
+        })
+        .collect();
+    req_ids.sort();
+    let mut out = Vec::new();
+    let mut malformed = 0usize;
+    for stem in req_ids {
+        let Ok(json) = std::fs::read_to_string(dir.join(format!("{stem}.json"))) else {
+            malformed += 1;
+            continue;
+        };
+        let Ok(intro) = serde_json::from_str::<Introduction>(&json) else {
+            malformed += 1;
+            continue;
+        };
+        let secret_ok = read_pending_invite(vault_path, intro.invite_id)
+            .map(|p| p.secret_hash == sha256_hex(intro.secret.as_bytes()))
+            .unwrap_or(false);
+        out.push(JoinRequest {
+            req_id: Uuid::parse_str(&stem).unwrap_or_default(),
+            invite_id: intro.invite_id,
+            device_id: intro.device_id,
+            display_name: intro.display_name.clone(),
+            secret_ok,
+        });
+    }
+    Ok((out, malformed))
+}
+
+/// Read one queued request back as an Introduction (approval input).
+pub fn read_request(vault_path: &Path, req_id: Uuid) -> Result<Introduction, BaluardError> {
+    let path = vault_path.join(REQUESTS_DIR).join(format!("{req_id}.json"));
+    let data = std::fs::read_to_string(&path).map_err(|_| {
+        BaluardError::from(VaultError::InvalidOperation("request not found".into()))
+    })?;
+    serde_json::from_str(&data)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("parse request: {e}"))))
+}
+
+/// Remove a queued request (consumed on approval, dropped on denial).
+pub fn consume_request(vault_path: &Path, req_id: Uuid) -> Result<(), BaluardError> {
+    let path = vault_path.join(REQUESTS_DIR).join(format!("{req_id}.json"));
+    std::fs::remove_file(&path)
+        .map_err(|e| BaluardError::from(VaultError::Metadata(format!("consume request: {e}"))))
 }
 
 /// The member id `device_id` is bound to (scans device bindings).
