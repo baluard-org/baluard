@@ -395,6 +395,50 @@ pub struct VaultRepo {
     pub vault_id: Option<String>,
 }
 
+/// Transport seat level for a repo collaborator (P8c least-privilege
+/// staging): pending joiners and viewers ride READ-only access (they must
+/// clone to introduce), editors and above are granted WRITE at approval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollaboratorPermission {
+    /// Read-only seat (clone/pull only). Pending joiners + viewers.
+    ReadOnly,
+    /// Write seat (push). Editors and above, granted at approval.
+    Write,
+}
+
+impl fmt::Display for CollaboratorPermission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReadOnly => write!(f, "read-only"),
+            Self::Write => write!(f, "write"),
+        }
+    }
+}
+
+/// Forge-side seat state for one collaborator on one repository.
+/// GitHub is the only provider with a real pending-acceptance state;
+/// GitLab and Codeberg grant immediately (acceptance is a no-op).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollaboratorStatus {
+    /// Seat granted and accepted (or provider grants immediately).
+    Active,
+    /// Invitation pending (GitHub; expires after 7 days server-side —
+    /// an expired invite reports `None` and the caller re-invites).
+    Invited,
+    /// No seat of any kind.
+    None,
+}
+
+impl fmt::Display for CollaboratorStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Active => write!(f, "active"),
+            Self::Invited => write!(f, "invited"),
+            Self::None => write!(f, "none"),
+        }
+    }
+}
+
 /// Error type for provider operations.
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
@@ -557,6 +601,39 @@ pub trait ForgeProvider: Send + Sync {
         name: &str,
     ) -> Result<(), ProviderError>;
 
+    /// Grant (or upgrade) a collaborator seat on a repo. P8c staging:
+    /// pending joiners ride `ReadOnly`, approved editors ride `Write`.
+    /// Returns the seat state AFTER the call (GitHub reports `Invited`
+    /// for a fresh invitation, `Active` when the seat exists already).
+    async fn add_collaborator(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+        permission: CollaboratorPermission,
+    ) -> Result<CollaboratorStatus, ProviderError>;
+
+    /// Query the seat state for one username on one repo. Used by the
+    /// join-approval pre-flight and the offboarding pre-flight.
+    async fn collaborator_status(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+    ) -> Result<CollaboratorStatus, ProviderError>;
+
+    /// Strike a collaborator seat. Idempotent: removing a username with
+    /// no seat succeeds (removal pre-flight must not wedge on retries).
+    async fn remove_collaborator(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+    ) -> Result<(), ProviderError>;
+
     /// Attempt to revoke a token at the provider. Non-blocking on failure.
     async fn revoke_token(&self, token: &ProviderToken) -> Result<(), ProviderError>;
 
@@ -593,18 +670,23 @@ pub trait ForgeProvider: Send + Sync {
 #[cfg(test)]
 pub mod mock {
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     /// Mock provider for unit tests. All operations succeed with dummy data.
     /// `revoked_calls` counts how many times `revoke_token` was invoked and
     /// `deleted_calls` counts how many times `delete_repo` was invoked, tests
     /// can share an `Arc<AtomicUsize>` between the factory and the assertion
-    /// site to verify the trait method is called by the wiring.
+    /// site to verify the trait method is called by the wiring. `seat_log`
+    /// records collaborator ops as `"add:o/r:user:read-only"`-style strings;
+    /// `seat_status` is the canned `collaborator_status`/`add_collaborator`
+    /// answer.
     pub struct MockProvider {
         pub provider_type: Provider,
         pub revoked_calls: Arc<AtomicUsize>,
         pub deleted_calls: Arc<AtomicUsize>,
+        pub seat_log: Arc<Mutex<Vec<String>>>,
+        pub seat_status: CollaboratorStatus,
     }
 
     impl MockProvider {
@@ -613,7 +695,13 @@ pub mod mock {
                 provider_type: Provider::GitHub,
                 revoked_calls: Arc::new(AtomicUsize::new(0)),
                 deleted_calls: Arc::new(AtomicUsize::new(0)),
+                seat_log: Arc::new(Mutex::new(Vec::new())),
+                seat_status: CollaboratorStatus::Active,
             }
+        }
+
+        fn record(&self, line: String) {
+            self.seat_log.lock().unwrap().push(line);
         }
     }
 
@@ -724,6 +812,40 @@ pub mod mock {
             _name: &str,
         ) -> Result<(), ProviderError> {
             self.deleted_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn add_collaborator(
+            &self,
+            _token: &ProviderToken,
+            owner: &str,
+            repo: &str,
+            username: &str,
+            permission: CollaboratorPermission,
+        ) -> Result<CollaboratorStatus, ProviderError> {
+            self.record(format!("add:{owner}/{repo}:{username}:{permission}"));
+            Ok(self.seat_status)
+        }
+
+        async fn collaborator_status(
+            &self,
+            _token: &ProviderToken,
+            owner: &str,
+            repo: &str,
+            username: &str,
+        ) -> Result<CollaboratorStatus, ProviderError> {
+            self.record(format!("status:{owner}/{repo}:{username}"));
+            Ok(self.seat_status)
+        }
+
+        async fn remove_collaborator(
+            &self,
+            _token: &ProviderToken,
+            owner: &str,
+            repo: &str,
+            username: &str,
+        ) -> Result<(), ProviderError> {
+            self.record(format!("remove:{owner}/{repo}:{username}"));
             Ok(())
         }
 
@@ -852,5 +974,120 @@ mod tests {
         // No explicit override -> env var.
         let config = ProviderConfig::defaults();
         assert_eq!(config.effective_client_id(Provider::GitHub), "from-env");
+    }
+}
+
+/// Shared test double for the forge REST APIs: a real local HTTP server so
+/// the collaborator ops run their actual reqwest request paths. Each test
+/// scripts FIFO responses with `push`; every request is recorded as
+/// `(method, path, body)` for assertions.
+#[cfg(test)]
+pub(crate) mod http_mock {
+    use std::collections::VecDeque;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    pub struct MockApi {
+        pub base_url: String,
+        requests: Arc<Mutex<Vec<(String, String, String)>>>,
+        responses: Arc<Mutex<VecDeque<(u16, String)>>>,
+    }
+
+    impl MockApi {
+        /// Bind 127.0.0.1:0 and serve until process exit (tests are
+        /// short-lived; the accept thread is detached).
+        pub fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock api");
+            let port = listener.local_addr().unwrap().port();
+            let requests = Arc::new(Mutex::new(Vec::<(String, String, String)>::new()));
+            let responses = Arc::new(Mutex::new(VecDeque::<(u16, String)>::new()));
+            let (reqs, resps) = (requests.clone(), responses.clone());
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { continue };
+                    let (reqs, resps) = (reqs.clone(), resps.clone());
+                    std::thread::spawn(move || {
+                        let mut buf = [0u8; 8192];
+                        let mut raw = Vec::new();
+                        // Read until the client is done writing this
+                        // request (Connection: close semantics).
+                        while let Ok(n) = stream.read(&mut buf) {
+                            if n == 0 {
+                                break;
+                            }
+                            raw.extend_from_slice(&buf[..n]);
+                            // Header terminator seen: request complete
+                            // unless Content-Length exceeds what we have.
+                            if let Some(pos) = find(&raw, b"\r\n\r\n") {
+                                let head = String::from_utf8_lossy(&raw[..pos]).to_lowercase();
+                                let len: usize = head
+                                    .lines()
+                                    .find_map(|l| {
+                                        l.strip_prefix("content-length:")
+                                            .map(|v| v.trim().parse().unwrap_or(0))
+                                    })
+                                    .unwrap_or(0);
+                                if raw.len() >= pos + 4 + len {
+                                    break;
+                                }
+                            }
+                        }
+                        let text = String::from_utf8_lossy(&raw);
+                        let mut lines = text.lines();
+                        let request_line = lines.next().unwrap_or_default().to_string();
+                        let mut parts = request_line.split_whitespace();
+                        let method = parts.next().unwrap_or_default().to_string();
+                        let path = parts.next().unwrap_or_default().to_string();
+                        let body = text
+                            .split("\r\n\r\n")
+                            .nth(1)
+                            .unwrap_or_default()
+                            .to_string();
+                        reqs.lock().unwrap().push((method, path, body));
+                        let (status, body) = resps
+                            .lock()
+                            .unwrap()
+                            .pop_front()
+                            .unwrap_or((500, "mock: no scripted response".into()));
+                        let reason = match status {
+                            200 => "OK",
+                            201 => "Created",
+                            204 => "No Content",
+                            404 => "Not Found",
+                            409 => "Conflict",
+                            _ => "Error",
+                        };
+                        let payload = format!(
+                            "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = stream.write_all(payload.as_bytes());
+                    });
+                }
+            });
+            Self {
+                base_url: format!("http://127.0.0.1:{port}"),
+                requests,
+                responses,
+            }
+        }
+
+        /// Script the next response.
+        pub fn push(&self, status: u16, body: &str) {
+            self.responses
+                .lock()
+                .unwrap()
+                .push_back((status, body.to_string()));
+        }
+
+        /// Snapshot of recorded requests.
+        pub fn requests(&self) -> Vec<(String, String, String)> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack.windows(needle.len()).position(|w| w == needle)
     }
 }
