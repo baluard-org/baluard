@@ -238,6 +238,12 @@ impl SyncEngine {
             "meta/index.enc.*",
             // P8b: local revocation verification tracker.
             "meta/revocations-verified.json",
+            // S1b-1: local refusal log (this device's own detection).
+            "meta/refusals.log",
+            // S1b-1: the activity log is per-device (multi-writer union
+            // merge is the S1b full build; syncing it today would wedge
+            // non-admin committers).
+            "meta/share-events.enc",
         ];
         let needs_update = match std::fs::read_to_string(&gitignore) {
             Ok(existing) => NEW_ENTRIES.iter().any(|e| !existing.contains(e)),
@@ -409,6 +415,10 @@ impl SyncEngine {
             "meta/index.enc",
             // P8b: local revocation verification tracker.
             "meta/revocations-verified.json",
+            // S1b-1: per-device activity log.
+            "meta/share-events.enc",
+            // S1b-1: local refusal log — never counts as dirty.
+            "meta/refusals.log",
         ];
         const LOCAL_ONLY_PREFIX: &str = "meta/index.enc.";
 
@@ -2424,6 +2434,29 @@ impl SyncEngine {
         Ok(Some(key))
     }
 
+    /// S1b-1: record a refused commit in this device's LOCAL refusal
+    /// log (meta/refusals.log, gitignored). Best-effort: a log failure
+    /// must never mask the refusal itself. Capped at the last 200
+    /// lines — this is a detection surface, not an archive.
+    fn record_refusal(vault_path: &Path, line: &str) {
+        let path = vault_path.join("meta/refusals.log");
+        let mut lines: Vec<String> = std::fs::read_to_string(&path)
+            .map(|d| d.lines().map(|l| l.to_string()).collect())
+            .unwrap_or_default();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        lines.push(format!("{stamp} {line}"));
+        if lines.len() > 200 {
+            let drop = lines.len() - 200;
+            lines.drain(..drop);
+        }
+        let mut out = lines.join("\n");
+        out.push('\n');
+        let _ = std::fs::write(&path, out);
+    }
+
     /// Build keyring service name for a vault path (mirrors handle.rs keyring_service).
     fn keyring_service_for_vault(vault_path: &Path) -> String {
         let kdf_path = vault_path.join("meta/kdf-params.json");
@@ -2526,8 +2559,27 @@ impl SyncEngine {
                 .find_commit(*oid)
                 .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
             if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
-                let signer = self.verify_commit_against_roster(repo, *oid, &roster)?;
-                Self::check_commit_paths(repo, &commit, &roster, &signer, &mut sticky_tombstoned)?;
+                let outcome = self
+                    .verify_commit_against_roster(repo, *oid, &roster)
+                    .and_then(|signer| {
+                        Self::check_commit_paths(
+                            repo,
+                            &commit,
+                            &roster,
+                            &signer,
+                            &mut sticky_tombstoned,
+                        )
+                        .map(|_| signer)
+                    });
+                if let Err(e) = outcome {
+                    // S1b-1: this client just DETECTED a refused commit —
+                    // record it locally (best-effort), then propagate.
+                    Self::record_refusal(
+                        &self.vault_path,
+                        &format!("refused commit {}: {e}", &oid.to_string()[..12]),
+                    );
+                    return Err(e);
+                }
             }
         }
 
@@ -2595,8 +2647,27 @@ impl SyncEngine {
                 .find_commit(*oid)
                 .map_err(|e| SyncError::Git(format!("walk: {e}")))?;
             if let Some(roster) = Self::roster_for_commit(repo, &commit, &mut roster_cache)? {
-                let signer = Self::verify_commit_against_roster_static(repo, *oid, &roster)?;
-                Self::check_commit_paths(repo, &commit, &roster, &signer, &mut sticky_tombstoned)?;
+                let outcome = Self::verify_commit_against_roster_static(repo, *oid, &roster)
+                    .and_then(|signer| {
+                        Self::check_commit_paths(
+                            repo,
+                            &commit,
+                            &roster,
+                            &signer,
+                            &mut sticky_tombstoned,
+                        )
+                        .map(|_| signer)
+                    });
+                if let Err(e) = outcome {
+                    // S1b-1: clone-path detection — same local record.
+                    if let Some(workdir) = repo.workdir() {
+                        Self::record_refusal(
+                            workdir,
+                            &format!("refused commit {}: {e}", &oid.to_string()[..12]),
+                        );
+                    }
+                    return Err(e);
+                }
             }
         }
         Ok(())
@@ -3619,6 +3690,15 @@ meta/index.enc.*
 
 # P8b: local revocation verification tracker (blob id + applied list).
 meta/revocations-verified.json
+
+# S1b-1: local refusal log — this device's own detection of refused
+# commits. Local-only by design: each honest client records what IT saw.
+meta/refusals.log
+
+# S1b-1: per-device activity log (encrypted under the events key).
+# Local-only until the S1b union-merge build; a synced copy would wedge
+# non-admin committers (the log changes on every member action).
+meta/share-events.enc
 
 # Build artifacts
 target/
