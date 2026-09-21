@@ -1150,6 +1150,8 @@ mod tests {
         )
         .unwrap();
         std::fs::write(vault.join("meta/members/notes.txt"), "junk").unwrap();
+        // Malformed ROW (valid .json name, garbage body): skipped inert.
+        std::fs::write(vault.join("meta/members/broken.json"), "{not json").unwrap();
 
         let members = list_members(vault).unwrap();
         assert_eq!(members.len(), 2);

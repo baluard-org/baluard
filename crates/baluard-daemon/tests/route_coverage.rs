@@ -687,3 +687,64 @@ async fn vault_host_lock_all_returns_count() {
     let n = host.lock_all().await;
     assert_eq!(n, 2, "lock_all returns count of locked vaults");
 }
+
+// ── §4.8-1: sharing surfaces (members / requests / activity) ──
+
+#[tokio::test]
+async fn sharing_surfaces_happy_path_and_role_guard() {
+    let (_dir, state) = open_unlocked("sharing-flow").await;
+
+    // Role parsing fails closed: a typo'd or missing role must never
+    // silently become an Editor invite (write seat + keywrap).
+    let err = state
+        .members_invite(r#"{"role": "view"}"#)
+        .await
+        .unwrap_err();
+    assert!(err.contains("invalid or missing 'role'"), "err: {err}");
+    let err = state.members_invite("{}").await.unwrap_err();
+    assert!(err.contains("invalid or missing 'role'"), "err: {err}");
+
+    // Mint an editor invite.
+    let invite: serde_json::Value =
+        serde_json::from_str(&state.members_invite(r#"{"role":"editor"}"#).await.unwrap()).unwrap();
+    assert!(!invite["code"].as_str().unwrap_or_default().is_empty());
+
+    // Members list: the genesis owner row, not reset/removed.
+    let rows: serde_json::Value =
+        serde_json::from_str(&state.members_list().await.unwrap()).unwrap();
+    let arr = rows.as_array().expect("members.list returns an array");
+    assert_eq!(arr.len(), 1, "genesis vault has exactly the owner row");
+    assert_eq!(arr[0]["role"], "owner");
+    assert_eq!(arr[0]["removed"], false);
+
+    // Join queue: empty on a fresh vault.
+    let q: serde_json::Value = serde_json::from_str(&state.requests_list().await.unwrap()).unwrap();
+    assert_eq!(q["requests"].as_array().unwrap().len(), 0);
+    assert_eq!(q["malformed"], 0);
+
+    // Activity surfaces: empty on a fresh vault.
+    let events: serde_json::Value =
+        serde_json::from_str(&state.activity_events("{}").await.unwrap()).unwrap();
+    assert!(events.as_array().unwrap().is_empty());
+    let refusals: serde_json::Value =
+        serde_json::from_str(&state.activity_refusals("{}").await.unwrap()).unwrap();
+    assert!(refusals.as_array().unwrap().is_empty());
+
+    // Approve/deny of an unknown request fail (nothing consumed).
+    let bogus = r#"{"req_id": "11111111-1111-1111-1111-111111111111"}"#;
+    assert!(state.requests_approve(bogus).await.is_err());
+    assert!(state.requests_deny(bogus).await.is_err());
+}
+
+#[tokio::test]
+async fn sharing_routes_reject_when_locked() {
+    let (_dir, state) = make_vault("sharing-locked");
+    let state = Arc::new(VaultState::new(state));
+    state.open().await.expect("vault open");
+    // NOT unlocked.
+    assert!(state.members_list().await.is_err());
+    assert!(state.members_invite(r#"{"role":"editor"}"#).await.is_err());
+    assert!(state.requests_list().await.is_err());
+    assert!(state.activity_events("{}").await.is_err());
+    assert!(state.activity_refusals("{}").await.is_err());
+}
