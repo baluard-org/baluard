@@ -15,6 +15,12 @@
 //! main history means someone moved main backwards — refused outright
 //! (fail closed) and recorded locally via the S1b-1 refusal log.
 //!
+//! Gossip is a DENY-ONLY channel: it can refuse a pull, never admit
+//! content. Only a signature verifying against a roster key grants any
+//! refusal power — unparseable and unverifiable files are equally inert
+//! (the branch is writable by any device, so treating junk as
+//! authoritative would be a one-file pull DoS).
+//!
 //! Boundaries (documented, priced in the plan): an attacker with full
 //! push access can force-push the gossip branch too — that escalation is
 //! quorum-signed rewind territory (P8c/S4), not this layer. Concurrent
