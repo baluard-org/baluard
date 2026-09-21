@@ -12,7 +12,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use baluard_core::device_manager::{DeviceManager, EnrollmentPayload};
 use baluard_core::error::{BaluardError, VaultError};
-use baluard_core::providers::types::VaultRepo;
+use baluard_core::providers::types::{CollaboratorPermission, CollaboratorStatus, VaultRepo};
 use baluard_core::providers::{
     DeviceFlowSession, Provider, ProviderConfig, ProviderInfo, ProviderToken, provider_for,
     revoke_and_disconnect, token,
@@ -162,6 +162,73 @@ pub async fn detect_vault_repos(provider: Provider) -> Result<Vec<VaultRepo>, Ba
     p.detect_vault_repos(&tok)
         .await
         .map_err(|e| VaultError::Metadata(format!("detect repos: {e}")).into())
+}
+
+/// Where a member stands in the P8c transport-staging lifecycle.
+/// The mapping is the least-privilege rule: nobody gets push until the
+/// vault-side approval grants an editor-or-above role.
+pub enum SeatStage {
+    /// Invited but not yet approved: read-only seat (must clone to introduce).
+    Pending,
+    /// Approved as a viewer: read-only seat.
+    Viewer,
+    /// Approved at editor or above: write seat.
+    Editor,
+}
+
+/// P8c staging rule: pending and viewer = read-only, editor+ = write.
+pub fn seat_permission(stage: SeatStage) -> CollaboratorPermission {
+    match stage {
+        SeatStage::Pending | SeatStage::Viewer => CollaboratorPermission::ReadOnly,
+        SeatStage::Editor => CollaboratorPermission::Write,
+    }
+}
+
+/// Grant (or upgrade) a collaborator seat on the connected provider.
+pub async fn add_collaborator(
+    provider: Provider,
+    owner: &str,
+    repo: &str,
+    username: &str,
+    permission: CollaboratorPermission,
+) -> Result<CollaboratorStatus, BaluardError> {
+    let (info, tok) = ensure_valid_token(provider).await?;
+    let p = provider_for(provider, info.config())
+        .map_err(|e| VaultError::Metadata(format!("provider init: {e}")))?;
+    p.add_collaborator(&tok, owner, repo, username, permission)
+        .await
+        .map_err(|e| VaultError::Metadata(format!("add collaborator: {e}")).into())
+}
+
+/// Query the seat state for one username on one repo of the connected provider.
+pub async fn collaborator_status(
+    provider: Provider,
+    owner: &str,
+    repo: &str,
+    username: &str,
+) -> Result<CollaboratorStatus, BaluardError> {
+    let (info, tok) = ensure_valid_token(provider).await?;
+    let p = provider_for(provider, info.config())
+        .map_err(|e| VaultError::Metadata(format!("provider init: {e}")))?;
+    p.collaborator_status(&tok, owner, repo, username)
+        .await
+        .map_err(|e| VaultError::Metadata(format!("collaborator status: {e}")).into())
+}
+
+/// Strike a collaborator seat (idempotent). Offboarding pre-flight calls
+/// this BEFORE the vault-side rotation commit is pushed.
+pub async fn remove_collaborator(
+    provider: Provider,
+    owner: &str,
+    repo: &str,
+    username: &str,
+) -> Result<(), BaluardError> {
+    let (info, tok) = ensure_valid_token(provider).await?;
+    let p = provider_for(provider, info.config())
+        .map_err(|e| VaultError::Metadata(format!("provider init: {e}")))?;
+    p.remove_collaborator(&tok, owner, repo, username)
+        .await
+        .map_err(|e| VaultError::Metadata(format!("remove collaborator: {e}")).into())
 }
 
 /// Clone a remote repository into `local_path` with `.partial` staging and `.baluard` marker verification.
@@ -352,6 +419,24 @@ mod tests {
 
         let lock_codeberg = mgr.lock_for(Provider::Codeberg);
         assert!(!Arc::ptr_eq(&lock1, &lock_codeberg));
+    }
+
+    #[test]
+    fn seat_permission_maps_p8c_staging() {
+        // Least-privilege: nobody gets push until vault-side approval
+        // grants an editor-or-above role.
+        assert_eq!(
+            seat_permission(SeatStage::Pending),
+            CollaboratorPermission::ReadOnly
+        );
+        assert_eq!(
+            seat_permission(SeatStage::Viewer),
+            CollaboratorPermission::ReadOnly
+        );
+        assert_eq!(
+            seat_permission(SeatStage::Editor),
+            CollaboratorPermission::Write
+        );
     }
 
     #[test]

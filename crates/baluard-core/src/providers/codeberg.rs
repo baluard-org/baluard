@@ -14,9 +14,9 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use secrecy::ExposeSecret;
 
 use super::types::{
-    ForgeProvider, OAuthStart, Provider, ProviderConfig, ProviderError, ProviderInfo,
-    ProviderToken, VaultRepo, code_challenge_s256, generate_code_verifier, generate_state,
-    now_secs, urlencoding_encode,
+    CollaboratorPermission, CollaboratorStatus, ForgeProvider, OAuthStart, Provider,
+    ProviderConfig, ProviderError, ProviderInfo, ProviderToken, VaultRepo, code_challenge_s256,
+    generate_code_verifier, generate_state, now_secs, urlencoding_encode,
 };
 
 pub struct CodebergProvider {
@@ -450,6 +450,96 @@ impl ForgeProvider for CodebergProvider {
         Ok(())
     }
 
+    async fn add_collaborator(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+        permission: CollaboratorPermission,
+    ) -> Result<CollaboratorStatus, ProviderError> {
+        // Forgejo grants immediately — acceptance is a no-op, so the seat
+        // is Active the moment the PUT lands. Scope gaps (a scopeless
+        // token is full account access) are surfaced at connect time.
+        let forgejo_permission = match permission {
+            CollaboratorPermission::ReadOnly => "read",
+            CollaboratorPermission::Write => "write",
+        };
+        let url = format!(
+            "{}/repos/{owner}/{repo}/collaborators/{username}",
+            self.api_base()
+        );
+        let resp = self
+            .authed(reqwest::Method::PUT, &url, token)
+            .json(&serde_json::json!({ "permission": forgejo_permission }))
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        match resp.status().as_u16() {
+            204 => Ok(CollaboratorStatus::Active),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(ProviderError::Api(format!(
+                    "add collaborator HTTP {s}: {body}"
+                )))
+            }
+        }
+    }
+
+    async fn collaborator_status(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+    ) -> Result<CollaboratorStatus, ProviderError> {
+        let url = format!(
+            "{}/repos/{owner}/{repo}/collaborators/{username}",
+            self.api_base()
+        );
+        let resp = self
+            .authed(reqwest::Method::GET, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        match resp.status().as_u16() {
+            204 => Ok(CollaboratorStatus::Active),
+            404 => Ok(CollaboratorStatus::None),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(ProviderError::Api(format!("collaborator HTTP {s}: {body}")))
+            }
+        }
+    }
+
+    async fn remove_collaborator(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+    ) -> Result<(), ProviderError> {
+        let url = format!(
+            "{}/repos/{owner}/{repo}/collaborators/{username}",
+            self.api_base()
+        );
+        let resp = self
+            .authed(reqwest::Method::DELETE, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        match resp.status().as_u16() {
+            // Idempotent strike: a missing seat is already what we want.
+            204 | 404 => Ok(()),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(ProviderError::Api(format!(
+                    "remove collaborator HTTP {s}: {body}"
+                )))
+            }
+        }
+    }
+
     async fn revoke_token(&self, _token: &ProviderToken) -> Result<(), ProviderError> {
         // Forgejo OAuth tokens can be revoked by the user deleting the app
         // authorization in settings. No API self-revoke for OAuth.
@@ -509,6 +599,71 @@ impl ForgeProvider for CodebergProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::types::ProviderConfig;
+    use crate::providers::types::http_mock::MockApi;
+
+    fn cb_at(base: &str) -> CodebergProvider {
+        CodebergProvider::with_config(ProviderConfig {
+            client_id: None,
+            instance_url: Some(base.into()),
+        })
+    }
+
+    #[tokio::test]
+    async fn collaborator_ops_immediate_grant() {
+        let api = MockApi::start();
+        let cb = cb_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "");
+
+        // Forgejo grants immediately: PUT 204 -> Active; read/write map
+        // to Forgejo's permission strings.
+        api.push(204, "");
+        let st = cb
+            .add_collaborator(&tok, "o", "r", "alice", CollaboratorPermission::ReadOnly)
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::Active);
+        let (method, path, body) = &api.requests()[0];
+        assert_eq!(method, "PUT");
+        assert_eq!(path, "/api/v1/repos/o/r/collaborators/alice");
+        assert!(body.contains("\"read\""), "body: {body}");
+
+        api.push(204, "");
+        let st = cb
+            .add_collaborator(&tok, "o", "r", "alice", CollaboratorPermission::Write)
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::Active);
+        let (_, _, body) = &api.requests()[1];
+        assert!(body.contains("\"write\""), "body: {body}");
+
+        // Status: 204 present / 404 absent.
+        api.push(204, "");
+        let st = cb
+            .collaborator_status(&tok, "o", "r", "alice")
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::Active);
+        api.push(404, "");
+        let st = cb
+            .collaborator_status(&tok, "o", "r", "ghost")
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::None);
+
+        // Removal is idempotent (204 + 404 both succeed).
+        api.push(204, "");
+        cb.remove_collaborator(&tok, "o", "r", "alice")
+            .await
+            .unwrap();
+        api.push(404, "");
+        cb.remove_collaborator(&tok, "o", "r", "alice")
+            .await
+            .unwrap();
+        let (method, path, _) = &api.requests()[4];
+        assert_eq!(method, "DELETE");
+        assert_eq!(path, "/api/v1/repos/o/r/collaborators/alice");
+    }
 
     #[test]
     fn provider_identity() {

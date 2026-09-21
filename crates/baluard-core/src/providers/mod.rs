@@ -10,8 +10,9 @@ pub mod token;
 pub mod types;
 
 pub use types::{
-    DeviceFlowSession, DeviceFlowStatus, ForgeProvider, OAuthStart, Provider, ProviderConfig,
-    ProviderInfo, ProviderToken, code_challenge_s256, generate_code_verifier, generate_state,
+    CollaboratorPermission, CollaboratorStatus, DeviceFlowSession, DeviceFlowStatus, ForgeProvider,
+    OAuthStart, Provider, ProviderConfig, ProviderInfo, ProviderToken, code_challenge_s256,
+    generate_code_verifier, generate_state,
 };
 
 use types::ProviderError;
@@ -79,6 +80,7 @@ pub async fn revoke_and_disconnect(provider: Provider) -> Result<(), ProviderErr
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use types::mock::MockProvider;
 
@@ -124,6 +126,8 @@ mod tests {
                 provider_type: Provider::GitHub,
                 revoked_calls: c,
                 deleted_calls: Arc::new(AtomicUsize::new(0)),
+                seat_log: Arc::new(Mutex::new(Vec::new())),
+                seat_status: CollaboratorStatus::Active,
             }) as Box<dyn ForgeProvider>)
         };
 
@@ -191,6 +195,8 @@ mod tests {
                 provider_type: Provider::GitHub,
                 revoked_calls: c,
                 deleted_calls: Arc::new(AtomicUsize::new(0)),
+                seat_log: Arc::new(Mutex::new(Vec::new())),
+                seat_status: CollaboratorStatus::Active,
             }) as Box<dyn ForgeProvider>)
         };
 

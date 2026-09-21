@@ -17,8 +17,9 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use secrecy::ExposeSecret;
 
 use super::types::{
-    DeviceFlowSession, DeviceFlowStatus, ForgeProvider, Provider, ProviderConfig, ProviderError,
-    ProviderInfo, ProviderToken, VaultRepo, now_secs, urlencoding_encode,
+    CollaboratorPermission, CollaboratorStatus, DeviceFlowSession, DeviceFlowStatus, ForgeProvider,
+    Provider, ProviderConfig, ProviderError, ProviderInfo, ProviderToken, VaultRepo, now_secs,
+    urlencoding_encode,
 };
 
 /// OAuth scopes requested at device-flow / PAT time. `api` is required for
@@ -131,6 +132,50 @@ impl GitLabProvider {
 impl Default for GitLabProvider {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl GitLabProvider {
+    /// Resolve a GitLab username to its numeric id — the members API takes
+    /// user_id only, never the username.
+    async fn resolve_user_id(
+        &self,
+        token: &ProviderToken,
+        username: &str,
+    ) -> Result<u64, ProviderError> {
+        let url = format!(
+            "{}/users?username={}",
+            self.api_base(),
+            urlencoding_encode(username)
+        );
+        let resp = self
+            .authed(reqwest::Method::GET, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        if !resp.status().is_success() {
+            let s = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ProviderError::Api(format!("user lookup HTTP {s}: {body}")));
+        }
+        let users: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        let wanted = username.to_lowercase();
+        users
+            .as_array()
+            .and_then(|list| {
+                list.iter().find_map(|u| {
+                    let login = u["username"].as_str().map(|l| l.to_lowercase());
+                    if login.as_deref() == Some(wanted.as_str()) {
+                        u["id"].as_u64()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .ok_or_else(|| ProviderError::Api(format!("user {username} not found on GitLab")))
     }
 }
 
@@ -491,6 +536,109 @@ impl ForgeProvider for GitLabProvider {
         Ok(())
     }
 
+    async fn add_collaborator(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+        permission: CollaboratorPermission,
+    ) -> Result<CollaboratorStatus, ProviderError> {
+        // GitLab grants immediately (no pending-acceptance state at CE
+        // level). Reporter(20) = read-only seat, Developer(30) = write.
+        let access_level = match permission {
+            CollaboratorPermission::ReadOnly => 20,
+            CollaboratorPermission::Write => 30,
+        };
+        let user_id = self.resolve_user_id(token, username).await?;
+        let path = format!("{owner}/{repo}");
+        let url = format!(
+            "{}/projects/{}/members",
+            self.api_base(),
+            urlencoding_encode(&path)
+        );
+        let resp = self
+            .authed(reqwest::Method::POST, &url, token)
+            .json(&serde_json::json!({
+                "user_id": user_id,
+                "access_level": access_level
+            }))
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        match resp.status().as_u16() {
+            201 => Ok(CollaboratorStatus::Active),
+            // 409 Conflict = already a member; the seat exists.
+            409 => Ok(CollaboratorStatus::Active),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(ProviderError::Api(format!("add member HTTP {s}: {body}")))
+            }
+        }
+    }
+
+    async fn collaborator_status(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+    ) -> Result<CollaboratorStatus, ProviderError> {
+        let user_id = self.resolve_user_id(token, username).await?;
+        let path = format!("{owner}/{repo}");
+        let url = format!(
+            "{}/projects/{}/members/{}",
+            self.api_base(),
+            urlencoding_encode(&path),
+            user_id
+        );
+        let resp = self
+            .authed(reqwest::Method::GET, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        match resp.status().as_u16() {
+            200 => Ok(CollaboratorStatus::Active),
+            404 => Ok(CollaboratorStatus::None),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(ProviderError::Api(format!("member HTTP {s}: {body}")))
+            }
+        }
+    }
+
+    async fn remove_collaborator(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+    ) -> Result<(), ProviderError> {
+        let user_id = self.resolve_user_id(token, username).await?;
+        let path = format!("{owner}/{repo}");
+        let url = format!(
+            "{}/projects/{}/members/{}",
+            self.api_base(),
+            urlencoding_encode(&path),
+            user_id
+        );
+        let resp = self
+            .authed(reqwest::Method::DELETE, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        match resp.status().as_u16() {
+            // Idempotent strike: a missing seat is already what we want.
+            204 | 404 => Ok(()),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(ProviderError::Api(format!(
+                    "remove member HTTP {s}: {body}"
+                )))
+            }
+        }
+    }
+
     async fn revoke_token(&self, token: &ProviderToken) -> Result<(), ProviderError> {
         // Best-effort. OAuth public clients revoke via /oauth/revoke with
         // client_id + token. PATs cannot self-revoke; user deletes in settings.
@@ -566,6 +714,105 @@ impl ForgeProvider for GitLabProvider {
 mod tests {
     use super::super::types::urlencoding_encode;
     use super::*;
+    use crate::providers::types::ProviderConfig;
+    use crate::providers::types::http_mock::MockApi;
+
+    fn gl_at(base: &str) -> GitLabProvider {
+        GitLabProvider::with_config(ProviderConfig {
+            client_id: None,
+            instance_url: Some(base.into()),
+        })
+    }
+
+    #[tokio::test]
+    async fn add_collaborator_resolves_user_id_and_maps_levels() {
+        let api = MockApi::start();
+        let gl = gl_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "api");
+
+        // Read-only: username -> id lookup, then Reporter(20).
+        api.push(200, r#"[{"id": 42, "username": "alice"}]"#);
+        api.push(201, r#"{"access_level": 20}"#);
+        let st = gl
+            .add_collaborator(&tok, "o", "r", "alice", CollaboratorPermission::ReadOnly)
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::Active);
+        let (method, path, body) = &api.requests()[1];
+        assert_eq!(method, "POST");
+        assert_eq!(path, "/api/v4/projects/o%2Fr/members");
+        assert!(body.contains("\"user_id\":42"), "body: {body}");
+        assert!(body.contains("\"access_level\":20"), "body: {body}");
+
+        // Write: Developer(30).
+        api.push(200, r#"[{"id": 42, "username": "alice"}]"#);
+        api.push(201, "{}");
+        gl.add_collaborator(&tok, "o", "r", "alice", CollaboratorPermission::Write)
+            .await
+            .unwrap();
+        let (_, _, body) = &api.requests()[3];
+        assert!(body.contains("\"access_level\":30"), "body: {body}");
+
+        // Already a member (409) counts as Active — the seat exists.
+        api.push(200, r#"[{"id": 42, "username": "alice"}]"#);
+        api.push(409, "{}");
+        let st = gl
+            .add_collaborator(&tok, "o", "r", "alice", CollaboratorPermission::Write)
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn collaborator_status_and_unknown_user() {
+        let api = MockApi::start();
+        let gl = gl_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "api");
+
+        // Member present -> Active.
+        api.push(200, r#"[{"id": 7, "username": "bob"}]"#);
+        api.push(200, r#"{"access_level": 30}"#);
+        let st = gl.collaborator_status(&tok, "o", "r", "bob").await.unwrap();
+        assert_eq!(st, CollaboratorStatus::Active);
+
+        // Not a member -> None.
+        api.push(200, r#"[{"id": 7, "username": "bob"}]"#);
+        api.push(404, "");
+        let st = gl.collaborator_status(&tok, "o", "r", "bob").await.unwrap();
+        assert_eq!(st, CollaboratorStatus::None);
+
+        // Unknown forge user fails closed — no silent seat assumption.
+        api.push(200, "[]");
+        let err = gl
+            .collaborator_status(&tok, "o", "r", "ghost")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"), "err: {err}");
+    }
+
+    #[tokio::test]
+    async fn remove_collaborator_idempotent() {
+        let api = MockApi::start();
+        let gl = gl_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "api");
+
+        // 204 removes; 404 (seat already gone) is also success — the
+        // offboarding pre-flight must not wedge on retries.
+        api.push(200, r#"[{"id": 42, "username": "alice"}]"#);
+        api.push(204, "");
+        gl.remove_collaborator(&tok, "o", "r", "alice")
+            .await
+            .unwrap();
+        let (method, path, _) = &api.requests()[1];
+        assert_eq!(method, "DELETE");
+        assert_eq!(path, "/api/v4/projects/o%2Fr/members/42");
+
+        api.push(200, r#"[{"id": 42, "username": "alice"}]"#);
+        api.push(404, "");
+        gl.remove_collaborator(&tok, "o", "r", "alice")
+            .await
+            .unwrap();
+    }
 
     #[test]
     fn provider_identity() {

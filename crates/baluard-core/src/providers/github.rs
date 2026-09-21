@@ -11,8 +11,8 @@ use octocrab::models::Repository;
 use secrecy::ExposeSecret;
 
 use super::types::{
-    DeviceFlowSession, DeviceFlowStatus, ForgeProvider, Provider, ProviderError, ProviderInfo,
-    ProviderToken, VaultRepo,
+    CollaboratorPermission, CollaboratorStatus, DeviceFlowSession, DeviceFlowStatus, ForgeProvider,
+    Provider, ProviderError, ProviderInfo, ProviderToken, VaultRepo,
 };
 
 /// Format an octocrab error with the real GitHub API message.
@@ -105,6 +105,34 @@ impl GitHubProvider {
             .personal_token(token.access_token().expose_secret().to_string())
             .build()
             .map_err(api_error)
+    }
+
+    /// REST API base for raw reqwest calls (collaborator ops). The public
+    /// instance talks to api.github.com; an explicit override is a
+    /// self-hosted GitHub Enterprise Server and mounts REST under /api/v3.
+    fn api_base(&self) -> String {
+        let base = self.config.effective_instance_url(Provider::GitHub);
+        if base == Provider::GitHub.default_instance_url() {
+            "https://api.github.com".into()
+        } else {
+            format!("{base}/api/v3")
+        }
+    }
+
+    /// Authenticated raw request for the collaborator ops.
+    fn authed(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        token: &ProviderToken,
+    ) -> reqwest::RequestBuilder {
+        self.http
+            .request(method, url)
+            .header(
+                "Authorization",
+                format!("Bearer {}", token.access_token().expose_secret()),
+            )
+            .header("Accept", "application/vnd.github+json")
     }
 
     /// Convert octocrab Repository to VaultRepo.
@@ -559,6 +587,166 @@ impl ForgeProvider for GitHubProvider {
             .map_err(api_error)
     }
 
+    async fn add_collaborator(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+        permission: CollaboratorPermission,
+    ) -> Result<CollaboratorStatus, ProviderError> {
+        // GitHub invitation flow: PUT creates a pending invitation (201)
+        // or updates an existing collaborator's permission (204). `pull`
+        // = read-only seat, `push` = write seat (P8c staging).
+        let gh_permission = match permission {
+            CollaboratorPermission::ReadOnly => "pull",
+            CollaboratorPermission::Write => "push",
+        };
+        let url = format!(
+            "{}/repos/{owner}/{repo}/collaborators/{username}",
+            self.api_base()
+        );
+        let resp = self
+            .authed(reqwest::Method::PUT, &url, token)
+            .json(&serde_json::json!({ "permission": gh_permission }))
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        match resp.status().as_u16() {
+            201 => Ok(CollaboratorStatus::Invited),
+            204 => Ok(CollaboratorStatus::Active),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(ProviderError::Api(format!(
+                    "add collaborator HTTP {s}: {body}"
+                )))
+            }
+        }
+    }
+
+    async fn collaborator_status(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+    ) -> Result<CollaboratorStatus, ProviderError> {
+        let api = self.api_base();
+        // 1. Direct collaborator? The permission endpoint answers 200 with
+        //    the effective level ("none" = no seat) or 404 for unknown users.
+        let url = format!("{api}/repos/{owner}/{repo}/collaborators/{username}/permission");
+        let resp = self
+            .authed(reqwest::Method::GET, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        if resp.status().as_u16() == 200 {
+            let body: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| ProviderError::Api(e.to_string()))?;
+            if body["permission"].as_str() != Some("none") {
+                return Ok(CollaboratorStatus::Active);
+            }
+        }
+        // 2. Pending invitation? GitHub invites expire server-side after
+        //    7 days; an expired one is simply absent here, so the caller
+        //    sees None and re-invites.
+        let url = format!("{api}/repos/{owner}/{repo}/invitations");
+        let resp = self
+            .authed(reqwest::Method::GET, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        if resp.status().as_u16() == 200 {
+            let invites: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| ProviderError::Api(e.to_string()))?;
+            if let Some(list) = invites.as_array() {
+                let wanted = username.to_lowercase();
+                for invite in list {
+                    let login = invite["invitee"]["login"]
+                        .as_str()
+                        .map(|l| l.to_lowercase());
+                    if login.as_deref() == Some(wanted.as_str()) {
+                        return Ok(CollaboratorStatus::Invited);
+                    }
+                }
+            }
+        }
+        Ok(CollaboratorStatus::None)
+    }
+
+    async fn remove_collaborator(
+        &self,
+        token: &ProviderToken,
+        owner: &str,
+        repo: &str,
+        username: &str,
+    ) -> Result<(), ProviderError> {
+        let api = self.api_base();
+        // Strike the live seat first; 404 = no direct seat.
+        let url = format!("{api}/repos/{owner}/{repo}/collaborators/{username}");
+        let resp = self
+            .authed(reqwest::Method::DELETE, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        let status = resp.status().as_u16();
+        if status == 204 {
+            return Ok(());
+        }
+        if status != 404 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ProviderError::Api(format!(
+                "remove collaborator HTTP {status}: {body}"
+            )));
+        }
+        // Fallback: cancel a pending invitation instead (removal pre-flight
+        // must clear BOTH seat kinds; absent invitation = already gone).
+        let url = format!("{api}/repos/{owner}/{repo}/invitations");
+        let resp = self
+            .authed(reqwest::Method::GET, &url, token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        if resp.status().as_u16() != 200 {
+            return Ok(());
+        }
+        let invites: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        let wanted = username.to_lowercase();
+        let invite_id = invites.as_array().and_then(|list| {
+            list.iter().find_map(|i| {
+                let login = i["invitee"]["login"].as_str().map(|l| l.to_lowercase());
+                if login.as_deref() == Some(wanted.as_str()) {
+                    i["id"].as_u64()
+                } else {
+                    None
+                }
+            })
+        });
+        if let Some(invite_id) = invite_id {
+            let url = format!("{api}/repos/{owner}/{repo}/invitations/{invite_id}");
+            let resp = self
+                .authed(reqwest::Method::DELETE, &url, token)
+                .send()
+                .await
+                .map_err(|e| ProviderError::Api(e.to_string()))?;
+            if resp.status().as_u16() != 204 {
+                let s = resp.status().as_u16();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(ProviderError::Api(format!(
+                    "cancel invitation HTTP {s}: {body}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     async fn revoke_token(&self, _token: &ProviderToken) -> Result<(), ProviderError> {
         // GitHub OAuth tokens can't be revoked via API (only deleted from settings).
         // PATs also require manual deletion. No-op.
@@ -577,6 +765,8 @@ impl ForgeProvider for GitHubProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::types::ProviderConfig;
+    use crate::providers::types::http_mock::MockApi;
 
     #[test]
     fn provider_identity() {
@@ -746,5 +936,115 @@ mod tests {
         let json = r#"{ "id": 1, "name": "x", "url": "https://api.github.com/repos/o/x", "clone_url": null }"#;
         let repo: octocrab::models::Repository = serde_json::from_str(json).unwrap();
         assert!(gh.repo_to_vault(&repo).is_none());
+    }
+
+    fn gh_at(base: &str) -> GitHubProvider {
+        GitHubProvider::with_config(ProviderConfig {
+            client_id: None,
+            instance_url: Some(base.into()),
+        })
+    }
+
+    #[tokio::test]
+    async fn add_collaborator_invitation_and_existing_seat() {
+        let api = MockApi::start();
+        let gh = gh_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "repo");
+
+        // Fresh invitation: 201 -> Invited; read-only maps to `pull`.
+        api.push(201, "{}");
+        let st = gh
+            .add_collaborator(&tok, "o", "r", "alice", CollaboratorPermission::ReadOnly)
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::Invited);
+        let (method, path, body) = &api.requests()[0];
+        assert_eq!(method, "PUT");
+        assert_eq!(path, "/api/v3/repos/o/r/collaborators/alice");
+        assert!(body.contains("\"pull\""), "body: {body}");
+
+        // Existing seat: 204 -> Active; write maps to `push`.
+        api.push(204, "");
+        let st = gh
+            .add_collaborator(&tok, "o", "r", "bob", CollaboratorPermission::Write)
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::Active);
+        let (_, _, body) = &api.requests()[1];
+        assert!(body.contains("\"push\""), "body: {body}");
+    }
+
+    #[tokio::test]
+    async fn collaborator_status_direct_invited_and_none() {
+        let api = MockApi::start();
+        let gh = gh_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "repo");
+
+        // Direct collaborator: one request, Active.
+        api.push(
+            200,
+            r#"{"permission": "write", "user": {"login": "alice"}}"#,
+        );
+        let st = gh
+            .collaborator_status(&tok, "o", "r", "alice")
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::Active);
+        assert_eq!(api.requests().len(), 1);
+
+        // No direct seat but a pending invitation -> Invited.
+        api.push(200, r#"{"permission": "none"}"#);
+        api.push(200, r#"[{"id": 9, "invitee": {"login": "Alice"}}]"#);
+        let st = gh
+            .collaborator_status(&tok, "o", "r", "alice")
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::Invited);
+
+        // Neither seat nor invitation -> None (expired GitHub invites
+        // surface exactly this way, so the caller re-invites).
+        api.push(200, r#"{"permission": "none"}"#);
+        api.push(200, "[]");
+        let st = gh
+            .collaborator_status(&tok, "o", "r", "carol")
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::None);
+    }
+
+    #[tokio::test]
+    async fn remove_collaborator_live_seat_pending_invite_and_errors() {
+        let api = MockApi::start();
+        let gh = gh_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "repo");
+
+        // Live seat: single DELETE, 204 -> Ok.
+        api.push(204, "");
+        gh.remove_collaborator(&tok, "o", "r", "alice")
+            .await
+            .unwrap();
+        let (method, path, _) = &api.requests()[0];
+        assert_eq!(method, "DELETE");
+        assert_eq!(path, "/api/v3/repos/o/r/collaborators/alice");
+
+        // No live seat (404) but a pending invitation: the invite is
+        // cancelled via its id. Absent invitation = already gone, Ok.
+        api.push(404, "");
+        api.push(200, r#"[{"id": 42, "invitee": {"login": "alice"}}]"#);
+        api.push(204, "");
+        gh.remove_collaborator(&tok, "o", "r", "alice")
+            .await
+            .unwrap();
+        let (method, path, _) = &api.requests()[3];
+        assert_eq!(method, "DELETE");
+        assert_eq!(path, "/api/v3/repos/o/r/invitations/42");
+
+        // Server error propagates — the pre-flight must see the failure.
+        api.push(500, "boom");
+        assert!(
+            gh.remove_collaborator(&tok, "o", "r", "alice")
+                .await
+                .is_err()
+        );
     }
 }
