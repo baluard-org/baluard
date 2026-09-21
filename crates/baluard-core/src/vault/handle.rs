@@ -677,6 +677,15 @@ impl VaultHandle {
         }
         self.assert_can_manage_members()?;
         let intro = crate::vault::members::Introduction::decode(intro_code)?;
+        // S1a-8 review: newline discipline applies at APPROVAL too, not
+        // just staging — the display name lands in the member record and
+        // later newline-delimited payloads.
+        if intro.display_name.contains(['\n', '\r']) {
+            return Err(VaultError::InvalidOperation(
+                "introduction display name contains newlines".into(),
+            )
+            .into());
+        }
         if intro.vault_id != self.vault_id {
             return Err(VaultError::InvalidOperation(
                 "introduction is for a different vault".into(),
@@ -716,6 +725,39 @@ impl VaultHandle {
                 .into());
             }
         }
+        // S1a-8 review: ALL read-only validation happens in the peek
+        // phase — the successor row's health (a reset invite whose
+        // target vanished, is tombstoned, or is already joined must not
+        // burn the invite) and the introduced key hex (parse failures
+        // must not strand a half-approval). Mutations start at consume.
+        if let Some(target) = invite.target_member {
+            let row =
+                crate::vault::members::member_file_by_id(&self.path, target).ok_or_else(|| {
+                    VaultError::InvalidOperation(
+                        "reset invite names a successor row that does not exist".into(),
+                    )
+                })?;
+            if row.reset.is_some() || row.removed.is_some() {
+                return Err(VaultError::InvalidOperation(
+                    "reset invite names a tombstoned row".into(),
+                )
+                .into());
+            }
+            if row.identity_signing_pubkey.is_some() {
+                return Err(VaultError::InvalidOperation(
+                    "successor row already joined; issue a new reset".into(),
+                )
+                .into());
+            }
+        }
+        let enc_bytes: [u8; 32] = hex::decode(&intro.encryption_public_key)
+            .map_err(|_| VaultError::Corrupt("intro encryption key".into()))?
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("intro encryption key length".into()))?;
+        let sig_bytes: [u8; 32] = hex::decode(&intro.signing_public_key)
+            .map_err(|_| VaultError::Corrupt("intro signing key".into()))?
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("intro signing key length".into()))?;
         let elevated = matches!(
             effective_role,
             crate::vault::members::MemberRole::Admin | crate::vault::members::MemberRole::Owner
@@ -782,15 +824,8 @@ impl VaultHandle {
         )?;
 
         // Enroll the joiner's device: the registry gates signatures, the
-        // member record gates roles.
-        let enc_bytes: [u8; 32] = hex::decode(&intro.encryption_public_key)
-            .map_err(|_| VaultError::Corrupt("intro encryption key".into()))?
-            .try_into()
-            .map_err(|_| VaultError::Corrupt("intro encryption key length".into()))?;
-        let sig_bytes: [u8; 32] = hex::decode(&intro.signing_public_key)
-            .map_err(|_| VaultError::Corrupt("intro signing key".into()))?
-            .try_into()
-            .map_err(|_| VaultError::Corrupt("intro signing key length".into()))?;
+        // member record gates roles. (Key hex was parsed in the peek
+        // phase — S1a-8 review.)
         self.device_manager.registry.enroll_with_id(
             intro.device_id,
             intro.display_name.clone(),
@@ -834,28 +869,15 @@ impl VaultHandle {
             .as_ref()
             .map(|c| c.card.identity_signing_pubkey.clone());
         let member = if let Some(target) = invite.target_member {
+            // Successor-row health was validated in the peek phase
+            // (S1a-8 review) — refusal there leaves the invite
+            // retryable. Here: only the writes.
             let mut row =
                 crate::vault::members::member_file_by_id(&self.path, target).ok_or_else(|| {
                     VaultError::InvalidOperation(
                         "reset invite names a successor row that does not exist".into(),
                     )
                 })?;
-            if row.reset.is_some() || row.removed.is_some() {
-                return Err(VaultError::InvalidOperation(
-                    "reset invite names a tombstoned row".into(),
-                )
-                .into());
-            }
-            // S1a-5 review: an already-identified successor cannot be
-            // re-bound — a second approval would overwrite the identity
-            // without any rotation proof. (The role check ran at the
-            // peek stage: refusal there leaves the invite retryable.)
-            if row.identity_signing_pubkey.is_some() {
-                return Err(VaultError::InvalidOperation(
-                    "successor row already joined; issue a new reset".into(),
-                )
-                .into());
-            }
             if elevated {
                 row.trust = crate::vault::members::TrustLevel::Verified;
             }
@@ -7707,21 +7729,37 @@ mod tests {
         let joiner = VaultHandle::open(&joiner_path).unwrap();
         assert!(joiner.join_queue_list().is_err());
 
-        // A malformed file in the requests dir is inert + counted.
+        // Malformed files in the requests dir are inert + counted. Non-
+        // UUID stems and oversized blobs count too (review: non-UUID
+        // stems used to collapse onto Uuid::nil() as unmanageable queue
+        // entries; oversized blobs were read into memory unchecked).
         let req_dir = owner_path.join("meta/requests");
         std::fs::write(
             req_dir.join("deadbeef-0000-0000-0000-000000000000.json"),
             "{junk",
         )
         .unwrap();
+        std::fs::write(req_dir.join("notauuid.json"), "{junk").unwrap();
+        std::fs::write(
+            req_dir.join(format!("{}.json", uuid::Uuid::new_v4())),
+            "x".repeat(65_537),
+        )
+        .unwrap();
         let (_, malformed) = handle.join_queue_list().unwrap();
-        assert_eq!(malformed, 1);
+        assert_eq!(malformed, 3);
+
+        // Newline display names are refused at APPROVAL too (the direct
+        // path bypasses staging), before any mutation.
+        let mut nl_intro = crate::vault::members::Introduction::decode(&intro1).unwrap();
+        nl_intro.display_name = "bad\nname".into();
+        assert!(handle.approve_join(&nl_intro.encode().unwrap()).is_err());
 
         // Approve through the queue: full standard verification, request
         // consumed on success.
         let member_id = handle.approve_queued_join(req1).unwrap();
         engine_o.commit_all(&repo_o, "approve queued join").unwrap();
-        assert_eq!(handle.join_queue_list().unwrap(), (Vec::new(), 1));
+        // The junk files stay (inert; purge-malformed is UI scope).
+        assert_eq!(handle.join_queue_list().unwrap(), (Vec::new(), 3));
 
         // The approved member is a real member: pulls, unlocks.
         let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
@@ -7771,7 +7809,7 @@ mod tests {
             "elevated-gate refusal leaves the request queued"
         );
         handle.deny_queued_join(req3).unwrap();
-        assert_eq!(handle.join_queue_list().unwrap(), (Vec::new(), 1));
+        assert_eq!(handle.join_queue_list().unwrap(), (Vec::new(), 3));
     }
 
     // ── P3: keywrap distribution + rekey-txn adoption ──
