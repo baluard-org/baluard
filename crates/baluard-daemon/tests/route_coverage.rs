@@ -758,6 +758,16 @@ async fn sharing_routes_reject_when_locked() {
     assert!(state.requests_list().await.is_err());
     assert!(state.activity_events("{}").await.is_err());
     assert!(state.activity_refusals("{}").await.is_err());
+    assert!(
+        state
+            .members_remove(
+                serde_json::json!({ "member_ids": [uuid::Uuid::new_v4().to_string()] })
+                    .to_string()
+                    .as_str()
+            )
+            .await
+            .is_err()
+    );
 }
 
 /// P8c-2: removal pre-flight — a member with a transport seat on a
@@ -837,7 +847,9 @@ async fn members_remove_preflight_strike_refusal_and_override() {
         .unwrap();
     let payload: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert_eq!(payload["seats_struck"].as_array().unwrap().len(), 0);
-    assert_eq!(payload["seat_failures"].as_array().unwrap().len(), 1);
+    // The overridden strike is reported as UNSTRUCK (screen-6 surface):
+    // the member is gone from the vault but their forge seat may live on.
+    assert_eq!(payload["unstruck_seats"].as_array().unwrap().len(), 1);
     // Tombstone semantics: the row remains with the removed marker set.
     let row_after: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(vault_path.join(format!("meta/members/{member_id}.json")))

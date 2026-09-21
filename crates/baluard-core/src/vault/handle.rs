@@ -123,8 +123,10 @@ pub struct MemberRemovalReport {
     /// Root Key epoch after the offboarding rotation.
     pub new_epoch: u64,
     /// P8c: forge usernames that held transport seats on the removed
-    /// rows — the caller strikes these at the provider (pre-flight,
-    /// before the rotation push).
+    /// rows. The daemon route strikes these BEFORE calling member_remove;
+    /// anything still listed here that the route did not strike (a
+    /// member added between the pre-flight and the rotation) is reported
+    /// as `unstruck_seats` for the notices surface.
     pub transport_usernames: Vec<String>,
 }
 
@@ -506,10 +508,15 @@ impl VaultHandle {
     /// the actor's own member, unknown or already-tombstoned rows.
     /// Provider seat removal is confirmed separately (S1b collaborator
     /// ops) — this call is repo-side only.
-    pub fn member_remove(
-        &mut self,
+    /// P8c-2: the removal pre-flight — authorization, batch validation,
+    /// and the transport seats to strike. Single source of truth: called
+    /// by member_remove (authoritative) and by the daemon route BEFORE
+    /// its provider strikes, so seat operations can never run for an
+    /// unauthorized caller or an invalid batch.
+    pub fn member_remove_precheck(
+        &self,
         member_ids: &[uuid::Uuid],
-    ) -> Result<MemberRemovalReport, BaluardError> {
+    ) -> Result<Vec<String>, BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
@@ -522,7 +529,6 @@ impl VaultHandle {
         self.assert_can_manage_members()?;
         let actor_member = crate::vault::members::member_id_for_device(&self.path, self.device_id);
 
-        // ── Pre-flight: validate everything before any mutation ──
         // S1a-6 review: the offboarding rotation's own preconditions are
         // checked HERE, before any row/seam mutation — otherwise a
         // rotation failure would strand tombstoned rows + deleted
@@ -580,6 +586,19 @@ impl VaultHandle {
                 transport_usernames.push(username.to_string());
             }
         }
+        Ok(transport_usernames)
+    }
+
+    pub fn member_remove(
+        &mut self,
+        member_ids: &[uuid::Uuid],
+    ) -> Result<MemberRemovalReport, BaluardError> {
+        // P8c-2: the pre-flight is the single source of truth for removal
+        // authorization + validation, and it returns the transport seats
+        // to strike. The daemon route calls THIS SAME fn before its
+        // provider strikes, so seat ops can never run for an
+        // unauthorized caller or an invalid batch.
+        let transport_usernames = self.member_remove_precheck(member_ids)?;
 
         // ── Offboard: tombstone rows, strike seats, rotate once ──
         let mut removed_members = Vec::new();
