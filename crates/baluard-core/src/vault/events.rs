@@ -68,7 +68,7 @@ fn now_secs() -> u64 {
 /// emission treats it as best-effort upstream.
 pub fn load(
     vault_path: &Path,
-    _vault_id: Uuid,
+    vault_id: Uuid,
     root_key: &[u8; 64],
 ) -> Result<Vec<ShareEvent>, BaluardError> {
     let path = events_path(vault_path);
@@ -80,6 +80,23 @@ pub fn load(
         .map_err(|e| BaluardError::from(VaultError::Metadata(format!("read events: {e}"))))?;
     let envelope = crate::vault::envelope::deserialize(&data)
         .map_err(|e| BaluardError::from(VaultError::Metadata(format!("events envelope: {e}"))))?;
+    // S1b-1 review: rebind the expected AAD (vault id, Meta object, the
+    // envelope's own epoch) — a log transplanted from another vault
+    // fails here before decryption even runs.
+    let expected_aad = crate::crypto::aead::build_aad(
+        vault_id,
+        crate::types::ObjectType::Meta,
+        Uuid::nil(),
+        None,
+        crate::ALG_AES_256_GCM,
+        envelope.header.key_epoch,
+        1,
+    );
+    if envelope.aad != expected_aad {
+        return Err(BaluardError::from(VaultError::Metadata(
+            "events log does not belong to this vault".into(),
+        )));
+    }
     let plaintext = crate::crypto::aead::decrypt(&key, &envelope)
         .map_err(|e| BaluardError::from(VaultError::Metadata(format!("events decrypt: {e}"))))?;
     serde_json::from_slice(&plaintext)

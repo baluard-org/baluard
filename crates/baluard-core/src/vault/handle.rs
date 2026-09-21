@@ -2236,9 +2236,9 @@ impl VaultHandle {
         );
     }
 
-    /// S1b-1: the Activity surface — most recent `limit` sharing events,
-    /// oldest last. Errors propagate (corrupt log = tamper, fail
-    /// closed).
+    /// S1b-1: the Activity surface — up to `limit` most recent sharing
+    /// events in CHRONOLOGICAL order (oldest first at index 0). Errors
+    /// propagate (corrupt log = tamper, fail closed).
     pub fn share_events(
         &self,
         limit: usize,
@@ -2259,7 +2259,8 @@ impl VaultHandle {
     /// S1b-1: this device's local refusal log — human lines recording
     /// commits THIS client refused during verification (policy or
     /// roster layer). Local-only by design: each client records what it
-    /// saw. Oldest last, capped like the log itself.
+    /// saw. Chronological order (oldest first), capped like the log
+    /// itself.
     pub fn refusal_log(&self, limit: usize) -> Vec<String> {
         let path = self.path.join("meta/refusals.log");
         let Ok(data) = std::fs::read_to_string(&path) else {
@@ -7237,6 +7238,11 @@ mod tests {
         let (successor_id, reset_code) = handle.member_reset(old_member_id).unwrap();
         // Double reset refused.
         assert!(handle.member_reset(old_member_id).is_err());
+        // S1b-1: the reset landed in the activity log.
+        assert_eq!(
+            handle.share_events(50).unwrap().last().unwrap().kind,
+            crate::vault::events::ShareEventKind::MemberReset
+        );
 
         // The tombstone ships: old row dead, successor row waiting.
         engine_o.commit_all(&repo_o, "member reset").unwrap();
@@ -7765,6 +7771,11 @@ mod tests {
         let new_row = crate::vault::members::member_file_by_id(&owner_path, member_c_id).unwrap();
         assert_eq!(new_row.role, crate::vault::members::MemberRole::Owner);
         assert_eq!(new_row.trust, crate::vault::members::TrustLevel::SelfTrust);
+        // S1b-1: the transfer landed in the activity log.
+        assert_eq!(
+            handle.share_events(50).unwrap().last().unwrap().kind,
+            crate::vault::events::ShareEventKind::OwnershipTransferred
+        );
 
         // The demoted old owner cannot transfer (disk-backed role), and
         // an Admin cannot remove the new Owner row.
@@ -8108,6 +8119,33 @@ mod tests {
         assert_eq!(
             events.last().unwrap().seq,
             crate::vault::events::MAX_SHARE_EVENTS as u64 + 5
+        );
+
+        // S1b-1 review: a log transplanted from another vault fails the
+        // AAD binding check (fail closed) instead of decrypting garbage.
+        let other_root = [8u8; 64];
+        let other_dir = temp.path().join("other");
+        std::fs::create_dir_all(other_dir.join("meta")).unwrap();
+        let other_vault_id = uuid::Uuid::new_v4();
+        crate::vault::events::append(
+            &other_dir,
+            other_vault_id,
+            &other_root,
+            1,
+            crate::vault::events::ShareEventKind::MemberJoined,
+            "foreign",
+        )
+        .unwrap();
+        std::fs::copy(
+            other_dir.join("meta/share-events.enc"),
+            vault.join("meta/share-events.enc"),
+        )
+        .unwrap();
+        let err = crate::vault::events::load(&vault, vault_id, &root)
+            .expect_err("transplanted log must fail closed");
+        assert!(
+            err.to_string().contains("does not belong"),
+            "expected the AAD binding refusal, got: {err}"
         );
     }
 
