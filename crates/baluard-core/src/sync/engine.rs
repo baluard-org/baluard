@@ -2437,17 +2437,25 @@ impl SyncEngine {
     /// S1b-1: record a refused commit in this device's LOCAL refusal
     /// log (meta/refusals.log, gitignored). Best-effort: a log failure
     /// must never mask the refusal itself. Capped at the last 200
-    /// lines — this is a detection surface, not an archive.
-    fn record_refusal(vault_path: &Path, line: &str) {
+    /// lines, and a repeat refusal of the SAME commit (periodic pulls
+    /// retry it) updates nothing — dedup on the commit prefix.
+    fn record_refusal(vault_path: &Path, oid12: &str, err: &str) {
         let path = vault_path.join("meta/refusals.log");
         let mut lines: Vec<String> = std::fs::read_to_string(&path)
             .map(|d| d.lines().map(|l| l.to_string()).collect())
             .unwrap_or_default();
+        if lines
+            .last()
+            .map(|l| l.contains(&format!("refused commit {oid12}")))
+            .unwrap_or(false)
+        {
+            return;
+        }
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        lines.push(format!("{stamp} {line}"));
+        lines.push(format!("{stamp} refused commit {oid12}: {err}"));
         if lines.len() > 200 {
             let drop = lines.len() - 200;
             lines.drain(..drop);
@@ -2573,11 +2581,9 @@ impl SyncEngine {
                     });
                 if let Err(e) = outcome {
                     // S1b-1: this client just DETECTED a refused commit —
-                    // record it locally (best-effort), then propagate.
-                    Self::record_refusal(
-                        &self.vault_path,
-                        &format!("refused commit {}: {e}", &oid.to_string()[..12]),
-                    );
+                    // record it locally (best-effort, deduped per commit),
+                    // then propagate.
+                    Self::record_refusal(&self.vault_path, &oid.to_string()[..12], &e.to_string());
                     return Err(e);
                 }
             }
@@ -2658,16 +2664,12 @@ impl SyncEngine {
                         )
                         .map(|_| signer)
                     });
-                if let Err(e) = outcome {
-                    // S1b-1: clone-path detection — same local record.
-                    if let Some(workdir) = repo.workdir() {
-                        Self::record_refusal(
-                            workdir,
-                            &format!("refused commit {}: {e}", &oid.to_string()[..12]),
-                        );
-                    }
-                    return Err(e);
-                }
+                // S1b-1: clone-path detection — NO local record here:
+                // the clone caller deletes the whole target directory on
+                // verification failure, so anything recorded would die
+                // with it. The propagated error is the signal; refusal
+                // records belong to an existing vault (pull path above).
+                outcome?;
             }
         }
         Ok(())
