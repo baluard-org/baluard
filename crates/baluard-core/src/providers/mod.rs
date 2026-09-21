@@ -12,7 +12,7 @@ pub mod types;
 pub use types::{
     CollaboratorPermission, CollaboratorStatus, DeviceFlowSession, DeviceFlowStatus, ForgeProvider,
     OAuthStart, Provider, ProviderConfig, ProviderInfo, ProviderToken, code_challenge_s256,
-    generate_code_verifier, generate_state,
+    generate_code_verifier, generate_state, split_owner_repo,
 };
 
 use types::ProviderError;

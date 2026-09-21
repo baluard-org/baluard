@@ -264,7 +264,7 @@ pub fn reset_member(
         removed: None,
     };
     write_member(vault_path, &successor)?;
-    let code = create_invite(vault_path, vault_id, old.role, Some(successor_id))?;
+    let code = create_invite(vault_path, vault_id, old.role, Some(successor_id), None)?;
     Ok((successor_id, code))
 }
 
@@ -620,6 +620,12 @@ pub struct PendingInviteFile {
     /// cannot rename themselves through the introduction).
     #[serde(default)]
     pub target_member: Option<Uuid>,
+    /// P8c: the joiner's forge username for the transport seat. The
+    /// owner grants a read-only seat at invite time (the joiner must
+    /// clone to introduce) and upgrades it to write at approval. `None`
+    /// = no transport seat managed (vault synced some other way).
+    #[serde(default)]
+    pub transport_username: Option<String>,
 }
 
 /// Joiner-side self-introduction (§4.1 join queue, offline thin
@@ -732,6 +738,7 @@ pub fn create_invite(
     vault_id: Uuid,
     role: MemberRole,
     target_member: Option<Uuid>,
+    transport_username: Option<String>,
 ) -> Result<String, BaluardError> {
     // S1a-7 review: an Owner invite would mint a SECOND owner row at
     // approval, violating the single-owner invariant. Ownership changes
@@ -754,6 +761,7 @@ pub fn create_invite(
         // the code present at introduction — same domain on both sides).
         secret_hash: sha256_hex(secret_hex.as_bytes()),
         target_member,
+        transport_username,
     };
     let dir = vault_path.join(INVITES_DIR);
     std::fs::create_dir_all(&dir)
@@ -1266,5 +1274,32 @@ mod tests {
         std::fs::create_dir_all(vault.join("meta")).unwrap();
         std::fs::write(vault.join("meta/member-unlock.json"), "{broken").unwrap();
         assert_eq!(join_status(vault), (false, false));
+    }
+
+    /// P8c: the transport username rides the pending invite record so
+    /// approval can upgrade the seat.
+    #[test]
+    fn create_invite_persists_transport_username() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault_id = uuid::Uuid::new_v4();
+        let code = create_invite(
+            temp.path(),
+            vault_id,
+            MemberRole::Editor,
+            None,
+            Some("gituser".into()),
+        )
+        .unwrap();
+        let raw = b64_decode(&code).unwrap();
+        let invite: InviteCode = serde_json::from_slice(&raw).unwrap();
+        let pending = read_pending_invite(temp.path(), invite.invite_id).unwrap();
+        assert_eq!(pending.transport_username.as_deref(), Some("gituser"));
+
+        // No username = None (invite-only sharing still works).
+        let code = create_invite(temp.path(), vault_id, MemberRole::Viewer, None, None).unwrap();
+        let raw = b64_decode(&code).unwrap();
+        let invite: InviteCode = serde_json::from_slice(&raw).unwrap();
+        let pending = read_pending_invite(temp.path(), invite.invite_id).unwrap();
+        assert_eq!(pending.transport_username, None);
     }
 }

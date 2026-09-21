@@ -617,6 +617,7 @@
     "inviteButton": "Crear invitación",
     "inviteCreated": "Invitación creada",
     "inviteHint": "Comparte este código de un solo uso con la persona que quieres invitar. Sirve para un único ingreso.",
+    "usernamePlaceholder": "Su nombre de usuario de git (para que pueda descargar la bóveda) — opcional",
     "roleEditor": "Editor (lectura y escritura)",
     "roleViewer": "Lector (solo lectura)",
     "roleAdmin": "Administrador",

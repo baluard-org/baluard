@@ -2186,8 +2186,70 @@ impl VaultState {
                 );
             }
         };
-        let code = handle.invite_create(role).map_err(|e| e.to_string())?;
-        Ok(serde_json::json!({ "code": code }).to_string())
+        let transport_username = v["transport_username"]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let code = handle
+            .invite_create(role, transport_username.clone())
+            .map_err(|e| e.to_string())?;
+
+        // P8c: grant the read-only transport seat so the joiner can clone.
+        // Best-effort: a seat failure never fails the invite — the
+        // response reports it and the owner can grant access manually.
+        let mut seat_granted = false;
+        let mut seat_error: Option<String> = None;
+        if let Some(username) = transport_username {
+            match self.vault_transport_coords() {
+                Some((provider, owner, repo)) => {
+                    match crate::providers::add_collaborator(
+                        provider,
+                        &owner,
+                        &repo,
+                        &username,
+                        baluard_core::providers::types::CollaboratorPermission::ReadOnly,
+                    )
+                    .await
+                    {
+                        Ok(_) => seat_granted = true,
+                        Err(e) => seat_error = Some(e.to_string()),
+                    }
+                }
+                None => {
+                    seat_error =
+                        Some("vault has no provider remote; grant clone access manually".into())
+                }
+            }
+        }
+        Ok(
+            serde_json::json!({ "code": code, "seat_granted": seat_granted, "seat_error": seat_error })
+                .to_string(),
+        )
+    }
+
+    /// P8c: the (provider, owner, repo) coordinates of this vault's
+    /// remote, resolved from the on-disk registry entry. None = no
+    /// provider remote (local-only vault) or an unparseable URL.
+    fn vault_transport_coords(
+        &self,
+    ) -> Option<(baluard_core::providers::Provider, String, String)> {
+        let reg = baluard_core::vault::registry::VaultRegistry::load_locked().ok()?;
+        for entry in reg.vaults.values() {
+            if entry.path == self.vault_path {
+                let provider = match entry.provider.as_deref()? {
+                    "github" => baluard_core::providers::Provider::GitHub,
+                    "gitlab" => baluard_core::providers::Provider::GitLab,
+                    "codeberg" => baluard_core::providers::Provider::Codeberg,
+                    _ => return None,
+                };
+                let remote_url = entry.remote_url.clone()?;
+                let (owner, repo) =
+                    baluard_core::providers::split_owner_repo(provider, &remote_url)?;
+                return Some((provider, owner, repo));
+            }
+        }
+        None
     }
 
     /// Join queue: well-shaped staged requests plus the malformed count.
@@ -2224,10 +2286,43 @@ impl VaultState {
         let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
         let req_id = uuid::Uuid::parse_str(v["req_id"].as_str().ok_or("missing req_id")?)
             .map_err(|e| e.to_string())?;
+        // P8c: read the invite's transport username BEFORE the approval
+        // consumes it, so the seat can be upgraded to write afterwards.
+        let transport_username = {
+            let (requests, _) = handle.join_queue_list().map_err(|e| e.to_string())?;
+            requests.iter().find(|r| r.req_id == req_id).and_then(|r| {
+                baluard_core::vault::members::read_pending_invite(&handle.path, r.invite_id)
+                    .ok()
+                    .and_then(|p| p.transport_username)
+            })
+        };
         let member_id = handle
             .approve_queued_join(req_id)
             .map_err(|e| e.to_string())?;
-        Ok(serde_json::json!({ "member_id": member_id.to_string() }).to_string())
+
+        // P8c: upgrade the transport seat to write (editor+ roles ride
+        // push access per the staging rule). Best-effort: the approval
+        // stands either way; a failed upgrade surfaces at the joiner's
+        // first push and on screen 6.
+        let mut seat_upgraded = false;
+        if let Some(username) = transport_username.filter(|u| !u.trim().is_empty()) {
+            if let Some((provider, owner, repo)) = self.vault_transport_coords() {
+                seat_upgraded = crate::providers::add_collaborator(
+                    provider,
+                    &owner,
+                    &repo,
+                    &username,
+                    baluard_core::providers::types::CollaboratorPermission::Write,
+                )
+                .await
+                .is_ok();
+            }
+        }
+        Ok(serde_json::json!({
+            "member_id": member_id.to_string(),
+            "seat_upgraded": seat_upgraded,
+        })
+        .to_string())
     }
 
     /// Deny (drop) a queued request.
