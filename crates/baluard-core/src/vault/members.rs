@@ -86,6 +86,11 @@ pub struct MemberFile {
     /// dead. Value = unix seconds at removal.
     #[serde(default)]
     pub removed: Option<u64>,
+    /// P8c: the member's forge username for the transport seat, recorded
+    /// at approval so offboarding can strike the seat without asking
+    /// anyone. `None` = no managed seat.
+    #[serde(default)]
+    pub transport_username: Option<String>,
 }
 
 /// S1a-5: reset provenance on a tombstoned member row.
@@ -262,6 +267,7 @@ pub fn reset_member(
         identity_rotated_at: None,
         reset: None,
         removed: None,
+        transport_username: old.transport_username.clone(),
     };
     write_member(vault_path, &successor)?;
     let code = create_invite(vault_path, vault_id, old.role, Some(successor_id), None)?;

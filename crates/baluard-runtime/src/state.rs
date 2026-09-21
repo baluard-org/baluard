@@ -2355,6 +2355,83 @@ impl VaultState {
         Ok("{}".into())
     }
 
+    /// P8c-2: offboard members with the transport pre-flight. Each
+    /// removed member's provider seat is struck BEFORE the rotation; a
+    /// failed strike refuses the removal unless `offline_override` is
+    /// explicit (provider outage / offline admin). The strike is network
+    /// I/O and runs WITHOUT the vault write lock; only the rotation
+    /// itself takes the lock.
+    pub async fn members_remove(&self, payload: &str) -> Result<String, String> {
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let mut ids = Vec::new();
+        for x in v["member_ids"].as_array().ok_or("missing member_ids")? {
+            let s = x.as_str().ok_or("member id must be a string")?;
+            ids.push(uuid::Uuid::parse_str(s).map_err(|e| e.to_string())?);
+        }
+        let offline_override = v["offline_override"].as_bool().unwrap_or(false);
+
+        // Pre-flight capture under a READ lock: the seats to strike,
+        // before any mutation.
+        let (vault_id, usernames) = {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault is locked")?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked. Unlock first.".into());
+            }
+            let rows = baluard_core::vault::members::list_members(&handle.path)
+                .map_err(|e| e.to_string())?;
+            let wanted: std::collections::HashSet<uuid::Uuid> = ids.iter().copied().collect();
+            let names: Vec<String> = rows
+                .iter()
+                .filter(|m| wanted.contains(&m.id))
+                .filter_map(|m| m.transport_username.clone())
+                .filter(|u| !u.trim().is_empty())
+                .collect();
+            (handle.vault_id, names)
+        };
+
+        // Strike seats before the rotation. A failure refuses the whole
+        // removal unless the admin explicitly overrides: a removed member
+        // keeping push access is worse than delaying the offboarding.
+        let mut seats_struck = Vec::new();
+        let mut seat_failures = Vec::new();
+        if !usernames.is_empty() {
+            if let Some((provider, owner, repo)) = self.vault_transport_coords(vault_id) {
+                for username in &usernames {
+                    match crate::providers::remove_collaborator(provider, &owner, &repo, username)
+                        .await
+                    {
+                        Ok(()) => seats_struck.push(username.clone()),
+                        Err(e) => seat_failures.push(format!("{username}: {e}")),
+                    }
+                }
+            }
+            if !seat_failures.is_empty() && !offline_override {
+                return Err(format!(
+                    "provider seat removal failed ({}); the offboarding was NOT run. Retry, or repeat with offline_override to remove anyway.",
+                    seat_failures.join("; ")
+                ));
+            }
+        }
+
+        // The rotation: local crypto + git only, under the write lock.
+        let report = {
+            let mut guard = self.inner.write().await;
+            let handle = guard.as_mut().ok_or("Vault is locked")?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked. Unlock first.".into());
+            }
+            handle.member_remove(&ids).map_err(|e| e.to_string())?
+        };
+        Ok(serde_json::json!({
+            "removed": report.removed_members,
+            "new_epoch": report.new_epoch,
+            "seats_struck": seats_struck,
+            "seat_failures": seat_failures,
+        })
+        .to_string())
+    }
+
     /// Activity surface: the sharing event log (human sentences),
     /// newest last.
     pub async fn activity_events(&self, payload: &str) -> Result<String, String> {

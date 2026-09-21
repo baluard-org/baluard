@@ -122,6 +122,10 @@ pub struct MemberRemovalReport {
     pub removed_devices: Vec<uuid::Uuid>,
     /// Root Key epoch after the offboarding rotation.
     pub new_epoch: u64,
+    /// P8c: forge usernames that held transport seats on the removed
+    /// rows — the caller strikes these at the provider (pre-flight,
+    /// before the rotation push).
+    pub transport_usernames: Vec<String>,
 }
 
 impl VaultHandle {
@@ -535,6 +539,9 @@ impl VaultHandle {
             load_device_privkeys(&self.path, self.device_id, seal_key.as_ref())?;
         }
         let mut seen = std::collections::BTreeSet::new();
+        // P8c: transport seats to strike at the provider BEFORE the
+        // rotation push (collected during pre-flight row reads).
+        let mut transport_usernames: Vec<String> = Vec::new();
         for id in member_ids {
             if !seen.insert(*id) {
                 return Err(VaultError::InvalidOperation(
@@ -562,6 +569,15 @@ impl VaultHandle {
                     "member {id} is already tombstoned"
                 ))
                 .into());
+            }
+            // P8c: remember the transport seat so the caller can strike it
+            // at the provider BEFORE pushing the rotation.
+            if let Some(username) = row
+                .transport_username
+                .as_deref()
+                .filter(|u| !u.trim().is_empty())
+            {
+                transport_usernames.push(username.to_string());
             }
         }
 
@@ -607,6 +623,7 @@ impl VaultHandle {
             removed_members,
             removed_devices: removed_devices_set.into_iter().collect(),
             new_epoch,
+            transport_usernames,
         })
     }
 
@@ -951,6 +968,9 @@ impl VaultHandle {
                 identity_rotated_at: None,
                 reset: None,
                 removed: None,
+                // P8c: the seat rides the record so offboarding can strike
+                // it without asking anyone.
+                transport_username: invite.transport_username.clone(),
             };
             crate::vault::members::write_member(&self.path, &member)?;
             member
@@ -9186,5 +9206,45 @@ mod tests {
             crate::vault::device_privkey::read_device_id(path),
             Some(dev2_id)
         );
+    }
+
+    /// P8c-2: the invite's transport username rides the approval into the
+    /// member record, so offboarding can strike the seat later.
+    #[test]
+    fn approve_join_records_transport_username() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let code = handle
+            .invite_create(
+                crate::vault::members::MemberRole::Editor,
+                Some("gituser".into()),
+            )
+            .unwrap();
+        // The invite record must be committed so the joiner's clone
+        // carries it (same flow as the S1a-2 ceremony).
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+
+        let joiner = temp.path().join("joiner");
+        git2::Repository::clone(owner.to_str().unwrap(), &joiner).unwrap();
+        let intro_code =
+            crate::vault::members::create_introduction(&joiner, &code, "member-pass", "Joiner")
+                .unwrap();
+        let member_id = handle.approve_join(&intro_code).unwrap();
+        let row = crate::vault::members::member_file_by_id(&owner, member_id).unwrap();
+        assert_eq!(row.transport_username.as_deref(), Some("gituser"));
     }
 }
