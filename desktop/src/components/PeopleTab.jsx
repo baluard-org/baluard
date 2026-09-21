@@ -34,6 +34,8 @@ export default function PeopleTab() {
   const [refusals, setRefusals] = createSignal([]);
   const [inviteCode, setInviteCode] = createSignal(null);
   const [inviteRole, setInviteRole] = createSignal("editor");
+  const [inviteUsername, setInviteUsername] = createSignal("");
+  const [seatError, setSeatError] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
 
   async function loadMembers() {
@@ -80,8 +82,14 @@ export default function PeopleTab() {
   async function doInvite() {
     setBusy(true);
     try {
-      const data = JSON.parse(await daemon("members.invite", { role: inviteRole() }));
-      setInviteCode(data.code);
+      const res = JSON.parse(
+        await daemon("members.invite", {
+          role: inviteRole(),
+          transport_username: inviteUsername().trim(),
+        }),
+      );
+      setInviteCode(res.code);
+      setSeatError(res.seat_error || null);
       toastSuccess(t("people.inviteCreated"));
       await loadMembers();
     } catch (e) {
@@ -140,6 +148,13 @@ export default function PeopleTab() {
             {t("people.inviteButton")}
           </button>
         </div>
+        <input
+          value={inviteUsername()}
+          onInput={(e) => setInviteUsername(e.currentTarget.value)}
+          maxlength="128"
+          class="w-full mt-2 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+          placeholder={t("people.usernamePlaceholder")}
+        />
         <Show when={inviteCode()}>
           <div class="mt-3 p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
             <p class="text-[10px] text-[var(--color-muted)] mb-1">{t("people.inviteHint")}</p>
@@ -150,6 +165,9 @@ export default function PeopleTab() {
               <CopyButton value={inviteCode()} />
             </div>
           </div>
+          <Show when={seatError()}>
+            <p class="mt-2 text-[10px] text-amber-500">{seatError()}</p>
+          </Show>
         </Show>
       </section>
 

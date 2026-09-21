@@ -780,7 +780,7 @@ async fn join_introduce_validates_consumes_and_polls() {
     handle.unlock(MASTER).unwrap();
     let vault_id = handle.vault_id;
     let code = handle
-        .invite_create(baluard_core::vault::members::MemberRole::Editor)
+        .invite_create(baluard_core::vault::members::MemberRole::Editor, None)
         .expect("invite");
     drop(handle);
 

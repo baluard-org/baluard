@@ -444,12 +444,19 @@ impl VaultHandle {
     pub fn invite_create(
         &mut self,
         role: crate::vault::members::MemberRole,
+        transport_username: Option<String>,
     ) -> Result<String, BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
-        crate::vault::members::create_invite(&self.path, self.vault_id, role, None)
+        crate::vault::members::create_invite(
+            &self.path,
+            self.vault_id,
+            role,
+            None,
+            transport_username,
+        )
     }
 
     /// S1a-5: member reset (§5.F-8 / scenario L — "tablet died, phrase
@@ -6802,7 +6809,7 @@ mod tests {
 
         // Owner: invite an editor. The code travels out-of-band.
         let code = handle
-            .invite_create(crate::vault::members::MemberRole::Editor)
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
             .unwrap();
 
         let engine_o = crate::sync::engine::SyncEngine::new(
@@ -6942,7 +6949,7 @@ mod tests {
         let owner_seal = handle.devkey_seal();
 
         let code = handle
-            .invite_create(crate::vault::members::MemberRole::Admin)
+            .invite_create(crate::vault::members::MemberRole::Admin, None)
             .unwrap();
 
         let engine_o = crate::sync::engine::SyncEngine::new(
@@ -7056,7 +7063,7 @@ mod tests {
 
         // Genesis: owner member record carries the creation identity vk.
         let code = handle
-            .invite_create(crate::vault::members::MemberRole::Editor)
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
             .unwrap();
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
@@ -7183,7 +7190,7 @@ mod tests {
         let owner_member_id = crate::vault::members::owner_member_id(&owner_path).unwrap();
 
         let code = handle
-            .invite_create(crate::vault::members::MemberRole::Editor)
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
             .unwrap();
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
@@ -7227,7 +7234,7 @@ mod tests {
         // approve joins, or reset members.
         assert!(
             joiner
-                .invite_create(crate::vault::members::MemberRole::Viewer)
+                .invite_create(crate::vault::members::MemberRole::Viewer, None)
                 .is_err()
         );
         assert!(joiner.member_reset(old_member_id).is_err());
@@ -7464,7 +7471,7 @@ mod tests {
         };
 
         let code = handle
-            .invite_create(crate::vault::members::MemberRole::Editor)
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
             .unwrap();
         let engine_o = crate::sync::engine::SyncEngine::new(
             &owner_path,
@@ -7510,7 +7517,7 @@ mod tests {
         let mut member_devices = vec![joiner_device];
         for name in ["MemberC", "MemberD"] {
             let code_n = handle
-                .invite_create(crate::vault::members::MemberRole::Editor)
+                .invite_create(crate::vault::members::MemberRole::Editor, None)
                 .unwrap();
             engine_o.commit_all(&repo_o, "invite").unwrap();
             let path_n = temp.path().join(name.to_lowercase());
@@ -7719,7 +7726,7 @@ mod tests {
         let mut members = Vec::new();
         for (name, pass) in [("MemberC", "pass-C"), ("MemberD", "pass-D")] {
             let code_n = handle
-                .invite_create(crate::vault::members::MemberRole::Editor)
+                .invite_create(crate::vault::members::MemberRole::Editor, None)
                 .unwrap();
             engine_o.commit_all(&repo_o, "invite").unwrap();
             let path_n = temp.path().join(name.to_lowercase());
@@ -7754,7 +7761,7 @@ mod tests {
         assert!(locked.transfer_ownership(member_c_id).is_err());
         assert!(
             handle
-                .invite_create(crate::vault::members::MemberRole::Owner)
+                .invite_create(crate::vault::members::MemberRole::Owner, None)
                 .is_err()
         );
 
@@ -7850,7 +7857,7 @@ mod tests {
 
         // Editor invite + introduction (the code travels out-of-band).
         let code1 = handle
-            .invite_create(crate::vault::members::MemberRole::Editor)
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
             .unwrap();
         engine_o.commit_all(&repo_o, "invite").unwrap();
         let joiner_path = temp.path().join("joiner");
@@ -7941,7 +7948,7 @@ mod tests {
         // Elevated gate through the queue: an Admin invite without a
         // verified card refuses, and the request stays queued for retry.
         let code3 = handle
-            .invite_create(crate::vault::members::MemberRole::Admin)
+            .invite_create(crate::vault::members::MemberRole::Admin, None)
             .unwrap();
         engine_o.commit_all(&repo_o, "invite 3").unwrap();
         let joiner3_path = temp.path().join("joiner3");
@@ -7993,7 +8000,7 @@ mod tests {
 
         // Join a member: MemberJoined lands.
         let code = handle
-            .invite_create(crate::vault::members::MemberRole::Editor)
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
             .unwrap();
         engine_o.commit_all(&repo_o, "invite").unwrap();
         let joiner_path = temp.path().join("joiner");

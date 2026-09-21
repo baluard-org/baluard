@@ -617,6 +617,7 @@
     "inviteButton": "Create invite",
     "inviteCreated": "Invite created",
     "inviteHint": "Share this one-time code with the person you want to invite. It works for a single join.",
+    "usernamePlaceholder": "Their git username (so they can download the vault) — optional",
     "roleEditor": "Editor (read and write)",
     "roleViewer": "Viewer (read only)",
     "roleAdmin": "Admin",

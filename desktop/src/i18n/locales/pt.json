@@ -617,6 +617,7 @@
     "inviteButton": "Criar convite",
     "inviteCreated": "Convite criado",
     "inviteHint": "Compartilhe este código de uso único com a pessoa que você quer convidar. Ele serve para um único acesso.",
+    "usernamePlaceholder": "Nome de usuário git da pessoa (para que ela possa baixar o cofre) — opcional",
     "roleEditor": "Editor (leitura e escrita)",
     "roleViewer": "Leitor (somente leitura)",
     "roleAdmin": "Administrador",

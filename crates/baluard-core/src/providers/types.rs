@@ -515,6 +515,58 @@ pub(crate) fn now_secs() -> u64 {
         .as_secs()
 }
 
+/// P8c: extract `(owner, repo)` from a clone URL for the collaborator
+/// APIs. Handles `https://host/owner/repo(.git)`, `ssh://`, and
+/// `git@host:owner/repo(.git)` forms. GitHub and Forgejo require exactly
+/// two path segments; GitLab accepts nested subgroup paths (everything
+/// but the last segment is the owner path). Returns None when the URL
+/// does not match the provider's expected shape — callers treat that as
+/// "no transport seat possible".
+pub fn split_owner_repo(provider: Provider, url: &str) -> Option<(String, String)> {
+    let s = url.trim();
+    let s = s.strip_suffix('/').unwrap_or(s);
+    let s = s.strip_suffix(".git").unwrap_or(s);
+    let path = if let Some(pos) = s.find("://") {
+        let rest = &s[pos + 3..];
+        let start = rest.find('/')?;
+        &rest[start + 1..]
+    } else {
+        let at = s.rfind('@')?;
+        let colon = s[at..].find(':')?;
+        &s[at + colon + 1..]
+    };
+    let path = path.trim_start_matches('/').trim_end_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    let mut segments: Vec<&str> = path.split('/').collect();
+    let repo = segments.pop()?;
+    if repo.is_empty() {
+        return None;
+    }
+    match provider {
+        // GitHub and Forgejo repos are strictly owner/repo.
+        Provider::GitHub | Provider::Codeberg => {
+            if segments.len() != 1 {
+                return None;
+            }
+            let owner = segments[0];
+            if owner.is_empty() {
+                return None;
+            }
+            Some((owner.to_string(), repo.to_string()))
+        }
+        // GitLab supports nested subgroups: the full path minus the last
+        // segment is the project owner path.
+        Provider::GitLab => {
+            if segments.is_empty() || segments.iter().any(|s| s.is_empty()) {
+                return None;
+            }
+            Some((segments.join("/"), repo.to_string()))
+        }
+    }
+}
+
 /// Minimal percent-encoder for path/query segments. Encodes everything except
 /// unreserved chars (RFC 3986). Shared helper used by providers.
 pub(crate) fn urlencoding_encode(input: &str) -> String {
@@ -974,6 +1026,36 @@ mod tests {
         // No explicit override -> env var.
         let config = ProviderConfig::defaults();
         assert_eq!(config.effective_client_id(Provider::GitHub), "from-env");
+    }
+
+    #[test]
+    fn split_owner_repo_handles_provider_shapes() {
+        // GitHub: https + .git, exactly owner/repo.
+        assert_eq!(
+            split_owner_repo(Provider::GitHub, "https://github.com/o/r.git"),
+            Some(("o".into(), "r".into()))
+        );
+        // Codeberg: git@ scp form.
+        assert_eq!(
+            split_owner_repo(Provider::Codeberg, "git@codeberg.org:o/r.git"),
+            Some(("o".into(), "r".into()))
+        );
+        // GitLab nested subgroups: everything but the last segment is the
+        // owner path.
+        assert_eq!(
+            split_owner_repo(Provider::GitLab, "https://gitlab.com/g/sub/r"),
+            Some(("g/sub".into(), "r".into()))
+        );
+        // GitHub with subgroups is not a valid repo URL.
+        assert_eq!(
+            split_owner_repo(Provider::GitHub, "https://github.com/g/sub/r"),
+            None
+        );
+        // Not a repo URL.
+        assert_eq!(
+            split_owner_repo(Provider::GitHub, "https://github.com"),
+            None
+        );
     }
 }
 
