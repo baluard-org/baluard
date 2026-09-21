@@ -707,10 +707,18 @@ async fn sharing_surfaces_happy_path_and_role_guard() {
     let err = state.members_invite("{}").await.unwrap_err();
     assert!(err.contains("invalid or missing 'role'"), "err: {err}");
 
-    // Mint an editor invite.
-    let invite: serde_json::Value =
-        serde_json::from_str(&state.members_invite(r#"{"role":"editor"}"#).await.unwrap()).unwrap();
+    // Mint an editor invite. A transport username with NO provider
+    // remote reports the seat failure but still creates the invite.
+    let invite: serde_json::Value = serde_json::from_str(
+        &state
+            .members_invite(r#"{"role":"editor", "transport_username":"gituser"}"#)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     assert!(!invite["code"].as_str().unwrap_or_default().is_empty());
+    assert_eq!(invite["seat_granted"], false);
+    assert!(invite["seat_error"].is_string());
 
     // Members list: the genesis owner row, not reset/removed.
     let rows: serde_json::Value =
