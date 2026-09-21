@@ -884,7 +884,11 @@ impl SyncEngine {
         // skips when the remote tip already carries this head). Failing the
         // push here would trade safe data for telemetry.
         if let Err(e) = self.announce_head(repo, remote_name) {
-            let _ = e; // advisory channel; retried on the next cycle
+            // Advisory channel (a missed announcement only delays
+            // detection and the next push re-announces) — but never
+            // silent: branch protection on the forge or a wedged gossip
+            // ref would otherwise disable detection with no trace.
+            eprintln!("warning: gossip announce failed: {e}");
         }
 
         Ok(())
@@ -1042,10 +1046,13 @@ impl SyncEngine {
     /// S1b-3: rollback detection — every head announcement on the gossip
     /// branch must be contained in the fetched main history. A contained
     /// violation means main moved backwards under the fleet. Deny-only
-    /// channel: gossip can refuse a pull, never admit content. Unknown
-    /// announcing devices (offboarding, stale gossip) are SKIPPED — a
-    /// removed device's old true announcements must not wedge survivors,
-    /// and unverifiable files carry zero enforcement power anyway.
+    /// channel: gossip can refuse a pull, never admit content, and only
+    /// a signature verifying against a roster key grants ANY refusal
+    /// power — unparseable and unverifiable files are equally inert
+    /// (removed devices' stale announcements must not wedge survivors;
+    /// junk files must not become a pull DoS). The hard errors sit AFTER
+    /// authentication: a rostered device signing an unparseable oid is a
+    /// deliberate act, not noise.
     fn check_head_gossip(
         repo: &Repository,
         remote_name: &str,
@@ -1082,8 +1089,13 @@ impl SyncEngine {
             let Ok(blob) = repo.find_blob(entry.id()) else {
                 continue; // non-file entry
             };
-            let ann: HeadAnnouncement = serde_json::from_slice(blob.content())
-                .map_err(|_| SyncError::Git("gossip: malformed announcement file".into()))?;
+            // Unparseable = unverifiable = INERT (same deny-only rule as
+            // a bad signature): the gossip branch is writable by any
+            // device, so parsing before authentication would let an
+            // attacker wedge every pull with one junk file.
+            let Ok(ann) = serde_json::from_slice::<HeadAnnouncement>(blob.content()) else {
+                continue;
+            };
             // Identity = whichever roster key verifies the signature (the
             // announcing device string is display-only). No roster key
             // verifies → unenforceable, skip: a removed device's stale
@@ -6931,5 +6943,138 @@ mod tests {
         let vengine = SyncEngine::new(&vpath, "victim", None);
         let vrepo = vengine.open_repo().unwrap();
         vengine.pull(&vrepo, "origin").unwrap();
+    }
+
+    /// S1b-3: the PRODUCTION clone path (engine.clone) refuses a
+    /// rolled-back remote outright and deletes the target directory —
+    /// no checked-out unverified copy may survive.
+    #[test]
+    fn gossip_rollback_refused_on_engine_clone() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine0) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine_a = SyncEngine::new(dir.path(), "device-a", None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_bare(&remote_path).unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine_a.commit_all(&repo_a, "c1").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+        std::fs::write(dir.path().join("two.enc"), b"\x02").unwrap();
+        engine_a.commit_all(&repo_a, "c2").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        // Force-rewind remote main to H1.
+        let branch = SyncEngine::resolve_default_branch(&repo_a);
+        let h1 = repo_a
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .parent(0)
+            .unwrap()
+            .id();
+        repo_a
+            .reference(
+                &format!("refs/heads/{branch}"),
+                h1,
+                true,
+                "simulated rollback",
+            )
+            .unwrap();
+        let mut remote = repo_a.find_remote("origin").unwrap();
+        let mut push_opts = PushOptions::new();
+        push_opts.remote_callbacks(crate::sync::credentials::build_callbacks(
+            &engine_a.credential_config,
+        ));
+        remote
+            .push(
+                &[&format!("+refs/heads/{branch}:refs/heads/{branch}")],
+                Some(&mut push_opts),
+            )
+            .unwrap();
+
+        // Production clone must refuse and clean up.
+        let vdir = tempfile::tempdir().unwrap();
+        let vpath = vdir.path().join("victim");
+        let err = SyncEngine::clone(&remote_url, &vpath, true)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("rollback detected"),
+            "expected rollback refusal, got: {err}"
+        );
+        assert!(!vpath.exists(), "target dir must be deleted on refusal");
+    }
+
+    /// S1b-3: two devices announcing leave BOTH files on the gossip
+    /// branch — the treebuilder must preserve sibling announcements.
+    #[test]
+    fn gossip_accumulates_across_devices() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_b = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let id_b = uuid::Uuid::new_v4();
+        let (dir, _engine0) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        enroll_device(dir.path(), &id_b, &key_b);
+        setup_signing_keys_with(dir.path(), &key_a);
+        let engine_a = SyncEngine::new(dir.path(), "device-a", None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        Repository::init_bare(&remote_path).unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+        engine_a.add_remote(&repo_a, "origin", &remote_url).unwrap();
+        std::fs::write(dir.path().join("one.enc"), b"\x01").unwrap();
+        engine_a.commit_all(&repo_a, "c1").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        // Device B clones (wildcard fetch — carries the gossip branch),
+        // enrolls its own key locally, and pushes an announcement.
+        let clone_dir = tempfile::tempdir().unwrap();
+        let cpath = clone_dir.path().join("b");
+        Repository::clone(&remote_url, &cpath).unwrap();
+        enroll_device(&cpath, &id_b, &key_b);
+        setup_signing_keys_with(&cpath, &key_b);
+        let engine_b = SyncEngine::new(&cpath, "device-b", None);
+        let repo_b = engine_b.open_repo().unwrap();
+        std::fs::write(cpath.join("two.enc"), b"\x02").unwrap();
+        engine_b.commit_all(&repo_b, "c2").unwrap();
+        engine_b.push(&repo_b, "origin").unwrap();
+
+        // The gossip tree on the remote carries BOTH devices' files.
+        let bare = Repository::open(&remote_path).unwrap();
+        let tip = bare
+            .find_reference("refs/heads/baluard-gossip")
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let heads = tip
+            .tree()
+            .unwrap()
+            .get_path(std::path::Path::new("heads"))
+            .unwrap();
+        let heads_tree = bare.find_tree(heads.id()).unwrap();
+        let names: Vec<String> = heads_tree
+            .iter()
+            .map(|e| String::from_utf8_lossy(e.name_bytes()).to_string())
+            .collect();
+        assert!(names.contains(&"device-a.json".to_string()), "{names:?}");
+        assert!(names.contains(&"device-b.json".to_string()), "{names:?}");
+
+        // A pulls B's main commit — announcements contained, no refusal.
+        let result = engine_a.pull(&repo_a, "origin").unwrap();
+        assert!(matches!(
+            result,
+            PullResult::FastForward | PullResult::Merged | PullResult::AlreadyUpToDate
+        ));
     }
 }
