@@ -423,7 +423,19 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        crate::vault::contacts::reconcile_stale_contacts(&self.path, &self.contacts_key()?)
+        let downgraded =
+            crate::vault::contacts::reconcile_stale_contacts(&self.path, &self.contacts_key()?)?;
+        // S1b-1: activity log (best-effort).
+        if !downgraded.is_empty() {
+            self.emit_share_event(
+                crate::vault::events::ShareEventKind::ContactTrustReset,
+                format!(
+                    "trust reset for {} contact(s): their identity was rotated or removed",
+                    downgraded.len()
+                ),
+            );
+        }
+        Ok(downgraded)
     }
 
     /// S1a-2: mint a one-time member invite (owner side). The returned
@@ -463,7 +475,14 @@ impl VaultHandle {
             )
             .into());
         }
-        crate::vault::members::reset_member(&self.path, self.vault_id, member_id)
+        let (successor, code) =
+            crate::vault::members::reset_member(&self.path, self.vault_id, member_id)?;
+        // S1b-1: activity log (best-effort).
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::MemberReset,
+            format!("member reset; re-join with the new invite (successor {successor})"),
+        );
+        Ok((successor, code))
     }
 
     /// S1a-6: member removal + offboarding (§4.2, scenario J; the
@@ -568,6 +587,15 @@ impl VaultHandle {
             VaultState::Unlocked(u) => u.current_epoch,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
+        // S1b-1: activity log (best-effort).
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::MemberRemoved,
+            format!(
+                "removed {} member(s); {} device seat(s) struck; vault re-keyed",
+                removed_members.len(),
+                removed_devices_set.len()
+            ),
+        );
         Ok(MemberRemovalReport {
             removed_members,
             removed_devices: removed_devices_set.into_iter().collect(),
@@ -604,7 +632,14 @@ impl VaultHandle {
                 VaultError::InvalidOperation("this vault has no owner member row".into()).into(),
             );
         };
-        crate::vault::members::transfer_ownership(&self.path, old_member_id, new_member_id)
+        let demoted = old_member_id;
+        crate::vault::members::transfer_ownership(&self.path, old_member_id, new_member_id)?;
+        // S1b-1: activity log (best-effort).
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::OwnershipTransferred,
+            format!("ownership transferred (member {demoted} is now admin)"),
+        );
+        Ok(())
     }
 
     /// S1a-8: stage a received introduction into the repo-backed join
@@ -920,6 +955,20 @@ impl VaultHandle {
                 member_id: member.id,
             },
         )?;
+        // S1b-1: activity log (best-effort).
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::MemberJoined,
+            format!(
+                "member \"{}\" joined as {}",
+                member.display_name,
+                match member.role {
+                    crate::vault::members::MemberRole::Owner => "owner",
+                    crate::vault::members::MemberRole::Admin => "admin",
+                    crate::vault::members::MemberRole::Editor => "editor",
+                    crate::vault::members::MemberRole::Viewer => "viewer",
+                }
+            ),
+        );
         Ok(member.id)
     }
 
@@ -1223,6 +1272,11 @@ impl VaultHandle {
         if let VaultState::Unlocked(u) = &mut self.state {
             u.identity = Some(new_keys);
         }
+        // S1b-1: activity log (best-effort).
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::IdentityRotated,
+            "identity rotated; contacts re-verify with the new card",
+        );
         Ok(())
     }
 
@@ -2160,6 +2214,64 @@ impl VaultHandle {
     }
 
     // ── Device Activity ──
+
+    /// S1b-1: emit a share event (best-effort — never fails the parent
+    /// operation).
+    fn emit_share_event(
+        &self,
+        kind: crate::vault::events::ShareEventKind,
+        detail: impl Into<String>,
+    ) {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return,
+        };
+        let _ = crate::vault::events::append(
+            &self.path,
+            self.vault_id,
+            unlocked.root_key.as_bytes(),
+            unlocked.current_epoch,
+            kind,
+            detail,
+        );
+    }
+
+    /// S1b-1: the Activity surface — most recent `limit` sharing events,
+    /// oldest last. Errors propagate (corrupt log = tamper, fail
+    /// closed).
+    pub fn share_events(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<crate::vault::events::ShareEvent>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let unlocked = self.unlocked();
+        let mut events =
+            crate::vault::events::load(&self.path, self.vault_id, unlocked.root_key.as_bytes())?;
+        if events.len() > limit {
+            let drop = events.len() - limit;
+            events.drain(..drop);
+        }
+        Ok(events)
+    }
+
+    /// S1b-1: this device's local refusal log — human lines recording
+    /// commits THIS client refused during verification (policy or
+    /// roster layer). Local-only by design: each client records what it
+    /// saw. Oldest last, capped like the log itself.
+    pub fn refusal_log(&self, limit: usize) -> Vec<String> {
+        let path = self.path.join("meta/refusals.log");
+        let Ok(data) = std::fs::read_to_string(&path) else {
+            return Vec::new();
+        };
+        let mut lines: Vec<String> = data.lines().map(|l| l.to_string()).collect();
+        if lines.len() > limit {
+            let drop = lines.len() - limit;
+            lines.drain(..drop);
+        }
+        lines
+    }
 
     /// Load encrypted device activity index from meta/activity.enc.
     /// Falls back to plaintext meta/device_activity.json (legacy).
@@ -4273,6 +4385,12 @@ impl VaultHandle {
         let old_generator = self.load_generator_history()?;
         // S1a-3: the address book is RootKey-derived — read pre-swap.
         let old_contacts = self.load_contacts()?;
+        // S1b-1: the activity log is RootKey-derived — read pre-swap.
+        let old_events = crate::vault::events::load(
+            &self.path,
+            self.vault_id,
+            self.unlocked().root_key.as_bytes(),
+        )?;
 
         // Phase 5: Swap Root Key and update epoch via DeviceManager lifecycle
         match &mut self.state {
@@ -4322,6 +4440,14 @@ impl VaultHandle {
         self.save_generator_history(&old_generator)?;
         // S1a-3: address book re-encrypted under the new contacts key.
         self.save_contacts(&old_contacts)?;
+        // S1b-1: activity log re-encrypted under the new events key.
+        crate::vault::events::save(
+            &self.path,
+            self.vault_id,
+            self.unlocked().root_key.as_bytes(),
+            self.unlocked().current_epoch,
+            &old_events,
+        )?;
 
         // P4: re-wrap the emergency escrow to the NEW root key. The old
         // escrow hands emergency recovery a stale key whose canary check
@@ -4740,6 +4866,12 @@ impl VaultHandle {
         let old_generator = self.load_generator_history()?;
         // S1a-3: the address book is RootKey-derived — read pre-swap.
         let old_contacts = self.load_contacts()?;
+        // S1b-1: the activity log is RootKey-derived — read pre-swap.
+        let old_events = crate::vault::events::load(
+            &self.path,
+            self.vault_id,
+            self.unlocked().root_key.as_bytes(),
+        )?;
 
         // ── Update in-memory state ──
         match &mut self.state {
@@ -4788,6 +4920,14 @@ impl VaultHandle {
         self.save_generator_history(&old_generator)?;
         // S1a-3: address book re-encrypted under the new contacts key.
         self.save_contacts(&old_contacts)?;
+        // S1b-1: activity log re-encrypted under the new events key.
+        crate::vault::events::save(
+            &self.path,
+            self.vault_id,
+            self.unlocked().root_key.as_bytes(),
+            self.unlocked().current_epoch,
+            &old_events,
+        )?;
 
         // P4: re-wrap the emergency escrow to the NEW root key. The old
         // escrow hands emergency recovery a stale key whose canary check
@@ -7810,6 +7950,165 @@ mod tests {
         );
         handle.deny_queued_join(req3).unwrap();
         assert_eq!(handle.join_queue_list().unwrap(), (Vec::new(), 3));
+    }
+
+    // ── S1b-1: sharing activity log (detect + notify + viewer) ──
+
+    /// Every member primitive emits a human-sentence event into the
+    /// encrypted, rotation-covered log; the local refusal log records
+    /// commits THIS client refused; the log survives the offboarding
+    /// rotation (re-encrypted under the new events key).
+    #[test]
+    fn share_events_activity_end_to_end() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // Empty log at genesis.
+        assert!(handle.share_events(50).unwrap().is_empty());
+
+        // Join a member: MemberJoined lands.
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Editor)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        handle.contacts_import_intro(&intro_code).unwrap();
+        let intro = crate::vault::members::Introduction::decode(&intro_code).unwrap();
+        handle
+            .contacts_mark_verified(
+                &intro
+                    .contact_card
+                    .as_ref()
+                    .unwrap()
+                    .card
+                    .identity_signing_pubkey,
+            )
+            .unwrap();
+        let old_member_id = handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve join").unwrap();
+
+        let events = handle.share_events(50).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].kind,
+            crate::vault::events::ShareEventKind::MemberJoined
+        );
+        assert!(events[0].detail.contains("MemberDevice"));
+        assert!(events[0].detail.contains("editor"));
+
+        // The member pulls, unlocks, rotates: IdentityRotated lands on
+        // the MEMBER device's local log.
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        joiner.rotate_identity().unwrap();
+        let joiner_events = joiner.share_events(50).unwrap();
+        assert_eq!(
+            joiner_events.last().unwrap().kind,
+            crate::vault::events::ShareEventKind::IdentityRotated
+        );
+
+        // Owner pulls the rotation, reconciles: ContactTrustReset lands.
+        let joiner_seal = joiner.devkey_seal();
+        let joiner_device = joiner.device_id;
+        drop(joiner);
+        let engine_j_signed = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner_device.to_string(),
+            joiner_seal.as_ref(),
+        );
+        engine_j_signed
+            .commit_all(&repo_j, "identity rotation")
+            .unwrap();
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .unwrap();
+        engine_o.pull(&repo_o, "joiner").unwrap();
+        let downgraded = handle.reconcile_stale_member_contacts().unwrap();
+        assert_eq!(downgraded.len(), 1);
+        let events = handle.share_events(50).unwrap();
+        assert_eq!(
+            events.last().unwrap().kind,
+            crate::vault::events::ShareEventKind::ContactTrustReset
+        );
+
+        // Removal: MemberRemoved + the offboarding rotation. The log
+        // must stay readable under the NEW events key (rotation
+        // coverage), and seq stays monotonic across the swap.
+        handle.member_remove(&[old_member_id]).unwrap();
+        engine_o.commit_all(&repo_o, "remove member").unwrap();
+        let events = handle.share_events(50).unwrap();
+        let removed = events.last().unwrap();
+        assert_eq!(
+            removed.kind,
+            crate::vault::events::ShareEventKind::MemberRemoved
+        );
+        assert!(removed.seq > events.first().unwrap().seq);
+
+        // Rogue commit from the removed member's stale clone: refused at
+        // pull, and the LOCAL refusal log records this client's
+        // detection (detect + notify, S1b-1).
+        engine_j_signed
+            .commit_all(&repo_j, "edit after removal")
+            .unwrap();
+        assert!(engine_o.pull(&repo_o, "joiner").is_err());
+        let refusals = handle.refusal_log(50);
+        assert!(
+            refusals.iter().any(|l| l.contains("refused commit")),
+            "the refusal must be recorded locally, got: {refusals:?}"
+        );
+    }
+
+    /// Compaction: the log folds its oldest entries beyond the cap.
+    #[test]
+    fn share_events_compaction_cap() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path().join("v");
+        std::fs::create_dir_all(&vault).unwrap();
+        let root = [9u8; 64];
+        let vault_id = uuid::Uuid::new_v4();
+        for i in 0..(crate::vault::events::MAX_SHARE_EVENTS + 5) {
+            crate::vault::events::append(
+                &vault,
+                vault_id,
+                &root,
+                1,
+                crate::vault::events::ShareEventKind::MemberJoined,
+                format!("event {i}"),
+            )
+            .unwrap();
+        }
+        let events = crate::vault::events::load(&vault, vault_id, &root).unwrap();
+        assert_eq!(events.len(), crate::vault::events::MAX_SHARE_EVENTS);
+        assert_eq!(events.first().unwrap().seq, 6, "oldest five folded away");
+        assert_eq!(
+            events.last().unwrap().seq,
+            crate::vault::events::MAX_SHARE_EVENTS as u64 + 5
+        );
     }
 
     // ── P3: keywrap distribution + rekey-txn adoption ──
