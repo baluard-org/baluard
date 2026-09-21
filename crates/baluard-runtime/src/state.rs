@@ -2344,11 +2344,16 @@ impl VaultState {
             .unwrap_or(0);
         let stale_cutoff = now.saturating_sub(7 * 24 * 3600);
 
-        // Reset-pending members: the tombstone clears from the notices
-        // once the successor row has a device binding (the re-join
-        // happened) — otherwise every reset would nag forever.
+        // Reset-pending members: the notice lives only while the reset
+        // chain is ALIVE — the successor exists, is not removed, and has
+        // not re-joined (no device binding). A successor removed before
+        // re-joining means the admin evicted the re-join path; emitting
+        // then would ghost forever (both rows tombstoned, nothing can
+        // clear it).
         for m in &members {
             if let Some(reset) = &m.reset {
+                let successor = members.iter().find(|s| s.id == reset.successor);
+                let chain_alive = successor.map(|s| s.removed.is_none()).unwrap_or(false);
                 let devices_dir = self
                     .vault_path
                     .join("meta/members")
@@ -2357,7 +2362,7 @@ impl VaultState {
                 let rejoined = std::fs::read_dir(&devices_dir)
                     .map(|d| d.count() > 0)
                     .unwrap_or(false);
-                if !rejoined {
+                if chain_alive && !rejoined {
                     notices.push(serde_json::json!({
                         "kind": "reset_pending",
                         "name": m.display_name,

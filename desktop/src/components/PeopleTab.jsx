@@ -47,6 +47,7 @@ export default function PeopleTab() {
   const [resetCode, setResetCode] = createSignal(null);
   const [notices, setNotices] = createSignal([]);
   const [transport, setTransport] = createSignal([]);
+  const [checkingAccess, setCheckingAccess] = createSignal(false);
 
   async function loadMembers() {
     try {
@@ -83,6 +84,7 @@ export default function PeopleTab() {
   }
 
   async function loadNotices(refreshTransport) {
+    if (refreshTransport) setCheckingAccess(true);
     try {
       const data = JSON.parse(
         await daemon("notices.list", { refresh_transport: refreshTransport }),
@@ -92,6 +94,8 @@ export default function PeopleTab() {
     } catch {
       setNotices([]);
       setTransport([]);
+    } finally {
+      if (refreshTransport) setCheckingAccess(false);
     }
   }
 
@@ -415,10 +419,10 @@ export default function PeopleTab() {
           <div class="flex items-center gap-3">
             <button
               onClick={() => loadNotices(true)}
-              disabled={busy()}
+              disabled={busy() || checkingAccess()}
               class="text-[10px] font-bold text-[var(--color-primary)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
             >
-              {t("notices.checkAccess")}
+              {checkingAccess() ? t("notices.checkingAccess") : t("notices.checkAccess")}
             </button>
             <button
               onClick={reloadAll}
