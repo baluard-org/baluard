@@ -2148,6 +2148,15 @@ impl VaultState {
         }
         let members =
             baluard_core::vault::members::list_members(&handle.path).map_err(|e| e.to_string())?;
+        // §4.8-3: the viewer's own identity + role gate the UI actions —
+        // computed once here, not per row.
+        let self_member_id =
+            baluard_core::vault::members::member_id_for_device(&handle.path, handle.device_id);
+        let your_role = self_member_id
+            .as_ref()
+            .and_then(|mid| members.iter().find(|m| &m.id == mid))
+            .and_then(|m| serde_json::to_value(m.role).ok())
+            .and_then(|v| v.as_str().map(str::to_string));
         let rows: Vec<serde_json::Value> = members
             .iter()
             .map(|m| {
@@ -2159,16 +2168,11 @@ impl VaultState {
                     "reset": m.reset.is_some(),
                     "removed": m.removed.is_some(),
                     "identity_rotated_at": m.identity_rotated_at,
-                    // §4.8-3: the UI hides destructive actions on the
-                    // viewer's own row.
-                    "is_self": baluard_core::vault::members::member_id_for_device(
-                        &handle.path,
-                        handle.device_id,
-                    ) == Some(m.id),
+                    "is_self": self_member_id == Some(m.id),
                 })
             })
             .collect();
-        serde_json::to_string(&rows).map_err(|e| e.to_string())
+        Ok(serde_json::json!({ "members": rows, "your_role": your_role }).to_string())
     }
 
     /// Mint a one-time invite code for the given role. The pending

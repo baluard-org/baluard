@@ -38,6 +38,7 @@ export default function PeopleTab() {
   const [inviteUsername, setInviteUsername] = createSignal("");
   const [seatError, setSeatError] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
+  const [yourRole, setYourRole] = createSignal(null);
   // §4.8-3: destructive actions (remove / reset / transfer). Each opens a
   // typed-confirmation modal; the confirm word is the member's name.
   const [pendingAction, setPendingAction] = createSignal(null);
@@ -47,8 +48,9 @@ export default function PeopleTab() {
 
   async function loadMembers() {
     try {
-      const rows = JSON.parse(await daemon("members.list"));
-      setMembers(Array.isArray(rows) ? rows : []);
+      const data = JSON.parse(await daemon("members.list"));
+      setMembers(Array.isArray(data.members) ? data.members : []);
+      setYourRole(data.your_role || null);
     } catch (e) {
       toastError(sanitizeError(e, t));
     }
@@ -179,9 +181,9 @@ export default function PeopleTab() {
       const msg = sanitizeError(e, t);
       if (action.kind === "remove" && msg.includes("provider seat removal failed")) {
         // The strike failed (provider down / offline). Surface the
-        // explicit override inside the modal instead of a dead end.
+        // override checkbox UNCHECKED — explicit consent, never pre-ticked.
         setLastRemoveError(msg);
-        setRemoveOverride(true);
+        setRemoveOverride(false);
       } else {
         toastError(msg);
       }
@@ -334,20 +336,20 @@ export default function PeopleTab() {
                   </span>
                 </Show>
                 {/* §4.8-3: destructive actions — never on the viewer's own
-                    row, never on tombstoned rows. */}
+                    row, never on tombstoned rows. Transfer belongs on the
+                    TARGET row and only when the viewer is the owner (the
+                    owner initiates transfers to a member). */}
                 <Show when={!m.is_self && !m.reset && !m.removed}>
-                  <Show
-                    when={m.role !== "owner"}
-                    fallback={
-                      <button
-                        onClick={() => openAction("transfer", m)}
-                        disabled={busy()}
-                        class="px-2 py-1 rounded-lg border border-[var(--color-border)] text-[10px] font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
-                      >
-                        {t("people.transfer")}
-                      </button>
-                    }
-                  >
+                  <Show when={yourRole() === "owner" && m.role !== "owner"}>
+                    <button
+                      onClick={() => openAction("transfer", m)}
+                      disabled={busy()}
+                      class="px-2 py-1 rounded-lg border border-[var(--color-border)] text-[10px] font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {t("people.transfer")}
+                    </button>
+                  </Show>
+                  <Show when={yourRole() === "owner" || yourRole() === "admin"}>
                     <button
                       onClick={() => openAction("reset", m)}
                       disabled={busy()}
@@ -446,18 +448,6 @@ export default function PeopleTab() {
           onConfirm={doConfirmedAction}
           onClose={closeAction}
         />
-      </Show>
-
-      {/* Reset code: one-time, hand back to the member */}
-      <Show when={resetCode()}>
-        <section class="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
-          <h3 class="text-sm font-bold text-[var(--color-text)] mb-1">{t("people.resetCodeTitle")}</h3>
-          <p class="text-xs text-[var(--color-muted)] mb-3">{t("people.resetCodeBody")}</p>
-          <div class="flex items-center gap-2">
-            <code class="text-xs text-[var(--color-text)] break-all flex-1 font-mono">{resetCode()}</code>
-            <CopyButton value={resetCode()} />
-          </div>
-        </section>
       </Show>
     </div>
   );
