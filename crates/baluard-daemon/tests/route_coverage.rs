@@ -812,6 +812,19 @@ async fn notices_aggregate_stale_invites_and_resets() {
         row.to_string(),
     )
     .unwrap();
+    // reset_member always creates the successor row alongside the
+    // tombstone.
+    let successor_row = serde_json::json!({
+        "id": successor_id.to_string(),
+        "display_name": "Leaver",
+        "role": "editor",
+        "trust": "channel",
+    });
+    std::fs::write(
+        vault_path.join(format!("meta/members/{successor_id}.json")),
+        successor_row.to_string(),
+    )
+    .unwrap();
 
     // A stale invite (created_at far in the past).
     std::fs::create_dir_all(vault_path.join("meta/invites")).unwrap();
@@ -847,6 +860,57 @@ async fn notices_aggregate_stale_invites_and_resets() {
     )
     .unwrap();
     assert_eq!(out2["transport"].as_array().unwrap().len(), 0);
+
+    // created_at = 0 (pre-field records) is NEVER stale.
+    let ancient = serde_json::json!({
+        "invite_id": uuid::Uuid::new_v4().to_string(),
+        "role": "viewer",
+        "secret_hash": "cd",
+        "created_at": 0,
+    });
+    std::fs::write(
+        vault_path.join(format!("meta/invites/{}.json", uuid::Uuid::new_v4())),
+        ancient.to_string(),
+    )
+    .unwrap();
+    let out3: serde_json::Value =
+        serde_json::from_str(&state.notices_list("{}").await.unwrap()).unwrap();
+    let stale = out3["notices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["kind"] == "stale_invite")
+        .unwrap();
+    assert_eq!(stale["count"], 1, "created_at 0 must not count as stale");
+
+    // The notice clears when the successor re-joins (binding appears),
+    // and ghosts are impossible: removing the successor BEFORE re-join
+    // kills the reset chain.
+    std::fs::create_dir_all(
+        vault_path
+            .join("meta/members")
+            .join(successor_id.to_string())
+            .join("devices"),
+    )
+    .unwrap();
+    std::fs::write(
+        vault_path
+            .join("meta/members")
+            .join(successor_id.to_string())
+            .join("devices")
+            .join(format!("{}.json", uuid::Uuid::new_v4())),
+        "{}",
+    )
+    .unwrap();
+    let out4: serde_json::Value =
+        serde_json::from_str(&state.notices_list("{}").await.unwrap()).unwrap();
+    let kinds2: Vec<&str> = out4["notices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["kind"].as_str().unwrap())
+        .collect();
+    assert!(!kinds2.contains(&"reset_pending"), "{kinds2:?}");
 }
 
 /// P8c-2: removal pre-flight — a member with a transport seat on a
