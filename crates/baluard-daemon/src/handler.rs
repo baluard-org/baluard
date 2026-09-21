@@ -298,6 +298,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "folder.rename",
     "folder.delete",
     "members.invite",
+    "members.remove",
     "requests.approve",
     "requests.deny",
     "tag.create",
@@ -3857,6 +3858,10 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
         "requests.deny" => match state.requests_deny(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "members.remove" => match state.members_remove(&req.payload).await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },

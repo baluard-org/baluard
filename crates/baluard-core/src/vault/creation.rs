@@ -442,6 +442,7 @@ impl<'a> VaultCreator<'a> {
                     identity_rotated_at: None,
                     reset: None,
                     removed: None,
+                    transport_username: None,
                 };
                 crate::vault::members::write_member(&path, &owner_member)?;
                 crate::vault::members::write_device_binding(

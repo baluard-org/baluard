@@ -19,7 +19,7 @@
 #![allow(dead_code)]
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use baluard_core::types::{CipherInput, CipherKind, LoginData, LoginUri};
 use baluard_core::vault::creation::VaultCreator;
@@ -760,11 +760,98 @@ async fn sharing_routes_reject_when_locked() {
     assert!(state.activity_refusals("{}").await.is_err());
 }
 
+/// P8c-2: removal pre-flight — a member with a transport seat on a
+/// provider-registered vault refuses the offboarding when the strike
+/// fails (provider not connected), and the explicit offline override
+/// removes anyway.
+#[tokio::test]
+async fn members_remove_preflight_strike_refusal_and_override() {
+    let _guard = JOIN_REG.lock().await;
+    let _sandbox = sandboxed_host_env();
+    let (_dir, state) = open_unlocked("remove-flow").await;
+    let vault_path = state.vault_path.clone();
+
+    // Forge a member row carrying a transport seat (rows are
+    // admin-authored; the fs-level write is what removal pre-flights see).
+    let member_id = uuid::Uuid::new_v4();
+    let row = serde_json::json!({
+        "id": member_id.to_string(),
+        "display_name": "Leaver",
+        "role": "editor",
+        "trust": "channel",
+        "transport_username": "gituser",
+    });
+    std::fs::create_dir_all(vault_path.join("meta/members")).unwrap();
+    std::fs::write(
+        vault_path.join(format!("meta/members/{member_id}.json")),
+        row.to_string(),
+    )
+    .unwrap();
+
+    // Register the vault with a provider remote (coords resolve; the
+    // provider TOKEN is not connected, so the strike fails). The entry
+    // must carry the REAL vault id — coords match by vault id.
+    let vault_id = baluard_core::vault::handle::VaultHandle::vault_id_for_path(&vault_path)
+        .expect("marker vault id");
+    let mut reg = VaultRegistry::default();
+    reg.add(VaultEntry {
+        slug: baluard_core::vault::slug::normalize_slug("remove-flow"),
+        display_name: "remove-flow".to_string(),
+        path: vault_path.clone(),
+        provider: Some("github".to_string()),
+        remote_url: Some("https://github.com/o/r.git".to_string()),
+        last_synced: None,
+        last_opened: None,
+        vault_id,
+    })
+    .expect("add entry");
+    reg.save_locked().expect("save registry");
+
+    // Strike fails (no connected token) → refusal; member NOT removed.
+    let err = state
+        .members_remove(
+            serde_json::json!({ "member_ids": [member_id.to_string()] })
+                .to_string()
+                .as_str(),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("provider seat removal failed"), "err: {err}");
+    assert!(
+        vault_path
+            .join(format!("meta/members/{member_id}.json"))
+            .exists()
+    );
+
+    // Explicit offline override removes anyway.
+    let resp = state
+        .members_remove(
+            serde_json::json!({
+                "member_ids": [member_id.to_string()],
+                "offline_override": true,
+            })
+            .to_string()
+            .as_str(),
+        )
+        .await
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(payload["seats_struck"].as_array().unwrap().len(), 0);
+    assert_eq!(payload["seat_failures"].as_array().unwrap().len(), 1);
+    // Tombstone semantics: the row remains with the removed marker set.
+    let row_after: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(vault_path.join(format!("meta/members/{member_id}.json")))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(row_after["removed"].is_u64(), "row: {row_after}");
+}
+
 // ── §4.8-2: join flow routes (wire-level through route_host_request) ──
 // The join handlers resolve slugs via the GLOBAL registry file, so tests
 // serialise on JOIN_REG and sandbox BALUARD_DATA_DIR (same pattern as
 // phase6_detach.rs).
-static JOIN_REG: Mutex<()> = Mutex::new(());
+static JOIN_REG: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn join_request(action: &str, payload: serde_json::Value) -> GatewayRequest {
     GatewayRequest {
@@ -777,7 +864,9 @@ fn join_request(action: &str, payload: serde_json::Value) -> GatewayRequest {
 
 #[tokio::test]
 async fn join_introduce_validates_consumes_and_polls() {
-    let _guard = JOIN_REG.lock().unwrap();
+    // Hold for the WHOLE test: both env-setting tests (BALUARD_DATA_DIR
+    // sandbox) must never interleave, or they read each other's registry.
+    let _guard = JOIN_REG.lock().await;
     let _sandbox = sandboxed_host_env();
     // Real vault with an owner genesis and a live editor invite.
     let dir = tempfile::tempdir().unwrap();
@@ -808,9 +897,6 @@ async fn join_introduce_validates_consumes_and_polls() {
     })
     .expect("add entry");
     reg.save_locked().expect("save registry");
-    // Drop the registry lock before any await (sandboxed data dir already
-    // isolates this test's registry file).
-    drop(_guard);
 
     let host = Arc::new(VaultHost::new());
 
