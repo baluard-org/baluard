@@ -684,5 +684,17 @@
     "passwordShort": "Use pelo menos 8 caracteres para sua senha.",
     "passwordMismatch": "As senhas não coincidem.",
     "unlockFailed": "Aprovado, mas o desbloqueio falhou. Tente desbloquear com sua senha."
+  },
+  "notices": {
+    "title": "Precisa de atenção",
+    "resetPendingText": "{name} foi redefinido e aguarda voltar — envie um novo convite.",
+    "staleInviteText": "{count} convite(s) provavelmente expiraram — crie um novo.",
+    "malformedRequestsText": "Não foi possível ler {count} pedido(s).",
+    "checkAccess": "Verificar acesso de download",
+    "transportTitle": "Acesso de download",
+    "status_active": "Tem acesso",
+    "status_invited": "Convite aguardando",
+    "status_none": "Sem acesso",
+    "status_unknown": "Desconhecido"
   }
 }

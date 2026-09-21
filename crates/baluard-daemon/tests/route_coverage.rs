@@ -720,13 +720,18 @@ async fn sharing_surfaces_happy_path_and_role_guard() {
     assert_eq!(invite["seat_granted"], false);
     assert!(invite["seat_error"].is_string());
 
-    // Members list: the genesis owner row, not reset/removed.
-    let rows: serde_json::Value =
+    // Members list: the genesis owner row, not reset/removed; the viewer
+    // here is the owner device (is_self) with the owner role.
+    let list: serde_json::Value =
         serde_json::from_str(&state.members_list().await.unwrap()).unwrap();
-    let arr = rows.as_array().expect("members.list returns an array");
+    let arr = list["members"]
+        .as_array()
+        .expect("members.list returns members");
     assert_eq!(arr.len(), 1, "genesis vault has exactly the owner row");
     assert_eq!(arr[0]["role"], "owner");
     assert_eq!(arr[0]["removed"], false);
+    assert_eq!(arr[0]["is_self"], true);
+    assert_eq!(list["your_role"], "owner");
 
     // Join queue: empty on a fresh vault.
     let q: serde_json::Value = serde_json::from_str(&state.requests_list().await.unwrap()).unwrap();
@@ -775,6 +780,73 @@ async fn sharing_routes_reject_when_locked() {
             .await
             .is_err()
     );
+}
+
+// ── S1b-4 / screen 6: notices aggregation ──
+
+#[tokio::test]
+async fn notices_aggregate_stale_invites_and_resets() {
+    let (_dir, state) = open_unlocked("notices-flow").await;
+    let vault_path = state.vault_path.clone();
+
+    // Fresh vault: quiet.
+    let out: serde_json::Value =
+        serde_json::from_str(&state.notices_list("{}").await.unwrap()).unwrap();
+    assert_eq!(out["notices"].as_array().unwrap().len(), 0);
+    assert_eq!(out["pending_requests"], 0);
+
+    // A reset-pending member: tombstoned row whose successor has NO
+    // device binding yet (re-join not happened).
+    let member_id = uuid::Uuid::new_v4();
+    let successor_id = uuid::Uuid::new_v4();
+    let row = serde_json::json!({
+        "id": member_id.to_string(),
+        "display_name": "Leaver",
+        "role": "editor",
+        "trust": "channel",
+        "reset": { "successor": successor_id.to_string(), "at": 123 },
+    });
+    std::fs::create_dir_all(vault_path.join("meta/members")).unwrap();
+    std::fs::write(
+        vault_path.join(format!("meta/members/{member_id}.json")),
+        row.to_string(),
+    )
+    .unwrap();
+
+    // A stale invite (created_at far in the past).
+    std::fs::create_dir_all(vault_path.join("meta/invites")).unwrap();
+    let invite = serde_json::json!({
+        "invite_id": uuid::Uuid::new_v4().to_string(),
+        "role": "editor",
+        "secret_hash": "ab",
+        "created_at": 1000,
+    });
+    std::fs::write(
+        vault_path.join(format!("meta/invites/{}.json", uuid::Uuid::new_v4())),
+        invite.to_string(),
+    )
+    .unwrap();
+
+    let out: serde_json::Value =
+        serde_json::from_str(&state.notices_list("{}").await.unwrap()).unwrap();
+    let kinds: Vec<&str> = out["notices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"reset_pending"), "{kinds:?}");
+    assert!(kinds.contains(&"stale_invite"), "{kinds:?}");
+
+    // Transport checks with no provider remote: empty, no error.
+    let out2: serde_json::Value = serde_json::from_str(
+        &state
+            .notices_list(r#"{"refresh_transport":true}"#.to_string().as_str())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(out2["transport"].as_array().unwrap().len(), 0);
 }
 
 /// P8c-2: removal pre-flight — a member with a transport seat on a
