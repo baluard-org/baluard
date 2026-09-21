@@ -2571,35 +2571,55 @@ static CLONE_JOBS: std::sync::LazyLock<
 /// intro code the joiner hands back to the admin out-of-band. Host-level:
 /// the joiner has no session token (their vault never unlocked yet) and
 /// the route reads no decrypted secrets.
-async fn handle_join_introduce(req: GatewayRequest, _host: &SharedVaultHost) -> GatewayResponse {
+async fn handle_join_introduce(
+    mut req: GatewayRequest,
+    _host: &SharedVaultHost,
+) -> GatewayResponse {
     let v: serde_json::Value = match serde_json::from_str(&req.payload) {
         Ok(v) => v,
-        Err(e) => return err_response(format!("Invalid join payload: {e}")),
+        Err(e) => {
+            req.payload.zeroize();
+            return err_response(format!("Invalid join payload: {e}"));
+        }
     };
     let Some(slug) = v["slug"].as_str().map(str::to_string) else {
+        req.payload.zeroize();
         return err_response("Missing 'slug' in join payload".to_string());
     };
     let Some(code) = v["code"].as_str().map(str::to_string) else {
+        req.payload.zeroize();
         return err_response("Missing 'code' in join payload".to_string());
     };
-    let Some(password) = v["password"].as_str().map(str::to_string) else {
-        return err_response("Missing 'password' in join payload".to_string());
-    };
+    // The joiner's chosen password: zeroizing local copy (same discipline
+    // as the unlock path; the serde Value copy drops without scrubbing,
+    // matching vault.unlock's documented behavior).
+    let password = v["password"]
+        .as_str()
+        .map(|p| zeroize::Zeroizing::new(p.to_string()));
     let Some(device_name) = v["device_name"].as_str().map(str::to_string) else {
+        req.payload.zeroize();
         return err_response("Missing 'device_name' in join payload".to_string());
     };
     if device_name.contains(['\n', '\r']) {
+        req.payload.zeroize();
         return err_response("device name must not contain newlines".to_string());
     }
     let Some(path) = registry_vault_path(&slug) else {
+        req.payload.zeroize();
         return err_response(format!("Unknown vault: {slug}"));
     };
-    match baluard_core::vault::members::create_introduction(&path, &code, &password, &device_name) {
-        Ok(intro_code) => {
-            let payload = serde_json::json!({ "intro_code": intro_code });
-            ok_resp(payload.to_string(), None)
+    let result = match password {
+        Some(password) => {
+            baluard_core::vault::members::create_introduction(&path, &code, &password, &device_name)
+                .map(|intro_code| serde_json::json!({ "intro_code": intro_code }).to_string())
+                .map_err(|e| e.to_string())
         }
-        Err(e) => err_response(e.to_string()),
+        None => Err("Missing 'password' in join payload".to_string()),
+    };
+    req.payload.zeroize();
+    match result {
+        Ok(payload) => ok_resp(payload, None),
+        Err(e) => err_response(e),
     }
 }
 
@@ -2608,7 +2628,7 @@ async fn handle_join_introduce(req: GatewayRequest, _host: &SharedVaultHost) -> 
 /// approval artifacts arrive, then reports `{ introduced, approved }`
 /// from pure filesystem checks (member unlock material + keywrap
 /// presence). Host-level, same trust level as the clone progress route.
-async fn handle_join_poll(req: GatewayRequest, _host: &SharedVaultHost) -> GatewayResponse {
+async fn handle_join_poll(req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
     let v: serde_json::Value = match serde_json::from_str(&req.payload) {
         Ok(v) => v,
         Err(e) => return err_response(format!("Invalid join payload: {e}")),
@@ -2619,6 +2639,23 @@ async fn handle_join_poll(req: GatewayRequest, _host: &SharedVaultHost) -> Gatew
     let Some(path) = registry_vault_path(&slug) else {
         return err_response(format!("Unknown vault: {slug}"));
     };
+
+    // Status FIRST: pulls only happen in the introduced-but-not-approved
+    // window — the only state a joiner's vault can be in. An unlocked
+    // vault is owned by autosync's cycle lock and is never a joiner
+    // target; touching its repo from an unsynchronized engine would race
+    // the C3 mutex.
+    let (introduced, approved) = baluard_core::vault::members::join_status(&path);
+    if !introduced || approved {
+        let payload = serde_json::json!({ "introduced": introduced, "approved": approved });
+        return ok_resp(payload.to_string(), None);
+    }
+    if let Some(state) = host.get(&slug).await {
+        if state.is_unlocked().await {
+            let payload = serde_json::json!({ "introduced": introduced, "approved": approved });
+            return ok_resp(payload.to_string(), None);
+        }
+    }
 
     // Pull best-effort: the joiner has no roster seat yet, so their
     // engine cannot sign anything — pull is fetch + verify + checkout,
