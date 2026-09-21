@@ -4,6 +4,7 @@ import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess, toastError } from "../context/toastSignal.js";
 import CopyButton from "./CopyButton.jsx";
+import TypedConfirmModal from "./TypedConfirmModal.jsx";
 
 // §4.8-1: the People surface — members, invites, join queue, activity.
 // Plain language only: roles are words, the join queue is "requests",
@@ -37,6 +38,12 @@ export default function PeopleTab() {
   const [inviteUsername, setInviteUsername] = createSignal("");
   const [seatError, setSeatError] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
+  // §4.8-3: destructive actions (remove / reset / transfer). Each opens a
+  // typed-confirmation modal; the confirm word is the member's name.
+  const [pendingAction, setPendingAction] = createSignal(null);
+  const [removeOverride, setRemoveOverride] = createSignal(false);
+  const [lastRemoveError, setLastRemoveError] = createSignal(null);
+  const [resetCode, setResetCode] = createSignal(null);
 
   async function loadMembers() {
     try {
@@ -125,8 +132,78 @@ export default function PeopleTab() {
     }
   }
 
+  function openAction(kind, member) {
+    setRemoveOverride(false);
+    setLastRemoveError(null);
+    setPendingAction({ kind, member });
+  }
+
+  function closeAction() {
+    setPendingAction(null);
+    setRemoveOverride(false);
+    setLastRemoveError(null);
+  }
+
+  async function doConfirmedAction() {
+    const action = pendingAction();
+    if (!action) return;
+    const id = action.member.id;
+    setBusy(true);
+    try {
+      if (action.kind === "remove") {
+        const res = JSON.parse(
+          await daemon("members.remove", {
+            member_ids: [id],
+            offline_override: removeOverride(),
+          }),
+        );
+        const unstruck = res.unstruck_seats || [];
+        if (unstruck.length > 0) {
+          toastError(
+            `${t("people.seatUnstruck")} ${unstruck.join(", ")}`,
+          );
+        } else {
+          toastSuccess(t("people.removedToast"));
+        }
+      } else if (action.kind === "reset") {
+        const res = JSON.parse(await daemon("members.reset", { member_id: id }));
+        setResetCode(res.reset_code);
+        toastSuccess(t("people.resetDone"));
+      } else if (action.kind === "transfer") {
+        await daemon("members.transfer", { member_id: id });
+        toastSuccess(t("people.transferDone"));
+      }
+      closeAction();
+      await loadMembers();
+    } catch (e) {
+      const msg = sanitizeError(e, t);
+      if (action.kind === "remove" && msg.includes("provider seat removal failed")) {
+        // The strike failed (provider down / offline). Surface the
+        // explicit override inside the modal instead of a dead end.
+        setLastRemoveError(msg);
+        setRemoveOverride(true);
+      } else {
+        toastError(msg);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div class="space-y-6">
+      {/* Reset code: one-time, hand back to the member */}
+      <Show when={resetCode()}>
+        <section class="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
+          <h3 class="text-sm font-bold text-[var(--color-text)] mb-1">{t("people.resetCodeTitle")}</h3>
+          <p class="text-xs text-[var(--color-muted)] mb-3">{t("people.resetCodeBody")}</p>
+          <div class="flex items-center gap-2">
+            <code class="text-xs text-[var(--color-text)] break-all flex-1 font-mono">{resetCode()}</code>
+            <CopyButton value={resetCode()} />
+          </div>
+        </section>
+      </Show>
+
       {/* Invite */}
       <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">
         <h3 class="text-sm font-bold text-[var(--color-text)] mb-3">{t("people.inviteTitle")}</h3>
@@ -256,6 +333,37 @@ export default function PeopleTab() {
                     {t(TRUST_KEYS[m.trust] || "people.trustChannel")}
                   </span>
                 </Show>
+                {/* §4.8-3: destructive actions — never on the viewer's own
+                    row, never on tombstoned rows. */}
+                <Show when={!m.is_self && !m.reset && !m.removed}>
+                  <Show
+                    when={m.role !== "owner"}
+                    fallback={
+                      <button
+                        onClick={() => openAction("transfer", m)}
+                        disabled={busy()}
+                        class="px-2 py-1 rounded-lg border border-[var(--color-border)] text-[10px] font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        {t("people.transfer")}
+                      </button>
+                    }
+                  >
+                    <button
+                      onClick={() => openAction("reset", m)}
+                      disabled={busy()}
+                      class="px-2 py-1 rounded-lg border border-[var(--color-border)] text-[10px] font-bold text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {t("people.reset")}
+                    </button>
+                    <button
+                      onClick={() => openAction("remove", m)}
+                      disabled={busy()}
+                      class="px-2 py-1 rounded-lg border border-red-400/30 text-[10px] font-bold text-red-400 hover:bg-red-500/10 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {t("people.remove")}
+                    </button>
+                  </Show>
+                </Show>
               </li>
             )}
           </For>
@@ -307,6 +415,50 @@ export default function PeopleTab() {
           </div>
         </Show>
       </section>
+
+      {/* §4.8-3: destructive action confirmations */}
+      <Show when={pendingAction()}>
+        <TypedConfirmModal
+          show
+          title={t(`people.${pendingAction().kind}Title`)}
+          body={t(`people.${pendingAction().kind}Body`).replace(
+            "{name}",
+            pendingAction().member.display_name,
+          )}
+          confirmWord={pendingAction().member.display_name}
+          confirmLabel={t(`people.${pendingAction().kind}Confirm`)}
+          danger={pendingAction().kind !== "transfer"}
+          extra={
+            <Show when={pendingAction().kind === "remove" && lastRemoveError()}>
+              <div class="mb-3 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                <p class="text-[10px] text-amber-500 mb-2">{lastRemoveError()}</p>
+                <label class="flex items-center gap-2 text-[10px] text-[var(--color-text)] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={removeOverride()}
+                    onChange={(e) => setRemoveOverride(e.currentTarget.checked)}
+                  />
+                  {t("people.overrideLabel")}
+                </label>
+              </div>
+            </Show>
+          }
+          onConfirm={doConfirmedAction}
+          onClose={closeAction}
+        />
+      </Show>
+
+      {/* Reset code: one-time, hand back to the member */}
+      <Show when={resetCode()}>
+        <section class="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
+          <h3 class="text-sm font-bold text-[var(--color-text)] mb-1">{t("people.resetCodeTitle")}</h3>
+          <p class="text-xs text-[var(--color-muted)] mb-3">{t("people.resetCodeBody")}</p>
+          <div class="flex items-center gap-2">
+            <code class="text-xs text-[var(--color-text)] break-all flex-1 font-mono">{resetCode()}</code>
+            <CopyButton value={resetCode()} />
+          </div>
+        </section>
+      </Show>
     </div>
   );
 }

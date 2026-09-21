@@ -2159,6 +2159,12 @@ impl VaultState {
                     "reset": m.reset.is_some(),
                     "removed": m.removed.is_some(),
                     "identity_rotated_at": m.identity_rotated_at,
+                    // §4.8-3: the UI hides destructive actions on the
+                    // viewer's own row.
+                    "is_self": baluard_core::vault::members::member_id_for_device(
+                        &handle.path,
+                        handle.device_id,
+                    ) == Some(m.id),
                 })
             })
             .collect();
@@ -2258,6 +2264,43 @@ impl VaultState {
             return Some((provider, owner, repo));
         }
         None
+    }
+
+    /// §4.8-3: member reset (admin-only, core-gated). Returns the
+    /// successor member id and the one-time reset code the admin hands
+    /// back to the member out-of-band.
+    pub async fn members_reset(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let member_id = uuid::Uuid::parse_str(v["member_id"].as_str().ok_or("missing member_id")?)
+            .map_err(|e| e.to_string())?;
+        let (successor_id, reset_code) =
+            handle.member_reset(member_id).map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "successor_id": successor_id.to_string(),
+            "reset_code": reset_code,
+        })
+        .to_string())
+    }
+
+    /// §4.8-3: ownership transfer (owner-only, core-gated).
+    pub async fn members_transfer(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault is locked")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let member_id = uuid::Uuid::parse_str(v["member_id"].as_str().ok_or("missing member_id")?)
+            .map_err(|e| e.to_string())?;
+        handle
+            .transfer_ownership(member_id)
+            .map_err(|e| e.to_string())?;
+        Ok("{}".into())
     }
 
     /// Join queue: well-shaped staged requests plus the malformed count.
