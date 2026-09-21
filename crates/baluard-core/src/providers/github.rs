@@ -632,48 +632,78 @@ impl ForgeProvider for GitHubProvider {
         username: &str,
     ) -> Result<CollaboratorStatus, ProviderError> {
         let api = self.api_base();
-        // 1. Direct collaborator? The permission endpoint answers 200 with
-        //    the effective level ("none" = no seat) or 404 for unknown users.
+        // Effective-permission check: the endpoint reports the user's real
+        // access INCLUDING org/team-inherited roles. `none` (or 404 for an
+        // unknown user) means no effective seat — fall through to the
+        // invitation scan. Any other failure propagates: the pre-flight
+        // callers must never read a server error as "no seat".
         let url = format!("{api}/repos/{owner}/{repo}/collaborators/{username}/permission");
         let resp = self
             .authed(reqwest::Method::GET, &url, token)
             .send()
             .await
             .map_err(|e| ProviderError::Api(e.to_string()))?;
-        if resp.status().as_u16() == 200 {
-            let body: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| ProviderError::Api(e.to_string()))?;
-            if body["permission"].as_str() != Some("none") {
-                return Ok(CollaboratorStatus::Active);
+        match resp.status().as_u16() {
+            200 => {
+                let body: serde_json::Value = resp
+                    .json()
+                    .await
+                    .map_err(|e| ProviderError::Api(e.to_string()))?;
+                match body["permission"].as_str() {
+                    Some("none") => {} // no effective seat; try invitations
+                    Some(_) => return Ok(CollaboratorStatus::Active),
+                    None => {
+                        return Err(ProviderError::Api(
+                            "collaborator permission: response missing permission field".into(),
+                        ));
+                    }
+                }
+            }
+            404 => {} // unknown user; try invitations
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(ProviderError::Api(format!(
+                    "collaborator permission HTTP {s}: {body}"
+                )));
             }
         }
-        // 2. Pending invitation? GitHub invites expire server-side after
-        //    7 days; an expired one is simply absent here, so the caller
-        //    sees None and re-invites.
-        let url = format!("{api}/repos/{owner}/{repo}/invitations");
-        let resp = self
-            .authed(reqwest::Method::GET, &url, token)
-            .send()
-            .await
-            .map_err(|e| ProviderError::Api(e.to_string()))?;
-        if resp.status().as_u16() == 200 {
+        // Pending invitation scan, paginated (the default page size is 30
+        // and a large invite backlog must not hide the invitee). GitHub
+        // invites expire server-side after 7 days; an expired one is
+        // simply absent here, so the caller sees None and re-invites.
+        let mut page = 1u8;
+        loop {
+            let url = format!("{api}/repos/{owner}/{repo}/invitations?per_page=100&page={page}");
+            let resp = self
+                .authed(reqwest::Method::GET, &url, token)
+                .send()
+                .await
+                .map_err(|e| ProviderError::Api(e.to_string()))?;
+            if resp.status().as_u16() != 200 {
+                let s = resp.status().as_u16();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(ProviderError::Api(format!(
+                    "list invitations HTTP {s}: {body}"
+                )));
+            }
             let invites: serde_json::Value = resp
                 .json()
                 .await
                 .map_err(|e| ProviderError::Api(e.to_string()))?;
-            if let Some(list) = invites.as_array() {
-                let wanted = username.to_lowercase();
-                for invite in list {
-                    let login = invite["invitee"]["login"]
-                        .as_str()
-                        .map(|l| l.to_lowercase());
-                    if login.as_deref() == Some(wanted.as_str()) {
-                        return Ok(CollaboratorStatus::Invited);
-                    }
+            let list = invites.as_array().cloned().unwrap_or_default();
+            let wanted = username.to_lowercase();
+            for invite in &list {
+                let login = invite["invitee"]["login"]
+                    .as_str()
+                    .map(|l| l.to_lowercase());
+                if login.as_deref() == Some(wanted.as_str()) {
+                    return Ok(CollaboratorStatus::Invited);
                 }
             }
+            if list.len() < 100 || page >= 10 {
+                break;
+            }
+            page += 1;
         }
         Ok(CollaboratorStatus::None)
     }
@@ -686,7 +716,11 @@ impl ForgeProvider for GitHubProvider {
         username: &str,
     ) -> Result<(), ProviderError> {
         let api = self.api_base();
-        // Strike the live seat first; 404 = no direct seat.
+        // Strike the live seat first; 404 = no direct seat. Boundary:
+        // DELETE removes DIRECT seats only — access inherited from a
+        // GitHub org/team survives it. The offboarding pre-flight calls
+        // collaborator_status AFTER this strike; a lingering Active
+        // report is the screen-6 signal to remove the org seat by hand.
         let url = format!("{api}/repos/{owner}/{repo}/collaborators/{username}");
         let resp = self
             .authed(reqwest::Method::DELETE, &url, token)
@@ -705,46 +739,58 @@ impl ForgeProvider for GitHubProvider {
         }
         // Fallback: cancel a pending invitation instead (removal pre-flight
         // must clear BOTH seat kinds; absent invitation = already gone).
-        let url = format!("{api}/repos/{owner}/{repo}/invitations");
-        let resp = self
-            .authed(reqwest::Method::GET, &url, token)
-            .send()
-            .await
-            .map_err(|e| ProviderError::Api(e.to_string()))?;
-        if resp.status().as_u16() != 200 {
-            return Ok(());
-        }
-        let invites: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| ProviderError::Api(e.to_string()))?;
+        // Errors propagate — a swallowed lookup here would leave a live
+        // invite behind while the caller believes the seat is gone.
         let wanted = username.to_lowercase();
-        let invite_id = invites.as_array().and_then(|list| {
-            list.iter().find_map(|i| {
+        let mut page = 1u8;
+        loop {
+            let url = format!("{api}/repos/{owner}/{repo}/invitations?per_page=100&page={page}");
+            let resp = self
+                .authed(reqwest::Method::GET, &url, token)
+                .send()
+                .await
+                .map_err(|e| ProviderError::Api(e.to_string()))?;
+            if resp.status().as_u16() != 200 {
+                let s = resp.status().as_u16();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(ProviderError::Api(format!(
+                    "list invitations HTTP {s}: {body}"
+                )));
+            }
+            let invites: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| ProviderError::Api(e.to_string()))?;
+            let list = invites.as_array().cloned().unwrap_or_default();
+            let invite_id = list.iter().find_map(|i| {
                 let login = i["invitee"]["login"].as_str().map(|l| l.to_lowercase());
                 if login.as_deref() == Some(wanted.as_str()) {
                     i["id"].as_u64()
                 } else {
                     None
                 }
-            })
-        });
-        if let Some(invite_id) = invite_id {
-            let url = format!("{api}/repos/{owner}/{repo}/invitations/{invite_id}");
-            let resp = self
-                .authed(reqwest::Method::DELETE, &url, token)
-                .send()
-                .await
-                .map_err(|e| ProviderError::Api(e.to_string()))?;
-            if resp.status().as_u16() != 204 {
-                let s = resp.status().as_u16();
-                let body = resp.text().await.unwrap_or_default();
-                return Err(ProviderError::Api(format!(
-                    "cancel invitation HTTP {s}: {body}"
-                )));
+            });
+            if let Some(invite_id) = invite_id {
+                let url = format!("{api}/repos/{owner}/{repo}/invitations/{invite_id}");
+                let resp = self
+                    .authed(reqwest::Method::DELETE, &url, token)
+                    .send()
+                    .await
+                    .map_err(|e| ProviderError::Api(e.to_string()))?;
+                if resp.status().as_u16() != 204 {
+                    let s = resp.status().as_u16();
+                    let body = resp.text().await.unwrap_or_default();
+                    return Err(ProviderError::Api(format!(
+                        "cancel invitation HTTP {s}: {body}"
+                    )));
+                }
+                return Ok(());
             }
+            if list.len() < 100 || page >= 10 {
+                return Ok(());
+            }
+            page += 1;
         }
-        Ok(())
     }
 
     async fn revoke_token(&self, _token: &ProviderToken) -> Result<(), ProviderError> {
@@ -1013,6 +1059,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn collaborator_status_fails_closed_on_errors() {
+        let api = MockApi::start();
+        let gh = gh_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "repo");
+
+        // Server error on the permission check propagates — the pre-flight
+        // must never read a failure as "no seat".
+        api.push(500, "boom");
+        assert!(
+            gh.collaborator_status(&tok, "o", "r", "alice")
+                .await
+                .is_err()
+        );
+
+        // Server error on the invitation scan propagates too.
+        api.push(200, r#"{"permission": "none"}"#);
+        api.push(503, "overloaded");
+        assert!(
+            gh.collaborator_status(&tok, "o", "r", "alice")
+                .await
+                .is_err()
+        );
+
+        // Malformed 200 body (missing permission field) fails closed
+        // instead of reporting Active.
+        api.push(200, "{}");
+        let err = gh
+            .collaborator_status(&tok, "o", "r", "alice")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("missing permission field"));
+    }
+
+    #[tokio::test]
+    async fn collaborator_status_scans_invitation_pages() {
+        let api = MockApi::start();
+        let gh = gh_at(&api.base_url);
+        let tok = ProviderToken::new("tok", "repo");
+
+        // Full first page (100 entries, no alice) -> the scan continues
+        // to page 2 and finds her there.
+        let page1: Vec<String> = (0..100)
+            .map(|i| format!(r#"{{"id": {i}, "invitee": {{"login": "user{i}"}}}}"#))
+            .collect();
+        api.push(200, r#"{"permission": "none"}"#);
+        api.push(200, &format!("[{}]", page1.join(",")));
+        api.push(200, r#"[{"id": 777, "invitee": {"login": "alice"}}]"#);
+        let st = gh
+            .collaborator_status(&tok, "o", "r", "alice")
+            .await
+            .unwrap();
+        assert_eq!(st, CollaboratorStatus::Invited);
+        let (_, path2, _) = &api.requests()[2];
+        assert_eq!(path2, "/api/v3/repos/o/r/invitations?per_page=100&page=2");
+    }
+
+    #[tokio::test]
     async fn remove_collaborator_live_seat_pending_invite_and_errors() {
         let api = MockApi::start();
         let gh = gh_at(&api.base_url);
@@ -1038,6 +1141,17 @@ mod tests {
         let (method, path, _) = &api.requests()[3];
         assert_eq!(method, "DELETE");
         assert_eq!(path, "/api/v3/repos/o/r/invitations/42");
+
+        // A server error on the invitation lookup propagates — swallowing
+        // it would leave a live invite behind while the caller believes
+        // the seat is gone.
+        api.push(404, "");
+        api.push(500, "boom");
+        assert!(
+            gh.remove_collaborator(&tok, "o", "r", "alice")
+                .await
+                .is_err()
+        );
 
         // Server error propagates — the pre-flight must see the failure.
         api.push(500, "boom");
