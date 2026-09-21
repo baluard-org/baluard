@@ -14,6 +14,7 @@ import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, I
 import FocusTrap from "./FocusTrap.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 import SyncTab from "./SyncTab.jsx";
+import PeopleTab from "./PeopleTab.jsx";
 import BridgeTab from "./BridgeTab.jsx";
 
 function TabButton(props) {
@@ -434,6 +435,7 @@ export default function SettingsModal() {
               <TabButton id="general" label={t("settings.tabGeneral")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="data" label={t("settings.tabData")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="sync" label={t("settings.tabSync")} active={activeTab()} setActiveTab={setActiveTab} />
+              <TabButton id="people" label={t("settings.tabPeople")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="devices" label={t("settings.tabDevices")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="bridge" label={t("settings.tabBridge")} active={activeTab()} setActiveTab={setActiveTab} />
             </div>
@@ -798,6 +800,10 @@ export default function SettingsModal() {
 
               <Show when={activeTab() === "sync"}>
                 <SyncTab />
+              </Show>
+
+              <Show when={activeTab() === "people"}>
+                <PeopleTab />
               </Show>
 
               <Show when={activeTab() === "devices"}>

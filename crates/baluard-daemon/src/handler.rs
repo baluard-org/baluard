@@ -293,6 +293,9 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "folder.create",
     "folder.rename",
     "folder.delete",
+    "members.invite",
+    "requests.approve",
+    "requests.deny",
     "tag.create",
     "tag.rename",
     "tag.delete",
@@ -3700,6 +3703,35 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         },
         "passkey.rename" => match state.passkey_rename(&req.payload).await {
             Ok(()) => ok_resp("{}", token_str),
+            Err(e) => err_response(e),
+        },
+        // ── §4.8-1: sharing surfaces (People + join queue + activity) ──
+        "members.list" => match state.members_list().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "members.invite" => match state.members_invite(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "requests.list" => match state.requests_list().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "requests.approve" => match state.requests_approve(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "requests.deny" => match state.requests_deny(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "activity.events" => match state.activity_events(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+        "activity.refusals" => match state.activity_refusals(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
 
