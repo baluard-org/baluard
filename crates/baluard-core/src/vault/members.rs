@@ -312,6 +312,60 @@ pub fn remove_member(vault_path: &Path, member_id: Uuid) -> Result<Vec<Uuid>, Ba
     Ok(devices)
 }
 
+/// S1a-7: ownership transfer (§4.2, first-class action). A role change
+/// on TWO member records: `old_member_id` (the current Owner row) is
+/// demoted to Admin, `new_member_id` is promoted to Owner with
+/// SelfTrust. Exactly one Owner row exists before and after — the two
+/// writes ship in ONE git commit, so the atomic unit is the commit, not
+/// the working tree. Mechanics only; actor gating (owner-only) is the
+/// caller's job.
+pub fn transfer_ownership(
+    vault_path: &Path,
+    old_member_id: Uuid,
+    new_member_id: Uuid,
+) -> Result<(), BaluardError> {
+    let deny = |msg: &str| BaluardError::from(VaultError::InvalidOperation(msg.to_string()));
+    if old_member_id == new_member_id {
+        return Err(deny("the vault is already owned by this member"));
+    }
+    let old_path = vault_path
+        .join(MEMBERS_DIR)
+        .join(format!("{old_member_id}.json"));
+    let data = std::fs::read_to_string(&old_path).map_err(|_| deny("owner row not found"))?;
+    let mut old: MemberFile =
+        serde_json::from_str(&data).map_err(|e| deny(&format!("owner record unreadable: {e}")))?;
+    if old.role != MemberRole::Owner {
+        return Err(deny("only the owner can transfer ownership"));
+    }
+    if old.reset.is_some() || old.removed.is_some() {
+        return Err(deny("owner row is tombstoned"));
+    }
+    let new_path = vault_path
+        .join(MEMBERS_DIR)
+        .join(format!("{new_member_id}.json"));
+    let data =
+        std::fs::read_to_string(&new_path).map_err(|_| deny("successor member not found"))?;
+    let mut new: MemberFile = serde_json::from_str(&data)
+        .map_err(|e| deny(&format!("successor record unreadable: {e}")))?;
+    if new.reset.is_some() || new.removed.is_some() {
+        return Err(deny("successor row is tombstoned"));
+    }
+    old.role = MemberRole::Admin;
+    super::write_vault_file(
+        &old_path,
+        serde_json::to_string_pretty(&old).unwrap().as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("demote owner: {e}"))))?;
+    new.role = MemberRole::Owner;
+    new.trust = TrustLevel::SelfTrust;
+    super::write_vault_file(
+        &new_path,
+        serde_json::to_string_pretty(&new).unwrap().as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("promote owner: {e}"))))?;
+    Ok(())
+}
+
 /// Role of `device_id`'s member, from the on-disk directory. `None` when
 /// unbound, legacy (no member directory), or bound to a TOMBSTONED row
 /// (S1a-5: reset kills the member's device bindings).
