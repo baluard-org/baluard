@@ -305,14 +305,17 @@ impl VaultHandle {
         crate::vault::contacts::save_contacts(&self.path, &self.contacts_key()?, entries)
     }
 
-    /// S1a-3: export this vault member's identity-signed contact card
-    /// (out-of-band code). Requires the identity to be available on this
-    /// device.
-    pub fn contact_card_create(&self) -> Result<String, BaluardError> {
+    /// S2: this vault member's identity-signed contact card (card v2,
+    /// carries the X25519 wrap pubkey so item packages can be sent to
+    /// it). Requires the identity to be available on this device.
+    pub fn contact_card_signed(
+        &self,
+    ) -> Result<crate::vault::contacts::SignedContactCard, BaluardError> {
         let identity = self.identity().ok_or_else(|| {
             VaultError::InvalidOperation("identity not available on this device".into())
         })?;
         let vk_hex = hex::encode(identity.signing_key().verifying_key().as_bytes());
+        let wrap_hex = hex::encode(identity.wrapping_pub_bytes());
         let display_name = self
             .load_profile()
             .ok()
@@ -322,12 +325,20 @@ impl VaultHandle {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let card = crate::vault::contacts::SignedContactCard::sign(
+        crate::vault::contacts::SignedContactCard::sign(
             &display_name,
             &vk_hex,
+            &wrap_hex,
             now,
             identity.signing_key(),
-        )?;
+        )
+    }
+
+    /// S1a-3: export this vault member's identity-signed contact card
+    /// (out-of-band code). Requires the identity to be available on this
+    /// device.
+    pub fn contact_card_create(&self) -> Result<String, BaluardError> {
+        let card = self.contact_card_signed()?;
         let code_bytes = serde_json::to_vec(&card)
             .map_err(|e| VaultError::Metadata(format!("encode card: {e}")))?;
         Ok(base64::engine::general_purpose::URL_SAFE.encode(code_bytes))
@@ -410,6 +421,91 @@ impl VaultHandle {
             &self.contacts_key()?,
             identity_signing_pubkey,
         )
+    }
+
+    /// S2 IS-3: export a cipher as a one-shot item package, HPKE-wrapped
+    /// to the recipient contact's identity wrap pubkey. The copy is
+    /// inert: no live link, cannot be un-shared (the pre-send UI states
+    /// this). Attachments, history, and vault-specific state do not travel.
+    pub fn export_item_package(
+        &self,
+        cipher_id: Uuid,
+        contact: &crate::vault::contacts::ContactCard,
+    ) -> Result<Vec<u8>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let identity = self.identity().ok_or_else(|| {
+            VaultError::InvalidOperation("identity not available on this device".into())
+        })?;
+        let recipient_wrap: [u8; 32] = hex::decode(&contact.identity_wrap_pubkey)
+            .map_err(|_| {
+                VaultError::InvalidOperation(
+                    "this contact's card has no sharing key: ask them to share their card again"
+                        .into(),
+                )
+            })?
+            .try_into()
+            .map_err(|_| {
+                VaultError::InvalidOperation(
+                    "this contact's card has no sharing key: ask them to share their card again"
+                        .into(),
+                )
+            })?;
+
+        let cipher = match self.get_cipher(cipher_id)? {
+            crate::vault::handle::CipherRead::Decrypted(c) => *c,
+            crate::vault::handle::CipherRead::Locked(_) => {
+                return Err(VaultError::Locked.into());
+            }
+        };
+        let mut item = crate::types::CipherInput::from_cipher(&cipher);
+        // Attachment bytes, history, and vault-specific pointers do not travel:
+        // the recipient gets the item data only as a fresh entry.
+        item.attachments.clear();
+        item.password_history.clear();
+        item.folder_id = None;
+        item.archived = false;
+        item.created_at = None;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let sender_card = self.contact_card_signed()?;
+        crate::vault::packages::seal_package(
+            sender_card,
+            now,
+            item,
+            &recipient_wrap,
+            identity.signing_key(),
+        )
+    }
+
+    /// S2 IS-3: open an item package and import the item as a fresh
+    /// entry (new id, this vault's keys). Returns (new cipher id, sender
+    /// display name from the verified card).
+    pub fn import_item_package(
+        &mut self,
+        package_bytes: &[u8],
+    ) -> Result<(Uuid, String), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let identity = self.identity().ok_or_else(|| {
+            VaultError::InvalidOperation("identity not available on this device".into())
+        })?;
+        let payload = crate::vault::packages::open_package(package_bytes, identity)?;
+        let mut item = payload.item;
+        // Defense in depth: the exporter strips these, a hostile
+        // hand-built payload does not get to resurrect them.
+        item.attachments.clear();
+        item.password_history.clear();
+        item.folder_id = None;
+        item.archived = false;
+        item.created_at = None;
+        let cipher_id = self.add_cipher(&item)?;
+        Ok((cipher_id, payload.sender_card.card.display_name.clone()))
     }
 
     /// S1a-3: address book contents (People screen, thin).
@@ -5478,6 +5574,94 @@ mod tests {
         let (dir, _password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
         assert!(handle.unlock("wrong-password").is_err());
+    }
+
+    /// S2 IS-3: one-shot item package end-to-end. B shares their card
+    /// with A, A wraps an item to it, B imports the package as a fresh
+    /// entry (new id, B's keys, sender name from the verified card).
+    #[test]
+    fn item_package_two_vault_roundtrip() {
+        let (dir_a, pw_a) = create_test_vault();
+        let (dir_b, pw_b) = create_test_vault();
+        let mut a = VaultHandle::open(dir_a.path()).unwrap();
+        a.unlock(&pw_a).unwrap();
+        let mut b = VaultHandle::open(dir_b.path()).unwrap();
+        b.unlock(&pw_b).unwrap();
+
+        let kind: crate::types::CipherKind =
+            serde_json::from_str(r#"{"type":"login","data":{"username":"u","password":"p"}}"#)
+                .unwrap();
+        let foreign_folder = Uuid::new_v4();
+        let source_id = a
+            .add_cipher(&crate::types::CipherInput {
+                name: "Bank".into(),
+                folder_id: Some(foreign_folder),
+                kind,
+                archived: true,
+                created_at: Some(1_600_000_000),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // B's card lands in A's address book at Channel — the only
+        // trust level a package needs (inert copy).
+        let card_code = b.contact_card_create().unwrap();
+        a.contacts_import_card(&card_code).unwrap();
+        let contact_card = a.contacts_list().unwrap()[0].card.clone();
+
+        let bytes = a.export_item_package(source_id, &contact_card).unwrap();
+        let (new_id, sender) = b.import_item_package(&bytes).unwrap();
+        assert_ne!(new_id, source_id, "import must be a fresh copy");
+        assert_eq!(sender, a.contacts_list().unwrap()[0].card.display_name);
+
+        match b.get_cipher(new_id).unwrap() {
+            CipherRead::Decrypted(c) => {
+                assert_eq!(c.name, "Bank");
+                assert!(matches!(c.kind, crate::types::CipherKind::Login(_)));
+                assert!(c.password_history.is_empty(), "history never travels");
+                assert!(c.attachments.is_empty(), "attachments never travel");
+                assert_eq!(c.folder_id, None, "foreign folder_id must be stripped");
+                assert!(!c.archived, "archived flag must not travel");
+                assert_ne!(
+                    c.created_at, 1_600_000_000,
+                    "creation timestamp must be reset"
+                );
+            }
+            CipherRead::Locked(_) => panic!("imported cipher must be readable"),
+        }
+    }
+
+    /// S2 IS-3: a contact whose card predates the wrap pubkey (empty
+    /// field, e.g. an address-book row stored before card v2) refuses
+    /// export with the re-share guidance instead of failing cryptically.
+    #[test]
+    fn item_package_refuses_card_without_wrap_key() {
+        let (dir_a, pw_a) = create_test_vault();
+        let mut a = VaultHandle::open(dir_a.path()).unwrap();
+        a.unlock(&pw_a).unwrap();
+
+        let kind: crate::types::CipherKind =
+            serde_json::from_str(r#"{"type":"login","data":{"username":"u","password":"p"}}"#)
+                .unwrap();
+        let source_id = a
+            .add_cipher(&crate::types::CipherInput {
+                name: "Bank".into(),
+                kind,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let legacy = crate::vault::contacts::ContactCard {
+            display_name: "Old Card".into(),
+            identity_signing_pubkey: hex::encode([1u8; 32]),
+            identity_wrap_pubkey: String::new(),
+            created_at: 1,
+        };
+        let err = a
+            .export_item_package(source_id, &legacy)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("share their card again"), "err: {err}");
     }
 
     /// P4: rotate_root_key must re-encrypt EVERY root-key-derived artifact —

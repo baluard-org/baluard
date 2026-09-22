@@ -32,12 +32,21 @@ use crate::error::{BaluardError, VaultError};
 pub const CONTACTS_FILE: &str = "meta/contacts.enc";
 
 /// The human-facing card payload. `identity_signing_pubkey` is the
-/// stable identifier (Ed25519 identity key, hex).
+/// stable identifier (Ed25519 identity key, hex); `identity_wrap_pubkey`
+/// is the X25519 half (hex) that HPKE item packages wrap to (S2 IS-3).
+/// Both are inside the signed payload, so the Level 2 code check covers
+/// the wrap key too — a swapped wrap key breaks the card signature.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContactCard {
     pub display_name: String,
     /// Hex Ed25519 identity signing pubkey.
     pub identity_signing_pubkey: String,
+    /// Hex X25519 identity wrap pubkey. `serde(default)`: address-book
+    /// rows stored before S2 load with an empty string, and item
+    /// package export refuses them (the contact must re-share their
+    /// card).
+    #[serde(default)]
+    pub identity_wrap_pubkey: String,
     /// Unix timestamp of card creation.
     pub created_at: u64,
 }
@@ -47,10 +56,12 @@ impl ContactCard {
         // Domain-separated canonical encoding: field order is fixed and
         // the name is the only free-text field — control characters are
         // rejected at sign time so it cannot shift field boundaries.
-        let mut payload = b"baluard-contact-v1\n".to_vec();
+        let mut payload = b"baluard-contact-v2\n".to_vec();
         payload.extend_from_slice(self.display_name.as_bytes());
         payload.push(b'\n');
         payload.extend_from_slice(self.identity_signing_pubkey.as_bytes());
+        payload.push(b'\n');
+        payload.extend_from_slice(self.identity_wrap_pubkey.as_bytes());
         payload.push(b'\n');
         payload.extend_from_slice(&self.created_at.to_le_bytes());
         payload
@@ -77,12 +88,14 @@ pub struct SignedContactCard {
 }
 
 impl SignedContactCard {
-    /// Sign a card with the member's identity signing key. Display names
-    /// containing control characters (newlines) are refused: the payload
-    /// is newline-delimited and the name flows into UI lists.
+    /// Sign a card with the member's identity signing key. Both public
+    /// keys travel inside the signed payload. Display names containing
+    /// control characters (newlines) are refused: the payload is
+    /// newline-delimited and the name flows into UI lists.
     pub fn sign(
         display_name: &str,
         identity_signing_pubkey: &str,
+        identity_wrap_pubkey: &str,
         created_at: u64,
         signing_key: &ed25519_dalek::SigningKey,
     ) -> Result<Self, BaluardError> {
@@ -91,9 +104,15 @@ impl SignedContactCard {
                 "display name must not contain newlines".into(),
             )));
         }
+        if identity_wrap_pubkey.is_empty() {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "card needs the identity wrap pubkey".into(),
+            )));
+        }
         let card = ContactCard {
             display_name: display_name.to_string(),
             identity_signing_pubkey: identity_signing_pubkey.to_string(),
+            identity_wrap_pubkey: identity_wrap_pubkey.to_string(),
             created_at,
         };
         let sig = signature::sign(signing_key, &card.payload())?;
@@ -315,7 +334,16 @@ mod tests {
         name: &str,
     ) -> Result<SignedContactCard, BaluardError> {
         let vk = signing.verifying_key();
-        SignedContactCard::sign(name, &hex::encode(vk.as_bytes()), 1_700_000_000, signing)
+        // Test wrap key: deterministic from the signing key so tests can
+        // also derive the matching X25519 secret via IdentityKeys::from_seed.
+        let wrap = crate::vault::identity::IdentityKeys::from_seed(&signing.to_bytes());
+        SignedContactCard::sign(
+            name,
+            &hex::encode(vk.as_bytes()),
+            &hex::encode(wrap.wrapping_pub_bytes()),
+            1_700_000_000,
+            signing,
+        )
     }
 
     #[test]
@@ -368,6 +396,7 @@ mod tests {
         let card = ContactCard {
             display_name: "A".into(),
             identity_signing_pubkey: hex::encode(vk.as_bytes()),
+            identity_wrap_pubkey: hex::encode([9u8; 32]),
             created_at: 1,
         };
 

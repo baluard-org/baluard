@@ -291,6 +291,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "vault.archive",
     "vault.unarchive",
     "cipher.clone",
+    "packages.import",
     "vault.import",
     "vault.trash.restore",
     "vault.trash.purge",
@@ -3156,6 +3157,36 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
+        "packages.export" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let cipher_id = parsed["cipher_id"].as_str().unwrap_or("");
+            let contact = parsed["contact"].as_str().unwrap_or("");
+            if cipher_id.is_empty() || contact.is_empty() {
+                return err_response("Missing cipher_id or contact in payload");
+            }
+            match state.export_item_package(cipher_id, contact).await {
+                Ok(b64) => ok_resp(serde_json::json!({ "package": b64 }).to_string(), token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "packages.import" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(package) = parsed["package"].as_str() else {
+                return err_response("Missing package in payload");
+            };
+            match state.import_item_package(package).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
         "cipher.totp_code" => {
             if req.payload.is_empty() {
                 return err_response("Missing cipher UUID in payload");
@@ -5113,6 +5144,8 @@ mod tests {
             "passkey.delete",
             "device.revoke",
             "cipher.totp_code",
+            "packages.export",
+            "packages.import",
         ] {
             assert!(action_requires_session_token(a), "{a} must be gated");
         }

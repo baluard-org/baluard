@@ -1149,6 +1149,7 @@ pub fn create_introduction(
         contact_card: Some(crate::vault::contacts::SignedContactCard::sign(
             device_name,
             &identity_vk_hex,
+            &hex::encode(identity.wrapping_pub_bytes()),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()

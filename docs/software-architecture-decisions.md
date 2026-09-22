@@ -983,6 +983,24 @@ See `docs/plan-android-autofill.md` and `docs/progress.md` for background and ve
 
 ---
 
+### D27. One-Shot Item Packages (IS-3) + Contact Card v2 (2026-09-22; S2-1 DONE)
+
+See `docs/plan-sharing.md` §4.6 (IS-3) and the S2 tracking row for the wave context.
+
+**What shipped**: a cipher exports as a self-contained encrypted file (`crates/baluard-core/src/vault/packages.rs`), HPKE-wrapped to a contact's identity X25519 wrap pubkey, delivered out-of-band (chat/email/USB). The recipient opens it and gets a FRESH entry (new id, their vault's item keys). Inert one-shot copy: no live link, no revocation, cannot be un-shared; Level 1 (Channel) trust suffices because packages wrap no live keys. Daemon routes `packages.export`/`packages.import` (token-gated; import is in COVER_MUTATION_ACTIONS).
+
+**Card v2**: the signed contact card now carries the identity X25519 wrap pubkey INSIDE the signed payload (`baluard-contact-v2` domain), so the Level 2 verification-code check covers the wrap key too — a swapped wrap key breaks the card signature. Address-book rows stored before v2 load with an empty key (serde default); package export refuses them with re-share guidance instead of failing cryptically.
+
+**Sender attribution (review round, blocker)**: a card's self-signature only proves the card is self-consistent — anyone can copy a public card verbatim — and HPKE Base mode authenticates neither party. Without more, anyone with a target's public card could seal a malicious item that opens as "from" any identity. Fix: the sender's identity Ed25519 key signs `recipient_wrap_pub || sent_at || item bytes` (`PackagePayload::signing_payload`), verified at open; re-wrapping a package to a different recipient fails the signature.
+
+**Metadata hygiene**: the envelope carries key material only — item, sender card, and timestamp all live inside the `secret_file`-sealed payload (AAD purpose-bound), so an intercepted file leaks nothing. Caps: 2 MB payload (matches the XL cipher tier so a sealed package always survives base64+JSON expansion under the 4 MB daemon socket frame limit; the seal/open size limits were reconciled in review), pre-decode length bound on the route.
+
+**Import stripping**: the recipient's entry drops attachments (bytes never travel), password history, folder assignment, the archived flag, and the sender's creation date — stripped on BOTH sides (export + import) so a hand-built payload cannot resurrect them.
+
+**Boundaries**: no expiry (expiry-in-AAD belongs to the IS-6 guest flavor), no CLI/UI yet (share sheet + "open a shared file" = §4.8 wave), tested against a scripted second vault rather than live transport.
+
+---
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.
