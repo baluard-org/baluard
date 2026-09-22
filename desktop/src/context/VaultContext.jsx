@@ -1,4 +1,4 @@
-import { createSignal, createContext, useContext } from "solid-js";
+import { createSignal, createContext, useContext, onSettled } from "solid-js";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { buildAddPayload, buildUpdatePayload, buildGetPayload } from "../lib/payload.js";
@@ -29,6 +29,10 @@ const EMPTY_CIPHER = {
 function VaultProvider(props) {
   // Cipher data
   const [ciphers, setCiphers] = createSignal([]);
+  // S2-5 merged multi-vault view: envelopes of OTHER open+unlocked vaults
+  // (each already filtered to non-active rows server-side). Refreshed
+  // alongside the active vault's list; non-critical on failure.
+  const [otherVaults, setOtherVaults] = createSignal([]);
   const [trashCiphers, setTrashCiphers] = createSignal([]);
   const [archivedCiphers, setArchivedCiphers] = createSignal([]);
   const [folders, setFolders] = createSignal([]);
@@ -82,12 +86,64 @@ function VaultProvider(props) {
       setTags(Array.isArray(data.tags) ? data.tags : []);
       setTrashCiphers(data.trash || []);
       setArchivedCiphers(data.archived || []);
+      await refreshOtherVaults();
       // Profile loads alongside cipher data
       refreshProfile();
     } catch (e) {
       toastError(sanitizeError(e, t));
     }
   }
+
+  // S2-5: pull the merged multi-vault payload. Active and locked/closed
+  // rows are dropped here; each remaining cipher gets tagged with its
+  // source vault for the list badge + read-only detail.
+  async function refreshOtherVaults() {
+    try {
+      const data = JSON.parse(await daemon("vaults.list_full_all"));
+      const rows = (data.vaults || []).filter(
+        (v) => !v.active && v.presence === "unlocked" && Array.isArray(v.ciphers)
+      );
+      setOtherVaults(
+        rows.map((v) => ({
+          slug: v.slug,
+          name: v.display_name,
+          space: v.space,
+          ciphers: v.ciphers,
+        }))
+      );
+    } catch {
+      // Non-critical surface: the merged view just stays empty.
+      setOtherVaults([]);
+    }
+  }
+
+  // Foreign ciphers (other vaults) tagged for the list + detail.
+  const otherVaultCiphers = () =>
+    otherVaults().flatMap((v) =>
+      (v.ciphers || []).map((c) => ({
+        ...c,
+        _vault: { slug: v.slug, name: v.name, space: v.space },
+      }))
+    );
+
+  // Staleness bound (S2-5 review): a sibling vault can lock (auto-lock
+  // timer, blur policy, close) without this context hearing about it.
+  // The daemon stays authoritative; re-pull on focus regain and on a 30s
+  // heartbeat — same design as the vault switcher's presence refresh.
+  let otherVaultHeartbeat;
+  function onFocusOrVisible() {
+    refreshOtherVaults();
+  }
+  onSettled(() => {
+    otherVaultHeartbeat = setInterval(refreshOtherVaults, 30_000);
+    window.addEventListener("focus", onFocusOrVisible);
+    document.addEventListener("visibilitychange", onFocusOrVisible);
+    return () => {
+      clearInterval(otherVaultHeartbeat);
+      window.removeEventListener("focus", onFocusOrVisible);
+      document.removeEventListener("visibilitychange", onFocusOrVisible);
+    };
+  });
 
   async function refreshDeviceFleet() {
     try {
@@ -219,6 +275,7 @@ function VaultProvider(props) {
   const store = {
     // Cipher data
     ciphers, setCiphers,
+    otherVaults, otherVaultCiphers,
     trashCiphers, setTrashCiphers,
     archivedCiphers, setArchivedCiphers,
     folders, setFolders,

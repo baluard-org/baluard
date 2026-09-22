@@ -392,6 +392,134 @@ async fn vault_host_list_empty_with_sandboxed_registry() {
     );
 }
 
+// ── vaults.list_full_all (S2-5 merged multi-vault) ──────────────────
+
+/// Register a created vault in the sandboxed registry so host.list()
+/// joins it into rows (the route merges registry rows with host states).
+fn register_in_registry(slug: &str, path: &std::path::Path) {
+    use baluard_core::vault::registry::{BaluardMarker, VaultEntry, VaultRegistry};
+    let vault_id = BaluardMarker::read_from_vault(path)
+        .ok()
+        .flatten()
+        .map(|m: baluard_core::vault::registry::BaluardMarker| m.vault_id)
+        .unwrap_or(uuid::Uuid::new_v4());
+    let mut reg = VaultRegistry::load_locked().unwrap_or_default();
+    reg.vaults.insert(
+        slug.to_string(),
+        VaultEntry {
+            slug: slug.to_string(),
+            display_name: format!("Vault {slug}"),
+            path: path.to_path_buf(),
+            provider: None,
+            remote_url: None,
+            last_synced: None,
+            last_opened: None,
+            vault_id,
+        },
+    );
+    reg.save_locked().expect("registry save");
+}
+
+#[tokio::test]
+async fn vaults_list_full_all_merges_and_gates_on_active_token() {
+    let _sandbox = sandboxed_host_env();
+    let host = VaultHost::new();
+    let host: baluard_daemon::host::SharedVaultHost = std::sync::Arc::new(host);
+
+    let (dir_a, path_a) = make_vault("fullall-a");
+    let state_a = Arc::new(VaultState::new(path_a.clone()));
+    state_a.open().await.expect("open a");
+    state_a.unlock(MASTER).await.expect("unlock a");
+    state_a
+        .add_cipher(&serde_json::to_string(&login_input("Bank A", "u")).unwrap())
+        .await
+        .expect("add a");
+    register_in_registry("fullall-a", &path_a);
+
+    let (dir_b, path_b) = make_vault("fullall-b");
+    let state_b = Arc::new(VaultState::new(path_b.clone()));
+    state_b.open().await.expect("open b");
+    state_b.unlock(MASTER).await.expect("unlock b");
+    state_b
+        .add_cipher(&serde_json::to_string(&login_input("Bank B", "u")).unwrap())
+        .await
+        .expect("add b");
+    register_in_registry("fullall-b", &path_b);
+
+    let (dir_c, path_c) = make_vault("fullall-c");
+    let state_c = Arc::new(VaultState::new(path_c.clone()));
+    state_c.open().await.expect("open c");
+    register_in_registry("fullall-c", &path_c);
+
+    host.insert("fullall-a".into(), state_a.clone()).await;
+    host.insert("fullall-b".into(), state_b.clone()).await;
+    host.insert("fullall-c".into(), state_c.clone()).await;
+    host.switch("fullall-a").await.expect("switch to a");
+
+    let token_a = state_a
+        .get_session_token()
+        .await
+        .expect("active vault token");
+    let token_b = state_b.get_session_token().await.expect("b token");
+
+    // Happy path: merged rows; unlocked vaults carry envelopes.
+    let req = GatewayRequest {
+        action: "vaults.list_full_all".into(),
+        payload: String::new(),
+        session_token: token_a.clone(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "err: {}", resp.error_message);
+    let parsed: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    let rows = parsed["vaults"].as_array().expect("rows").clone();
+    assert_eq!(rows.len(), 3, "all registered vaults appear: {rows:?}");
+
+    let row_a = rows.iter().find(|r| r["slug"] == "fullall-a").unwrap();
+    assert_eq!(row_a["active"], serde_json::json!(true));
+    assert_eq!(
+        row_a["ciphers"].as_array().unwrap().len(),
+        1,
+        "active vault envelope present"
+    );
+    let row_b = rows.iter().find(|r| r["slug"] == "fullall-b").unwrap();
+    assert_eq!(
+        row_b["ciphers"].as_array().unwrap().len(),
+        1,
+        "sibling unlocked vault merges"
+    );
+    assert!(row_b["active"] == serde_json::json!(false));
+    let row_c = rows.iter().find(|r| r["slug"] == "fullall-c").unwrap();
+    assert!(
+        row_c.get("ciphers").is_none(),
+        "locked vault carries metadata only"
+    );
+
+    // Gate 1: no token refused.
+    let req = GatewayRequest {
+        action: "vaults.list_full_all".into(),
+        payload: String::new(),
+        session_token: String::new(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "empty token must be refused");
+
+    // Gate 2: a SIBLING vault's token refused — only the active
+    // session may read the merge (bridge/extension tokens can never
+    // verify here, preserving the D21 no-export boundary).
+    let req = GatewayRequest {
+        action: "vaults.list_full_all".into(),
+        payload: String::new(),
+        session_token: token_b,
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "sibling token must be refused");
+
+    let _ = (dir_a, dir_b, dir_c);
+}
+
 // ── Auto-lock policy ──────────────────────────────────────────────────
 
 #[tokio::test]

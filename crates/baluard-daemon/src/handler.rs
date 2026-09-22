@@ -267,6 +267,7 @@ const HOST_ACTIONS: &[&str] = &[
     "join.introduce",
     "join.poll",
     "vaults.list",
+    "vaults.list_full_all",
     "vaults.active",
     "vaults.switch",
     "vaults.set_active",
@@ -832,6 +833,80 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
                 }
                 None => err_response("No active vault".to_string()),
             };
+        }
+        // ── vaults.list_full_all (S2-5 merged multi-vault item list) ──
+        // Token-gated HERE (not pre-token): the payload carries sibling
+        // vaults' decrypted secrets. The caller must hold the ACTIVE
+        // vault's session token — the same trust that already grants it
+        // `vault.list_full` for the active vault. Bridge pairing tokens
+        // never verify against a vault session, so the extension cannot
+        // export vaults (preserves the D21 no-export boundary).
+        "vaults.list_full_all" => {
+            let Some(active_slug) = host.active_slug().await else {
+                return err_response("No active vault".to_string());
+            };
+            let Some(active_state) = host.get(&active_slug).await else {
+                return err_response("No active vault".to_string());
+            };
+            if let Err(e) = active_state.verify_session_token(&req.session_token).await {
+                return err_response(e);
+            }
+            // Snapshot rows WITHOUT holding the host lock across the
+            // per-vault envelope awaits (same discipline as host.list).
+            let rows = host.list().await;
+            let mut merged = Vec::with_capacity(rows.len());
+            for row in rows {
+                let mut obj = serde_json::json!({
+                    "slug": row.slug,
+                    "display_name": row.display_name,
+                    "space": row.space,
+                    "active": row.active,
+                    "presence": row.presence,
+                });
+                if row.presence == "unlocked" {
+                    if let Some(state) = host.get(&row.slug).await {
+                        match state.full_envelope().await {
+                            Ok(env) => {
+                                if let Some(o) = obj.as_object_mut() {
+                                    if row.active {
+                                        // Active row keeps the full envelope
+                                        // shape (mirrors vault.list_full).
+                                        for key in
+                                            ["ciphers", "folders", "trash", "archived", "tags"]
+                                        {
+                                            o.insert(key.to_string(), env[key].clone());
+                                        }
+                                    } else {
+                                        // Sibling rows carry only the item
+                                        // list — folders/trash/tags belong to
+                                        // their own vault's view, and skipping
+                                        // them keeps the merged frame small.
+                                        o.insert("ciphers".into(), env["ciphers"].clone());
+                                    }
+                                }
+                            }
+                            // A vault that locked mid-scan degrades to a
+                            // metadata row with CORRECTED presence; never
+                            // fail the whole merge.
+                            Err(_) => {
+                                obj["presence"] = serde_json::json!("locked");
+                            }
+                        }
+                    }
+                }
+                merged.push(obj);
+            }
+            // Deterministic ordering (the registry is a HashMap).
+            merged.sort_by(|a, b| {
+                a["slug"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(b["slug"].as_str().unwrap_or(""))
+            });
+            return ok_resp(
+                serde_json::to_string(&serde_json::json!({ "vaults": merged })).unwrap_or_default(),
+                None,
+            );
         }
         "vaults.switch" => {
             let slug = match extract_slug(&req.payload) {

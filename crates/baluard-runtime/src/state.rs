@@ -577,6 +577,14 @@ impl VaultState {
     /// Batch-fetch all decrypted ciphers, folders, trash, and archived items.
     /// Returns a single JSON blob to eliminate N+1 IPC round-trips from the frontend.
     pub async fn list_all(&self) -> Result<String, String> {
+        let result = self.full_envelope().await?;
+        serde_json::to_string(&result).map_err(|e| format!("Serialization: {e}"))
+    }
+
+    /// The `vault.list_full` payload as a structured Value. Shared by the
+    /// single-vault route and the merged multi-vault `vaults.list_full_all`
+    /// host route (S2-5).
+    pub async fn full_envelope(&self) -> Result<serde_json::Value, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
 
@@ -641,14 +649,13 @@ impl VaultState {
         let _ = handle.rebuild_tag_index();
         let tags = handle.list_tags().unwrap_or_default();
 
-        let result = serde_json::json!({
+        Ok(serde_json::json!({
             "ciphers": ciphers,
             "folders": folders,
             "trash": trash,
             "archived": archived,
             "tags": tags,
-        });
-        serde_json::to_string(&result).map_err(|e| format!("Serialization: {e}"))
+        }))
     }
 
     /// Autofill credential query (Phase 6, plan D1/D2/D4).

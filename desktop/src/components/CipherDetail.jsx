@@ -49,7 +49,7 @@ export default function CipherDetail(props) {
 
   async function deletePasskey() {
     const pk = showPasskeyDelete();
-    if (!pk) return;
+    if (!pk || foreign()) return;
     try {
       await daemon("passkey.delete", JSON.stringify({ id: pk.cipher_id, credential_id: pk.credential_id }));
       setShowPasskeyDelete(null);
@@ -63,6 +63,10 @@ export default function CipherDetail(props) {
   }
 
   const cipher = () => props.cipher;
+  // S2-5: entries from another vault are read-only here — the daemon
+  // routes are slug-routed to the ACTIVE vault, so mutations would fail
+  // (or worse, target a same-uuid cipher in the wrong vault).
+  const foreign = () => !!props.cipher?._vault;
 
   // TOTP code auto-refresh timer (boundary-aligned)
   createEffect(
@@ -80,7 +84,7 @@ export default function CipherDetail(props) {
       const fetchCode = async () => {
         if (!active) return;
         try {
-          const data = JSON.parse(await daemon("cipher.totp_code", target.id));
+          const data = JSON.parse(await daemon("cipher.totp_code", target.id, cipher()?._vault?.slug || null));
           if (active) {
             setTotpCode(data);
             if (data.expires_at) {
@@ -105,7 +109,7 @@ export default function CipherDetail(props) {
 
   function startEdit() {
     const c = cipher();
-    if (!c) return;
+    if (!c || foreign()) return;
     props.onEdit(cipherToFlat(c));
   }
 
@@ -228,6 +232,7 @@ export default function CipherDetail(props) {
                       <p class="text-[10px] text-amber-600">{t("passkey.missingKeyWarning")}</p>
                     </Show>
                     <div class="flex justify-end pt-1">
+                      <Show when={!foreign()}>
                       <button
                         onClick={() => {
                           const c = cipher();
@@ -243,6 +248,7 @@ export default function CipherDetail(props) {
                         }}
                         class="text-xs text-red-500 hover:text-red-400 transition-colors cursor-pointer"
                       >{t("passkey.deleteBtn")}</button>
+                      </Show>
                     </div>
                   </div>
                 );
@@ -487,7 +493,7 @@ export default function CipherDetail(props) {
                   try {
                     const result = JSON.parse(await daemon("vault.attach_download", JSON.stringify(
                       buildAttachDownloadPayload(cipher().id, attach.id)
-                    )));
+                    ), cipher()?._vault?.slug || null));
                     const b64 = result.data_base64;
                     const binary = atob(b64);
                     const bytes = new Uint8Array(binary.length);
@@ -523,8 +529,14 @@ export default function CipherDetail(props) {
 
       {/* Footer Details Action bar */}
       <div class="p-6 bg-[var(--color-sidebar)] border-t border-[var(--color-border)] flex items-center justify-between gap-4">
-        <Show when={props.selectedCategory === "Trash"} fallback={
-          <Show when={props.selectedCategory === "Archive"} fallback={
+        <Show when={foreign()}>
+          <div class="flex-1 py-3 px-4 rounded-xl bg-[var(--color-sidebar)] text-[var(--color-muted)] text-sm text-center border border-[var(--color-border)]">
+            {t("vault.readOnlyOtherVault", { name: props.cipher._vault.name })}
+          </div>
+        </Show>
+        <Show when={!foreign() && props.selectedCategory === "Trash"} fallback={
+          <Show when={!foreign() && props.selectedCategory === "Archive"} fallback={
+            <Show when={!foreign()}>
             <>
               <button
                 onClick={startEdit}
@@ -548,6 +560,7 @@ export default function CipherDetail(props) {
                 {t("entry.delete")}
               </button>
             </>
+            </Show>
           }>
             <button
               onClick={() => vault.unarchiveCipher(cipher().id, t).then(() => { props.setViewCipher(null); props.setActivePane("welcome"); })}

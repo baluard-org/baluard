@@ -228,6 +228,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vaults.close",
     "vaults.detach",
     "vaults.list",
+    "vaults.list_full_all",
     "vaults.register_local",
     "vaults.switch",
     // clone from provider
