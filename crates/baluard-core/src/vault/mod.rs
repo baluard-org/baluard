@@ -21,6 +21,7 @@ pub mod members;
 pub mod packages;
 pub mod padding;
 pub mod registry;
+pub mod reveals;
 pub mod slug;
 
 pub use handle::VaultHandle;

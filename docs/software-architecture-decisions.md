@@ -1001,6 +1001,24 @@ See `docs/plan-sharing.md` §4.6 (IS-3) and the S2 tracking row for the wave con
 
 ---
 
+### D28. Field-Scoped Reveals, Two Flavors (IS-6) (2026-09-22; S2-2 DONE)
+
+See `docs/plan-sharing.md` §4.6 (IS-6) and the S2 tracking row for the wave context.
+
+**What shipped**: a Login's fields (url, username, password; TOTP opt-in) export as a self-contained expiring file (`crates/baluard-core/src/vault/reveals.rs`) in two flavors. Contact-key (Level 1): HPKE-wrapped to a contact card's wrap pubkey, sender-attributed. Passphrase-guest (Level 0): Argon2id over an app-generated 7-word passphrase, no identity involved, opened by the Baluard app without a vault ("Open a shared file" on first-run). Reveals are VIEW-ONLY: unlike IS-3 packages, opening never mutates the recipient's vault. Daemon routes `reveals.export_contact`/`reveals.export_guest`/`reveals.open_contact` (token-gated) plus `reveals.open_guest` (host-level, tokenless, pure compute). The TOTP seed never crosses IPC: open returns the current code and its validity window.
+
+**Expiry binding**: the envelope carries `expires_at` in plaintext feeding the seal's AAD marker (`item-reveal-payload-v1/exp/<unix>`), so an edited date breaks the GCM tag and the sealed copy must equal it. Expired files refuse in plain language; the recipient asks for a fresh reveal.
+
+**Sender attribution**: the identity key signs `recipient_wrap_pub ‖ expires_at ‖ created_at ‖ item_name ‖ fields` — everything a captured signature could otherwise re-seal (a card's self-signature is copyable and HPKE Base mode authenticates neither party; the label and freshness timestamp are signed so a stale capture cannot masquerade as a new send under a new name).
+
+**Untrusted KDF params (review round, blocker)**: the guest envelope's Argon2id block is attacker-controlled; without a clamp a hostile file could set memory_kib to terabytes and abort the daemon on allocation the moment the victim types the passphrase. The open path clamps params to generous ceilings (128 MiB / 6 / 4 vs the DesktopStd seal path's 64 MiB / 3 / 2), so legit files verify and hostile ones collapse to a normal-cost derivation that fails the GCM tag.
+
+**Passphrase pool caveat**: the generator's passphrase pool is bilingual (EFF English + Spanish BIP-39, 16,380 words, ~98 bits at 7 words). Voice delivery of a mixed-language passphrase is a known wrinkle deferred to the UI wave (the app also shows the words on screen; a language-scoped draw needs a generator option).
+
+**Boundaries**: no UI/CLI yet (share sheet + "Open a shared file" = §4.8 wave); error strings inside core stay technical until that wave maps them to plain copy (packages parity); route-level tests for the three gated actions remain harness-blocked (no session-token minting for vault routes; the P6 pin covers their gating).
+
+---
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.
