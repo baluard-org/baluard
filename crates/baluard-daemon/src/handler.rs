@@ -229,6 +229,7 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     "vault.clone_finalize",
     "join.introduce",
     "join.poll",
+    "reveals.open_guest",
 ];
 
 /// Default-deny gate for the per-vault dispatcher. Unknown actions require
@@ -281,6 +282,7 @@ const HOST_ACTIONS: &[&str] = &[
     "bridge.pending",
     "bridge.reauth",
     "bridge.revoke",
+    "reveals.open_guest",
 ];
 
 /// Actions that mutate vault data. Schedule cover commits after these.
@@ -1268,6 +1270,15 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     }
     if req.action.as_str() == "join.poll" {
         return handle_join_poll(req, host).await;
+    }
+    // S2 IS-6 passphrase-guest reveal: host-level and vault-agnostic —
+    // a guest has NO vault ("Open a shared file" on first-run). Pure
+    // compute: bytes in, an Argon2id derivation over the user-supplied
+    // passphrase, fields out. Nothing on disk is touched, no token is
+    // minted, and the crypto itself gates the payload (wrong passphrase
+    // = GCM failure), so the 0600 same-UID socket is the only gate.
+    if req.action.as_str() == "reveals.open_guest" {
+        return handle_reveal_open_guest(req);
     }
     // Biometric unlock is a host-level lifecycle op: it mints a session
     // token (via state.unlock internally) and the desktop files that token
@@ -2638,6 +2649,42 @@ async fn handle_join_introduce(
     }
 }
 
+/// S2 IS-6: open a passphrase-guest reveal (host-level, no vault, no
+/// token). The payload's own crypto is the gate: a wrong passphrase or
+/// an expired file refuses in core. The TOTP seed, when present, never
+/// leaves core; the response carries only the current code.
+fn handle_reveal_open_guest(req: GatewayRequest) -> GatewayResponse {
+    let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+        Ok(v) => v,
+        Err(_) => serde_json::json!({}),
+    };
+    let Some(reveal_b64) = parsed["reveal"].as_str() else {
+        return err_response("Missing reveal in payload");
+    };
+    let Some(passphrase) = parsed["passphrase"].as_str() else {
+        return err_response("Missing passphrase in payload");
+    };
+    if reveal_b64.len() > baluard_core::vault::reveals::MAX_REVEAL_FILE_BYTES * 2 {
+        return err_response("That file is too large to be a shared item.");
+    }
+    use base64::Engine as _;
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(reveal_b64.trim()) {
+        Ok(b) => b,
+        Err(_) => return err_response("Not a valid shared file."),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    match baluard_core::vault::reveals::open_guest_reveal(&bytes, passphrase, now) {
+        Ok(opened) => match serde_json::to_string(&opened) {
+            Ok(json) => ok_resp(json, Some(req.session_token.as_str())),
+            Err(e) => err_response(format!("{e}")),
+        },
+        Err(e) => err_response(format!("{e}")),
+    }
+}
+
 /// §4.8-2: poll the join flow state. Payload: `{ slug }`. Pulls the
 /// remote (tolerant: offline leaves the previous status) so the admin's
 /// approval artifacts arrive, then reports `{ introduced, approved }`
@@ -3182,6 +3229,68 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 return err_response("Missing package in payload");
             };
             match state.import_item_package(package).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "reveals.export_contact" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let cipher_id = parsed["cipher_id"].as_str().unwrap_or("");
+            let contact = parsed["contact"].as_str().unwrap_or("");
+            let Some(expires_at) = parsed["expires_at"].as_u64() else {
+                return err_response("Missing expires_at in payload");
+            };
+            let include_totp = parsed["include_totp"].as_bool().unwrap_or(false);
+            if cipher_id.is_empty() || contact.is_empty() {
+                return err_response("Missing cipher_id or contact in payload");
+            }
+            match state
+                .export_contact_reveal(cipher_id, contact, expires_at, include_totp)
+                .await
+            {
+                Ok(reveal_b64) => ok_resp(
+                    serde_json::json!({ "reveal": reveal_b64 }).to_string(),
+                    token_str,
+                ),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "reveals.export_guest" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let cipher_id = parsed["cipher_id"].as_str().unwrap_or("");
+            let Some(expires_at) = parsed["expires_at"].as_u64() else {
+                return err_response("Missing expires_at in payload");
+            };
+            let include_totp = parsed["include_totp"].as_bool().unwrap_or(false);
+            if cipher_id.is_empty() {
+                return err_response("Missing cipher_id in payload");
+            }
+            match state
+                .export_guest_reveal(cipher_id, expires_at, include_totp)
+                .await
+            {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "reveals.open_contact" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(reveal) = parsed["reveal"].as_str() else {
+                return err_response("Missing reveal in payload");
+            };
+            match state.open_contact_reveal(reveal).await {
                 Ok(json) => ok_resp(json, token_str),
                 Err(e) => err_response(e),
             }
@@ -5146,6 +5255,9 @@ mod tests {
             "cipher.totp_code",
             "packages.export",
             "packages.import",
+            "reveals.export_contact",
+            "reveals.export_guest",
+            "reveals.open_contact",
         ] {
             assert!(action_requires_session_token(a), "{a} must be gated");
         }

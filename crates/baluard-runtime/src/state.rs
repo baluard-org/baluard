@@ -2815,6 +2815,84 @@ impl VaultState {
         .to_string())
     }
 
+    /// S2 IS-6 contact-key flavor: seal a Login's reveal fields to a
+    /// contact. Returns the base64 reveal file.
+    pub async fn export_contact_reveal(
+        &self,
+        cipher_id: &str,
+        contact_pubkey: &str,
+        expires_at: u64,
+        include_totp: bool,
+    ) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let cid = uuid::Uuid::parse_str(cipher_id).map_err(|_| "Invalid item ID.".to_string())?;
+        let contact = handle
+            .contacts_list()
+            .map_err(|e| format!("{e}"))?
+            .into_iter()
+            .find(|entry| entry.card.identity_signing_pubkey == contact_pubkey)
+            .ok_or_else(|| "That person is not in your contacts.".to_string())?;
+        let bytes = handle
+            .export_contact_reveal(cid, &contact.card, expires_at, include_totp)
+            .map_err(|e| format!("{e}"))?;
+        use base64::Engine as _;
+        Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+    }
+
+    /// S2 IS-6 passphrase-guest flavor: seal a Login's reveal fields
+    /// under an app-generated passphrase. Returns `{reveal, passphrase}`;
+    /// the passphrase travels by voice, never beside the file.
+    pub async fn export_guest_reveal(
+        &self,
+        cipher_id: &str,
+        expires_at: u64,
+        include_totp: bool,
+    ) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let cid = uuid::Uuid::parse_str(cipher_id).map_err(|_| "Invalid item ID.".to_string())?;
+        let (bytes, passphrase) = handle
+            .export_guest_reveal(cid, expires_at, include_totp)
+            .map_err(|e| format!("{e}"))?;
+        use base64::Engine as _;
+        Ok(serde_json::json!({
+            "reveal": base64::engine::general_purpose::STANDARD.encode(bytes),
+            "passphrase": passphrase,
+        })
+        .to_string())
+    }
+
+    /// S2 IS-6: open a contact-key reveal with this vault's identity.
+    /// Read-only: nothing is added to the vault. Returns the
+    /// [`OpenedReveal`] JSON (TOTP seed never crosses IPC; only the
+    /// current code).
+    pub async fn open_contact_reveal(&self, reveal_b64: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let trimmed = reveal_b64.trim();
+        if trimmed.len() > baluard_core::vault::reveals::MAX_REVEAL_FILE_BYTES * 2 {
+            return Err("That file is too large to be a shared item.".to_string());
+        }
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(trimmed)
+            .map_err(|_| "Not a valid shared file.".to_string())?;
+        let opened = handle
+            .open_contact_reveal(&bytes)
+            .map_err(|e| format!("{e}"))?;
+        serde_json::to_string(&opened).map_err(|e| format!("{e}"))
+    }
+
     /// Update an existing cipher.
     pub async fn update_cipher(&self, payload: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;

@@ -1308,3 +1308,57 @@ async fn join_introduce_validates_consumes_and_polls() {
     assert_eq!(payload["introduced"], true);
     assert_eq!(payload["approved"], false);
 }
+
+/// S2 IS-6: the passphrase-guest reveal opens through the host-level
+/// route with no vault, no token, and no host state. A wrong passphrase
+/// refuses through the same route. NOTE: no sandboxed_host_env here —
+/// the route touches no disk, and flipping the process-global
+/// BALUARD_DATA_DIR mid-test races the join tests' registry reads.
+#[tokio::test]
+async fn reveal_open_guest_route_roundtrip_and_refusal() {
+    let host = Arc::new(VaultHost::new());
+
+    let fields = baluard_core::vault::reveals::RevealFields {
+        url: Some("https://app.example.com".into()),
+        username: Some("ada".into()),
+        password: Some("hunter2".into()),
+        totp_uri: None,
+    };
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 86_400;
+    let (bytes, passphrase) =
+        baluard_core::vault::reveals::seal_guest_reveal("Wifi", &fields, expires).unwrap();
+    use base64::Engine as _;
+    let reveal_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    // Empty token: the route never consults one.
+    let req = GatewayRequest {
+        action: "reveals.open_guest".into(),
+        payload: serde_json::json!({ "reveal": reveal_b64, "passphrase": passphrase }).to_string(),
+        session_token: String::new(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "{}", resp.error_message);
+    let payload: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    assert_eq!(payload["item_name"], "Wifi");
+    assert_eq!(payload["password"], "hunter2");
+    assert_eq!(payload["sender_name"], serde_json::Value::Null);
+
+    // Wrong passphrase: refused, no oracle beyond the crypto.
+    let req = GatewayRequest {
+        action: "reveals.open_guest".into(),
+        payload: serde_json::json!({
+            "reveal": reveal_b64,
+            "passphrase": "not-the-passphrase",
+        })
+        .to_string(),
+        session_token: String::new(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "wrong passphrase must refuse");
+}

@@ -508,6 +508,133 @@ impl VaultHandle {
         Ok((cipher_id, payload.sender_card.card.display_name.clone()))
     }
 
+    /// S2 IS-6: pull the revealable fields out of a Login cipher.
+    /// Only Login ciphers reveal: the field set is login-shaped (url,
+    /// username, password, TOTP opt-in).
+    fn reveal_fields_from_cipher(
+        cipher: &crate::types::Cipher,
+        include_totp: bool,
+    ) -> Result<crate::vault::reveals::RevealFields, BaluardError> {
+        let crate::types::CipherKind::Login(login) = &cipher.kind else {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "Only logins can be shared as a reveal.".into(),
+            )));
+        };
+        Ok(crate::vault::reveals::RevealFields {
+            url: login.uris.first().map(|u| u.uri.clone()),
+            username: login.username.clone(),
+            password: login.password.clone(),
+            totp_uri: if include_totp {
+                login.totp_uri.clone()
+            } else {
+                None
+            },
+        })
+    }
+
+    fn checked_reveal_expiry(expires_at: u64) -> Result<(), BaluardError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if expires_at <= now {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "Pick an expiry date in the future.".into(),
+            )));
+        }
+        Ok(())
+    }
+
+    /// S2 IS-6 contact-key flavor: seal the reveal fields of a Login
+    /// cipher to a contact card's wrap pubkey (Level 1 trust).
+    pub fn export_contact_reveal(
+        &self,
+        cipher_id: Uuid,
+        contact: &crate::vault::contacts::ContactCard,
+        expires_at: u64,
+        include_totp: bool,
+    ) -> Result<Vec<u8>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        Self::checked_reveal_expiry(expires_at)?;
+        let identity = self.identity().ok_or_else(|| {
+            VaultError::InvalidOperation("identity not available on this device".into())
+        })?;
+        let recipient_wrap: [u8; 32] = hex::decode(&contact.identity_wrap_pubkey)
+            .map_err(|_| {
+                VaultError::InvalidOperation(
+                    "this contact's card has no sharing key: ask them to share their card again"
+                        .into(),
+                )
+            })?
+            .try_into()
+            .map_err(|_| {
+                VaultError::InvalidOperation(
+                    "this contact's card has no sharing key: ask them to share their card again"
+                        .into(),
+                )
+            })?;
+        let cipher = match self.get_cipher(cipher_id)? {
+            crate::vault::handle::CipherRead::Decrypted(c) => *c,
+            crate::vault::handle::CipherRead::Locked(_) => {
+                return Err(VaultError::Locked.into());
+            }
+        };
+        let fields = Self::reveal_fields_from_cipher(&cipher, include_totp)?;
+        let sender_card = self.contact_card_signed()?;
+        crate::vault::reveals::seal_contact_reveal(
+            sender_card,
+            identity.signing_key(),
+            &cipher.name,
+            &fields,
+            expires_at,
+            &recipient_wrap,
+        )
+    }
+
+    /// S2 IS-6 passphrase-guest flavor: seal the reveal fields of a
+    /// Login cipher under an app-generated passphrase (Level 0). The
+    /// passphrase travels by voice, never beside the file.
+    pub fn export_guest_reveal(
+        &self,
+        cipher_id: Uuid,
+        expires_at: u64,
+        include_totp: bool,
+    ) -> Result<(Vec<u8>, String), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        Self::checked_reveal_expiry(expires_at)?;
+        let cipher = match self.get_cipher(cipher_id)? {
+            crate::vault::handle::CipherRead::Decrypted(c) => *c,
+            crate::vault::handle::CipherRead::Locked(_) => {
+                return Err(VaultError::Locked.into());
+            }
+        };
+        let fields = Self::reveal_fields_from_cipher(&cipher, include_totp)?;
+        crate::vault::reveals::seal_guest_reveal(&cipher.name, &fields, expires_at)
+    }
+
+    /// S2 IS-6: open a contact-key reveal with this vault's identity
+    /// (the recipient side). Never mutates the vault.
+    pub fn open_contact_reveal(
+        &self,
+        reveal_bytes: &[u8],
+    ) -> Result<crate::vault::reveals::OpenedReveal, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let identity = self.identity().ok_or_else(|| {
+            VaultError::InvalidOperation("identity not available on this device".into())
+        })?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        crate::vault::reveals::open_contact_reveal(reveal_bytes, identity, now)
+    }
+
     /// S1a-3: address book contents (People screen, thin).
     pub fn contacts_list(&self) -> Result<Vec<crate::vault::contacts::ContactEntry>, BaluardError> {
         if !self.is_unlocked() {
@@ -5662,6 +5789,105 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("share their card again"), "err: {err}");
+    }
+
+    /// S2 IS-6: both reveal flavors end-to-end from a real vault cipher.
+    /// Contact flavor: B's card, B's identity opens it (TOTP opted in,
+    /// code computed, seed never surfaces). Guest flavor: passphrase
+    /// opens it (no TOTP unless opted in, no sender). Non-Login ciphers
+    /// and past expiries refuse at export.
+    #[test]
+    fn reveal_flavors_roundtrip_and_guards() {
+        let (dir_a, pw_a) = create_test_vault();
+        let (dir_b, pw_b) = create_test_vault();
+        let mut a = VaultHandle::open(dir_a.path()).unwrap();
+        a.unlock(&pw_a).unwrap();
+        let mut b = VaultHandle::open(dir_b.path()).unwrap();
+        b.unlock(&pw_b).unwrap();
+
+        let source_id = a
+            .add_cipher(&crate::types::CipherInput {
+                name: "Team login".into(),
+                kind: serde_json::from_str(
+                    r#"{"type":"login","data":{"username":"ada",
+                        "password":"hunter2",
+                        "uris":[{"uri":"https://app.example.com"}],
+                        "totp_uri":"otpauth://totp/Example:ada@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example"}}"#,
+                )
+                .unwrap(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // B's card lands in A's book at Channel (Level 1 is enough).
+        let card_code = b.contact_card_create().unwrap();
+        a.contacts_import_card(&card_code).unwrap();
+        let contact = a.contacts_list().unwrap()[0].card.clone();
+
+        let expires = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 86_400;
+
+        // Contact flavor: TOTP opted in, recipient opens with identity.
+        let bytes = a
+            .export_contact_reveal(source_id, &contact, expires, true)
+            .unwrap();
+        let opened = b.open_contact_reveal(&bytes).unwrap();
+        assert_eq!(opened.item_name, "Team login");
+        assert_eq!(opened.url.as_deref(), Some("https://app.example.com"));
+        assert_eq!(opened.username.as_deref(), Some("ada"));
+        assert_eq!(opened.password.as_deref(), Some("hunter2"));
+        let code = opened
+            .totp_code
+            .clone()
+            .expect("totp code computed at open");
+        assert_eq!(code.len(), 6, "6-digit TOTP code, got {code}");
+        assert!(opened.totp_valid_until.unwrap() > expires - 86_400);
+        assert_eq!(
+            opened.sender_name.as_deref(),
+            Some(contact.display_name.as_str())
+        );
+        // The seed never surfaces in the opened view.
+        let opened_json = serde_json::to_string(&opened).unwrap();
+        assert!(
+            !opened_json.contains("JBSWY3DPEHPK3PXP"),
+            "totp seed must not cross the boundary"
+        );
+
+        // Guest flavor: TOTP not opted in, no sender, passphrase opens.
+        let (guest_bytes, passphrase) = a.export_guest_reveal(source_id, expires, false).unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let guest =
+            crate::vault::reveals::open_guest_reveal(&guest_bytes, &passphrase, now).unwrap();
+        assert_eq!(guest.password.as_deref(), Some("hunter2"));
+        assert_eq!(guest.totp_code, None, "totp is opt-in");
+        assert_eq!(guest.sender_name, None);
+
+        // Non-Login ciphers refuse.
+        let note_id = a
+            .add_cipher(&crate::types::CipherInput {
+                name: "Note".into(),
+                kind: serde_json::from_str(r#"{"type":"secureNote"}"#).unwrap(),
+                ..Default::default()
+            })
+            .unwrap();
+        let err = a
+            .export_guest_reveal(note_id, expires, false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Only logins"), "err: {err}");
+
+        // Past expiry refuses at export.
+        let err = a
+            .export_guest_reveal(source_id, now - 60, false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("future"), "err: {err}");
     }
 
     /// P4: rotate_root_key must re-encrypt EVERY root-key-derived artifact —
