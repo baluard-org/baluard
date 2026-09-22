@@ -1,3 +1,4 @@
+import { Show } from "solid-js";
 import { useVault } from "../context/VaultContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import CipherAvatar from "./CipherAvatar.jsx";
@@ -23,7 +24,14 @@ export default function CipherRow(props) {
       <CipherAvatar name={props.cipher.name} uri={firstUri()} favicon={props.cipher.favicon} />
       <div class="min-w-0 flex-1">
         <div class="text-sm font-semibold text-[var(--color-text)] truncate">{props.cipher.name || t("entry.untitled")}</div>
-        <div class="text-xs text-[var(--color-muted)] truncate">{props.cipher.username || props.cipher._meta?.username || ""}</div>
+        <div class="flex items-center gap-2 text-xs text-[var(--color-muted)] truncate">
+          <span class="truncate">{props.cipher.username || props.cipher._meta?.username || ""}</span>
+          <Show when={props.cipher._vault}>
+            <span class="shrink-0 px-1.5 py-px rounded-full bg-[var(--color-sidebar)] text-[10px] text-[var(--color-muted)] border border-[var(--color-border)]">
+              {props.cipher._vault.name}
+            </span>
+          </Show>
+        </div>
       </div>
     </button>
   );

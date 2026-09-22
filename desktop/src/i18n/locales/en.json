@@ -101,6 +101,7 @@
     "entryCount": "{count} entry",
     "entryCount_plural": "{count} entries",
     "emptyList": "No entries yet",
+    "readOnlyOtherVault": "This entry lives in {name}. Open that vault to make changes.",
     "lock": "Lock Vault",
     "emptyTrash": "Empty Trash",
     "emptyTrashConfirm": "Permanently delete all entries in trash? This cannot be undone.",

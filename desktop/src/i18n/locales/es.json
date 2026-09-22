@@ -73,6 +73,7 @@
     "entryCount": "{count} entrada",
     "entryCount_plural": "{count} entradas",
     "emptyList": "Aún no hay entradas",
+    "readOnlyOtherVault": "Esta entrada está en {name}. Abre esa bóveda para hacer cambios.",
     "lock": "Bloquear bóveda",
     "emptyTrash": "Vaciar papelera",
     "emptyTrashConfirm": "¿Eliminar permanentemente todas las entradas de la papelera? Esta acción no se puede deshacer.",

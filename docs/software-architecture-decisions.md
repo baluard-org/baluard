@@ -1051,6 +1051,20 @@ See `docs/plan-sharing.md` §4.6 (row C) and the S2 tracking row for the wave co
 
 ---
 
+### D31. Merged Multi-Vault Item List, `vaults.list_full_all` (S2-5) (2026-09-22; S2 DONE)
+
+See `docs/plan-sharing.md` §4.6 (line 148) and the S2 tracking row.
+
+**What shipped**: one daemon call returns every registered vault as a row (slug, display name, space flag, active flag, presence) — unlocked vaults carry their full `vault.list_full` envelope (active row) or just the cipher list (sibling rows; folders/trash/tags belong to their own vault's view and skipping them keeps the merged frame under the response cap), locked/closed vaults carry metadata only. Rows sort by slug (the registry is a HashMap). A vault that locks mid-scan degrades to a metadata row with corrected `presence`, never failing the merge. `VaultState::full_envelope` is the shared payload builder (list_all wraps it to a string).
+
+**Trust model**: the route is host-level but NOT pre-token — it verifies the caller's session token against the ACTIVE vault's state. That is the same trust that already grants `vault.list_full` for the active vault; sibling vaults belong to the same user. Sibling and empty tokens fail the constant-time compare; bridge pairing tokens can never verify against a vault session, so the extension cannot pull the merge — the D21 no-export boundary holds (the route is absent from BRIDGE_ALLOWED_ACTIONS at NMH, daemon, and token-verification layers).
+
+**Desktop**: `VaultContext` pulls the merge alongside every cipher refresh and tags foreign ciphers with `_vault {slug, name, space}`; the merged list shows foreign rows (with a vault-name chip) in every category except trash/archive, folder/tag/search filters apply naturally (foreign folder/tag ids never match the active vault's), and foreign entries open a READ-ONLY detail: edit/archive/delete/passkey-delete gated off, TOTP and attachment downloads slug-routed to the source vault (the desktop's per-slug token cache carries sibling tokens minted at their unlock), and a read-only notice points the user at the source vault. Staleness bound: a sibling vault can lock (idle timer, blur policy, close) without the merge context hearing about it, so foreign rows re-pull on focus regain and a 30s heartbeat — the daemon stays authoritative, the same design as the switcher's presence refresh. Sidebar All-items badge and row-highlight now count/compare across vaults (composite slug:id key).
+
+**Review round (agy, 10 findings: 8 accepted, 2 declined)**: blocker — stale foreign secrets stayed rendered after a sibling locked/closed (the merge signal had no staleness bound) → the focus/heartbeat re-pull above; major — passkey delete not gated for foreign entries; TOTP and attachment fetches targeted the active vault (now slug-routed); fire-and-forget refresh race → awaited; payload-size blowout → sibling rows trimmed to ciphers; mid-scan lock left `presence: unlocked` with no payload → corrected to `locked`; nondeterministic row order → sorted; badge-count mismatch → summed; row-highlight UUID collision → composite key. Declined: none beyond wording.
+
+**Boundaries**: mobile merged host is the S4 line item; foreign entries are view-only (mutations stay slug-routed to the active vault — no cross-vault write surface exists); locked vaults surface as metadata rows, unlock stays a switcher action.
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

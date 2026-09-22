@@ -99,6 +99,12 @@ export default function VaultView() {
   const filteredCiphers = createMemo(() => {
     const cat = vault.selectedCategory();
     let list = selectSource(cat, vault.ciphers(), vault.trashCiphers(), vault.archivedCiphers());
+    // S2-5 merged view: entries from other open vaults join every
+    // non-trash/non-archive source (folder/tag filters naturally exclude
+    // foreign entries whose folder/tag ids belong to another vault).
+    if (cat !== "Trash" && cat !== "Archive") {
+      list = [...list, ...vault.otherVaultCiphers()];
+    }
     list = filterByCategory(list, cat);
     list = filterByFolder(list, vault.folders(), vault.selectedFolder());
     list = filterByTag(list, vault.selectedTag());
@@ -256,7 +262,7 @@ export default function VaultView() {
                     </div>
                     <Show when={cat.name === "All items"}>
                       <span class="text-[10px] bg-[var(--color-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md font-mono text-[var(--color-muted)]">
-                        {vault.ciphers().length}
+                        {vault.ciphers().length + vault.otherVaultCiphers().length}
                       </span>
                     </Show>
                     <Show when={cat.name === "Trash"}>
@@ -468,7 +474,7 @@ export default function VaultView() {
             </Show>
 
             <For each={filteredCiphers()}>
-              {(cipher) => <CipherRow cipher={cipher} onSelect={(c) => { setViewCipher(c); vault.setActivePane("detail"); }} active={viewCipher()?.id === cipher.id} />}
+              {(cipher) => <CipherRow cipher={cipher} onSelect={(c) => { setViewCipher(c); vault.setActivePane("detail"); }} active={(viewCipher()?._vault?.slug || "") + ":" + (viewCipher()?.id || "") === (cipher._vault?.slug || "") + ":" + (cipher.id || "")} />}
             </For>
           </div>
         </div>

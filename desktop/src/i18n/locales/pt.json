@@ -102,6 +102,7 @@
     "entryCount": "{count} item",
     "entryCount_plural": "{count} itens",
     "emptyList": "Nenhum item encontrado",
+    "readOnlyOtherVault": "Este item está em {name}. Abra esse cofre para fazer alterações.",
     "lock": "Bloquear",
     "emptyTrash": "Esvaziar lixeira",
     "emptyTrashConfirm": "Excluir permanentemente todos os itens da lixeira?",
