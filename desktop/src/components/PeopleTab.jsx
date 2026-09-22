@@ -452,6 +452,11 @@ export default function PeopleTab() {
                     >
                       {t(`notices.status_${row.status.split(":")[0]}`)}
                     </span>
+                    <Show when={row.reinvited}>
+                      <span class="text-[10px] font-bold border rounded-full px-2 py-0.5 text-blue-400 border-blue-400/30">
+                        {t("notices.reinvited")}
+                      </span>
+                    </Show>
                   </li>
                 )}
               </For>
