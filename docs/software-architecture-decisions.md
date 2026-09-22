@@ -1033,6 +1033,22 @@ See `docs/plan-sharing.md` §4.6 (IS-5) and the S2 tracking row for the wave con
 
 ---
 
+### D30. Per-Recipient Outboxes with Live Mirror (IS-4b, row C) (2026-09-22; S2-4 DONE)
+
+See `docs/plan-sharing.md` §4.6 (row C) and the S2 tracking row for the wave context.
+
+**What shipped**: an outbox is a small standalone git repo, ONE per recipient (`crates/baluard-core/src/vault/outbox.rs`). Layout: `outbox.json` (plaintext marker: outbox id, owner vault id, owner signed contact card), `share/keywrap.json` (HPKE wrap of the content key to the recipient's identity wrap pubkey + Ed25519 signature binding recipient pubkey + outbox id), `entries/<cipher_id>.enc` (sealed blobs, AAD purpose `outbox-entry-v1/<outbox_id>/<cipher_id>`). Entries carry the sender card + item + a signature binding outbox id, entry id, timestamp, and item bytes. The content key is a fresh random AES-256-GCM key per outbox — no vault key ever wraps into it (Level 1 channel trust). Owner registry `meta/outbox-owner.enc` and recipient links `meta/outbox-links.enc` are sealed under the new RootKey-derived `derive_outbox_key` and are re-encrypted in BOTH `rotate_root_key` and `revoke_device_and_rekey`.
+
+**Live mirror**: `publish_entry` seals from the CURRENT cipher state; a SHA-256 digest over the sealed doc makes re-publish idempotent (unchanged → no write, no commit). The daemon's post-CRUD `COVER_MUTATION` hook runs `outbox_resync()` best-effort between two autosync nudges (the registry file is git-tracked; the second nudge guarantees a cycle commits it). Trashed and purged sources unpublish on the next resync — a purged cipher's `CipherNotFound` is handled, not propagated (a purge would otherwise wedge every later resync). Explicit routes `outbox.publish`/`unpublish`/`revoke`/`resync` are not needed — resync rides the hook; the nine routes are publish/unpublish/revoke/list/link/links/forget/read/entries, all token-gated, the registry-writing five in COVER_MUTATION_ACTIONS.
+
+**Recipient side**: `outbox.link` verifies the marker card, unwraps the content key with the recipient's own identity, and stores the link with the owner's signing pubkey AS SEEN AT LINK TIME. Every open re-checks marker id + owner pubkey against the link — a repo writer who swaps in a complete impostor set (own card, own key, keywrap re-addressed to the victim: HPKE Base wraps need no secret) cannot hijack an existing link. Entry attribution must equal the marker owner's identity (a repo writer cannot inject entries labeled as someone else). Reads are view-only; nothing is imported.
+
+**Review round (agy, 10 findings: 7 accepted incl. 3 blockers, 2 declined)**: (1) registry writes ran under the runtime READ guard — lost-update race; all mutating wrappers now take the write guard and the handle methods are `&mut self`. (2) `git2::Repository::discover` walks parents: an outbox folder inside the vault would commit mirror files into the VAULT repo — `open` + init fallback. (3) a purged source aborted `outbox_resync_all` permanently — CipherNotFound unpublishes now. Plus: `update_all` stages deletions into the outbox git tree (unpublish/revoke reached clones), link/owner-attribution binding (above), content keys stripped from the IPC surface (`outbox.list`/`links`/`link` responses), recipient-keyed reuse on the STABLE signing pubkey with wrap-rotation re-wrapping, and canonicalized registry paths. Declined: forge-seat strike on revoke (this wave grants no seats — the future transport wiring pairs grant+strike) and Zeroizing hex key fields (the key rests inside a sealed blob; the decode path already Zeroizes).
+
+**Boundaries**: local-folder transport only this wave — origin push is best-effort and provider seat grant/strike for outboxes is the P8c-facade wave; UI share sheet = §4.8 wave; revoke keeps old-key copies readable (the plan's eventual-revocation boundary, stated at share time).
+
+---
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

@@ -643,6 +643,233 @@ impl VaultHandle {
         self.load_contacts()
     }
 
+    // ── S2 IS-4b: per-recipient outboxes (live mirror) ──
+
+    fn outbox_key(&self) -> Result<[u8; 32], BaluardError> {
+        crate::crypto::hkdf_derive::derive_outbox_key(self.unlocked().root_key.as_bytes())
+            .map_err(BaluardError::from)
+    }
+
+    /// Publish (or re-publish) one cipher into a recipient's outbox.
+    /// The entry is sealed from the CURRENT cipher state, so calling
+    /// this after an edit IS the live mirror. Attachments and password
+    /// history are stripped (attachment bytes never travel; history is
+    /// stale on arrival), mirroring packages.
+    pub fn outbox_publish(
+        &mut self,
+        outbox_path: &std::path::Path,
+        cipher_id: Uuid,
+        contact: &crate::vault::contacts::ContactCard,
+    ) -> Result<crate::vault::outbox::OutboxReport, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let identity = self.identity().ok_or_else(|| {
+            VaultError::InvalidOperation("identity not available on this device".into())
+        })?;
+        let card = self.contact_card_signed()?;
+        let mut item = match self.get_cipher(cipher_id)? {
+            CipherRead::Decrypted(c) => crate::types::CipherInput::from_cipher(&c),
+            CipherRead::Locked(_) => {
+                return Err(VaultError::Locked.into());
+            }
+        };
+        item.attachments.clear();
+        item.password_history.clear();
+        let report = crate::vault::outbox::publish_entry(
+            &self.path,
+            outbox_path,
+            &card,
+            identity.signing_key(),
+            &self.outbox_key()?,
+            cipher_id,
+            &item,
+            &contact.identity_signing_pubkey,
+            &contact.identity_wrap_pubkey,
+        )?;
+        Ok(report)
+    }
+
+    /// Live-mirror tick: re-publish EVERY published entry from the
+    /// current cipher state. Called best-effort after cipher CRUD (the
+    /// daemon's COVER_MUTATION hook) and on the explicit resync route.
+    /// Unchanged entries digest-match and cost nothing.
+    pub fn outbox_resync_all(&mut self) -> Result<Vec<(Uuid, bool)>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let identity = self.identity().ok_or_else(|| {
+            VaultError::InvalidOperation("identity not available on this device".into())
+        })?;
+        let card = self.contact_card_signed()?;
+        let key = self.outbox_key()?;
+        // A trashed source is a deletion for mirror purposes: the
+        // recipient must not keep serving stale bytes.
+        let trashed: std::collections::HashSet<Uuid> = self.list_trash_ids()?.into_iter().collect();
+        let mut results = Vec::new();
+        for record in crate::vault::outbox::load_owner_registry(&self.path, &key)? {
+            let path = std::path::Path::new(&record.path);
+            for pref in &record.published {
+                if trashed.contains(&pref.cipher_id) {
+                    let _ = crate::vault::outbox::unpublish_entry(
+                        &self.path,
+                        path,
+                        &key,
+                        pref.cipher_id,
+                    );
+                    results.push((pref.cipher_id, true));
+                    continue;
+                }
+                let mut item = match self.get_cipher(pref.cipher_id) {
+                    Ok(CipherRead::Decrypted(c)) => crate::types::CipherInput::from_cipher(&c),
+                    // Locked (trashed/locked) source: the entry must
+                    // not keep serving stale bytes — unpublish it.
+                    Ok(CipherRead::Locked(_)) => {
+                        let _ = crate::vault::outbox::unpublish_entry(
+                            &self.path,
+                            path,
+                            &key,
+                            pref.cipher_id,
+                        );
+                        results.push((pref.cipher_id, true));
+                        continue;
+                    }
+                    // Purged (hard-deleted) source: get_cipher errors
+                    // CipherNotFound — the mirror must unpublish, not
+                    // abort (a purge would otherwise wedge every later
+                    // resync on this outbox).
+                    Err(e) if matches!(&e, BaluardError::Vault(VaultError::CipherNotFound(_))) => {
+                        let _ = crate::vault::outbox::unpublish_entry(
+                            &self.path,
+                            path,
+                            &key,
+                            pref.cipher_id,
+                        );
+                        results.push((pref.cipher_id, true));
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                };
+                item.attachments.clear();
+                item.password_history.clear();
+                let report = crate::vault::outbox::publish_entry(
+                    &self.path,
+                    path,
+                    &card,
+                    identity.signing_key(),
+                    &key,
+                    pref.cipher_id,
+                    &item,
+                    &record.recipient_signing_pub,
+                    &record.recipient_wrap_pub,
+                )?;
+                results.push((pref.cipher_id, report.committed));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Remove one published entry from a recipient's outbox
+    /// (source-deleted → entry unpublished).
+    pub fn outbox_unpublish(
+        &mut self,
+        outbox_path: &std::path::Path,
+        cipher_id: Uuid,
+    ) -> Result<crate::vault::outbox::OutboxReport, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        crate::vault::outbox::unpublish_entry(
+            &self.path,
+            outbox_path,
+            &self.outbox_key()?,
+            cipher_id,
+        )
+    }
+
+    /// Revoke a whole outbox: unpublish everything, drop the keywrap,
+    /// forget the record. Provider seat removal is the runtime's job.
+    pub fn outbox_revoke(&mut self, outbox_path: &std::path::Path) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        crate::vault::outbox::revoke_outbox(&self.path, outbox_path, &self.outbox_key()?)
+    }
+
+    /// The owner's outbox records (which folder belongs to whom, what
+    /// is published, the dirty-check digests).
+    pub fn outbox_list(&self) -> Result<Vec<crate::vault::outbox::OwnerOutbox>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        crate::vault::outbox::load_owner_registry(&self.path, &self.outbox_key()?)
+    }
+
+    /// Recipient side: link an outbox folder (view-only; nothing is
+    /// imported — reads resolve live against the folder).
+    pub fn outbox_link(
+        &mut self,
+        outbox_path: &std::path::Path,
+    ) -> Result<crate::vault::outbox::OutboxLink, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let identity = self.identity().ok_or_else(|| {
+            VaultError::InvalidOperation("identity not available on this device".into())
+        })?;
+        crate::vault::outbox::link_outbox(&self.path, &self.outbox_key()?, identity, outbox_path)
+    }
+
+    pub fn outbox_links(&self) -> Result<Vec<crate::vault::outbox::OutboxLink>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        crate::vault::outbox::load_links(&self.path, &self.outbox_key()?)
+    }
+
+    pub fn outbox_forget(&mut self, outbox_id: Uuid) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        crate::vault::outbox::forget_link(&self.path, &self.outbox_key()?, outbox_id)
+    }
+
+    /// Read one shared entry from a linked outbox (view-only; the item
+    /// is NOT imported). Sender name comes from the verified card.
+    pub fn outbox_read(
+        &self,
+        outbox_id: Uuid,
+        cipher_id: Uuid,
+    ) -> Result<crate::vault::outbox::OpenedEntry, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let link = crate::vault::outbox::load_links(&self.path, &self.outbox_key()?)?
+            .into_iter()
+            .find(|l| l.outbox_id == outbox_id)
+            .ok_or_else(|| {
+                VaultError::InvalidOperation("that shared folder is not linked anymore".into())
+            })?;
+        crate::vault::outbox::open_entry(std::path::Path::new(&link.path), &link, cipher_id)
+    }
+
+    /// List the entries of one linked outbox (view-only).
+    pub fn outbox_list_entries(
+        &self,
+        outbox_id: Uuid,
+    ) -> Result<Vec<crate::vault::outbox::OpenedEntry>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let link = crate::vault::outbox::load_links(&self.path, &self.outbox_key()?)?
+            .into_iter()
+            .find(|l| l.outbox_id == outbox_id)
+            .ok_or_else(|| {
+                VaultError::InvalidOperation("that shared folder is not linked anymore".into())
+            })?;
+        crate::vault::outbox::list_entries(std::path::Path::new(&link.path), &link)
+    }
+
     /// S1a-4: reconcile the address book against member identity records
     /// after a sync. A Verified contact whose pubkey no longer matches
     /// its member's current identity (the member rotated) drops to
@@ -4660,6 +4887,10 @@ impl VaultHandle {
         let old_generator = self.load_generator_history()?;
         // S1a-3: the address book is RootKey-derived — read pre-swap.
         let old_contacts = self.load_contacts()?;
+        // S2 IS-4b: the outbox registries are RootKey-derived — read
+        // pre-swap, re-encrypt under the new outbox key post-swap.
+        let old_outboxes = self.outbox_list()?;
+        let old_links = self.outbox_links()?;
         // S1b-1: the activity log is RootKey-derived — read pre-swap.
         let old_events = crate::vault::events::load(
             &self.path,
@@ -4715,6 +4946,9 @@ impl VaultHandle {
         self.save_generator_history(&old_generator)?;
         // S1a-3: address book re-encrypted under the new contacts key.
         self.save_contacts(&old_contacts)?;
+        // S2 IS-4b: outbox registries re-encrypted under the new key.
+        crate::vault::outbox::save_owner_registry(&self.path, &self.outbox_key()?, &old_outboxes)?;
+        crate::vault::outbox::save_links(&self.path, &self.outbox_key()?, &old_links)?;
         // S1b-1: activity log re-encrypted under the new events key.
         crate::vault::events::save(
             &self.path,
@@ -5141,6 +5375,10 @@ impl VaultHandle {
         let old_generator = self.load_generator_history()?;
         // S1a-3: the address book is RootKey-derived — read pre-swap.
         let old_contacts = self.load_contacts()?;
+        // S2 IS-4b: the outbox registries are RootKey-derived — read
+        // pre-swap, re-encrypt under the new outbox key post-swap.
+        let old_outboxes = self.outbox_list()?;
+        let old_links = self.outbox_links()?;
         // S1b-1: the activity log is RootKey-derived — read pre-swap.
         let old_events = crate::vault::events::load(
             &self.path,
@@ -5195,6 +5433,9 @@ impl VaultHandle {
         self.save_generator_history(&old_generator)?;
         // S1a-3: address book re-encrypted under the new contacts key.
         self.save_contacts(&old_contacts)?;
+        // S2 IS-4b: outbox registries re-encrypted under the new key.
+        crate::vault::outbox::save_owner_registry(&self.path, &self.outbox_key()?, &old_outboxes)?;
+        crate::vault::outbox::save_links(&self.path, &self.outbox_key()?, &old_links)?;
         // S1b-1: activity log re-encrypted under the new events key.
         crate::vault::events::save(
             &self.path,
@@ -5817,6 +6058,158 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("share their card again"), "err: {err}");
+    }
+
+    /// S2 IS-4b: outbox live mirror end-to-end. A publishes an entry to
+    /// an outbox folder addressed to B's card; B links and reads
+    /// (view-only, nothing imported); A edits the cipher, resync
+    /// re-publishes (digest changed → commit), B sees the new value; A
+    /// deletes the source, resync unpublishes, B sees an empty list.
+    #[test]
+    fn outbox_live_mirror_two_vaults() {
+        let (dir_a, pw_a) = create_test_vault();
+        let (dir_b, pw_b) = create_test_vault();
+        let mut a = VaultHandle::open(dir_a.path()).unwrap();
+        a.unlock(&pw_a).unwrap();
+        let mut b = VaultHandle::open(dir_b.path()).unwrap();
+        b.unlock(&pw_b).unwrap();
+
+        let kind: crate::types::CipherKind =
+            serde_json::from_str(r#"{"type":"login","data":{"username":"u","password":"p"}}"#)
+                .unwrap();
+        let source_id = a
+            .add_cipher(&crate::types::CipherInput {
+                name: "Bank".into(),
+                kind,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let card_code = b.contact_card_create().unwrap();
+        a.contacts_import_card(&card_code).unwrap();
+        let contact_card = a.contacts_list().unwrap()[0].card.clone();
+
+        let outbox_dir = dir_a.path().join("outbox-mirror");
+        let report = a
+            .outbox_publish(&outbox_dir, source_id, &contact_card)
+            .unwrap();
+        assert!(report.committed);
+
+        // B links with their OWN identity (the keywrap is addressed to
+        // them) and reads.
+        let link = b.outbox_link(&outbox_dir).unwrap();
+        let entries = b.outbox_list_entries(link.outbox_id).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].sender_name,
+            a.contacts_list().unwrap()[0].card.display_name
+        );
+
+        // Edit → resync → the mirror serves the new value.
+        let kind2: crate::types::CipherKind = serde_json::from_str(
+            r#"{"type":"login","data":{"username":"u","password":"new-pass"}}"#,
+        )
+        .unwrap();
+        a.update_cipher(
+            source_id,
+            &crate::types::CipherInput {
+                name: "Bank".into(),
+                kind: kind2,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let resync = a.outbox_resync_all().unwrap();
+        assert!(
+            resync
+                .iter()
+                .any(|(id, committed)| *id == source_id && *committed)
+        );
+        let entries = b.outbox_list_entries(link.outbox_id).unwrap();
+        let crate::types::CipherKind::Login(login) = &entries[0].item.kind else {
+            panic!("expected login");
+        };
+        assert_eq!(login.password.as_deref(), Some("new-pass"));
+
+        // Source deleted → unpublish on the next resync.
+        a.delete_cipher(source_id).unwrap();
+        a.outbox_resync_all().unwrap();
+        let entries = b.outbox_list_entries(link.outbox_id).unwrap();
+        assert!(entries.is_empty(), "deleted source must unpublish");
+    }
+
+    /// S2 IS-4b review: a PURGED (hard-deleted) source errors in
+    /// get_cipher; the resync must unpublish it, not abort (a purge
+    /// would otherwise wedge every later resync on the outbox).
+    #[test]
+    fn outbox_resync_survives_purged_source() {
+        let (dir_a, pw_a) = create_test_vault();
+        let (dir_b, pw_b) = create_test_vault();
+        let mut a = VaultHandle::open(dir_a.path()).unwrap();
+        a.unlock(&pw_a).unwrap();
+        let mut b = VaultHandle::open(dir_b.path()).unwrap();
+        b.unlock(&pw_b).unwrap();
+
+        let kind: crate::types::CipherKind =
+            serde_json::from_str(r#"{"type":"login","data":{"username":"u","password":"p"}}"#)
+                .unwrap();
+        let source_id = a
+            .add_cipher(&crate::types::CipherInput {
+                name: "Bank".into(),
+                kind,
+                ..Default::default()
+            })
+            .unwrap();
+        let card_code = b.contact_card_create().unwrap();
+        a.contacts_import_card(&card_code).unwrap();
+        let contact_card = a.contacts_list().unwrap()[0].card.clone();
+        let outbox_dir = dir_a.path().join("outbox-purge");
+        a.outbox_publish(&outbox_dir, source_id, &contact_card)
+            .unwrap();
+
+        a.delete_cipher(source_id).unwrap();
+        a.purge_old_trash(0).unwrap();
+        // Purged: get_cipher now errors CipherNotFound. Resync must
+        // still succeed and unpublish.
+        let resync = a.outbox_resync_all().unwrap();
+        assert!(resync.iter().any(|(id, _)| *id == source_id));
+        let link = b.outbox_link(&outbox_dir).unwrap();
+        let entries = b.outbox_list_entries(link.outbox_id).unwrap();
+        assert!(entries.is_empty(), "purged source must unpublish");
+    }
+
+    /// S2 IS-4b: the outbox registries are RootKey-derived and must
+    /// survive a rotation re-encrypted (the P4 coverage rule).
+    #[test]
+    fn rotation_reencrypts_outbox_registries() {
+        let (dir_a, pw_a) = create_test_vault();
+        let (dir_b, pw_b) = create_test_vault();
+        let mut a = VaultHandle::open(dir_a.path()).unwrap();
+        a.unlock(&pw_a).unwrap();
+        let mut b = VaultHandle::open(dir_b.path()).unwrap();
+        b.unlock(&pw_b).unwrap();
+
+        let kind: crate::types::CipherKind =
+            serde_json::from_str(r#"{"type":"login","data":{"username":"u","password":"p"}}"#)
+                .unwrap();
+        let source_id = a
+            .add_cipher(&crate::types::CipherInput {
+                name: "Bank".into(),
+                kind,
+                ..Default::default()
+            })
+            .unwrap();
+        let card_code = b.contact_card_create().unwrap();
+        a.contacts_import_card(&card_code).unwrap();
+        let contact_card = a.contacts_list().unwrap()[0].card.clone();
+        let outbox_dir = dir_a.path().join("outbox-rot");
+        a.outbox_publish(&outbox_dir, source_id, &contact_card)
+            .unwrap();
+
+        a.rotate_root_key().unwrap();
+        let rows = a.outbox_list().unwrap();
+        assert_eq!(rows.len(), 1, "registry must survive rotation");
+        assert_eq!(rows[0].published.len(), 1);
     }
 
     /// S2 IS-6: both reveal flavors end-to-end from a real vault cipher.

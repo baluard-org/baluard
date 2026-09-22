@@ -315,6 +315,15 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "settings.set",
     "vault.avatar.set",
     "device.revoke",
+    // S2 IS-4b: the outbox routes write git-tracked registry files
+    // inside the vault (meta/outbox-owner.enc / outbox-links.enc); the
+    // resync route only touches the outbox folders, but listing it
+    // here keeps its registry-affecting siblings consistent.
+    "outbox.publish",
+    "outbox.unpublish",
+    "outbox.revoke",
+    "outbox.link",
+    "outbox.forget",
     // Phase 1: passkey mutations
     "passkey.finish_register",
     "passkey.delete",
@@ -3352,6 +3361,126 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
+        "outbox.publish" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let cipher_id = parsed["cipher_id"].as_str().unwrap_or("");
+            let contact = parsed["contact"].as_str().unwrap_or("");
+            let Some(outbox_path) = parsed["outbox_path"].as_str() else {
+                return err_response("Missing outbox_path in payload");
+            };
+            if cipher_id.is_empty() || contact.is_empty() {
+                return err_response("Missing cipher_id or contact in payload");
+            }
+            match state.outbox_publish(outbox_path, cipher_id, contact).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "outbox.unpublish" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let cipher_id = parsed["cipher_id"].as_str().unwrap_or("");
+            let Some(outbox_path) = parsed["outbox_path"].as_str() else {
+                return err_response("Missing outbox_path in payload");
+            };
+            if cipher_id.is_empty() {
+                return err_response("Missing cipher_id in payload");
+            }
+            match state.outbox_unpublish(outbox_path, cipher_id).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "outbox.revoke" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(outbox_path) = parsed["outbox_path"].as_str() else {
+                return err_response("Missing outbox_path in payload");
+            };
+            match state.outbox_revoke(outbox_path).await {
+                Ok(()) => ok_resp(serde_json::json!({ "ok": true }).to_string(), token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "outbox.list" => match state.outbox_list().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "outbox.link" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(outbox_path) = parsed["outbox_path"].as_str() else {
+                return err_response("Missing outbox_path in payload");
+            };
+            match state.outbox_link(outbox_path).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "outbox.links" => match state.outbox_links().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "outbox.forget" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(outbox_id) = parsed["outbox_id"].as_str() else {
+                return err_response("Missing outbox_id in payload");
+            };
+            match state.outbox_forget(outbox_id).await {
+                Ok(()) => ok_resp(serde_json::json!({ "ok": true }).to_string(), token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "outbox.read" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(outbox_id) = parsed["outbox_id"].as_str() else {
+                return err_response("Missing outbox_id in payload");
+            };
+            let Some(cipher_id) = parsed["cipher_id"].as_str() else {
+                return err_response("Missing cipher_id in payload");
+            };
+            match state.outbox_read(outbox_id, cipher_id).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "outbox.entries" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(outbox_id) = parsed["outbox_id"].as_str() else {
+                return err_response("Missing outbox_id in payload");
+            };
+            match state.outbox_entries(outbox_id).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
         "cipher.totp_code" => {
             if req.payload.is_empty() {
                 return err_response("Missing cipher UUID in payload");
@@ -4662,6 +4791,17 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         state.schedule_cover_after_commit();
         let dn = first_device_id(&state.vault_path);
         state.autosync.nudge(dn).await;
+        // S2 IS-4b live mirror: re-publish every outboxed entry from the
+        // current cipher state (vault.delete/archive land as Locked and
+        // unpublish). Best-effort: a mirror failure must never fail the
+        // mutation the user just made.
+        if let Err(e) = state.outbox_resync().await {
+            log::warn!("[daemon] outbox mirror after {}: {e}", req.action);
+        }
+        // The resync writes the git-tracked outbox registry after the
+        // first nudge; a second nudge guarantees a cycle commits it.
+        let dn = first_device_id(&state.vault_path);
+        state.autosync.nudge(dn).await;
     }
 
     // Zeroize any remaining sensitive data in the request
@@ -5314,6 +5454,15 @@ mod tests {
             "reveals.export_contact",
             "reveals.export_guest",
             "reveals.open_contact",
+            "outbox.publish",
+            "outbox.unpublish",
+            "outbox.revoke",
+            "outbox.list",
+            "outbox.link",
+            "outbox.links",
+            "outbox.forget",
+            "outbox.read",
+            "outbox.entries",
         ] {
             assert!(action_requires_session_token(a), "{a} must be gated");
         }
