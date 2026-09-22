@@ -696,6 +696,7 @@
     "status_active": "Tem acesso",
     "status_invited": "Convite aguardando",
     "status_none": "Sem acesso",
-    "status_unknown": "Desconhecido"
+    "status_unknown": "Desconhecido",
+    "reinvited": "Convite reenviado"
   }
 }

@@ -1681,6 +1681,17 @@ async fn route_bridge_request(
         return err_response("locked");
     }
 
+    // 5b. D21 read scope: capture/update from the extension rides the
+    //     desktop session's write scope. On a shared vault a Viewer (or
+    //     a half-finished join) must not mint entries their own device
+    //     could never push — refuse here, where the extension can show it.
+    if matches!(req.action.as_str(), "vault.add" | "vault.update") {
+        if let Err(reason) = state.bridge_write_allowed().await {
+            log::warn!("[daemon] bridge {} refused: {reason}", req.action);
+            return err_response(reason);
+        }
+    }
+
     // 3b. C21: vault.update omission gate. The generic update path replaces
     //     the whole `kind` when the payload carries one (serde defaults
     //     absorb absent fields), so a bridge payload omitting

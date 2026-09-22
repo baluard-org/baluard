@@ -913,6 +913,152 @@ async fn notices_aggregate_stale_invites_and_resets() {
     assert!(!kinds2.contains(&"reset_pending"), "{kinds2:?}");
 }
 
+// ── D21 read scope: bridge writes ride the session's write scope ──
+
+/// Rebind `device_id` to a fresh member row with the given role. Strips
+/// the device's existing bindings first (fresh test vaults carry the
+/// S1a owner genesis binding) so role resolution is deterministic.
+fn rebind_device(
+    vault_path: &std::path::Path,
+    role: baluard_core::vault::members::MemberRole,
+    device_id: uuid::Uuid,
+    removed: Option<u64>,
+) {
+    use baluard_core::vault::members::{
+        DeviceBinding, MemberFile, TrustLevel, write_device_binding, write_member,
+    };
+    let members = vault_path.join("meta/members");
+    for entry in std::fs::read_dir(&members).expect("members dir") {
+        let binding = entry
+            .expect("entry")
+            .path()
+            .join("devices")
+            .join(format!("{device_id}.json"));
+        let _ = std::fs::remove_file(binding);
+    }
+    let member = MemberFile {
+        id: uuid::Uuid::new_v4(),
+        display_name: "Test Member".into(),
+        role,
+        trust: TrustLevel::Channel,
+        identity_signing_pubkey: None,
+        identity_signing_pubkey_previous: None,
+        identity_rotation_signature: None,
+        identity_rotated_at: None,
+        reset: None,
+        removed,
+        transport_username: None,
+    };
+    write_member(vault_path, &member).expect("write member row");
+    write_device_binding(
+        vault_path,
+        &DeviceBinding {
+            device_id,
+            member_id: member.id,
+        },
+    )
+    .expect("write binding");
+}
+
+#[tokio::test]
+async fn bridge_write_gate_follows_member_role() {
+    let (_dir, state) = open_unlocked("bridge-write-gate").await;
+
+    // Fresh creation binds the device to the owner genesis row: writes
+    // pass. (On a pre-S1a legacy vault there is no member directory and
+    // the same call takes the owner-equivalent path — same Ok.)
+    state.bridge_write_allowed().await.expect("owner allows");
+
+    let device_id: uuid::Uuid = state.device_id().await.parse().expect("device uuid");
+
+    // Viewer binding: refused here, where the extension can show it,
+    // instead of wedging at push time.
+    rebind_device(
+        &state.vault_path,
+        baluard_core::vault::members::MemberRole::Viewer,
+        device_id,
+        None,
+    );
+    let err = state.bridge_write_allowed().await.unwrap_err();
+    assert!(err.contains("view-only"), "err: {err}");
+
+    // Editor binding: allowed.
+    rebind_device(
+        &state.vault_path,
+        baluard_core::vault::members::MemberRole::Editor,
+        device_id,
+        None,
+    );
+    state.bridge_write_allowed().await.expect("editor allows");
+
+    // Removed member: fail closed (the row resolves no role).
+    rebind_device(
+        &state.vault_path,
+        baluard_core::vault::members::MemberRole::Editor,
+        device_id,
+        Some(0),
+    );
+    assert!(state.bridge_write_allowed().await.is_err());
+}
+
+#[tokio::test]
+async fn bridge_route_enforces_write_gate() {
+    let _sandbox = sandboxed_host_env();
+    let (_dir, state) = open_unlocked("bridge-route-gate").await;
+    let host = Arc::new(VaultHost::new());
+    host.insert("brg".into(), state.clone()).await;
+    host.switch("brg").await.expect("switch");
+
+    // Bind the vault's device to a Viewer row.
+    let device_id: uuid::Uuid = state.device_id().await.parse().expect("device uuid");
+    rebind_device(
+        &state.vault_path,
+        baluard_core::vault::members::MemberRole::Viewer,
+        device_id,
+        None,
+    );
+
+    // Mint a live bridge token straight into the registry (the pairing
+    // ceremony's tail: start_pair stages the pending, complete_pair
+    // mints the token).
+    let token_hex = {
+        let mut reg = host.bridge().write().await;
+        let _pair = reg.start_pair("test-harness");
+        reg.complete_pair("ext", "firefox").expect("pair").1
+    };
+
+    // Write through the bridge: refused at the ROUTE layer, not just
+    // the state method.
+    let req = GatewayRequest {
+        action: "vault.add".into(),
+        payload: serde_json::to_string(&login_input("X", "u")).unwrap(),
+        session_token: token_hex.clone(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(!resp.success, "viewer bridge write must be refused");
+    assert!(
+        resp.error_message.contains("view-only"),
+        "err: {}",
+        resp.error_message
+    );
+
+    // Reads stay open for viewers: bridge.match rides the same route
+    // and must succeed (metadata only, no passwords).
+    let req = GatewayRequest {
+        action: "bridge.match".into(),
+        payload: r#"{"url":"https://example.com/login"}"#.into(),
+        session_token: token_hex,
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(
+        resp.success,
+        "viewer bridge read must pass: {}",
+        resp.error_message
+    );
+}
+
 /// P8c-2: removal pre-flight — a member with a transport seat on a
 /// provider-registered vault refuses the offboarding when the strike
 /// fails (provider not connected), and the explicit offline override

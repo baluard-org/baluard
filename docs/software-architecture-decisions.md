@@ -896,6 +896,8 @@ See `docs/plan-git-providers-multi-vault.md` Phase 6 for the full design and acc
 
 **Why allowlist not deny-list?** Pre-1.0 WIP (per STATUS), expansion is a deliberate allowlist change + same-change call-site update. The friction is intentional: it forces a conscious security decision per route.
 
+**Shared-vault write scope (2026-09-22, sharing plan S1b-5).** The allowlist is action-scoped; sharing added the session-scope dimension: `vault.add`/`vault.update` over a bridge token additionally require the ACTIVE vault's member row to carry cipher write scope (`VaultState::bridge_write_allowed`; legacy vaults without `meta/members` stay owner-equivalent; Viewer rows and unbound/tombstoned devices are refused where the extension can show the error — a viewer-accepted capture would otherwise wedge at push time, since cipher paths are editor-scope in the sharing policy table). Reads are unchanged: `bridge.match`/`vault.get`/`cipher.totp_code` stay open to viewers. The same wave shipped `ensure_access_accepted` (sharing plan §4.5) via the notices transport check: expired GitHub invitations (status `None`) are healed by a permission-matched re-invite and surfaced per member; GitLab/Codeberg `None` is reported only — their grants are immediate, so `None` may be a deliberate out-of-band removal and auto re-adding would resurrect it.
+
 **Files:**
 - `crates/baluard-core/src/bridge/{mod,pairing,token}.rs`: pairing + bridge token
 - `crates/baluard-runtime/src/bridge.rs`: bridge routes + allowlist enforcement

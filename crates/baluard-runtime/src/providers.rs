@@ -215,6 +215,34 @@ pub async fn collaborator_status(
         .map_err(|e| VaultError::Metadata(format!("collaborator status: {e}")).into())
 }
 
+/// §4.5 `ensure_access_accepted`: surface whether a member actually
+/// accepted their seat, and heal an expired invitation — GitHub invites
+/// die after 7 days and an expired one reads as `None`, so the healing
+/// action is a re-invite with the member's approved permission. Returns
+/// the current-or-refreshed status plus whether a re-invite was issued.
+/// GitHub ONLY: on GitLab/Codeberg a `None` is ambiguous (never-added,
+/// deliberately-struck, or revoked out-of-band — grants there are
+/// immediate, there is no pending state), so auto re-adding would
+/// resurrect access an admin may have removed by hand. Those providers
+/// report `None` and the admin re-invites explicitly.
+pub async fn ensure_access_accepted(
+    provider: Provider,
+    owner: &str,
+    repo: &str,
+    username: &str,
+    permission: CollaboratorPermission,
+) -> Result<(CollaboratorStatus, bool), BaluardError> {
+    let status = collaborator_status(provider, owner, repo, username).await?;
+    match status {
+        CollaboratorStatus::Active | CollaboratorStatus::Invited => Ok((status, false)),
+        CollaboratorStatus::None if provider == Provider::GitHub => {
+            let s = add_collaborator(provider, owner, repo, username, permission).await?;
+            Ok((s, true))
+        }
+        CollaboratorStatus::None => Ok((status, false)),
+    }
+}
+
 /// Strike a collaborator seat (idempotent). Offboarding pre-flight calls
 /// this BEFORE the vault-side rotation commit is pushed.
 pub async fn remove_collaborator(

@@ -2392,29 +2392,80 @@ impl VaultState {
             }));
         }
 
-        // Transport seat statuses (optional network; best-effort).
+        // Transport seat statuses (optional network; best-effort). §4.5
+        // ensure_access_accepted: an expired invitation (GitHub's 7-day
+        // window) reads as `None` and is healed by a re-invite with the
+        // member's approved permission — surfaced per member so the admin
+        // sees who is waiting vs who has access. Tombstoned rows (reset /
+        // removed) never get seat checks: their seats were struck at
+        // offboarding, and a None must never resurrect their access.
         let mut transport = Vec::new();
         if refresh_transport {
             if let Some((provider, owner, repo)) = self.vault_transport_coords(vault_id) {
-                let usernames: std::collections::BTreeSet<String> = members
-                    .iter()
-                    .filter(|m| m.transport_username.is_some())
-                    .filter_map(|m| m.transport_username.clone())
-                    .filter(|u| !u.trim().is_empty())
-                    .collect();
-                for username in usernames {
-                    let status = match crate::providers::collaborator_status(
-                        provider, &owner, &repo, &username,
+                let mut seen = std::collections::BTreeSet::new();
+                for m in members.iter() {
+                    if m.reset.is_some() || m.removed.is_some() {
+                        continue;
+                    }
+                    // Unbound rows (pending joiners, reset successors
+                    // awaiting re-join) are not live members yet: their
+                    // seat state is meaningless and a `None` must never
+                    // re-invite them ahead of approval — the staging rule
+                    // keeps them read-only at best. The reset-pending and
+                    // stale-invite notices already cover their wait states.
+                    let devices_dir = self
+                        .vault_path
+                        .join("meta/members")
+                        .join(m.id.to_string())
+                        .join("devices");
+                    let bound = std::fs::read_dir(&devices_dir)
+                        .map(|d| d.count() > 0)
+                        .unwrap_or(false);
+                    if !bound {
+                        continue;
+                    }
+                    // The owner's repo access is structural (they own the
+                    // repo); a managed-seat check there only produces forge
+                    // errors after an ownership transfer (GitHub 422s the
+                    // re-add of a repo owner).
+                    if m.role == baluard_core::vault::members::MemberRole::Owner {
+                        continue;
+                    }
+                    let Some(username) = m
+                        .transport_username
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|u| !u.is_empty())
+                    else {
+                        continue;
+                    };
+                    if !seen.insert(username.to_string()) {
+                        continue;
+                    }
+                    // Staging rule: viewers stay read-only; editor and
+                    // above ride write.
+                    let permission = match m.role {
+                        baluard_core::vault::members::MemberRole::Viewer => {
+                            baluard_core::providers::types::CollaboratorPermission::ReadOnly
+                        }
+                        _ => baluard_core::providers::types::CollaboratorPermission::Write,
+                    };
+                    let row = match crate::providers::ensure_access_accepted(
+                        provider, &owner, &repo, username, permission,
                     )
                     .await
                     {
-                        Ok(s) => s.to_string(),
-                        Err(e) => format!("unknown: {e}"),
+                        Ok((status, reinvited)) => serde_json::json!({
+                            "username": username,
+                            "status": status.to_string(),
+                            "reinvited": reinvited,
+                        }),
+                        Err(e) => serde_json::json!({
+                            "username": username,
+                            "status": format!("unknown: {e}"),
+                        }),
                     };
-                    transport.push(serde_json::json!({
-                        "username": username,
-                        "status": status,
-                    }));
+                    transport.push(row);
                 }
             }
         }
@@ -2425,6 +2476,42 @@ impl VaultState {
             "transport": transport,
         })
         .to_string())
+    }
+
+    /// D21 read scope: bridge (browser-extension) writes ride the desktop
+    /// session's write scope. Legacy vaults (no member directory) are
+    /// owner-equivalent. Strict vaults fail closed: Viewer rows and
+    /// unbound/pending devices are refused here, where the extension can
+    /// show the error — an accepted capture would otherwise wedge at push
+    /// time (cipher paths are editor-scope in the policy table).
+    pub async fn bridge_write_allowed(&self) -> Result<(), String> {
+        let device_id = {
+            let guard = self.inner.read().await;
+            // The extension treats the literal "locked" as its
+            // unlock-prompt state; a lock racing this check (auto-lock
+            // walker, focus lock-all) must surface as exactly that.
+            let handle = guard.as_ref().ok_or_else(|| "locked".to_string())?;
+            handle.device_id
+        };
+        let members_dir = self
+            .vault_path
+            .join(baluard_core::vault::members::MEMBERS_DIR);
+        if !members_dir.exists() {
+            return Ok(()); // legacy personal vault: admin-equivalent
+        }
+        match baluard_core::vault::members::member_role_for_device(&self.vault_path, device_id) {
+            Some(role) if role != baluard_core::vault::members::MemberRole::Viewer => Ok(()),
+            Some(_) => Err(
+                "You have view-only access to this vault. Entries cannot be saved or changed from the browser extension."
+                    .into(),
+            ),
+            // Unbound on a strict vault = a removed/reset member still
+            // holding a session (joiners cannot unlock before approval).
+            // Same refusal, wording that fits both.
+            None => Err(
+                "You do not have permission to save or change entries in this vault.".into(),
+            ),
+        }
     }
 
     /// Join queue: well-shaped staged requests plus the malformed count.
