@@ -1362,3 +1362,61 @@ async fn reveal_open_guest_route_roundtrip_and_refusal() {
     let resp = route_host_request(req, &host).await;
     assert!(!resp.success, "wrong passphrase must refuse");
 }
+
+/// S2 IS-5: space.create rides the vault.create pipeline with a forced
+/// baluard-space- slug, writes the shape flag, and the flag surfaces in
+/// vaults.list. Sandboxed + serialized on JOIN_REG (touches the
+/// process-global BALUARD_DATA_DIR via paths + registry).
+#[tokio::test]
+async fn space_create_route_prefixes_slug_marks_flag_and_lists() {
+    let _guard = JOIN_REG.lock().await;
+    let _sandbox = sandboxed_host_env();
+    let host = Arc::new(VaultHost::new());
+
+    let req = GatewayRequest {
+        action: "space.create".into(),
+        payload: serde_json::json!({
+            "name": "Family",
+            "password": MASTER,
+            "profile": "mobile_low",
+        })
+        .to_string(),
+        session_token: String::new(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "{}", resp.error_message);
+    let payload: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    let slug = payload["slug"].as_str().expect("slug in response");
+    assert!(
+        slug.starts_with("baluard-space-"),
+        "space slug must carry the prefix: {slug}"
+    );
+    assert!(
+        payload["session_token"].is_string(),
+        "created vault is unlocked"
+    );
+
+    // The shape flag landed in the plaintext prefs.
+    let vault_path = baluard_core::paths::vaults_dir().join(slug);
+    assert!(vault_path.exists(), "vault dir exists");
+    assert!(baluard_core::vault::space::is_space_vault(&vault_path));
+
+    // vaults.list carries the space marker for the switcher.
+    let req = GatewayRequest {
+        action: "vaults.list".into(),
+        payload: String::new(),
+        session_token: String::new(),
+        slug: String::new(),
+    };
+    let resp = route_host_request(req, &host).await;
+    assert!(resp.success, "{}", resp.error_message);
+    let payload: serde_json::Value = serde_json::from_str(&resp.payload).unwrap();
+    let row = payload["vaults"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["slug"] == *slug)
+        .expect("created space listed");
+    assert_eq!(row["space"], serde_json::json!(true));
+}

@@ -381,7 +381,14 @@ pub fn transfer_ownership(
         serde_json::to_string_pretty(&new).unwrap().as_bytes(),
     )
     .map_err(|e| BaluardError::from(VaultError::Metadata(format!("promote owner: {e}"))))?;
-    old.role = MemberRole::Admin;
+    // S2 IS-5: a pair Space has no admins — the demoted owner stays an
+    // editor, or a later reset of their row would mint an Admin invite
+    // the pair gate refuses, wedging recovery permanently.
+    old.role = if super::space::is_space_vault(vault_path) {
+        MemberRole::Editor
+    } else {
+        MemberRole::Admin
+    };
     // S1a-7 review: a demoted owner must not keep SelfTrust — repeated
     // transfers would otherwise accumulate SelfTrust Admin rows.
     if old.trust == TrustLevel::SelfTrust {
@@ -761,6 +768,10 @@ pub fn create_invite(
             "ownership cannot be invited; use transfer_ownership".into(),
         )));
     }
+    // S2 IS-5: pair Space policy — owner plus one editor/viewer, no
+    // more; admin+ roles never mint on a Space. Refusing at mint time
+    // keeps the bad invite out of the join queue entirely.
+    super::space::pair_gate(vault_path, role)?;
     let mut secret = [0u8; 32];
     use rand::RngCore;
     rand::rngs::OsRng.fill_bytes(&mut secret);
@@ -1342,5 +1353,118 @@ mod tests {
         let invite: InviteCode = serde_json::from_slice(&raw).unwrap();
         let pending = read_pending_invite(temp.path(), invite.invite_id).unwrap();
         assert_eq!(pending.transport_username, None);
+    }
+
+    #[test]
+    fn create_invite_respects_pair_space_policy() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path();
+        super::super::space::set_space_flag(vault, true).unwrap();
+
+        // Admin never mints on a Space.
+        let err = create_invite(vault, Uuid::new_v4(), MemberRole::Admin, None, None).unwrap_err();
+        assert!(err.to_string().contains("editor or viewer"), "{err}");
+
+        // Owner + one bound editor fills the pair; the next invite
+        // refuses at mint time.
+        let owner = MemberFile {
+            id: Uuid::new_v4(),
+            display_name: "Owner".into(),
+            role: MemberRole::Owner,
+            trust: TrustLevel::SelfTrust,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            transport_username: None,
+        };
+        write_member(vault, &owner).unwrap();
+        write_device_binding(
+            vault,
+            &DeviceBinding {
+                member_id: owner.id,
+                device_id: Uuid::new_v4(),
+            },
+        )
+        .unwrap();
+        create_invite(vault, Uuid::new_v4(), MemberRole::Editor, None, None).unwrap();
+        let member = MemberFile {
+            id: Uuid::new_v4(),
+            display_name: "Pair".into(),
+            role: MemberRole::Editor,
+            trust: TrustLevel::Channel,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            transport_username: None,
+        };
+        // Simulate the approval that binds the second member.
+        write_member(vault, &member).unwrap();
+        write_device_binding(
+            vault,
+            &DeviceBinding {
+                member_id: member.id,
+                device_id: Uuid::new_v4(),
+            },
+        )
+        .unwrap();
+        let err = create_invite(vault, Uuid::new_v4(), MemberRole::Viewer, None, None).unwrap_err();
+        assert!(err.to_string().contains("two people"), "{err}");
+    }
+
+    #[test]
+    fn transfer_demotes_old_owner_to_editor_on_space() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = temp.path();
+        super::super::space::set_space_flag(vault, true).unwrap();
+        let owner = MemberFile {
+            id: Uuid::new_v4(),
+            display_name: "Owner".into(),
+            role: MemberRole::Owner,
+            trust: TrustLevel::SelfTrust,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            transport_username: None,
+        };
+        let partner = MemberFile {
+            id: Uuid::new_v4(),
+            display_name: "Partner".into(),
+            role: MemberRole::Editor,
+            trust: TrustLevel::Channel,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            transport_username: None,
+        };
+        write_member(vault, &owner).unwrap();
+        write_member(vault, &partner).unwrap();
+
+        super::transfer_ownership(vault, owner.id, partner.id).unwrap();
+        let old: MemberFile = serde_json::from_str(
+            &std::fs::read_to_string(vault.join(MEMBERS_DIR).join(format!("{}.json", owner.id)))
+                .unwrap(),
+        )
+        .unwrap();
+        let new: MemberFile = serde_json::from_str(
+            &std::fs::read_to_string(vault.join(MEMBERS_DIR).join(format!("{}.json", partner.id)))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(new.role, MemberRole::Owner);
+        // A pair Space has no admins: the demoted owner stays an editor
+        // so a later reset of their row mints an invite the gate admits.
+        assert_eq!(old.role, MemberRole::Editor);
     }
 }

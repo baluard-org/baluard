@@ -320,6 +320,7 @@ impl VaultHost {
                 } else {
                     String::new()
                 },
+                space: baluard_core::vault::space::is_space_vault(&entry.path),
             });
         }
 
@@ -570,6 +571,9 @@ pub struct VaultListRow {
     /// Vault directory on disk (from the registry entry). Surfaced so the
     /// desktop detach modal can show the user what is about to be removed.
     pub path: String,
+    /// S2 IS-5: the vault is a pair Space (shape flag in plaintext
+    /// settings-pub.json). Pre-unlock safe: same charter as theme/lang.
+    pub space: bool,
 }
 
 #[cfg(test)]
