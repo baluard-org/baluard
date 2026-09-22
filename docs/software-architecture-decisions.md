@@ -1019,6 +1019,20 @@ See `docs/plan-sharing.md` §4.6 (IS-6) and the S2 tracking row for the wave con
 
 ---
 
+### D29. Pair Space (IS-5) (2026-09-22; S2-3 DONE)
+
+See `docs/plan-sharing.md` §4.6 (IS-5) and the S2 tracking row for the wave context.
+
+**What shipped**: the S1a membership machinery now covers the two-person Space shape. A Space is a vault whose slug is forced to `baluard-space-<name>` (`space_slug`, idempotent) and whose plaintext `meta/settings-pub.json` carries `"space": true` (pre-unlock readable, rename-safe; absent file/field = personal). `vaults.list` rows expose the flag pre-unlock alongside theme/lang. Daemon route `space.create` (host-level, mirrors `vault.create`: inherits unlock, registry insert, session token) rewrites the payload slug before delegation and writes the shape flag after creation.
+
+**Pair policy**: `space::pair_gate` runs at BOTH invite minting (`create_invite`) and join approval (`approve_join`, before any mutation so a refusal leaves the invite intact for retry). It refuses Owner/Admin roles on a space (a pair shares as Editor or Viewer) and a second joiner once two bound live members exist. The cap counts rows with at least one `.json` device binding and no tombstone — `removed` and `reset` rows are both skipped (a reset predecessor keeps its bindings on disk and must not occupy the slot while the successor is pending), and unbound rows (pending joiners, reset successors) are excluded so a reset approval never self-blocks.
+
+**Review round (agy, 9 findings: 6 accepted + 2 blockers, 1 declined)**: (1) the member counter originally ignored the `reset` tombstone, so a reset predecessor's persisted bindings made the space believe it was full and permanently wedged member reset — tombstones of both kinds are now skipped (blocker). (2) `save_settings`/`save_locale` rebuilt `settings-pub.json` wholesale, silently stripping `space: true` and deactivating the pair gates on the next settings save — both writers now merge with the existing JSON and preserve unknown keys (blocker). (3) `transfer_ownership` demoted the old owner to Admin unconditionally; on a pair space a later reset of that admin would mint an invite the gate refuses, wedging recovery — the demotion lands as Editor on space vaults. (5, partial) `handle_space_create` now zeroizes the master-password-bearing payload on every path (early returns included) before handing to `vault.create`. (6) `space.create` joined the desktop Tauri IPC allowlist. (7) the device-binding count requires a `.json` entry (`.DS_Store`-proof, `list_members` parity). (8) `space_slug("space")` no longer double-suffixes. Declined: failing the `space.create` response when the flag write fails — the flag is a policy guardrail, not a confidentiality control; the created vault is already unlocked with a token issued (registry-add warn precedent), and failing closed would strand the client mid-wizard with a live vault to clean up.
+
+**Boundaries**: CLI/UI deferred (the Family-shape silent share sheet = §4.8 wave + P1); pre-P1 a Space still has its own master password; S3 owns space.adopt/migrate for churn.
+
+---
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

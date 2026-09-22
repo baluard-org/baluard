@@ -221,6 +221,7 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     "vault.open",
     "vault.unlock",
     "vault.create",
+    "space.create",
     "vault.active",
     "vault.biometric_unlock",
     "vault.pin_unlock",
@@ -257,6 +258,7 @@ const HOST_ACTIONS: &[&str] = &[
     "vault.open",
     "vault.unlock",
     "vault.create",
+    "space.create",
     "vault.biometric_unlock",
     "vault.pin_unlock",
     "vault.clone_start",
@@ -1255,6 +1257,12 @@ pub async fn route_host_request(req: GatewayRequest, host: &SharedVaultHost) -> 
     }
     if req.action.as_str() == "vault.create" {
         return handle_vault_create(req, host).await;
+    }
+    // S2 IS-5: a pair Space is a vault created through the standard
+    // pipeline with a forced baluard-space- slug and the space shape
+    // flag; pair membership is capped by the core policy gates.
+    if req.action.as_str() == "space.create" {
+        return handle_space_create(req, host).await;
     }
     if req.action.as_str() == "vault.open" {
         return handle_vault_open(req, host).await;
@@ -2435,6 +2443,54 @@ fn inject_slug(body: String, slug: &str) -> String {
 
 /// `vault.create` (Phase 6): creates a new vault, inserts it into the map,
 /// sets it active, and registers it in the registry.
+/// S2 IS-5: create a pair Space. Delegates to the standard vault.create
+/// pipeline (unlock, registry, session token) after forcing the
+/// baluard-space- slug, then writes the space shape flag so the pair
+/// policy gates (invite + approval) and the vaults.list space marker
+/// engage. Payload: the vault.create fields; `slug` is derived from
+/// `name` and any client-sent slug is overridden.
+async fn handle_space_create(mut req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
+    if req.payload.is_empty() {
+        return err_response("Missing space creation JSON in payload");
+    }
+    let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+        Ok(v) => v,
+        Err(e) => {
+            req.payload.zeroize();
+            return err_response(format!("Invalid space payload: {e}"));
+        }
+    };
+    let Some(name) = parsed["name"].as_str().map(str::to_string) else {
+        req.payload.zeroize();
+        return err_response("Missing 'name' in space payload".to_string());
+    };
+    let slug = baluard_core::vault::space::space_slug(&name);
+    let mut payload = parsed;
+    payload["slug"] = serde_json::json!(slug);
+    let rebuilt = payload.to_string();
+    // The rebuilt string carries the master password; wipe the original
+    // buffer before the handoff (handle_vault_create zeroizes the new one).
+    req.payload.zeroize();
+    req.payload = rebuilt;
+    let resp = handle_vault_create(req, host).await;
+    if resp.success {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&resp.payload) {
+            if let Some(created_slug) = val["slug"].as_str() {
+                let path = baluard_core::paths::vaults_dir().join(created_slug);
+                if let Err(e) = baluard_core::vault::space::set_space_flag(&path, true) {
+                    // The vault exists and is open; a failed flag write
+                    // degrades it to an ungated vault. Warn loudly, do
+                    // not strand the user mid-wizard.
+                    log::warn!(
+                        "[daemon] space.create: flag write failed for '{created_slug}': {e}"
+                    );
+                }
+            }
+        }
+    }
+    resp
+}
+
 async fn handle_vault_create(mut req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
     if req.payload.is_empty() {
         return err_response("Missing vault creation JSON in payload");

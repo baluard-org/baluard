@@ -1015,6 +1015,12 @@ impl VaultHandle {
             .and_then(|t| crate::vault::members::member_file_by_id(&self.path, t))
             .map(|row| row.role);
         let effective_role = target_row_role.unwrap_or(invite.role);
+        // S2 IS-5: the pair policy also holds at approval — an invite
+        // minted before the shape was set, or a second member binding
+        // mid-ceremony, must not breach the cap here. Reset approvals
+        // pass: the successor row is unbound, so the cap counts only
+        // joined members.
+        crate::vault::space::pair_gate(&self.path, effective_role)?;
         // S1a-5: an invite whose role disagrees with the admin-fixed
         // successor row is stale or tampered — refuse BEFORE consuming
         // so the invite survives for the admin to correct.
@@ -2201,11 +2207,15 @@ impl VaultHandle {
         let pub_path = self.path.join("meta/settings-pub.json");
         let enc_path = self.path.join("meta/settings.enc");
 
-        // Public prefs (plaintext, pre-unlock).
-        let pub_json = serde_json::json!({
-            "theme": settings.theme,
-            "lang": settings.lang,
-        });
+        // Public prefs (plaintext, pre-unlock). Merge with the existing
+        // file so keys owned by other writers (the S2 space shape flag)
+        // survive a settings save.
+        let mut pub_json: serde_json::Value = std::fs::read_to_string(&pub_path)
+            .ok()
+            .and_then(|data| serde_json::from_str(&data).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        pub_json["theme"] = serde_json::json!(settings.theme);
+        pub_json["lang"] = serde_json::json!(settings.lang);
         let pub_str = serde_json::to_string_pretty(&pub_json)
             .map_err(|e| VaultError::Metadata(format!("settings-pub serialization: {e}")))?;
         super::write_vault_file(&pub_path, pub_str.as_bytes())?;
@@ -2446,18 +2456,13 @@ impl VaultHandle {
     /// clobber it. Replaces the old meta/locale sidecar (2026-06-26).
     pub fn save_locale(&self, lang: &str) -> Result<(), BaluardError> {
         let path = self.path.join("meta/settings-pub.json");
-        // Read existing pub prefs to preserve theme.
-        let existing = std::fs::read_to_string(&path).ok().and_then(|d| {
-            serde_json::from_str::<serde_json::Value>(&d)
-                .ok()
-                .and_then(|v| {
-                    serde_json::from_value::<crate::types::ThemeMode>(v["theme"].clone()).ok()
-                })
-        });
-        let json = serde_json::json!({
-            "theme": existing,
-            "lang": lang,
-        });
+        // Merge with the existing pub prefs (theme, the S2 space shape
+        // flag) instead of rebuilding the object.
+        let mut json: serde_json::Value = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|data| serde_json::from_str(&data).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        json["lang"] = serde_json::json!(lang);
         let body = serde_json::to_string_pretty(&json)
             .map_err(|e| VaultError::Metadata(format!("settings-pub serialization: {e}")))?;
         super::write_vault_file(&path, body.as_bytes())?;
@@ -5701,6 +5706,29 @@ mod tests {
         let (dir, _password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
         assert!(handle.unlock("wrong-password").is_err());
+    }
+
+    /// S2 IS-5 review fix: settings-pub.json writers merge instead of
+    /// rebuild, so the pair-space shape flag survives a settings save
+    /// or a locale change.
+    #[test]
+    fn settings_writers_preserve_space_flag() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        crate::vault::space::set_space_flag(dir.path(), true).unwrap();
+
+        handle
+            .save_settings(&crate::vault::manifest::VaultSettings::default())
+            .unwrap();
+        handle.save_locale("es").unwrap();
+
+        let pub_json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("meta/settings-pub.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(pub_json["space"], serde_json::json!(true));
+        assert_eq!(pub_json["lang"], serde_json::json!("es"));
     }
 
     /// S2 IS-3: one-shot item package end-to-end. B shares their card

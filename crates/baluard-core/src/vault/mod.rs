@@ -23,6 +23,7 @@ pub mod padding;
 pub mod registry;
 pub mod reveals;
 pub mod slug;
+pub mod space;
 
 pub use handle::VaultHandle;
 

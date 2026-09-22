@@ -210,6 +210,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vault.update",
     // vault lifecycle / unlock
     "vault.create",
+    "space.create",
     "vault.info",
     "vault.lock",
     "vault.open",
