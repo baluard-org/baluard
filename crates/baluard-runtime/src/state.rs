@@ -2760,6 +2760,61 @@ impl VaultState {
         Ok(cipher_id.to_string())
     }
 
+    /// S2 IS-3: export a cipher as a one-shot item package for a
+    /// contact (address-book lookup by identity signing pubkey, hex).
+    /// Returns base64 package file bytes.
+    pub async fn export_item_package(
+        &self,
+        cipher_id: &str,
+        contact_pubkey: &str,
+    ) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let cid = uuid::Uuid::parse_str(cipher_id).map_err(|_| "Invalid item ID.".to_string())?;
+        let contact = handle
+            .contacts_list()
+            .map_err(|e| format!("{e}"))?
+            .into_iter()
+            .find(|entry| entry.card.identity_signing_pubkey == contact_pubkey)
+            .ok_or_else(|| "That person is not in your contacts.".to_string())?;
+        let bytes = handle
+            .export_item_package(cid, &contact.card)
+            .map_err(|e| format!("{e}"))?;
+        use base64::Engine as _;
+        Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+    }
+
+    /// S2 IS-3: open an item package and import the item as a fresh
+    /// entry. Returns `{id, sender}`.
+    pub async fn import_item_package(&self, package_b64: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let trimmed = package_b64.trim();
+        if trimmed.len() > baluard_core::vault::packages::MAX_PACKAGE_FILE_BYTES * 2 {
+            return Err("Shared file too large.".to_string());
+        }
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(trimmed)
+            .map_err(|_| "Not a valid shared file.".to_string())?;
+        let (cipher_id, sender) = handle
+            .import_item_package(&bytes)
+            .map_err(|e| format!("{e}"))?;
+        let _ = handle.rebuild_tag_index();
+
+        Ok(serde_json::json!({
+            "id": cipher_id.to_string(),
+            "sender": sender,
+        })
+        .to_string())
+    }
+
     /// Update an existing cipher.
     pub async fn update_cipher(&self, payload: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;

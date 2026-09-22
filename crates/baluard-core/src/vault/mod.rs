@@ -18,6 +18,7 @@ pub mod index;
 pub mod keywrap;
 pub mod manifest;
 pub mod members;
+pub mod packages;
 pub mod padding;
 pub mod registry;
 pub mod slug;
