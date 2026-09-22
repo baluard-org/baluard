@@ -881,6 +881,82 @@ async fn sharing_surfaces_happy_path_and_role_guard() {
 }
 
 #[tokio::test]
+async fn collections_state_lifecycle_and_locked_rejection() {
+    let (_dir, vault_path) = make_vault("collections-state");
+    let state_path = vault_path.clone();
+    let state = Arc::new(VaultState::new(state_path));
+    state.open().await.expect("vault open");
+    // NOT unlocked: every collection surface refuses.
+    assert!(state.collections_list().await.is_err());
+    assert!(state.collection_create(r#""Servers""#).await.is_err());
+
+    state.unlock(MASTER).await.expect("vault unlock");
+    // Owner session: create, rename, list.
+    let created: serde_json::Value =
+        serde_json::from_str(&state.collection_create("Servers").await.unwrap()).unwrap();
+    let id = created["id"].as_str().expect("collection id");
+    state.collection_rename(id, "Infra").await.expect("rename");
+    let list: serde_json::Value =
+        serde_json::from_str(&state.collections_list().await.unwrap()).unwrap();
+    let rows = list["collections"].as_array().expect("rows");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["name"], "Infra");
+
+    // Grant: write access to a live member row.
+    let member = uuid::Uuid::new_v4();
+    std::fs::create_dir_all(vault_path.join("meta/members")).unwrap();
+    baluard_core::vault::members::write_member(
+        &vault_path,
+        &baluard_core::vault::members::MemberFile {
+            id: member,
+            display_name: "Alicia".into(),
+            role: baluard_core::vault::members::MemberRole::Editor,
+            trust: baluard_core::vault::members::TrustLevel::Verified,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            transport_username: None,
+        },
+    )
+    .unwrap();
+    let grant_payload = serde_json::json!({
+        "id": id,
+        "member_id": member.to_string(),
+        "access": "write",
+    });
+    state
+        .collection_grant(id, &grant_payload)
+        .await
+        .expect("grant");
+    let list: serde_json::Value =
+        serde_json::from_str(&state.collections_list().await.unwrap()).unwrap();
+    assert_eq!(
+        list["collections"][0]["grants"].as_array().unwrap().len(),
+        1
+    );
+    state
+        .collection_revoke(id, &member.to_string())
+        .await
+        .expect("revoke");
+    state.collection_delete(id).await.expect("delete");
+    let list: serde_json::Value =
+        serde_json::from_str(&state.collections_list().await.unwrap()).unwrap();
+    assert!(list["collections"].as_array().unwrap().is_empty());
+
+    // Bad ids fail closed.
+    assert!(state.collection_rename("not-a-uuid", "X").await.is_err());
+    assert!(
+        state
+            .collection_grant("not-a-uuid", &grant_payload)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn sharing_routes_reject_when_locked() {
     let (_dir, state) = make_vault("sharing-locked");
     let state = Arc::new(VaultState::new(state));

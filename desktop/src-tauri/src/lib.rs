@@ -229,6 +229,12 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vaults.detach",
     "vaults.list",
     "vaults.list_full_all",
+        "collections.create",
+        "collections.list",
+        "collections.rename",
+        "collections.delete",
+        "collections.grant",
+        "collections.revoke",
     "vaults.register_local",
     "vaults.switch",
     // clone from provider

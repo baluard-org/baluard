@@ -1065,6 +1065,20 @@ See `docs/plan-sharing.md` §4.6 (line 148) and the S2 tracking row.
 
 **Boundaries**: mobile merged host is the S4 line item; foreign entries are view-only (mutations stay slug-routed to the active vault — no cross-vault write surface exists); locked vaults surface as metadata rows, unlock stays a switcher action.
 
+---
+
+### D32. Collections Core (S3-1) (2026-09-22; S3 OPEN)
+
+See `docs/plan-sharing.md` §4.2/§4.6 (S3 row) and the S3 tracking row.
+
+**What shipped**: the org-granularity data + key layer. `meta/collections/<id>.json` carries plaintext grants (`{member_id, access: read|write, expires_at?}` — plan rule: plaintext is UUIDs + names + trust) plus the collection's display name sealed under a random per-collection content key (CK), so a non-grantee sees an opaque id while grantees see real names. The CK is wrapped under a key HKDF-derived from the Space Group Key and bound to its epoch (plan: "collection key — random; wrapped under SGK"), which is why rotation re-seals: both `rotate_root_key` and `revoke_device_and_rekey` decrypt every collection's CK with the outgoing SGK pre-swap and re-seal post-swap (the outbox-registry pattern). Six admin-gated handle methods + runtime wrappers + daemon routes (`collections.create/list/rename/delete/grant/revoke`; the mutating five in COVER_MUTATION_ACTIONS; desktop allowlist updated). `collections_list` returns grant rows (member, access, expiry) so an admin can see who has what before revoking.
+
+**Trust model**: the admin gate (`assert_can_manage_members`) covers all five mutating ops; list is open to any unlocked member (read-only). The sync policy table already requires Admin for `meta/collections/**`, so commit verification backs the route gate. Grants validate the target is a live member (no `removed`/`reset` tombstone). Malformed files skip inert in the directory walker, and the filename stem must match the embedded id so a misnamed file cannot wedge rotation.
+
+**Review round (agy, 7 findings, all accepted)**: grants were write-only through IPC (list carried only a count); decrypted CK vectors were not zeroized; `format` unvalidated; filename/id mismatch could wedge rotation; editor-refusal coverage existed only for create; a stale doc comment; the rewrap path skipped the size cap. Refutations confirmed the gate coverage on all mutating ops, the epoch-bound wrap derivation, AAD transplant rejection, rotation wiring in both paths, and grant validation.
+
+**Boundaries**: entries stay at personal paths — collection-scoped cipher paths and the policy-table binding are the P5 remainder (the enforcement slice); per-member identity wraps (`meta/collections/<c>/<m>.wrap`) and Team-shape key separation (non-admins never hold the Root Key) arrive with the P1 Space parts; expiry enforcement (expiry-that-rotates + notices surfacing), role templates, delegated manage, JIT request-access, and `space.adopt` are their own S3 slices; no UI yet (the §4.8 sharing-surfaces wave).
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.
