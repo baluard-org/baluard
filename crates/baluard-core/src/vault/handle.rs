@@ -896,6 +896,111 @@ impl VaultHandle {
         crate::vault::outbox::list_entries(std::path::Path::new(&link.path), &link)
     }
 
+    // ── Collections (S3-1) ──────────────────────────────────────────────
+
+    /// Mint a collection (admin-gated). Entries keep their personal keys;
+    /// the collection is the grant/organization layer for now.
+    pub fn collection_create(&mut self, name: &str) -> Result<Uuid, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let file = crate::vault::collections::create_collection(
+            &self.path,
+            &self.unlocked().space_group_key,
+            name,
+        )?;
+
+        Ok(file.id)
+    }
+
+    /// List collections with decrypted names (any unlocked member).
+    pub fn collections_list(
+        &self,
+    ) -> Result<
+        Vec<(
+            Uuid,
+            String,
+            Vec<crate::vault::collections::CollectionGrant>,
+        )>,
+        BaluardError,
+    > {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        Ok(crate::vault::collections::list_collections(
+            &self.path,
+            &self.unlocked().space_group_key,
+        )?
+        .into_iter()
+        .map(|(f, name)| (f.id, name, f.grants))
+        .collect())
+    }
+
+    /// Rename a collection (admin-gated).
+    pub fn collection_rename(&mut self, id: Uuid, name: &str) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::collections::rename_collection(
+            &self.path,
+            &self.unlocked().space_group_key,
+            &id,
+            name,
+        )?;
+        Ok(())
+    }
+
+    /// Delete a collection (admin-gated). Entries stay; grants die.
+    pub fn collection_delete(&mut self, id: Uuid) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::collections::delete_collection(&self.path, &id)
+    }
+
+    /// Grant or update a member's access on a collection (admin-gated).
+    pub fn collection_grant(
+        &mut self,
+        id: Uuid,
+        member_id: Uuid,
+        access: crate::vault::collections::CollectionAccess,
+        expires_at: Option<u64>,
+    ) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::collections::upsert_grant(
+            &self.path,
+            &self.unlocked().space_group_key,
+            &id,
+            crate::vault::collections::CollectionGrant {
+                member_id,
+                access,
+                expires_at,
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Revoke one member's access on a collection (admin-gated).
+    pub fn collection_revoke(&mut self, id: Uuid, member_id: Uuid) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::collections::revoke_grant(
+            &self.path,
+            &self.unlocked().space_group_key,
+            &id,
+            &member_id,
+        )?;
+        Ok(())
+    }
+
     /// S1a-4: reconcile the address book against member identity records
     /// after a sync. A Verified contact whose pubkey no longer matches
     /// its member's current identity (the member rotated) drops to
@@ -4917,6 +5022,12 @@ impl VaultHandle {
         // pre-swap, re-encrypt under the new outbox key post-swap.
         let old_outboxes = self.outbox_list()?;
         let old_links = self.outbox_links()?;
+        // S3-1 rotation coverage: decrypt collection content keys with the
+        // outgoing SGK before the swap (rewrapped post-swap).
+        let old_collection_keys = crate::vault::collections::collect_content_keys(
+            &self.path,
+            &self.unlocked().space_group_key,
+        )?;
         // S1b-1: the activity log is RootKey-derived — read pre-swap.
         let old_events = crate::vault::events::load(
             &self.path,
@@ -4975,6 +5086,11 @@ impl VaultHandle {
         // S2 IS-4b: outbox registries re-encrypted under the new key.
         crate::vault::outbox::save_owner_registry(&self.path, &self.outbox_key()?, &old_outboxes)?;
         crate::vault::outbox::save_links(&self.path, &self.outbox_key()?, &old_links)?;
+        crate::vault::collections::rewrap_from_plaintexts(
+            &self.path,
+            &self.unlocked().space_group_key,
+            &old_collection_keys,
+        )?;
         // S1b-1: activity log re-encrypted under the new events key.
         crate::vault::events::save(
             &self.path,
@@ -5405,6 +5521,12 @@ impl VaultHandle {
         // pre-swap, re-encrypt under the new outbox key post-swap.
         let old_outboxes = self.outbox_list()?;
         let old_links = self.outbox_links()?;
+        // S3-1 rotation coverage: decrypt collection content keys with the
+        // outgoing SGK before the swap (rewrapped post-swap).
+        let old_collection_keys = crate::vault::collections::collect_content_keys(
+            &self.path,
+            &self.unlocked().space_group_key,
+        )?;
         // S1b-1: the activity log is RootKey-derived — read pre-swap.
         let old_events = crate::vault::events::load(
             &self.path,
@@ -5462,6 +5584,11 @@ impl VaultHandle {
         // S2 IS-4b: outbox registries re-encrypted under the new key.
         crate::vault::outbox::save_owner_registry(&self.path, &self.outbox_key()?, &old_outboxes)?;
         crate::vault::outbox::save_links(&self.path, &self.outbox_key()?, &old_links)?;
+        crate::vault::collections::rewrap_from_plaintexts(
+            &self.path,
+            &self.unlocked().space_group_key,
+            &old_collection_keys,
+        )?;
         // S1b-1: activity log re-encrypted under the new events key.
         crate::vault::events::save(
             &self.path,
@@ -6195,6 +6322,122 @@ mod tests {
     /// S2 IS-4b review: a PURGED (hard-deleted) source errors in
     /// get_cipher; the resync must unpublish it, not abort (a purge
     /// would otherwise wedge every later resync on the outbox).
+    /// S3-1: collection lifecycle end-to-end on the handle, plus rotation
+    /// coverage (content keys re-wrapped under the new SGK epoch).
+    #[test]
+    fn collections_lifecycle_rotation() {
+        let (dir_a, pw_a) = create_test_vault();
+        let mut a = VaultHandle::open(dir_a.path()).unwrap();
+        a.unlock(&pw_a).unwrap();
+
+        // Owner session: full lifecycle.
+        let id = a.collection_create("Servers").unwrap();
+        a.collection_rename(id, "Infra").unwrap();
+        let rows = a.collections_list().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, "Infra");
+
+        // Grant to a live member; revoke.
+        let member = uuid::Uuid::new_v4();
+        std::fs::create_dir_all(dir_a.path().join("meta/members")).unwrap();
+        crate::vault::members::write_member(
+            dir_a.path(),
+            &crate::vault::members::MemberFile {
+                id: member,
+                display_name: "Alicia".into(),
+                role: crate::vault::members::MemberRole::Editor,
+                trust: crate::vault::members::TrustLevel::Verified,
+                identity_signing_pubkey: None,
+                identity_signing_pubkey_previous: None,
+                identity_rotation_signature: None,
+                identity_rotated_at: None,
+                reset: None,
+                removed: None,
+                transport_username: None,
+            },
+        )
+        .unwrap();
+        a.collection_grant(
+            id,
+            member,
+            crate::vault::collections::CollectionAccess::Write,
+            None,
+        )
+        .unwrap();
+        assert_eq!(a.collections_list().unwrap()[0].2.len(), 1);
+        a.collection_revoke(id, member).unwrap();
+        assert_eq!(a.collections_list().unwrap()[0].2.len(), 0);
+
+        // Rotation: the content keys must re-wrap under the new SGK.
+        a.rotate_root_key().unwrap();
+        let names: Vec<String> = a
+            .collections_list()
+            .unwrap()
+            .into_iter()
+            .map(|(_, n, _)| n)
+            .collect();
+        assert_eq!(names, vec!["Infra".to_string()]);
+
+        a.collection_delete(id).unwrap();
+        assert!(a.collections_list().unwrap().is_empty());
+    }
+
+    /// S3-1: the admin gate refuses a session device bound to an Editor row
+    /// (plan §10.2: editors do not create collections).
+    #[test]
+    fn collections_create_refused_for_editor_device() {
+        let (dir_a, pw_a) = create_test_vault();
+        let device_id = {
+            let h = VaultHandle::open(dir_a.path()).unwrap();
+            h.device_id
+        };
+        let member = uuid::Uuid::new_v4();
+        std::fs::create_dir_all(dir_a.path().join("meta/members")).unwrap();
+        crate::vault::members::write_member(
+            dir_a.path(),
+            &crate::vault::members::MemberFile {
+                id: member,
+                display_name: "Editor Person".into(),
+                role: crate::vault::members::MemberRole::Editor,
+                trust: crate::vault::members::TrustLevel::Verified,
+                identity_signing_pubkey: None,
+                identity_signing_pubkey_previous: None,
+                identity_rotation_signature: None,
+                identity_rotated_at: None,
+                reset: None,
+                removed: None,
+                transport_username: None,
+            },
+        )
+        .unwrap();
+        crate::vault::members::write_device_binding(
+            dir_a.path(),
+            &crate::vault::members::DeviceBinding {
+                device_id,
+                member_id: member,
+            },
+        )
+        .unwrap();
+        let mut a = VaultHandle::open(dir_a.path()).unwrap();
+        a.unlock(&pw_a).unwrap();
+        assert!(a.collection_create("Nope").is_err());
+        assert!(a.collections_list().is_ok());
+        // The gate is per-op: rename/delete/grant/revoke all refuse for a
+        // non-admin session device.
+        let fake = uuid::Uuid::new_v4();
+        assert!(a.collection_rename(fake, "X").is_err());
+        assert!(a.collection_delete(fake).is_err());
+        assert!(
+            a.collection_grant(
+                fake,
+                member,
+                crate::vault::collections::CollectionAccess::Read,
+                None
+            )
+            .is_err()
+        );
+        assert!(a.collection_revoke(fake, member).is_err());
+    }
     #[test]
     fn outbox_resync_survives_purged_source() {
         let (dir_a, pw_a) = create_test_vault();

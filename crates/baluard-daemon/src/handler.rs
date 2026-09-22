@@ -312,6 +312,11 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "tag.create",
     "tag.rename",
     "tag.delete",
+    "collections.create",
+    "collections.rename",
+    "collections.delete",
+    "collections.grant",
+    "collections.revoke",
     "tag.rebuild_index",
     "settings.set",
     "vault.avatar.set",
@@ -3561,6 +3566,87 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        "collections.create" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(name) = parsed["name"].as_str() else {
+                return err_response("Missing name in payload");
+            };
+            match state.collection_create(name).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "collections.list" => match state.collections_list().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "collections.rename" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(id) = parsed["id"].as_str() else {
+                return err_response("Missing id in payload");
+            };
+            let Some(name) = parsed["name"].as_str() else {
+                return err_response("Missing name in payload");
+            };
+            match state.collection_rename(id, name).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "collections.delete" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(id) = parsed["id"].as_str() else {
+                return err_response("Missing id in payload");
+            };
+            match state.collection_delete(id).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "collections.grant" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(id) = parsed["id"].as_str() else {
+                return err_response("Missing id in payload");
+            };
+            match state.collection_grant(id, &parsed).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "collections.revoke" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(id) = parsed["id"].as_str() else {
+                return err_response("Missing id in payload");
+            };
+            let Some(member_id) = parsed["member_id"].as_str() else {
+                return err_response("Missing member_id in payload");
+            };
+            match state.collection_revoke(id, member_id).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
         "cipher.totp_code" => {
             if req.payload.is_empty() {
                 return err_response("Missing cipher UUID in payload");
@@ -5544,6 +5630,12 @@ mod tests {
             "outbox.read",
             "outbox.entries",
             "outbox.resync",
+            "collections.create",
+            "collections.list",
+            "collections.rename",
+            "collections.delete",
+            "collections.grant",
+            "collections.revoke",
         ] {
             assert!(action_requires_session_token(a), "{a} must be gated");
         }

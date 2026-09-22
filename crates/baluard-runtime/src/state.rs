@@ -3049,6 +3049,110 @@ impl VaultState {
         serde_json::to_string(&rows).map_err(|e| format!("{e}"))
     }
 
+    /// Mint a collection (admin-gated).
+    pub async fn collection_create(&self, name: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let id = handle.collection_create(name).map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "id": id.to_string() }).to_string())
+    }
+
+    pub async fn collections_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let rows: Vec<serde_json::Value> = handle
+            .collections_list()
+            .map_err(|e| format!("{e}"))?
+            .into_iter()
+            .map(|(id, name, grants)| {
+                serde_json::json!({
+                    "id": id.to_string(),
+                    "name": name,
+                    "grants": grants.iter().map(|g| serde_json::json!({
+                        "member_id": g.member_id.to_string(),
+                        "access": g.access,
+                        "expires_at": g.expires_at,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "collections": rows }).to_string())
+    }
+
+    pub async fn collection_rename(&self, id: &str, name: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let uuid = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid collection id: {e}"))?;
+        handle
+            .collection_rename(uuid, name)
+            .map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "ok": true }).to_string())
+    }
+
+    pub async fn collection_delete(&self, id: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let uuid = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid collection id: {e}"))?;
+        handle.collection_delete(uuid).map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "ok": true }).to_string())
+    }
+
+    pub async fn collection_grant(
+        &self,
+        id: &str,
+        payload: &serde_json::Value,
+    ) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let uuid = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid collection id: {e}"))?;
+        let member_id = payload["member_id"]
+            .as_str()
+            .ok_or("Missing member_id in payload")?;
+        let member =
+            uuid::Uuid::parse_str(member_id).map_err(|e| format!("Invalid member_id: {e}"))?;
+        let access: baluard_core::vault::collections::CollectionAccess =
+            serde_json::from_value(payload["access"].clone())
+                .map_err(|e| format!("Invalid access: {e}"))?;
+        let expires_at = payload["expires_at"].as_u64();
+        handle
+            .collection_grant(uuid, member, access, expires_at)
+            .map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "ok": true }).to_string())
+    }
+
+    pub async fn collection_revoke(&self, id: &str, member_id: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let uuid = uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid collection id: {e}"))?;
+        let member =
+            uuid::Uuid::parse_str(member_id).map_err(|e| format!("Invalid member_id: {e}"))?;
+        handle
+            .collection_revoke(uuid, member)
+            .map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "ok": true }).to_string())
+    }
+
+    /// Live-mirror tick: re-publish every entry in every outbox from
+    /// the current cipher state. Idempotent; used by the daemon's
+    /// post-CRUD hook and the explicit resync route.
     /// Live-mirror tick: re-publish every entry in every outbox from
     /// the current cipher state. Idempotent; used by the daemon's
     /// post-CRUD hook and the explicit resync route.
