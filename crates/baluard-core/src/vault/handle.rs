@@ -676,6 +676,9 @@ impl VaultHandle {
         };
         item.attachments.clear();
         item.password_history.clear();
+        // View-only mirror: no passkey material travels (the embedded
+        // encrypted blobs are useless to the recipient and private).
+        Self::strip_fido2(&mut item);
         let report = crate::vault::outbox::publish_entry(
             &self.path,
             outbox_path,
@@ -688,6 +691,15 @@ impl VaultHandle {
             &contact.identity_wrap_pubkey,
         )?;
         Ok(report)
+    }
+
+    /// Mirror hygiene shared by publish and resync: view-only reads never
+    /// need passkey material, so the embedded credentials are stripped
+    /// before an item is sealed into any outbox.
+    fn strip_fido2(item: &mut crate::types::CipherInput) {
+        if let crate::types::CipherKind::Login(ref mut login) = item.kind {
+            login.fido2_credentials = None;
+        }
     }
 
     /// Live-mirror tick: re-publish EVERY published entry from the
@@ -752,7 +764,8 @@ impl VaultHandle {
                 };
                 item.attachments.clear();
                 item.password_history.clear();
-                let report = crate::vault::outbox::publish_entry(
+                Self::strip_fido2(&mut item);
+                let report = match crate::vault::outbox::publish_entry(
                     &self.path,
                     path,
                     &card,
@@ -762,7 +775,20 @@ impl VaultHandle {
                     &item,
                     &record.recipient_signing_pub,
                     &record.recipient_wrap_pub,
-                )?;
+                ) {
+                    Ok(report) => report,
+                    // One broken outbox (unmounted drive, stale lock)
+                    // must not starve every later resync: report the
+                    // miss and keep going.
+                    Err(e) => {
+                        eprintln!(
+                            "warning: outbox resync: publish {} failed: {e}",
+                            pref.cipher_id
+                        );
+                        results.push((pref.cipher_id, false));
+                        continue;
+                    }
+                };
                 results.push((pref.cipher_id, report.committed));
             }
         }
@@ -6074,9 +6100,33 @@ mod tests {
         let mut b = VaultHandle::open(dir_b.path()).unwrap();
         b.unlock(&pw_b).unwrap();
 
-        let kind: crate::types::CipherKind =
-            serde_json::from_str(r#"{"type":"login","data":{"username":"u","password":"p"}}"#)
-                .unwrap();
+        let passkey = crate::types::PasskeyData {
+            credential_id: "abc".into(),
+            key_type: "public-key".into(),
+            key_algorithm: "ECDSA".into(),
+            key_curve: "P-256".into(),
+            key_value: "aa".into(),
+            rp_id: "bank.example".into(),
+            rp_name: Some("Bank".into()),
+            user_handle: None,
+            user_name: Some("u".into()),
+            user_display_name: None,
+            counter: 0,
+            aaguid: uuid::Uuid::nil(),
+            prf_key: Some(vec![9, 9, 9]),
+            private_key: Some(vec![1, 2, 3]),
+            private_key_missing: false,
+            linked_login_id: None,
+            creation_date: 1_700_000_000,
+            name: Some("pk".into()),
+        };
+        let mut login_data = crate::types::LoginData {
+            username: Some("u".into()),
+            password: Some("p".into()),
+            ..Default::default()
+        };
+        login_data.fido2_credentials = Some(vec![passkey]);
+        let kind = crate::types::CipherKind::Login(login_data);
         let source_id = a
             .add_cipher(&crate::types::CipherInput {
                 name: "Bank".into(),
@@ -6089,7 +6139,8 @@ mod tests {
         a.contacts_import_card(&card_code).unwrap();
         let contact_card = a.contacts_list().unwrap()[0].card.clone();
 
-        let outbox_dir = dir_a.path().join("outbox-mirror");
+        let ob_dir = tempfile::TempDir::new().unwrap();
+        let outbox_dir = ob_dir.path().join("outbox-mirror");
         let report = a
             .outbox_publish(&outbox_dir, source_id, &contact_card)
             .unwrap();
@@ -6100,6 +6151,9 @@ mod tests {
         let link = b.outbox_link(&outbox_dir).unwrap();
         let entries = b.outbox_list_entries(link.outbox_id).unwrap();
         assert_eq!(entries.len(), 1);
+        // View-only mirror: no passkey material travels.
+        let mirrored = serde_json::to_string(&entries[0].item).unwrap();
+        assert!(!mirrored.contains("fido2"), "passkeys must not mirror");
         assert_eq!(
             entries[0].sender_name,
             a.contacts_list().unwrap()[0].card.display_name
@@ -6163,7 +6217,8 @@ mod tests {
         let card_code = b.contact_card_create().unwrap();
         a.contacts_import_card(&card_code).unwrap();
         let contact_card = a.contacts_list().unwrap()[0].card.clone();
-        let outbox_dir = dir_a.path().join("outbox-purge");
+        let ob_dir = tempfile::TempDir::new().unwrap();
+        let outbox_dir = ob_dir.path().join("outbox-purge");
         a.outbox_publish(&outbox_dir, source_id, &contact_card)
             .unwrap();
 
@@ -6202,7 +6257,8 @@ mod tests {
         let card_code = b.contact_card_create().unwrap();
         a.contacts_import_card(&card_code).unwrap();
         let contact_card = a.contacts_list().unwrap()[0].card.clone();
-        let outbox_dir = dir_a.path().join("outbox-rot");
+        let ob_dir = tempfile::TempDir::new().unwrap();
+        let outbox_dir = ob_dir.path().join("outbox-rot");
         a.outbox_publish(&outbox_dir, source_id, &contact_card)
             .unwrap();
 
