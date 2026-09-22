@@ -2893,6 +2893,174 @@ impl VaultState {
         serde_json::to_string(&opened).map_err(|e| format!("{e}"))
     }
 
+    // ── S2 IS-4b: per-recipient outboxes (live mirror) ──
+
+    /// Publish (or re-publish) a cipher into a recipient's outbox
+    /// folder. The contact is resolved from the address book by
+    /// signing-pubkey hex.
+    pub async fn outbox_publish(
+        &self,
+        outbox_path: &str,
+        cipher_id: &str,
+        contact_pubkey: &str,
+    ) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let cid = uuid::Uuid::parse_str(cipher_id).map_err(|_| "Invalid item ID.".to_string())?;
+        let contact = handle
+            .contacts_list()
+            .map_err(|e| format!("{e}"))?
+            .into_iter()
+            .find(|entry| entry.card.identity_signing_pubkey == contact_pubkey)
+            .ok_or_else(|| "That person is not in your contacts.".to_string())?;
+        let report = handle
+            .outbox_publish(std::path::Path::new(outbox_path), cid, &contact.card)
+            .map_err(|e| format!("{e}"))?;
+        serde_json::to_string(&report).map_err(|e| format!("{e}"))
+    }
+
+    pub async fn outbox_unpublish(
+        &self,
+        outbox_path: &str,
+        cipher_id: &str,
+    ) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let cid = uuid::Uuid::parse_str(cipher_id).map_err(|_| "Invalid item ID.".to_string())?;
+        let report = handle
+            .outbox_unpublish(std::path::Path::new(outbox_path), cid)
+            .map_err(|e| format!("{e}"))?;
+        serde_json::to_string(&report).map_err(|e| format!("{e}"))
+    }
+
+    pub async fn outbox_revoke(&self, outbox_path: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        handle
+            .outbox_revoke(std::path::Path::new(outbox_path))
+            .map_err(|e| format!("{e}"))
+    }
+
+    pub async fn outbox_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let rows = handle.outbox_list().map_err(|e| format!("{e}"))?;
+        // Content keys stay in the sealed registry; never over IPC.
+        let mut json = serde_json::to_value(&rows).map_err(|e| format!("{e}"))?;
+        if let Some(arr) = json.as_array_mut() {
+            for row in arr {
+                if let Some(obj) = row.as_object_mut() {
+                    obj.remove("content_key_hex");
+                }
+            }
+        }
+        serde_json::to_string(&json).map_err(|e| format!("{e}"))
+    }
+
+    pub async fn outbox_link(&self, outbox_path: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let link = handle
+            .outbox_link(std::path::Path::new(outbox_path))
+            .map_err(|e| format!("{e}"))?;
+        // The content key stays in the sealed links file; it never
+        // crosses IPC.
+        let mut json = serde_json::to_value(&link).map_err(|e| format!("{e}"))?;
+        if let Some(obj) = json.as_object_mut() {
+            obj.remove("content_key_hex");
+        }
+        serde_json::to_string(&json).map_err(|e| format!("{e}"))
+    }
+
+    pub async fn outbox_links(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let links = handle.outbox_links().map_err(|e| format!("{e}"))?;
+        // Strip content keys from the IPC surface (F6: raw symmetric
+        // keys must not cross the socket).
+        let mut json = serde_json::to_value(&links).map_err(|e| format!("{e}"))?;
+        if let Some(arr) = json.as_array_mut() {
+            for row in arr {
+                if let Some(obj) = row.as_object_mut() {
+                    obj.remove("content_key_hex");
+                }
+            }
+        }
+        serde_json::to_string(&json).map_err(|e| format!("{e}"))
+    }
+
+    pub async fn outbox_forget(&self, outbox_id: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let id = uuid::Uuid::parse_str(outbox_id).map_err(|_| "Invalid outbox ID.".to_string())?;
+        handle.outbox_forget(id).map_err(|e| format!("{e}"))
+    }
+
+    pub async fn outbox_read(&self, outbox_id: &str, cipher_id: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let oid = uuid::Uuid::parse_str(outbox_id).map_err(|_| "Invalid outbox ID.".to_string())?;
+        let cid = uuid::Uuid::parse_str(cipher_id).map_err(|_| "Invalid item ID.".to_string())?;
+        let opened = handle.outbox_read(oid, cid).map_err(|e| format!("{e}"))?;
+        serde_json::to_string(&opened).map_err(|e| format!("{e}"))
+    }
+
+    pub async fn outbox_entries(&self, outbox_id: &str) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let oid = uuid::Uuid::parse_str(outbox_id).map_err(|_| "Invalid outbox ID.".to_string())?;
+        let rows = handle
+            .outbox_list_entries(oid)
+            .map_err(|e| format!("{e}"))?;
+        serde_json::to_string(&rows).map_err(|e| format!("{e}"))
+    }
+
+    /// Live-mirror tick: re-publish every entry in every outbox from
+    /// the current cipher state. Idempotent; used by the daemon's
+    /// post-CRUD hook and the explicit resync route.
+    pub async fn outbox_resync(&self) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let results = handle.outbox_resync_all().map_err(|e| format!("{e}"))?;
+        let json: Vec<serde_json::Value> = results
+            .into_iter()
+            .map(|(id, committed)| {
+                serde_json::json!({ "cipher_id": id.to_string(), "committed": committed })
+            })
+            .collect();
+        serde_json::to_string(&json).map_err(|e| format!("{e}"))
+    }
+
     /// Update an existing cipher.
     pub async fn update_cipher(&self, payload: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;

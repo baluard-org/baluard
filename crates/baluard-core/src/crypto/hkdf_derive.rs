@@ -24,6 +24,7 @@ const ACTIVITY_INFO: &[u8] = b"baluard-activity-v1";
 const GENERATOR_HISTORY_INFO: &[u8] = b"baluard-generator-history-v1";
 const CONTACTS_INFO: &[u8] = b"baluard-contacts-v1";
 const EVENTS_INFO: &[u8] = b"baluard-share-events-v1";
+const OUTBOX_INFO: &[u8] = b"baluard-outbox-registry-v1";
 
 /// Derive a 32-byte Session Key from KEK.
 ///
@@ -158,6 +159,19 @@ pub fn derive_generator_history_key(root_key: &[u8; 64]) -> Result<[u8; 32], Cry
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
     let mut key = [0u8; 32];
     hkdf.expand(GENERATOR_HISTORY_INFO, &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
+/// Derive a 32-byte Outbox Key from Root Key.
+///
+/// Outbox Key encrypts the per-recipient outbox registries
+/// (meta/outbox-owner.enc and meta/outbox-links.enc). S2 artifact:
+/// covered by rotation like the other RootKey-derived metadata keys.
+pub fn derive_outbox_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, root_key);
+    let mut key = [0u8; 32];
+    hkdf.expand(OUTBOX_INFO, &mut key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
