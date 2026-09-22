@@ -344,8 +344,13 @@ fn norm_path(p: &Path) -> String {
         .unwrap_or_else(|_| p.to_string_lossy().to_string())
 }
 
-/// Seal one entry blob and return (doc, digest). Reused by publish and
-/// resync so both sides never drift on the payload shape.
+/// Seal one entry blob and return (blob, digest). Reused by publish
+/// and resync so both sides never drift on the payload shape. The
+/// digest is computed over a CANONICAL MIRROR DOC that excludes
+/// `updated_at`: the payload signature covers the real timestamp, but
+/// a digest that includes a live clock would change every second and
+/// defeat the unchanged-skip (every resync would rewrite + commit
+/// every entry).
 fn seal_entry(
     outbox_id: Uuid,
     cipher_id: Uuid,
@@ -370,7 +375,16 @@ fn seal_entry(
     }
     let purpose = format!("{ENTRY_PURPOSE_PREFIX}/{outbox_id}/{cipher_id}");
     let blob = crate::secret_file::seal_secret_blob(content_key, &doc, &purpose)?;
-    let digest = doc_digest(&doc);
+    // Canonical dirty-check input: item bytes + placement, no clock.
+    let mirror_doc = serde_json::json!({
+        "outbox_id": outbox_id,
+        "cipher_id": cipher_id,
+        "item": item,
+    });
+    let digest = doc_digest(
+        &serde_json::to_vec(&mirror_doc)
+            .map_err(|e| VaultError::Metadata(format!("encode outbox entry: {e}")))?,
+    );
     drop(doc);
     Ok((blob, digest))
 }
@@ -399,6 +413,21 @@ pub fn publish_entry(
     recipient_signing_pub_hex: &str,
     recipient_wrap_pub_hex: &str,
 ) -> Result<OutboxReport, BaluardError> {
+    // The outbox repo must live outside the vault: an outbox at or
+    // inside the vault folder would commit vault files into the mirror
+    // (and vice versa), corrupting both histories.
+    let vault_canon = vault_path
+        .canonicalize()
+        .unwrap_or_else(|_| vault_path.to_path_buf());
+    let outbox_canon = outbox_path
+        .canonicalize()
+        .unwrap_or_else(|_| outbox_path.to_path_buf());
+    if outbox_canon == vault_canon
+        || outbox_canon.starts_with(&vault_canon)
+        || vault_canon.starts_with(&outbox_canon)
+    {
+        return Err(deny("the shared folder must live outside the vault"));
+    }
     let wrap_hex = recipient_wrap_pub_hex;
     if wrap_hex.is_empty() || recipient_signing_pub_hex.is_empty() {
         return Err(deny(
@@ -481,10 +510,20 @@ pub fn publish_entry(
         }
         let (eph, ct, tag) =
             hpke_wrap::wrap_key(&content_key[..], &recipient_pub, OUTBOX_KEYWRAP_CONTEXT)?;
+        // The signature binds the WRAP BYTES too (sha256 over eph|ct|tag):
+        // it only covers recipient + outbox id, a repo writer could swap
+        // the ciphertext under the still-valid signature and break the
+        // recipient's link.
+        let mut wrap_hasher = Sha256::new();
+        wrap_hasher.update(&eph);
+        wrap_hasher.update(&ct);
+        wrap_hasher.update(tag);
         let mut input = KEYWRAP_SIGNATURE_DOMAIN.as_bytes().to_vec();
         input.extend_from_slice(recipient_pub.as_bytes());
         input.push(b'\n');
         input.extend_from_slice(outbox_id.as_bytes());
+        input.push(b'\n');
+        input.extend_from_slice(&wrap_hasher.finalize());
         let sig = signature::sign(owner_signing, &input)?;
         use base64::Engine as _;
         let b64 = base64::engine::general_purpose::STANDARD;
@@ -578,10 +617,9 @@ pub fn unpublish_entry(
     if let Some(o) = outboxes.iter_mut().find(|o| o.path == path_str) {
         o.published.retain(|p| p.cipher_id != cipher_id);
         entries = o.published.len();
-        if o.published.is_empty() {
-            let path_str = o.path.clone();
-            outboxes.retain(|o| o.path != path_str);
-        }
+        // Keep the record even when nothing is published: the marker on
+        // disk still carries this outbox id, and dropping the record
+        // would wedge a later re-publish (fresh id vs old marker).
     }
     save_owner_registry(vault_path, registry_key, &outboxes)?;
 
@@ -602,6 +640,9 @@ pub fn revoke_outbox(
     registry_key: &[u8; 32],
 ) -> Result<(), BaluardError> {
     let mut outboxes = load_owner_registry(vault_path, registry_key)?;
+    // Gate on an owned record: a typo'd path must never strip an
+    // unrelated folder's entries/ directory.
+    find_record(&outboxes, outbox_path)?;
     let path_str = norm_path(outbox_path);
     outboxes.retain(|o| o.path != path_str);
     save_owner_registry(vault_path, registry_key, &outboxes)?;
@@ -651,6 +692,14 @@ pub fn open_entry(
     let entry_path = outbox_path
         .join(ENTRIES_DIR)
         .join(format!("{cipher_id}.enc"));
+    // Size bound BEFORE reading: a hostile oversized file must not get
+    // pulled into memory wholesale.
+    let file_len = std::fs::metadata(&entry_path)
+        .map(|m| m.len())
+        .map_err(|e| deny(&format!("entry unreadable: {e}")))?;
+    if file_len as usize > MAX_ENTRY_PAYLOAD_BYTES * 2 {
+        return Err(deny("shared entry is too large"));
+    }
     let blob = std::fs::read(&entry_path).map_err(|e| deny(&format!("entry unreadable: {e}")))?;
     let purpose = format!("{ENTRY_PURPOSE_PREFIX}/{}", marker.outbox_id);
     let purpose = format!("{purpose}/{cipher_id}");
@@ -753,12 +802,19 @@ pub fn link_outbox(
     drop(content_key);
 
     // The keywrap signature binds the recipient wrap pubkey + outbox
-    // id, so a wrap for someone else (or a transplanted keywrap)
-    // refuses here.
+    // id + the wrap bytes (sha256 over eph|ct|tag), so a wrap for
+    // someone else, a transplanted keywrap, or a ciphertext swap under
+    // the still-valid signature refuses here.
     let mut input = KEYWRAP_SIGNATURE_DOMAIN.as_bytes().to_vec();
     input.extend_from_slice(&identity.wrapping_pub_bytes());
     input.push(b'\n');
     input.extend_from_slice(marker.outbox_id.as_bytes());
+    input.push(b'\n');
+    let mut wrap_hasher = Sha256::new();
+    wrap_hasher.update(&eph);
+    wrap_hasher.update(&ct);
+    wrap_hasher.update(tag);
+    input.extend_from_slice(&wrap_hasher.finalize());
     let vk_bytes = hex::decode(&marker.owner_card.card.identity_signing_pubkey)
         .map_err(|_| deny("outbox owner card is invalid"))?;
     let vk_arr: [u8; 32] = vk_bytes
@@ -833,7 +889,12 @@ pub fn list_entries(
             .collect();
         ids.sort();
         for id in ids {
-            out.push(open_entry(outbox_path, link, id)?);
+            // Skip unreadable/tampered entries instead of failing the
+            // whole listing: one corrupt file must not hide every valid
+            // entry from the recipient.
+            if let Ok(entry) = open_entry(outbox_path, link, id) {
+                out.push(entry);
+            }
         }
     }
     let _ = marker;
@@ -863,6 +924,14 @@ mod tests {
         let key = crate::crypto::hkdf_derive::derive_outbox_key(&root).unwrap();
         let path = dir.path().to_path_buf();
         (dir, key, path)
+    }
+
+    /// An outbox folder OUTSIDE any vault directory: the path guard
+    /// refuses outboxes at/inside the vault, so tests place them in a
+    /// leaked sibling tempdir (leak keeps the dir alive for the test).
+    fn sibling_dir() -> &'static std::path::Path {
+        let dir = tempfile::tempdir().unwrap();
+        Box::leak(dir.keep().into_boxed_path())
     }
 
     fn owner_card(signing: &ed25519_dalek::SigningKey, wrap_pub: &[u8; 32]) -> SignedContactCard {
@@ -897,11 +966,11 @@ mod tests {
 
     #[test]
     fn publish_link_read_roundtrip() {
-        let (owner_dir, okey, opath) = fake_vault();
+        let (_owner_dir, okey, opath) = fake_vault();
         let (_rdir, _rkey, rpath) = fake_vault();
         let sender = IdentityKeys::generate().unwrap();
         let recipient = IdentityKeys::generate().unwrap();
-        let outbox = owner_dir.path().join("outbox-a");
+        let outbox = sibling_dir().join("outbox-a");
         let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
 
         let report = publish_entry(
@@ -935,10 +1004,10 @@ mod tests {
 
     #[test]
     fn republish_reflects_edit_and_skips_unchanged() {
-        let (owner_dir, okey, opath) = fake_vault();
+        let (_owner_dir, okey, opath) = fake_vault();
         let sender = IdentityKeys::generate().unwrap();
         let recipient = IdentityKeys::generate().unwrap();
-        let outbox = owner_dir.path().join("outbox-b");
+        let outbox = sibling_dir().join("outbox-b");
         let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
         let cid = Uuid::new_v4();
 
@@ -990,11 +1059,11 @@ mod tests {
     }
 
     #[test]
-    fn unpublish_removes_entry_and_registry_slot() {
-        let (owner_dir, okey, opath) = fake_vault();
+    fn unpublish_keeps_record_and_removes_entry() {
+        let (_owner_dir, okey, opath) = fake_vault();
         let sender = IdentityKeys::generate().unwrap();
         let recipient = IdentityKeys::generate().unwrap();
-        let outbox = owner_dir.path().join("outbox-c");
+        let outbox = sibling_dir().join("outbox-c");
         let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
         let cid = Uuid::new_v4();
         publish_entry(
@@ -1012,21 +1081,23 @@ mod tests {
         let report = unpublish_entry(&opath, &outbox, &okey, cid).unwrap();
         assert_eq!(report.entries, 0);
         assert!(!outbox.join(ENTRIES_DIR).join(format!("{cid}.enc")).exists());
-        assert!(
-            load_owner_registry(&opath, &okey)
-                .unwrap()
-                .iter()
-                .all(|o| o.path != outbox.to_string_lossy())
-        );
+        // The record STAYS (the on-disk marker still carries the
+        // outbox id; dropping the record would wedge a re-publish).
+        let rows = load_owner_registry(&opath, &okey).unwrap();
+        let kept = rows
+            .iter()
+            .find(|o| o.path == norm_path(&outbox))
+            .expect("empty outbox keeps its record");
+        assert!(kept.published.is_empty());
     }
 
     #[test]
     fn revoke_kills_recipient_access() {
-        let (owner_dir, okey, opath) = fake_vault();
+        let (_owner_dir, okey, opath) = fake_vault();
         let (_rdir, _rkey, rpath) = fake_vault();
         let sender = IdentityKeys::generate().unwrap();
         let recipient = IdentityKeys::generate().unwrap();
-        let outbox = owner_dir.path().join("outbox-d");
+        let outbox = sibling_dir().join("outbox-d");
         let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
         let cid = Uuid::new_v4();
         publish_entry(
@@ -1050,12 +1121,12 @@ mod tests {
 
     #[test]
     fn stranger_cannot_link_or_read() {
-        let (owner_dir, okey, opath) = fake_vault();
+        let (_owner_dir, okey, opath) = fake_vault();
         let (_rdir, _rkey, rpath) = fake_vault();
         let sender = IdentityKeys::generate().unwrap();
         let recipient = IdentityKeys::generate().unwrap();
         let stranger = IdentityKeys::generate().unwrap();
-        let outbox = owner_dir.path().join("outbox-e");
+        let outbox = sibling_dir().join("outbox-e");
         let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
         publish_entry(
             &opath,
@@ -1074,11 +1145,11 @@ mod tests {
 
     #[test]
     fn different_recipient_reuse_refused() {
-        let (owner_dir, okey, opath) = fake_vault();
+        let (_owner_dir, okey, opath) = fake_vault();
         let sender = IdentityKeys::generate().unwrap();
         let a = IdentityKeys::generate().unwrap();
         let b = IdentityKeys::generate().unwrap();
-        let outbox = owner_dir.path().join("outbox-f");
+        let outbox = sibling_dir().join("outbox-f");
         let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
         publish_entry(
             &opath,
@@ -1113,11 +1184,11 @@ mod tests {
         // whole set (own card, own key, keywrap re-addressed to the
         // victim — HPKE Base wraps need no secret). The link pins the
         // owner identity + outbox id seen at link time.
-        let (owner_dir, okey, opath) = fake_vault();
+        let (_owner_dir, okey, opath) = fake_vault();
         let (_rdir, _rkey, rpath) = fake_vault();
         let sender = IdentityKeys::generate().unwrap();
         let recipient = IdentityKeys::generate().unwrap();
-        let outbox = owner_dir.path().join("outbox-i");
+        let outbox = sibling_dir().join("outbox-i");
         let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
         let cid = Uuid::new_v4();
         publish_entry(
@@ -1183,10 +1254,10 @@ mod tests {
 
     #[test]
     fn unpublish_stages_deletion_into_git() {
-        let (owner_dir, okey, opath) = fake_vault();
+        let (_owner_dir, okey, opath) = fake_vault();
         let sender = IdentityKeys::generate().unwrap();
         let recipient = IdentityKeys::generate().unwrap();
-        let outbox = owner_dir.path().join("outbox-j");
+        let outbox = sibling_dir().join("outbox-j");
         let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
         let cid = Uuid::new_v4();
         publish_entry(
@@ -1214,10 +1285,10 @@ mod tests {
 
     #[test]
     fn recipient_wrap_rotation_rewraps_content_key() {
-        let (owner_dir, okey, opath) = fake_vault();
+        let (_owner_dir, okey, opath) = fake_vault();
         let sender = IdentityKeys::generate().unwrap();
         let recipient = IdentityKeys::generate().unwrap();
-        let outbox = owner_dir.path().join("outbox-k");
+        let outbox = sibling_dir().join("outbox-k");
         let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
         let cid = Uuid::new_v4();
         publish_entry(
@@ -1267,11 +1338,11 @@ mod tests {
 
     #[test]
     fn cross_outbox_transplant_refused() {
-        let (owner_dir, okey, opath) = fake_vault();
+        let (_owner_dir, okey, opath) = fake_vault();
         let sender = IdentityKeys::generate().unwrap();
         let recipient = IdentityKeys::generate().unwrap();
-        let outbox1 = owner_dir.path().join("outbox-g1");
-        let outbox2 = owner_dir.path().join("outbox-g2");
+        let outbox1 = sibling_dir().join("outbox-g1");
+        let outbox2 = sibling_dir().join("outbox-g2");
         let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
         let cid1 = Uuid::new_v4();
         publish_entry(
@@ -1307,15 +1378,164 @@ mod tests {
     }
 
     #[test]
+    fn keywrap_ciphertext_swap_under_captured_signature_refused() {
+        // Repo writer swaps the HPKE ciphertext while keeping the
+        // owner's captured signature (which pre-fix covered only
+        // recipient + outbox id). The wrap-bytes hash in the signature
+        // must refuse the swap.
+        let (_owner_dir, okey, opath) = fake_vault();
+        let (_rdir, _rkey, rpath) = fake_vault();
+        let sender = IdentityKeys::generate().unwrap();
+        let recipient = IdentityKeys::generate().unwrap();
+        let outbox = sibling_dir().join("outbox-swap");
+        let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
+        let cid = Uuid::new_v4();
+        publish_entry(
+            &opath,
+            &outbox,
+            &card,
+            sender.signing_key(),
+            &okey,
+            cid,
+            &sample_item("p"),
+            recipient_card(&recipient).identity_signing_pubkey.as_str(),
+            recipient_card(&recipient).identity_wrap_pubkey.as_str(),
+        )
+        .unwrap();
+        let link = link_outbox(&rpath, &_rkey, &recipient, &outbox).unwrap();
+
+        let kw_path = outbox.join(KEYWRAP_FILE);
+        let captured_sig: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&kw_path).unwrap()).unwrap();
+        let captured_sig = captured_sig["signature"].as_str().unwrap().to_string();
+
+        // Attacker wraps THEIR key to the victim's wrap pubkey (HPKE
+        // Base needs no secret) and reuses the owner's captured
+        // signature, which does not cover the wrap bytes.
+        use rand::RngCore;
+        let mut attacker_key = Zeroizing::new([0u8; 32]);
+        rand::rngs::OsRng.fill_bytes(attacker_key.as_mut());
+        let victim_pub = x25519_dalek::PublicKey::from(recipient.wrapping_pub_bytes());
+        let (eph, ct, tag) =
+            hpke_wrap::wrap_key(&attacker_key[..], &victim_pub, OUTBOX_KEYWRAP_CONTEXT).unwrap();
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let kw = serde_json::json!({
+            "format": 1,
+            "ephemeral_public": b64.encode(&eph),
+            "encrypted_key": b64.encode(&ct),
+            "wrap_tag": b64.encode(tag),
+            "signature": captured_sig,
+        });
+        std::fs::write(&kw_path, serde_json::to_string_pretty(&kw).unwrap()).unwrap();
+
+        let err = link_outbox(&rpath, &_rkey, &recipient, &outbox).unwrap_err();
+        assert!(
+            err.to_string().contains("keywrap signature invalid"),
+            "{err}"
+        );
+        let _ = link;
+    }
+
+    #[test]
+    fn outbox_inside_vault_path_refused() {
+        let (_owner_dir, okey, opath) = fake_vault();
+        let sender = IdentityKeys::generate().unwrap();
+        let recipient = IdentityKeys::generate().unwrap();
+        let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
+        // Same path as the vault → refuse (would commit vault files).
+        let err = publish_entry(
+            &opath,
+            &opath,
+            &card,
+            sender.signing_key(),
+            &okey,
+            Uuid::new_v4(),
+            &sample_item("p"),
+            recipient_card(&recipient).identity_signing_pubkey.as_str(),
+            recipient_card(&recipient).identity_wrap_pubkey.as_str(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("outside the vault"), "{err}");
+        // Subdirectory of the vault → refuse too.
+        let err2 = publish_entry(
+            &opath,
+            &opath.join("entries"),
+            &card,
+            sender.signing_key(),
+            &okey,
+            Uuid::new_v4(),
+            &sample_item("p"),
+            recipient_card(&recipient).identity_signing_pubkey.as_str(),
+            recipient_card(&recipient).identity_wrap_pubkey.as_str(),
+        )
+        .unwrap_err();
+        assert!(err2.to_string().contains("outside the vault"), "{err2}");
+    }
+
+    #[test]
+    fn unpublish_then_republish_same_folder() {
+        let (_owner_dir, okey, opath) = fake_vault();
+        let sender = IdentityKeys::generate().unwrap();
+        let recipient = IdentityKeys::generate().unwrap();
+        let outbox = sibling_dir().join("outbox-reuse");
+        let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
+        let cid = Uuid::new_v4();
+        publish_entry(
+            &opath,
+            &outbox,
+            &card,
+            sender.signing_key(),
+            &okey,
+            cid,
+            &sample_item("p"),
+            recipient_card(&recipient).identity_signing_pubkey.as_str(),
+            recipient_card(&recipient).identity_wrap_pubkey.as_str(),
+        )
+        .unwrap();
+        // Unpublish everything; the record stays (marker id preserved).
+        unpublish_entry(&opath, &outbox, &okey, cid).unwrap();
+        let rows = load_owner_registry(&opath, &okey).unwrap();
+        assert!(
+            rows.iter().any(|o| o.path == norm_path(&outbox)),
+            "empty outbox must keep its registry record"
+        );
+        // Re-publish to the same folder works (no id/marker wedge).
+        publish_entry(
+            &opath,
+            &outbox,
+            &card,
+            sender.signing_key(),
+            &okey,
+            cid,
+            &sample_item("p2"),
+            recipient_card(&recipient).identity_signing_pubkey.as_str(),
+            recipient_card(&recipient).identity_wrap_pubkey.as_str(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn revoke_unregistered_path_refused() {
+        let (_owner_dir, okey, opath) = fake_vault();
+        let err =
+            revoke_outbox(&opath, &opath.parent().unwrap().join("nowhere"), &okey).unwrap_err();
+        assert!(
+            err.to_string().contains("not a shared outbox you own"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn resealed_with_content_key_but_forged_signature_refused() {
         // Attacker model: the RECIPIENT holds the content key (they can
         // read the outbox) but not the owner's signing key. They can
         // re-seal arbitrary bytes; the entry signature still refuses.
-        let (owner_dir, okey, opath) = fake_vault();
+        let (_owner_dir, okey, opath) = fake_vault();
         let (_rdir, _rkey, rpath) = fake_vault();
         let sender = IdentityKeys::generate().unwrap();
         let recipient = IdentityKeys::generate().unwrap();
-        let outbox = owner_dir.path().join("outbox-h");
+        let outbox = sibling_dir().join("outbox-h");
         let card = owner_card(sender.signing_key(), &sender.wrapping_pub_bytes());
         let cid = Uuid::new_v4();
         publish_entry(

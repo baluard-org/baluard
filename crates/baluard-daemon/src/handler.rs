@@ -3481,6 +3481,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
+        "outbox.resync" => match state.outbox_resync().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
         "cipher.totp_code" => {
             if req.payload.is_empty() {
                 return err_response("Missing cipher UUID in payload");
@@ -5463,6 +5468,7 @@ mod tests {
             "outbox.forget",
             "outbox.read",
             "outbox.entries",
+            "outbox.resync",
         ] {
             assert!(action_requires_session_token(a), "{a} must be gated");
         }
