@@ -881,6 +881,70 @@ async fn sharing_surfaces_happy_path_and_role_guard() {
 }
 
 #[tokio::test]
+async fn unlock_sweeps_expired_grants_and_route_can_invoke() {
+    // S3-3: the admin client executes expiry on next sync (at unlock,
+    // post-pull). No remote here, so the inline no-pull path runs.
+    let (_dir, path) = make_vault("expiry-sweep");
+    let state = Arc::new(VaultState::new(path.clone()));
+    state.open().await.expect("open");
+    state.unlock(MASTER).await.expect("unlock");
+    // Seed: one collection with an expired grant (expires_at 1 = long
+    // past) via the normal grant route, plus a live member row.
+    let created: serde_json::Value =
+        serde_json::from_str(&state.collection_create("Contractors").await.unwrap()).unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+    let member = uuid::Uuid::new_v4();
+    std::fs::create_dir_all(path.join("meta/members")).unwrap();
+    let row = baluard_core::vault::members::MemberFile {
+        id: member,
+        display_name: "Contractor".into(),
+        role: baluard_core::vault::members::MemberRole::Editor,
+        trust: baluard_core::vault::members::TrustLevel::Verified,
+        identity_signing_pubkey: None,
+        identity_signing_pubkey_previous: None,
+        identity_rotation_signature: None,
+        identity_rotated_at: None,
+        reset: None,
+        removed: None,
+        transport_username: None,
+    };
+    baluard_core::vault::members::write_member(&path, &row).unwrap();
+    let grant_payload = serde_json::json!({
+        "member_id": member.to_string(),
+        "access": "read",
+        "expires_at": 1,
+    });
+    state
+        .collection_grant(&id, &grant_payload)
+        .await
+        .expect("grant");
+
+    // Re-unlock: the unlock path sweeps (no remote -> inline). Lock via
+    // a fresh state on the same vault (unlock is idempotent-guarded on
+    // the live state, so re-open from disk instead).
+    let state2 = Arc::new(VaultState::new(path.clone()));
+    state2.open().await.expect("open");
+    state2.unlock(MASTER).await.expect("unlock");
+    let list: serde_json::Value =
+        serde_json::from_str(&state2.collections_list().await.unwrap()).unwrap();
+    let grants: Vec<_> = list["collections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|c| c["grants"].as_array().unwrap().iter())
+        .collect();
+    assert!(
+        grants.is_empty(),
+        "expired grant must be swept by the admin unlock: {list}"
+    );
+
+    // On-demand route wrapper: an empty sweep reports 0.
+    let swept: serde_json::Value =
+        serde_json::from_str(&state2.collections_sweep().await.unwrap()).unwrap();
+    assert_eq!(swept["removed"].as_u64(), Some(0));
+}
+
+#[tokio::test]
 async fn collections_state_lifecycle_and_locked_rejection() {
     let (_dir, vault_path) = make_vault("collections-state");
     let state_path = vault_path.clone();

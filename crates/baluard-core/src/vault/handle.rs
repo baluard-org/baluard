@@ -1001,6 +1001,24 @@ impl VaultHandle {
         Ok(())
     }
 
+    /// Expiry-that-rotates (plan line 153): drop grants whose
+    /// `expires_at` has passed and rotate the affected collections'
+    /// keys. Admin-gated — meta/collections/** is Admin-only at the git
+    /// layer, so a non-admin sweep would mint a refused commit and wedge
+    /// every peer's pull.
+    pub fn collections_sweep(
+        &mut self,
+    ) -> Result<Vec<crate::vault::collections::ExpiredGrant>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::collections::sweep_expired_grants(
+            &self.path,
+            &self.unlocked().space_group_key,
+        )
+    }
+
     /// S1a-4: reconcile the address book against member identity records
     /// after a sync. A Verified contact whose pubkey no longer matches
     /// its member's current identity (the member rotated) drops to
@@ -3473,6 +3491,10 @@ impl VaultHandle {
                                 g.member_id == m
                                     && g.access
                                         == crate::vault::collections::CollectionAccess::Write
+                                    && !crate::vault::collections::is_grant_expired(
+                                        g,
+                                        crate::vault::collections::now_secs_pub(),
+                                    )
                             })
                     })
                 })
