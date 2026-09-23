@@ -1551,6 +1551,24 @@ impl VaultHandle {
             .contact_card
             .as_ref()
             .map(|c| c.card.identity_signing_pubkey.clone());
+        // P1: the X25519 wrap pubkey rides the signed v2 card payload.
+        // Verify the card before recording either key — a forged card
+        // must not seed the member's wrap identity (fail-closed).
+        let identity_wrap = match intro.contact_card.as_ref() {
+            Some(card) => {
+                card.verify()?;
+                let wrap = card.card.identity_wrap_pubkey.trim();
+                if wrap.is_empty() {
+                    None
+                } else {
+                    // A malformed wrap pubkey would brick every later
+                    // collection re-key; refuse the card here.
+                    crate::vault::collections::wrap_pubkey_bytes(wrap)?;
+                    Some(wrap.to_string())
+                }
+            }
+            None => None,
+        };
         let member = if let Some(target) = invite.target_member {
             // Successor-row health was validated in the peek phase
             // (S1a-8 review) — refusal there leaves the invite
@@ -1568,6 +1586,7 @@ impl VaultHandle {
             row.identity_signing_pubkey_previous = None;
             row.identity_rotation_signature = None;
             row.identity_rotated_at = None;
+            row.identity_wrap_pubkey = identity_wrap;
             let path = self
                 .path
                 .join(crate::vault::members::MEMBERS_DIR)
@@ -1595,6 +1614,7 @@ impl VaultHandle {
                 // P8c: the seat rides the record so offboarding can strike
                 // it without asking anyone.
                 transport_username: invite.transport_username.clone(),
+                identity_wrap_pubkey: identity_wrap,
             };
             crate::vault::members::write_member(&self.path, &member)?;
             member
@@ -1901,10 +1921,37 @@ impl VaultHandle {
         // S1a-4 review: sign the rotation payload with the NEW identity
         // key (proof of possession) and record the replaced key so the
         // structural rule can enforce previous-key continuity.
-        let previous_vk =
-            crate::vault::members::identity_pubkey_for_device(&self.path, self.device_id);
+        // P1: the self-heal runs BEFORE any identity bytes are written —
+        // unwrap every own wrap with the old secret, seal to the new
+        // pubkey. An abort here (hostile wrap, IO) leaves zero state
+        // change; the identity swap below only happens after it clears.
+        let new_wrap_hex = hex::encode(new_keys.wrapping_pub_bytes());
         let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id)
             .ok_or_else(|| VaultError::InvalidOperation("device is not a vault member".into()))?;
+        if let VaultState::Unlocked(u) = &self.state {
+            match u.identity.as_ref() {
+                Some(old_identity) => {
+                    crate::vault::collections::rewrap_own_grant_wraps(
+                        &self.path,
+                        &member_id,
+                        old_identity.wrapping_secret(),
+                        &new_wrap_hex,
+                    )?;
+                }
+                None => {
+                    // No old identity in memory: existing wraps would be
+                    // orphaned by the rotation. Refuse while they exist.
+                    if crate::vault::collections::has_grant_wraps(&self.path, &member_id) {
+                        return Err(VaultError::InvalidOperation(
+                            "This device lost its identity key, so rotation is refused to keep the shared collection keys readable.".into(),
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+        let previous_vk =
+            crate::vault::members::identity_pubkey_for_device(&self.path, self.device_id);
         let rotation_payload = crate::vault::members::identity_rotation_payload(
             &member_id,
             &vk_hex,
@@ -1919,6 +1966,7 @@ impl VaultHandle {
             previous_vk.as_deref(),
             &rotation_sig,
             now,
+            Some(&new_wrap_hex),
         )?;
         if let VaultState::Unlocked(u) = &mut self.state {
             u.identity = Some(new_keys);
@@ -6222,6 +6270,108 @@ mod tests {
     use crate::types::KdfProfile;
     use crate::vault::creation;
 
+    #[test]
+    fn approve_join_records_wrap_pubkey_from_intro_card() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
+            .unwrap();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        handle.approve_join(&intro_code).unwrap();
+        let intro = crate::vault::members::Introduction::decode(&intro_code).unwrap();
+        let expected = intro
+            .contact_card
+            .as_ref()
+            .unwrap()
+            .card
+            .identity_wrap_pubkey
+            .clone();
+        assert!(!expected.is_empty());
+        let member_id =
+            crate::vault::members::member_id_for_device(&owner_path, intro.device_id).unwrap();
+        let row = crate::vault::members::member_file_by_id(&owner_path, member_id).unwrap();
+        assert_eq!(row.identity_wrap_pubkey.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn identity_rotation_rewraps_own_grant_wraps() {
+        let (dir, password) = create_test_vault();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&password).unwrap();
+        let member_id =
+            crate::vault::members::member_id_for_device(dir.path(), h.device_id).unwrap();
+        let card = h.contact_card_signed().unwrap();
+        let mut row = crate::vault::members::member_file_by_id(dir.path(), member_id).unwrap();
+        row.identity_wrap_pubkey = Some(card.card.identity_wrap_pubkey.clone());
+        crate::vault::members::write_member(dir.path(), &row).unwrap();
+        let sgk = h.unlocked().space_group_key.clone();
+        let file =
+            crate::vault::collections::create_collection(dir.path(), &sgk, "Shared").unwrap();
+        crate::vault::collections::upsert_grant(
+            dir.path(),
+            &sgk,
+            &file.id,
+            crate::vault::collections::CollectionGrant {
+                member_id,
+                access: crate::vault::collections::CollectionAccess::Write,
+                expires_at: None,
+            },
+        )
+        .unwrap();
+        let old_keys = crate::vault::identity::IdentityKeys::from_seed(
+            &h.unlocked().identity.as_ref().unwrap().seed(),
+        );
+        h.rotate_identity().unwrap();
+        // The row carries the NEW wrap pubkey; the new identity opens
+        // the re-wrapped CK, the old one is dead.
+        let row2 = crate::vault::members::member_file_by_id(dir.path(), member_id).unwrap();
+        assert_ne!(
+            row2.identity_wrap_pubkey.as_deref(),
+            Some(card.card.identity_wrap_pubkey.as_str())
+        );
+        let new_keys = h.unlocked().identity.as_ref().unwrap();
+        crate::vault::collections::open_grant_wrap(
+            dir.path(),
+            &file.id,
+            &member_id,
+            new_keys.wrapping_secret(),
+        )
+        .unwrap();
+        assert!(
+            crate::vault::collections::open_grant_wrap(
+                dir.path(),
+                &file.id,
+                &member_id,
+                old_keys.wrapping_secret()
+            )
+            .is_err()
+        );
+    }
+
     fn create_test_vault() -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().unwrap();
         let password = "test-password-unlock-flow";
@@ -6554,6 +6704,7 @@ mod tests {
                 reset: None,
                 removed: None,
                 transport_username: None,
+                identity_wrap_pubkey: None,
             },
         )
         .unwrap();
@@ -6630,6 +6781,7 @@ mod tests {
                 reset: None,
                 removed: None,
                 transport_username: None,
+                identity_wrap_pubkey: None,
             },
         )
         .unwrap();
@@ -6683,6 +6835,7 @@ mod tests {
                 reset: None,
                 removed: None,
                 transport_username: None,
+                identity_wrap_pubkey: None,
             },
         )
         .unwrap();

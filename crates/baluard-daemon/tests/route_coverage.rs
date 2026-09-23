@@ -907,17 +907,25 @@ async fn unlock_sweeps_expired_grants_and_route_can_invoke() {
         reset: None,
         removed: None,
         transport_username: None,
+        identity_wrap_pubkey: None,
     };
     baluard_core::vault::members::write_member(&path, &row).unwrap();
+    // The mint gate refuses past-dated grants, so the grant is minted
+    // valid and expires by time passage (1s window, then sleep past it).
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let grant_payload = serde_json::json!({
         "member_id": member.to_string(),
         "access": "read",
-        "expires_at": 1,
+        "expires_at": now + 1,
     });
     state
         .collection_grant(&id, &grant_payload)
         .await
         .expect("grant");
+    std::thread::sleep(std::time::Duration::from_millis(1600));
 
     // Re-unlock: the unlock path sweeps (no remote -> inline). Lock via
     // a fresh state on the same vault (unlock is idempotent-guarded on
@@ -983,6 +991,7 @@ async fn collections_state_lifecycle_and_locked_rejection() {
             reset: None,
             removed: None,
             transport_username: None,
+            identity_wrap_pubkey: None,
         },
     )
     .unwrap();
@@ -1216,6 +1225,7 @@ fn rebind_device(
         reset: None,
         removed,
         transport_username: None,
+        identity_wrap_pubkey: None,
     };
     write_member(vault_path, &member).expect("write member row");
     write_device_binding(

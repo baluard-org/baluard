@@ -431,6 +431,235 @@ fn live_member(vault_path: &Path, member_id: &Uuid) -> Result<members::MemberFil
     Ok(member)
 }
 
+/// P1 (Space parts): per-member CK wraps at `meta/collections/<c>/<m>.wrap`
+/// — the collection key HPKE-wrapped to the granted member's identity
+/// wrap pubkey. Today every member also holds SGK, so these wraps are
+/// additive groundwork: the Team-shape flip (non-admins stop receiving
+/// SGK) consumes them as the only path to their granted collections.
+const GRANT_WRAP_FORMAT: u32 = 1;
+
+/// The HPKE context binds the wrap to its collection AND member, so a
+/// wrap transplanted into another collection's directory (or another
+/// member's filename) fails the AEAD tag instead of yielding a foreign
+/// key (the outbox-entry AAD discipline).
+fn grant_wrap_context(id: &Uuid, member_id: &Uuid) -> String {
+    format!("collection-grant-v1/{id}/{member_id}")
+}
+
+fn grant_wraps_dir(vault_path: &Path, id: &Uuid) -> PathBuf {
+    vault_path.join("meta/collections").join(id.to_string())
+}
+
+fn grant_wrap_path(vault_path: &Path, id: &Uuid, member_id: &Uuid) -> PathBuf {
+    grant_wraps_dir(vault_path, id).join(format!("{member_id}.wrap"))
+}
+
+pub(crate) fn wrap_pubkey_bytes(wrap_pub_hex: &str) -> Result<[u8; 32], BaluardError> {
+    hex::decode(wrap_pub_hex.trim())
+        .map_err(|_| {
+            VaultError::InvalidOperation("That contact card's share key is invalid.".into())
+        })?
+        .try_into()
+        .map_err(|_| {
+            VaultError::InvalidOperation("That contact card's share key is invalid.".into()).into()
+        })
+}
+
+fn write_grant_wrap(
+    vault_path: &Path,
+    id: &Uuid,
+    member_id: &Uuid,
+    wrap_pub_hex: &str,
+    ck: &[u8; 32],
+) -> Result<(), BaluardError> {
+    let recip = x25519_dalek::PublicKey::from(wrap_pubkey_bytes(wrap_pub_hex)?);
+    let (eph, ct, tag) =
+        crate::crypto::hpke_wrap::wrap_key(ck, &recip, &grant_wrap_context(id, member_id))?;
+    let doc = serde_json::json!({
+        "format": GRANT_WRAP_FORMAT,
+        "ephemeral_public": hex::encode(eph),
+        "encrypted_key": hex::encode(ct),
+        "tag": hex::encode(tag),
+    });
+    write_vault_file(
+        &grant_wrap_path(vault_path, id, member_id),
+        serde_json::to_string_pretty(&doc)
+            .map_err(|e| VaultError::Metadata(format!("grant wrap serialize: {e}")))?
+            .as_bytes(),
+    )
+    .map_err(|e| BaluardError::from(VaultError::Metadata(format!("write grant wrap: {e}"))))
+}
+
+/// Open one per-member wrap with the member's own X25519 wrapping
+/// secret. Fails closed on a missing/tampered/foreign wrap.
+pub fn open_grant_wrap(
+    vault_path: &Path,
+    id: &Uuid,
+    member_id: &Uuid,
+    wrapping_secret: &x25519_dalek::StaticSecret,
+) -> Result<Zeroizing<[u8; 32]>, BaluardError> {
+    let bytes = std::fs::read(grant_wrap_path(vault_path, id, member_id)).map_err(|_| {
+        VaultError::InvalidOperation("That collection key wrap does not exist.".into())
+    })?;
+    if bytes.len() > MAX_COLLECTION_FILE_BYTES {
+        return Err(VaultError::InvalidOperation(
+            "That collection key wrap is too large to open.".into(),
+        )
+        .into());
+    }
+    let doc: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| VaultError::InvalidOperation("That collection key wrap is damaged.".into()))?;
+    if doc["format"].as_u64() != Some(GRANT_WRAP_FORMAT as u64) {
+        return Err(VaultError::InvalidOperation("Unsupported wrap format.".into()).into());
+    }
+    let hex_field = |k: &str| -> Result<String, BaluardError> {
+        doc[k].as_str().map(|s| s.to_string()).ok_or_else(|| {
+            BaluardError::from(VaultError::InvalidOperation(
+                "That collection key wrap is damaged.".into(),
+            ))
+        })
+    };
+    let eph = hex::decode(hex_field("ephemeral_public")?)
+        .map_err(|_| VaultError::InvalidOperation("That collection key wrap is damaged.".into()))?;
+    let ct = hex::decode(hex_field("encrypted_key")?)
+        .map_err(|_| VaultError::InvalidOperation("That collection key wrap is damaged.".into()))?;
+    let tag: [u8; 16] = hex::decode(hex_field("tag")?)
+        .map_err(|_| VaultError::InvalidOperation("That collection key wrap is damaged.".into()))?
+        .try_into()
+        .map_err(|_| VaultError::InvalidOperation("That collection key wrap is damaged.".into()))?;
+    let pt = crate::crypto::hpke_wrap::unwrap_key(
+        &eph,
+        &ct,
+        &tag,
+        wrapping_secret,
+        &grant_wrap_context(id, member_id),
+    )
+    .map_err(|_| VaultError::InvalidOperation("That collection key wrap cannot be read.".into()))?;
+    let ck: [u8; 32] = pt.try_into().map_err(|_| {
+        VaultError::InvalidOperation("That collection key has the wrong length.".into())
+    })?;
+    Ok(Zeroizing::new(ck))
+}
+
+fn remove_grant_wrap(vault_path: &Path, id: &Uuid, member_id: &Uuid) -> Result<(), BaluardError> {
+    match std::fs::remove_file(grant_wrap_path(vault_path, id, member_id)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(BaluardError::from(VaultError::Metadata(format!(
+            "remove collection key wrap: {e}"
+        )))),
+    }
+}
+
+/// True when the member holds at least one per-member wrap on disk.
+pub(crate) fn has_grant_wraps(vault_path: &Path, member_id: &Uuid) -> bool {
+    std::fs::read_dir(vault_path.join("meta/collections"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            e.path()
+                .file_stem()
+                .and_then(|s| s.to_str().map(String::from))
+        })
+        .filter_map(|stem| Uuid::parse_str(&stem).ok())
+        .any(|id| grant_wrap_path(vault_path, &id, member_id).exists())
+}
+
+/// Re-write every per-member wrap of one collection under `new_ck`.
+/// The wrap survives only when ALL of these hold: the member id is in
+/// the collection's LIVE grant list (not expired), the member row is
+/// live (no removed/reset tombstone), and the row carries a wrap
+/// pubkey. Anything else loses its wrap file — a stale wrap must never
+/// keep working past its grant or its membership (a repo-writable
+/// leftover or a revoked-before-rotation member would otherwise be
+/// handed the NEW collection key). Returns the wraps re-written.
+pub fn rewrap_grant_wraps(
+    vault_path: &Path,
+    id: &Uuid,
+    new_ck: &[u8; 32],
+    grants: &[CollectionGrant],
+) -> Result<usize, BaluardError> {
+    let dir = grant_wraps_dir(vault_path, id);
+    let mut done = 0;
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("wrap") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Ok(member_id) = Uuid::parse_str(stem) else {
+            continue;
+        };
+        let granted = grants
+            .iter()
+            .any(|g| g.member_id == member_id && !is_grant_expired(g, now_secs()));
+        let wrap_pub = if granted {
+            members::member_file_by_id(vault_path, member_id)
+                .filter(|row| row.removed.is_none() && row.reset.is_none())
+                .and_then(|row| row.identity_wrap_pubkey)
+                .filter(|w| !w.is_empty())
+        } else {
+            None
+        };
+        match wrap_pub {
+            Some(wrap_pub) => {
+                write_grant_wrap(vault_path, id, &member_id, &wrap_pub, new_ck)?;
+                done += 1;
+            }
+            // Ungated, expired, tombstoned, gone, or legacy: the stale
+            // wrap must die.
+            None => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    Ok(done)
+}
+
+/// P1: identity-rotation self-heal. Re-wraps the rotating member's own
+/// grant wraps from the old wrap secret to the new pubkey — self-service,
+/// no admin round-trip, and the old wraps die with the rotation.
+pub fn rewrap_own_grant_wraps(
+    vault_path: &Path,
+    member_id: &Uuid,
+    old_secret: &x25519_dalek::StaticSecret,
+    new_wrap_pub_hex: &str,
+) -> Result<usize, BaluardError> {
+    // Two-phase: unwrap EVERYTHING first, write only after every unwrap
+    // succeeded. A hostile/corrupt wrap aborts the rotation before any
+    // wrap file changed hands; combined with the identity-swap reorder,
+    // an abort here leaves zero state change.
+    let mut collected: Vec<(Uuid, Zeroizing<[u8; 32]>)> = Vec::new();
+    for entry in std::fs::read_dir(vault_path.join("meta/collections"))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let p = entry.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Ok(id) = Uuid::parse_str(stem) else {
+            continue;
+        };
+        if !grant_wrap_path(vault_path, &id, member_id).exists() {
+            continue;
+        }
+        let ck = open_grant_wrap(vault_path, &id, member_id, old_secret)?;
+        collected.push((id, ck));
+    }
+    for (id, ck) in &collected {
+        write_grant_wrap(vault_path, id, member_id, new_wrap_pub_hex, ck)?;
+    }
+    Ok(collected.len())
+}
+
 /// Add or update a grant. Refuses tombstoned members and cap overflow.
 pub fn upsert_grant(
     vault_path: &Path,
@@ -439,7 +668,14 @@ pub fn upsert_grant(
     grant: CollectionGrant,
 ) -> Result<CollectionFile, BaluardError> {
     let (mut file, _) = open_collection(vault_path, sgk, collection_id)?;
-    live_member(vault_path, &grant.member_id)?;
+    let member = live_member(vault_path, &grant.member_id)?;
+    if is_grant_expired(&grant, now_secs()) {
+        return Err(VaultError::InvalidOperation(
+            "That expiry date is already in the past.".into(),
+        )
+        .into());
+    }
+    let grant_member_id = grant.member_id;
     if let Some(slot) = file
         .grants
         .iter_mut()
@@ -456,6 +692,17 @@ pub fn upsert_grant(
         file.grants.push(grant);
     }
     save_collection(vault_path, &file)?;
+    // P1: mint the per-member CK wrap when the member record carries an
+    // identity wrap pubkey (legacy rows stay SGK-covered until the
+    // Team-shape flip).
+    if let Some(wrap_pub) = member
+        .identity_wrap_pubkey
+        .as_deref()
+        .filter(|w| !w.is_empty())
+    {
+        let ck = unwrap_ck(&file, sgk)?;
+        write_grant_wrap(vault_path, collection_id, &grant_member_id, wrap_pub, &ck)?;
+    }
     Ok(file)
 }
 
@@ -477,6 +724,7 @@ pub fn revoke_grant(
         .into());
     }
     save_collection(vault_path, &file)?;
+    remove_grant_wrap(vault_path, collection_id, member_id)?;
     Ok(file)
 }
 
@@ -525,12 +773,15 @@ pub fn sweep_expired_grants(
         updated.name_enc = seal_name(&new_ck, &updated.id, &name)?;
         save_collection(vault_path, &updated)?;
         let collection_id = updated.id;
-        for member_id in expired {
+        for member_id in &expired {
+            // The expired grantee must not keep a wrap to the NEW key.
+            remove_grant_wrap(vault_path, &collection_id, member_id)?;
             removed.push(ExpiredGrant {
                 collection_id,
-                member_id,
+                member_id: *member_id,
             });
         }
+        rewrap_grant_wraps(vault_path, &collection_id, &new_ck, &updated.grants)?;
     }
     Ok(removed)
 }
@@ -546,6 +797,7 @@ pub fn delete_collection(vault_path: &Path, id: &Uuid) -> Result<(), BaluardErro
     let path = collections_file_path(vault_path, id);
     std::fs::remove_file(&path)
         .map_err(|_| VaultError::InvalidOperation("That collection no longer exists.".into()))?;
+    let _ = std::fs::remove_dir_all(grant_wraps_dir(vault_path, id));
     Ok(())
 }
 
@@ -580,6 +832,7 @@ pub fn rewrap_from_plaintexts(
         .map_err(|_| VaultError::InvalidOperation("That collection file is damaged.".into()))?;
         file.ck_wrapped = wrap_ck(new_sgk, ck, id)?;
         save_collection(vault_path, &file)?;
+        rewrap_grant_wraps(vault_path, id, ck, &file.grants)?;
         done += 1;
     }
     Ok(done)
@@ -610,6 +863,7 @@ mod tests {
             reset: None,
             removed: None,
             transport_username: None,
+            identity_wrap_pubkey: None,
         }
     }
 
@@ -824,17 +1078,16 @@ mod tests {
             row.id = m;
             members::write_member(&path, &row).unwrap();
         }
-        upsert_grant(
-            &path,
-            &sgk,
-            &file.id,
-            CollectionGrant {
-                member_id: gone,
-                access: CollectionAccess::Write,
-                expires_at: Some(now - 10),
-            },
-        )
-        .unwrap();
+        // Seed the past-dated grant at the file level: grants become
+        // expired by time passing, not by being minted expired (the
+        // mint gate refuses those).
+        let (mut seeded, _) = open_collection(&path, &sgk, &file.id).unwrap();
+        seeded.grants.push(CollectionGrant {
+            member_id: gone,
+            access: CollectionAccess::Write,
+            expires_at: Some(now - 10),
+        });
+        save_collection(&path, &seeded).unwrap();
         upsert_grant(
             &path,
             &sgk,
@@ -889,5 +1142,235 @@ mod tests {
         assert!(create_collection(&path, &sgk, "   ").is_err());
         assert!(create_collection(&path, &sgk, &"x".repeat(MAX_NAME_CHARS + 1)).is_err());
         assert!(create_collection(&path, &sgk, "bad\nname").is_err());
+    }
+
+    // ── P1: per-member grant wraps ──
+
+    fn wrap_row(id: Uuid, wrap_hex: &str) -> members::MemberFile {
+        let mut row = live_member_row(id);
+        row.identity_wrap_pubkey = Some(wrap_hex.into());
+        row
+    }
+
+    fn grant_to(member_id: Uuid) -> CollectionGrant {
+        CollectionGrant {
+            member_id,
+            access: CollectionAccess::Read,
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn grant_wrap_minted_and_opens_only_for_the_member() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let file = create_collection(&path, &sgk, "Servers").unwrap();
+        let member_id = Uuid::new_v4();
+        let alice = crate::vault::identity::IdentityKeys::from_seed(&[7u8; 32]);
+        let mallory = crate::vault::identity::IdentityKeys::from_seed(&[9u8; 32]);
+        members::write_member(
+            &path,
+            &wrap_row(member_id, &hex::encode(alice.wrapping_pub_bytes())),
+        )
+        .unwrap();
+        upsert_grant(&path, &sgk, &file.id, grant_to(member_id)).unwrap();
+        // The wrap opens to the same CK the SGK path yields.
+        let via_wrap =
+            open_grant_wrap(&path, &file.id, &member_id, alice.wrapping_secret()).unwrap();
+        let (on_disk, _) = open_collection(&path, &sgk, &file.id).unwrap();
+        assert_eq!(
+            via_wrap.as_ref(),
+            unwrap_ck(&on_disk, &sgk).unwrap().as_ref()
+        );
+        // A different identity is refused (HPKE unwrap fails closed).
+        let err =
+            open_grant_wrap(&path, &file.id, &member_id, mallory.wrapping_secret()).unwrap_err();
+        assert!(err.to_string().contains("cannot be read"), "{err}");
+    }
+
+    #[test]
+    fn revoke_and_delete_kill_member_wraps() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let file = create_collection(&path, &sgk, "Servers").unwrap();
+        let member_id = Uuid::new_v4();
+        let alice = crate::vault::identity::IdentityKeys::from_seed(&[7u8; 32]);
+        members::write_member(
+            &path,
+            &wrap_row(member_id, &hex::encode(alice.wrapping_pub_bytes())),
+        )
+        .unwrap();
+        upsert_grant(&path, &sgk, &file.id, grant_to(member_id)).unwrap();
+        let wrap = grant_wrap_path(&path, &file.id, &member_id);
+        assert!(wrap.exists());
+        revoke_grant(&path, &sgk, &file.id, &member_id).unwrap();
+        assert!(!wrap.exists(), "revoke must remove the member wrap");
+        // Re-grant then delete the collection: the whole wrap dir dies.
+        upsert_grant(&path, &sgk, &file.id, grant_to(member_id)).unwrap();
+        assert!(wrap.exists());
+        delete_collection(&path, &file.id).unwrap();
+        assert!(!wrap.exists(), "delete must remove the wrap dir");
+    }
+
+    #[test]
+    fn transplanted_wrap_refused_by_context_binding() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let a = create_collection(&path, &sgk, "A").unwrap();
+        let b = create_collection(&path, &sgk, "B").unwrap();
+        let member_id = Uuid::new_v4();
+        let alice = crate::vault::identity::IdentityKeys::from_seed(&[7u8; 32]);
+        members::write_member(
+            &path,
+            &wrap_row(member_id, &hex::encode(alice.wrapping_pub_bytes())),
+        )
+        .unwrap();
+        upsert_grant(&path, &sgk, &a.id, grant_to(member_id)).unwrap();
+        upsert_grant(&path, &sgk, &b.id, grant_to(member_id)).unwrap();
+        // Copy A's wrap into B's directory under the same member name:
+        // the context binding must refuse it (the AEAD tag covers the
+        // collection id), not yield A's key as B's.
+        let a_wrap = grant_wrap_path(&path, &a.id, &member_id);
+        let b_wrap = grant_wrap_path(&path, &b.id, &member_id);
+        std::fs::copy(&a_wrap, &b_wrap).unwrap();
+        assert!(open_grant_wrap(&path, &b.id, &member_id, alice.wrapping_secret()).is_err());
+        // A's own wrap still opens.
+        open_grant_wrap(&path, &a.id, &member_id, alice.wrapping_secret()).unwrap();
+    }
+
+    #[test]
+    fn expired_grant_refused_at_mint() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let file = create_collection(&path, &sgk, "Servers").unwrap();
+        let member_id = Uuid::new_v4();
+        members::write_member(&path, &live_member_row(member_id)).unwrap();
+        let mut stale = grant_to(member_id);
+        stale.expires_at = Some(1);
+        let err = upsert_grant(&path, &sgk, &file.id, stale).unwrap_err();
+        assert!(err.to_string().contains("already in the past"), "{err}");
+    }
+
+    #[test]
+    fn legacy_row_grant_skips_wrap_file() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let file = create_collection(&path, &sgk, "Servers").unwrap();
+        let member_id = Uuid::new_v4();
+        members::write_member(&path, &live_member_row(member_id)).unwrap();
+        upsert_grant(&path, &sgk, &file.id, grant_to(member_id)).unwrap();
+        assert!(!grant_wrap_path(&path, &file.id, &member_id).exists());
+        let rows = list_collections(&path, &sgk).unwrap();
+        assert_eq!(rows[0].0.id, file.id);
+    }
+
+    #[test]
+    fn key_rotation_rewraps_member_wraps() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let new_sgk = SpaceGroupKey::generate(2);
+        let file = create_collection(&path, &sgk, "Servers").unwrap();
+        let member_id = Uuid::new_v4();
+        let alice = crate::vault::identity::IdentityKeys::from_seed(&[7u8; 32]);
+        members::write_member(
+            &path,
+            &wrap_row(member_id, &hex::encode(alice.wrapping_pub_bytes())),
+        )
+        .unwrap();
+        upsert_grant(&path, &sgk, &file.id, grant_to(member_id)).unwrap();
+        let cks = collect_content_keys(&path, &sgk).unwrap();
+        rewrap_from_plaintexts(&path, &new_sgk, &cks).unwrap();
+        let via_wrap =
+            open_grant_wrap(&path, &file.id, &member_id, alice.wrapping_secret()).unwrap();
+        let (on_disk, _) = open_collection(&path, &new_sgk, &file.id).unwrap();
+        assert_eq!(
+            via_wrap.as_ref(),
+            unwrap_ck(&on_disk, &new_sgk).unwrap().as_ref()
+        );
+    }
+
+    #[test]
+    fn sweep_strips_expired_wrap_and_rewraps_survivors() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let file = create_collection(&path, &sgk, "Contractors").unwrap();
+        let gone = Uuid::new_v4();
+        let stays = Uuid::new_v4();
+        let alice = crate::vault::identity::IdentityKeys::from_seed(&[7u8; 32]);
+        let bob = crate::vault::identity::IdentityKeys::from_seed(&[11u8; 32]);
+        members::write_member(
+            &path,
+            &wrap_row(gone, &hex::encode(alice.wrapping_pub_bytes())),
+        )
+        .unwrap();
+        members::write_member(
+            &path,
+            &wrap_row(stays, &hex::encode(bob.wrapping_pub_bytes())),
+        )
+        .unwrap();
+        upsert_grant(&path, &sgk, &file.id, grant_to(stays)).unwrap();
+        // Seed the expired grant + its wrap at the file level (time
+        // passage): the mint gate refuses past-dated grants.
+        let (mut seeded, _) = open_collection(&path, &sgk, &file.id).unwrap();
+        let mut expired = grant_to(gone);
+        expired.expires_at = Some(1);
+        seeded.grants.push(expired);
+        save_collection(&path, &seeded).unwrap();
+        let ck_now = {
+            let (f, _) = open_collection(&path, &sgk, &file.id).unwrap();
+            unwrap_ck(&f, &sgk).unwrap()
+        };
+        write_grant_wrap(
+            &path,
+            &file.id,
+            &gone,
+            &hex::encode(alice.wrapping_pub_bytes()),
+            &ck_now,
+        )
+        .unwrap();
+        let removed = sweep_expired_grants(&path, &sgk).unwrap();
+        assert_eq!(removed.len(), 1);
+        // The expired grantee's wrap is gone; the survivor's opens to
+        // the rotated CK.
+        assert!(!grant_wrap_path(&path, &file.id, &gone).exists());
+        let via_wrap = open_grant_wrap(&path, &file.id, &stays, bob.wrapping_secret()).unwrap();
+        let (on_disk, _) = open_collection(&path, &sgk, &file.id).unwrap();
+        assert_eq!(
+            via_wrap.as_ref(),
+            unwrap_ck(&on_disk, &sgk).unwrap().as_ref()
+        );
+    }
+
+    #[test]
+    fn identity_rotation_rewraps_own_wraps() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let file = create_collection(&path, &sgk, "Servers").unwrap();
+        let member_id = Uuid::new_v4();
+        let old_id = crate::vault::identity::IdentityKeys::from_seed(&[7u8; 32]);
+        let new_id = crate::vault::identity::IdentityKeys::from_seed(&[8u8; 32]);
+        members::write_member(
+            &path,
+            &wrap_row(member_id, &hex::encode(old_id.wrapping_pub_bytes())),
+        )
+        .unwrap();
+        upsert_grant(&path, &sgk, &file.id, grant_to(member_id)).unwrap();
+        let done = rewrap_own_grant_wraps(
+            &path,
+            &member_id,
+            old_id.wrapping_secret(),
+            &hex::encode(new_id.wrapping_pub_bytes()),
+        )
+        .unwrap();
+        assert_eq!(done, 1);
+        // The new identity opens it; the old one is dead.
+        let via_new =
+            open_grant_wrap(&path, &file.id, &member_id, new_id.wrapping_secret()).unwrap();
+        let (on_disk, _) = open_collection(&path, &sgk, &file.id).unwrap();
+        assert_eq!(
+            via_new.as_ref(),
+            unwrap_ck(&on_disk, &sgk).unwrap().as_ref()
+        );
+        assert!(open_grant_wrap(&path, &file.id, &member_id, old_id.wrapping_secret()).is_err());
     }
 }
