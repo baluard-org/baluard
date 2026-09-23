@@ -229,6 +229,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vaults.detach",
     "vaults.list",
     "vaults.list_full_all",
+        "cipher.set_collection",
         "collections.create",
         "collections.list",
         "collections.rename",

@@ -3398,6 +3398,126 @@ impl VaultHandle {
     }
 
     /// List cipher IDs from filenames in ciphers/ directory.
+    /// The on-disk path for an active cipher file: the personal flat
+    /// path, or the collection-scoped directory when the entry was
+    /// assigned to a salted collection (plan P5). Trash is not probed
+    /// here; callers handle trash separately.
+    pub fn cipher_file_path(&self, cipher_id: Uuid) -> Option<std::path::PathBuf> {
+        let flat = self.path.join(format!("ciphers/{cipher_id}.enc"));
+        if flat.exists() {
+            return Some(flat);
+        }
+        let dirs = crate::vault::collections::load_dir_map(&self.path);
+        for (d, _) in &dirs {
+            let p = self.path.join(format!("ciphers/{d}/{cipher_id}.enc"));
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    /// Assign (or unassign) a live cipher to a collection by MOVING its
+    /// file to the collection's scoped directory (plan P5: the path is
+    /// the on-disk source of truth for membership, so the policy table
+    /// can bind writes to collections). Trash is not assignable.
+    pub fn assign_cipher_to_collection(
+        &mut self,
+        cipher_id: Uuid,
+        collection_id: Option<Uuid>,
+    ) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let all = crate::vault::collections::list_collections(
+            &self.path,
+            &self.unlocked().space_group_key,
+        )?;
+        let target_rel = match collection_id {
+            Some(cid) => {
+                let file = all
+                    .iter()
+                    .map(|(f, _)| f)
+                    .find(|f| f.id == cid)
+                    .ok_or_else(|| {
+                        VaultError::InvalidOperation("That collection no longer exists.".into())
+                    })?;
+                crate::vault::collections::cipher_rel_path(Some(file), cipher_id)
+            }
+            None => crate::vault::collections::cipher_rel_path(None, cipher_id),
+        };
+        let Some(current) = self.cipher_file_path(cipher_id) else {
+            // A trashed (or unknown) cipher cannot move.
+            return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
+        };
+        // Write-scope gate (plan §4.4): a commit the local device cannot
+        // authorize would be refused at pull time on every peer and wedge
+        // the vault's sync, so the move is refused here, before any
+        // commit exists. Owner/Admin bypass (structural access); a move
+        // out of a collection needs write scope on the SOURCE collection
+        // too — membership changes are collection writes in both
+        // directions.
+        let actor_member = crate::vault::members::member_id_for_device(&self.path, self.device_id);
+        let is_admin = matches!(
+            crate::vault::members::member_role_for_device(&self.path, self.device_id),
+            Some(crate::vault::members::MemberRole::Owner)
+                | Some(crate::vault::members::MemberRole::Admin)
+        );
+        if !(is_admin || !self.path.join("meta/members").is_dir()) {
+            // member_dir absence = legacy vault, admin-equivalent.
+            let has_grant = |cid: &Uuid| {
+                actor_member.is_some_and(|m| {
+                    all.iter().any(|(f, _)| {
+                        f.id == *cid
+                            && f.grants.iter().any(|g| {
+                                g.member_id == m
+                                    && g.access
+                                        == crate::vault::collections::CollectionAccess::Write
+                            })
+                    })
+                })
+            };
+            // Source-side check: nested path means the cipher currently
+            // lives in a collection dir.
+            let source_cid = current
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|d| d.to_str())
+                .and_then(|d| {
+                    crate::vault::collections::load_dir_map(&self.path)
+                        .into_iter()
+                        .find(|(name, _)| name == d)
+                        .map(|(_, id)| id)
+                });
+            if let Some(src) = source_cid {
+                if !has_grant(&src) {
+                    return Err(VaultError::InvalidOperation(
+                        "You do not have write access to that collection.".into(),
+                    )
+                    .into());
+                }
+            }
+            if let Some(dst) = collection_id {
+                if !has_grant(&dst) {
+                    return Err(VaultError::InvalidOperation(
+                        "You do not have write access to that collection.".into(),
+                    )
+                    .into());
+                }
+            }
+        }
+        let target = self.path.join(target_rel);
+        if current == target {
+            return Ok(());
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&current, &target)?;
+        self.rebuild_index()?;
+        Ok(())
+    }
+
     pub fn list_cipher_ids(&self) -> Result<Vec<Uuid>, BaluardError> {
         let ciphers_dir = self.path.join("ciphers");
         if !ciphers_dir.exists() {
@@ -3405,14 +3525,30 @@ impl VaultHandle {
         }
 
         let mut ids = Vec::new();
-        for entry in std::fs::read_dir(&ciphers_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if let Some(id_str) = name.strip_suffix(".enc") {
+        let mut seen = std::collections::HashSet::new();
+        let push = |ids: &mut Vec<Uuid>, seen: &mut std::collections::HashSet<Uuid>, raw: &str| {
+            if let Some(id_str) = raw.strip_suffix(".enc") {
                 if let Ok(id) = Uuid::parse_str(id_str) {
-                    ids.push(id);
+                    // The same UUID can exist both flat and in a
+                    // collection dir (a grantee can plant a copy); the
+                    // index must list it once.
+                    if seen.insert(id) {
+                        ids.push(id);
+                    }
                 }
             }
+        };
+        for entry in std::fs::read_dir(&ciphers_dir)?.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if entry.path().is_dir() {
+                // Collection-scoped directory: recurse one level.
+                for inner in std::fs::read_dir(entry.path())?.flatten() {
+                    let inner_name = inner.file_name().to_string_lossy().to_string();
+                    push(&mut ids, &mut seen, &inner_name);
+                }
+                continue;
+            }
+            push(&mut ids, &mut seen, &name);
         }
         Ok(ids)
     }
@@ -3475,10 +3611,9 @@ impl VaultHandle {
         let mut skipped: Vec<uuid::Uuid> = Vec::new();
 
         for id in ids {
-            let file_path = self.path.join(format!("ciphers/{}.enc", id));
-            if !file_path.exists() {
+            let Some(file_path) = self.cipher_file_path(id) else {
                 continue;
-            }
+            };
             let envelope_bytes = std::fs::read(&file_path)?;
             let file = cipher::CipherFile { id, envelope_bytes };
 
@@ -3730,11 +3865,10 @@ impl VaultHandle {
     /// Get a cipher (decrypts if unlocked, returns metadata only if locked).
     /// Looks up in both active ciphers and trash.
     pub fn get_cipher(&self, cipher_id: Uuid) -> Result<CipherRead, BaluardError> {
-        let active_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
         let trash_path = self.path.join(format!("trash/{}.enc", cipher_id));
 
-        let file_path = if active_path.exists() {
-            active_path
+        let file_path = if let Some(p) = self.cipher_file_path(cipher_id) {
+            p
         } else if trash_path.exists() {
             trash_path
         } else {
@@ -3835,10 +3969,9 @@ impl VaultHandle {
         if !self.device_manager.writes_allowed() {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
-        let active_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
         let trash_path = self.path.join(format!("trash/{}.enc", cipher_id));
 
-        if active_path.exists() {
+        if let Some(active_path) = self.cipher_file_path(cipher_id) {
             let trash_dir = self.path.join("trash");
             std::fs::create_dir_all(&trash_dir)?;
             let envelope_bytes = std::fs::read(&active_path)?;
@@ -3879,6 +4012,9 @@ impl VaultHandle {
 
     /// Restore a deleted cipher from trash back to active.
     pub fn restore_cipher(&self, cipher_id: Uuid) -> Result<(), BaluardError> {
+        // Restores land at the personal flat path: collection membership
+        // is re-assigned explicitly if wanted (the path IS the membership,
+        // so an opaque restore target would guess).
         let active_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
         let trash_path = self.path.join(format!("trash/{}.enc", cipher_id));
 
@@ -3982,10 +4118,9 @@ impl VaultHandle {
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
-        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
-        if !file_path.exists() {
-            return Err(VaultError::NotFound(format!("cipher {cipher_id}")).into());
-        }
+        let file_path = self
+            .cipher_file_path(cipher_id)
+            .ok_or_else(|| VaultError::NotFound(format!("cipher {cipher_id}")))?;
 
         // Read existing envelope to get current update_seq and key_epoch
         let existing_bytes = std::fs::read(&file_path)?;
@@ -4071,10 +4206,9 @@ impl VaultHandle {
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
-        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
-        if !file_path.exists() {
-            return Err(VaultError::NotFound(format!("cipher {cipher_id}")).into());
-        }
+        let file_path = self
+            .cipher_file_path(cipher_id)
+            .ok_or_else(|| VaultError::NotFound(format!("cipher {cipher_id}")))?;
 
         let existing_file = cipher::CipherFile {
             id: cipher_id,
@@ -4112,10 +4246,9 @@ impl VaultHandle {
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
-        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
-        if !file_path.exists() {
-            return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
-        }
+        let file_path = self
+            .cipher_file_path(cipher_id)
+            .ok_or_else(|| VaultError::CipherNotFound(cipher_id.to_string()))?;
 
         let existing_file = cipher::CipherFile {
             id: cipher_id,
@@ -4154,10 +4287,9 @@ impl VaultHandle {
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
-        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
-        if !file_path.exists() {
-            return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
-        }
+        let file_path = self
+            .cipher_file_path(cipher_id)
+            .ok_or_else(|| VaultError::CipherNotFound(cipher_id.to_string()))?;
 
         let existing_file = cipher::CipherFile {
             id: cipher_id,
@@ -4725,10 +4857,11 @@ impl VaultHandle {
         // Try first cipher envelope
         if let Ok(ids) = self.list_cipher_ids() {
             if let Some(first_id) = ids.first() {
-                let file_path = self.path.join(format!("ciphers/{}.enc", first_id));
-                if let Ok(data) = std::fs::read(&file_path) {
-                    if let Ok(envelope) = crate::vault::envelope::deserialize(&data) {
-                        return envelope.header.key_epoch;
+                if let Some(file_path) = self.cipher_file_path(*first_id) {
+                    if let Ok(data) = std::fs::read(&file_path) {
+                        if let Ok(envelope) = crate::vault::envelope::deserialize(&data) {
+                            return envelope.header.key_epoch;
+                        }
                     }
                 }
             }
@@ -5756,10 +5889,9 @@ impl VaultHandle {
         let mut skipped: Vec<uuid::Uuid> = Vec::new();
 
         for id in ids {
-            let file_path = self.path.join(format!("ciphers/{}.enc", id));
-            if !file_path.exists() {
+            let Some(file_path) = self.cipher_file_path(id) else {
                 continue;
-            }
+            };
             let envelope_bytes = std::fs::read(&file_path)?;
             let file = cipher::CipherFile { id, envelope_bytes };
 
@@ -6324,6 +6456,128 @@ mod tests {
     /// would otherwise wedge every later resync on the outbox).
     /// S3-1: collection lifecycle end-to-end on the handle, plus rotation
     /// coverage (content keys re-wrapped under the new SGK epoch).
+    #[test]
+    fn cipher_collection_assignment_moves_files() {
+        let (dir, pw) = create_test_vault();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&pw).unwrap();
+
+        let mk_input = |name: &str, pw: &str| {
+            let kind = crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("u".into()),
+                password: Some(pw.into()),
+                ..Default::default()
+            });
+            crate::types::CipherInput {
+                name: name.into(),
+                kind,
+                ..Default::default()
+            }
+        };
+        let id = h.add_cipher(&mk_input("In Collection", "p")).unwrap();
+
+        let col = h.collection_create("Work").unwrap();
+        let flat = dir.path().join(format!("ciphers/{id}.enc"));
+        assert!(flat.exists());
+        h.assign_cipher_to_collection(id, Some(col)).unwrap();
+        assert!(!flat.exists());
+        // The file now lives in the collection's scoped directory.
+        let dirs = crate::vault::collections::load_dir_map(dir.path());
+        assert_eq!(dirs.len(), 1);
+        let scoped_path = dir.path().join(format!("ciphers/{}/{}.enc", dirs[0].0, id));
+        assert!(scoped_path.exists());
+        // Reads, updates, and trash flows work through the scoped path.
+        assert!(matches!(h.get_cipher(id), Ok(CipherRead::Decrypted(_))));
+        let upd = mk_input("In Collection", "new-pass");
+        h.update_cipher(id, &upd).unwrap();
+        // Unassign moves it back to the personal flat path.
+        h.assign_cipher_to_collection(id, None).unwrap();
+        assert!(flat.exists());
+        assert!(!scoped_path.exists());
+        // Assign to a missing collection fails closed.
+        let ghost = Uuid::new_v4();
+        h.assign_cipher_to_collection(id, Some(ghost)).unwrap_err();
+        // Delete from the collection dir lands in trash; restore lands
+        // at the personal flat path.
+        h.assign_cipher_to_collection(id, Some(col)).unwrap();
+        h.delete_cipher(id).unwrap();
+        assert!(dir.path().join(format!("trash/{id}.enc")).exists());
+        h.restore_cipher(id).unwrap();
+        assert!(flat.exists());
+    }
+
+    #[test]
+    fn cipher_assignment_requires_collection_write_grant() {
+        // F1 review fix: a non-grantee session device must not be able
+        // to mint a commit that peers would refuse (wedging the vault).
+        let (dir, pw) = create_test_vault();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&pw).unwrap();
+        let col = h.collection_create("Shared").unwrap();
+
+        // Rebind the session device to a fresh Editor member row.
+        let editor = uuid::Uuid::new_v4();
+        std::fs::create_dir_all(dir.path().join("meta/members")).unwrap();
+        crate::vault::members::write_member(
+            dir.path(),
+            &crate::vault::members::MemberFile {
+                id: editor,
+                display_name: "Editor".into(),
+                role: crate::vault::members::MemberRole::Editor,
+                trust: crate::vault::members::TrustLevel::Verified,
+                identity_signing_pubkey: None,
+                identity_signing_pubkey_previous: None,
+                identity_rotation_signature: None,
+                identity_rotated_at: None,
+                reset: None,
+                removed: None,
+                transport_username: None,
+            },
+        )
+        .unwrap();
+        crate::vault::members::write_device_binding(
+            dir.path(),
+            &crate::vault::members::DeviceBinding {
+                device_id: h.device_id,
+                member_id: editor,
+            },
+        )
+        .unwrap();
+
+        let kind = crate::types::CipherKind::Login(crate::types::LoginData {
+            username: Some("u".into()),
+            password: Some("p".into()),
+            ..Default::default()
+        });
+        let cid = h
+            .add_cipher(&crate::types::CipherInput {
+                name: "E".into(),
+                kind,
+                ..Default::default()
+            })
+            .unwrap();
+        // No grant: refused before any commit can be created.
+        h.assign_cipher_to_collection(cid, Some(col)).unwrap_err();
+        // Grant write on the collection, directly on disk (the editor
+        // session cannot call collection_grant).
+        let sgk = h.unlocked().space_group_key.clone();
+        crate::vault::collections::upsert_grant(
+            dir.path(),
+            &sgk,
+            &col,
+            crate::vault::collections::CollectionGrant {
+                member_id: editor,
+                access: crate::vault::collections::CollectionAccess::Write,
+                expires_at: None,
+            },
+        )
+        .unwrap();
+        h.assign_cipher_to_collection(cid, Some(col)).unwrap();
+        // Moving out also needs the write grant; revoke it first.
+        crate::vault::collections::revoke_grant(dir.path(), &sgk, &col, &editor).unwrap();
+        h.assign_cipher_to_collection(cid, None).unwrap_err();
+    }
+
     #[test]
     fn collections_lifecycle_rotation() {
         let (dir_a, pw_a) = create_test_vault();

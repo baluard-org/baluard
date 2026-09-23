@@ -1079,6 +1079,22 @@ See `docs/plan-sharing.md` §4.2/§4.6 (S3 row) and the S3 tracking row.
 
 **Boundaries**: entries stay at personal paths — collection-scoped cipher paths and the policy-table binding are the P5 remainder (the enforcement slice); per-member identity wraps (`meta/collections/<c>/<m>.wrap`) and Team-shape key separation (non-admins never hold the Root Key) arrive with the P1 Space parts; expiry enforcement (expiry-that-rotates + notices surfacing), role templates, delegated manage, JIT request-access, and `space.adopt` are their own S3 slices; no UI yet (the §4.8 sharing-surfaces wave).
 
+---
+
+### D33. Collection-Scoped Cipher Paths + Policy Enforcement (P5 remainder, S3-2) (2026-09-23; S3 in progress)
+
+See `docs/plan-sharing.md` P5 row and §4.4's `ciphers/<collection_id>/**` row.
+
+**What shipped**: a collection's cipher directory is a salted hash (`sha256(dir_salt || id)`, 16 truncated bytes, hex) minted at collection creation and stored as `dir_salt` on the collection file, so the git host sees neither the collection id nor cross-vault links, and every device derives the same opaque dir. The on-disk path IS the collection membership: `cipher.set_collection` (new token-gated route; write-guarded state wrapper) renames the entry's file between the personal flat path and `ciphers/<dir>/<uuid>.enc`, refusing unknown collections and trash. Reads, updates, archive/unarchive, delete-to-trash, metadata scans, and the index rebuild all resolve through a shared probe (flat first, then collection dirs) and `list_cipher_ids` recurses one level into collection dirs with UUID dedup (a grantee can plant a same-UUID copy; the index lists it once).
+
+**Enforcement**: the policy walker builds a `CollectionScope` from the verified commit's OWN tree — the dir->id map plus the collection ids the signer's member holds write grants on (a non-admin cannot forge a definition: `meta/collections/**` is Admin-only, so a referenced dir must be one an admin already defined in that tree). `authorize_scoped` denies any `ciphers/<dir>/**` path whose dir is unknown or ungranted BEFORE the static table, whose `ciphers/**` Editor row still gates the role floor (a Viewer with a grant still cannot write). Legacy vaults carry an empty scope and deny any unexpected 3-segment cipher path.
+
+**Local gate mirrors the policy (review F1, Blocker)**: `assign_cipher_to_collection` requires the session device's member to hold write scope on BOTH the source and target collection (Owner/Admin bypass; legacy vaults bypass); a commit no peer would authorize must not exist locally, because the first policy-denied commit wedges every peer's pull permanently.
+
+**Review round (Claude, first-rotation): 5 accepted, 2 declined**. Accepted: the local write-grant gate (F1 above — a non-grantee Editor could have minted a commit that wedges all peers' pulls); `CollectionScope` now owns its Vecs instead of leaking `'static` slices per verified commit (F2); grant-less directory duplicates deduped in `list_cipher_ids` (F4); the non-grantee refusal test (F6); `load_dir_map` now applies the same filename-stem pin as `list_collections` (F7). Declined: sticky grant revocation (F3) — the walker reads grants from the commit's own tree, so a stale clone can replay a since-revoked grant until its parent ancestry includes the revocation commit; this matches the plan's accepted "revocation is only eventual" boundary (sticky enforcement exists only for member REMOVAL, where removal must fail closed); lib.rs indentation (fmt already green).
+
+**Boundaries**: scope is per-commit-tree, so grant revocation converges only when the revocation commit is in the signer's ancestry (F3 decline); restore lands at the personal flat path (membership re-assigned explicitly); canary ciphers stay flat; attachments stay under `entries/`; `staged path sets` (the other P5 remainder) is deferred; no UI for assignment yet (§4.8 wave); expiry-that-rotates will need grant rows re-checked at verification time.
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

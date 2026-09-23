@@ -79,6 +79,78 @@ pub struct CollectionFile {
     /// The collection's display name, sealed under the CK.
     pub name_enc: serde_json::Value,
     pub grants: Vec<CollectionGrant>,
+    /// Hex salt for the collection's opaque cipher directory name
+    /// (plan P5: ciphers/<dir>/<uuid>.enc with a salted-hash dir so the
+    /// git host sees neither the collection id nor cross-vault links).
+    /// Absent on pre-S3-2 collections: their ciphers stay at the
+    /// personal flat path until re-saved.
+    #[serde(default)]
+    pub dir_salt: Option<String>,
+}
+
+/// The opaque directory name for a collection's ciphers, or None for a
+/// legacy (salt-less) collection. Deterministic given the salt so every
+/// device derives the same path.
+pub fn collection_dir(file: &CollectionFile) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let salt = file.dir_salt.as_deref()?;
+    if salt.is_empty() {
+        return None;
+    }
+    let mut h = Sha256::new();
+    h.update(salt.as_bytes());
+    h.update(file.id.to_string().as_bytes());
+    Some(hex_encode(&h.finalize()[..16]))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Dir-name -> collection id map for every salted collection on disk.
+/// Malformed rows are skipped inert (member-directory precedent); a
+/// missing or damaged name does not matter here because only the
+/// plaintext fields are read.
+pub fn load_dir_map(vault_path: &Path) -> Vec<(String, Uuid)> {
+    let dir = collections_dir(vault_path);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut map = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if bytes.len() > MAX_COLLECTION_FILE_BYTES {
+            continue;
+        }
+        let Ok(file) = serde_json::from_slice::<CollectionFile>(&bytes) else {
+            continue;
+        };
+        if file.format != FORMAT {
+            continue;
+        }
+        if path.file_stem().and_then(|x| x.to_str()) != Some(file.id.to_string().as_str()) {
+            continue;
+        }
+        if let Some(d) = collection_dir(&file) {
+            map.push((d, file.id));
+        }
+    }
+    map
+}
+
+/// The relative path for a cipher: collection-scoped when the collection
+/// is salted, personal flat otherwise (plan P5).
+pub fn cipher_rel_path(file: Option<&CollectionFile>, cipher_id: Uuid) -> String {
+    match file.and_then(collection_dir) {
+        Some(d) => format!("ciphers/{d}/{cipher_id}.enc"),
+        None => format!("ciphers/{cipher_id}.enc"),
+    }
 }
 
 fn now_secs() -> u64 {
@@ -150,6 +222,8 @@ pub fn create_collection(
     let id = Uuid::new_v4();
     let mut ck = Zeroizing::new([0u8; 32]);
     rand::rngs::OsRng.fill_bytes(ck.as_mut());
+    let mut salt = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut salt);
     let ck_wrapped = wrap_ck(sgk, &ck, &id)?;
     let name_enc = seal_name(&ck, &id, name.trim())?;
     let file = CollectionFile {
@@ -159,6 +233,7 @@ pub fn create_collection(
         ck_wrapped,
         name_enc,
         grants: Vec::new(),
+        dir_salt: Some(hex_encode(&salt)),
     };
     std::fs::create_dir_all(&dir)?;
     let bytes = serde_json::to_vec(&file)
@@ -468,6 +543,40 @@ mod tests {
             removed: None,
             transport_username: None,
         }
+    }
+
+    fn plain_collection(id: Uuid) -> CollectionFile {
+        CollectionFile {
+            format: FORMAT,
+            id,
+            created_at: 0,
+            ck_wrapped: serde_json::Value::Null,
+            name_enc: serde_json::Value::Null,
+            grants: Vec::new(),
+            dir_salt: None,
+        }
+    }
+
+    #[test]
+    fn collection_dir_deterministic_and_legacy_flat() {
+        let mut file = plain_collection(Uuid::new_v4());
+        file.dir_salt = Some("aabbccdd00112233aabbccdd00112233".into());
+        let d1 = collection_dir(&file).unwrap();
+        let d2 = collection_dir(&file).unwrap();
+        assert_eq!(d1, d2);
+        assert_eq!(d1.len(), 32);
+        // A different salt yields a different (uncorrelatable) dir.
+        file.dir_salt = Some("ffffffffffffffffffffffffffffffff".into());
+        assert_ne!(collection_dir(&file).unwrap(), d1);
+        // Legacy (no salt / empty salt) collections stay at flat paths.
+        file.dir_salt = None;
+        assert!(collection_dir(&file).is_none());
+        file.dir_salt = Some(String::new());
+        assert!(collection_dir(&file).is_none());
+        assert_eq!(
+            cipher_rel_path(Some(&file), file.id),
+            format!("ciphers/{}.enc", file.id)
+        );
     }
 
     #[test]
