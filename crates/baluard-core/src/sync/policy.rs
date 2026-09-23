@@ -22,6 +22,7 @@
 //! write inside its own member's devices subtree).
 
 use crate::error::SyncError;
+use uuid::Uuid;
 
 /// Commit signer roles. Rank: Owner strongest, PendingJoiner weakest
 /// (it satisfies only [`RequiredRole::Any`] rows).
@@ -185,21 +186,58 @@ fn pattern_matches(pattern: &[&str], path: &[&str], member: Option<&str>) -> boo
     }
 }
 
+/// Collection write context for one verified commit (plan P5/S3): the
+/// salted dir -> collection id map read from the commit tree's
+/// `meta/collections/**`, and the collection ids the SIGNER holds a
+/// write grant on (resolved from those same files plus the signer's
+/// member id). An empty scope = every cipher path is personal-flat.
+pub struct CollectionScope {
+    pub dirs: Vec<(String, Uuid)>,
+    pub writable: Vec<Uuid>,
+}
+
+impl CollectionScope {
+    pub fn none() -> CollectionScope {
+        CollectionScope {
+            dirs: Vec::new(),
+            writable: Vec::new(),
+        }
+    }
+}
+
 /// Evaluate the table for one written path. The first matching row
 /// decides; an unmatched path is denied (deny by default). `member` is
 /// the signer's member id from the binding snapshot (`None` = unbound
 /// device, which can never satisfy a `{member}` segment).
-pub fn authorize(
+///
+/// Collection-scoped rule (plan §4.4 row `ciphers/<collection_id>/**`):
+/// a path at `ciphers/<dir>/...` (three or more segments) names a
+/// collection directory. It is admitted only when the directory maps to
+/// a known collection AND the signer holds write scope on that
+/// collection — the member-role rows then apply on top, so a Viewer can
+/// never write ciphers even with a grant.
+pub fn authorize_scoped(
     signer: &str,
     member: Option<&str>,
     role: CommitRole,
     path: &str,
+    scope: &CollectionScope,
 ) -> Result<(), SyncError> {
     let deny = || SyncError::PolicyViolation {
         device: signer.to_string(),
         path: path.to_string(),
     };
     let segs: Vec<&str> = path.split('/').collect();
+    if segs.first() == Some(&"ciphers") && segs.len() >= 3 {
+        let dir = segs[1];
+        let Some((_, cid)) = scope.dirs.iter().find(|(d, _)| d == dir) else {
+            return Err(deny());
+        };
+        if !scope.writable.contains(cid) {
+            return Err(deny());
+        }
+        // Fall through: the member-role rows still gate the signer.
+    }
     for row in TABLE {
         let pattern: Vec<&str> = row.pattern.split('/').collect();
         if pattern_matches(&pattern, &segs, member) {
@@ -211,6 +249,16 @@ pub fn authorize(
         }
     }
     Err(deny())
+}
+
+/// Personal-flat convenience wrapper (no collections in scope).
+pub fn authorize(
+    signer: &str,
+    member: Option<&str>,
+    role: CommitRole,
+    path: &str,
+) -> Result<(), SyncError> {
+    authorize_scoped(signer, member, role, path, &CollectionScope::none())
 }
 
 #[cfg(test)]
@@ -232,6 +280,91 @@ mod tests {
         let other = format!("meta/members/{MB}/devices/{DA}.json");
         assert!(authorize(DA, Some(MA), CommitRole::Viewer, &other).is_err());
         authorize(DA, Some(MA), CommitRole::Admin, &other).unwrap();
+    }
+
+    fn scoped(dir: &str, cid: Uuid, writable: &[Uuid]) -> CollectionScope {
+        CollectionScope {
+            dirs: vec![(dir.to_string(), cid)],
+            writable: writable.to_vec(),
+        }
+    }
+
+    #[test]
+    fn collection_scoped_paths_follow_grants_and_role() {
+        let cid = uuid::Uuid::new_v4();
+        let other = uuid::Uuid::new_v4();
+        let path = format!("ciphers/deadbeefdeadbeefdeadbeefdeadbeef/{MA}.enc");
+        // Editor with a write grant: allowed.
+        authorize_scoped(
+            DA,
+            Some(MA),
+            CommitRole::Editor,
+            &path,
+            &scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[cid]),
+        )
+        .unwrap();
+        // Editor without a grant: denied.
+        assert!(
+            authorize_scoped(
+                DA,
+                Some(MA),
+                CommitRole::Editor,
+                &path,
+                &scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[]),
+            )
+            .is_err()
+        );
+        // Unknown dir: denied even for an Owner (deny-by-default keeps
+        // forged directories out) — the scope map has a different name.
+        assert!(
+            authorize_scoped(
+                DA,
+                Some(MA),
+                CommitRole::Owner,
+                &path,
+                &scoped("cafebabecafebabecafebabecafebabe", cid, &[cid]),
+            )
+            .is_err()
+        );
+        // A grant does not lift the role floor: a Viewer with write
+        // grant still cannot write ciphers.
+        assert!(
+            authorize_scoped(
+                DA,
+                Some(MA),
+                CommitRole::Viewer,
+                &path,
+                &scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[cid]),
+            )
+            .is_err()
+        );
+        // A different collection's id in the writable set does not open
+        // this dir.
+        assert!(
+            authorize_scoped(
+                DA,
+                Some(MA),
+                CommitRole::Editor,
+                &path,
+                &scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[other]),
+            )
+            .is_err()
+        );
+        // Personal flat paths stay Editor-only, no scope needed.
+        authorize(DA, Some(MA), CommitRole::Editor, "ciphers/x.enc").unwrap();
+        // With CollectionScope::NONE (legacy/personal) an unexpected
+        // 3-segment ciphers path is still denied: the empty scope has no
+        // known dirs, so nothing can hide behind a nested path.
+        assert!(
+            authorize_scoped(
+                DA,
+                Some(MA),
+                CommitRole::Editor,
+                "ciphers/x.enc/inner.enc",
+                &CollectionScope::none(),
+            )
+            .is_err()
+        );
     }
 
     #[test]

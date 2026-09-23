@@ -3436,8 +3436,9 @@ impl SyncEngine {
             let diff = repo
                 .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
                 .map_err(|e| SyncError::Git(format!("net diff: {e}")))?;
+            let scope = Self::collection_scope_for_tree(repo, &tree, member_id)?;
             for delta in diff.deltas() {
-                Self::check_delta_path(repo, &delta, roster, signer, member_id, role)?;
+                Self::check_delta_path(repo, &delta, roster, signer, member_id, role, &scope)?;
             }
         }
         if commit.parent_count() == 2 {
@@ -3518,8 +3519,9 @@ impl SyncEngine {
             let residue_diff = repo
                 .diff_tree_to_tree(Some(&expected), Some(&tree), None)
                 .map_err(|e| SyncError::Git(format!("merge residue diff: {e}")))?;
+            let scope = Self::collection_scope_for_tree(repo, &tree, member_id)?;
             for delta in residue_diff.deltas() {
-                Self::check_delta_path(repo, &delta, roster, signer, member_id, role)?;
+                Self::check_delta_path(repo, &delta, roster, signer, member_id, role, &scope)?;
             }
         }
         Ok(())
@@ -3530,6 +3532,7 @@ impl SyncEngine {
     /// this device's own registry bump (last_seen_epoch on its own entry)
     /// — the per-commit epoch bump must not wedge lower roles, while
     /// adding, removing, or rekeying registry entries stays admin-only.
+    #[allow(clippy::too_many_arguments)]
     fn check_delta_path(
         repo: &Repository,
         delta: &git2::DiffDelta,
@@ -3537,6 +3540,7 @@ impl SyncEngine {
         signer: &str,
         member: Option<&str>,
         role: crate::sync::policy::CommitRole,
+        scope: &crate::sync::policy::CollectionScope,
     ) -> Result<(), BaluardError> {
         let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) else {
             return Ok(());
@@ -3644,7 +3648,63 @@ impl SyncEngine {
             }
             .into());
         }
-        crate::sync::policy::authorize(signer, member, role, &path).map_err(BaluardError::from)
+        crate::sync::policy::authorize_scoped(signer, member, role, &path, scope)
+            .map_err(BaluardError::from)
+    }
+
+    /// P5/S3: the collection write scope in force at `tree` — the
+    /// salted dir -> id map plus the collections the signer's member
+    /// holds write grants on, read from the tree's own
+    /// meta/collections/** (an attacker cannot forge a definition:
+    /// those files are Admin-only per the policy table, so a non-admin
+    /// referencing a collection dir must reference one an admin already
+    /// defined in the same tree).
+    fn collection_scope_for_tree(
+        repo: &Repository,
+        tree: &git2::Tree<'_>,
+        signer_member: Option<&str>,
+    ) -> Result<crate::sync::policy::CollectionScope, BaluardError> {
+        let mut dirs: Vec<(String, uuid::Uuid)> = Vec::new();
+        let mut writable: Vec<uuid::Uuid> = Vec::new();
+        let member = signer_member.and_then(|m| uuid::Uuid::parse_str(m).ok());
+        let entry = tree.get_path(std::path::Path::new("meta/collections"));
+        if let Ok(dir_entry) = entry {
+            let sub = repo
+                .find_tree(dir_entry.id())
+                .map_err(|e| SyncError::Git(format!("walk collections: {e}")))?;
+            for e in sub.iter() {
+                let Some(name) = e.name() else { continue };
+                if !name.ends_with(".json") {
+                    continue;
+                }
+                let Ok(blob) = repo.find_blob(e.id()) else {
+                    continue;
+                };
+                let Ok(file) = serde_json::from_slice::<crate::vault::collections::CollectionFile>(
+                    blob.content(),
+                ) else {
+                    continue;
+                };
+                if file.format != 1 {
+                    continue;
+                }
+                if let Some(d) = crate::vault::collections::collection_dir(&file) {
+                    dirs.push((d, file.id));
+                }
+                if let Some(m) = member {
+                    if file.grants.iter().any(|g| {
+                        g.member_id == m
+                            && g.access == crate::vault::collections::CollectionAccess::Write
+                    }) {
+                        writable.push(file.id);
+                    }
+                }
+            }
+        } else {
+            // No collections directory in this tree: legacy/personal.
+            return Ok(crate::sync::policy::CollectionScope::none());
+        }
+        Ok(crate::sync::policy::CollectionScope { dirs, writable })
     }
 
     /// S1a-4: a non-admin member's own record delta is allowed iff ONLY

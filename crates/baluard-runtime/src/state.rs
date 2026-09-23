@@ -3049,6 +3049,38 @@ impl VaultState {
         serde_json::to_string(&rows).map_err(|e| format!("{e}"))
     }
 
+    /// Move a cipher into (or out of) a collection's scoped directory
+    /// (plan P5). Admin-agnostic by design: the core refuses writes the
+    /// actor has no write scope for, and the vault gate stays the
+    /// session unlock.
+    pub async fn cipher_set_collection(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked".to_string());
+        }
+        let parsed: serde_json::Value = serde_json::from_str(payload)
+            .map_err(|_| "Invalid cipher assignment JSON".to_string())?;
+        let cipher_id = parsed["cipher_id"].as_str().unwrap_or("");
+        let collection_raw = parsed.get("collection_id");
+        let cid: Option<uuid::Uuid> = match collection_raw {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(x)) if x.is_empty() => None,
+            Some(serde_json::Value::String(x)) => Some(
+                uuid::Uuid::parse_str(x)
+                    .map_err(|_| "That collection id is not valid.".to_string())?,
+            ),
+            _ => return Err("That collection id is not valid.".to_string()),
+        };
+        let cipher_id = cipher_id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| "That entry id is not valid.".to_string())?;
+        handle
+            .assign_cipher_to_collection(cipher_id, cid)
+            .map_err(|e| format!("{e}"))?;
+        Ok("{}".to_string())
+    }
+
     /// Mint a collection (admin-gated).
     pub async fn collection_create(&self, name: &str) -> Result<String, String> {
         let mut guard = self.inner.write().await;

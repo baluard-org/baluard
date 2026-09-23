@@ -312,6 +312,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "tag.create",
     "tag.rename",
     "tag.delete",
+    "cipher.set_collection",
     "collections.create",
     "collections.rename",
     "collections.delete",
@@ -3566,6 +3567,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        "cipher.set_collection" => match state.cipher_set_collection(&req.payload).await {
+            Ok(v) => ok_resp(v, token_str),
+            Err(e) => err_response(e),
+        },
+
         "collections.create" => {
             let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
                 Ok(v) => v,
@@ -5630,6 +5636,7 @@ mod tests {
             "outbox.read",
             "outbox.entries",
             "outbox.resync",
+            "cipher.set_collection",
             "collections.create",
             "collections.list",
             "collections.rename",
