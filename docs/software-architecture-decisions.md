@@ -1109,6 +1109,24 @@ See plan-sharing line 153 and the `grant_expiry` preset row (§6.5).
 
 **Boundaries**: expired-but-unenforced grants keep authorizing at the git layer until the admin's sweep lands (surfaced as `grant_expired`); a grantee can replant content with pre-expiry knowledge until rotation converges (eventual); no per-member wraps yet (P1 Space parts), so CK rotation is future-proofing for the Team shape; the sweep is unlock-triggered and route-triggered — no background timer; clock-clamp note 11 holds (the sweep clock is the admin's local clock only for its own writes).
 
+---
+
+### D35. Per-Member Identity Wraps (P1 Space Parts groundwork) (2026-09-23; S3 in progress)
+
+See plan-sharing line 111 (Team shape: non-admins hold only their collection wraps, never K).
+
+**What shipped**: `MemberFile.identity_wrap_pubkey` (hex X25519, serde default) recorded at approval from the intro card's v2 signed payload (card signature verified, wrap key hex+length validated; a malformed key would brick every later re-key). Collections mint per-member CK wraps at `meta/collections/<c>/<m>.wrap` — the collection key HPKE-wrapped to the member's wrap pubkey with the context binding `collection-grant-v1/<collection_id>/<member_id>`, so a wrap transplanted to another collection or member name fails the AEAD tag (the outbox-entry AAD discipline). Minted at grant, removed at revoke, killed with the collection, re-wrapped under the new CK by every rotation path (Root Key rotation, removal rekey, S3-3 expiry sweep), and self-healed across identity rotation by the member's own client (unwrap all with the old secret first, then write — two-phase, and it runs BEFORE any identity byte is written so an abort leaves zero state change). The owner's genesis row carries their wrap pubkey.
+
+**Wraps are additive groundwork**: every member still holds SGK, so consumption via per-member wraps lands with the later Team-shape flip (non-admins stop receiving SGK; the wraps become their only path to granted collections). This slice builds and maintains the wrap set so that flip is a unlock-path change only.
+
+**Wrap survival is grant-gated**: `rewrap_grant_wraps` re-writes a wrap only when the member id is in the collection's LIVE grant list (not expired), the member row is live (no removed/reset tombstone), and the row carries a wrap pubkey; anything else loses its wrap file. Without this, a revoked-before-rotation member (whose tombstone kept a wrap identity) would be handed the NEW collection key by the very rotation meant to lock them out. Both tombstone writers (reset, remove) now also clear `identity_wrap_pubkey`.
+
+**Mint gate**: `upsert_grant` refuses past-dated `expires_at` (a grant expires by time passing, not by being minted expired) and keeps save-before-wrap ordering — a failed wrap write must fail toward NO access, never toward key-without-grant.
+
+**Review round (agy): 8 accepted, 1 partially accepted**. Blockers: the tombstoned-member wrap surviving rotation (above) and the disk-driven rewrap ignoring the grants list. Majors: the static HPKE context (cross-collection transplant), the identity-rotation partial-failure window (reordered + two-phase), and the malformed-wrap-pubkey rotation brick. Minors: owner genesis wrap pubkey, the no-old-identity rotation refusal, expired-at-mint refusal, removal errors inspected (NotFound tolerated). Partially accepted: save/wrap ordering in `upsert_grant` — the suggested wrap-first order was rejected because a failed save would then leave a working wrap for an ungranted state.
+
+**Boundaries**: expired-but-unrotated grants keep their wraps until a rotation path runs (the eventual-revocation boundary, unchanged); no background timer maintains wraps; the Team-shape SGK flip is the next P1 slice.
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

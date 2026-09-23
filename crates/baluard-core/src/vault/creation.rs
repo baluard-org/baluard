@@ -443,6 +443,7 @@ impl<'a> VaultCreator<'a> {
                     reset: None,
                     removed: None,
                     transport_username: None,
+                    identity_wrap_pubkey: None,
                 };
                 crate::vault::members::write_member(&path, &owner_member)?;
                 crate::vault::members::write_device_binding(
@@ -606,6 +607,10 @@ impl<'a> VaultCreator<'a> {
                 owner_member.identity_signing_pubkey = Some(hex::encode(
                     identity_keys.signing_key().verifying_key().as_bytes(),
                 ));
+                // P1: the owner's wrap pubkey rides the genesis record so
+                // grants to the owner mint per-member wraps immediately.
+                owner_member.identity_wrap_pubkey =
+                    Some(hex::encode(identity_keys.wrapping_pub_bytes()));
                 crate::vault::members::write_member(&path, &owner_member)?;
 
                 // Write .baluard marker file (vault detection, not secret).

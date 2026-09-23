@@ -91,6 +91,13 @@ pub struct MemberFile {
     /// anyone. `None` = no managed seat.
     #[serde(default)]
     pub transport_username: Option<String>,
+    /// P1 (Space parts): the member's X25519 identity wrapping pubkey
+    /// (hex), extracted from the v2 contact card at approval and kept
+    /// current by identity rotation. Collections mint per-member CK
+    /// wraps to it (`meta/collections/<c>/<m>.wrap`). `None` on legacy
+    /// rows: the SGK-derived wrap covers them until the Team-shape flip.
+    #[serde(default)]
+    pub identity_wrap_pubkey: Option<String>,
 }
 
 /// S1a-5: reset provenance on a tombstoned member row.
@@ -247,6 +254,9 @@ pub fn reset_member(
     // downgrades address book entries that still carry it.
     old.identity_signing_pubkey_previous = old.identity_signing_pubkey.take();
     old.identity_rotation_signature = None;
+    // P1: the tombstone must not keep a usable wrap identity — the
+    // per-member collection wraps would otherwise survive re-keying.
+    old.identity_wrap_pubkey = None;
     old.reset = Some(MemberReset {
         successor: successor_id,
         at: now,
@@ -268,6 +278,9 @@ pub fn reset_member(
         reset: None,
         removed: None,
         transport_username: old.transport_username.clone(),
+        // The successor re-introduces with a fresh card; approval
+        // overwrites this from the card's wrap pubkey.
+        identity_wrap_pubkey: None,
     };
     write_member(vault_path, &successor)?;
     let code = create_invite(vault_path, vault_id, old.role, Some(successor_id), None)?;
@@ -304,6 +317,8 @@ pub fn remove_member(vault_path: &Path, member_id: Uuid) -> Result<Vec<Uuid>, Ba
         .as_secs();
     member.identity_signing_pubkey_previous = member.identity_signing_pubkey.take();
     member.identity_rotation_signature = None;
+    // P1: same as reset — no usable wrap identity past the tombstone.
+    member.identity_wrap_pubkey = None;
     member.removed = Some(now);
     super::write_vault_file(
         &path,
@@ -527,12 +542,22 @@ pub fn set_member_identity(
     previous_pubkey: Option<&str>,
     rotation_signature: &str,
     rotated_at: u64,
+    identity_wrap_pubkey: Option<&str>,
 ) -> Result<(), BaluardError> {
     if let Some((path, mut member)) = member_file_for_device(vault_path, device_id) {
         member.identity_signing_pubkey = Some(identity_signing_pubkey.to_string());
         member.identity_signing_pubkey_previous = previous_pubkey.map(|s| s.to_string());
         member.identity_rotation_signature = Some(rotation_signature.to_string());
         member.identity_rotated_at = Some(rotated_at);
+        member.identity_wrap_pubkey = match identity_wrap_pubkey {
+            Some(wrap) if !wrap.trim().is_empty() => {
+                // A malformed wrap pubkey would brick every later
+                // collection re-key; refuse it at the write.
+                crate::vault::collections::wrap_pubkey_bytes(wrap)?;
+                Some(wrap.trim().to_string())
+            }
+            _ => None,
+        };
         super::write_vault_file(
             &path,
             serde_json::to_string_pretty(&member).unwrap().as_bytes(),
@@ -1379,6 +1404,7 @@ mod tests {
             reset: None,
             removed: None,
             transport_username: None,
+            identity_wrap_pubkey: None,
         };
         write_member(vault, &owner).unwrap();
         write_device_binding(
@@ -1402,6 +1428,7 @@ mod tests {
             reset: None,
             removed: None,
             transport_username: None,
+            identity_wrap_pubkey: None,
         };
         // Simulate the approval that binds the second member.
         write_member(vault, &member).unwrap();
@@ -1434,6 +1461,7 @@ mod tests {
             reset: None,
             removed: None,
             transport_username: None,
+            identity_wrap_pubkey: None,
         };
         let partner = MemberFile {
             id: Uuid::new_v4(),
@@ -1447,6 +1475,7 @@ mod tests {
             reset: None,
             removed: None,
             transport_username: None,
+            identity_wrap_pubkey: None,
         };
         write_member(vault, &owner).unwrap();
         write_member(vault, &partner).unwrap();

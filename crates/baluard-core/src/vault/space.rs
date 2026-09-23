@@ -154,6 +154,7 @@ mod tests {
             reset: None,
             removed,
             transport_username: None,
+            identity_wrap_pubkey: None,
         }
     }
 
