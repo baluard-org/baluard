@@ -1095,6 +1095,20 @@ See `docs/plan-sharing.md` P5 row and §4.4's `ciphers/<collection_id>/**` row.
 
 **Boundaries**: scope is per-commit-tree, so grant revocation converges only when the revocation commit is in the signer's ancestry (F3 decline); restore lands at the personal flat path (membership re-assigned explicitly); canary ciphers stay flat; attachments stay under `entries/`; `staged path sets` (the other P5 remainder) is deferred; no UI for assignment yet (§4.8 wave); expiry-that-rotates will need grant rows re-checked at verification time.
 
+---
+
+### D34. Grant Expiry-that-Rotates (S3-3) (2026-09-23; S3 in progress)
+
+See plan-sharing line 153 and the `grant_expiry` preset row (§6.5).
+
+**What shipped**: `CollectionGrant.expires_at` is now enforced. The admin client executes it — the sweep drops grants whose `expires_at` has passed and rotates the affected collections' content keys in the SAME atomic save (one write per collection: grant drop + fresh CK + re-sealed name), so a departing grantee's derived item keys stop matching anything minted later. Two execution surfaces: at unlock (the runtime post-pull tail) and on demand (`collections.sweep` route). Pending and expired grants surface member-visible on the notices screen: `grant_expiring` (within 7 days) and `grant_expired` (expired but present — the sweep has not landed yet) in en/es/pt.
+
+**Enforcement placement (settled)**: commit verification stays clock-FREE — an expired-between-authoring-and-verify grant would refuse commits on every peer and wedge the vault (the first-denied-commit rule). Expiry enforcement is admin-side; peers converge on pull, which is the plan's accepted eventual-revocation boundary. The LOCAL write gate (`assign_cipher_to_collection`) DOES check expiry — a locally expired grant must not mint new moves. `expires_at = 0` is the IPC convention for "no expiry" and never expires.
+
+**Review round (agy, second rotation on this codebase): 5 accepted, 1 declined**. Blocker: the sweep originally ran inside core unlock BEFORE the unlock pull — pull's force-checkout would have discarded the uncommitted sweep files, and they would never have been committed or pushed (unlock is not a cover-mutation). The sweep moved to the runtime post-pull tail: pull first, then sweep (admin-gated), then an autosync nudge so the rotation commits and pushes on the normal cycle; vaults without a remote sweep inline after the handle guard drops. Also accepted: the `expires_at=0` semantics alignment, the legacy-vault admin-equivalence bypass in the sweep gate (matching the other collection mutators), the on-demand route (token-gated, COVER_MUTATION_ACTIONS, desktop allowlist), and the expired-notice copy ("will be removed on the next sync" — no unlock prompt, which non-admins cannot act on anyway). Declined: none. The review also caught a self-deadlock the fix introduced (the inline no-remote sweep ran while unlock still held the handle guard — the guard now drops before the unlock tail).
+
+**Boundaries**: expired-but-unenforced grants keep authorizing at the git layer until the admin's sweep lands (surfaced as `grant_expired`); a grantee can replant content with pre-expiry knowledge until rotation converges (eventual); no per-member wraps yet (P1 Space parts), so CK rotation is future-proofing for the Team shape; the sweep is unlock-triggered and route-triggered — no background timer; clock-clamp note 11 holds (the sweep clock is the admin's local clock only for its own writes).
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

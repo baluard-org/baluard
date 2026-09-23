@@ -337,7 +337,7 @@ impl VaultState {
     /// KDF derivation (Argon2id) runs OUTSIDE the write lock to avoid
     /// blocking all reads during the expensive derivation (~300ms-1s).
     /// Opens the vault once, unlocks it, then swaps it in.
-    pub async fn unlock(&self, master_password: &str) -> Result<(), String> {
+    pub async fn unlock(self: &Arc<Self>, master_password: &str) -> Result<(), String> {
         // Quick check: already unlocked?
         {
             let guard = self.inner.read().await;
@@ -409,6 +409,10 @@ impl VaultState {
                 .unwrap_or_default();
             // C1: seal subkey from the just-unlocked handle (never the KEK).
             let devkey_seal = guard.as_ref().and_then(|h| h.devkey_seal());
+            // Drop the handle guard before the post-unlock tail: the
+            // no-remote expiry sweep takes the write lock and would
+            // self-deadlock behind it.
+            drop(guard);
             if !device_id.is_empty() {
                 let has_remote = baluard_core::sync::engine::SyncEngine::new(
                     &self.vault_path,
@@ -427,14 +431,68 @@ impl VaultState {
                     // network fetch; pull_only's generation check no-ops if the
                     // vault is locked before the fetch completes.
                     let handle = self.autosync.clone();
+                    // S3-3 (review F1): the expiry sweep must run AFTER the
+                    // unlock pull — pull_only force-checkouts the worktree,
+                    // which would discard an uncommitted sweep written
+                    // before it, and the sweep's file changes only reach
+                    // peers once committed. The spawned task pulls first,
+                    // sweeps (admin-gated), then nudges autosync so the
+                    // rotation commits and pushes on the normal cycle.
+                    let state = self.clone();
                     tokio::spawn(async move {
-                        handle.pull_only(device_id).await;
+                        handle.pull_only(device_id.clone()).await;
+                        let removed = state.sweep_grants_if_admin_inner().await;
+                        if removed > 0 {
+                            handle.on_mutation(device_id).await;
+                        }
                     });
+                } else {
+                    // No remote: no pull can race, so sweep inline.
+                    if self.sweep_grants_if_admin_inner().await > 0 {
+                        log::warn!("[state] grant expiry sweep removed expired grants");
+                    }
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// S3-3 expiry-that-rotates executor: drop expired grants + rotate
+    /// the affected collections' keys, but only when the unlocking
+    /// device can authorize the write (Owner/Admin, or a legacy vault
+    /// without meta/members — same admin-equivalence as the other
+    /// collection mutators). A non-admin client must never attempt the
+    /// admin-only write: the commit would be refused at pull time on
+    /// every peer. Best-effort: failures retry at the next unlock.
+    /// Returns the number of removed grants.
+    async fn sweep_grants_if_admin_inner(&self) -> usize {
+        let mut guard = self.inner.write().await;
+        let Some(handle) = guard.as_mut() else {
+            return 0;
+        };
+        if !handle.is_unlocked() {
+            return 0;
+        }
+        let admin_equivalent = !self.vault_path.join("meta/members").is_dir();
+        let is_admin = matches!(
+            baluard_core::vault::members::member_role_for_device(
+                &self.vault_path,
+                handle.device_id,
+            ),
+            Some(baluard_core::vault::members::MemberRole::Owner)
+                | Some(baluard_core::vault::members::MemberRole::Admin)
+        );
+        if !(is_admin || admin_equivalent) {
+            return 0;
+        }
+        match handle.collections_sweep() {
+            Ok(rows) => rows.len(),
+            Err(e) => {
+                log::warn!("[state] grant expiry sweep failed: {e}");
+                0
+            }
+        }
     }
 
     /// Lock the vault, zeroizing keys in memory. Clears the session token.
@@ -531,7 +589,7 @@ impl VaultState {
     /// `unlock_with_kek` (keywrap HPKE unwrap + canaries), mints a session
     /// token. A stale/corrupted keywrap fails closed (a password changed on
     /// another device invalidates the retained KEK).
-    pub async fn unlock_with_kek(&self, kek: &[u8; 32]) -> Result<(), String> {
+    pub async fn unlock_with_kek(self: &Arc<Self>, kek: &[u8; 32]) -> Result<(), String> {
         // unlock_with_kek runs outside the lock (no KDF, but the HPKE unwrap
         // + canary check still touch the keywrap).
         let mut new_handle = baluard_core::vault::handle::VaultHandle::open(&self.vault_path)
@@ -2323,7 +2381,7 @@ impl VaultState {
         let v = serde_json::from_str(payload).unwrap_or(serde_json::Value::Null);
         let refresh_transport = v["refresh_transport"].as_bool().unwrap_or(false);
 
-        let (members, invites, malformed, pending_requests, vault_id) = {
+        let (members, invites, malformed, pending_requests, vault_id, collections) = {
             let guard = self.inner.read().await;
             let handle = guard.as_ref().ok_or("Vault is locked")?;
             if !handle.is_unlocked() {
@@ -2335,12 +2393,19 @@ impl VaultState {
                 .map_err(|e| e.to_string())?;
             let (requests, malformed) = handle.join_queue_list().map_err(|e| e.to_string())?;
             let pending_requests = requests.len();
+            // S3-3 surfacing: pending grant expirations are member-visible
+            // (plan line 153) so holidays do not extend contractor access.
+            // Read-only here — the rotation itself runs in the admin's
+            // unlock sweep; expired-but-unenforced grants are surfaced as
+            // their own notice until it lands.
+            let collections = handle.collections_list().unwrap_or_default();
             (
                 members,
                 invites,
                 malformed,
                 pending_requests,
                 handle.vault_id,
+                collections,
             )
         };
 
@@ -2396,6 +2461,37 @@ impl VaultState {
             notices.push(serde_json::json!({
                 "kind": "malformed_requests",
                 "count": malformed,
+            }));
+        }
+
+        // Grant expirations (S3-3): expiring within 7 days = act now;
+        // expired-but-still-present = the admin client's sweep has not
+        // landed yet (it executes at the next admin unlock and
+        // converges on pull). Counts only — grant rows live on
+        // collections.list.
+        let expiring = collections
+            .iter()
+            .flat_map(|(_, _, grants)| grants.iter())
+            .filter(|g| {
+                g.expires_at
+                    .is_some_and(|e| e > now && e - now <= 7 * 24 * 3600)
+            })
+            .count();
+        if expiring > 0 {
+            notices.push(serde_json::json!({
+                "kind": "grant_expiring",
+                "count": expiring,
+            }));
+        }
+        let expired = collections
+            .iter()
+            .flat_map(|(_, _, grants)| grants.iter())
+            .filter(|g| g.expires_at.is_some_and(|e| e != 0 && e <= now))
+            .count();
+        if expired > 0 {
+            notices.push(serde_json::json!({
+                "kind": "grant_expired",
+                "count": expired,
             }));
         }
 
@@ -3079,6 +3175,19 @@ impl VaultState {
             .assign_cipher_to_collection(cipher_id, cid)
             .map_err(|e| format!("{e}"))?;
         Ok("{}".to_string())
+    }
+
+    /// S3-3: on-demand admin sweep (drop expired grants + rotate their
+    /// collection keys). Admin-gated in core; this wrapper is the route
+    /// surface.
+    pub async fn collections_sweep(&self) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let removed = handle.collections_sweep().map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "removed": removed.len() }).to_string())
     }
 
     /// Mint a collection (admin-gated).
@@ -4250,7 +4359,7 @@ impl VaultState {
     /// Biometric unlock for THIS vault. Retrieves this vault's stored master
     /// password from the OS keychain and performs vault unlock. The secret
     /// NEVER leaves this process.
-    pub async fn biometric_unlock(&self) -> Result<String, String> {
+    pub async fn biometric_unlock(self: &Arc<Self>) -> Result<String, String> {
         let vault_id = self.vault_id_str().await?;
         let master_password = baluard_core::biometric::unlock(&vault_id)?;
         self.unlock(&master_password).await?;
@@ -5656,6 +5765,7 @@ mod session_token_tests {
         // Re-unlock via the REAL master-password path; the new token must
         // verify on the first gated call (this is exactly what unstamped
         // mint sites broke).
+        let state = std::sync::Arc::new(state);
         state.unlock("test-pass-123").await.unwrap();
         let tok2 = state.get_session_token().await.unwrap();
         assert_ne!(tok, tok2, "re-unlock must mint a fresh token");

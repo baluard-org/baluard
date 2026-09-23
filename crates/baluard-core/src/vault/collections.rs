@@ -57,8 +57,9 @@ pub enum CollectionAccess {
     Write,
 }
 
-/// One grant row. `expires_at` (unix seconds) is recorded this wave; the
-/// expiry-that-rotates execution and notices surfacing are their own slice.
+/// One grant row. `expires_at` (unix seconds): the admin client executes
+/// expiry at unlock (drop grant + rotate the collection key); pending and
+/// expired grants surface on the notices screen.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionGrant {
     pub member_id: Uuid,
@@ -151,6 +152,13 @@ pub fn cipher_rel_path(file: Option<&CollectionFile>, cipher_id: Uuid) -> String
         Some(d) => format!("ciphers/{d}/{cipher_id}.enc"),
         None => format!("ciphers/{cipher_id}.enc"),
     }
+}
+
+/// Public clock for sibling modules (the local-write expiry checks).
+/// Verification stays clock-free by design; this clock gates only
+/// locally-authored writes.
+pub fn now_secs_pub() -> u64 {
+    now_secs()
 }
 
 fn now_secs() -> u64 {
@@ -474,6 +482,66 @@ pub fn revoke_grant(
 
 /// Delete a collection: file gone. Entries stay (path binding is a later
 /// slice); grants die with the file.
+/// A grant is expired once `expires_at` (unix seconds) has passed.
+/// Enforcement is admin-side: this wave deliberately does NOT make commit
+/// verification clock-dependent (an expired-between-authoring-and-verify
+/// grant would refuse commits on every peer and wedge the vault); the
+/// admin's client executes the rotation on next sync instead (plan line
+/// 153), so expired-but-unenforced grants converge on pull.
+pub fn is_grant_expired(grant: &CollectionGrant, now: u64) -> bool {
+    // 0 is the IPC convention for "no expiry" — never an expiry.
+    grant.expires_at.is_some_and(|e| e != 0 && e <= now)
+}
+
+/// Admin sweep (plan line 153): drop grants whose `expires_at` has
+/// passed, and rotate the collection key for any collection whose
+/// grants changed. Runs on the admin client after unlock's pull; other
+/// members converge on pull. Returns one row per removed grant.
+pub fn sweep_expired_grants(
+    vault_path: &Path,
+    sgk: &SpaceGroupKey,
+) -> Result<Vec<ExpiredGrant>, BaluardError> {
+    let mut removed = Vec::new();
+    let now = now_secs();
+    for (file, name) in list_collections(vault_path, sgk)? {
+        let expired: Vec<Uuid> = file
+            .grants
+            .iter()
+            .filter(|g| is_grant_expired(g, now))
+            .map(|g| g.member_id)
+            .collect();
+        if expired.is_empty() {
+            continue;
+        }
+        // One atomic save: drop the expired grants AND rotate the key
+        // (the departing grantee's derived item keys must stop matching
+        // anything minted later; knowledge of what they already read is
+        // the accepted eventual-revocation boundary).
+        let mut updated = file;
+        updated.grants.retain(|g| !is_grant_expired(g, now));
+        let mut new_ck = Zeroizing::new([0u8; 32]);
+        rand::rngs::OsRng.fill_bytes(new_ck.as_mut());
+        updated.ck_wrapped = wrap_ck(sgk, &new_ck, &updated.id)?;
+        updated.name_enc = seal_name(&new_ck, &updated.id, &name)?;
+        save_collection(vault_path, &updated)?;
+        let collection_id = updated.id;
+        for member_id in expired {
+            removed.push(ExpiredGrant {
+                collection_id,
+                member_id,
+            });
+        }
+    }
+    Ok(removed)
+}
+
+/// One removed grant from the expiry sweep.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExpiredGrant {
+    pub collection_id: Uuid,
+    pub member_id: Uuid,
+}
+
 pub fn delete_collection(vault_path: &Path, id: &Uuid) -> Result<(), BaluardError> {
     let path = collections_file_path(vault_path, id);
     std::fs::remove_file(&path)
@@ -740,6 +808,78 @@ mod tests {
         std::fs::write(path.join("meta/collections/junk.json"), b"{not json").unwrap();
         let rows = list_collections(&path, &sgk).unwrap();
         assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn sweep_expires_grants_and_rotates_key() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let file = create_collection(&path, &sgk, "Servers").unwrap();
+        let now = now_secs_pub();
+        let gone = Uuid::new_v4();
+        let staying = Uuid::new_v4();
+        std::fs::create_dir_all(path.join("meta/members")).unwrap();
+        for m in [gone, staying] {
+            let mut row = live_member_row(m);
+            row.id = m;
+            members::write_member(&path, &row).unwrap();
+        }
+        upsert_grant(
+            &path,
+            &sgk,
+            &file.id,
+            CollectionGrant {
+                member_id: gone,
+                access: CollectionAccess::Write,
+                expires_at: Some(now - 10),
+            },
+        )
+        .unwrap();
+        upsert_grant(
+            &path,
+            &sgk,
+            &file.id,
+            CollectionGrant {
+                member_id: staying,
+                access: CollectionAccess::Read,
+                expires_at: Some(now + 3600),
+            },
+        )
+        .unwrap();
+        let removed = sweep_expired_grants(&path, &sgk).unwrap();
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].member_id, gone);
+        assert_eq!(removed[0].collection_id, file.id);
+        // The surviving grant is intact and the name still decrypts
+        // under the rotated key.
+        let (updated, name) = open_collection(&path, &sgk, &file.id).unwrap();
+        assert_eq!(name, "Servers");
+        assert_eq!(updated.grants.len(), 1);
+        assert_eq!(updated.grants[0].member_id, staying);
+        // Idempotent: a second sweep removes nothing.
+        assert!(sweep_expired_grants(&path, &sgk).unwrap().is_empty());
+    }
+
+    #[test]
+    fn expired_grant_does_not_authorize() {
+        // is_grant_expired is the gate used by the local write check.
+        let g = CollectionGrant {
+            member_id: Uuid::new_v4(),
+            access: CollectionAccess::Write,
+            expires_at: Some(1),
+        };
+        assert!(is_grant_expired(&g, now_secs_pub()));
+        let future = CollectionGrant {
+            expires_at: Some(now_secs_pub() + 3600),
+            ..g.clone()
+        };
+        assert!(!is_grant_expired(&future, now_secs_pub()));
+        // An absent expires_at never expires.
+        let none = CollectionGrant {
+            expires_at: None,
+            ..g
+        };
+        assert!(!is_grant_expired(&none, now_secs_pub()));
     }
 
     #[test]
