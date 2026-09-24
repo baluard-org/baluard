@@ -450,7 +450,7 @@ fn grant_wraps_dir(vault_path: &Path, id: &Uuid) -> PathBuf {
     vault_path.join("meta/collections").join(id.to_string())
 }
 
-fn grant_wrap_path(vault_path: &Path, id: &Uuid, member_id: &Uuid) -> PathBuf {
+pub(crate) fn grant_wrap_path(vault_path: &Path, id: &Uuid, member_id: &Uuid) -> PathBuf {
     grant_wraps_dir(vault_path, id).join(format!("{member_id}.wrap"))
 }
 
@@ -669,6 +669,17 @@ pub fn upsert_grant(
 ) -> Result<CollectionFile, BaluardError> {
     let (mut file, _) = open_collection(vault_path, sgk, collection_id)?;
     let member = live_member(vault_path, &grant.member_id)?;
+    // Path-membership rule (S3-2): a Viewer can never author a cipher
+    // commit (Editor floor in the git policy), so a write grant to a
+    // Viewer would pass locally and wedge their sync at verification.
+    if matches!(grant.access, CollectionAccess::Write)
+        && member.role == crate::vault::members::MemberRole::Viewer
+    {
+        return Err(VaultError::InvalidOperation(
+            "Viewers cannot be given write access to a collection.".into(),
+        )
+        .into());
+    }
     if is_grant_expired(&grant, now_secs()) {
         return Err(VaultError::InvalidOperation(
             "That expiry date is already in the past.".into(),

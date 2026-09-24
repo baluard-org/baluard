@@ -26,6 +26,7 @@ pub mod registry;
 pub mod reveals;
 pub mod slug;
 pub mod space;
+pub mod templates;
 
 pub use handle::VaultHandle;
 

@@ -1127,6 +1127,20 @@ See plan-sharing line 111 (Team shape: non-admins hold only their collection wra
 
 **Boundaries**: expired-but-unrotated grants keep their wraps until a rotation path runs (the eventual-revocation boundary, unchanged); no background timer maintains wraps; the Team-shape SGK flip is the next P1 slice.
 
+### D36. Role Templates (S3-4) (2026-09-24; S3 in progress)
+
+An admin-defined reusable invite preset: `RoleTemplate {id, name, role, grants, created_at}` where each grant is `{collection_id, access, expires_in_days}`. Storage is one sealed blob at `meta/templates.enc` under a root-key HKDF (`baluard-role-templates-v1`, purpose `role-templates-v1`), riding the meta/** Admin git-policy row like collections. Caps: 64 templates / 100 name chars / 64 grants; a missing store loads as empty so legacy vaults work.
+
+**The invite is the contract**: inviting with a template embeds a SNAPSHOT (`EmbeddedTemplate`) in `PendingInviteFile` at mint time, with a fail-closed role cross-check (the picked role must equal the template's). Approval applies the embedded grants — never re-reading templates.enc — so deleting or editing a template after minting changes nothing pending. Grant application is best-effort fail-toward-less-access (missing collections skipped with a warning; each applied grant mints the D35 per-member wrap immediately). Expiry is converted to absolute `expires_at` at APPROVAL time (now + days). Rotation re-seals the store in both rekey paths (read-old-then-resave).
+
+**Fail-closed parsing everywhere** (review round): a present-but-mistyped value refuses — negative or non-integer `expires_in_days` (would have silently become permanent access), non-string `template_id` (would have silently minted a template-less invite), non-array `grants`. `templates.list` is open to unlocked members; create/delete are admin-gated; list is correctly NOT in COVER_MUTATION_ACTIONS.
+
+**Viewer+write is unmintable** (review Blocker-class): the git policy floor for cipher commits is Editor, so a Viewer holding a write grant passes locally and wedges their sync at peer verification (the wave-10 wedge class). `validate_template` refuses a Viewer template with write grants, and `upsert_grant` refuses a write grant to a Viewer-role member at the root — covering the template path AND the plain grant route. Template names also reject line breaks (the newline discipline shared with contacts/members).
+
+**Approval-side grant cap**: a git-synced invite file carrying more than MAX_GRANTS_PER_TEMPLATE entries is tampering; the approval peek phase refuses BEFORE any mutation, so a hostile invite cannot run unbounded encrypt+wrap work under the vault lock.
+
+**Boundaries**: templates are advisory presets, not policy — live access is still governed by grants and the git policy table; no template versioning or audit trail (the activity log records the join, not the template); UI surface rides the later §4.8 sharing-surfaces wave.
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.
