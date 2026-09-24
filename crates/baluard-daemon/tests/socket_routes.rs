@@ -81,6 +81,25 @@ fn request(
     GatewayResponse::decode(&buf[offset..end]).expect("decode GatewayResponse")
 }
 
+/// Panic- and abort-safe kill: a test panic unwinds through Drop, so
+/// the daemon dies even when the handle was never constructed. (A
+/// hard-killed RUNNER is covered by BALUARD_DAEMON_DIE_WITH_PARENT
+/// instead.) Kill+wait: wait reaps the zombie.
+struct ChildGuard(std::process::Child);
+
+impl ChildGuard {
+    fn kill_now(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        self.kill_now();
+    }
+}
+
 struct VaultedHandle {
     _data_dir: tempfile::TempDir,
     // Keep the vault TempDir alive for the lifetime of the handle so
@@ -90,7 +109,7 @@ struct VaultedHandle {
     // files (e.g. ciphers/{uuid}.enc) under an unlinked dir fails
     // with ENOENT. This was the root cause of the vault.add IO error.
     _vault_dir: tempfile::TempDir,
-    _child: std::process::Child,
+    _child: ChildGuard,
     socket: PathBuf,
     token: String,
 }
@@ -125,20 +144,29 @@ fn spawn_vaulted() -> VaultedHandle {
     }
 
     let socket = data_dir.path().join("baluard.sock");
-    let mut child = Command::new(DAEMON_BIN)
-        .arg("--socket")
-        .arg(&socket)
-        .env("BALUARD_DATA_DIR", data_dir.path())
-        .env_remove("BALUARD_SOCKET")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn daemon");
+    // Guard from the SPAWN onward: the unlock request and asserts below
+    // run before VaultedHandle exists, so a panic there must still kill
+    // the daemon (the pre-guard window was review finding F2).
+    let mut child = ChildGuard(
+        Command::new(DAEMON_BIN)
+            .arg("--socket")
+            .arg(&socket)
+            .env("BALUARD_DATA_DIR", data_dir.path())
+            .env_remove("BALUARD_SOCKET")
+            // Belt in depth: the daemon itself exits when this runner
+            // dies, covering hard kills (SIGKILL/OOM) where no Drop can
+            // run.
+            .env("BALUARD_DAEMON_DIE_WITH_PARENT", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
     let deadline = Instant::now() + Duration::from_secs(5);
     while !socket.exists() {
         if Instant::now() > deadline {
-            let _ = child.kill();
+            child.kill_now();
             panic!("daemon did not create socket");
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -146,7 +174,7 @@ fn spawn_vaulted() -> VaultedHandle {
     let connect_deadline = Instant::now() + Duration::from_secs(2);
     while UnixStream::connect(&socket).is_err() {
         if Instant::now() > connect_deadline {
-            let _ = child.kill();
+            child.kill_now();
             panic!("daemon not accepting");
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -166,6 +194,10 @@ fn spawn_vaulted() -> VaultedHandle {
         token: resp.session_token,
     }
 }
+
+// The daemon subprocess dies with the handle via ChildGuard's Drop
+// above (std does not kill on Child drop; this suite once leaked ~34
+// daemons per green run, the 1816-orphan machine crash, 2026-09-24).
 
 impl VaultedHandle {
     fn call(&self, action: &str, payload: &str) -> GatewayResponse {

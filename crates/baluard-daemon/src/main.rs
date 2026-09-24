@@ -111,6 +111,35 @@ fn main() -> anyhow::Result<()> {
 
     init_debug_logging();
 
+    // Test-fixture kill switch: when the spawning parent goes away
+    // (SIGKILLed test runner, OOM kill, crash), no Drop guard can run,
+    // so the daemon would sit orphaned forever — 1816 of them once
+    // filled this machine's RAM. Polling getppid beats PR_SET_PDEATHSIG
+    // for portability (macOS has no pdeathsig); a missed poll only adds
+    // a 2s grace. Production never sets this env var. Unix-only by
+    // design: Windows test runs keep the (weaker) Drop-guard layer
+    // only.
+    #[cfg(unix)]
+    if std::env::var("BALUARD_DAEMON_DIE_WITH_PARENT").as_deref() == Ok("1") {
+        std::thread::spawn(|| {
+            let ppid = unsafe { libc::getppid() };
+            // Already orphaned before we captured the parent (parent
+            // died inside the spawn race): init re-parented us, exit
+            // now (review F3). A subreaper adoption in that same race
+            // is accepted residual risk — the Drop guards cover it in
+            // every normal test flow.
+            if ppid == 1 {
+                std::process::exit(0);
+            }
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if unsafe { libc::getppid() } != ppid {
+                    std::process::exit(0);
+                }
+            }
+        });
+    }
+
     let matches =
         clap::Command::new("baluard-daemon")
             .arg(

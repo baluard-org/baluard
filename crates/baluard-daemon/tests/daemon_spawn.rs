@@ -113,6 +113,8 @@ fn spawn_daemon() -> DaemonHandle {
         // The daemon doesn't accept --data-dir; instead it honors the
         // BALUARD_DATA_DIR env var (via baluard_core::paths::data_dir).
         .env("BALUARD_DATA_DIR", data_dir.path())
+        // Belt in depth: the daemon exits when this runner dies.
+        .env("BALUARD_DAEMON_DIE_WITH_PARENT", "1")
         // Tests must never touch the real macOS keychain (interactive auth
         // prompts stall the suite and pollute the user's keychain).
         .env("BALUARD_DISABLE_KEYRING", "1")
@@ -309,6 +311,8 @@ fn spawn_with_vault() -> VaultedDaemon {
         .arg("--socket")
         .arg(&socket_path)
         .env("BALUARD_DATA_DIR", data_dir.path())
+        // Belt in depth: the daemon exits when this runner dies.
+        .env("BALUARD_DAEMON_DIE_WITH_PARENT", "1")
         // Tests must never touch the real macOS keychain (interactive auth
         // prompts stall the suite and pollute the user's keychain).
         .env("BALUARD_DISABLE_KEYRING", "1")
