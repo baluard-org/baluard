@@ -1029,6 +1029,196 @@ async fn collections_state_lifecycle_and_locked_rejection() {
     );
 }
 
+/// S3-6: request-access JIT lifecycle through the state wrappers, plus
+/// fail-closed payload parsing and locked-vault rejection.
+#[tokio::test]
+async fn access_requests_state_lifecycle_and_locked_rejection() {
+    let (_dir, vault_path) = make_vault("access-requests");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    // NOT unlocked: every JIT surface refuses.
+    assert!(state.collection_requests_mine().await.is_err());
+    assert!(state.collection_requests_list().await.is_err());
+    assert!(state.collection_catalog_list().await.is_err());
+    assert!(
+        state
+            .collection_request_access("{\"collection_id\":\"x\"}")
+            .await
+            .is_err()
+    );
+
+    state.unlock(MASTER).await.expect("vault unlock");
+    // The owner session creates the catalog target and asks for its own
+    // collection (owner devices are members, so this exercises the full
+    // submit path; the two-device ceremony lives in the core handle test).
+    let created: serde_json::Value =
+        serde_json::from_str(&state.collection_create("Servers").await.unwrap()).unwrap();
+    let cid = created["id"].as_str().expect("collection id").to_string();
+
+    // Fail-closed parses: mistyped access, non-UUID collection id.
+    assert!(
+        state
+            .collection_request_access(
+                &serde_json::json!({"collection_id": cid, "access": "admin"}).to_string()
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        state
+            .collection_request_access(
+                &serde_json::json!({"collection_id": "nope", "access": "read"}).to_string()
+            )
+            .await
+            .is_err()
+    );
+
+    let submitted: serde_json::Value = serde_json::from_str(
+        &state
+            .collection_request_access(
+                &serde_json::json!({"collection_id": cid, "access": "read", "note": "please"})
+                    .to_string(),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let rid = submitted["request_id"]
+        .as_str()
+        .expect("request id")
+        .to_string();
+
+    // Own list shows the pending ask; the admin inbox decrypts it.
+    let mine: serde_json::Value =
+        serde_json::from_str(&state.collection_requests_mine().await.unwrap()).unwrap();
+    assert_eq!(mine["requests"].as_array().unwrap().len(), 1);
+    let inbox: serde_json::Value =
+        serde_json::from_str(&state.collection_requests_list().await.unwrap()).unwrap();
+    assert_eq!(inbox["malformed"].as_u64(), Some(0));
+    assert_eq!(inbox["requests"].as_array().unwrap().len(), 1);
+    assert_eq!(inbox["requests"][0]["collection_name"], "Servers");
+    assert_eq!(inbox["requests"][0]["note"], "please");
+
+    // Approve with an access override; the grant lands.
+    let owner_member = baluard_core::vault::members::member_id_for_device(
+        &vault_path,
+        uuid::Uuid::parse_str(&state.device_id().await).expect("device uuid"),
+    )
+    .expect("owner member");
+    let approved: serde_json::Value = serde_json::from_str(
+        &state
+            .collection_requests_approve(
+                &serde_json::json!({
+                    "request_id": rid,
+                    "requester_member_id": owner_member.to_string(),
+                    "access": "write"
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(approved["approved"], true);
+    // Mistyped expiry refuses instead of silently meaning "never expires".
+    // The deny leg uses a SECOND collection: the owner now holds a write
+    // grant on Servers, so a redundant ask refuses before parsing (F4).
+    let finance: serde_json::Value =
+        serde_json::from_str(&state.collection_create("Finance").await.unwrap()).unwrap();
+    let fid = finance["id"].as_str().unwrap().to_string();
+    let second = serde_json::from_str::<serde_json::Value>(
+        &state
+            .collection_request_access(
+                &serde_json::json!({"collection_id": fid, "access": "read"}).to_string(),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let rid2 = second["request_id"].as_str().unwrap().to_string();
+    assert!(
+        state
+            .collection_requests_approve(
+                &serde_json::json!({
+                    "request_id": rid2,
+                    "requester_member_id": owner_member.to_string(),
+                    "expires_at": "soon"
+                })
+                .to_string()
+            )
+            .await
+            .is_err()
+    );
+    state
+        .collection_requests_deny(
+            &serde_json::json!({
+                "request_id": rid2,
+                "requester_member_id": owner_member.to_string()
+            })
+            .to_string(),
+        )
+        .await
+        .expect("deny");
+    // Double-deny refuses (consumed).
+    assert!(
+        state
+            .collection_requests_deny(
+                &serde_json::json!({
+                    "request_id": rid2,
+                    "requester_member_id": owner_member.to_string()
+                })
+                .to_string()
+            )
+            .await
+            .is_err()
+    );
+
+    let list: serde_json::Value =
+        serde_json::from_str(&state.collections_list().await.unwrap()).unwrap();
+    let servers = list["collections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == cid)
+        .expect("servers row")
+        .clone();
+    let grants = servers["grants"].as_array().unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0]["access"], "write");
+    assert_eq!(
+        grants[0]["member_id"].as_str(),
+        Some(owner_member.to_string()).as_deref()
+    );
+
+    // Catalog: unknown collection refused; publish + list + clear.
+    assert!(
+        state
+            .collection_catalog_set(
+                &serde_json::json!({"entries": [{"collection_id": uuid::Uuid::new_v4().to_string(), "name": "Ghost"}]})
+                    .to_string()
+            )
+            .await
+            .is_err()
+    );
+    state
+        .collection_catalog_set(
+            &serde_json::json!({"entries": [{"collection_id": cid, "name": "Servers"}]})
+                .to_string(),
+        )
+        .await
+        .expect("catalog publish");
+    let catalog: serde_json::Value =
+        serde_json::from_str(&state.collection_catalog_list().await.unwrap()).unwrap();
+    assert_eq!(catalog["catalog"][0]["name"], "Servers");
+    state
+        .collection_catalog_set("{\"entries\": []}")
+        .await
+        .expect("catalog clear");
+    let catalog: serde_json::Value =
+        serde_json::from_str(&state.collection_catalog_list().await.unwrap()).unwrap();
+    assert!(catalog["catalog"].as_array().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn templates_state_lifecycle_and_fail_closed_parses() {
     let (_dir, vault_path) = make_vault("templates-state");

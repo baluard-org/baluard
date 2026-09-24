@@ -1192,6 +1192,217 @@ impl VaultHandle {
         )
     }
 
+    // ── S3-6: request-access JIT ──
+
+    /// Submit a JIT ask for collection access (any live member, any role).
+    /// The ask ships to the repo via autosync; approvers see it in
+    /// [`Self::access_requests_inbox`] after their next pull.
+    pub fn collection_access_request(
+        &mut self,
+        collection_id: Uuid,
+        access: crate::vault::collections::CollectionAccess,
+        note: &str,
+    ) -> Result<Uuid, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .ok_or_else(|| {
+                VaultError::InvalidOperation("This device is not a member of this vault.".into())
+            })?;
+        let (collection, _) = crate::vault::collections::open_collection(
+            &self.path,
+            &self.unlocked().space_group_key,
+            &collection_id,
+        )?;
+        crate::vault::access_requests::submit_request(
+            &self.path,
+            member_id,
+            &collection,
+            access,
+            note,
+        )
+    }
+
+    /// The caller's own pending asks.
+    pub fn my_access_requests(
+        &self,
+    ) -> Result<Vec<crate::vault::access_requests::OwnRequestRow>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .ok_or_else(|| {
+                VaultError::InvalidOperation("This device is not a member of this vault.".into())
+            })?;
+        crate::vault::access_requests::list_own_requests(&self.path, member_id)
+    }
+
+    /// Withdraw one of the caller's own pending asks.
+    pub fn withdraw_access_request(&mut self, request_id: Uuid) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .ok_or_else(|| {
+                VaultError::InvalidOperation("This device is not a member of this vault.".into())
+            })?;
+        crate::vault::access_requests::withdraw_request(&self.path, member_id, request_id)
+    }
+
+    /// The approver inbox (admin surface): decrypted pending asks plus a
+    /// count of inert files (malformed, tampered, or not addressed to this
+    /// approver).
+    pub fn access_requests_inbox(
+        &self,
+    ) -> Result<(Vec<crate::vault::access_requests::AccessRequestRow>, usize), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let identity = self.identity().ok_or_else(|| {
+            VaultError::InvalidOperation("identity not available on this device".into())
+        })?;
+        let approver = crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .ok_or_else(|| {
+                VaultError::InvalidOperation("This device is not a member of this vault.".into())
+            })?;
+        crate::vault::access_requests::list_inbox(
+            &self.path,
+            approver,
+            identity.wrapping_secret(),
+            &self.unlocked().space_group_key,
+        )
+    }
+
+    /// Approve a JIT ask: issue the grant (the admin may override access
+    /// and set an expiry; the granted collection and requester always come
+    /// from the sealed ask) and consume the request file. Admin-gated:
+    /// consuming another member's request file writes outside the own
+    /// subtree, and delegated managers have no such reach (S3-5 boundary).
+    pub fn approve_access_request(
+        &mut self,
+        requester_member_id: Uuid,
+        request_id: Uuid,
+        access: Option<crate::vault::collections::CollectionAccess>,
+        expires_at: Option<u64>,
+    ) -> Result<crate::vault::access_requests::AccessRequestRow, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let identity = self.identity().ok_or_else(|| {
+            VaultError::InvalidOperation("identity not available on this device".into())
+        })?;
+        let approver = crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .ok_or_else(|| {
+                VaultError::InvalidOperation("This device is not a member of this vault.".into())
+            })?;
+        let row = crate::vault::access_requests::open_inbox_row(
+            &self.path,
+            requester_member_id,
+            request_id,
+            approver,
+            identity.wrapping_secret(),
+            &self.unlocked().space_group_key,
+        )?;
+        let final_access = access.unwrap_or(row.access);
+        // The askable set is read/write (refused at submit); a crafted or
+        // overridden manage approval must refuse here too — manage grants
+        // go through collections.grant, never the inbox (review F1).
+        if final_access == crate::vault::collections::CollectionAccess::Manage {
+            return Err(VaultError::InvalidOperation(
+                "Manage access cannot be granted through a request approval.".into(),
+            )
+            .into());
+        }
+        crate::vault::collections::upsert_grant(
+            &self.path,
+            &self.unlocked().space_group_key,
+            &row.collection_id,
+            crate::vault::collections::CollectionGrant {
+                member_id: requester_member_id,
+                access: final_access,
+                expires_at,
+            },
+        )?;
+        crate::vault::access_requests::consume_request(
+            &self.path,
+            requester_member_id,
+            request_id,
+        )?;
+        // S1b-1: activity log (best-effort).
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::AccessGranted,
+            format!(
+                "granted {} access to {} on collection \"{}\"",
+                row.requester_name,
+                match final_access {
+                    crate::vault::collections::CollectionAccess::Read => "view",
+                    crate::vault::collections::CollectionAccess::Write
+                    | crate::vault::collections::CollectionAccess::Manage => "edit",
+                },
+                row.collection_name.as_deref().unwrap_or("a collection"),
+            ),
+        );
+        Ok(row)
+    }
+
+    /// Deny a JIT ask: consume the request file, grant nothing. Admin-gated
+    /// (same reason as approval).
+    pub fn deny_access_request(
+        &mut self,
+        requester_member_id: Uuid,
+        request_id: Uuid,
+    ) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::access_requests::consume_request(
+            &self.path,
+            requester_member_id,
+            request_id,
+        )?;
+        let name = crate::vault::members::member_file_by_id(&self.path, requester_member_id)
+            .map(|m| m.display_name)
+            .unwrap_or_else(|| "unknown".into());
+        // S1b-1: activity log (best-effort).
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::AccessDenied,
+            format!("denied an access request from {name}"),
+        );
+        Ok(())
+    }
+
+    /// Publish (or replace/clear) the plaintext collection catalog (admin
+    /// surface; the git policy's meta/collections/** Admin row is the
+    /// enforcement twin).
+    pub fn catalog_publish(
+        &mut self,
+        entries: Vec<crate::vault::access_requests::CatalogEntry>,
+    ) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::access_requests::catalog_set(
+            &self.path,
+            &self.unlocked().space_group_key,
+            entries,
+        )
+    }
+
+    /// The catalog as requesters see it (any unlocked member; empty when
+    /// the org has not published one).
+    pub fn catalog_entries(
+        &self,
+    ) -> Result<Vec<crate::vault::access_requests::CatalogEntry>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        Ok(crate::vault::access_requests::catalog_list(&self.path))
+    }
+
     /// S1a-4: reconcile the address book against member identity records
     /// after a sync. A Verified contact whose pubkey no longer matches
     /// its member's current identity (the member rotated) drops to
@@ -9092,6 +9303,194 @@ mod tests {
         let record: crate::vault::members::MemberFile =
             serde_json::from_str(&std::fs::read_to_string(&member_file).unwrap()).unwrap();
         assert_eq!(record.role, crate::vault::members::MemberRole::Admin);
+    }
+
+    /// S3-6: request-access JIT end-to-end across two devices. The joiner
+    /// submits a sealed ask, the owner's inbox decrypts it, approval issues
+    /// the grant + mints the per-member wrap + consumes the file, and a
+    /// second ask dies by denial. Ship legs ride the real sync engine.
+    #[test]
+    fn jit_access_request_roundtrip_two_devices() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // The owner row must carry the identity wrap pubkey so the
+        // approver set is non-empty (deterministic regardless of genesis
+        // ordering in the keystore-less test environment).
+        let owner_member =
+            crate::vault::members::member_id_for_device(&owner_path, handle.device_id).unwrap();
+        let mut owner_row =
+            crate::vault::members::member_file_by_id(&owner_path, owner_member).unwrap();
+        let card = handle.contact_card_signed().unwrap();
+        owner_row.identity_wrap_pubkey = Some(card.card.identity_wrap_pubkey.clone());
+        crate::vault::members::write_member(&owner_path, &owner_row).unwrap();
+
+        // Two collections: one gets granted, one gets denied.
+        let sgk = handle.unlocked().space_group_key.clone();
+        let work = crate::vault::collections::create_collection(&owner_path, &sgk, "Work").unwrap();
+        let finance =
+            crate::vault::collections::create_collection(&owner_path, &sgk, "Finance").unwrap();
+
+        // Standard join ceremony: the asker is a live Editor member.
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        let joiner_member = handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve join").unwrap();
+
+        // Joiner pulls everything (collections + membership), unlocks,
+        // and submits TWO sealed asks (Work to be granted, Finance to be
+        // denied). One unlock, one ship commit: an unlock between commits
+        // can dirty git-tracked files via the plaintext-activity
+        // migration, and an Editor cannot commit those.
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        let req_id = joiner
+            .collection_access_request(
+                work.id,
+                crate::vault::collections::CollectionAccess::Read,
+                "need the servers",
+            )
+            .unwrap();
+        let req_denied = joiner
+            .collection_access_request(
+                finance.id,
+                crate::vault::collections::CollectionAccess::Read,
+                "",
+            )
+            .unwrap();
+        assert_eq!(joiner.my_access_requests().unwrap().len(), 2);
+
+        // Ship the ask; the owner pulls and reads the inbox.
+        let joiner_seal = joiner.devkey_seal();
+        let joiner_device = joiner.device_id;
+        drop(joiner);
+        let engine_j_signed = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner_device.to_string(),
+            joiner_seal.as_ref(),
+        );
+        engine_j_signed
+            .commit_all(&repo_j, "access requests")
+            .unwrap();
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .unwrap();
+        engine_o.pull(&repo_o, "joiner").unwrap();
+
+        let (rows, malformed) = handle.access_requests_inbox().unwrap();
+        assert_eq!(malformed, 0);
+        assert_eq!(rows.len(), 2);
+        let work_ask = rows.iter().find(|r| r.request_id == req_id).unwrap();
+        assert_eq!(work_ask.requester_member_id, joiner_member);
+        assert_eq!(work_ask.collection_name.as_deref(), Some("Work"));
+        assert_eq!(work_ask.note, "need the servers");
+        assert!(
+            rows.iter()
+                .any(|r| r.request_id == req_denied
+                    && r.collection_name.as_deref() == Some("Finance"))
+        );
+
+        // Approve with an access override (asked read, granted write).
+        let granted = handle
+            .approve_access_request(
+                joiner_member,
+                req_id,
+                Some(crate::vault::collections::CollectionAccess::Write),
+                None,
+            )
+            .unwrap();
+        assert_eq!(granted.collection_name.as_deref(), Some("Work"));
+        // The request is consumed: double-approve is a refusal.
+        assert!(
+            handle
+                .approve_access_request(joiner_member, req_id, None, None)
+                .is_err()
+        );
+        // The deny leg: the second ask dies by denial, no grant issued.
+        handle
+            .deny_access_request(joiner_member, req_denied)
+            .unwrap();
+        // Double-deny is a refusal (the file is consumed).
+        assert!(
+            handle
+                .deny_access_request(joiner_member, req_denied)
+                .is_err()
+        );
+        engine_o.commit_all(&repo_o, "decide requests").unwrap();
+
+        // Joiner pulls the decisions: no pending asks, the grant visible
+        // (write, the admin's override), the denied collection untouched,
+        // and the approval minted their per-member CK wrap.
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        assert!(joiner.my_access_requests().unwrap().is_empty());
+        let listed = joiner.collections_list().unwrap();
+        let work_row = listed.iter().find(|(id, _, _)| *id == work.id).unwrap();
+        assert!(work_row.2.iter().any(|g| {
+            g.member_id == joiner_member
+                && g.access == crate::vault::collections::CollectionAccess::Write
+        }));
+        let finance_row = listed.iter().find(|(id, _, _)| *id == finance.id).unwrap();
+        assert!(finance_row.2.is_empty());
+        let via_wrap = crate::vault::collections::open_grant_wrap(
+            &joiner_path,
+            &work.id,
+            &joiner_member,
+            joiner.identity().unwrap().wrapping_secret(),
+        )
+        .unwrap();
+        let cks = crate::vault::collections::collect_content_keys(
+            &joiner_path,
+            &joiner.unlocked().space_group_key,
+        )
+        .unwrap();
+        let (_, ck) = cks.iter().find(|(id, _)| *id == work.id).unwrap();
+        assert_eq!(via_wrap.as_ref(), ck.as_ref());
+
+        // Activity log: one grant, one denial, in order.
+        let events = handle.share_events(50).unwrap();
+        let kinds: Vec<_> = events.iter().map(|e| e.kind).collect();
+        assert!(kinds.contains(&crate::vault::events::ShareEventKind::AccessGranted));
+        assert!(kinds.contains(&crate::vault::events::ShareEventKind::AccessDenied));
+        let grant_idx = kinds
+            .iter()
+            .position(|k| *k == crate::vault::events::ShareEventKind::AccessGranted)
+            .unwrap();
+        let deny_idx = kinds
+            .iter()
+            .position(|k| *k == crate::vault::events::ShareEventKind::AccessDenied)
+            .unwrap();
+        assert!(grant_idx < deny_idx);
+        assert!(events[grant_idx].detail.contains("MemberDevice"));
     }
 
     /// S1a-4: identity rotation is visible and triggers the trust reset.

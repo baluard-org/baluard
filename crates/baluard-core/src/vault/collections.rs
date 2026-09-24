@@ -256,7 +256,7 @@ pub fn create_collection(
     Ok(file)
 }
 
-fn collections_file_path(vault_path: &Path, id: &Uuid) -> PathBuf {
+pub(crate) fn collections_file_path(vault_path: &Path, id: &Uuid) -> PathBuf {
     vault_path.join(format!("meta/collections/{id}.json"))
 }
 

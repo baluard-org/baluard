@@ -240,6 +240,15 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "collections.delete",
         "collections.grant",
         "collections.revoke",
+        // S3-6: request-access JIT surfaces.
+        "collections.request_access",
+        "collections.requests_mine",
+        "collections.requests_withdraw",
+        "collections.requests_list",
+        "collections.requests_approve",
+        "collections.requests_deny",
+        "collections.catalog_set",
+        "collections.catalog_list",
     "vaults.register_local",
     "vaults.switch",
     // clone from provider

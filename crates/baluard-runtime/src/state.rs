@@ -3209,6 +3209,241 @@ impl VaultState {
         Ok(serde_json::json!({ "removed": removed.len() }).to_string())
     }
 
+    // ── S3-6: request-access JIT ──
+    // All routes token-gated by the daemon's default-deny gate; the
+    // mutating ones ride COVER_MUTATION_ACTIONS so autosync ships the
+    // artifacts.
+
+    /// Member side: submit a JIT ask for collection access.
+    pub async fn collection_request_access(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let id = v["collection_id"]
+            .as_str()
+            .ok_or("Missing collection_id in payload")?;
+        let collection_id =
+            uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid collection_id: {e}"))?;
+        let access = Self::parse_request_access(&v)?;
+        let note = v["note"].as_str().unwrap_or("");
+        let request_id = handle
+            .collection_access_request(collection_id, access, note)
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "request_id": request_id.to_string() }).to_string())
+    }
+
+    /// Fail closed on a mistyped access: an unknown string must never
+    /// silently become a write seat (the S3-4 parsing rule).
+    fn parse_request_access(
+        v: &serde_json::Value,
+    ) -> Result<baluard_core::vault::collections::CollectionAccess, String> {
+        match v["access"].as_str() {
+            Some("read") => Ok(baluard_core::vault::collections::CollectionAccess::Read),
+            Some("write") => Ok(baluard_core::vault::collections::CollectionAccess::Write),
+            _ => Err("'access' must be \"read\" or \"write\"".into()),
+        }
+    }
+
+    /// Member side: the caller's own pending asks.
+    pub async fn collection_requests_mine(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let rows: Vec<serde_json::Value> = handle
+            .my_access_requests()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.id.to_string(),
+                    "collection_id": r.collection_id.to_string(),
+                    "access": r.access,
+                    "created_at": r.created_at,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "requests": rows }).to_string())
+    }
+
+    /// Member side: withdraw one of the caller's own pending asks.
+    pub async fn collection_requests_withdraw(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let id = v["request_id"]
+            .as_str()
+            .ok_or("Missing request_id in payload")?;
+        let request_id =
+            uuid::Uuid::parse_str(id).map_err(|e| format!("Invalid request_id: {e}"))?;
+        handle
+            .withdraw_access_request(request_id)
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "withdrawn": true }).to_string())
+    }
+
+    /// Admin side: the decrypted inbox plus the inert-file count.
+    pub async fn collection_requests_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let (rows, malformed) = handle.access_requests_inbox().map_err(|e| e.to_string())?;
+        let rows: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "request_id": r.request_id.to_string(),
+                    "requester_member_id": r.requester_member_id.to_string(),
+                    "requester_name": r.requester_name,
+                    "collection_id": r.collection_id.to_string(),
+                    "collection_name": r.collection_name,
+                    "access": r.access,
+                    "note": r.note,
+                    "created_at": r.created_at,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "requests": rows, "malformed": malformed }).to_string())
+    }
+
+    /// Admin side: approve a JIT ask. Optional access override + expiry
+    /// are the admin's decision; collection and requester come from the
+    /// sealed ask.
+    pub async fn collection_requests_approve(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let rid = v["request_id"]
+            .as_str()
+            .ok_or("Missing request_id in payload")?;
+        let request_id =
+            uuid::Uuid::parse_str(rid).map_err(|e| format!("Invalid request_id: {e}"))?;
+        let mid = v["requester_member_id"]
+            .as_str()
+            .ok_or("Missing requester_member_id in payload")?;
+        let requester_member_id =
+            uuid::Uuid::parse_str(mid).map_err(|e| format!("Invalid requester_member_id: {e}"))?;
+        let access = match v.get("access") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(_) => Some(Self::parse_request_access(&v)?),
+        };
+        // A present-but-mistyped expiry must refuse, not silently become
+        // "no expiry" (permanent access).
+        let expires_at = match v.get("expires_at") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::Number(n)) => Some(
+                n.as_u64()
+                    .ok_or("'expires_at' must be a whole number of unix seconds.")?,
+            ),
+            Some(_) => return Err("'expires_at' must be a whole number of unix seconds.".into()),
+        };
+        let row = handle
+            .approve_access_request(requester_member_id, request_id, access, expires_at)
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "approved": true,
+            "request_id": row.request_id.to_string(),
+            "requester_member_id": row.requester_member_id.to_string(),
+            "requester_name": row.requester_name,
+            "collection_id": row.collection_id.to_string(),
+            "collection_name": row.collection_name,
+            "access": row.access,
+        })
+        .to_string())
+    }
+
+    /// Admin side: deny a JIT ask (consume it, grant nothing).
+    pub async fn collection_requests_deny(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let rid = v["request_id"]
+            .as_str()
+            .ok_or("Missing request_id in payload")?;
+        let request_id =
+            uuid::Uuid::parse_str(rid).map_err(|e| format!("Invalid request_id: {e}"))?;
+        let mid = v["requester_member_id"]
+            .as_str()
+            .ok_or("Missing requester_member_id in payload")?;
+        let requester_member_id =
+            uuid::Uuid::parse_str(mid).map_err(|e| format!("Invalid requester_member_id: {e}"))?;
+        handle
+            .deny_access_request(requester_member_id, request_id)
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "denied": true }).to_string())
+    }
+
+    /// Admin side: publish (or replace/clear) the plaintext catalog.
+    pub async fn collection_catalog_set(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let mut entries = Vec::new();
+        match v.get("entries") {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::Array(rows)) => {
+                for row in rows {
+                    let cid = row["collection_id"]
+                        .as_str()
+                        .ok_or("'entries[].collection_id' must be a string UUID.")?;
+                    let collection_id = uuid::Uuid::parse_str(cid).map_err(|_| {
+                        "'entries[].collection_id' must be a string UUID.".to_string()
+                    })?;
+                    let name = row["name"]
+                        .as_str()
+                        .ok_or("'entries[].name' must be a string.")?;
+                    entries.push(baluard_core::vault::access_requests::CatalogEntry {
+                        collection_id,
+                        name: name.to_string(),
+                    });
+                }
+            }
+            Some(_) => return Err("'entries' must be a list of catalog rows.".into()),
+        }
+        handle.catalog_publish(entries).map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "published": true }).to_string())
+    }
+
+    /// Any member: the catalog as requesters see it (empty when
+    /// unpublished).
+    pub async fn collection_catalog_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let rows: Vec<serde_json::Value> = handle
+            .catalog_entries()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|e| {
+                serde_json::json!({
+                    "collection_id": e.collection_id.to_string(),
+                    "name": e.name,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "catalog": rows }).to_string())
+    }
+
     /// Mint a collection (admin-gated).
     pub async fn collection_create(&self, name: &str) -> Result<String, String> {
         let mut guard = self.inner.write().await;

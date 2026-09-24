@@ -321,6 +321,13 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "collections.delete",
     "collections.grant",
     "collections.revoke",
+    // S3-6: JIT asks write git-tracked request files (own member subtree)
+    // and the catalog; approvals/denials also consume request files.
+    "collections.request_access",
+    "collections.requests_withdraw",
+    "collections.requests_approve",
+    "collections.requests_deny",
+    "collections.catalog_set",
     "tag.rebuild_index",
     "settings.set",
     "vault.avatar.set",
@@ -3665,6 +3672,51 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
+        // ── S3-6: request-access JIT ──
+        "collections.request_access" => match state.collection_request_access(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "collections.requests_mine" => match state.collection_requests_mine().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "collections.requests_withdraw" => {
+            match state.collection_requests_withdraw(&req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "collections.requests_list" => match state.collection_requests_list().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "collections.requests_approve" => {
+            match state.collection_requests_approve(&req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "collections.requests_deny" => match state.collection_requests_deny(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "collections.catalog_set" => match state.collection_catalog_set(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "collections.catalog_list" => match state.collection_catalog_list().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
         "templates.list" => match state.templates_list().await {
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
@@ -5675,6 +5727,11 @@ mod tests {
             "collections.delete",
             "collections.grant",
             "collections.revoke",
+            "collections.request_access",
+            "collections.requests_withdraw",
+            "collections.requests_approve",
+            "collections.requests_deny",
+            "collections.catalog_set",
             "templates.create",
             "templates.list",
             "templates.delete",
