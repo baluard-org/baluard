@@ -650,6 +650,114 @@ impl VaultHandle {
             .map_err(BaluardError::from)
     }
 
+    /// S3-4: role templates — named presets bundling a vault role plus
+    /// collection grants, applied at invite time (see templates.rs).
+    pub fn templates_list(
+        &self,
+    ) -> Result<Vec<crate::vault::templates::RoleTemplate>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        crate::vault::templates::load_templates(&self.path, self.unlocked().root_key.as_bytes())
+    }
+
+    /// Mint a role template (admin-gated). Names and grant structure
+    /// are sealed inside meta/templates.enc, never on disk in the clear.
+    pub fn template_create(
+        &mut self,
+        name: &str,
+        role: crate::vault::members::MemberRole,
+        grants: Vec<crate::vault::templates::TemplateGrant>,
+    ) -> Result<crate::vault::templates::RoleTemplate, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::templates::validate_template(name, role, &grants)?;
+        let root_key = self.unlocked().root_key.as_bytes();
+        let mut all = crate::vault::templates::load_templates(&self.path, root_key)?;
+        if all.len() >= crate::vault::templates::MAX_TEMPLATES {
+            return Err(VaultError::InvalidOperation(
+                "That vault has too many templates. Delete one first.".into(),
+            )
+            .into());
+        }
+        let template = crate::vault::templates::RoleTemplate {
+            id: uuid::Uuid::new_v4(),
+            name: name.trim().to_string(),
+            role,
+            grants,
+            created_at: crate::vault::templates::now_secs(),
+        };
+        all.push(template.clone());
+        crate::vault::templates::save_templates(&self.path, root_key, &all)?;
+        Ok(template)
+    }
+
+    /// Delete a role template (admin-gated). Pending invites keep their
+    /// embedded copy — the invite is the contract.
+    pub fn template_delete(&mut self, template_id: uuid::Uuid) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let root_key = self.unlocked().root_key.as_bytes();
+        let mut all = crate::vault::templates::load_templates(&self.path, root_key)?;
+        let before = all.len();
+        all.retain(|t| t.id != template_id);
+        if all.len() == before {
+            return Err(
+                VaultError::InvalidOperation("That template no longer exists.".into()).into(),
+            );
+        }
+        crate::vault::templates::save_templates(&self.path, root_key, &all)
+    }
+
+    /// Invite from a role template: the template's role must match the
+    /// requested role (fail closed on divergence), and the template's
+    /// grants are embedded in the invite at MINT time so approval
+    /// applies exactly what the admin picked — even if the template is
+    /// deleted before the joiner approves.
+    pub fn invite_create_with_template(
+        &mut self,
+        role: crate::vault::members::MemberRole,
+        transport_username: Option<String>,
+        template_id: uuid::Uuid,
+    ) -> Result<String, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let templates = crate::vault::templates::load_templates(
+            &self.path,
+            self.unlocked().root_key.as_bytes(),
+        )?;
+        let template = templates
+            .into_iter()
+            .find(|t| t.id == template_id)
+            .ok_or_else(|| {
+                BaluardError::from(VaultError::InvalidOperation(
+                    "That template no longer exists.".into(),
+                ))
+            })?;
+        if template.role != role {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "The picked role does not match that template.".into(),
+            )));
+        }
+        crate::vault::members::create_invite(
+            &self.path,
+            self.vault_id,
+            role,
+            None,
+            transport_username,
+            Some(crate::vault::templates::EmbeddedTemplate {
+                name: template.name,
+                grants: template.grants,
+            }),
+        )
+    }
+
     /// Publish (or re-publish) one cipher into a recipient's outbox.
     /// The entry is sealed from the CURRENT cipher state, so calling
     /// this after an edit IS the live mirror. Attachments and password
@@ -1061,6 +1169,7 @@ impl VaultHandle {
             role,
             None,
             transport_username,
+            None,
         )
     }
 
@@ -1397,6 +1506,19 @@ impl VaultHandle {
         // pass: the successor row is unbound, so the cap counts only
         // joined members.
         crate::vault::space::pair_gate(&self.path, effective_role)?;
+        // S3-4 review: an invite's embedded grants are bounded at mint
+        // (MAX_GRANTS_PER_TEMPLATE). More than that in a git-synced
+        // invite file means tampering — and the approval loop would run
+        // an unbounded number of encrypt+wrap operations under the
+        // vault lock. Refuse BEFORE any mutation so the invite and the
+        // queue entry stay intact.
+        if let Some(template) = &invite.template {
+            if template.grants.len() > crate::vault::templates::MAX_GRANTS_PER_TEMPLATE {
+                return Err(
+                    VaultError::InvalidOperation("This invite is not valid.".into()).into(),
+                );
+            }
+        }
         // S1a-5: an invite whose role disagrees with the admin-fixed
         // successor row is stale or tampered — refuse BEFORE consuming
         // so the invite survives for the admin to correct.
@@ -1626,6 +1748,34 @@ impl VaultHandle {
                 member_id: member.id,
             },
         )?;
+        // S3-4: apply the invite's embedded template grants. The invite
+        // is the contract (resolved at mint time), so a template
+        // deleted after minting changes nothing here. A collection that
+        // no longer exists is skipped inert — a grant must fail toward
+        // no access, never wedge the approval. Grants are applied AFTER
+        // the member row landed, so each grant mints the per-member
+        // key wrap (P1 groundwork) for the new member immediately.
+        if let Some(template) = &invite.template {
+            for spec in &template.grants {
+                let collection_id = spec.collection_id;
+                let expires_at = spec
+                    .expires_in_days
+                    .map(|days| crate::vault::templates::now_secs() + u64::from(days) * 86_400);
+                let grant = crate::vault::collections::CollectionGrant {
+                    member_id: member.id,
+                    access: spec.access,
+                    expires_at,
+                };
+                if let Err(e) = crate::vault::collections::upsert_grant(
+                    &self.path,
+                    &self.unlocked().space_group_key,
+                    &collection_id,
+                    grant,
+                ) {
+                    eprintln!("warning: template grant skipped: {e}");
+                }
+            }
+        }
         // S1b-1: activity log (best-effort).
         self.emit_share_event(
             crate::vault::events::ShareEventKind::MemberJoined,
@@ -5225,6 +5375,7 @@ impl VaultHandle {
         // pre-swap, re-encrypt under the new outbox key post-swap.
         let old_outboxes = self.outbox_list()?;
         let old_links = self.outbox_links()?;
+        let old_templates = self.templates_list()?;
         // S3-1 rotation coverage: decrypt collection content keys with the
         // outgoing SGK before the swap (rewrapped post-swap).
         let old_collection_keys = crate::vault::collections::collect_content_keys(
@@ -5289,6 +5440,11 @@ impl VaultHandle {
         // S2 IS-4b: outbox registries re-encrypted under the new key.
         crate::vault::outbox::save_owner_registry(&self.path, &self.outbox_key()?, &old_outboxes)?;
         crate::vault::outbox::save_links(&self.path, &self.outbox_key()?, &old_links)?;
+        crate::vault::templates::save_templates(
+            &self.path,
+            self.unlocked().root_key.as_bytes(),
+            &old_templates,
+        )?;
         crate::vault::collections::rewrap_from_plaintexts(
             &self.path,
             &self.unlocked().space_group_key,
@@ -5724,6 +5880,7 @@ impl VaultHandle {
         // pre-swap, re-encrypt under the new outbox key post-swap.
         let old_outboxes = self.outbox_list()?;
         let old_links = self.outbox_links()?;
+        let old_templates = self.templates_list()?;
         // S3-1 rotation coverage: decrypt collection content keys with the
         // outgoing SGK before the swap (rewrapped post-swap).
         let old_collection_keys = crate::vault::collections::collect_content_keys(
@@ -5787,6 +5944,11 @@ impl VaultHandle {
         // S2 IS-4b: outbox registries re-encrypted under the new key.
         crate::vault::outbox::save_owner_registry(&self.path, &self.outbox_key()?, &old_outboxes)?;
         crate::vault::outbox::save_links(&self.path, &self.outbox_key()?, &old_links)?;
+        crate::vault::templates::save_templates(
+            &self.path,
+            self.unlocked().root_key.as_bytes(),
+            &old_templates,
+        )?;
         crate::vault::collections::rewrap_from_plaintexts(
             &self.path,
             &self.unlocked().space_group_key,
@@ -6315,6 +6477,116 @@ mod tests {
             crate::vault::members::member_id_for_device(&owner_path, intro.device_id).unwrap();
         let row = crate::vault::members::member_file_by_id(&owner_path, member_id).unwrap();
         assert_eq!(row.identity_wrap_pubkey.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn invite_template_applies_grants_at_approval() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let sgk = handle.unlocked().space_group_key.clone();
+        let work = crate::vault::collections::create_collection(&owner_path, &sgk, "Work").unwrap();
+        let template = handle
+            .template_create(
+                "Contractor",
+                crate::vault::members::MemberRole::Viewer,
+                vec![crate::vault::templates::TemplateGrant {
+                    collection_id: work.id,
+                    access: crate::vault::collections::CollectionAccess::Read,
+                    expires_in_days: Some(30),
+                }],
+            )
+            .unwrap();
+        // Role divergence refuses (fail closed): the admin picked a
+        // Viewer template, an Editor role must not ride it.
+        assert!(
+            handle
+                .invite_create_with_template(
+                    crate::vault::members::MemberRole::Editor,
+                    None,
+                    template.id
+                )
+                .is_err()
+        );
+        let code = handle
+            .invite_create_with_template(
+                crate::vault::members::MemberRole::Viewer,
+                None,
+                template.id,
+            )
+            .unwrap();
+        // Deleting the template now must NOT change the pending invite:
+        // the invite is the contract.
+        handle.template_delete(template.id).unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        handle.approve_join(&intro_code).unwrap();
+        let intro = crate::vault::members::Introduction::decode(&intro_code).unwrap();
+        let member_id =
+            crate::vault::members::member_id_for_device(&owner_path, intro.device_id).unwrap();
+        let row = crate::vault::members::member_file_by_id(&owner_path, member_id).unwrap();
+        assert_eq!(row.role, crate::vault::members::MemberRole::Viewer);
+        // The grant landed from the embedded copy with a ~30-day window.
+        let now = crate::vault::templates::now_secs();
+        let grants = handle
+            .collections_list()
+            .unwrap()
+            .into_iter()
+            .find(|(id, _, _)| *id == work.id)
+            .map(|(_, _, grants)| grants)
+            .unwrap();
+        let grant = grants.iter().find(|g| g.member_id == member_id).unwrap();
+        assert_eq!(
+            grant.access,
+            crate::vault::collections::CollectionAccess::Read
+        );
+        let expires_at = grant.expires_at.expect("window");
+        assert!(expires_at > now + 29 * 86_400);
+        assert!(expires_at < now + 31 * 86_400);
+        // The per-member key wrap minted at approval (P1 groundwork).
+        assert!(
+            crate::vault::collections::grant_wrap_path(&owner_path, &work.id, &member_id).exists()
+        );
+    }
+
+    #[test]
+    fn templates_survive_root_key_rotation() {
+        let (dir, password) = create_test_vault();
+        let mut h = VaultHandle::open(dir.path()).unwrap();
+        h.unlock(&password).unwrap();
+        let t = h
+            .template_create("Auditor", crate::vault::members::MemberRole::Viewer, vec![])
+            .unwrap();
+        h.rotate_root_key().unwrap();
+        let listed = h.templates_list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, t.id);
+        assert_eq!(listed[0].name, "Auditor");
+        // Still usable after rotation (the store re-sealed under the
+        // new key).
+        h.template_delete(t.id).unwrap();
+        assert!(h.templates_list().unwrap().is_empty());
     }
 
     #[test]

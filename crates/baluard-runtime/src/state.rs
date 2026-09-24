@@ -2266,9 +2266,28 @@ impl VaultState {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
-        let code = handle
-            .invite_create(role, transport_username.clone())
-            .map_err(|e| e.to_string())?;
+        // S3-4: an optional role template. Present-but-unparseable
+        // refuses (fail closed) — silently dropping it would mint an
+        // invite with no grants where the admin picked a template. A
+        // non-STRING value (number, bool, object) is equally unparseable
+        // and refuses too.
+        let template_id = match v.get("template_id") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(raw)) if raw.trim().is_empty() => None,
+            Some(serde_json::Value::String(raw)) => Some(
+                uuid::Uuid::parse_str(raw.trim())
+                    .map_err(|_| "invalid 'template_id'; expected a UUID".to_string())?,
+            ),
+            Some(_) => return Err("invalid 'template_id'; expected a UUID".to_string()),
+        };
+        let code = match template_id {
+            Some(template_id) => handle
+                .invite_create_with_template(role, transport_username.clone(), template_id)
+                .map_err(|e| e.to_string())?,
+            None => handle
+                .invite_create(role, transport_username.clone())
+                .map_err(|e| e.to_string())?,
+        };
         let vault_id = handle.vault_id;
         // P8c: the seat grant is network I/O — release the exclusive vault
         // lock before touching the forge API so cipher reads/unlock never
@@ -3224,6 +3243,130 @@ impl VaultState {
             })
             .collect();
         Ok(serde_json::json!({ "collections": rows }).to_string())
+    }
+
+    /// S3-4: role templates. Create parses {name, role, grants:
+    /// [{collection_id, access, expires_in_days?}]} with a fail-closed
+    /// role parse (same discipline as members.invite).
+    pub async fn templates_create(&self, payload: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
+        let name = v["name"].as_str().unwrap_or_default().trim();
+        let role = match v["role"].as_str() {
+            Some("admin") => baluard_core::vault::members::MemberRole::Admin,
+            Some("editor") => baluard_core::vault::members::MemberRole::Editor,
+            Some("viewer") => baluard_core::vault::members::MemberRole::Viewer,
+            _ => {
+                return Err(
+                    "invalid or missing 'role'; expected 'admin', 'editor', or 'viewer'".into(),
+                );
+            }
+        };
+        let mut grants = Vec::new();
+        // Present-but-mistyped refuses (fail closed); absent means a
+        // role-only template with no grants.
+        match v.get("grants") {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::Array(rows)) => {
+                for row in rows {
+                    let collection_id = row["collection_id"]
+                        .as_str()
+                        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                        .ok_or("invalid 'grants[].collection_id'; expected a UUID")?;
+                    let access = match row["access"].as_str() {
+                        Some("read") => baluard_core::vault::collections::CollectionAccess::Read,
+                        Some("write") => baluard_core::vault::collections::CollectionAccess::Write,
+                        _ => {
+                            return Err(
+                                "invalid 'grants[].access'; expected 'read' or 'write'".into()
+                            );
+                        }
+                    };
+                    // A negative or non-integer value must refuse, not
+                    // silently become "no expiry" (permanent access).
+                    let expires_in_days = match row.get("expires_in_days") {
+                        None | Some(serde_json::Value::Null) => None,
+                        Some(serde_json::Value::Number(n)) => {
+                            let days = n.as_u64().ok_or(
+                                "'grants[].expires_in_days' must be a whole number of days.",
+                            )?;
+                            if days > u32::MAX as u64 {
+                                return Err("'grants[].expires_in_days' is too large.".into());
+                            }
+                            Some(days as u32)
+                        }
+                        Some(_) => {
+                            return Err(
+                                "'grants[].expires_in_days' must be a whole number of days.".into(),
+                            );
+                        }
+                    };
+                    grants.push(baluard_core::vault::templates::TemplateGrant {
+                        collection_id,
+                        access,
+                        expires_in_days,
+                    });
+                }
+            }
+            Some(_) => return Err("'grants' must be a list of collection entries.".into()),
+        }
+        let t = handle
+            .template_create(name, role, grants)
+            .map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({
+            "id": t.id.to_string(),
+            "name": t.name,
+            "role": t.role,
+            "grants": t.grants.iter().map(|g| serde_json::json!({
+                "collection_id": g.collection_id.to_string(),
+                "access": g.access,
+                "expires_in_days": g.expires_in_days,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string())
+    }
+
+    pub async fn templates_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let rows: Vec<serde_json::Value> = handle
+            .templates_list()
+            .map_err(|e| format!("{e}"))?
+            .into_iter()
+            .map(|t| {
+                serde_json::json!({
+                    "id": t.id.to_string(),
+                    "name": t.name,
+                    "role": t.role,
+                    "grants": t.grants.iter().map(|g| serde_json::json!({
+                        "collection_id": g.collection_id.to_string(),
+                        "access": g.access,
+                        "expires_in_days": g.expires_in_days,
+                    })).collect::<Vec<_>>(),
+                    "created_at": t.created_at,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "templates": rows }).to_string())
+    }
+
+    pub async fn template_delete(&self, template_id: &str) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".to_string());
+        }
+        let id = uuid::Uuid::parse_str(template_id)
+            .map_err(|_| "That template id is not valid.".to_string())?;
+        handle.template_delete(id).map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "deleted": true }).to_string())
     }
 
     pub async fn collection_rename(&self, id: &str, name: &str) -> Result<String, String> {

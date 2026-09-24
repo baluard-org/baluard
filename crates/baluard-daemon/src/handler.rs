@@ -313,6 +313,8 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "tag.rename",
     "tag.delete",
     "cipher.set_collection",
+    "templates.create",
+    "templates.delete",
     "collections.create",
     "collections.sweep",
     "collections.rename",
@@ -3658,6 +3660,30 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
+        "templates.create" => match state.templates_create(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "templates.list" => match state.templates_list().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "templates.delete" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let Some(id) = parsed["id"].as_str() else {
+                return err_response("Missing id in payload");
+            };
+            match state.template_delete(id).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
         "cipher.totp_code" => {
             if req.payload.is_empty() {
                 return err_response("Missing cipher UUID in payload");
@@ -5649,6 +5675,9 @@ mod tests {
             "collections.delete",
             "collections.grant",
             "collections.revoke",
+            "templates.create",
+            "templates.list",
+            "templates.delete",
         ] {
             assert!(action_requires_session_token(a), "{a} must be gated");
         }

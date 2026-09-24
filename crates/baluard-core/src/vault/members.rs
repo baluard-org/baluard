@@ -283,7 +283,14 @@ pub fn reset_member(
         identity_wrap_pubkey: None,
     };
     write_member(vault_path, &successor)?;
-    let code = create_invite(vault_path, vault_id, old.role, Some(successor_id), None)?;
+    let code = create_invite(
+        vault_path,
+        vault_id,
+        old.role,
+        Some(successor_id),
+        None,
+        None,
+    )?;
     Ok((successor_id, code))
 }
 
@@ -664,6 +671,12 @@ pub struct PendingInviteFile {
     /// = no transport seat managed (vault synced some other way).
     #[serde(default)]
     pub transport_username: Option<String>,
+    /// S3-4: the resolved template (name + collection grants) the
+    /// invite was minted from. Resolved at MINT time so the invite is
+    /// the contract: a template deleted later changes nothing for
+    /// pending invites. Applied by approve_join.
+    #[serde(default)]
+    pub template: Option<crate::vault::templates::EmbeddedTemplate>,
     /// Screen 6: unix seconds at creation — invites older than the
     /// provider's acceptance window surface as "likely expired" notices
     /// (re-invite = plain re-add). `0` on records written before this
@@ -783,6 +796,7 @@ pub fn create_invite(
     role: MemberRole,
     target_member: Option<Uuid>,
     transport_username: Option<String>,
+    template: Option<crate::vault::templates::EmbeddedTemplate>,
 ) -> Result<String, BaluardError> {
     // S1a-7 review: an Owner invite would mint a SECOND owner row at
     // approval, violating the single-owner invariant. Ownership changes
@@ -810,6 +824,7 @@ pub fn create_invite(
         secret_hash: sha256_hex(secret_hex.as_bytes()),
         target_member,
         transport_username,
+        template,
         created_at: crate::providers::types::now_secs(),
     };
     let dir = vault_path.join(INVITES_DIR);
@@ -1365,6 +1380,7 @@ mod tests {
             MemberRole::Editor,
             None,
             Some("gituser".into()),
+            None,
         )
         .unwrap();
         let raw = b64_decode(&code).unwrap();
@@ -1373,7 +1389,8 @@ mod tests {
         assert_eq!(pending.transport_username.as_deref(), Some("gituser"));
 
         // No username = None (invite-only sharing still works).
-        let code = create_invite(temp.path(), vault_id, MemberRole::Viewer, None, None).unwrap();
+        let code =
+            create_invite(temp.path(), vault_id, MemberRole::Viewer, None, None, None).unwrap();
         let raw = b64_decode(&code).unwrap();
         let invite: InviteCode = serde_json::from_slice(&raw).unwrap();
         let pending = read_pending_invite(temp.path(), invite.invite_id).unwrap();
@@ -1387,7 +1404,8 @@ mod tests {
         super::super::space::set_space_flag(vault, true).unwrap();
 
         // Admin never mints on a Space.
-        let err = create_invite(vault, Uuid::new_v4(), MemberRole::Admin, None, None).unwrap_err();
+        let err =
+            create_invite(vault, Uuid::new_v4(), MemberRole::Admin, None, None, None).unwrap_err();
         assert!(err.to_string().contains("editor or viewer"), "{err}");
 
         // Owner + one bound editor fills the pair; the next invite
@@ -1415,7 +1433,7 @@ mod tests {
             },
         )
         .unwrap();
-        create_invite(vault, Uuid::new_v4(), MemberRole::Editor, None, None).unwrap();
+        create_invite(vault, Uuid::new_v4(), MemberRole::Editor, None, None, None).unwrap();
         let member = MemberFile {
             id: Uuid::new_v4(),
             display_name: "Pair".into(),
@@ -1440,7 +1458,8 @@ mod tests {
             },
         )
         .unwrap();
-        let err = create_invite(vault, Uuid::new_v4(), MemberRole::Viewer, None, None).unwrap_err();
+        let err =
+            create_invite(vault, Uuid::new_v4(), MemberRole::Viewer, None, None, None).unwrap_err();
         assert!(err.to_string().contains("two people"), "{err}");
     }
 

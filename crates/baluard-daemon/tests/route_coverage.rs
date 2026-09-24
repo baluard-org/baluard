@@ -1030,6 +1030,115 @@ async fn collections_state_lifecycle_and_locked_rejection() {
 }
 
 #[tokio::test]
+async fn templates_state_lifecycle_and_fail_closed_parses() {
+    let (_dir, vault_path) = make_vault("templates-state");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    // NOT unlocked: every template surface refuses.
+    assert!(state.templates_list().await.is_err());
+    assert!(state.templates_create(r#"{"name":"X"}"#).await.is_err());
+
+    state.unlock(MASTER).await.expect("vault unlock");
+    // Fail-closed parses: a bad role, a bad grant access, and a
+    // malformed template_id on invite must refuse, never silently
+    // downgrade to a template-less invite.
+    assert!(
+        state
+            .templates_create(r#"{"name":"C","role":"wizard"}"#)
+            .await
+            .is_err()
+    );
+    assert!(state
+        .templates_create(r#"{"name":"C","role":"viewer","grants":[{"collection_id":"123e4567-e89b-12d3-a456-426614174000","access":"root"}]}"#)
+        .await
+        .is_err());
+    assert!(
+        state
+            .members_invite(r#"{"role":"viewer","template_id":"not-a-uuid"}"#)
+            .await
+            .is_err()
+    );
+    // S3-4 review: present-but-mistyped values refuse instead of
+    // silently downgrading (negative days → permanent access, a
+    // non-string template_id → template-less invite, non-array grants
+    // → empty template).
+    assert!(
+        state
+            .templates_create(
+                r#"{"name":"C","role":"editor","grants":[{"collection_id":"123e4567-e89b-12d3-a456-426614174000","access":"read","expires_in_days":-1}]}"#
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        state
+            .templates_create(r#"{"name":"C","role":"viewer","grants":"all"}"#)
+            .await
+            .is_err()
+    );
+    assert!(
+        state
+            .members_invite(r#"{"role":"viewer","template_id":42}"#)
+            .await
+            .is_err()
+    );
+    // A viewer template cannot carry write access: the member would
+    // pass locally and wedge their sync at git verification.
+    assert!(
+        state
+            .templates_create(
+                r#"{"name":"C","role":"viewer","grants":[{"collection_id":"123e4567-e89b-12d3-a456-426614174000","access":"write"}]}"#
+            )
+            .await
+            .is_err()
+    );
+
+    // Lifecycle: create, list, delete.
+    let created: serde_json::Value = serde_json::from_str(
+        &state
+            .templates_create(
+                r#"{"name":"Contractor","role":"viewer","grants":[{"collection_id":"123e4567-e89b-12d3-a456-426614174000","access":"read","expires_in_days":30}]}"#,
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let id = created["id"].as_str().expect("template id");
+    assert_eq!(created["role"], "viewer");
+    assert_eq!(created["grants"].as_array().unwrap().len(), 1);
+    let list: serde_json::Value =
+        serde_json::from_str(&state.templates_list().await.unwrap()).unwrap();
+    assert_eq!(list["templates"].as_array().unwrap().len(), 1);
+
+    // Invite from the template (role must match).
+    let invite_payload = serde_json::json!({
+        "role": "viewer",
+        "template_id": id,
+    });
+    state
+        .members_invite(invite_payload.to_string().as_str())
+        .await
+        .expect("templated invite");
+    // Role divergence refuses.
+    assert!(
+        state
+            .members_invite(
+                serde_json::json!({"role":"editor","template_id":id})
+                    .to_string()
+                    .as_str()
+            )
+            .await
+            .is_err()
+    );
+
+    state.template_delete(id).await.expect("delete");
+    let list: serde_json::Value =
+        serde_json::from_str(&state.templates_list().await.unwrap()).unwrap();
+    assert!(list["templates"].as_array().unwrap().is_empty());
+    assert!(state.template_delete("not-a-uuid").await.is_err());
+}
+
+#[tokio::test]
 async fn sharing_routes_reject_when_locked() {
     let (_dir, state) = make_vault("sharing-locked");
     let state = Arc::new(VaultState::new(state));
