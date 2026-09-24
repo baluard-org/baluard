@@ -3280,9 +3280,13 @@ impl VaultState {
                     let access = match row["access"].as_str() {
                         Some("read") => baluard_core::vault::collections::CollectionAccess::Read,
                         Some("write") => baluard_core::vault::collections::CollectionAccess::Write,
+                        Some("manage") => {
+                            baluard_core::vault::collections::CollectionAccess::Manage
+                        }
                         _ => {
                             return Err(
-                                "invalid 'grants[].access'; expected 'read' or 'write'".into()
+                                "invalid 'grants[].access'; expected 'read', 'write', or 'manage'"
+                                    .into(),
                             );
                         }
                     };

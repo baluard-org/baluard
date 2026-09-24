@@ -95,15 +95,19 @@ pub fn validate_template(
         .into());
     }
     // A Viewer can never author a cipher commit (the git policy floor
-    // is Editor), so a template pairing Viewer with a write grant would
-    // wedge that member's sync on their first commit.
+    // is Editor), so a template pairing Viewer with a write or manage
+    // grant would wedge that member's sync on their first commit.
     if role == MemberRole::Viewer
-        && grants
-            .iter()
-            .any(|g| matches!(g.access, crate::vault::collections::CollectionAccess::Write))
+        && grants.iter().any(|g| {
+            matches!(
+                g.access,
+                crate::vault::collections::CollectionAccess::Write
+                    | crate::vault::collections::CollectionAccess::Manage
+            )
+        })
     {
         return Err(VaultError::InvalidOperation(
-            "A viewer template cannot include write access.".into(),
+            "A viewer template cannot include write or manage access.".into(),
         )
         .into());
     }
