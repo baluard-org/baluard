@@ -16,6 +16,28 @@ use std::time::{Duration, Instant};
 
 const DAEMON_BIN: &str = env!("CARGO_BIN_EXE_baluard-daemon");
 
+/// Panic-safe kill: a test panic unwinds through Drop, so the daemon
+/// dies even when the inline cleanup below is skipped. (A hard-killed
+/// RUNNER is covered by BALUARD_DAEMON_DIE_WITH_PARENT instead.)
+struct ChildGuard(std::process::Child);
+
+impl ChildGuard {
+    fn kill_now(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+
+    fn take_stderr(&mut self) -> std::process::ChildStderr {
+        self.0.stderr.take().expect("daemon stderr piped")
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        self.kill_now();
+    }
+}
+
 fn encode_varint(mut value: u64, buf: &mut Vec<u8>) {
     loop {
         let byte = (value & 0x7F) as u8;
@@ -134,18 +156,38 @@ fn diag_vault_add_with_explicit_path_registry() {
 
     // 4. Spawn the daemon with stderr captured.
     let socket = data_dir.path().join("baluard.sock");
-    let mut child = Command::new(DAEMON_BIN)
-        .arg("--socket")
-        .arg(&socket)
-        .env("BALUARD_DATA_DIR", data_dir.path())
-        .env_remove("BALUARD_SOCKET")
-        .env("RUST_LOG", "debug")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn daemon");
-    let mut daemon_stderr = child.stderr.take().unwrap();
+    let mut child = ChildGuard(
+        Command::new(DAEMON_BIN)
+            .arg("--socket")
+            .arg(&socket)
+            .env("BALUARD_DATA_DIR", data_dir.path())
+            .env_remove("BALUARD_SOCKET")
+            // Belt in depth: the daemon exits when this runner dies.
+            .env("BALUARD_DAEMON_DIE_WITH_PARENT", "1")
+            .env("RUST_LOG", "debug")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn daemon"),
+    );
+    // Drain stderr in a background thread from the START (review F1):
+    // a piped child that fills the OS pipe buffer (~64KB Linux, ~16KB
+    // macOS) blocks on write(2) and would deadlock the request() calls
+    // below. The buffer is read only after the child is dead, so EOF
+    // closes the reader.
+    let daemon_stderr = child.take_stderr();
+    let stderr_buf = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let stderr_handle = {
+        let stderr_buf = std::sync::Arc::clone(&stderr_buf);
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = String::new();
+            let mut daemon_stderr = daemon_stderr;
+            let _ = daemon_stderr.read_to_string(&mut buf);
+            *stderr_buf.lock().unwrap() = buf;
+        })
+    };
 
     // 5. Wait for socket.
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -214,11 +256,10 @@ fn diag_vault_add_with_explicit_path_registry() {
     let tree_after_add = dump_tree(&vault_path, "");
     eprintln!("=== vault dir AFTER vault.add ===\n{}", tree_after_add);
 
-    // 10. Read daemon stderr and dump it.
-    let _ = child.kill();
-    let _ = child.wait();
-    let mut stderr_buf = String::new();
-    let _ = daemon_stderr.read_to_string(&mut stderr_buf);
+    // 10. Stop the daemon, then dump everything it logged.
+    child.kill_now();
+    stderr_handle.join().expect("stderr drain thread");
+    let stderr_buf = stderr_buf.lock().unwrap();
     eprintln!(
         "=== daemon stderr ({} bytes) ===\n{}",
         stderr_buf.len(),
