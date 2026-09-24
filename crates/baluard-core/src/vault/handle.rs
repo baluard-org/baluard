@@ -287,6 +287,68 @@ impl VaultHandle {
         }
     }
 
+    /// Delegated manage (S3-5): Owner/Admin pass structurally; a legacy
+    /// vault (no member directory) is admin-equivalent; otherwise the
+    /// device's member must hold a LIVE `manage` grant on this exact
+    /// collection. Mirrors the sync-layer authority (the policy admits
+    /// `meta/collections/<id>/**` writes from the parent tree's manage
+    /// grants), so a commit this gate allows is verifiable on every
+    /// peer and can never wedge the vault's sync.
+    fn assert_can_manage_collection(&self, id: Uuid) -> Result<(), BaluardError> {
+        if !self.path.join(crate::vault::members::MEMBERS_DIR).exists() {
+            return Ok(());
+        }
+        match crate::vault::members::member_role_for_device(&self.path, self.device_id) {
+            Some(crate::vault::members::MemberRole::Owner)
+            | Some(crate::vault::members::MemberRole::Admin) => Ok(()),
+            // S3-5 review F3: a demoted Viewer can carry a stale manage
+            // grant (role changes never strip grants). The sync layer's
+            // Editor floor would refuse their commits on every peer and
+            // wedge the vault, so the local gate refuses up front,
+            // grant or no grant.
+            Some(crate::vault::members::MemberRole::Viewer) => Err(VaultError::InvalidOperation(
+                "You do not have permission to manage that collection.".into(),
+            )
+            .into()),
+            Some(_) => {
+                let member_id =
+                    crate::vault::members::member_id_for_device(&self.path, self.device_id);
+                let manages = member_id.is_some_and(|m| {
+                    crate::vault::collections::list_collections(
+                        &self.path,
+                        &self.unlocked().space_group_key,
+                    )
+                    .unwrap_or_default()
+                    .into_iter()
+                    .any(|(f, _)| {
+                        f.id == id
+                            && f.grants.iter().any(|g| {
+                                g.member_id == m
+                                    && g.access
+                                        == crate::vault::collections::CollectionAccess::Manage
+                                    && !crate::vault::collections::is_grant_expired(
+                                        g,
+                                        crate::vault::collections::now_secs_pub(),
+                                    )
+                            })
+                    })
+                });
+                if manages {
+                    Ok(())
+                } else {
+                    Err(VaultError::InvalidOperation(
+                        "You do not have permission to manage that collection.".into(),
+                    )
+                    .into())
+                }
+            }
+            None => Err(VaultError::InvalidOperation(
+                "You do not have permission to manage that collection.".into(),
+            )
+            .into()),
+        }
+    }
+
     // ── S1a-3: contact cards + trust dial ──
 
     fn contacts_key(&self) -> Result<[u8; 32], BaluardError> {
@@ -1045,12 +1107,13 @@ impl VaultHandle {
         .collect())
     }
 
-    /// Rename a collection (admin-gated).
+    /// Rename a collection (admin, or the collection's delegated
+    /// manager — S3-5).
     pub fn collection_rename(&mut self, id: Uuid, name: &str) -> Result<(), BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        self.assert_can_manage_members()?;
+        self.assert_can_manage_collection(id)?;
         crate::vault::collections::rename_collection(
             &self.path,
             &self.unlocked().space_group_key,
@@ -1069,7 +1132,8 @@ impl VaultHandle {
         crate::vault::collections::delete_collection(&self.path, &id)
     }
 
-    /// Grant or update a member's access on a collection (admin-gated).
+    /// Grant or update a member's access on a collection (admin, or
+    /// the collection's delegated manager — S3-5).
     pub fn collection_grant(
         &mut self,
         id: Uuid,
@@ -1080,7 +1144,7 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        self.assert_can_manage_members()?;
+        self.assert_can_manage_collection(id)?;
         crate::vault::collections::upsert_grant(
             &self.path,
             &self.unlocked().space_group_key,
@@ -1094,12 +1158,13 @@ impl VaultHandle {
         Ok(())
     }
 
-    /// Revoke one member's access on a collection (admin-gated).
+    /// Revoke one member's access on a collection (admin, or the
+    /// collection's delegated manager — S3-5).
     pub fn collection_revoke(&mut self, id: Uuid, member_id: Uuid) -> Result<(), BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        self.assert_can_manage_members()?;
+        self.assert_can_manage_collection(id)?;
         crate::vault::collections::revoke_grant(
             &self.path,
             &self.unlocked().space_group_key,
@@ -3681,14 +3746,29 @@ impl VaultHandle {
         );
         if !(is_admin || !self.path.join("meta/members").is_dir()) {
             // member_dir absence = legacy vault, admin-equivalent.
+            // S3-5 review F3: a demoted Viewer with a stale write or
+            // manage grant must refuse here — peers apply the Editor
+            // floor and the resulting commit would wedge sync.
+            if matches!(
+                crate::vault::members::member_role_for_device(&self.path, self.device_id),
+                Some(crate::vault::members::MemberRole::Viewer)
+            ) {
+                return Err(VaultError::InvalidOperation(
+                    "You do not have write access to that collection.".into(),
+                )
+                .into());
+            }
             let has_grant = |cid: &Uuid| {
                 actor_member.is_some_and(|m| {
                     all.iter().any(|(f, _)| {
                         f.id == *cid
                             && f.grants.iter().any(|g| {
                                 g.member_id == m
-                                    && g.access
-                                        == crate::vault::collections::CollectionAccess::Write
+                                    && matches!(
+                                        g.access,
+                                        crate::vault::collections::CollectionAccess::Write
+                                            | crate::vault::collections::CollectionAccess::Manage
+                                    )
                                     && !crate::vault::collections::is_grant_expired(
                                         g,
                                         crate::vault::collections::now_secs_pub(),
@@ -7138,6 +7218,106 @@ mod tests {
             .is_err()
         );
         assert!(a.collection_revoke(fake, member).is_err());
+    }
+    #[test]
+    fn delegated_manager_gates_follow_manage_grant() {
+        let (dir_a, pw_a) = create_test_vault();
+        let device_id = {
+            let h = VaultHandle::open(dir_a.path()).unwrap();
+            h.device_id
+        };
+        let mut owner = VaultHandle::open(dir_a.path()).unwrap();
+        owner.unlock(&pw_a).unwrap();
+        // The owner mints two collections and a manage grant for a new
+        // Editor member BEFORE the session device rebinds to it.
+        let c1 = owner.collection_create("Servers").unwrap();
+        let c2 = owner.collection_create("Finance").unwrap();
+        let member = uuid::Uuid::new_v4();
+        std::fs::create_dir_all(dir_a.path().join("meta/members")).unwrap();
+        crate::vault::members::write_member(
+            dir_a.path(),
+            &crate::vault::members::MemberFile {
+                id: member,
+                display_name: "Manager Person".into(),
+                role: crate::vault::members::MemberRole::Editor,
+                trust: crate::vault::members::TrustLevel::Verified,
+                identity_signing_pubkey: None,
+                identity_signing_pubkey_previous: None,
+                identity_rotation_signature: None,
+                identity_rotated_at: None,
+                reset: None,
+                removed: None,
+                transport_username: None,
+                identity_wrap_pubkey: None,
+            },
+        )
+        .unwrap();
+        owner
+            .collection_grant(
+                c1,
+                member,
+                crate::vault::collections::CollectionAccess::Manage,
+                None,
+            )
+            .unwrap();
+        // Rebind the session device to the Editor/manager member.
+        crate::vault::members::write_device_binding(
+            dir_a.path(),
+            &crate::vault::members::DeviceBinding {
+                device_id,
+                member_id: member,
+            },
+        )
+        .unwrap();
+        let mut m = VaultHandle::open(dir_a.path()).unwrap();
+        m.unlock(&pw_a).unwrap();
+        let stranger = uuid::Uuid::new_v4();
+        std::fs::create_dir_all(dir_a.path().join("meta/members")).unwrap();
+        crate::vault::members::write_member(
+            dir_a.path(),
+            &crate::vault::members::MemberFile {
+                id: stranger,
+                display_name: "Stranger Person".into(),
+                role: crate::vault::members::MemberRole::Viewer,
+                trust: crate::vault::members::TrustLevel::Verified,
+                identity_signing_pubkey: None,
+                identity_signing_pubkey_previous: None,
+                identity_rotation_signature: None,
+                identity_rotated_at: None,
+                reset: None,
+                removed: None,
+                transport_username: None,
+                identity_wrap_pubkey: None,
+            },
+        )
+        .unwrap();
+        // Manager powers on the managed collection: grant, rename,
+        // revoke.
+        m.collection_grant(
+            c1,
+            stranger,
+            crate::vault::collections::CollectionAccess::Read,
+            None,
+        )
+        .unwrap();
+        m.collection_rename(c1, "Servers Renamed").unwrap();
+        m.collection_revoke(c1, stranger).unwrap();
+        // Outside the managed scope everything refuses: grants on the
+        // other collection, and create/delete stay admin-only.
+        assert!(
+            m.collection_grant(
+                c2,
+                stranger,
+                crate::vault::collections::CollectionAccess::Read,
+                None
+            )
+            .is_err()
+        );
+        assert!(m.collection_revoke(c2, stranger).is_err());
+        assert!(m.collection_rename(c2, "Nope").is_err());
+        assert!(m.collection_create("Nope").is_err());
+        assert!(m.collection_delete(c1).is_err());
+        assert!(m.collection_delete(c2).is_err());
     }
     #[test]
     fn outbox_resync_survives_purged_source() {

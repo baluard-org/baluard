@@ -3436,7 +3436,8 @@ impl SyncEngine {
             let diff = repo
                 .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
                 .map_err(|e| SyncError::Git(format!("net diff: {e}")))?;
-            let scope = Self::collection_scope_for_tree(repo, &tree, member_id)?;
+            let scope =
+                Self::collection_scope_for_tree(repo, &tree, parent_tree.as_ref(), member_id)?;
             for delta in diff.deltas() {
                 Self::check_delta_path(repo, &delta, roster, signer, member_id, role, &scope)?;
             }
@@ -3497,6 +3498,21 @@ impl SyncEngine {
                 }
                 conflicted.sort();
                 conflicted.dedup();
+                // S3-5 review F4: the strip loop authorizes the REMOVAL
+                // of each conflicted path. It previously used the
+                // unscoped authorize(), so a manager resolving a
+                // conflict that touches their collection's def or a
+                // grantee resolving a cipher conflict in a collection
+                // dir would be refused and wedge sync. Build the same
+                // scope the residue pass uses (authority from the first
+                // parent) and authorize removals against it.
+                let strip_parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+                let strip_scope = Self::collection_scope_for_tree(
+                    repo,
+                    &tree,
+                    strip_parent_tree.as_ref(),
+                    member_id,
+                )?;
                 for p in &conflicted {
                     // Exact removal: remove_all treats its argument as a
                     // glob/directory pathspec and would also strip
@@ -3506,8 +3522,15 @@ impl SyncEngine {
                         .map_err(|e| SyncError::Git(format!("strip conflict: {e}")))?;
                 }
                 for p in &conflicted {
-                    crate::sync::policy::authorize(signer, member_id, role, &p.to_string_lossy())
-                        .map_err(BaluardError::from)?;
+                    crate::sync::policy::authorize_scoped(
+                        signer,
+                        member_id,
+                        role,
+                        &p.to_string_lossy(),
+                        &strip_scope,
+                        true,
+                    )
+                    .map_err(BaluardError::from)?;
                 }
             }
             let expected_oid = idx
@@ -3519,7 +3542,15 @@ impl SyncEngine {
             let residue_diff = repo
                 .diff_tree_to_tree(Some(&expected), Some(&tree), None)
                 .map_err(|e| SyncError::Git(format!("merge residue diff: {e}")))?;
-            let scope = Self::collection_scope_for_tree(repo, &tree, member_id)?;
+            // Delegated-manage authority comes from the first parent:
+            // the pre-merge head the merger built on.
+            let merge_parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+            let scope = Self::collection_scope_for_tree(
+                repo,
+                &tree,
+                merge_parent_tree.as_ref(),
+                member_id,
+            )?;
             for delta in residue_diff.deltas() {
                 Self::check_delta_path(repo, &delta, roster, signer, member_id, role, &scope)?;
             }
@@ -3648,7 +3679,11 @@ impl SyncEngine {
             }
             .into());
         }
-        crate::sync::policy::authorize_scoped(signer, member, role, &path, scope)
+        // S3-5 review F2: the manage relaxation must never admit def
+        // deletions, so the policy layer sees whether this delta removes
+        // the path.
+        let is_deletion = delta.status() == git2::Delta::Deleted;
+        crate::sync::policy::authorize_scoped(signer, member, role, &path, scope, is_deletion)
             .map_err(BaluardError::from)
     }
 
@@ -3658,14 +3693,20 @@ impl SyncEngine {
     /// meta/collections/** (an attacker cannot forge a definition:
     /// those files are Admin-only per the policy table, so a non-admin
     /// referencing a collection dir must reference one an admin already
-    /// defined in the same tree).
+    /// defined in the same tree; a delegated manager's def edit is
+    /// admitted separately via `managed`, whose authority comes from
+    /// `parent_tree` — the grants that existed BEFORE the commit — so a
+    /// member cannot self-grant manage in the same commit). Manage
+    /// implies write: a manager may move ciphers in their collection.
     fn collection_scope_for_tree(
         repo: &Repository,
         tree: &git2::Tree<'_>,
+        parent_tree: Option<&git2::Tree<'_>>,
         signer_member: Option<&str>,
     ) -> Result<crate::sync::policy::CollectionScope, BaluardError> {
         let mut dirs: Vec<(String, uuid::Uuid)> = Vec::new();
         let mut writable: Vec<uuid::Uuid> = Vec::new();
+        let mut managed: Vec<uuid::Uuid> = Vec::new();
         let member = signer_member.and_then(|m| uuid::Uuid::parse_str(m).ok());
         let entry = tree.get_path(std::path::Path::new("meta/collections"));
         if let Ok(dir_entry) = entry {
@@ -3688,6 +3729,15 @@ impl SyncEngine {
                 if file.format != 1 {
                     continue;
                 }
+                // S3-5 review F1 (Blocker): bind the claimed id to the
+                // file name. Without this pin a manager of collection A
+                // could rewrite their authorized def's inner id to
+                // collection B and inherit B's scope in the next
+                // commit's parent-tree walk. Same rule as
+                // load_dir_map/list_collections.
+                if e.name() != Some(&format!("{}.json", file.id)) {
+                    continue;
+                }
                 if let Some(d) = crate::vault::collections::collection_dir(&file) {
                     dirs.push((d, file.id));
                 }
@@ -3704,7 +3754,56 @@ impl SyncEngine {
             // No collections directory in this tree: legacy/personal.
             return Ok(crate::sync::policy::CollectionScope::none());
         }
-        Ok(crate::sync::policy::CollectionScope { dirs, writable })
+        // S3-5 delegated manage: authority reads from the PARENT tree —
+        // the grants that existed before this commit — so a member
+        // cannot self-grant manage in the commit being verified. Manage
+        // implies write on the same collection (a manager may move
+        // ciphers in).
+        if let Some(parent) = parent_tree {
+            if let Some(m) = member {
+                if let Ok(dir_entry) = parent.get_path(std::path::Path::new("meta/collections")) {
+                    if let Ok(sub) = repo.find_tree(dir_entry.id()) {
+                        for e in sub.iter() {
+                            let Some(name) = e.name() else { continue };
+                            if !name.ends_with(".json") {
+                                continue;
+                            }
+                            let Ok(blob) = repo.find_blob(e.id()) else {
+                                continue;
+                            };
+                            let Ok(file) = serde_json::from_slice::<
+                                crate::vault::collections::CollectionFile,
+                            >(blob.content()) else {
+                                continue;
+                            };
+                            if file.format != 1 {
+                                continue;
+                            }
+                            // S3-5 review F1: same id/name pin as the
+                            // own-tree loop above.
+                            if e.name() != Some(&format!("{}.json", file.id)) {
+                                continue;
+                            }
+                            if file.grants.iter().any(|g| {
+                                g.member_id == m
+                                    && g.access
+                                        == crate::vault::collections::CollectionAccess::Manage
+                            }) {
+                                managed.push(file.id);
+                                if !writable.contains(&file.id) {
+                                    writable.push(file.id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(crate::sync::policy::CollectionScope {
+            dirs,
+            writable,
+            managed,
+        })
     }
 
     /// S1a-4: a non-admin member's own record delta is allowed iff ONLY

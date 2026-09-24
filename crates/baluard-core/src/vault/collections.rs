@@ -48,13 +48,19 @@ const CK_WRAP_INFO: &[u8] = b"baluard-ck-wrap-v1";
 const KEY_PURPOSE: &str = "collection-key-v1";
 const NAME_PURPOSE: &str = "collection-name-v1";
 
-/// A member's access level on a collection (§3 D: "read or write").
+/// A member's access level on a collection. `manage` is delegated
+/// administration (§4.7 ladder): the holder can grant and revoke other
+/// members on that one collection without being an admin. Manage is
+/// mintable to Editor+ only — a Viewer can never author a cipher or
+/// meta commit, so manage access would wedge their sync.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CollectionAccess {
     #[serde(rename = "read")]
     Read,
     #[serde(rename = "write")]
     Write,
+    #[serde(rename = "manage")]
+    Manage,
 }
 
 /// One grant row. `expires_at` (unix seconds): the admin client executes
@@ -670,13 +676,16 @@ pub fn upsert_grant(
     let (mut file, _) = open_collection(vault_path, sgk, collection_id)?;
     let member = live_member(vault_path, &grant.member_id)?;
     // Path-membership rule (S3-2): a Viewer can never author a cipher
-    // commit (Editor floor in the git policy), so a write grant to a
-    // Viewer would pass locally and wedge their sync at verification.
-    if matches!(grant.access, CollectionAccess::Write)
-        && member.role == crate::vault::members::MemberRole::Viewer
+    // or meta commit (Editor floor in the git policy), so a write or
+    // manage grant to a Viewer would pass locally and wedge their sync
+    // at verification.
+    if matches!(
+        grant.access,
+        CollectionAccess::Write | CollectionAccess::Manage
+    ) && member.role == crate::vault::members::MemberRole::Viewer
     {
         return Err(VaultError::InvalidOperation(
-            "Viewers cannot be given write access to a collection.".into(),
+            "Viewers cannot be given write or manage access to a collection.".into(),
         )
         .into());
     }
@@ -973,6 +982,65 @@ mod tests {
         assert_eq!(name, "Servers");
         let err = revoke_grant(&path, &sgk, &file.id, &member).unwrap_err();
         assert!(err.to_string().contains("no access"));
+    }
+
+    #[test]
+    fn manage_grant_roundtrip_and_viewer_mint_refused() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let file = create_collection(&path, &sgk, "Servers").unwrap();
+        // S3-5: an Editor can hold delegated manage; update in place and
+        // revoke all work through the normal grant machinery.
+        let editor = Uuid::new_v4();
+        std::fs::create_dir_all(path.join("meta/members")).unwrap();
+        members::write_member(&path, &live_member_row(editor)).unwrap();
+        let granted = upsert_grant(
+            &path,
+            &sgk,
+            &file.id,
+            CollectionGrant {
+                member_id: editor,
+                access: CollectionAccess::Manage,
+                expires_at: Some(2_000_000_000),
+            },
+        )
+        .unwrap();
+        assert_eq!(granted.grants[0].access, CollectionAccess::Manage);
+        let updated = upsert_grant(
+            &path,
+            &sgk,
+            &file.id,
+            CollectionGrant {
+                member_id: editor,
+                access: CollectionAccess::Manage,
+                expires_at: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.grants.len(), 1);
+        revoke_grant(&path, &sgk, &file.id, &editor).unwrap();
+
+        // A Viewer can hold neither write nor manage: they can never
+        // author the resulting meta/ciphers commits, so the grant would
+        // wedge their sync at peer verification.
+        let mut viewer_row = live_member_row(Uuid::new_v4());
+        viewer_row.role = crate::vault::members::MemberRole::Viewer;
+        std::fs::create_dir_all(path.join("meta/members")).unwrap();
+        members::write_member(&path, &viewer_row).unwrap();
+        for access in [CollectionAccess::Write, CollectionAccess::Manage] {
+            let err = upsert_grant(
+                &path,
+                &sgk,
+                &file.id,
+                CollectionGrant {
+                    member_id: viewer_row.id,
+                    access,
+                    expires_at: None,
+                },
+            )
+            .unwrap_err();
+            assert!(err.to_string().contains("Viewers cannot be given"), "{err}");
+        }
     }
 
     #[test]

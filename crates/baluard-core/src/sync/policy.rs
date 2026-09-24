@@ -194,6 +194,12 @@ fn pattern_matches(pattern: &[&str], path: &[&str], member: Option<&str>) -> boo
 pub struct CollectionScope {
     pub dirs: Vec<(String, Uuid)>,
     pub writable: Vec<Uuid>,
+    /// S3-5 delegated manage: collections whose def (grant list) the
+    /// signer may edit — the ids holding a `manage` grant for the
+    /// signer in the PARENT tree. Authority must pre-date the edit:
+    /// reading the commit's own tree would let a member self-grant
+    /// manage in the same commit.
+    pub managed: Vec<Uuid>,
 }
 
 impl CollectionScope {
@@ -201,6 +207,7 @@ impl CollectionScope {
         CollectionScope {
             dirs: Vec::new(),
             writable: Vec::new(),
+            managed: Vec::new(),
         }
     }
 }
@@ -222,6 +229,7 @@ pub fn authorize_scoped(
     role: CommitRole,
     path: &str,
     scope: &CollectionScope,
+    is_deletion: bool,
 ) -> Result<(), SyncError> {
     let deny = || SyncError::PolicyViolation {
         device: signer.to_string(),
@@ -237,6 +245,46 @@ pub fn authorize_scoped(
             return Err(deny());
         }
         // Fall through: the member-role rows still gate the signer.
+    }
+    if segs.first() == Some(&"meta") && segs.get(1) == Some(&"collections") {
+        // Own-wrap self-service (P1 groundwork, review S3-5): a member
+        // rotating their identity rewrites their OWN per-member key
+        // wrap. Structural rule at any role, like the members/devices
+        // self-rule — without it every grantee's identity rotation
+        // would wedge sync on the Admin meta/collections row.
+        if segs.len() == 4
+            && segs[3].ends_with(".wrap")
+            && segs[3].strip_suffix(".wrap") == member
+            && segs[2].parse::<Uuid>().is_ok()
+        {
+            return Ok(());
+        }
+        // S3-5 delegated manage: a signer holding a manage grant (from
+        // the parent tree) may edit that collection's def and rewrite
+        // or remove member wraps. Shapes are exact — the def is
+        // meta/collections/<uuid>.json, wraps are one segment deeper —
+        // so nothing can hide under loose subpaths. Def DELETION is
+        // never delegated (it kills the collection's grant list; that
+        // stays admin-only), wrap deletions are (revoke removes them).
+        // The Editor floor still applies — a Viewer can never author
+        // these commits. Everything else on meta/collections/** stays
+        // Admin via the table below.
+        if segs.len() == 3 && segs[2].ends_with(".json") && !is_deletion {
+            if let Some(raw) = segs[2].strip_suffix(".json") {
+                if let Ok(cid) = raw.parse::<Uuid>() {
+                    if scope.managed.contains(&cid) && RequiredRole::Editor.admits(role) {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        if segs.len() == 4 && segs[3].ends_with(".wrap") {
+            if let Ok(cid) = segs[2].parse::<Uuid>() {
+                if scope.managed.contains(&cid) && RequiredRole::Editor.admits(role) {
+                    return Ok(());
+                }
+            }
+        }
     }
     for row in TABLE {
         let pattern: Vec<&str> = row.pattern.split('/').collect();
@@ -258,7 +306,7 @@ pub fn authorize(
     role: CommitRole,
     path: &str,
 ) -> Result<(), SyncError> {
-    authorize_scoped(signer, member, role, path, &CollectionScope::none())
+    authorize_scoped(signer, member, role, path, &CollectionScope::none(), false)
 }
 
 #[cfg(test)]
@@ -286,7 +334,18 @@ mod tests {
         CollectionScope {
             dirs: vec![(dir.to_string(), cid)],
             writable: writable.to_vec(),
+            managed: Vec::new(),
         }
+    }
+
+    // Test-module wrappers binding the signer pair; `del` picks the
+    // deletion variant of the policy check.
+    fn allowed(path: &str, role: CommitRole, scope: &CollectionScope) -> Result<(), SyncError> {
+        authorize_scoped(DA, Some(MA), role, path, scope, false)
+    }
+
+    fn allowed_del(path: &str, role: CommitRole, scope: &CollectionScope) -> Result<(), SyncError> {
+        authorize_scoped(DA, Some(MA), role, path, scope, true)
     }
 
     #[test]
@@ -295,58 +354,48 @@ mod tests {
         let other = uuid::Uuid::new_v4();
         let path = format!("ciphers/deadbeefdeadbeefdeadbeefdeadbeef/{MA}.enc");
         // Editor with a write grant: allowed.
-        authorize_scoped(
-            DA,
-            Some(MA),
-            CommitRole::Editor,
+        allowed(
             &path,
+            CommitRole::Editor,
             &scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[cid]),
         )
         .unwrap();
         // Editor without a grant: denied.
         assert!(
-            authorize_scoped(
-                DA,
-                Some(MA),
-                CommitRole::Editor,
+            allowed(
                 &path,
-                &scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[]),
+                CommitRole::Editor,
+                &scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[])
             )
             .is_err()
         );
         // Unknown dir: denied even for an Owner (deny-by-default keeps
         // forged directories out) — the scope map has a different name.
         assert!(
-            authorize_scoped(
-                DA,
-                Some(MA),
-                CommitRole::Owner,
+            allowed(
                 &path,
-                &scoped("cafebabecafebabecafebabecafebabe", cid, &[cid]),
+                CommitRole::Owner,
+                &scoped("cafebabecafebabecafebabecafebabe", cid, &[cid])
             )
             .is_err()
         );
         // A grant does not lift the role floor: a Viewer with write
         // grant still cannot write ciphers.
         assert!(
-            authorize_scoped(
-                DA,
-                Some(MA),
-                CommitRole::Viewer,
+            allowed(
                 &path,
-                &scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[cid]),
+                CommitRole::Viewer,
+                &scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[cid])
             )
             .is_err()
         );
         // A different collection's id in the writable set does not open
         // this dir.
         assert!(
-            authorize_scoped(
-                DA,
-                Some(MA),
-                CommitRole::Editor,
+            allowed(
                 &path,
-                &scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[other]),
+                CommitRole::Editor,
+                &scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[other])
             )
             .is_err()
         );
@@ -356,15 +405,76 @@ mod tests {
         // 3-segment ciphers path is still denied: the empty scope has no
         // known dirs, so nothing can hide behind a nested path.
         assert!(
-            authorize_scoped(
-                DA,
-                Some(MA),
-                CommitRole::Editor,
+            allowed(
                 "ciphers/x.enc/inner.enc",
-                &CollectionScope::none(),
+                CommitRole::Editor,
+                &CollectionScope::none()
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn delegated_manage_admits_meta_collections_for_managers_only() {
+        let cid = uuid::Uuid::new_v4();
+        let other = uuid::Uuid::new_v4();
+        let def = format!("meta/collections/{cid}.json");
+        let wrap = format!("meta/collections/{cid}/{}.wrap", uuid::Uuid::new_v4());
+        let mut scope = scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[cid]);
+        // No manage grant: even an Owner hits the Admin table row...
+        assert!(allowed(&def, CommitRole::Editor, &scope).is_err());
+        // ...while an actual Admin passes via the table.
+        allowed(&def, CommitRole::Admin, &scope).unwrap();
+
+        // S3-5: a manager may edit the def and the per-member wraps of
+        // the managed collection (Editor floor intact).
+        scope.managed = vec![cid];
+        allowed(&def, CommitRole::Editor, &scope).unwrap();
+        allowed(&wrap, CommitRole::Editor, &scope).unwrap();
+        // The Viewer floor is not lifted by manage (a Viewer can never
+        // hold one anyway — the mint gate refuses — but the policy must
+        // not rely on that).
+        assert!(allowed(&def, CommitRole::Viewer, &scope).is_err());
+        // A different collection's def stays out of reach.
+        let other_def = format!("meta/collections/{other}.json");
+        assert!(allowed(&other_def, CommitRole::Editor, &scope).is_err());
+        // A non-UUID entry under meta/collections is not a collection
+        // def: falls through to the Admin row and is denied.
+        assert!(allowed("meta/collections/notes.txt", CommitRole::Editor, &scope).is_err());
+        // Legacy/personal scope (empty) denies everything on the path.
+        assert!(allowed(&def, CommitRole::Editor, &CollectionScope::none()).is_err());
+    }
+
+    #[test]
+    fn manage_review_fixes_deletion_own_wrap_and_shapes() {
+        let cid = uuid::Uuid::new_v4();
+        let def = format!("meta/collections/{cid}.json");
+        let wrap = format!("meta/collections/{cid}/{MA}.wrap");
+        let mut scope = scoped("deadbeefdeadbeefdeadbeefdeadbeef", cid, &[cid]);
+        scope.managed = vec![cid];
+
+        // Review F2: def DELETION is never delegated — removing it kills
+        // the collection's grant list. Wrap deletion stays within manage
+        // authority (revoke removes wraps).
+        assert!(allowed_del(&def, CommitRole::Editor, &scope).is_err());
+        allowed_del(&wrap, CommitRole::Editor, &scope).unwrap();
+
+        // Review F5: a member's OWN wrap is self-service at any role —
+        // identity rotation rewrites it, and the Admin row would
+        // otherwise wedge every grantee's rotation. No manage grant
+        // needed (empty scope); someone else's wrap is not self-service.
+        allowed(&wrap, CommitRole::Viewer, &CollectionScope::none()).unwrap();
+        let other_wrap = format!("meta/collections/{cid}/{}.wrap", uuid::Uuid::new_v4());
+        assert!(allowed(&other_wrap, CommitRole::Editor, &CollectionScope::none()).is_err());
+
+        // Review F6: exact shapes only. Loose subpaths and extension
+        // games fall through to the Admin row.
+        let loose = format!("meta/collections/{cid}/sub/payload.enc");
+        assert!(allowed(&loose, CommitRole::Editor, &scope).is_err());
+        let deep_def = format!("meta/collections/{cid}.json/extra");
+        assert!(allowed(&deep_def, CommitRole::Editor, &scope).is_err());
+        let no_ext = format!("meta/collections/{cid}");
+        assert!(allowed(&no_ext, CommitRole::Editor, &scope).is_err());
     }
 
     #[test]
