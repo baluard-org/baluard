@@ -36,6 +36,10 @@ pub enum ShareEventKind {
     OwnershipTransferred,
     IdentityRotated,
     ContactTrustReset,
+    /// S3-6: a JIT access ask was approved (grant issued).
+    AccessGranted,
+    /// S3-6: a JIT access ask was denied.
+    AccessDenied,
 }
 
 /// One activity entry: a machine-readable kind plus a human sentence
