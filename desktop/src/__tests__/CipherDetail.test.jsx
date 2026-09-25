@@ -47,6 +47,8 @@ const vaultMock = {
   refreshCiphers: vi.fn().mockResolvedValue(undefined),
   ciphers: vi.fn(() => []),
   deleteCipher: vi.fn().mockResolvedValue(undefined),
+  collections: vi.fn(() => []),
+  refreshCollections: vi.fn().mockResolvedValue(undefined),
 };
 vi.mock("../context/VaultContext.jsx", () => ({
   useVault: () => vaultMock,

@@ -675,11 +675,26 @@ impl VaultState {
         }
 
         // Trash
-        let trash_ids = handle.list_trash_ids().map_err(|e| format!("{e}"))?;
-        let mut trash = Vec::with_capacity(trash_ids.len());
-        for id in &trash_ids {
+        let trash_entries = handle.list_trash_entries().map_err(|e| format!("{e}"))?;
+        let mut trash = Vec::with_capacity(trash_entries.len());
+        for (id, collection_id) in &trash_entries {
             match handle.get_cipher(*id) {
-                Ok(CipherRead::Decrypted(ref c)) => trash.push(cipher_to_json(c)),
+                Ok(CipherRead::Decrypted(ref c)) => {
+                    let mut json = cipher_to_json(c);
+                    let username = match &c.kind {
+                        baluard_core::types::CipherKind::Login(data) => data.username.clone(),
+                        _ => None,
+                    };
+                    json["_meta"] = serde_json::json!({
+                        "id": id.to_string(),
+                        "name": c.name,
+                        "cipher_type": c.kind.cipher_type(),
+                        "favorite": c.favorite,
+                        "username": username,
+                        "collection_id": collection_id,
+                    });
+                    trash.push(json);
+                }
                 _ => continue,
             }
         }
@@ -4225,9 +4240,11 @@ impl VaultState {
     pub async fn list_trash_meta(&self) -> Result<Vec<baluard_core::types::CipherMeta>, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
-        let ids = handle.list_trash_ids().map_err(|e| format!("{e}"))?;
-        let mut metas = Vec::with_capacity(ids.len());
-        for id in &ids {
+        // §4.8-5: trash rows carry their origin collection so the
+        // trash view can badge entries correctly.
+        let entries = handle.list_trash_entries().map_err(|e| format!("{e}"))?;
+        let mut metas = Vec::with_capacity(entries.len());
+        for (id, collection_id) in &entries {
             match handle.get_cipher(*id) {
                 Ok(CipherRead::Decrypted(ref c)) => {
                     let username = match &c.kind {
@@ -4248,9 +4265,7 @@ impl VaultState {
                         updated_at: c.updated_at,
                         archived: c.archived,
                         tags: c.tags.clone(),
-                        // Trash view has no collection mapping yet; the
-                        // core restore path resolves the origin domain.
-                        collection_id: None,
+                        collection_id: *collection_id,
                     });
                 }
                 _ => continue, // undecryptable trash blob: skip

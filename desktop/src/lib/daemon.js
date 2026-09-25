@@ -19,10 +19,13 @@ const MUTATION_ACTIONS = new Set([
   "tag.create", "tag.rename", "tag.delete", "tag.rebuild_index",
   "settings.set", "vault.avatar.set", "device.revoke",
   "passkey.finish_register", "passkey.delete", "passkey.rename", "passkey.finish_assert",
+  "cipher.set_collection", "collections.create", "collections.rename", "collections.delete",
+  "collections.grant", "collections.revoke", "collections.catalog_set",
 ]);
 
 async function daemon(action, payload = "", slug = null) {
-  const args = { action, payload };
+  const payloadStr = typeof payload === "string" ? payload : JSON.stringify(payload ?? "");
+  const args = { action, payload: payloadStr };
   if (slug) args.slug = slug;
   const res = await invoke("daemon_request", args);
   if (!res.success) {

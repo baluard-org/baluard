@@ -5461,41 +5461,67 @@ impl VaultHandle {
 
     /// List deleted cipher IDs in trash.
     pub fn list_trash_ids(&self) -> Result<Vec<Uuid>, BaluardError> {
+        Ok(self
+            .list_trash_entries()?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect())
+    }
+
+    /// Trash rows with their origin collection, when the entry was
+    /// trashed from a collection directory (§4.8-5). A row sitting
+    /// under an unknown or vanished subdirectory maps to None; permanent
+    /// purge still cleans it up.
+    pub fn list_trash_entries(&self) -> Result<Vec<(Uuid, Option<Uuid>)>, BaluardError> {
         let trash_dir = self.path.join("trash");
         if !trash_dir.exists() {
             return Ok(Vec::new());
         }
+        let dirs = crate::vault::collections::load_dir_map(&self.path);
 
-        let mut ids = Vec::new();
+        let mut rows = Vec::new();
         let mut seen = std::collections::HashSet::new();
+
+        // Flat files first: matches trash_file_path resolution priority.
+        for entry in std::fs::read_dir(&trash_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if let Some(id_str) = name.strip_suffix(".enc") {
+                    if let Ok(id) = Uuid::parse_str(id_str) {
+                        if seen.insert(id) {
+                            rows.push((id, None));
+                        }
+                    }
+                }
+            }
+        }
+
         for entry in std::fs::read_dir(&trash_dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
                 // S3-7c: collection ciphers trash into trash/<dir>/.
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                let cid = dirs
+                    .iter()
+                    .find(|(name, _)| *name == dir_name)
+                    .map(|(_, id)| *id);
                 for inner in std::fs::read_dir(&path)?.flatten() {
                     if let Some(id_str) = inner.file_name().to_string_lossy().strip_suffix(".enc") {
                         if let Ok(id) = Uuid::parse_str(id_str) {
                             // Review F10: the same uuid can sit at both
                             // trash shapes; keep the list deduplicated.
                             if seen.insert(id) {
-                                ids.push(id);
+                                rows.push((id, cid));
                             }
                         }
                     }
                 }
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if let Some(id_str) = name.strip_suffix(".enc") {
-                if let Ok(id) = Uuid::parse_str(id_str) {
-                    if seen.insert(id) {
-                        ids.push(id);
-                    }
-                }
             }
         }
-        Ok(ids)
+        Ok(rows)
     }
 
     /// Restore a deleted cipher from trash back to active. S3-7c: trash
@@ -9424,6 +9450,68 @@ mod tests {
             }
             CipherRead::Decrypted(_) => panic!("expected locked metadata"),
         }
+    }
+
+    #[test]
+    fn trash_entries_carry_origin_collection() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let cid = handle.collection_create("Moves").unwrap();
+        let scoped = handle
+            .add_cipher_in_collection(
+                &CipherInput {
+                    name: "Scoped".into(),
+                    folder_id: None,
+                    collection_id: None,
+                    kind: crate::types::CipherKind::SecureNote,
+                    favorite: false,
+                    notes: None,
+                    custom_fields: vec![],
+                    created_at: None,
+                    password_history: vec![],
+                    attachments: vec![],
+                    archived: false,
+                    tags: vec![],
+                    reprompt: false,
+                },
+                Some(cid),
+            )
+            .unwrap();
+        let flat = handle
+            .add_cipher(&CipherInput {
+                name: "Flat".into(),
+                folder_id: None,
+                collection_id: None,
+                kind: crate::types::CipherKind::SecureNote,
+                favorite: false,
+                notes: None,
+                custom_fields: vec![],
+                created_at: None,
+                password_history: vec![],
+                attachments: vec![],
+                archived: false,
+                tags: vec![],
+                reprompt: false,
+            })
+            .unwrap();
+
+        handle.delete_cipher(scoped).unwrap();
+        handle.delete_cipher(flat).unwrap();
+
+        let rows = handle.list_trash_entries().unwrap();
+        assert_eq!(rows.len(), 2);
+        let scoped_row = rows.iter().find(|(id, _)| *id == scoped).unwrap();
+        assert_eq!(scoped_row.1, Some(cid));
+        let flat_row = rows.iter().find(|(id, _)| *id == flat).unwrap();
+        assert_eq!(flat_row.1, None);
+
+        // Same-domain restore keeps working off the same walk.
+        handle.restore_cipher(scoped).unwrap();
+        let rows = handle.list_trash_entries().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, None);
     }
 
     #[test]

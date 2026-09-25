@@ -194,7 +194,10 @@
     "matchExact": "Exacta",
     "matchRegex": "Regex",
     "matchNever": "Nunca",
-    "sshShowPrivate": "Mostrar clave privada"
+    "sshShowPrivate": "Mostrar clave privada",
+    "collectionLabel": "Colección",
+    "noCollection": "Sin colección",
+    "movedToast": "Entrada movida"
   },
   "settings": {
     "faviconLabel": "Mostrar iconos de sitios web",
@@ -761,6 +764,9 @@
     "catalogTitle": "Mostrar colecciones cuando alguien pide",
     "catalogSubtitle": "Publica los nombres de las colecciones para que la gente pueda elegir al pedir acceso. Solo se muestran nombres.",
     "catalogButton": "Publicar lista",
-    "catalogPublished": "Lista publicada"
+    "catalogPublished": "Lista publicada",
+    "catalogClear": "Vaciar lista",
+    "catalogClearConfirm": "Quienes pidan acceso dejarán de ver los nombres de las colecciones; todavía pueden pegar un id. ¿Vaciar la lista publicada?",
+    "catalogCleared": "Lista vaciada"
   }
 }

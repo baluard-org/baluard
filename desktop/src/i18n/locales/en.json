@@ -224,7 +224,10 @@
     "matchExact": "Exact",
     "matchRegex": "Regex",
     "matchNever": "Never",
-    "sshShowPrivate": "Show private key"
+    "sshShowPrivate": "Show private key",
+    "collectionLabel": "Collection",
+    "noCollection": "No collection",
+    "movedToast": "Entry moved"
   },
   "settings": {
     "faviconLabel": "Show website icons",
@@ -761,6 +764,9 @@
     "catalogTitle": "Show collections when people ask",
     "catalogSubtitle": "Publishes collection names so people can pick one when asking for access. Only names are shown.",
     "catalogButton": "Publish list",
-    "catalogPublished": "List published"
+    "catalogPublished": "List published",
+    "catalogClear": "Clear list",
+    "catalogClearConfirm": "Members asking for access will no longer see collection names; they can still paste an id. Clear the published list?",
+    "catalogCleared": "List cleared"
   }
 }

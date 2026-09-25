@@ -1197,6 +1197,14 @@ The review round proved the payload contract is a real perimeter: the desktop in
 
 **Boundaries**: entry move-to-collection UI, trash collection mapping, and catalog opt-out UX stay with the §4.8-5 polish pass; org settings/readiness and the provider checklist are the remaining S3 remainder.
 
+### D43. Collection Polish (§4.8-5) (2026-09-25; S3 in progress)
+
+A move is a re-encryption, not a rename, and the UI now says so without saying it: the entry detail offers the collections the device can actually reach (admin: all, plus back out to personal; member: live write/manage grants only), a read-only source renders as a plain label instead of a select that would promise a move the daemon refuses, and a refusal snaps the control back to the truth. The daemon remains the only validator — the UI filter is ergonomics, never the gate.
+
+Trash rows now carry their origin collection end to end, resolved from the on-disk layout with flats listed before collection subdirs so the listing agrees with the restore resolver regardless of directory order. And the admin catalog gained its opt-out: an empty publish is the off switch. The review round was a lesson in verification symmetry — four findings died against the source or the diff (the payload stringifier the reviewer missed, a trash meta fix already in the working tree), the blocker self-refuted, and the four real ones were all about the UI telling the truth after a refused move.
+
+**Boundaries**: collection-aware extension routes and mobile admin surfaces remain the S3 tail; org settings/readiness and the provider checklist stay deferred.
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

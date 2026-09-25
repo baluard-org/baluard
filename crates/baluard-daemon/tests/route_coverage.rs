@@ -1272,6 +1272,29 @@ async fn collections_list_admin_shape_and_cipher_collection_ids() {
     let ciphers = full["ciphers"].as_array().unwrap();
     let personal = ciphers.iter().find(|c| c["name"] == "Personal").unwrap();
     assert!(personal["_meta"]["collection_id"].is_null());
+
+    // §4.8-5: cipher.set_collection moves an entry across key domains
+    // in one op — flat personal entry into the collection and back.
+    let personal_id = personal["_meta"]["id"].as_str().unwrap().to_string();
+    let move_in = format!(r#"{{"cipher_id":"{personal_id}","collection_id":"{cid}"}}"#);
+    state.cipher_set_collection(&move_in).await.unwrap();
+    let envelope = state.list_all().await.unwrap();
+    let full: serde_json::Value = serde_json::from_str(&envelope).unwrap();
+    let ciphers = full["ciphers"].as_array().unwrap();
+    let moved = ciphers.iter().find(|c| c["name"] == "Personal").unwrap();
+    assert_eq!(
+        moved["_meta"]["collection_id"].as_str(),
+        Some(cid.as_str()),
+        "moved entry reads back inside the collection"
+    );
+
+    let move_out = format!(r#"{{"cipher_id":"{personal_id}","collection_id":null}}"#);
+    state.cipher_set_collection(&move_out).await.unwrap();
+    let envelope = state.list_all().await.unwrap();
+    let full: serde_json::Value = serde_json::from_str(&envelope).unwrap();
+    let ciphers = full["ciphers"].as_array().unwrap();
+    let moved_back = ciphers.iter().find(|c| c["name"] == "Personal").unwrap();
+    assert!(moved_back["_meta"]["collection_id"].is_null());
 }
 
 async fn space_meta_prepare_status_and_locked_rejection() {
