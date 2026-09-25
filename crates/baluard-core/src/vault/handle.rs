@@ -172,6 +172,17 @@ impl Drop for UnlockedState {
     }
 }
 
+/// Key domain of a cipher file, decided by its on-disk location (S3-7c).
+/// Collection and trash-collection domains resolve to a collection id via
+/// the salted dir map; flat domains are SGK-keyed admin surface.
+#[derive(Debug, Clone, PartialEq)]
+enum CipherDomain {
+    Flat,
+    Collection(String),
+    TrashFlat,
+    TrashCollection(String),
+}
+
 /// Report for the S3-7b team-shape flip.
 #[derive(Debug, Clone)]
 pub struct SpaceFlipReport {
@@ -268,9 +279,13 @@ impl VaultHandle {
                  a root-key rotation did not complete cleanly. Sweeping staged files.",
                 path.display()
             );
-            for dir_name in &["ciphers", "trash", "meta", "meta/keywrap"] {
+            for dir_name in &["meta", "meta/keywrap"] {
                 remove_tmp_files(&path.join(dir_name));
             }
+            // S3-7c review F9: collection-scoped ciphers stage into
+            // ciphers/<dir>/ and trash/<dir>/ — the sweep must recurse.
+            remove_tmp_files_recursive(&path.join("ciphers"));
+            remove_tmp_files_recursive(&path.join("trash"));
             remove_tmp_files_recursive(&path.join("entries"));
             // Leave the marker in place: a sweep is not a successful commit,
             // and the epoch state below may still need operator attention.
@@ -4320,7 +4335,13 @@ impl VaultHandle {
                     VaultState::Unlocked(u) => u,
                     VaultState::Locked => return Err(VaultError::Locked.into()),
                 };
-                self.try_decrypt_cipher_with_root_key(unlocked.root()?, &existing_file)?
+                // S3-7c: skip ciphers this device cannot resolve (a member
+                // device cannot read personal-flat ciphers; the owning
+                // device converges the folder unassignment for those).
+                match self.try_decrypt_cipher_at(unlocked, &file_path, &existing_file) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                }
             };
 
             if existing_cipher
@@ -4384,19 +4405,22 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        let all = crate::vault::collections::list_collections(&self.path, self.unlocked().sgk()?)?;
+        // S3-7c review F7: resolve the target from the plaintext dir map —
+        // no SGK needed, so granted members can move ciphers between
+        // collections. A flat target stays admin-surface.
         let target_rel = match collection_id {
             Some(cid) => {
-                let file = all
+                let dirs = crate::vault::collections::load_dir_map(&self.path);
+                let dir_name = dirs
                     .iter()
-                    .map(|(f, _)| f)
-                    .find(|f| f.id == cid)
+                    .find(|(_, id)| *id == cid)
+                    .map(|(d, _)| d.clone())
                     .ok_or_else(|| {
                         VaultError::InvalidOperation("That collection no longer exists.".into())
                     })?;
-                crate::vault::collections::cipher_rel_path(Some(file), cipher_id)
+                format!("ciphers/{dir_name}/{cipher_id}.enc")
             }
-            None => crate::vault::collections::cipher_rel_path(None, cipher_id),
+            None => format!("ciphers/{cipher_id}.enc"),
         };
         let Some(current) = self.cipher_file_path(cipher_id) else {
             // A trashed (or unknown) cipher cannot move.
@@ -4409,47 +4433,19 @@ impl VaultHandle {
         // out of a collection needs write scope on the SOURCE collection
         // too — membership changes are collection writes in both
         // directions.
-        let actor_member = crate::vault::members::member_id_for_device(&self.path, self.device_id);
+        // S3-7c review F7: one shared gate for both ends — a move is a
+        // collection write on the SOURCE and the TARGET (membership
+        // changes are collection writes in both directions). The gate
+        // reads plaintext grant rows, so member devices run it too.
         let is_admin = matches!(
             crate::vault::members::member_role_for_device(&self.path, self.device_id),
             Some(crate::vault::members::MemberRole::Owner)
                 | Some(crate::vault::members::MemberRole::Admin)
         );
-        if !(is_admin || !self.path.join("meta/members").is_dir()) {
-            // member_dir absence = legacy vault, admin-equivalent.
-            // S3-5 review F3: a demoted Viewer with a stale write or
-            // manage grant must refuse here — peers apply the Editor
-            // floor and the resulting commit would wedge sync.
-            if matches!(
-                crate::vault::members::member_role_for_device(&self.path, self.device_id),
-                Some(crate::vault::members::MemberRole::Viewer)
-            ) {
-                return Err(VaultError::InvalidOperation(
-                    "You do not have write access to that collection.".into(),
-                )
-                .into());
-            }
-            let has_grant = |cid: &Uuid| {
-                actor_member.is_some_and(|m| {
-                    all.iter().any(|(f, _)| {
-                        f.id == *cid
-                            && f.grants.iter().any(|g| {
-                                g.member_id == m
-                                    && matches!(
-                                        g.access,
-                                        crate::vault::collections::CollectionAccess::Write
-                                            | crate::vault::collections::CollectionAccess::Manage
-                                    )
-                                    && !crate::vault::collections::is_grant_expired(
-                                        g,
-                                        crate::vault::collections::now_secs_pub(),
-                                    )
-                            })
-                    })
-                })
-            };
-            // Source-side check: nested path means the cipher currently
-            // lives in a collection dir.
+        if !is_admin {
+            // Source-side: a nested path means the cipher currently lives
+            // in a collection dir; a flat source is the admin surface and
+            // the target-key derivation refuses members anyway.
             let source_cid = current
                 .parent()
                 .and_then(|p| p.file_name())
@@ -4461,32 +4457,108 @@ impl VaultHandle {
                         .map(|(_, id)| id)
                 });
             if let Some(src) = source_cid {
-                if !has_grant(&src) {
-                    return Err(VaultError::InvalidOperation(
-                        "You do not have write access to that collection.".into(),
-                    )
-                    .into());
-                }
+                self.assert_collection_write(&src)?;
             }
             if let Some(dst) = collection_id {
-                if !has_grant(&dst) {
-                    return Err(VaultError::InvalidOperation(
-                        "You do not have write access to that collection.".into(),
-                    )
-                    .into());
-                }
+                self.assert_collection_write(&dst)?;
             }
         }
         let target = self.path.join(target_rel);
         if current == target {
             return Ok(());
         }
+        // S3-7c: the path IS the key domain. A cross-domain move must
+        // re-encrypt under the target domain's item key (same envelope
+        // epoch, seq bumped): SGK-keyed bytes dropped into a collection
+        // dir would be unreadable for everyone but admins, and
+        // CK-keyed bytes restored to flat would be unreadable at all.
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let existing_file = cipher::CipherFile {
+            id: cipher_id,
+            envelope_bytes: std::fs::read(&current)?,
+        };
+        let existing = self.try_decrypt_cipher_at(unlocked, &current, &existing_file)?;
+        let existing_envelope = crate::vault::envelope::deserialize(&existing_file.envelope_bytes)?;
+        let input = CipherInput {
+            name: existing.name,
+            folder_id: existing.folder_id,
+            kind: existing.kind,
+            favorite: existing.favorite,
+            reprompt: existing.reprompt,
+            notes: existing.notes,
+            custom_fields: existing.custom_fields,
+            created_at: Some(existing.created_at),
+            password_history: existing.password_history,
+            attachments: existing.attachments,
+            archived: existing.archived,
+            tags: existing.tags.clone(),
+        };
+        let target_item_key = self.resolve_item_key(
+            unlocked,
+            &target,
+            cipher_id,
+            existing_envelope.header.key_epoch,
+        )?;
+        let file = cipher::encrypt_cipher(
+            self.vault_id,
+            cipher_id,
+            &input,
+            &target_item_key,
+            existing_envelope.header.key_epoch,
+            existing_envelope.header.update_seq + 1,
+        )?;
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::rename(&current, &target)?;
+        super::write_vault_file(&target, &file.envelope_bytes)?;
+        std::fs::remove_file(&current)?;
         self.rebuild_index()?;
+        self.record_integrity(
+            &cipher_id.to_string(),
+            existing_envelope.header.update_seq + 1,
+        );
         Ok(())
+    }
+
+    /// Cipher ids this device can actually resolve: everything for an
+    /// admin (or pre-flip) device; only wrap-covered collection ciphers
+    /// for a flipped member. Review F4: the heal/rebuild scan set MUST
+    /// equal the staleness scan set, or every list re-heals forever.
+    fn scannable_cipher_ids(&self, unlocked: &UnlockedState) -> Result<Vec<Uuid>, BaluardError> {
+        if unlocked.holds_root() {
+            return self.list_cipher_ids();
+        }
+        let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id);
+        let mut ids = Vec::new();
+        for (dir, cid) in crate::vault::collections::load_dir_map(&self.path) {
+            let wrap_covers = member_id.is_some_and(|m| {
+                crate::vault::collections::grant_wrap_path(&self.path, &cid, &m).exists()
+            });
+            if wrap_covers {
+                ids.extend(self.list_cipher_ids_in_dir(&dir)?);
+            }
+        }
+        Ok(ids)
+    }
+
+    /// Cipher ids inside one collection directory (`ciphers/<dir>/`).
+    pub fn list_cipher_ids_in_dir(&self, dir: &str) -> Result<Vec<Uuid>, BaluardError> {
+        let dir_path = self.path.join("ciphers").join(dir);
+        if !dir_path.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut ids = Vec::new();
+        for inner in std::fs::read_dir(&dir_path)?.flatten() {
+            if let Some(id_str) = inner.file_name().to_string_lossy().strip_suffix(".enc") {
+                if let Ok(id) = Uuid::parse_str(id_str) {
+                    ids.push(id);
+                }
+            }
+        }
+        Ok(ids)
     }
 
     pub fn list_cipher_ids(&self) -> Result<Vec<Uuid>, BaluardError> {
@@ -4543,6 +4615,16 @@ impl VaultHandle {
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
+        // S3-7c: member devices list only what they can resolve — ciphers
+        // inside collections they hold a wrap for. The staleness scan and
+        // the heal both use that scope; personal-flat ciphers are invisible.
+        let scan_ids = self.scannable_cipher_ids(unlocked)?;
+        let member_scope: Option<std::collections::HashSet<Uuid>> = if unlocked.holds_root() {
+            None
+        } else {
+            Some(scan_ids.iter().copied().collect())
+        };
+
         // Try reading from the (possibly sharded) index. Missing or corrupt
         // shards → None → auto-heal rebuild below.
         if let Ok(index_key) = crate::crypto::hkdf_derive::derive_index_key(&unlocked.meta_ikm()) {
@@ -4554,8 +4636,13 @@ impl VaultHandle {
                 // scan detects disk/index divergence — SET equality, not just
                 // counts (an add+delete swap keeps counts equal). On mismatch
                 // fall through to the auto-heal rebuild instead of showing a
-                // stale list.
-                match self.list_cipher_ids() {
+                // stale list. S3-7c: a member compares against its own
+                // readable scope, not the whole disk.
+                let scan: Result<Vec<Uuid>, BaluardError> = match &member_scope {
+                    Some(set) => Ok(set.iter().copied().collect()),
+                    None => self.list_cipher_ids(),
+                };
+                match scan {
                     Ok(mut disk_ids) => {
                         let mut indexed: Vec<uuid::Uuid> = ciphers
                             .iter()
@@ -4573,15 +4660,13 @@ impl VaultHandle {
                 }
             }
         }
-
-        // Auto-heal: rebuild index and save. S3-7b: team-member devices
-        // hold no Root Key, so the SGK-decryption heal is out of their
-        // reach — return an empty rebuild instead of a hard refusal (the
-        // 7c slice gives members collection-key decryption).
-        if !unlocked.holds_root() {
-            return Ok(Vec::new());
-        }
-        let ids = self.list_cipher_ids()?;
+        // Review F4: scan the SAME id set the staleness guard compared
+        // against, so the rebuilt index matches on the next read.
+        let ids = if unlocked.holds_root() {
+            self.list_cipher_ids()?
+        } else {
+            scan_ids.clone()
+        };
         let mut metas = Vec::with_capacity(ids.len());
         let mut skipped: Vec<uuid::Uuid> = Vec::new();
 
@@ -4592,7 +4677,7 @@ impl VaultHandle {
             let envelope_bytes = std::fs::read(&file_path)?;
             let file = cipher::CipherFile { id, envelope_bytes };
 
-            let c = match self.try_decrypt_cipher_with_root_key(unlocked.root()?, &file) {
+            let c = match self.try_decrypt_cipher_at(unlocked, &file_path, &file) {
                 Ok(c) => c,
                 Err(crate::error::BaluardError::Vault(crate::error::VaultError::CrossEpoch {
                     envelope_epoch,
@@ -4753,34 +4838,98 @@ impl VaultHandle {
             .into());
         }
 
-        let canary_id = cipher_ids[0];
-        let file_path = self.path.join(format!("ciphers/{}.enc", canary_id));
-        let envelope_bytes = std::fs::read(&file_path)?;
-        let file = crate::vault::cipher::CipherFile {
-            id: canary_id,
-            envelope_bytes,
-        };
-
-        match self.try_decrypt_cipher_with_root_key(root_key, &file) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(VaultError::Corrupt(
-                "master password incorrect (root key verification failed)".into(),
-            )
-            .into()),
+        // S3-7c review F11: the Root Key verifies flat ciphers directly
+        // and collection ciphers via the SGK unwrap of the collection's
+        // content key. Scan until one canary decrypts; a wrong password
+        // fails everything.
+        let epoch = self.determine_current_epoch();
+        let sgk = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(root_key, epoch);
+        for canary_id in &cipher_ids {
+            let Some(file_path) = self.cipher_file_path(*canary_id) else {
+                continue;
+            };
+            let Ok(envelope_bytes) = std::fs::read(&file_path) else {
+                continue;
+            };
+            let file = crate::vault::cipher::CipherFile {
+                id: *canary_id,
+                envelope_bytes,
+            };
+            let item_key = match self.cipher_domain(&file_path) {
+                CipherDomain::Collection(dir) => {
+                    let Some(cid) = self.collection_id_for_dir(&dir) else {
+                        continue;
+                    };
+                    let (collection, _) =
+                        match crate::vault::collections::open_collection(&self.path, &sgk, &cid) {
+                            Ok(pair) => pair,
+                            Err(_) => continue,
+                        };
+                    let Ok(ck) = crate::vault::collections::unwrap_ck(&collection, &sgk) else {
+                        continue;
+                    };
+                    let Ok(envelope) = crate::vault::envelope::deserialize(&file.envelope_bytes)
+                    else {
+                        continue;
+                    };
+                    crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(
+                        &ck,
+                        *canary_id,
+                        envelope.header.key_epoch,
+                    )
+                }
+                _ => Self::derive_item_key_from_root(root_key, *canary_id, epoch),
+            };
+            if crate::vault::cipher::decrypt_cipher(self.vault_id, *canary_id, &file, &item_key)
+                .is_ok()
+            {
+                return Ok(());
+            }
         }
+        Err(
+            VaultError::Corrupt("master password incorrect (root key verification failed)".into())
+                .into(),
+        )
     }
 
-    /// Try to decrypt a cipher using the Root Key (derives Item Key).
-    fn try_decrypt_cipher_with_root_key(
+    /// Old and new item keys for one cipher across a root rotation,
+    /// domain-aware (S3-7c). Flat ciphers re-key under the new Root Key's
+    /// SGK; collection ciphers keep the SAME content key (CK values are
+    /// rotation-invariant) and re-derive at the new epoch, so member
+    /// grant wraps stay valid and the member's access survives rotation.
+    #[allow(clippy::too_many_arguments)]
+    fn rotation_item_keys(
         &self,
-        root_key: &RootKey,
-        file: &crate::vault::cipher::CipherFile,
-    ) -> Result<Cipher, BaluardError> {
-        let item_key = {
-            let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
-            Self::derive_item_key_from_root(root_key, file.id, envelope.header.key_epoch)
-        };
-        crate::vault::cipher::decrypt_cipher(self.vault_id, file.id, file, &item_key)
+        unlocked: &UnlockedState,
+        old_root: &RootKey,
+        file_path: &Path,
+        file: &cipher::CipherFile,
+        old_epoch: u64,
+        new_epoch: u64,
+        new_root: &RootKey,
+    ) -> Result<(ItemKey, ItemKey), BaluardError> {
+        match self.cipher_domain(file_path) {
+            CipherDomain::Flat | CipherDomain::TrashFlat => Ok((
+                Self::derive_item_key_from_root(old_root, file.id, old_epoch),
+                Self::derive_item_key_from_root(new_root, file.id, new_epoch),
+            )),
+            CipherDomain::Collection(dir) | CipherDomain::TrashCollection(dir) => {
+                let Some(cid) = self.collection_id_for_dir(&dir) else {
+                    return Err(BaluardError::from(VaultError::InvalidOperation(
+                        "That entry's collection no longer exists.".into(),
+                    )));
+                };
+                let ck = self.resolve_ck(unlocked, &cid)?;
+                Ok((
+                    crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(
+                        &ck, file.id, old_epoch,
+                    ),
+                    crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(
+                        &ck, file.id, new_epoch,
+                    ),
+                ))
+            }
+        }
     }
 
     /// Derive an item key from the cached Space Group Key in UnlockedState.
@@ -4810,6 +4959,165 @@ impl VaultHandle {
     fn derive_item_key_from_root(root_key: &RootKey, cipher_id: Uuid, epoch: u64) -> ItemKey {
         let sgk = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(root_key, epoch);
         sgk.derive_item_key(cipher_id, epoch)
+    }
+
+    // ── S3-7c: cipher key domain ────────────────────────────────────
+    //
+    // A cipher's item key follows its location: flat paths (personal
+    // ciphers) are keyed by the SGK and stay an admin surface; ciphers
+    // inside a collection directory are keyed by that collection's
+    // content key, so granted members holding only their per-member CK
+    // wrap can decrypt without any group or root key material. Trash
+    // preserves the origin directory so restore is always same-domain.
+
+    fn cipher_domain(&self, file_path: &Path) -> CipherDomain {
+        let rel = file_path.strip_prefix(&self.path).unwrap_or(file_path);
+        let segs: Vec<&str> = rel.iter().map(|s| s.to_str().unwrap_or("")).collect();
+        match segs.as_slice() {
+            ["ciphers", dir, _] => CipherDomain::Collection((*dir).to_string()),
+            ["trash", dir, _] => CipherDomain::TrashCollection((*dir).to_string()),
+            ["trash", _] => CipherDomain::TrashFlat,
+            _ => CipherDomain::Flat,
+        }
+    }
+
+    fn collection_id_for_dir(&self, dir: &str) -> Option<Uuid> {
+        crate::vault::collections::load_dir_map(&self.path)
+            .into_iter()
+            .find(|(name, _)| name == dir)
+            .map(|(_, id)| id)
+    }
+
+    /// The trash location for a cipher, mirroring its origin layout.
+    /// Falls back to scanning trash/ subdirectories directly, so entries
+    /// trashed from a since-deleted collection stay reachable (review
+    /// F12) until purge removes them.
+    fn trash_file_path(&self, cipher_id: Uuid) -> Option<std::path::PathBuf> {
+        let flat = self.path.join(format!("trash/{cipher_id}.enc"));
+        if flat.exists() {
+            return Some(flat);
+        }
+        for (d, _) in crate::vault::collections::load_dir_map(&self.path) {
+            let p = self.path.join(format!("trash/{d}/{cipher_id}.enc"));
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        // Ghost fallback: any trash subdirectory not backed by a live
+        // collection def.
+        let trash_dir = self.path.join("trash");
+        for entry in std::fs::read_dir(&trash_dir).ok()?.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let p = entry.path().join(format!("{cipher_id}.enc"));
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    /// Resolve one collection's content key for THIS device: admins (and
+    /// pre-flip members holding the SGK) unwrap it from the collection
+    /// file; flipped members open their per-member grant wrap with their
+    /// identity wrapping secret.
+    fn resolve_ck(
+        &self,
+        unlocked: &UnlockedState,
+        collection_id: &Uuid,
+    ) -> Result<Zeroizing<[u8; 32]>, BaluardError> {
+        if let Ok(sgk) = unlocked.sgk() {
+            let (file, _) =
+                crate::vault::collections::open_collection(&self.path, sgk, collection_id)?;
+            return crate::vault::collections::unwrap_ck(&file, sgk);
+        }
+        let identity = unlocked.identity.as_ref().ok_or_else(|| {
+            BaluardError::from(VaultError::InvalidOperation(
+                "this entry's collection key is not available on this device".into(),
+            ))
+        })?;
+        let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .ok_or_else(|| {
+                BaluardError::from(VaultError::InvalidOperation(
+                    "this device is not bound to a Space member".into(),
+                ))
+            })?;
+        crate::vault::collections::open_grant_wrap(
+            &self.path,
+            collection_id,
+            &member_id,
+            identity.wrapping_secret(),
+        )
+    }
+
+    /// Derive the item key for a cipher at its on-disk location.
+    fn resolve_item_key(
+        &self,
+        unlocked: &UnlockedState,
+        file_path: &Path,
+        cipher_id: Uuid,
+        epoch: u64,
+    ) -> Result<ItemKey, BaluardError> {
+        match self.cipher_domain(file_path) {
+            CipherDomain::Flat => {
+                let sgk = unlocked.sgk()?;
+                sgk.try_derive_item_key(cipher_id, epoch).ok_or_else(|| {
+                    BaluardError::from(VaultError::CrossEpoch {
+                        envelope_epoch: epoch,
+                        held_epoch: sgk.epoch(),
+                    })
+                })
+            }
+            CipherDomain::Collection(dir) => {
+                let Some(cid) = self.collection_id_for_dir(&dir) else {
+                    return Err(BaluardError::from(VaultError::InvalidOperation(
+                        "That entry's collection no longer exists.".into(),
+                    )));
+                };
+                let ck = self.resolve_ck(unlocked, &cid)?;
+                Ok(
+                    crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(
+                        &ck, cipher_id, epoch,
+                    ),
+                )
+            }
+            CipherDomain::TrashCollection(dir) => {
+                let Some(cid) = self.collection_id_for_dir(&dir) else {
+                    return Err(BaluardError::from(VaultError::InvalidOperation(
+                        "That entry's collection no longer exists.".into(),
+                    )));
+                };
+                let ck = self.resolve_ck(unlocked, &cid)?;
+                Ok(
+                    crate::keys::hierarchy::SpaceGroupKey::derive_item_key_from_ck(
+                        &ck, cipher_id, epoch,
+                    ),
+                )
+            }
+            CipherDomain::TrashFlat => {
+                let sgk = unlocked.sgk()?;
+                sgk.try_derive_item_key(cipher_id, epoch).ok_or_else(|| {
+                    BaluardError::from(VaultError::CrossEpoch {
+                        envelope_epoch: epoch,
+                        held_epoch: sgk.epoch(),
+                    })
+                })
+            }
+        }
+    }
+
+    /// Decrypt a cipher file at its on-disk location (domain-aware).
+    fn try_decrypt_cipher_at(
+        &self,
+        unlocked: &UnlockedState,
+        file_path: &Path,
+        file: &crate::vault::cipher::CipherFile,
+    ) -> Result<Cipher, BaluardError> {
+        let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
+        let item_key =
+            self.resolve_item_key(unlocked, file_path, file.id, envelope.header.key_epoch)?;
+        crate::vault::cipher::decrypt_cipher(self.vault_id, file.id, file, &item_key)
     }
 
     /// Derive item key for a cipher (requires unlocked vault).
@@ -4847,12 +5155,10 @@ impl VaultHandle {
     /// Get a cipher (decrypts if unlocked, returns metadata only if locked).
     /// Looks up in both active ciphers and trash.
     pub fn get_cipher(&self, cipher_id: Uuid) -> Result<CipherRead, BaluardError> {
-        let trash_path = self.path.join(format!("trash/{}.enc", cipher_id));
-
         let file_path = if let Some(p) = self.cipher_file_path(cipher_id) {
             p
-        } else if trash_path.exists() {
-            trash_path
+        } else if let Some(p) = self.trash_file_path(cipher_id) {
+            p
         } else {
             return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
         };
@@ -4865,19 +5171,7 @@ impl VaultHandle {
 
         match &self.state {
             VaultState::Unlocked(unlocked) => {
-                // Read epoch from envelope header for correct Item Key derivation
-                let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
-                let item_key = Self::derive_item_key_from_sgk(
-                    unlocked.sgk()?,
-                    cipher_id,
-                    envelope.header.key_epoch,
-                )?;
-                let cipher = crate::vault::cipher::decrypt_cipher(
-                    self.vault_id,
-                    cipher_id,
-                    &file,
-                    &item_key,
-                )?;
+                let cipher = self.try_decrypt_cipher_at(unlocked, &file_path, &file)?;
                 Ok(CipherRead::Decrypted(Box::new(cipher)))
             }
             VaultState::Locked => {
@@ -4914,19 +5208,8 @@ impl VaultHandle {
         envelope_bytes: &[u8],
     ) -> Result<crate::types::Cipher, BaluardError> {
         let envelope = crate::vault::envelope::deserialize(envelope_bytes)?;
-        // Cross-epoch safe path: the envelope may be at a foreign epoch (e.g.
-        // a remote pre-rotation version whose RootKey this device no longer
-        // holds). try_derive_item_key returns None on epoch mismatch instead
-        // of panicking (the plain derive_item_key debug-asserts, which would
-        // crash the daemon on the exact safety path). Map None to a clean Err
-        // the caller reports as `cross_epoch`.
-        let sgk = match &self.state {
-            VaultState::Unlocked(u) => u.space_group_key.as_ref().ok_or_else(|| {
-                VaultError::InvalidOperation(
-                    "this operation requires a managing device (team members hold no group key)"
-                        .into(),
-                )
-            }),
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
             VaultState::Locked => {
                 return Err(VaultError::Corrupt(
                     "decrypt_cipher_bytes called on locked vault".into(),
@@ -4934,19 +5217,34 @@ impl VaultHandle {
                 .into());
             }
         };
-        let sgk = sgk?;
-        let item_key = sgk
-            .try_derive_item_key(cipher_id, envelope.header.key_epoch)
-            .ok_or_else(|| {
-                BaluardError::from(VaultError::Corrupt(format!(
-                    "cross-epoch decrypt: envelope epoch {} != held SGK epoch {}",
-                    envelope.header.key_epoch,
-                    sgk.epoch()
-                )))
-            })?;
         let file = crate::vault::cipher::CipherFile {
             id: cipher_id,
             envelope_bytes: envelope_bytes.to_vec(),
+        };
+        // S3-7c: when the cipher exists locally, its key domain follows the
+        // on-disk location (collection ciphers are CK-keyed). A cipher with
+        // no local file is treated flat — conflict resolution only runs for
+        // ciphers that exist locally, and a new remote cipher lands on disk
+        // before any merge decision.
+        let item_key = match self.cipher_file_path(cipher_id) {
+            Some(path) => {
+                self.resolve_item_key(unlocked, &path, cipher_id, envelope.header.key_epoch)?
+            }
+            None => {
+                // Cross-epoch safe path: the envelope may be at a foreign
+                // epoch. try_derive_item_key returns None on epoch mismatch
+                // instead of panicking; map None to a clean Err the caller
+                // reports as `cross_epoch`.
+                let sgk = unlocked.sgk()?;
+                sgk.try_derive_item_key(cipher_id, envelope.header.key_epoch)
+                    .ok_or_else(|| {
+                        BaluardError::from(VaultError::Corrupt(format!(
+                            "cross-epoch decrypt: envelope epoch {} != held SGK epoch {}",
+                            envelope.header.key_epoch,
+                            sgk.epoch()
+                        )))
+                    })?
+            }
         };
         crate::vault::cipher::decrypt_cipher(self.vault_id, cipher_id, &file, &item_key)
     }
@@ -4957,18 +5255,56 @@ impl VaultHandle {
         if !self.device_manager.writes_allowed() {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
-        let trash_path = self.path.join(format!("trash/{}.enc", cipher_id));
 
+        // S3-7c: trash preserves the origin layout, so restore is always
+        // same-domain (a collection cipher stays CK-keyed inside
+        // trash/<dir>/; a personal cipher stays SGK-keyed at trash/ root).
         if let Some(active_path) = self.cipher_file_path(cipher_id) {
-            let trash_dir = self.path.join("trash");
-            std::fs::create_dir_all(&trash_dir)?;
+            // Review F6: personal-flat ciphers are the admin surface — a
+            // member cannot trash what it cannot read (and trashing needs
+            // no crypto, so the role gate is the only fence).
+            let is_admin = matches!(
+                crate::vault::members::member_role_for_device(&self.path, self.device_id),
+                Some(crate::vault::members::MemberRole::Owner)
+                    | Some(crate::vault::members::MemberRole::Admin)
+            );
+            match self.cipher_domain(&active_path) {
+                CipherDomain::Collection(dir) => {
+                    let Some(cid) = self.collection_id_for_dir(&dir) else {
+                        return Err(BaluardError::from(VaultError::InvalidOperation(
+                            "That entry's collection no longer exists.".into(),
+                        )));
+                    };
+                    self.assert_collection_write(&cid)?;
+                }
+                CipherDomain::Flat if !is_admin => {
+                    return Err(BaluardError::from(VaultError::InvalidOperation(
+                        "this operation requires a managing device (team members hold no group key)"
+                            .into(),
+                    )));
+                }
+                _ => {}
+            }
+            let mut trash_rel = std::path::PathBuf::from("trash");
+            // Only collection-scoped ciphers keep a subdirectory; flat
+            // ciphers trash at the root (trash/<id>.enc).
+            if let CipherDomain::Collection(dir) | CipherDomain::TrashCollection(dir) =
+                self.cipher_domain(&active_path)
+            {
+                trash_rel.push(dir);
+            }
+            trash_rel.push(format!("{cipher_id}.enc"));
+            let trash_path = self.path.join(trash_rel);
+            if let Some(parent) = trash_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
             let envelope_bytes = std::fs::read(&active_path)?;
             super::write_vault_file(&trash_path, &envelope_bytes)?;
             std::fs::remove_file(&active_path)?;
             self.remove_integrity(&cipher_id.to_string());
             self.rebuild_index()?;
             Ok(())
-        } else if trash_path.exists() {
+        } else if let Some(trash_path) = self.trash_file_path(cipher_id) {
             std::fs::remove_file(&trash_path)?;
             self.remove_integrity(&cipher_id.to_string());
             self.rebuild_index()?;
@@ -4976,6 +5312,72 @@ impl VaultHandle {
         } else {
             Err(VaultError::CipherNotFound(cipher_id.to_string()).into())
         }
+    }
+
+    /// Local write-scope gate for one collection: admins (and legacy
+    /// vaults without a member directory) pass; everyone else needs a
+    /// live write-or-manage grant. Mirrors the assign gate so a refused
+    /// move can never mint an unpushable commit.
+    fn assert_collection_write(&self, collection_id: &Uuid) -> Result<(), BaluardError> {
+        let is_admin = matches!(
+            crate::vault::members::member_role_for_device(&self.path, self.device_id),
+            Some(crate::vault::members::MemberRole::Owner)
+                | Some(crate::vault::members::MemberRole::Admin)
+        );
+        if is_admin || !self.path.join("meta/members").is_dir() {
+            return Ok(());
+        }
+        // S3-5 review (restored, S3-7c F3): a demoted Viewer keeps a stale
+        // write grant — peers apply the Editor floor, so a Viewer-authored
+        // write would wedge sync. Refuse here, before any commit exists.
+        if matches!(
+            crate::vault::members::member_role_for_device(&self.path, self.device_id),
+            Some(crate::vault::members::MemberRole::Viewer)
+        ) {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "You do not have write access to that collection.".into(),
+            )));
+        }
+        let Some(member_id) =
+            crate::vault::members::member_id_for_device(&self.path, self.device_id)
+        else {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "You do not have write access to that collection.".into(),
+            )));
+        };
+        // S3-7c: read the collection file's plaintext grant rows directly
+        // — no SGK needed, so member devices can run this gate.
+        let file_path = crate::vault::collections::collections_file_path(&self.path, collection_id);
+        let bytes = std::fs::read(&file_path).map_err(|_| {
+            BaluardError::from(VaultError::InvalidOperation(
+                "That collection no longer exists.".into(),
+            ))
+        })?;
+        let file: crate::vault::collections::CollectionFile = serde_json::from_slice(&bytes)
+            .map_err(|_| {
+                BaluardError::from(VaultError::InvalidOperation(
+                    "That collection's record is damaged.".into(),
+                ))
+            })?;
+        let has_grant = file.id == *collection_id
+            && file.grants.iter().any(|g| {
+                g.member_id == member_id
+                    && matches!(
+                        g.access,
+                        crate::vault::collections::CollectionAccess::Write
+                            | crate::vault::collections::CollectionAccess::Manage
+                    )
+                    && !crate::vault::collections::is_grant_expired(
+                        g,
+                        crate::vault::collections::now_secs_pub(),
+                    )
+            });
+        if !has_grant {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "You do not have write access to that collection.".into(),
+            )));
+        }
+        Ok(())
     }
 
     /// List deleted cipher IDs in trash.
@@ -4986,32 +5388,82 @@ impl VaultHandle {
         }
 
         let mut ids = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for entry in std::fs::read_dir(&trash_dir)? {
             let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                // S3-7c: collection ciphers trash into trash/<dir>/.
+                for inner in std::fs::read_dir(&path)?.flatten() {
+                    if let Some(id_str) = inner.file_name().to_string_lossy().strip_suffix(".enc") {
+                        if let Ok(id) = Uuid::parse_str(id_str) {
+                            // Review F10: the same uuid can sit at both
+                            // trash shapes; keep the list deduplicated.
+                            if seen.insert(id) {
+                                ids.push(id);
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
             let name = entry.file_name().to_string_lossy().to_string();
             if let Some(id_str) = name.strip_suffix(".enc") {
                 if let Ok(id) = Uuid::parse_str(id_str) {
-                    ids.push(id);
+                    if seen.insert(id) {
+                        ids.push(id);
+                    }
                 }
             }
         }
         Ok(ids)
     }
 
-    /// Restore a deleted cipher from trash back to active.
+    /// Restore a deleted cipher from trash back to active. S3-7c: trash
+    /// preserves the origin layout, so restore is always same-domain —
+    /// the bytes move back unchanged (a collection cipher returns to its
+    /// collection dir, a personal cipher to the flat path). Collection
+    /// restores need write scope (the path IS the membership).
     pub fn restore_cipher(&self, cipher_id: Uuid) -> Result<(), BaluardError> {
-        // Restores land at the personal flat path: collection membership
-        // is re-assigned explicitly if wanted (the path IS the membership,
-        // so an opaque restore target would guess).
-        let active_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
-        let trash_path = self.path.join(format!("trash/{}.enc", cipher_id));
+        let trash_path = self
+            .trash_file_path(cipher_id)
+            .ok_or_else(|| BaluardError::from(VaultError::CipherNotFound(cipher_id.to_string())))?;
 
-        if !trash_path.exists() {
-            return Err(VaultError::CipherNotFound(cipher_id.to_string()).into());
+        let rel = trash_path
+            .strip_prefix(&self.path)
+            .unwrap_or(&trash_path)
+            .to_path_buf();
+        let mut active_rel = std::path::PathBuf::from("ciphers");
+        if let Some(parent_name) = rel.parent().and_then(|p| p.file_name()) {
+            let parent_str = parent_name.to_string_lossy().to_string();
+            if parent_str != "trash" {
+                active_rel.push(&parent_str);
+                let Some(cid) = self.collection_id_for_dir(&parent_str) else {
+                    return Err(BaluardError::from(VaultError::InvalidOperation(
+                        "That entry's collection no longer exists.".into(),
+                    )));
+                };
+                self.assert_collection_write(&cid)?;
+            } else {
+                // Review F6: flat trash restores are admin-surface.
+                let is_admin = matches!(
+                    crate::vault::members::member_role_for_device(&self.path, self.device_id),
+                    Some(crate::vault::members::MemberRole::Owner)
+                        | Some(crate::vault::members::MemberRole::Admin)
+                );
+                if !is_admin {
+                    return Err(BaluardError::from(VaultError::InvalidOperation(
+                        "this operation requires a managing device (team members hold no group key)"
+                            .into(),
+                    )));
+                }
+            }
         }
-
-        let ciphers_dir = self.path.join("ciphers");
-        std::fs::create_dir_all(&ciphers_dir)?;
+        active_rel.push(format!("{cipher_id}.enc"));
+        let active_path = self.path.join(active_rel);
+        if let Some(parent) = active_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let envelope_bytes = std::fs::read(&trash_path)?;
         super::write_vault_file(&active_path, &envelope_bytes)?;
         std::fs::remove_file(&trash_path)?;
@@ -5033,13 +5485,26 @@ impl VaultHandle {
         for entry in std::fs::read_dir(&trash_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() {
-                if let Ok(metadata) = std::fs::metadata(&path) {
-                    if let Ok(modified) = metadata.modified() {
-                        if modified < limit {
-                            std::fs::remove_file(&path)?;
-                            count += 1;
+            if path.is_dir() {
+                // S3-7c: collection trash subdirs — recurse one level.
+                for inner in std::fs::read_dir(&path)?.flatten() {
+                    let ipath = inner.path();
+                    if let Ok(metadata) = std::fs::metadata(&ipath) {
+                        if let Ok(modified) = metadata.modified() {
+                            if modified < limit {
+                                std::fs::remove_file(&ipath)?;
+                                count += 1;
+                            }
                         }
+                    }
+                }
+                continue;
+            }
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                if let Ok(modified) = metadata.modified() {
+                    if modified < limit {
+                        std::fs::remove_file(&path)?;
+                        count += 1;
                     }
                 }
             }
@@ -5049,6 +5514,18 @@ impl VaultHandle {
 
     /// Add a cipher (requires unlocked vault).
     pub fn add_cipher(&mut self, input: &CipherInput) -> Result<Uuid, BaluardError> {
+        self.add_cipher_in_collection(input, None)
+    }
+
+    /// Add a cipher, optionally inside a collection (S3-7c). A collection
+    /// cipher is keyed by that collection's content key, so granted
+    /// members can create entries without any group key material; a flat
+    /// (personal) cipher stays SGK-keyed and is an admin surface.
+    pub fn add_cipher_in_collection(
+        &mut self,
+        input: &CipherInput,
+        collection_id: Option<Uuid>,
+    ) -> Result<Uuid, BaluardError> {
         if !self.device_manager.writes_allowed() {
             return Err(VaultError::Corrupt("vault is rotating, writes blocked".into()).into());
         }
@@ -5063,8 +5540,27 @@ impl VaultHandle {
         };
 
         let cipher_id = Uuid::new_v4();
+        let file_path = match collection_id {
+            None => self.path.join(format!("ciphers/{cipher_id}.enc")),
+            Some(cid) => {
+                self.assert_collection_write(&cid)?;
+                // S3-7c: resolve the dir from the plaintext dir map — no
+                // SGK needed, so members can create inside collections
+                // they hold a write grant on.
+                let dirs = crate::vault::collections::load_dir_map(&self.path);
+                let dir_name = dirs
+                    .iter()
+                    .find(|(_, id)| *id == cid)
+                    .map(|(d, _)| d.clone())
+                    .ok_or_else(|| {
+                        VaultError::InvalidOperation("That collection no longer exists.".into())
+                    })?;
+                self.path
+                    .join(format!("ciphers/{dir_name}/{cipher_id}.enc"))
+            }
+        };
         let item_key =
-            Self::derive_item_key_from_sgk(unlocked.sgk()?, cipher_id, unlocked.current_epoch)?;
+            self.resolve_item_key(unlocked, &file_path, cipher_id, unlocked.current_epoch)?;
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -5075,7 +5571,6 @@ impl VaultHandle {
             1,                      // update_seq
         )?;
 
-        let file_path = self.path.join(format!("ciphers/{}.enc", cipher_id));
         super::write_vault_file(&file_path, &file.envelope_bytes)?;
         self.rebuild_index()?;
         self.record_integrity(&cipher_id.to_string(), 1);
@@ -5107,6 +5602,19 @@ impl VaultHandle {
             .cipher_file_path(cipher_id)
             .ok_or_else(|| VaultError::NotFound(format!("cipher {cipher_id}")))?;
 
+        // S3-7c review F2: a Read-grantee holds the CK wrap and could
+        // re-encrypt an update locally, but peers refuse non-writable
+        // cipher commits — the local gate must refuse first or the vault
+        // wedges. Personal-flat ciphers stay an admin surface.
+        if let CipherDomain::Collection(dir) = self.cipher_domain(&file_path) {
+            let Some(cid) = self.collection_id_for_dir(&dir) else {
+                return Err(BaluardError::from(VaultError::InvalidOperation(
+                    "That entry's collection no longer exists.".into(),
+                )));
+            };
+            self.assert_collection_write(&cid)?;
+        }
+
         // Read existing envelope to get current update_seq and key_epoch
         let existing_bytes = std::fs::read(&file_path)?;
         let existing_file = cipher::CipherFile {
@@ -5117,9 +5625,8 @@ impl VaultHandle {
         let new_update_seq = existing_envelope.header.update_seq + 1;
         let key_epoch = existing_envelope.header.key_epoch;
 
-        // Read existing cipher to preserve created_at
-        let existing_cipher =
-            self.try_decrypt_cipher_with_root_key(unlocked.root()?, &existing_file)?;
+        // Read existing cipher to preserve created_at (S3-7c: domain-aware)
+        let existing_cipher = self.try_decrypt_cipher_at(unlocked, &file_path, &existing_file)?;
 
         let mut input_owned = input.clone();
         input_owned.created_at = Some(existing_cipher.created_at);
@@ -5162,7 +5669,7 @@ impl VaultHandle {
             input_owned.password_history = existing_cipher.password_history.clone();
         }
 
-        let item_key = Self::derive_item_key_from_sgk(unlocked.sgk()?, cipher_id, key_epoch)?;
+        let item_key = self.resolve_item_key(unlocked, &file_path, cipher_id, key_epoch)?;
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -5198,7 +5705,7 @@ impl VaultHandle {
             id: cipher_id,
             envelope_bytes: std::fs::read(&file_path)?,
         };
-        let existing = self.try_decrypt_cipher_with_root_key(unlocked.root()?, &existing_file)?;
+        let existing = self.try_decrypt_cipher_at(unlocked, &file_path, &existing_file)?;
 
         let input = CipherInput {
             name: existing.name,
@@ -5215,8 +5722,16 @@ impl VaultHandle {
             tags: existing.tags.clone(),
         };
 
-        // add_cipher handles new UUID + encryption
-        self.add_cipher(&input)
+        // add_cipher handles new UUID + encryption.
+        // S3-7c review F8: the clone lands in the SAME key domain as its
+        // source — cloning a collection cipher into the flat personal
+        // surface would silently move the copy out of the collection (and
+        // a member clone would fail outright on the SGK path).
+        let source_collection = match self.cipher_domain(&file_path) {
+            CipherDomain::Collection(dir) => self.collection_id_for_dir(&dir),
+            _ => None,
+        };
+        self.add_cipher_in_collection(&input, source_collection)
     }
 
     /// Archive a cipher: sets `archived: true`, hides from main list.
@@ -5238,7 +5753,7 @@ impl VaultHandle {
             id: cipher_id,
             envelope_bytes: std::fs::read(&file_path)?,
         };
-        let existing = self.try_decrypt_cipher_with_root_key(unlocked.root()?, &existing_file)?;
+        let existing = self.try_decrypt_cipher_at(unlocked, &file_path, &existing_file)?;
 
         if existing.archived {
             return Ok(()); // Already archived, idempotent
@@ -5279,7 +5794,7 @@ impl VaultHandle {
             id: cipher_id,
             envelope_bytes: std::fs::read(&file_path)?,
         };
-        let existing = self.try_decrypt_cipher_with_root_key(unlocked.root()?, &existing_file)?;
+        let existing = self.try_decrypt_cipher_at(unlocked, &file_path, &existing_file)?;
 
         if !existing.archived {
             return Ok(()); // Already unarchived, idempotent
@@ -5915,28 +6430,40 @@ impl VaultHandle {
         // crash mid-rename-loop left a mixed-epoch vault with no recovery.
         let mut _guard = RotationGuard::new(&self.path);
 
-        // Phase 1: Re-encrypt all ciphers to .tmp files (staged)
+        // Phase 1: Re-encrypt all ciphers to .tmp files (staged).
+        // S3-7c: domain-aware — the flat-only path build silently skipped
+        // every collection-scoped cipher (they stayed at the old epoch).
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
+        let old_root = unlocked.root()?.clone();
         let mut staged_renames: Vec<(PathBuf, PathBuf)> = Vec::new();
         for (cipher_id, is_trash) in &all_ids {
-            let dir = if *is_trash { "trash" } else { "ciphers" };
-            let file_path = self.path.join(dir).join(format!("{cipher_id}.enc"));
-            if !file_path.exists() {
+            let file_path = if *is_trash {
+                self.trash_file_path(*cipher_id)
+            } else {
+                self.cipher_file_path(*cipher_id)
+            };
+            let Some(file_path) = file_path else {
                 continue;
-            }
+            };
             let envelope_bytes = std::fs::read(&file_path)?;
             let file = cipher::CipherFile {
                 id: *cipher_id,
                 envelope_bytes,
             };
 
-            let old_root = match &self.state {
-                VaultState::Unlocked(u) => u.root()?.clone(),
-                VaultState::Locked => return Err(VaultError::Locked.into()),
-            };
-            let mut existing = self.try_decrypt_cipher_with_root_key(&old_root, &file)?;
-            let old_item_key = Self::derive_item_key_from_root(&old_root, *cipher_id, old_epoch);
-            let new_item_key =
-                Self::derive_item_key_from_root(&new_root_key, *cipher_id, new_epoch);
+            let (old_item_key, new_item_key) = self.rotation_item_keys(
+                unlocked,
+                &old_root,
+                &file_path,
+                &file,
+                old_epoch,
+                new_epoch,
+                &new_root_key,
+            )?;
+            let mut existing = self.try_decrypt_cipher_at(unlocked, &file_path, &file)?;
 
             // P4: re-encrypt attachment blobs with the new item key (mirrors
             // revoke_device_and_rekey). Attachments live outside the cipher
@@ -5993,8 +6520,6 @@ impl VaultHandle {
                 tags: existing.tags.clone(),
             };
 
-            let new_item_key =
-                Self::derive_item_key_from_root(&new_root_key, *cipher_id, new_epoch);
             let new_file = cipher::encrypt_cipher(
                 self.vault_id,
                 *cipher_id,
@@ -6008,7 +6533,6 @@ impl VaultHandle {
             // previously skipped this, leaving every secret in freed heap
             // after a routine non-revocation rotation).
             Self::zeroize_decrypted_cipher(&mut existing);
-            drop(old_root);
 
             // Write to .tmp path (staged)
             let tmp_path = file_path.with_extension("enc.tmp");
@@ -6037,6 +6561,7 @@ impl VaultHandle {
             std::fs::write(&avatar_tmp, &new_blob)?;
             staged_renames.push((avatar_tmp, avatar_path));
         }
+        drop(old_root);
 
         // Phase 2: Update RK canary (staged)
         let rk_canary = super::canary::create_rk_canary(&new_root_key, self.vault_id, new_epoch)?;
@@ -6507,25 +7032,38 @@ impl VaultHandle {
             .chain(trash_ids.iter().map(|id| (*id, true)))
             .collect();
 
+        // S3-7c: domain-aware (mirrors rotate_root_key — the flat-only
+        // path build skipped collection-scoped ciphers).
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => return Err(VaultError::Locked.into()),
+        };
         let mut staged_renames: Vec<(PathBuf, PathBuf)> = Vec::new();
         for (cipher_id, is_trash) in &all_ids {
-            let dir = if *is_trash { "trash" } else { "ciphers" };
-            let file_path = self.path.join(dir).join(format!("{cipher_id}.enc"));
-            if !file_path.exists() {
+            let file_path = if *is_trash {
+                self.trash_file_path(*cipher_id)
+            } else {
+                self.cipher_file_path(*cipher_id)
+            };
+            let Some(file_path) = file_path else {
                 continue;
-            }
+            };
             let envelope_bytes = std::fs::read(&file_path)?;
             let file = cipher::CipherFile {
                 id: *cipher_id,
                 envelope_bytes,
             };
 
-            let mut existing = self.try_decrypt_cipher_with_root_key(&old_root, &file)?;
-
-            // Re-encrypt attachment blobs with new item key
-            let new_item_key =
-                Self::derive_item_key_from_root(&new_root_key, *cipher_id, new_epoch);
-            let old_item_key = Self::derive_item_key_from_root(&old_root, *cipher_id, old_epoch);
+            let (old_item_key, new_item_key) = self.rotation_item_keys(
+                unlocked,
+                &old_root,
+                &file_path,
+                &file,
+                old_epoch,
+                new_epoch,
+                &new_root_key,
+            )?;
+            let mut existing = self.try_decrypt_cipher_at(unlocked, &file_path, &file)?;
             for attach_meta in &existing.attachments {
                 let attach_dir = self
                     .path
@@ -6929,7 +7467,9 @@ impl VaultHandle {
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
-        let ids = self.list_cipher_ids()?;
+        // Review F4: scan the SAME id set a member staleness guard would
+        // compare against, so the rebuilt index matches on the next read.
+        let ids = self.scannable_cipher_ids(unlocked)?;
         let mut metas = Vec::with_capacity(ids.len());
         let mut skipped: Vec<uuid::Uuid> = Vec::new();
 
@@ -6940,7 +7480,7 @@ impl VaultHandle {
             let envelope_bytes = std::fs::read(&file_path)?;
             let file = cipher::CipherFile { id, envelope_bytes };
 
-            let c = match self.try_decrypt_cipher_with_root_key(unlocked.root()?, &file) {
+            let c = match self.try_decrypt_cipher_at(unlocked, &file_path, &file) {
                 Ok(c) => c,
                 Err(crate::error::BaluardError::Vault(crate::error::VaultError::CrossEpoch {
                     envelope_epoch,
@@ -7074,15 +7614,13 @@ impl Drop for RotationGuard {
         // the rotation failed or panicked, and the next open must warn that
         // the vault may be in a mixed-epoch state (P4: an incomplete rotation
         // must never look complete).
-        // Sweep flat dirs
-        for dir_name in &["ciphers", "trash"] {
-            remove_tmp_files(&self.vault_path.join(dir_name));
-        }
-        // Sweep entries/ recursively (attachments live in entries/<id>/attachments/)
-        remove_tmp_files_recursive(&self.vault_path.join("entries"));
         // Sweep meta/ and meta/keywrap/
         remove_tmp_files(&self.vault_path.join("meta"));
         remove_tmp_files(&self.vault_path.join("meta/keywrap"));
+        // S3-7c review F9: ciphers and trash now hold collection
+        // subdirectories — sweep their .tmp files recursively.
+        remove_tmp_files_recursive(&self.vault_path.join("ciphers"));
+        remove_tmp_files_recursive(&self.vault_path.join("trash"));
     }
 }
 
@@ -7754,13 +8292,24 @@ mod tests {
         // Assign to a missing collection fails closed.
         let ghost = Uuid::new_v4();
         h.assign_cipher_to_collection(id, Some(ghost)).unwrap_err();
-        // Delete from the collection dir lands in trash; restore lands
-        // at the personal flat path.
+        // Delete from the collection dir lands in trash PRESERVING the
+        // collection subdir (S3-7c: same-domain restore); restore returns
+        // it to the collection dir it came from.
         h.assign_cipher_to_collection(id, Some(col)).unwrap();
         h.delete_cipher(id).unwrap();
-        assert!(dir.path().join(format!("trash/{id}.enc")).exists());
+        let dir_name = scoped_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let mut trash_scoped = dir.path().join("trash");
+        trash_scoped.push(dir_name);
+        trash_scoped.push(format!("{id}.enc"));
+        assert!(trash_scoped.exists());
         h.restore_cipher(id).unwrap();
-        assert!(flat.exists());
+        assert!(scoped_path.exists());
+        assert!(!flat.exists());
     }
 
     #[test]
@@ -10085,6 +10634,234 @@ mod tests {
             "flip must name the blocked member: {err}"
         );
         assert!(!crate::vault::space_meta::shape_flipped(&owner_path));
+    }
+
+    /// S3-7c wave centerpiece: after the flip, a granted member reads and
+    /// writes collection ciphers via grant wraps (no Root Key, no SGK),
+    /// personal-flat ciphers stay invisible, trash/restore is
+    /// same-domain, and root rotation keeps member access alive.
+    #[test]
+    fn member_collection_access_two_devices() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        let owner_member =
+            crate::vault::members::member_id_for_device(&owner_path, handle.device_id).unwrap();
+        let mut owner_row =
+            crate::vault::members::member_file_by_id(&owner_path, owner_member).unwrap();
+        let card = handle.contact_card_signed().unwrap();
+        owner_row.identity_wrap_pubkey = Some(card.card.identity_wrap_pubkey.clone());
+        crate::vault::members::write_member(&owner_path, &owner_row).unwrap();
+
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve join").unwrap();
+
+        // The joiner engine signs with the joiner's device id (the commit
+        // signer string drives the member-of lookup at verification). Pull
+        // the approval first: the device identity comes from the clone.
+        let probe = VaultHandle::open(&joiner_path).unwrap();
+        let joiner_device = probe.device_id;
+        drop(probe);
+        let engine_j =
+            crate::sync::engine::SyncEngine::new(&joiner_path, &joiner_device.to_string(), None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        let joiner_seal = joiner.devkey_seal();
+        drop(joiner);
+        let engine_j = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner_device.to_string(),
+            joiner_seal.as_ref(),
+        );
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+
+        // Prepare + flip: the joiner becomes rootless.
+        handle.space_prepare().unwrap();
+        engine_o.commit_all(&repo_o, "prepare").unwrap();
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+        handle.space_flip().unwrap();
+        engine_o.commit_all(&repo_o, "flip").unwrap();
+
+        let mk_login = |name: &str, pw: &str| {
+            let kind = crate::types::CipherKind::Login(crate::types::LoginData {
+                username: Some("u".into()),
+                password: Some(pw.to_string()),
+                ..Default::default()
+            });
+            crate::types::CipherInput {
+                name: name.into(),
+                kind,
+                ..Default::default()
+            }
+        };
+
+        // Owner grants the Editor WRITE on a new collection and seeds one
+        // cipher into it; one personal cipher stays flat.
+        let work = handle.collection_create("Work").unwrap();
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        drop(joiner);
+        let joiner_member =
+            crate::vault::members::member_id_for_device(&owner_path, joiner_device).unwrap();
+        handle
+            .collection_grant(
+                work,
+                joiner_member,
+                crate::vault::collections::CollectionAccess::Write,
+                None,
+            )
+            .unwrap();
+        let seed_id = handle
+            .add_cipher_in_collection(&mk_login("Seeded", "seed-pass"), Some(work))
+            .unwrap();
+        let personal_id = handle.add_cipher(&mk_login("Personal", "pw")).unwrap();
+        engine_o.commit_all(&repo_o, "seed").unwrap();
+
+        // Joiner pulls: the collection cipher is readable via the grant
+        // wrap; the personal cipher is invisible AND unreadable.
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        assert!(!joiner.unlocked().holds_root());
+        let metas = joiner.list_cipher_meta().unwrap();
+        assert!(
+            metas.iter().any(|m| m.id == seed_id),
+            "seeded cipher listed"
+        );
+        assert!(
+            !metas.iter().any(|m| m.id == personal_id),
+            "personal cipher invisible"
+        );
+        match joiner.get_cipher(seed_id).unwrap() {
+            CipherRead::Decrypted(c) => {
+                let crate::types::CipherKind::Login(l) = &c.kind else {
+                    panic!("expected login")
+                };
+                assert_eq!(l.password.as_deref(), Some("seed-pass"));
+            }
+            _ => panic!("expected decrypted"),
+        }
+        assert!(joiner.get_cipher(personal_id).is_err());
+
+        // Member writes: create inside the collection, update the seeded
+        // cipher. A flat create refuses (no group key).
+        let own_id = joiner
+            .add_cipher_in_collection(&mk_login("Mine", "mine-pass"), Some(work))
+            .unwrap();
+        assert!(joiner.add_cipher(&mk_login("Flat", "x")).is_err());
+        joiner
+            .update_cipher(seed_id, &mk_login("Seeded", "rotated-pass"))
+            .unwrap();
+
+        // Member trash + restore: same-domain, back inside the dir.
+        let dirs = crate::vault::collections::load_dir_map(&joiner_path);
+        let work_dir = dirs.iter().find(|(_, id)| *id == work).unwrap().0.clone();
+        joiner.delete_cipher(own_id).unwrap();
+        assert!(
+            joiner_path
+                .join(format!("trash/{work_dir}/{own_id}.enc"))
+                .exists()
+        );
+        joiner.restore_cipher(own_id).unwrap();
+        assert!(
+            joiner_path
+                .join(format!("ciphers/{work_dir}/{own_id}.enc"))
+                .exists()
+        );
+        drop(joiner);
+
+        // Joiner commits its writes; the owner pulls from the joiner
+        // (the owner repo is the origin — add it as a remote).
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.commit_all(&repo_j, "member writes").unwrap();
+        drop(repo_j);
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .map_err(|e| e.message().to_string())
+            .ok();
+        engine_o.pull(&repo_o, "joiner").unwrap();
+        for (cid, want) in [(own_id, "mine-pass"), (seed_id, "rotated-pass")] {
+            match handle.get_cipher(cid).unwrap() {
+                CipherRead::Decrypted(c) => {
+                    let crate::types::CipherKind::Login(l) = &c.kind else {
+                        panic!("expected login")
+                    };
+                    assert_eq!(l.password.as_deref(), Some(want));
+                }
+                _ => panic!("expected decrypted"),
+            }
+        }
+        engine_o.commit_all(&repo_o, "land member writes").unwrap();
+
+        // Root rotation: CK values are rotation-invariant, collection
+        // ciphers re-key at the new epoch, and the member's grant wrap
+        // still opens — access survives.
+        handle.rotate_root_key().unwrap();
+        // The rotating admin must still read its own re-keyed ciphers.
+        match handle.get_cipher(seed_id).unwrap() {
+            CipherRead::Decrypted(c) => {
+                let crate::types::CipherKind::Login(l) = &c.kind else {
+                    panic!("expected login")
+                };
+                assert_eq!(l.password.as_deref(), Some("rotated-pass"));
+            }
+            _ => panic!("expected decrypted"),
+        }
+        engine_o.commit_all(&repo_o, "rotate").unwrap();
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        match joiner.get_cipher(seed_id).unwrap() {
+            CipherRead::Decrypted(c) => {
+                let crate::types::CipherKind::Login(l) = &c.kind else {
+                    panic!("expected login")
+                };
+                assert_eq!(l.password.as_deref(), Some("rotated-pass"));
+            }
+            _ => panic!("expected decrypted"),
+        }
     }
 
     #[test]

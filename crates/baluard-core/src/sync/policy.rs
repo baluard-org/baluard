@@ -194,6 +194,11 @@ fn pattern_matches(pattern: &[&str], path: &[&str], member: Option<&str>) -> boo
 pub struct CollectionScope {
     pub dirs: Vec<(String, Uuid)>,
     pub writable: Vec<Uuid>,
+    /// S3-7c review F5: set from the commit tree's space-shape marker.
+    /// On a flipped (team-shape) vault the personal-flat cipher surface is
+    /// Admin-only — member devices hold neither Root Key nor SGK and can
+    /// never have authored flat content legitimately.
+    pub flat_admin_only: bool,
     /// S3-5 delegated manage: collections whose def (grant list) the
     /// signer may edit — the ids holding a `manage` grant for the
     /// signer in the PARENT tree. Authority must pre-date the edit:
@@ -208,6 +213,7 @@ impl CollectionScope {
             dirs: Vec::new(),
             writable: Vec::new(),
             managed: Vec::new(),
+            flat_admin_only: false,
         }
     }
 }
@@ -241,10 +247,43 @@ pub fn authorize_scoped(
         let Some((_, cid)) = scope.dirs.iter().find(|(d, _)| d == dir) else {
             return Err(deny());
         };
-        if !scope.writable.contains(cid) {
+        // S3-7c fix (latent S3-2 gap): Owner/Admin hold every known
+        // collection structurally — the writable set lists GRANT holders
+        // only, so an admin-authored collection cipher was refused at
+        // every peer's pull. Unknown dirs still deny everyone (forged
+        // directories stay out), and the role floor below still applies.
+        if !matches!(role, CommitRole::Owner | CommitRole::Admin) && !scope.writable.contains(cid) {
             return Err(deny());
         }
         // Fall through: the member-role rows still gate the signer.
+    }
+    // S3-7c review F5: two path classes the table alone admits too
+    // broadly on team vaults.
+    //   1. trash/<dir>/**: collection-scoped trashes follow the SAME
+    //      scope rules as the ciphers they came from (known dir +
+    //      grant-or-admin); an Editor member cannot trash foreign
+    //      collection entries.
+    //   2. Personal-flat ciphers and root trash files: on a FLIPPED
+    //      vault these are the admin surface — member devices hold
+    //      neither Root Key nor SGK and never authored flat content
+    //      legitimately, so the Editor table row must not admit their
+    //      rewrites or deletions. Pre-flip vaults keep the legacy rows.
+    if segs.first() == Some(&"trash") && segs.len() >= 3 {
+        let dir = segs[1];
+        let Some((_, cid)) = scope.dirs.iter().find(|(d, _)| *d == dir) else {
+            return Err(deny());
+        };
+        if !matches!(role, CommitRole::Owner | CommitRole::Admin) && !scope.writable.contains(cid) {
+            return Err(deny());
+        }
+        // Fall through: the member-role rows still gate the signer.
+    }
+    if scope.flat_admin_only {
+        let flat_cipher = segs.first() == Some(&"ciphers") && segs.len() == 2;
+        let flat_trash = segs.first() == Some(&"trash") && segs.len() == 2;
+        if (flat_cipher || flat_trash) && role.rank() < CommitRole::Admin.rank() {
+            return Err(deny());
+        }
     }
     if segs.first() == Some(&"meta") && segs.get(1) == Some(&"collections") {
         // Own-wrap self-service (P1 groundwork, review S3-5): a member
@@ -353,6 +392,7 @@ mod tests {
 
     fn scoped(dir: &str, cid: Uuid, writable: &[Uuid]) -> CollectionScope {
         CollectionScope {
+            flat_admin_only: false,
             dirs: vec![(dir.to_string(), cid)],
             writable: writable.to_vec(),
             managed: Vec::new(),

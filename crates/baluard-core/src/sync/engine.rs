@@ -3646,10 +3646,18 @@ impl SyncEngine {
                     {
                         for (object_id, old_cp) in &old_manifest.checkpoints {
                             match manifest.checkpoints.get(object_id) {
-                                Some(cp)
-                                    if cp.device_id == old_cp.device_id && cp.seq >= old_cp.seq => {
+                                // S3-7c review F1: seq is the envelope's
+                                // update_seq and rises on every edit
+                                // regardless of which device makes it, so
+                                // the floor is unconditional — a device
+                                // change may never launder a higher seq
+                                // (the checkpoint itself already verified
+                                // against the roster above).
+                                Some(cp) if cp.seq < old_cp.seq => {
+                                    return Err(deny());
                                 }
-                                _ => return Err(deny()),
+                                Some(_) => {}
+                                None => return Err(deny()),
                             }
                         }
                     }
@@ -3803,6 +3811,11 @@ impl SyncEngine {
             dirs,
             writable,
             managed,
+            // S3-7c review F5: the flip marker in the verified commit's
+            // own tree decides whether flat cipher paths are admin-only.
+            flat_admin_only: tree
+                .get_path(std::path::Path::new("meta/space-shape.json"))
+                .is_ok(),
         })
     }
 
@@ -3872,6 +3885,23 @@ impl SyncEngine {
         {
             Some(Ok(key)) if key.len() == 32 => {}
             _ => return Err(deny()),
+        }
+        // S3-7c: the wrap pubkey is load-bearing on team-shape vaults
+        // (grant + space wraps address it), so a self-service rotation may
+        // only set it to a valid 32-byte hex value or clear it. Malformed
+        // text would wedge every future wrap mint against this member.
+        match (
+            old_member.identity_wrap_pubkey.as_deref(),
+            new_member.identity_wrap_pubkey.as_deref(),
+        ) {
+            (old, new) if old == new => {}
+            (_, None) => {}
+            (_, Some(new)) => {
+                let ok = hex::decode(new).map(|k| k.len() == 32).unwrap_or(false);
+                if !ok {
+                    return Err(deny());
+                }
+            }
         }
         // S1a-4 review: proof of possession of the NEW identity key plus
         // previous-key linkage. Without these, a member could claim an

@@ -235,21 +235,37 @@ impl SpaceGroupKey {
     }
 
     fn derive_item_key_unchecked(&self, cipher_id: uuid::Uuid) -> ItemKey {
+        Self::item_key_expand(self.key.as_slice(), self.epoch, cipher_id)
+    }
+
+    /// Shared HKDF expansion for item keys. The info string is identical
+    /// for every IKM source (SGK or collection content key), so a cipher's
+    /// key domain can move without changing the derivation discipline —
+    /// only the input keying material changes.
+    fn item_key_expand(ikm: &[u8], epoch: u64, cipher_id: uuid::Uuid) -> ItemKey {
         use hkdf::Hkdf;
         use sha2::Sha256;
 
         // "baluard-item-v1" (13 bytes) + epoch (8 bytes) + UUID (16 bytes) = 37 bytes
         let mut info = Vec::with_capacity(37);
         info.extend_from_slice(b"baluard-item-v1");
-        info.extend_from_slice(&self.epoch.to_le_bytes());
+        info.extend_from_slice(&epoch.to_le_bytes());
         info.extend_from_slice(cipher_id.as_bytes());
 
-        let hkdf = Hkdf::<Sha256>::new(None, self.key.as_slice());
+        let hk = Hkdf::<Sha256>::new(None, ikm);
         let mut key = [0u8; 32];
-        hkdf.expand(&info, &mut key)
+        hk.expand(&info, &mut key)
             .expect("32 bytes is valid output length for HKDF-SHA256");
 
         ItemKey::from_bytes(key)
+    }
+
+    /// Derive an Item Key from a collection content key. S3-7c: ciphers
+    /// inside a collection directory are keyed by that collection's CK
+    /// (same info string as the SGK path), so granted members holding only
+    /// the CK wrap can decrypt without any group or root key material.
+    pub fn derive_item_key_from_ck(ck: &[u8; 32], cipher_id: uuid::Uuid, epoch: u64) -> ItemKey {
+        Self::item_key_expand(ck.as_slice(), epoch, cipher_id)
     }
 
     /// M1 fix: Derive a dedicated key for encrypting the user avatar.

@@ -405,7 +405,7 @@ pub fn rename_collection(
     Ok(file)
 }
 
-fn unwrap_ck(
+pub(crate) fn unwrap_ck(
     file: &CollectionFile,
     sgk: &SpaceGroupKey,
 ) -> Result<Zeroizing<[u8; 32]>, BaluardError> {
