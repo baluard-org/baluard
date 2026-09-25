@@ -1189,6 +1189,14 @@ The review round converted two latent gaps into rules. First, the rotation loop 
 
 **Boundaries**: flat/personal ciphers stay admin-surface; member-facing collection UI is the §4.8 wave; attachment blobs ride the cipher item key so they follow the domain automatically; S4 groups and dual control untouched.
 
+### D42. Shared-Collection Surfaces (§4.8-4) (2026-09-25; S3 in progress)
+
+One listing route, role-aware output. Admins see every collection with the grant table and an access:"admin" marker; members see only rows they can open, names decrypted through their own grant wrap. The marker is server-derived from holds_root, so no client can badge itself into a managing position. A cipher's collection membership travels as a path-derived field (CipherMeta.collection_id filled from the on-disk location over a single dir-map pass) — never from client input, so an entry cannot claim a collection it is not stored in. Entry creation takes the collection id in the payload and lands inside the collection in one operation, closing the create-then-move window a Read-grantee could otherwise have wedged.
+
+The review round proved the payload contract is a real perimeter: the desktop inbox shipped payloads the daemon refuses (a missing requester_member_id blocks every approve/deny), and an expiry field the daemon never parsed silently turned temporary access into permanent. Cross-layer contracts need a test on BOTH ends, not a shared name. The same round surfaced a pre-existing toolchain break — solid 2.0.0-rc.1 dropped onMount from the default entry, so `vite build` failed on main independent of any wave — closed by moving both importers to the onSettled convention the codebase already uses, and the build smoke joined the verification set.
+
+**Boundaries**: entry move-to-collection UI, trash collection mapping, and catalog opt-out UX stay with the §4.8-5 polish pass; org settings/readiness and the provider checklist are the remaining S3 remainder.
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

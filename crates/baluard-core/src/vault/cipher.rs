@@ -186,6 +186,7 @@ mod tests {
         let input = CipherInput {
             name: "GitHub".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user@example.com".into()),
                 password: Some("s3cret!".into()),
@@ -237,6 +238,7 @@ mod tests {
         let input = CipherInput {
             name: "test".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: None,
                 password: Some("secret".into()),
@@ -275,6 +277,7 @@ mod tests {
         let input = CipherInput {
             name: "secret-entry".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: None,
                 password: Some("password-for-A".into()),
@@ -326,6 +329,7 @@ mod tests {
         let input = CipherInput {
             name: "test".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: None,
                 password: Some("secret".into()),

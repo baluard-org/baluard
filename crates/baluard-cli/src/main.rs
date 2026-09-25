@@ -789,6 +789,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
             Ok(CipherInput {
                 name,
                 folder_id: parse_folder_id(folder.as_ref())?,
+                collection_id: None,
                 kind: CipherKind::Login(LoginData {
                     username,
                     password: cipher_password,
@@ -834,6 +835,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
             Ok(CipherInput {
                 name,
                 folder_id: parse_folder_id(folder.as_ref())?,
+                collection_id: None,
                 kind: CipherKind::Card(baluard_core::types::CardData {
                     cardholder_name,
                     brand,
@@ -862,6 +864,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
         } => Ok(CipherInput {
             name,
             folder_id: parse_folder_id(folder.as_ref())?,
+            collection_id: None,
             kind: CipherKind::SecureNote,
             favorite,
             notes,
@@ -897,6 +900,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
         } => Ok(CipherInput {
             name,
             folder_id: parse_folder_id(folder.as_ref())?,
+            collection_id: None,
             kind: CipherKind::Identity(baluard_core::types::IdentityData {
                 title,
                 first_name,
@@ -941,6 +945,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
             Ok(CipherInput {
                 name,
                 folder_id: parse_folder_id(folder.as_ref())?,
+                collection_id: None,
                 kind: CipherKind::SshKey(baluard_core::types::SshKeyData {
                     public_key,
                     private_key,
@@ -990,6 +995,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
             Ok(CipherInput {
                 name,
                 folder_id: parse_folder_id(folder.as_ref())?,
+                collection_id: None,
                 kind: CipherKind::BankAccount(baluard_core::types::BankAccountData {
                     bank_name,
                     name_on_account,
@@ -1030,6 +1036,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
         } => Ok(CipherInput {
             name,
             folder_id: parse_folder_id(folder.as_ref())?,
+            collection_id: None,
             kind: CipherKind::DriversLicense(baluard_core::types::DriversLicenseData {
                 first_name,
                 middle_name,
@@ -1071,6 +1078,7 @@ fn build_cipher_input(cipher: CipherAddCommand) -> Result<CipherInput, Box<dyn s
         } => Ok(CipherInput {
             name,
             folder_id: parse_folder_id(folder.as_ref())?,
+            collection_id: None,
             kind: CipherKind::Passport(baluard_core::types::PassportData {
                 surname,
                 given_name,

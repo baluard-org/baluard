@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   CATEGORY_TYPE_MAP,
+  cipherCollectionId,
+  filterByCollection,
   selectSource,
   filterByCategory,
   filterByFolder,
@@ -140,5 +142,26 @@ describe("CATEGORY_TYPE_MAP", () => {
     expect(types).toContain("driversLicense");
     expect(types).toContain("passport");
     expect(Object.keys(CATEGORY_TYPE_MAP)).toHaveLength(8);
+  });
+});
+
+describe("cipherCollectionId", () => {
+  it("prefers top-level then _meta then null", () => {
+    expect(cipherCollectionId({ collection_id: "a" })).toBe("a");
+    expect(cipherCollectionId({ _meta: { collection_id: "b" } })).toBe("b");
+    expect(cipherCollectionId({})).toBeNull();
+  });
+});
+
+describe("filterByCollection", () => {
+  const rows = [
+    { id: "1", _meta: { collection_id: "c1" } },
+    { id: "2", collection_id: "c2" },
+    { id: "3" },
+  ];
+  it("filters by either surface and passes everything through when unset", () => {
+    expect(filterByCollection(rows, "c1").map((r) => r.id)).toEqual(["1"]);
+    expect(filterByCollection(rows, "c2").map((r) => r.id)).toEqual(["2"]);
+    expect(filterByCollection(rows, null)).toHaveLength(3);
   });
 });

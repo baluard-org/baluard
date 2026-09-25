@@ -2096,6 +2096,7 @@ pub fn handle_edit(
                     })
                     .transpose()?
                     .or(existing_cipher.folder_id),
+                collection_id: None,
                 kind: existing_cipher.kind.clone(),
                 favorite: favorite.unwrap_or(existing_cipher.favorite),
                 reprompt: existing_cipher.reprompt,
@@ -2870,6 +2871,7 @@ pub fn handle_passkey_delete(
                     let input = baluard_core::types::CipherInput {
                         name: cipher.name.clone(),
                         folder_id: cipher.folder_id,
+                        collection_id: None,
                         favorite: cipher.favorite,
                         reprompt: cipher.reprompt,
                         tags: cipher.tags.clone(),
@@ -2937,6 +2939,7 @@ pub fn handle_passkey_rename(
                     let input = baluard_core::types::CipherInput {
                         name: cipher.name.clone(),
                         folder_id: cipher.folder_id,
+                        collection_id: None,
                         favorite: cipher.favorite,
                         reprompt: cipher.reprompt,
                         tags: cipher.tags.clone(),

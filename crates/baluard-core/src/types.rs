@@ -975,6 +975,10 @@ pub struct CipherInput {
     pub name: String,
     #[serde(default)]
     pub folder_id: Option<Uuid>,
+    /// S3-7c / 4.8: create directly inside a collection (member path —
+    /// flat creation refuses on granted members). None = flat.
+    #[serde(default)]
+    pub collection_id: Option<Uuid>,
     #[serde(default)]
     pub kind: CipherKind,
     #[serde(default)]
@@ -1009,6 +1013,7 @@ impl CipherInput {
         Self {
             name: c.name.clone(),
             folder_id: c.folder_id,
+            collection_id: None,
             kind: c.kind.clone(),
             favorite: c.favorite,
             reprompt: c.reprompt,
@@ -1339,6 +1344,10 @@ pub struct CipherMeta {
     pub archived: bool,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// S3-7c / 4.8: the collection this entry lives in (path-derived at
+    /// list time). None = personal-flat surface.
+    #[serde(default)]
+    pub collection_id: Option<Uuid>,
 }
 
 /// Resolve a linked field's value from a cipher's data.

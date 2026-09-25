@@ -151,6 +151,71 @@ pub fn load_dir_map(vault_path: &Path) -> Vec<(String, Uuid)> {
     map
 }
 
+/// One row of the member-side listing (4.8): the caller's own grant,
+/// with the name decrypted through their grant wrap. No SGK needed.
+#[derive(Debug, Clone)]
+pub struct MemberCollectionRow {
+    pub collection_id: Uuid,
+    pub name: String,
+    pub access: CollectionAccess,
+    pub expires_at: Option<u64>,
+}
+
+/// List the collections a member can actually open: walk the dir map,
+/// parse each file (malformed rows skip inert, matching the admin walk),
+/// keep the member's own LIVE grant, and decrypt the name through the
+/// per-member grant wrap. A member with no wrap for a granted row
+/// (revoked-race or pre-wrap legacy) skips inert — sync converges it.
+pub fn list_member_collections(
+    vault_path: &Path,
+    member_id: &Uuid,
+    wrapping_secret: &x25519_dalek::StaticSecret,
+) -> Vec<MemberCollectionRow> {
+    let mut rows = Vec::new();
+    let now = now_secs_pub();
+    for (dir, id) in load_dir_map(vault_path) {
+        let _ = dir;
+        let Ok(bytes) = std::fs::read(collections_file_path(vault_path, &id)) else {
+            continue;
+        };
+        let Ok(file) = serde_json::from_slice::<CollectionFile>(&bytes) else {
+            continue;
+        };
+        let Some(grant) = file
+            .grants
+            .iter()
+            .find(|g| g.member_id == *member_id && !is_grant_expired(g, now))
+        else {
+            continue;
+        };
+        let Ok(ck) = open_grant_wrap(vault_path, &id, member_id, wrapping_secret) else {
+            continue;
+        };
+        let Ok(name_bytes) = open_secret_blob(
+            &ck,
+            match json_bytes(&file.name_enc) {
+                Ok(b) => b,
+                Err(_) => continue,
+            }
+            .as_slice(),
+            &format!("{NAME_PURPOSE}/{}", file.id),
+        ) else {
+            continue;
+        };
+        let Ok(name) = String::from_utf8(name_bytes) else {
+            continue;
+        };
+        rows.push(MemberCollectionRow {
+            collection_id: id,
+            name,
+            access: grant.access,
+            expires_at: grant.expires_at,
+        });
+    }
+    rows.sort_by_key(|r| r.name.to_lowercase());
+    rows
+}
+
 /// The relative path for a cipher: collection-scoped when the collection
 /// is salted, personal flat otherwise (plan P5).
 pub fn cipher_rel_path(file: Option<&CollectionFile>, cipher_id: Uuid) -> String {
@@ -1237,6 +1302,43 @@ mod tests {
             access: CollectionAccess::Read,
             expires_at: None,
         }
+    }
+
+    #[test]
+    fn member_listing_needs_no_group_key() {
+        let (_d, path) = temp_vault();
+        let sgk = SpaceGroupKey::generate(1);
+        let servers = create_collection(&path, &sgk, "Servers").unwrap();
+        let finance = create_collection(&path, &sgk, "Finance").unwrap();
+        let member_id = Uuid::new_v4();
+        let stranger = Uuid::new_v4();
+        let alice = crate::vault::identity::IdentityKeys::from_seed(&[7u8; 32]);
+        members::write_member(
+            &path,
+            &wrap_row(member_id, &hex::encode(alice.wrapping_pub_bytes())),
+        )
+        .unwrap();
+        // Read grant on Servers; a lapsed grant on Finance must not list.
+        // upsert refuses past dates, so plant the lapsed row directly.
+        upsert_grant(&path, &sgk, &servers.id, grant_to(member_id)).unwrap();
+        let (mut fin_file, _) = open_collection(&path, &sgk, &finance.id).unwrap();
+        fin_file.grants.push(CollectionGrant {
+            member_id,
+            access: CollectionAccess::Write,
+            expires_at: Some(1),
+        });
+        save_collection(&path, &fin_file).unwrap();
+
+        let rows = list_member_collections(&path, &member_id, alice.wrapping_secret());
+        assert_eq!(rows.len(), 1, "only the live grant lists: {rows:?}");
+        assert_eq!(rows[0].collection_id, servers.id);
+        assert_eq!(rows[0].name, "Servers");
+        assert_eq!(rows[0].access, CollectionAccess::Read);
+        assert!(rows[0].expires_at.is_none());
+
+        // No grant at all → empty.
+        let none = list_member_collections(&path, &stranger, alice.wrapping_secret());
+        assert!(none.is_empty());
     }
 
     #[test]

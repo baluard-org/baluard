@@ -603,6 +603,7 @@ mod tests {
         CipherInput {
             name: name.to_string(),
             folder_id: None,
+            collection_id: None,
             kind: CipherKind::Login(LoginData::default()),
             favorite: false,
             notes: None,
@@ -741,6 +742,7 @@ mod tests {
         let mut base = CipherInput {
             name: "Card".into(),
             folder_id: None,
+            collection_id: None,
             kind: CipherKind::Card(crate::types::CardData {
                 brand: Some("Visa".into()),
                 ..Default::default()
@@ -772,6 +774,7 @@ mod tests {
         let base = CipherInput {
             name: "Card".into(),
             folder_id: None,
+            collection_id: None,
             kind: CipherKind::Card(crate::types::CardData {
                 cardholder_name: Some("Alice".into()),
                 number: Some("1111".into()),
@@ -820,6 +823,7 @@ mod tests {
         let base = CipherInput {
             name: "Card".into(),
             folder_id: None,
+            collection_id: None,
             kind: CipherKind::Card(crate::types::CardData {
                 number: Some("1111".into()),
                 ..Default::default()

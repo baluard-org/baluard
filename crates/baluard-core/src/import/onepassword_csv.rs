@@ -75,6 +75,7 @@ pub fn parse(data: &str) -> ImportResult {
         let cipher = CipherInput {
             name,
             folder_id: None,
+            collection_id: None,
             kind,
             favorite: false,
             notes: get(&record, col_notes),

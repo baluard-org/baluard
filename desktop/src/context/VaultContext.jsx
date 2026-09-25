@@ -47,6 +47,9 @@ function VaultProvider(props) {
   const [selectedCategory, setSelectedCategory] = createSignal("All items");
   const [selectedFolder, setSelectedFolder] = createSignal(null);
   const [selectedTag, setSelectedTag] = createSignal(null);
+  // S3-7c / 4.8: shared collections (role-aware) + the selected one.
+  const [collections, setCollections] = createSignal([]);
+  const [selectedCollection, setSelectedCollection] = createSignal(null);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [activePane, setActivePane] = createSignal("welcome");
 
@@ -69,6 +72,7 @@ function VaultProvider(props) {
     setSelectedCategory("All items");
     setSelectedFolder(null);
     setSelectedTag(null);
+    setSelectedCollection(null);
     setSearchQuery("");
     setActivePane("welcome");
   }
@@ -87,10 +91,22 @@ function VaultProvider(props) {
       setTrashCiphers(data.trash || []);
       setArchivedCiphers(data.archived || []);
       await refreshOtherVaults();
+      refreshCollections();
       // Profile loads alongside cipher data
       refreshProfile();
     } catch (e) {
       toastError(sanitizeError(e, t));
+    }
+  }
+
+  // S3-7c / 4.8: role-aware shared collections. Best-effort — a vault
+  // without collections support simply shows an empty section.
+  async function refreshCollections() {
+    try {
+      const data = JSON.parse(await daemon("collections.list"));
+      setCollections(Array.isArray(data.collections) ? data.collections : []);
+    } catch {
+      setCollections([]);
     }
   }
 
@@ -288,6 +304,8 @@ function VaultProvider(props) {
     selectedCategory, setSelectedCategory,
     selectedFolder, setSelectedFolder,
     selectedTag, setSelectedTag,
+    collections, refreshCollections,
+    selectedCollection, setSelectedCollection,
     searchQuery, setSearchQuery,
     activePane, setActivePane,
     // Settings

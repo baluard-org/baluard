@@ -52,6 +52,7 @@ fn login_input(name: &str, user: &str) -> CipherInput {
     CipherInput {
         name: name.to_string(),
         folder_id: None,
+        collection_id: None,
         kind: CipherKind::Login(LoginData {
             username: Some(user.to_string()),
             password: Some("p".into()),
@@ -693,6 +694,7 @@ async fn health_report_with_short_password_flags_weak() {
     let weak_input = CipherInput {
         name: "weak".to_string(),
         folder_id: None,
+        collection_id: None,
         kind: CipherKind::Login(LoginData {
             username: Some("u".into()),
             password: Some("abc".into()), // 3 chars
@@ -1219,7 +1221,59 @@ async fn access_requests_state_lifecycle_and_locked_rejection() {
     assert!(catalog["catalog"].as_array().unwrap().is_empty());
 }
 
+// S3-7c / 4.8: the collections surface role-aware listing (admin
+// branch), entries carrying their collection id, and vault.add creating
+// straight into a collection.
 #[tokio::test]
+async fn collections_list_admin_shape_and_cipher_collection_ids() {
+    let (_dir, vault_path) = make_vault("coll-ui");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    assert!(state.collections_list().await.is_err(), "locked refuses");
+    state.unlock(MASTER).await.expect("vault unlock");
+
+    // Admin branch: rows carry access "admin" and a grants array.
+    let created: serde_json::Value =
+        serde_json::from_str(&state.collection_create("Servers").await.unwrap()).unwrap();
+    let cid = created["id"].as_str().unwrap().to_string();
+    let list: serde_json::Value =
+        serde_json::from_str(&state.collections_list().await.unwrap()).unwrap();
+    let rows = list["collections"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["name"], "Servers");
+    assert_eq!(rows[0]["access"], "admin");
+    assert!(rows[0]["grants"].is_array());
+
+    // vault.add with a collection id lands inside the collection; the
+    // listing meta carries that collection id.
+    let add_payload = format!(
+        r#"{{"name":"Prod login","kind":{{"type":"login","data":{{"username":"u","password":"p"}}}},"collection_id":"{cid}"}}"#
+    );
+    let added = state.add_cipher(&add_payload).await;
+    if added.is_err() {
+        panic!("in-collection create refused: {:?}", added);
+    }
+    let envelope = state.list_all().await.unwrap();
+    let full: serde_json::Value = serde_json::from_str(&envelope).unwrap();
+    let ciphers = full["ciphers"].as_array().unwrap();
+    assert_eq!(ciphers.len(), 1, "one entry: {full}");
+    assert_eq!(
+        ciphers[0]["_meta"]["collection_id"].as_str(),
+        Some(cid.as_str()),
+        "list_full rows carry the collection id in _meta"
+    );
+
+    // Flat creation (no collection_id) stays the admin surface.
+    let flat =
+        r#"{"name":"Personal","kind":{"type":"login","data":{"username":"u","password":"p"}}}"#;
+    assert!(state.add_cipher(flat).await.is_ok());
+    let envelope = state.list_all().await.unwrap();
+    let full: serde_json::Value = serde_json::from_str(&envelope).unwrap();
+    let ciphers = full["ciphers"].as_array().unwrap();
+    let personal = ciphers.iter().find(|c| c["name"] == "Personal").unwrap();
+    assert!(personal["_meta"]["collection_id"].is_null());
+}
+
 async fn space_meta_prepare_status_and_locked_rejection() {
     let (_dir, vault_path) = make_vault("space-meta");
     let state = Arc::new(VaultState::new(vault_path.clone()));

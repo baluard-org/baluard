@@ -294,6 +294,7 @@ mod sharding_tests {
             updated_at: i as u64,
             archived: false,
             tags: vec![],
+            collection_id: None,
         }
     }
 

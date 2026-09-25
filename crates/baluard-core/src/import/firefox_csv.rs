@@ -74,6 +74,7 @@ pub fn parse(data: &str) -> ImportResult {
         let cipher = CipherInput {
             name,
             folder_id: None,
+            collection_id: None,
             kind: CipherKind::Login(LoginData {
                 username: get(&record, col_username),
                 password: get(&record, col_password),
