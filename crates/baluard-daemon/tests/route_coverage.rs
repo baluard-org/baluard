@@ -1259,6 +1259,28 @@ async fn space_meta_prepare_status_and_locked_rejection() {
     // The 7b flip gate is ready iff no live member lacks a wrap pubkey.
     let ready = missing == 0;
     assert_eq!(ready, st["missing_wrap_pubkey"].as_u64().unwrap() == 0);
+
+    // S3-7b: the flip surface. Locked refusal, then the solo-vault path:
+    // this vault has no joiner, so flipping is allowed for the owner
+    // (owner is admin; readiness passes) — assert the marker lands and
+    // status reports it.
+    let (_d2, vp2) = make_vault("space-flip");
+    let state2 = Arc::new(VaultState::new(vp2.clone()));
+    state2.open().await.expect("open");
+    assert!(state2.space_flip().await.is_err(), "locked refusal");
+    state2.unlock(MASTER).await.expect("unlock");
+    // Owner row needs a wrap pubkey for its own space.wrap mint; the
+    // flip readiness only blocks NON-admin members, so a solo vault
+    // flips regardless.
+    let rep: serde_json::Value = serde_json::from_str(&state2.space_flip().await.unwrap()).unwrap();
+    assert_eq!(rep["already_flipped"], false);
+    assert_eq!(rep["files_reencrypted"], 5);
+    let rep2: serde_json::Value =
+        serde_json::from_str(&state2.space_flip().await.unwrap()).unwrap();
+    assert_eq!(rep2["already_flipped"], true);
+    let st2: serde_json::Value =
+        serde_json::from_str(&state2.space_status().await.unwrap()).unwrap();
+    assert_eq!(st2["flipped"], true);
 }
 
 #[tokio::test]

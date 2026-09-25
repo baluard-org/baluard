@@ -619,10 +619,19 @@ pub fn join_status(vault_path: &Path) -> (bool, bool) {
     // binding the device must both be present. Keywrap alone is not
     // enough — unlock would open the vault but commits would fail
     // verification as a PendingJoiner.
-    let approved = vault_path
-        .join(format!("meta/keywrap/{}.json", unlock.device_id))
-        .exists()
-        && member_file_for_device(vault_path, unlock.device_id).is_some();
+    // S3-7b: on a team-shape vault the Root Key keywrap is never shipped
+    // to members; the space.wrap is the approval deliverable instead.
+    let approved = if crate::vault::space_meta::shape_flipped(vault_path) {
+        member_file_for_device(vault_path, unlock.device_id).is_some()
+            && member_id_for_device(vault_path, unlock.device_id)
+                .map(|m| crate::vault::space_meta::has_space_wrap(vault_path, &m))
+                .unwrap_or(false)
+    } else {
+        vault_path
+            .join(format!("meta/keywrap/{}.json", unlock.device_id))
+            .exists()
+            && member_file_for_device(vault_path, unlock.device_id).is_some()
+    };
     (true, approved)
 }
 

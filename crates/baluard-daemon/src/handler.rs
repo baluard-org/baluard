@@ -323,6 +323,7 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "collections.revoke",
     // S3-7a: prepare writes the sealed store + per-member wraps.
     "space.prepare",
+    "space.flip",
     // S3-6: JIT asks write git-tracked request files (own member subtree)
     // and the catalog; approvals/denials also consume request files.
     "collections.request_access",
@@ -3590,11 +3591,16 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         },
 
         // S3-7a: Space Meta Key groundwork (store + per-member wraps).
+        // S3-7b: space.flip moves the vault to team shape.
         "space.prepare" => match state.space_prepare().await {
             Ok(v) => ok_resp(v, token_str),
             Err(e) => err_response(e),
         },
         "space.status" => match state.space_status().await {
+            Ok(v) => ok_resp(v, token_str),
+            Err(e) => err_response(e),
+        },
+        "space.flip" => match state.space_flip().await {
             Ok(v) => ok_resp(v, token_str),
             Err(e) => err_response(e),
         },
@@ -5740,6 +5746,7 @@ mod tests {
             "collections.grant",
             "collections.revoke",
             "space.prepare",
+            "space.flip",
             "collections.request_access",
             "collections.requests_withdraw",
             "collections.requests_approve",

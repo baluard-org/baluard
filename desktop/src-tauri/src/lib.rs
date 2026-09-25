@@ -243,6 +243,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         // S3-7a: space meta key groundwork.
         "space.prepare",
         "space.status",
+        "space.flip",
         // S3-6: request-access JIT surfaces.
         "collections.request_access",
         "collections.requests_mine",
