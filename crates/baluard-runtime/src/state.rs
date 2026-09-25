@@ -666,6 +666,7 @@ impl VaultState {
                         "cipher_type": meta.cipher_type,
                         "favorite": meta.favorite,
                         "username": meta.username,
+                        "collection_id": meta.collection_id,
                     });
                     ciphers.push(json);
                 }
@@ -696,6 +697,7 @@ impl VaultState {
                         "cipher_type": meta.cipher_type,
                         "favorite": meta.favorite,
                         "username": meta.username,
+                        "collection_id": meta.collection_id,
                     });
                     archived.push(json);
                 }
@@ -1500,6 +1502,7 @@ impl VaultState {
                 let input = baluard_core::types::CipherInput {
                     name: cipher.name.clone(),
                     folder_id: cipher.folder_id,
+                    collection_id: None,
                     favorite: cipher.favorite,
                     reprompt: cipher.reprompt,
                     tags: cipher.tags.clone(),
@@ -1529,6 +1532,7 @@ impl VaultState {
                     .clone()
                     .unwrap_or_else(|| pk_data.rp_id.clone()),
                 folder_id: None,
+                collection_id: None,
                 favorite: false,
                 reprompt: false,
                 tags: vec!["passkey".to_string()],
@@ -1659,6 +1663,7 @@ impl VaultState {
                                 let input = baluard_core::types::CipherInput {
                                     name: c.name.clone(),
                                     folder_id: c.folder_id,
+                                    collection_id: None,
                                     favorite: c.favorite,
                                     reprompt: c.reprompt,
                                     tags: c.tags.clone(),
@@ -1745,6 +1750,7 @@ impl VaultState {
                 let input = baluard_core::types::CipherInput {
                     name: cipher.name.clone(),
                     folder_id: cipher.folder_id,
+                    collection_id: None,
                     favorite: cipher.favorite,
                     reprompt: cipher.reprompt,
                     tags: cipher.tags.clone(),
@@ -1806,6 +1812,7 @@ impl VaultState {
                 let input = baluard_core::types::CipherInput {
                     name: cipher.name.clone(),
                     folder_id: cipher.folder_id,
+                    collection_id: None,
                     favorite: cipher.favorite,
                     reprompt: cipher.reprompt,
                     tags: cipher.tags.clone(),
@@ -2882,7 +2889,14 @@ impl VaultState {
         let input: baluard_core::types::CipherInput =
             serde_json::from_str(payload).map_err(|e| format!("Invalid cipher input: {e}"))?;
 
-        let cipher_id = handle.add_cipher(&input).map_err(|e| format!("{e}"))?;
+        // S3-7c / 4.8: collection_id in the payload routes the create
+        // straight into the collection dir (the member path — flat
+        // creation refuses on granted members, so there is no
+        // create-then-move window).
+        let collection_id = input.collection_id;
+        let cipher_id = handle
+            .add_cipher_in_collection(&input, collection_id)
+            .map_err(|e| format!("{e}"))?;
         let _ = handle.rebuild_tag_index();
 
         Ok(cipher_id.to_string())
@@ -3528,22 +3542,35 @@ impl VaultState {
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".to_string());
         }
-        let rows: Vec<serde_json::Value> = handle
-            .collections_list()
-            .map_err(|e| format!("{e}"))?
-            .into_iter()
-            .map(|(id, name, grants)| {
-                serde_json::json!({
+        // S3-7c / 4.8: one route, role-aware output. Admins get every
+        // collection with the full grant table; members get only what
+        // they can open (names via their grant wrap). `access: "admin"`
+        // marks the managing side so the UI can gate controls.
+        let mut rows: Vec<serde_json::Value> = Vec::new();
+        if handle.holds_root() {
+            for (id, name, grants) in handle.collections_list().map_err(|e| format!("{e}"))? {
+                rows.push(serde_json::json!({
                     "id": id.to_string(),
                     "name": name,
+                    "access": "admin",
+                    "expires_at": null,
                     "grants": grants.iter().map(|g| serde_json::json!({
                         "member_id": g.member_id.to_string(),
                         "access": g.access,
                         "expires_at": g.expires_at,
                     })).collect::<Vec<_>>(),
-                })
-            })
-            .collect();
+                }));
+            }
+        } else {
+            for r in handle.my_collections_list().map_err(|e| format!("{e}"))? {
+                rows.push(serde_json::json!({
+                    "id": r.collection_id.to_string(),
+                    "name": r.name,
+                    "access": r.access,
+                    "expires_at": r.expires_at,
+                }));
+            }
+        }
         Ok(serde_json::json!({ "collections": rows }).to_string())
     }
 
@@ -3807,6 +3834,7 @@ impl VaultState {
                     .and_then(|s| s.parse::<uuid::Uuid>().ok())
                     .or(existing_cipher.folder_id)
             },
+            collection_id: None,
             kind: update
                 .get("kind")
                 .and_then(|v| {
@@ -4220,6 +4248,9 @@ impl VaultState {
                         updated_at: c.updated_at,
                         archived: c.archived,
                         tags: c.tags.clone(),
+                        // Trash view has no collection mapping yet; the
+                        // core restore path resolves the origin domain.
+                        collection_id: None,
                     });
                 }
                 _ => continue, // undecryptable trash blob: skip
@@ -5051,6 +5082,7 @@ impl VaultState {
         let input = baluard_core::types::CipherInput {
             name: cipher.name.clone(),
             folder_id: cipher.folder_id,
+            collection_id: None,
             kind: cipher.kind.clone(),
             favorite: cipher.favorite,
             reprompt: cipher.reprompt,
@@ -5187,6 +5219,7 @@ impl VaultState {
         let input = baluard_core::types::CipherInput {
             name: cipher.name.clone(),
             folder_id: cipher.folder_id,
+            collection_id: None,
             kind: cipher.kind.clone(),
             favorite: cipher.favorite,
             reprompt: cipher.reprompt,

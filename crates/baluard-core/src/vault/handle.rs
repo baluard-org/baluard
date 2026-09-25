@@ -1183,6 +1183,34 @@ impl VaultHandle {
         )
     }
 
+    /// S3-7c / 4.8: the member-side listing — collections this device's
+    /// member can open, names decrypted through the per-member grant
+    /// wrap. No group key involved.
+    pub fn my_collections_list(
+        &self,
+    ) -> Result<Vec<crate::vault::collections::MemberCollectionRow>, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        let unlocked = self.unlocked();
+        let identity = unlocked.identity.as_ref().ok_or_else(|| {
+            BaluardError::from(VaultError::InvalidOperation(
+                "This device has no member identity.".into(),
+            ))
+        })?;
+        let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .ok_or_else(|| {
+                BaluardError::from(VaultError::InvalidOperation(
+                    "This device is not a member of this space yet.".into(),
+                ))
+            })?;
+        Ok(crate::vault::collections::list_member_collections(
+            &self.path,
+            &member_id,
+            identity.wrapping_secret(),
+        ))
+    }
+
     /// Rename a collection (admin, or the collection's delegated
     /// manager — S3-5).
     pub fn collection_rename(&mut self, id: Uuid, name: &str) -> Result<(), BaluardError> {
@@ -3289,6 +3317,12 @@ impl VaultHandle {
         matches!(self.state, VaultState::Unlocked(_))
     }
 
+    /// Whether the unlocked session holds the Root Key (admin surface).
+    /// Locked handles report false.
+    pub fn holds_root(&self) -> bool {
+        matches!(&self.state, VaultState::Unlocked(u) if u.holds_root())
+    }
+
     /// Device-privkey seal subkey (C1). `Some` only while unlocked: the
     /// subkey lives in `UnlockedState` and is dropped on lock, exactly like
     /// the session key. Consumers: daemon sync signing (autosync), direct
@@ -4352,6 +4386,7 @@ impl VaultHandle {
                 let input = CipherInput {
                     name: existing_cipher.name.clone(),
                     folder_id: None, // unassign
+                    collection_id: None,
                     kind: existing_cipher.kind.clone(),
                     favorite: existing_cipher.favorite,
                     reprompt: existing_cipher.reprompt,
@@ -4485,6 +4520,7 @@ impl VaultHandle {
         let input = CipherInput {
             name: existing.name,
             folder_id: existing.folder_id,
+            collection_id: None,
             kind: existing.kind,
             favorite: existing.favorite,
             reprompt: existing.reprompt,
@@ -4542,6 +4578,33 @@ impl VaultHandle {
             }
         }
         Ok(ids)
+    }
+
+    /// S3-7c / 4.8: fill each meta's collection id from the on-disk
+    /// path (index contents can predate the field). Review F6: one
+    /// dir-map parse per list and one stat per unresolved meta — never
+    /// per-cipher directory scans. Flat ciphers stay None (correct:
+    /// they have no collection).
+    fn fill_collection_ids(&self, metas: &mut [crate::types::CipherMeta]) {
+        let dirs = crate::vault::collections::load_dir_map(&self.path);
+        if dirs.is_empty() {
+            return;
+        }
+        for meta in metas.iter_mut() {
+            if meta.collection_id.is_some() {
+                continue;
+            }
+            for (dir, cid) in &dirs {
+                if self
+                    .path
+                    .join(format!("ciphers/{dir}/{}.enc", meta.id))
+                    .exists()
+                {
+                    meta.collection_id = Some(*cid);
+                    break;
+                }
+            }
+        }
     }
 
     /// Cipher ids inside one collection directory (`ciphers/<dir>/`).
@@ -4652,11 +4715,17 @@ impl VaultHandle {
                         disk_ids.sort_unstable();
                         indexed.sort_unstable();
                         if disk_ids == indexed {
-                            return Ok(ciphers);
+                            let mut metas = ciphers;
+                            self.fill_collection_ids(&mut metas);
+                            return Ok(metas);
                         }
                     }
                     // Cannot scan — trust the index rather than showing nothing.
-                    Err(_) => return Ok(ciphers),
+                    Err(_) => {
+                        let mut metas = ciphers;
+                        self.fill_collection_ids(&mut metas);
+                        return Ok(metas);
+                    }
                 }
             }
         }
@@ -4667,6 +4736,7 @@ impl VaultHandle {
         } else {
             scan_ids.clone()
         };
+        let dirs = crate::vault::collections::load_dir_map(&self.path);
         let mut metas = Vec::with_capacity(ids.len());
         let mut skipped: Vec<uuid::Uuid> = Vec::new();
 
@@ -4674,6 +4744,11 @@ impl VaultHandle {
             let Some(file_path) = self.cipher_file_path(id) else {
                 continue;
             };
+            let file_dir = file_path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(|n| n.to_string());
             let envelope_bytes = std::fs::read(&file_path)?;
             let file = cipher::CipherFile { id, envelope_bytes };
 
@@ -4724,6 +4799,10 @@ impl VaultHandle {
                 updated_at: c.updated_at,
                 archived: c.archived,
                 tags: c.tags.clone(),
+                collection_id: dirs
+                    .iter()
+                    .find(|(name, _)| Some(name) == file_dir.as_ref())
+                    .map(|(_, id)| *id),
             });
         }
 
@@ -5710,6 +5789,7 @@ impl VaultHandle {
         let input = CipherInput {
             name: existing.name,
             folder_id: existing.folder_id,
+            collection_id: None,
             kind: existing.kind,
             favorite: existing.favorite,
             reprompt: existing.reprompt,
@@ -5762,6 +5842,7 @@ impl VaultHandle {
         let input = CipherInput {
             name: existing.name,
             folder_id: existing.folder_id,
+            collection_id: None,
             kind: existing.kind,
             favorite: existing.favorite,
             reprompt: existing.reprompt,
@@ -5803,6 +5884,7 @@ impl VaultHandle {
         let input = CipherInput {
             name: existing.name,
             folder_id: existing.folder_id,
+            collection_id: None,
             kind: existing.kind,
             favorite: existing.favorite,
             reprompt: existing.reprompt,
@@ -6090,6 +6172,7 @@ impl VaultHandle {
                 let input = CipherInput {
                     name: cipher.name,
                     folder_id: cipher.folder_id,
+                    collection_id: None,
                     kind: cipher.kind,
                     favorite: cipher.favorite,
                     reprompt: cipher.reprompt,
@@ -6139,6 +6222,7 @@ impl VaultHandle {
                 let input = CipherInput {
                     name: cipher.name,
                     folder_id: cipher.folder_id,
+                    collection_id: None,
                     kind: cipher.kind,
                     favorite: cipher.favorite,
                     reprompt: cipher.reprompt,
@@ -6508,6 +6592,7 @@ impl VaultHandle {
             let input = CipherInput {
                 name: existing.name.clone(),
                 folder_id: existing.folder_id,
+                collection_id: None,
                 kind: existing.kind.clone(),
                 favorite: existing.favorite,
                 reprompt: existing.reprompt,
@@ -7104,6 +7189,7 @@ impl VaultHandle {
             let input = CipherInput {
                 name: existing.name.clone(),
                 folder_id: existing.folder_id,
+                collection_id: None,
                 kind: existing.kind.clone(),
                 favorite: existing.favorite,
                 reprompt: existing.reprompt,
@@ -7470,6 +7556,7 @@ impl VaultHandle {
         // Review F4: scan the SAME id set a member staleness guard would
         // compare against, so the rebuilt index matches on the next read.
         let ids = self.scannable_cipher_ids(unlocked)?;
+        let dirs = crate::vault::collections::load_dir_map(&self.path);
         let mut metas = Vec::with_capacity(ids.len());
         let mut skipped: Vec<uuid::Uuid> = Vec::new();
 
@@ -7477,6 +7564,11 @@ impl VaultHandle {
             let Some(file_path) = self.cipher_file_path(id) else {
                 continue;
             };
+            let file_dir = file_path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(|n| n.to_string());
             let envelope_bytes = std::fs::read(&file_path)?;
             let file = cipher::CipherFile { id, envelope_bytes };
 
@@ -7527,6 +7619,10 @@ impl VaultHandle {
                 updated_at: c.updated_at,
                 archived: c.archived,
                 tags: c.tags.clone(),
+                collection_id: dirs
+                    .iter()
+                    .find(|(name, _)| Some(name) == file_dir.as_ref())
+                    .map(|(_, id)| *id),
             });
         }
 
@@ -8072,6 +8168,7 @@ mod tests {
             .add_cipher(&crate::types::CipherInput {
                 name: "Bank".into(),
                 folder_id: Some(foreign_folder),
+                collection_id: None,
                 kind,
                 archived: true,
                 created_at: Some(1_600_000_000),
@@ -8866,6 +8963,7 @@ mod tests {
             .add_cipher(&crate::types::CipherInput {
                 name: "with-attach".into(),
                 folder_id: None,
+                collection_id: None,
                 kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
                 favorite: false,
                 reprompt: false,
@@ -9240,6 +9338,7 @@ mod tests {
         let input = CipherInput {
             name: "GitHub".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user@example.com".into()),
                 password: Some("s3cret!".into()),
@@ -9292,6 +9391,7 @@ mod tests {
         let input = CipherInput {
             name: "Test".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: None,
                 password: Some("pw".into()),
@@ -9335,6 +9435,7 @@ mod tests {
         let input = CipherInput {
             name: "Delete Me".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: None,
                 password: Some("val".into()),
@@ -9390,6 +9491,7 @@ mod tests {
         let input = CipherInput {
             name: "GitHub".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user@gh.com".into()),
                 password: Some("s3cret".into()),
@@ -9416,6 +9518,7 @@ mod tests {
         let card_input = CipherInput {
             name: "Visa".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Card(crate::types::CardData {
                 brand: Some("Visa".into()),
                 ..Default::default()
@@ -9455,6 +9558,7 @@ mod tests {
         let input = CipherInput {
             name: "Old Name".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: false,
             notes: None,
@@ -9471,6 +9575,7 @@ mod tests {
         let updated = CipherInput {
             name: "New Name".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: true,
             notes: None,
@@ -9505,6 +9610,7 @@ mod tests {
         let input = CipherInput {
             name: "GitHub".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user@gh.com".into()),
                 password: Some("old-pass-1".into()),
@@ -9527,6 +9633,7 @@ mod tests {
             let updated = CipherInput {
                 name: "GitHub".into(),
                 folder_id: None,
+                collection_id: None,
                 kind: crate::types::CipherKind::Login(crate::types::LoginData {
                     username: Some("user@gh.com".into()),
                     password: Some(pw.into()),
@@ -9583,6 +9690,7 @@ mod tests {
         let input = CipherInput {
             name: "GitHub".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user".into()),
                 password: Some("pass1".into()),
@@ -9604,6 +9712,7 @@ mod tests {
         let updated = CipherInput {
             name: "GitHub".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user".into()),
                 password: Some("pass2".into()),
@@ -9665,6 +9774,7 @@ mod tests {
         let input = CipherInput {
             name: "Test".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 password: Some("pw0".into()),
                 ..Default::default()
@@ -9686,6 +9796,7 @@ mod tests {
             let updated = CipherInput {
                 name: "Test".into(),
                 folder_id: None,
+                collection_id: None,
                 kind: crate::types::CipherKind::Login(crate::types::LoginData {
                     password: Some(format!("pw{i}")),
                     ..Default::default()
@@ -9766,6 +9877,7 @@ mod tests {
         let input = CipherInput {
             name: "Twitter".into(),
             folder_id: Some(folder_id),
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: false,
             notes: None,
@@ -9815,6 +9927,7 @@ mod tests {
         let input = CipherInput {
             name: "Test".into(),
             folder_id: Some(folder_a),
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: false,
             notes: None,
@@ -9832,6 +9945,7 @@ mod tests {
         let updated = CipherInput {
             name: "Test".into(),
             folder_id: Some(folder_b),
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: false,
             notes: None,
@@ -9922,6 +10036,7 @@ mod tests {
         let input1 = CipherInput {
             name: "GitHub".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user@gh.com".into()),
                 password: Some("secret123".into()),
@@ -9942,6 +10057,7 @@ mod tests {
         let input2 = CipherInput {
             name: "AWS".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("admin".into()),
                 password: Some("aws-key".into()),
@@ -10237,6 +10353,7 @@ mod tests {
         let input = CipherInput {
             name: "FromMember".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("member".into()),
                 password: Some("pw".into()),
@@ -11291,6 +11408,7 @@ mod tests {
             .add_cipher(&crate::types::CipherInput {
                 name: "rogue-after-reset".into(),
                 folder_id: None,
+                collection_id: None,
                 kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
                 favorite: false,
                 reprompt: false,
@@ -11403,6 +11521,7 @@ mod tests {
             .add_cipher(&crate::types::CipherInput {
                 name: "after-reset-entry".into(),
                 folder_id: None,
+                collection_id: None,
                 kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
                 favorite: false,
                 reprompt: false,
@@ -11460,6 +11579,7 @@ mod tests {
             let input = crate::types::CipherInput {
                 name: "pre-removal-entry".into(),
                 folder_id: None,
+                collection_id: None,
                 kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
                 favorite: false,
                 reprompt: false,
@@ -11681,6 +11801,7 @@ mod tests {
             .add_cipher(&crate::types::CipherInput {
                 name: "post-removal-entry".into(),
                 folder_id: None,
+                collection_id: None,
                 kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
                 favorite: false,
                 reprompt: false,
@@ -12277,6 +12398,7 @@ mod tests {
         let input = CipherInput {
             name: "Secret".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user".into()),
                 password: Some("pass123".into()),
@@ -12484,6 +12606,7 @@ mod tests {
         let input = CipherInput {
             name: "Secret".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user".into()),
                 password: Some("pass123".into()),
@@ -12619,6 +12742,7 @@ mod tests {
         let input = CipherInput {
             name: "WithAttachment".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("user".into()),
                 password: Some("pass".into()),
@@ -12668,6 +12792,7 @@ mod tests {
         let trash_input = CipherInput {
             name: "Trashed".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData {
                 username: Some("trash".into()),
                 password: Some("trashed-pass".into()),
@@ -12767,6 +12892,7 @@ mod tests {
         let input = CipherInput {
             name: "Tagged".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: false,
             reprompt: false,
@@ -12799,6 +12925,7 @@ mod tests {
         let input1 = CipherInput {
             name: "A".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: false,
             reprompt: false,
@@ -12813,6 +12940,7 @@ mod tests {
         let input2 = CipherInput {
             name: "B".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: false,
             reprompt: false,
@@ -12864,6 +12992,7 @@ mod tests {
         let input1 = CipherInput {
             name: "A".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: false,
             reprompt: false,
@@ -12878,6 +13007,7 @@ mod tests {
         let input2 = CipherInput {
             name: "B".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: false,
             reprompt: false,
@@ -12925,6 +13055,7 @@ mod tests {
         let input1 = CipherInput {
             name: "A".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: false,
             reprompt: false,
@@ -12939,6 +13070,7 @@ mod tests {
         let input2 = CipherInput {
             name: "B".into(),
             folder_id: None,
+            collection_id: None,
             kind: crate::types::CipherKind::Login(crate::types::LoginData::default()),
             favorite: false,
             reprompt: false,

@@ -44,6 +44,7 @@ export function buildAddPayload(c) {
     favorite: c.favorite || false,
     notes: c.notes || null,
     folder_id: c.folder_id || null,
+    collection_id: c.collection_id || null,
     custom_fields: c.custom_fields || [],
     tags: c.tags || [],
   };

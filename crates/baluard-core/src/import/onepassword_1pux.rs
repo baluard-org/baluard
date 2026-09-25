@@ -166,6 +166,7 @@ pub fn parse(data: &[u8]) -> ImportResult {
                 let cipher = CipherInput {
                     name,
                     folder_id: None,
+                    collection_id: None,
                     kind,
                     favorite: false,
                     notes,

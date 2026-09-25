@@ -39,6 +39,7 @@ mod real_vault {
         CipherInput {
             name: name.to_string(),
             folder_id: None,
+            collection_id: None,
             kind: CipherKind::Login(LoginData {
                 username: Some("u".into()),
                 password: Some("p".into()),

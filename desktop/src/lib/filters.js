@@ -81,6 +81,22 @@ export function filterByTag(ciphers, tag) {
 }
 
 /**
+ * S3-7c / 4.8: the collection an entry lives in (top-level on fresh
+ * rows, _meta on list_full rows).
+ */
+export function cipherCollectionId(c) {
+  return c.collection_id || c._meta?.collection_id || null;
+}
+
+/**
+ * S3-7c / 4.8: filter ciphers by shared collection.
+ */
+export function filterByCollection(ciphers, collectionId) {
+  if (!collectionId) return ciphers;
+  return ciphers.filter(c => cipherCollectionId(c) === collectionId);
+}
+
+/**
  * Search ciphers by text query. Matches name, username, URIs, and notes.
  */
 export function searchCiphers(ciphers, query) {

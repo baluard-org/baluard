@@ -6,10 +6,11 @@ import { toastError } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { buildFolderCreatePayload } from "../lib/payload.js";
-import { selectSource, filterByCategory, filterByFolder, filterByTag, searchCiphers } from "../lib/filters.js";
+import { selectSource, filterByCategory, filterByFolder, filterByTag, filterByCollection, cipherCollectionId, searchCiphers } from "../lib/filters.js";
 import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
-import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox, IconSwitch, IconBaluardLogo } from "./Icon.jsx";
+import AskAccessModal from "./AskAccessModal.jsx";
+import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox, IconSwitch, IconBaluardLogo, IconUsers } from "./Icon.jsx";
 import ConflictBanner from "./ConflictBanner.jsx";
 import CipherRow from "./CipherRow.jsx";
 import CipherDetail from "./CipherDetail.jsx";
@@ -40,6 +41,8 @@ export default function VaultView() {
   const [showAddMenu, setShowAddMenu] = createSignal(false);
   const [showEmptyTrashConfirm, setShowEmptyTrashConfirm] = createSignal(false);
   const [showNewFolder, setShowNewFolder] = createSignal(false);
+  // S3-7c / 4.8: the ask-for-access dialog (member side).
+  const [showAskAccess, setShowAskAccess] = createSignal(false);
   const [deleteTagName, setDeleteTagName] = createSignal(null);
   // Phase 6: vault picked from the switcher that needs unlocking. When set,
   // SwitchUnlockModal renders over the current view. Cleared on success/cancel.
@@ -106,14 +109,26 @@ export default function VaultView() {
       list = [...list, ...vault.otherVaultCiphers()];
     }
     list = filterByCategory(list, cat);
+    list = filterByCollection(list, vault.selectedCollection());
     list = filterByFolder(list, vault.folders(), vault.selectedFolder());
     list = filterByTag(list, vault.selectedTag());
     list = searchCiphers(list, vault.searchQuery());
     return list;
   });
 
+  // "admin" on any row = this device manages the space; members see the
+  // ask-for-access entry instead of management controls.
+  const myAccess = createMemo(() =>
+    (vault.collections() || []).some((c) => c.access === "admin") ? "admin" : "member"
+  );
+
   function startAdd(type = "login") {
-    setNewCipher({ ...EMPTY_CIPHER, cipherType: type, folder_id: vault.selectedFolder() || null });
+    setNewCipher({
+      ...EMPTY_CIPHER,
+      cipherType: type,
+      folder_id: vault.selectedFolder() || null,
+      collection_id: vault.selectedCollection() || null,
+    });
     vault.setActivePane("add");
     setShowAddMenu(false);
   }
@@ -168,6 +183,7 @@ export default function VaultView() {
         }}
         onClose={() => setShowEmptyTrashConfirm(false)}
       />
+      <AskAccessModal show={showAskAccess()} setShow={setShowAskAccess} />
       <GeneratorModal showGenerator={showGenerator()} setShowGenerator={setShowGenerator} />
       <RepromptModal />
       <SettingsModal />
@@ -361,6 +377,44 @@ export default function VaultView() {
                       )}
                     </For>
                   </div>
+                </div>
+              </Show>
+              <Show when={vault.collections() && vault.collections().length > 0}>
+                <div class="mt-3 pt-3 border-t border-[var(--color-border)]">
+                  <div class="flex items-center justify-between mb-2" style={{ "padding-left": "14px", "padding-right": "14px" }}>
+                    <h3 class="text-[10px] font-extrabold uppercase tracking-wider text-[var(--color-muted)]">{t("shared.header")}</h3>
+                    <Show when={vault.selectedCollection()}>
+                      <button
+                        onClick={() => vault.setSelectedCollection(null)}
+                        class="px-2 py-0.5 text-[9px] font-bold normal-case border border-[var(--color-border)] bg-[var(--color-card)] rounded-md text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer"
+                      >
+                        {t("shared.clearCollectionFilter")}
+                      </button>
+                    </Show>
+                  </div>
+                  <For each={vault.collections() || []}>
+                    {col => (
+                      <button
+                        onClick={() => vault.setSelectedCollection(vault.selectedCollection() === col.id ? null : col.id)}
+                        class={`w-full flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer min-h-[30px] ${vault.selectedCollection() === col.id ? "bg-[var(--color-sidebar)] text-[var(--color-text)]" : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
+                        style={{ "padding-left": "14px", "padding-right": "6px" }}
+                      >
+                        <IconUsers class="w-3.5 h-3.5 shrink-0" />
+                        <span class="truncate">{col.name}</span>
+                        <span class="ml-auto text-[10px] font-mono text-[var(--color-muted)]">{ciphers().filter(c => cipherCollectionId(c) === col.id).length}</span>
+                      </button>
+                    )}
+                  </For>
+                  <Show when={myAccess() !== "admin"}>
+                    <button
+                      onClick={() => setShowAskAccess(true)}
+                      class="w-full flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-slate-800/10 cursor-pointer min-h-[30px]"
+                      style={{ "padding-left": "14px", "padding-right": "6px" }}
+                    >
+                      <IconPlus class="w-3.5 h-3.5 shrink-0" />
+                      <span>{t("shared.askForAccess")}</span>
+                    </button>
+                  </Show>
                 </div>
               </Show>
             </div>

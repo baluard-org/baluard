@@ -1,4 +1,4 @@
-import { createSignal, onMount, Show, For } from "solid-js";
+import { createSignal, onSettled, Show, For } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -48,6 +48,9 @@ export default function PeopleTab() {
   const [notices, setNotices] = createSignal([]);
   const [transport, setTransport] = createSignal([]);
   const [checkingAccess, setCheckingAccess] = createSignal(false);
+  // S3-6 / 4.8: collection access asks (JIT inbox).
+  const [asks, setAsks] = createSignal([]);
+  const [askBusy, setAskBusy] = createSignal(null);
 
   async function loadMembers() {
     try {
@@ -99,13 +102,58 @@ export default function PeopleTab() {
     }
   }
 
+  async function loadAsks() {
+    try {
+      const data = JSON.parse(await daemon("collections.requests_list"));
+      setAsks(Array.isArray(data.requests) ? data.requests : []);
+    } catch {
+      // Admin-only; non-admin devices land here.
+      setAsks([]);
+    }
+  }
+
+  async function approveAsk(r, access) {
+    setAskBusy(r.request_id);
+    try {
+      const payload = {
+        request_id: r.request_id,
+        requester_member_id: r.requester_member_id,
+        access,
+      };
+      if (expiryDays) payload.expires_in_days = expiryDays;
+      await daemon("collections.requests_approve", payload);
+      toastSuccess(t("shared.approvedToast", { name: r.requester_name }));
+      await Promise.all([loadAsks(), loadMembers()]);
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    } finally {
+      setAskBusy(null);
+    }
+  }
+
+  async function denyAsk(r) {
+    setAskBusy(r.request_id);
+    try {
+      await daemon("collections.requests_deny", {
+        request_id: r.request_id,
+        requester_member_id: r.requester_member_id,
+      });
+      toastSuccess(t("shared.deniedToast", { name: r.requester_name }));
+      await loadAsks();
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    } finally {
+      setAskBusy(null);
+    }
+  }
+
   async function reloadAll() {
     setBusy(true);
-    await Promise.all([loadMembers(), loadRequests(), loadActivity(), loadNotices(false)]);
+    await Promise.all([loadMembers(), loadRequests(), loadActivity(), loadNotices(false), loadAsks()]);
     setBusy(false);
   }
 
-  onMount(reloadAll);
+  onSettled(() => void reloadAll());
 
   async function doInvite() {
     setBusy(true);
@@ -340,6 +388,57 @@ export default function PeopleTab() {
           </p>
         </Show>
       </section>
+
+      {/* S3-6 / 4.8: collection access asks */}
+      <Show when={asks().length > 0}>
+        <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">
+          <h3 class="text-sm font-bold text-[var(--color-text)] mb-3">{t("shared.asksTitle")}</h3>
+          <ul class="space-y-2">
+            <For each={asks()}>
+              {(r) => (
+                <li class="p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-xs font-bold text-[var(--color-text)]">
+                      {r.requester_name}
+                    </span>
+                    <span class="text-[10px] text-[var(--color-muted)]">
+                      {t("shared.asksFor")} <span class="font-bold">{r.collection_name}</span>
+                      {" · "}
+                      {r.access === "write" ? t("shared.writeAccess") : t("shared.readAccess")}
+                    </span>
+                    <div class="ml-auto flex items-center gap-2">
+                      <button
+                        disabled={askBusy() === r.request_id}
+                        onClick={() => void approveAsk(r, "read")}
+                        class="text-[10px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-text)] disabled:opacity-50 cursor-pointer"
+                      >
+                        {t("shared.grantRead")}
+                      </button>
+                      <button
+                        disabled={askBusy() === r.request_id}
+                        onClick={() => void approveAsk(r, "write")}
+                        class="text-[10px] font-bold px-2 py-1 rounded-md border border-green-500/30 text-green-400 hover:border-green-400 disabled:opacity-50 cursor-pointer"
+                      >
+                        {t("shared.grantWrite")}
+                      </button>
+                      <button
+                        disabled={askBusy() === r.request_id}
+                        onClick={() => void denyAsk(r)}
+                        class="text-[10px] font-bold px-2 py-1 rounded-md border border-red-400/30 text-red-400 hover:border-red-400 disabled:opacity-50 cursor-pointer"
+                      >
+                        {t("shared.deny")}
+                      </button>
+                    </div>
+                  </div>
+                  <Show when={r.note}>
+                    <p class="text-[10px] text-[var(--color-muted)] mt-1.5 italic">“{r.note}”</p>
+                  </Show>
+                </li>
+              )}
+            </For>
+          </ul>
+        </section>
+      </Show>
 
       {/* Members */}
       <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">

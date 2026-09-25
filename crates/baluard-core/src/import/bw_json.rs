@@ -473,6 +473,7 @@ pub fn parse(data: &str) -> ImportResult {
         let cipher = CipherInput {
             name,
             folder_id: None, // Resolved later via folder_map
+            collection_id: None,
             kind,
             favorite: item.favorite.unwrap_or(false),
             notes: item.notes.clone(),
