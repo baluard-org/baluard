@@ -1220,6 +1220,48 @@ async fn access_requests_state_lifecycle_and_locked_rejection() {
 }
 
 #[tokio::test]
+async fn space_meta_prepare_status_and_locked_rejection() {
+    let (_dir, vault_path) = make_vault("space-meta");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    // NOT unlocked: both surfaces refuse.
+    assert!(state.space_prepare().await.is_err());
+    assert!(state.space_status().await.is_err());
+
+    state.unlock(MASTER).await.expect("vault unlock");
+    // Unprepared vault: status reports readiness zeros.
+    let st: serde_json::Value = serde_json::from_str(&state.space_status().await.unwrap()).unwrap();
+    assert_eq!(st["prepared"], false);
+    assert_eq!(st["wrapped"], 0);
+
+    // Prepare mints the store. This vault has one live member (the
+    // owner genesis row). Whether that row carries a wrap pubkey
+    // depends on the genesis path (D35); the report must agree with
+    // status either way.
+    let prep: serde_json::Value =
+        serde_json::from_str(&state.space_prepare().await.unwrap()).unwrap();
+    assert_eq!(prep["smk_fresh"], true);
+    let wrapped = prep["wrapped"].as_u64().unwrap();
+    let missing = prep["missing_wrap_pubkey"].as_array().unwrap().len();
+
+    // Idempotent re-run: no fresh mint.
+    let again: serde_json::Value =
+        serde_json::from_str(&state.space_prepare().await.unwrap()).unwrap();
+    assert_eq!(again["smk_fresh"], false);
+
+    let st: serde_json::Value = serde_json::from_str(&state.space_status().await.unwrap()).unwrap();
+    assert_eq!(st["prepared"], true);
+    assert_eq!(st["wrapped"], wrapped);
+    assert_eq!(st["missing_wrap_pubkey"], missing);
+
+    // Prepare closes every wrap-pubkey row's gap: nothing pending.
+    assert_eq!(st["pending_wrap"], 0);
+    // The 7b flip gate is ready iff no live member lacks a wrap pubkey.
+    let ready = missing == 0;
+    assert_eq!(ready, st["missing_wrap_pubkey"].as_u64().unwrap() == 0);
+}
+
+#[tokio::test]
 async fn templates_state_lifecycle_and_fail_closed_parses() {
     let (_dir, vault_path) = make_vault("templates-state");
     let state = Arc::new(VaultState::new(vault_path.clone()));

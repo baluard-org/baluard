@@ -1192,6 +1192,31 @@ impl VaultHandle {
         )
     }
 
+    // ── S3-7a: Space Meta Key groundwork ──
+
+    /// Mint (or idempotently refresh) the SMK store + per-member wraps.
+    /// Admin-gated. The report names live members that can never be
+    /// wrapped (legacy rows without an identity wrap pubkey); the 7b
+    /// flip gate refuses until that list is empty.
+    pub fn space_prepare(
+        &mut self,
+    ) -> Result<crate::vault::space_meta::PrepareReport, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::space_meta::prepare(&self.path, &self.unlocked().root_key)
+    }
+
+    /// Readiness counts for the Team-shape flip. Admin-gated.
+    pub fn space_status(&self) -> Result<crate::vault::space_meta::SpaceStatus, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        crate::vault::space_meta::status(&self.path, &self.unlocked().root_key)
+    }
+
     // ── S3-6: request-access JIT ──
 
     /// Submit a JIT ask for collection access (any live member, any role).
@@ -1474,6 +1499,10 @@ impl VaultHandle {
         }
         let (successor, code) =
             crate::vault::members::reset_member(&self.path, self.vault_id, member_id)?;
+        // S3-7a: the successor row re-joins with a fresh identity, so the
+        // stale identity-keyed wrap is dead mail. Best-effort (the 7b
+        // gate counts it via status; prepare re-mints on the new card).
+        let _ = crate::vault::space_meta::remove_space_wrap(&self.path, &member_id);
         // S1b-1: activity log (best-effort).
         self.emit_share_event(
             crate::vault::events::ShareEventKind::MemberReset,
@@ -1595,6 +1624,9 @@ impl VaultHandle {
         for id in member_ids {
             let devices = crate::vault::members::remove_member(&self.path, *id)?;
             removed_members.push(*id);
+            // S3-7a: the removed member's identity-keyed wrap dies with
+            // the tombstone (same semantics as the collection wraps).
+            let _ = crate::vault::space_meta::remove_space_wrap(&self.path, id);
             for device in devices {
                 if device == self.device_id {
                     continue; // defense in depth: the actor's own seat stays
@@ -1609,6 +1641,16 @@ impl VaultHandle {
         self.sync_registry_from_device_manager();
         self.device_manager.auto_save_result()?;
         self.rotate_root_key()?;
+        // S3-7a (review F4): the removed member knew the SMK, so retire
+        // it under the fresh root. Best-effort in this additive slice
+        // (nothing is SMK-encrypted yet); status surfaces any gap and
+        // the 7b flip makes this authoritative.
+        if crate::vault::space_meta::status(&self.path, &self.unlocked().root_key)
+            .map(|s| s.prepared)
+            .unwrap_or(false)
+        {
+            let _ = crate::vault::space_meta::rotate(&self.path, &self.unlocked().root_key);
+        }
         let new_epoch = match &self.state {
             VaultState::Unlocked(u) => u.current_epoch,
             VaultState::Locked => return Err(VaultError::Locked.into()),
@@ -2024,6 +2066,21 @@ impl VaultHandle {
                 member_id: member.id,
             },
         )?;
+        // S3-7a: mint the member's space meta wrap when an SMK store
+        // already exists (best-effort: prepare re-runs close any gap, so
+        // a store failure must not fail the approval).
+        if let Some(wrap_hex) = member.identity_wrap_pubkey.as_deref() {
+            if let Ok(smk) =
+                crate::vault::space_meta::open_store(&self.path, &self.unlocked().root_key)
+            {
+                // Best-effort by design: the store exists but a wrap
+                // write failing must not fail the approval. status()
+                // counts the gap and prepare closes it.
+                let _ = crate::vault::space_meta::write_space_wrap(
+                    &self.path, &member.id, wrap_hex, &smk,
+                );
+            }
+        }
         // S3-4: apply the invite's embedded template grants. The invite
         // is the contract (resolved at mint time), so a template
         // deleted after minting changes nothing here. A collection that
@@ -2298,6 +2355,47 @@ impl VaultHandle {
         };
 
         let new_keys = crate::vault::identity::IdentityKeys::generate()?;
+        // P1 invariant, now actually true: the wrap self-heal and its
+        // refusal run BEFORE any identity byte is written. The refusal
+        // path (identity lost in memory while wraps exist) must leave
+        // zero state change — previously it fired after the sealed
+        // seed, escrow, and member-unlock material had already been
+        // overwritten with the new identity, orphaning every wrap.
+        let new_wrap_hex = hex::encode(new_keys.wrapping_pub_bytes());
+        let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .ok_or_else(|| VaultError::InvalidOperation("device is not a vault member".into()))?;
+        if let VaultState::Unlocked(u) = &self.state {
+            match u.identity.as_ref() {
+                Some(old_identity) => {
+                    crate::vault::collections::rewrap_own_grant_wraps(
+                        &self.path,
+                        &member_id,
+                        old_identity.wrapping_secret(),
+                        &new_wrap_hex,
+                    )?;
+                    // S3-7a: the space meta wrap rides the same
+                    // identity; same two-phase discipline.
+                    crate::vault::space_meta::rewrap_own_space_wrap(
+                        &self.path,
+                        &member_id,
+                        old_identity.wrapping_secret(),
+                        &new_wrap_hex,
+                    )?;
+                }
+                None => {
+                    // No old identity in memory: existing wraps would be
+                    // orphaned by the rotation. Refuse while they exist.
+                    if crate::vault::collections::has_grant_wraps(&self.path, &member_id)
+                        || crate::vault::space_meta::has_space_wrap(&self.path, &member_id)
+                    {
+                        return Err(VaultError::InvalidOperation(
+                            "This device lost its identity key, so rotation is refused to keep the shared collection keys readable.".into(),
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
         let sealed = crate::vault::identity::seal_identity(&wrap_key, &new_keys)?;
         super::write_vault_file(&identity_path, &sealed)?;
 
@@ -2347,35 +2445,8 @@ impl VaultHandle {
         // S1a-4 review: sign the rotation payload with the NEW identity
         // key (proof of possession) and record the replaced key so the
         // structural rule can enforce previous-key continuity.
-        // P1: the self-heal runs BEFORE any identity bytes are written —
-        // unwrap every own wrap with the old secret, seal to the new
-        // pubkey. An abort here (hostile wrap, IO) leaves zero state
-        // change; the identity swap below only happens after it clears.
-        let new_wrap_hex = hex::encode(new_keys.wrapping_pub_bytes());
-        let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id)
-            .ok_or_else(|| VaultError::InvalidOperation("device is not a vault member".into()))?;
-        if let VaultState::Unlocked(u) = &self.state {
-            match u.identity.as_ref() {
-                Some(old_identity) => {
-                    crate::vault::collections::rewrap_own_grant_wraps(
-                        &self.path,
-                        &member_id,
-                        old_identity.wrapping_secret(),
-                        &new_wrap_hex,
-                    )?;
-                }
-                None => {
-                    // No old identity in memory: existing wraps would be
-                    // orphaned by the rotation. Refuse while they exist.
-                    if crate::vault::collections::has_grant_wraps(&self.path, &member_id) {
-                        return Err(VaultError::InvalidOperation(
-                            "This device lost its identity key, so rotation is refused to keep the shared collection keys readable.".into(),
-                        )
-                        .into());
-                    }
-                }
-            }
-        }
+        // (The wrap self-heal + refusal ran ABOVE, before any identity
+        // byte was written.)
         let previous_vk =
             crate::vault::members::identity_pubkey_for_device(&self.path, self.device_id);
         let rotation_payload = crate::vault::members::identity_rotation_payload(
@@ -5673,6 +5744,14 @@ impl VaultHandle {
             &self.path,
             &self.unlocked().space_group_key,
         )?;
+        // S3-7a: open the SMK with the OUTGOING root (the store is sealed
+        // under it). Any failure means no usable SMK rides this rotation:
+        // unprepared (NotFound) or already-dead (damaged by a previous
+        // crashed rotation). Neither may wedge the rotation itself:
+        // prepare re-mints and re-wraps everyone, so skipping is the
+        // convergent choice.
+        let old_space_smk =
+            crate::vault::space_meta::open_store(&self.path, &self.unlocked().root_key).ok();
         // S1b-1: the activity log is RootKey-derived — read pre-swap.
         let old_events = crate::vault::events::load(
             &self.path,
@@ -5741,6 +5820,11 @@ impl VaultHandle {
             &self.unlocked().space_group_key,
             &old_collection_keys,
         )?;
+        // S3-7a: re-seal the space store under the new root. P4 rule:
+        // failures propagate (a skipped reseal orphans the SMK).
+        if let Some(smk) = &old_space_smk {
+            crate::vault::space_meta::reseal_store(&self.path, &self.unlocked().root_key, smk)?;
+        }
         // S1b-1: activity log re-encrypted under the new events key.
         crate::vault::events::save(
             &self.path,
@@ -6178,6 +6262,14 @@ impl VaultHandle {
             &self.path,
             &self.unlocked().space_group_key,
         )?;
+        // S3-7a: open the SMK with the OUTGOING root (the store is sealed
+        // under it). Any failure means no usable SMK rides this rotation:
+        // unprepared (NotFound) or already-dead (damaged by a previous
+        // crashed rotation). Neither may wedge the rotation itself:
+        // prepare re-mints and re-wraps everyone, so skipping is the
+        // convergent choice.
+        let old_space_smk =
+            crate::vault::space_meta::open_store(&self.path, &self.unlocked().root_key).ok();
         // S1b-1: the activity log is RootKey-derived — read pre-swap.
         let old_events = crate::vault::events::load(
             &self.path,
@@ -6245,6 +6337,11 @@ impl VaultHandle {
             &self.unlocked().space_group_key,
             &old_collection_keys,
         )?;
+        // S3-7a: re-seal the space store under the new root. P4 rule:
+        // failures propagate (a skipped reseal orphans the SMK).
+        if let Some(smk) = &old_space_smk {
+            crate::vault::space_meta::reseal_store(&self.path, &self.unlocked().root_key, smk)?;
+        }
         // S1b-1: activity log re-encrypted under the new events key.
         crate::vault::events::save(
             &self.path,
@@ -7707,6 +7804,41 @@ mod tests {
     /// joined the pre-existing folders/tags/profile/activity coverage. After
     /// rotation, all of them must be readable at the new epoch, and the
     /// emergency escrow must unwrap to the NEW root key.
+    #[test]
+    fn rotation_reseals_space_meta_store() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Prepare mints the SMK store (owner genesis carries a wrap
+        // pubkey per D35; either way prepare succeeds).
+        let report = handle.space_prepare().unwrap();
+        assert!(report.smk_fresh);
+        let pre_rotation_root = RootKey::from_bytes(
+            handle_root_key_for_test(&handle)
+                .try_into()
+                .expect("root 64 bytes"),
+        );
+        let smk_before =
+            crate::vault::space_meta::open_store(dir.path(), &pre_rotation_root).unwrap();
+
+        // Rotation re-seals the store under the new root; the SMK is
+        // unchanged (wraps keep opening to the same key).
+        handle.rotate_root_key().unwrap();
+        let new_root = RootKey::from_bytes(
+            handle_root_key_for_test(&handle)
+                .try_into()
+                .expect("root 64 bytes"),
+        );
+        let smk_after = crate::vault::space_meta::open_store(dir.path(), &new_root).unwrap();
+        assert_eq!(*smk_after, *smk_before);
+        // The pre-rotation root no longer opens the re-sealed store
+        // (review F7).
+        assert!(crate::vault::space_meta::open_store(dir.path(), &pre_rotation_root).is_err());
+        let st = handle.space_status().unwrap();
+        assert!(st.prepared);
+    }
+
     #[test]
     fn rotation_covers_all_artifacts() {
         use crate::emergency;
