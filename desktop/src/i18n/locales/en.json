@@ -24,7 +24,8 @@
     "useDifferent": "Create new or use a different vault",
     "quickUnlock": "Quick Unlock",
     "pinUnlock": "Unlock with PIN",
-    "pinPlaceholder": "6-digit PIN"
+    "pinPlaceholder": "6-digit PIN",
+    "renderRecoveryNotice": "Baluard closed unexpectedly last time, so this session draws the window in a safer mode. You can change this in Settings after you unlock."
   },
   "welcome": {
     "title": "Welcome to Baluard",
@@ -230,6 +231,10 @@
     "trayOnlyDesc": "Keep Baluard in the system tray only. The window stays reachable from the tray icon; closing it still hides to the tray.",
     "trayOnlyEnabled": "Tray-only mode on",
     "trayOnlyDisabled": "Tray-only mode off",
+    "compatibleRenderingLabel": "Compatible rendering",
+    "compatibleRenderingDesc": "Fixes blank or glitched windows on some Linux systems. Automatic turns it on only when needed. Applies after you restart Baluard.",
+    "compatibleRenderingAuto": "Automatic",
+    "renderRestart": "Saved. Restart Baluard to apply.",
     "autolockSettings": "Auto-lock settings",
     "autolockTimeout": "Auto-lock Timeout",
     "saved": "Saved",

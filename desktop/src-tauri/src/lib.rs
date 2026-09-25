@@ -485,6 +485,11 @@ async fn daemon_status() -> bool {
 fn show_window(window: tauri::WebviewWindow) {
     let _ = window.show();
     let _ = window.set_focus();
+    // The webview loaded and rendered: the previous run did NOT die before
+    // presenting. Clear the Linux watchdog marker here — logout/shutdown
+    // SIGTERMs never reach RunEvent::Exit and must not read as crashes.
+    #[cfg(target_os = "linux")]
+    render::clear_marker();
 }
 
 /// D1: save the recovery phrase to a user-chosen file — dialog AND write
@@ -709,6 +714,12 @@ struct DesktopPrefs {
     /// window still hides it to the tray (unchanged).
     #[serde(default)]
     tray_only: bool,
+    /// Linux compatible-rendering preference. `None` = automatic (decided
+    /// at each launch from GPU detection + crash recovery). `Some(true)`
+    /// forces the WebKitGTK workaround on, `Some(false)` forces it off.
+    /// See the `render` module for the decision order.
+    #[serde(default)]
+    compatible_rendering: Option<bool>,
 }
 
 fn desktop_prefs_path() -> std::path::PathBuf {
@@ -788,14 +799,162 @@ fn get_desktop_prefs() -> DesktopPrefs {
 /// falsely report success when the Dock/taskbar state didn't actually change.
 #[tauri::command]
 fn set_tray_only(app: AppHandle, enabled: bool) -> Result<(), String> {
-    save_desktop_prefs(&DesktopPrefs { tray_only: enabled });
+    // Load-mutate-save: the prefs struct carries more than one field now;
+    // reconstructing it here would silently wipe the others.
+    let mut prefs = load_desktop_prefs();
+    prefs.tray_only = enabled;
+    save_desktop_prefs(&prefs);
     apply_tray_only(&app, enabled)
+}
+
+// ── Linux compatible rendering (WebKitGTK DMABUF workaround) ──
+//
+// WebKitGTK's DMABUF renderer blank-windows or corrupts on some Linux GPU
+// stacks (proprietary NVIDIA most commonly; see Tauri's "Linux Graphics
+// Issues" doc). The standard fix is WEBKIT_DISABLE_DMABUF_RENDERER=1.
+// Baluard decides it here so non-technical users never touch env vars.
+//
+// Decision order at launch:
+//   1. user/distro env var set  → never touched, reported as-is
+//   2. explicit pref            → Some(true)/Some(false) wins
+//   3. automatic                → proprietary NVIDIA present, OR the
+//                                 previous run never presented a window
+//                                 (crash marker). The recovery trigger is
+//                                 session-only and surfaced on the login
+//                                 screen; making it permanent is a
+//                                 Settings toggle.
+//
+// Marker semantics: written at every Linux launch, cleared the moment the
+// frontend calls `show_window` (webview loaded and rendered — the failure
+// signal is "died before presenting", not merely "ended uncleanly": logout
+// and shutdown SIGTERM the app and must not read as crashes). `RunEvent::Exit`
+// clears it too, as a backstop for sessions that never reached the frontend.
+#[cfg(target_os = "linux")]
+mod render {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Workaround active for this session (env var on or pref on).
+    pub static ACTIVE: AtomicBool = AtomicBool::new(false);
+    /// The crash-recovery heuristic triggered THIS session (implies ACTIVE).
+    pub static RECOVERY: AtomicBool = AtomicBool::new(false);
+
+    fn marker_path() -> std::path::PathBuf {
+        baluard_core::paths::data_dir().join("render-watchdog.flag")
+    }
+
+    fn nvidia_proprietary_present() -> bool {
+        std::path::Path::new("/proc/driver/nvidia/version").exists()
+            || std::path::Path::new("/sys/module/nvidia").exists()
+    }
+
+    /// Decide + apply. Must run before the Tauri Builder: it is the only
+    /// safe point for `env::set_var` (unsafe in edition 2024, no concurrent
+    /// threads yet) and WebKitGTK reads the variable at renderer init.
+    /// Returns whether the workaround is active.
+    pub fn init() -> bool {
+        if let Some(v) = std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER") {
+            let on = v == "1";
+            ACTIVE.store(on, Ordering::Relaxed);
+            return on;
+        }
+        let prefs = super::load_desktop_prefs();
+        let saw_marker = marker_path().exists();
+        let enable = match prefs.compatible_rendering {
+            Some(v) => v,
+            None => {
+                let heuristic = nvidia_proprietary_present() || saw_marker;
+                RECOVERY.store(heuristic && saw_marker, Ordering::Relaxed);
+                heuristic
+            }
+        };
+        if enable {
+            // SAFETY: single-threaded startup — called from `run()` before
+            // the Tauri Builder spawns any thread or loads WebKitGTK.
+            unsafe {
+                std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            }
+        }
+        ACTIVE.store(enable, Ordering::Relaxed);
+        enable
+    }
+
+    /// Crash marker: written at every Linux launch, cleared when the
+    /// window presents (`show_window`) or on clean exit (`RunEvent::Exit`).
+    /// Presence at the NEXT launch means the previous run died before it
+    /// ever rendered — the blank-window signature. Constant content, no
+    /// secrets. Parent dir is created on demand: a first-run crash must
+    /// still leave the marker behind.
+    pub fn write_marker() {
+        let path = marker_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, b"1");
+    }
+
+    pub fn clear_marker() {
+        let _ = std::fs::remove_file(marker_path());
+    }
+}
+
+/// Linux rendering state for the UI: drives the login-screen recovery
+/// notice and the Settings toggle. One round trip covers both.
+#[derive(Debug, Serialize)]
+struct RenderState {
+    linux: bool,
+    active: bool,
+    recovery: bool,
+    setting: Option<bool>,
+}
+
+#[tauri::command]
+fn get_render_state() -> RenderState {
+    #[cfg(target_os = "linux")]
+    {
+        RenderState {
+            linux: true,
+            active: render::ACTIVE.load(std::sync::atomic::Ordering::Relaxed),
+            recovery: render::RECOVERY.load(std::sync::atomic::Ordering::Relaxed),
+            setting: load_desktop_prefs().compatible_rendering,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        RenderState {
+            linux: false,
+            active: false,
+            recovery: false,
+            setting: None,
+        }
+    }
+}
+
+/// Persist the compatible-rendering preference. `None` = automatic.
+/// WebKitGTK reads the env var at renderer init, so the change applies on
+/// the NEXT launch; the UI says so. Never an OS call, never fails visibly.
+#[tauri::command]
+fn set_compatible_rendering(value: Option<bool>) {
+    let mut prefs = load_desktop_prefs();
+    prefs.compatible_rendering = value;
+    save_desktop_prefs(&prefs);
 }
 
 // ── App entry ──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Linux: decide the WebKitGTK rendering workaround first (see the
+    // `render` module). Must precede the Builder: set_var is unsafe in
+    // edition 2024 and only safe pre-thread-spawn, and WebKitGTK reads the
+    // variable when the webview initializes.
+    #[cfg(target_os = "linux")]
+    {
+        if render::init() {
+            eprintln!("[desktop] compatible rendering enabled (WEBKIT_DISABLE_DMABUF_RENDERER=1)");
+        }
+        render::write_marker();
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -991,6 +1150,17 @@ pub fn run() {
                 }
             }
 
+            // Record the rendering decision in the log now that the file
+            // logger is attached (the decision itself happened in run(),
+            // before the builder).
+            #[cfg(target_os = "linux")]
+            if render::ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+                log::info!(
+                    "[desktop] compatible rendering active (recovery={})",
+                    render::RECOVERY.load(std::sync::atomic::Ordering::Relaxed)
+                );
+            }
+
             Ok(())
         })
         // Window events → defensive (policy-driven) lock.
@@ -1098,7 +1268,9 @@ pub fn run() {
             save_recovery_phrase,
             clipboard_mark_concealed,
             get_desktop_prefs,
-            set_tray_only
+            set_tray_only,
+            get_render_state,
+            set_compatible_rendering
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1118,6 +1290,14 @@ pub fn run() {
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
+            }
+            // Linux: clean exit clears the watchdog marker so the next
+            // launch does not read this run as a rendering crash. A
+            // SIGKILL / blank-window force-quit skips this and leaves the
+            // marker behind (that is the signal).
+            #[cfg(target_os = "linux")]
+            if let tauri::RunEvent::Exit = event {
+                render::clear_marker();
             }
             #[cfg(not(target_os = "macos"))]
             {

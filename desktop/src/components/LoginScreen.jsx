@@ -2,7 +2,7 @@ import { Show, createSignal, createEffect, onCleanup } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
-import { daemon } from "../lib/daemon.js";
+import { daemon, getRenderState } from "../lib/daemon.js";
 import { biometryPrompt } from "../lib/biometry.js";
 import { toastError } from "../context/toastSignal.js";
 import { sanitizeError } from "../lib/utils.js";
@@ -18,6 +18,17 @@ export default function LoginScreen() {
   let passwordRef;
 
   const [wrongPassword, setWrongPassword] = createSignal(false);
+
+  // Linux compatible-rendering recovery notice. The backend enables the
+  // WebKitGTK workaround for THIS session when the previous run died
+  // uncleanly (blank-window force-quit signature). One best-effort probe on
+  // mount; silent no-op off Linux.
+  const [renderRecovery, setRenderRecovery] = createSignal(false);
+  getRenderState()
+    .then(rs => {
+      if (rs.linux && rs.recovery) setRenderRecovery(true);
+    })
+    .catch(() => {});
 
   // Re-query Quick Unlock status whenever the effective target vault changes.
   // Post-QU fix the keychain entry is per-vault, so the button must reflect
@@ -402,6 +413,11 @@ export default function LoginScreen() {
         </Show>
 
         <div class="mt-6 text-center border-t border-[var(--color-border)] pt-4 space-y-2">
+          <Show when={renderRecovery()}>
+            <p class="text-[11px] text-[var(--color-muted)] leading-relaxed">
+              {t("login.renderRecoveryNotice")}
+            </p>
+          </Show>
           <button
             onClick={() => (joinMode() ? exitJoinMode() : setJoinMode(true))}
             class="block w-full text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"

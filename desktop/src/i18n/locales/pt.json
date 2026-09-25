@@ -24,7 +24,8 @@
     "useDifferent": "Criar novo ou usar outro cofre",
     "quickUnlock": "Desbloqueio Rápido",
     "pinUnlock": "Desbloquear com PIN",
-    "pinPlaceholder": "PIN de 6 dígitos"
+    "pinPlaceholder": "PIN de 6 dígitos",
+    "renderRecoveryNotice": "Da última vez o Baluard fechou de forma inesperada, então esta sessão desenha a janela em um modo mais seguro. Você pode mudar isso em Configurações depois de desbloquear."
   },
   "welcome": {
     "title": "Boas-vindas ao Baluard",
@@ -230,6 +231,10 @@
     "trayOnlyDesc": "Manter o Baluard apenas na bandeja do sistema. A janela continua acessível pelo ícone da bandeja; fechá-la oculta para a bandeja.",
     "trayOnlyEnabled": "Modo somente bandeja ativado",
     "trayOnlyDisabled": "Modo somente bandeja desativado",
+    "compatibleRenderingLabel": "Renderização compatível",
+    "compatibleRenderingDesc": "Corrige janelas em branco ou com falhas em alguns sistemas Linux. Automático ativa somente quando necessário. Vale após reiniciar o Baluard.",
+    "compatibleRenderingAuto": "Automático",
+    "renderRestart": "Salvo. Reinicie o Baluard para aplicar.",
     "autolockSettings": "Configurações de bloqueio automático",
     "autolockTimeout": "Tempo limite de bloqueio automático",
     "saved": "Salvo",

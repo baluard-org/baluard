@@ -1,0 +1,102 @@
+# Linux install-and-launch smoke test for the desktop packages.
+#
+# Builds deb + rpm once, then installs each in clean distro containers and
+# launches the app under Xvfb. The deb/rpm dependency resolution step is the
+# point: declared runtime deps (libwebkit2gtk-4.1-0, libgtk-3-0t64,
+# libayatana-appindicator3-1, rpm equivalents) must resolve on every target
+# distro release, which is the soname-drift failure mode that has bitten
+# before. Process-alive + daemon-socket assertions catch launch failures;
+# screenshots are uploaded for human blank-window inspection.
+name: linux-smoke
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            protobuf-compiler \
+            rpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Stage daemon + CLI sidecars
+        run: |
+          TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
+          mkdir -p desktop/src-tauri/binaries
+          cargo build --release -p baluard-daemon -p baluard-cli -p baluard-nmh
+          cp target/release/baluard-daemon "desktop/src-tauri/binaries/baluard-daemon-$TRIPLE"
+          cp target/release/baluard "desktop/src-tauri/binaries/baluard-$TRIPLE"
+
+      - name: Build desktop bundles (deb, rpm)
+        run: |
+          cd desktop
+          npm install
+          npm run tauri build -- --bundles deb,rpm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            desktop/src-tauri/target/release/bundle/deb/*.deb
+            desktop/src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - container: ubuntu:24.04
+            pm: deb
+            id: ubuntu-24-04
+          - container: ubuntu:26.04
+            pm: deb
+            id: ubuntu-26-04
+          - container: fedora:43
+            pm: rpm
+            id: fedora-43
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ matrix.container }}
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages
+
+      - name: Run install-and-launch smoke
+        env:
+          SMOKE_ARTIFACTS: ${{ github.workspace }}/smoke-artifacts
+        run: |
+          PKG=$(find "$GITHUB_WORKSPACE" -name "*.${{ matrix.pm }}" -type f | head -n 1)
+          test -n "$PKG" || { echo "no ${{ matrix.pm }} package in artifact"; exit 1; }
+          bash scripts/linux-smoke.sh "$PKG"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.id }}
+          path: smoke-artifacts/
+          if-no-files-found: ignore

@@ -24,7 +24,8 @@
     "useDifferent": "",
     "quickUnlock": "",
     "pinUnlock": "",
-    "pinPlaceholder": ""
+    "pinPlaceholder": "",
+    "renderRecoveryNotice": ""
   },
   "welcome": {
     "title": "",
@@ -229,6 +230,10 @@
     "trayOnlyDesc": "",
     "trayOnlyEnabled": "",
     "trayOnlyDisabled": "",
+    "compatibleRenderingLabel": "",
+    "compatibleRenderingDesc": "",
+    "compatibleRenderingAuto": "",
+    "renderRestart": "",
     "autolockSettings": "",
     "autolockTimeout": "",
     "saved": "",

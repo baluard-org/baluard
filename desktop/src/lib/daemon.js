@@ -52,4 +52,16 @@ async function setTrayOnly(enabled) {
   return invoke("set_tray_only", { enabled });
 }
 
-export { daemon, showWindow, getDesktopPrefs, setTrayOnly };
+// Linux compatible-rendering state: drives the login recovery notice and the
+// Settings toggle. Safe to call on every platform; linux=false elsewhere.
+async function getRenderState() {
+  return invoke("get_render_state");
+}
+
+// Set the compatible-rendering preference. `null` = automatic (GPU detection
+// + crash recovery). Applies after the next app restart.
+async function setCompatibleRendering(value) {
+  return invoke("set_compatible_rendering", { value });
+}
+
+export { daemon, showWindow, getDesktopPrefs, setTrayOnly, getRenderState, setCompatibleRendering };
