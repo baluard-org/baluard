@@ -4,7 +4,7 @@ import { useVault } from "../context/VaultContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { theme, setTheme } from "../context/themeSignal.js";
 import { useI18n } from "../i18n/index.jsx";
-import { daemon, getDesktopPrefs, setTrayOnly } from "../lib/daemon.js";
+import { daemon, getDesktopPrefs, setTrayOnly, getRenderState, setCompatibleRendering } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { buildImportPayload, buildExportPayload } from "../lib/payload.js";
@@ -76,6 +76,15 @@ export default function SettingsModal() {
   // Tray-only mode (app-global: hide from Dock / taskbar). Lives in the Tauri
   // layer, not the daemon — pre-unlock client preference.
   const [trayOnly, setTrayOnlySignal] = createSignal(false);
+
+  // Linux compatible rendering (WebKitGTK workaround). Setting cycles
+  // automatic → on → off → automatic; `active` mirrors what the backend
+  // decided for THIS launch (auto heuristics included); `recovery` marks a
+  // session enabled by the crash-recovery heuristic.
+  const [isLinux, setIsLinux] = createSignal(false);
+  const [renderSetting, setRenderSetting] = createSignal(null); // null | true | false
+  const [renderActive, setRenderActive] = createSignal(false);
+  const [renderRecovery, setRenderRecovery] = createSignal(false);
 
   // Import/Export state
   const [importing, setImporting] = createSignal(false);
@@ -156,6 +165,16 @@ export default function SettingsModal() {
         setTrayOnlySignal(!!prefs.tray_only);
       } catch {}
 
+      // Linux compatible rendering state (also Tauri layer). One call fills
+      // platform flag, current decision, and the user setting.
+      try {
+        const rs = await getRenderState();
+        setIsLinux(rs.linux);
+        setRenderActive(!!rs.active);
+        setRenderRecovery(!!rs.recovery);
+        setRenderSetting(rs.setting ?? null);
+      } catch {}
+
       // Load profile
       setDisplayName(data.display_name || "");
       setAvatarExt(data.avatar_ext || "png");
@@ -207,6 +226,22 @@ export default function SettingsModal() {
       toastSuccess(t(next ? "settings.trayOnlyEnabled" : "settings.trayOnlyDisabled"));
     } catch (e) {
       setTrayOnlySignal(!next);
+      toastError(sanitizeError(e, t));
+    }
+  }
+
+  // Cycle: automatic → on → off → automatic. `null` is the automatic state;
+  // Tauri maps it to Option::None backend-side. Applies after restart.
+  async function cycleCompatibleRendering() {
+    const order = [null, true, false];
+    const prev = renderSetting();
+    const next = order[(order.indexOf(prev) + 1) % order.length];
+    setRenderSetting(next);
+    try {
+      await setCompatibleRendering(next);
+      toastSuccess(t("settings.renderRestart"));
+    } catch (e) {
+      setRenderSetting(prev);
       toastError(sanitizeError(e, t));
     }
   }
@@ -735,6 +770,25 @@ export default function SettingsModal() {
                     </button>
                   </div>
                 </div>
+
+                {/* Linux compatible rendering (WebKitGTK blank-window fix).
+                    Visible on Linux only; the backend reports the platform. */}
+                <Show when={isLinux()}>
+                  <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
+                    <div class="flex items-center justify-between">
+                      <div class="flex flex-col flex-1 pr-4">
+                        <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.compatibleRenderingLabel")}</span>
+                        <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.compatibleRenderingDesc")}</span>
+                      </div>
+                      <button
+                        onClick={cycleCompatibleRendering}
+                        class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${(renderSetting() === true || (renderSetting() === null && renderActive())) ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                      >
+                        {renderSetting() === null ? t("settings.compatibleRenderingAuto") : renderSetting() ? t("settings.enabled") : t("settings.disabled")}
+                      </button>
+                    </div>
+                  </div>
+                </Show>
               </Show>
 
               <Show when={activeTab() === "data"}>

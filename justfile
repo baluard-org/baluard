@@ -413,6 +413,20 @@ desktop-build: _sysdeps-desktop _sidecar desktop-deps
 	fi
 	{{ linuxbrew_env }} cd desktop && npm run tauri build
 
+# Install-and-launch smoke test for a built Linux package (deb or rpm).
+# Usage: just smoke-pkg desktop/src-tauri/target/release/bundle/deb/*.deb
+# Installs with the distro package manager (declared runtime deps must
+# resolve — this catches soname drift), launches under Xvfb, asserts the
+# daemon socket appears, saves a screenshot. See scripts/linux-smoke.sh.
+smoke-pkg pkg:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	if [[ "$(uname -s)" != "Linux" ]]; then
+		echo "Linux only."
+		exit 1
+	fi
+	bash scripts/linux-smoke.sh "{{pkg}}"
+
 # ── App Icons ──────────────────────────────────────────────────────────────
 
 # Generate app icons for ALL platforms (Windows/macOS/Linux desktop + Android/iOS mobile)
