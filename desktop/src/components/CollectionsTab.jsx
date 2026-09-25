@@ -29,6 +29,7 @@ export default function CollectionsTab() {
   const [grantAccess, setGrantAccess] = createSignal("read");
   const [grantDays, setGrantDays] = createSignal("");
   const [deleteTarget, setDeleteTarget] = createSignal(null);
+  const [clearAsk, setClearAsk] = createSignal(false);
   const [members, setMembers] = createSignal([]);
 
   async function loadMembers() {
@@ -135,6 +136,21 @@ export default function CollectionsTab() {
       await daemon("collections.catalog_set", { entries });
       toastSuccess(t("collections.catalogPublished"));
       await vault.refreshCollections();
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearCatalog() {
+    setBusy(true);
+    try {
+      // §4.8-5: an empty publish is the opt-out — members asking for
+      // access fall back to pasting an id.
+      await daemon("collections.catalog_set", { entries: [] });
+      toastSuccess(t("collections.catalogCleared"));
+      setClearAsk(false);
     } catch (e) {
       toastError(sanitizeError(e, t));
     } finally {
@@ -268,10 +284,29 @@ export default function CollectionsTab() {
       <section class="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]">
         <h3 class="text-sm font-bold text-[var(--color-text)] mb-1">{t("collections.catalogTitle")}</h3>
         <p class="text-xs text-[var(--color-muted)] mb-3">{t("collections.catalogSubtitle")}</p>
-        <Button onClick={() => void publishCatalog()} disabled={busy() || vault.collections().length === 0}>
-          {t("collections.catalogButton")}
-        </Button>
+        <div class="flex gap-2">
+          <Button onClick={() => void publishCatalog()} disabled={busy() || vault.collections().length === 0}>
+            {t("collections.catalogButton")}
+          </Button>
+          <Button onClick={() => setClearAsk(true)} disabled={busy()}>
+            {t("collections.catalogClear")}
+          </Button>
+        </div>
       </section>
+
+      {/* Catalog clear confirm */}
+      <Show when={clearAsk()}>
+        <ConfirmModal
+          show
+          idPrefix="catalog-clear"
+          title={t("collections.catalogClear")}
+          body={t("collections.catalogClearConfirm")}
+          confirmLabel={t("collections.catalogClear")}
+          confirmClass="bg-[var(--color-danger)] text-white"
+          onConfirm={() => void clearCatalog()}
+          onClose={() => setClearAsk(false)}
+        />
+      </Show>
 
       {/* Delete confirm */}
       <Show when={deleteTarget()}>

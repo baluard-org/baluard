@@ -1,11 +1,12 @@
-import { createSignal, createEffect, Show, For } from "solid-js";
+import { createSignal, createEffect, createMemo, Show, For } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { cipherToFlat } from "../lib/cipherSchema.js";
+import { cipherCollectionId } from "../lib/filters.js";
 import { useVault } from "../context/VaultContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { copyToClipboard } from "../lib/clipboard.js";
 import { daemon } from "../lib/daemon.js";
-import { toastError } from "../context/toastSignal.js";
+import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { uriStr, formatCardNumber, sanitizeError } from "../lib/utils.js";
 import { SECTION_LABEL } from "../lib/helpers.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
@@ -42,6 +43,55 @@ export default function CipherDetail(props) {
   const { t } = useI18n();
 
   const [revealPass, setRevealPass] = createSignal(false);
+  const [moving, setMoving] = createSignal(false);
+
+  // §4.8-5: move the open entry between collections. Admins can move
+  // anywhere (and back out to personal); members only where they hold
+  // a live write/manage grant — the daemon still validates every move.
+  const moveTargets = createMemo(() => {
+    const rows = vault.collections() || [];
+    const now = Math.floor(Date.now() / 1000);
+    return rows.filter(
+      (r) =>
+        r.access === "admin" ||
+        ((r.access === "write" || r.access === "manage") && (!r.expires_at || r.expires_at > now)),
+    );
+  });
+  const isAdminDevice = createMemo(() => (vault.collections() || []).some((r) => r.access === "admin"));
+  const currentCollection = () => (cipher() ? cipherCollectionId(cipher()) : null);
+  // Review F3: the daemon gates the move on write access to BOTH ends;
+  // a member viewing a read-only collection gets a plain label instead
+  // of a select that could promise a move the daemon would refuse.
+  const sourceWritable = () =>
+    isAdminDevice() ||
+    !currentCollection() ||
+    moveTargets().some((r) => r.id === currentCollection());
+
+  async function moveTo(colId, selectEl) {
+    const id = cipher()?.id; // review F8: pin the target across awaits
+    if (!id || colId === (currentCollection() || "")) return;
+    setMoving(true);
+    try {
+      await daemon("cipher.set_collection", {
+        cipher_id: id,
+        collection_id: colId === "" ? null : colId,
+      });
+      await vault.refreshCiphers(t);
+      await vault.refreshCollections();
+      // Review F2: archived entries live in their own list.
+      const updated =
+        vault.ciphers().find((c) => (c.id || c._meta?.id) === id) ||
+        vault.archivedCiphers().find((c) => (c.id || c._meta?.id) === id);
+      if (updated) props.setViewCipher(updated);
+      toastSuccess(t("entry.movedToast"));
+    } catch (e) {
+      // Review F3: on refusal, snap the select back to the real value.
+      if (selectEl) selectEl.value = currentCollection() || "";
+      toastError(sanitizeError(e, t));
+    } finally {
+      setMoving(false);
+    }
+  }
   const [totpCode, setTotpCode] = createSignal(null);
   const [attachLoading, setAttachLoading] = createSignal(false);
   const [totpCopied, setTotpCopied] = createSignal(false);
@@ -526,6 +576,41 @@ export default function CipherDetail(props) {
           </div>
         </Show>
       </div>
+
+      {/* Collection move (§4.8-5) */}
+      <Show when={!foreign() && props.selectedCategory !== "Trash" && (currentCollection() || moveTargets().length > 0)}>
+        <div class="px-6 py-3 border-t border-[var(--color-border)] flex items-center gap-3">
+          <span class="text-xs font-bold text-[var(--color-muted)] shrink-0">{t("entry.collectionLabel")}</span>
+          <Show
+            when={sourceWritable() && (isAdminDevice() || moveTargets().some((r) => r.id !== currentCollection()))}
+            fallback={
+              // Review F7: nothing to change — show the name, not a dead select.
+              <span class="flex-1 text-xs text-[var(--color-text)]">
+                {vault.collections().find((r) => r.id === currentCollection())?.name || t("entry.noCollection")}
+              </span>
+            }
+          >
+            <select
+              class="flex-1 text-xs bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg px-2 py-1.5 text-[var(--color-text)] cursor-pointer disabled:opacity-50"
+              disabled={moving()}
+              value={currentCollection() || ""}
+              onChange={(e) => void moveTo(e.currentTarget.value, e.currentTarget)}
+            >
+            <option value={currentCollection() || ""} disabled={!currentCollection()}>
+              {currentCollection()
+                ? vault.collections().find((r) => r.id === currentCollection())?.name || t("entry.collectionLabel")
+                : t("entry.noCollection")}
+            </option>
+            <Show when={isAdminDevice() && currentCollection()}>
+              <option value="">{t("entry.noCollection")}</option>
+            </Show>
+            <For each={moveTargets().filter((r) => r.id !== currentCollection())}>
+              {(r) => <option value={r.id}>{r.name}</option>}
+            </For>
+            </select>
+          </Show>
+        </div>
+      </Show>
 
       {/* Footer Details Action bar */}
       <div class="p-6 bg-[var(--color-sidebar)] border-t border-[var(--color-border)] flex items-center justify-between gap-4">
