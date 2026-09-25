@@ -1031,7 +1031,9 @@ impl VaultState {
         let enc_path = handle.path.join("meta/avatar.enc");
         if enc_path.exists() {
             let blob = std::fs::read(&enc_path).map_err(|e| format!("read avatar: {e}"))?;
-            let key = handle.derive_avatar_key();
+            let key = handle
+                .derive_avatar_key()
+                .map_err(|e| format!("avatar key: {e}"))?;
             let bytes = baluard_core::vault::avatar::decrypt_avatar(&key, &blob)
                 .map_err(|e| format!("{e}"))?;
             use base64::Engine;
@@ -1046,7 +1048,9 @@ impl VaultState {
         }
         let data = std::fs::read(&avatar_path).map_err(|e| format!("read avatar: {e}"))?;
         // Migrate: encrypt and write to avatar.enc
-        let key = handle.derive_avatar_key();
+        let key = handle
+            .derive_avatar_key()
+            .map_err(|e| format!("avatar key: {e}"))?;
         let blob =
             baluard_core::vault::avatar::encrypt_avatar(&key, &data).map_err(|e| format!("{e}"))?;
         baluard_core::vault::write_vault_file(&enc_path, &blob)
@@ -1108,7 +1112,9 @@ impl VaultState {
             .map_err(|e| format!("base64 decode: {e}"))?;
 
         // M1 fix: encrypt with avatar key derived from SGK
-        let key = handle.derive_avatar_key();
+        let key = handle
+            .derive_avatar_key()
+            .map_err(|e| format!("avatar key: {e}"))?;
         let blob = baluard_core::vault::avatar::encrypt_avatar(&key, &bytes)
             .map_err(|e| format!("{e}"))?;
 
@@ -3249,6 +3255,23 @@ impl VaultState {
             "wrapped": st.wrapped,
             "missing_wrap_pubkey": st.missing_wrap_pubkey,
             "pending_wrap": st.pending_wrap,
+            "flipped": baluard_core::vault::space_meta::shape_flipped(&self.vault_path),
+        })
+        .to_string())
+    }
+
+    /// S3-7b: flip the vault to team shape (admin, mutating).
+    pub async fn space_flip(&self) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let r = handle.space_flip().map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "already_flipped": r.already_flipped,
+            "files_reencrypted": r.files_reencrypted,
+            "keywraps_removed": r.keywraps_removed,
         })
         .to_string())
     }

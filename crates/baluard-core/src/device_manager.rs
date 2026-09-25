@@ -977,8 +977,33 @@ impl DeviceManager {
             return Err(DeviceError::NotEnrolled(initiating_device_id.to_string()).into());
         }
 
-        // Generate new Root Key and wrap for all enrolled devices
-        let device_pubs = self.registry.encryption_public_keys();
+        // Generate new Root Key and wrap for enrolled devices.
+        // S3-7b: on a team-shape vault only ADMIN-member devices may
+        // receive Root Key wraps — the committed .txn carries HPKE wraps
+        // any listed device can open with its private key, so a member
+        // entry would leak the Root Key to a member device offline.
+        let mut device_pubs = self.registry.encryption_public_keys();
+        if let Some(vp) = self.store.as_ref().and_then(|store| store.vault_path()) {
+            if crate::vault::space_meta::shape_flipped(vp) {
+                device_pubs.retain(|(dev_id, _)| {
+                    crate::vault::members::member_id_for_device(vp, *dev_id)
+                        .and_then(|m| {
+                            crate::vault::members::list_members(vp)
+                                .ok()
+                                .and_then(|rows| {
+                                    rows.iter().find(|r| r.id == m).map(|r| {
+                                        matches!(
+                                            r.role,
+                                            crate::vault::members::MemberRole::Owner
+                                                | crate::vault::members::MemberRole::Admin
+                                        )
+                                    })
+                                })
+                        })
+                        .unwrap_or(true) // unresolved = legacy device = admin-equivalent
+                });
+            }
+        }
         let (new_root, tx) = crate::keys::rotation::initiate_epoch_rotation(
             self.epoch.epoch,
             &device_pubs,

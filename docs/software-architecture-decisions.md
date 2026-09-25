@@ -1171,6 +1171,16 @@ The review also caught a pre-existing blocker, not from this slice: `rotate_iden
 
 **Boundaries**: 7b owns the flip itself — meta derivation re-homing, keywrap shape changes, shape-aware rotation staging, and the flip ceremony; sync-engine validation of `identity_wrap_pubkey` lands when the field becomes load-bearing at verification; the desktop surface for prepare/status rides the §4.8 wave.
 
+### D40. Team-Shape Flip (S3-7b) (2026-09-25; S3 in progress)
+
+A team vault must not hand its Root Key to people who only need one collection. S3-7b makes that true at the crypto layer: an admin flips the vault, and from that commit forward member devices hold neither the Root Key nor the Space Group Key. Their unlock path is identity seed → space.wrap → SMK; the seven member-visible meta derivations (index, folders, tags, profile, settings, contacts, events) take HKDF(SMK) where they took Root Key bytes, with every per-file info constant unchanged so admins and members compute identical keys. Admin-only derivations (activity, generator history, templates, outbox, avatar) stay Root-Key-bound and refuse on member devices.
+
+Two ordering decisions carry the design. First, the marker moves before the files: `meta/space-shape.json` (plaintext, admin-row policy) is the point of no return, and every crash window after it is healed by the next admin unlock, which re-reads any old-keyed file with the live Root Key derivation and re-saves under the SMK derivation. A crash before the marker changes nothing. Second, Root-Key distribution is gated by shape everywhere, not just in one loop: the rotation staging filter, the quorum transaction builder, transaction adoption, and the join approval all check the marker, because the review demonstrated that a single unfiltered path (the quorum `.txn`) re-leaks the Root Key to member devices offline — the committed wraps are openable by any listed device's private key, unlock paths notwithstanding.
+
+The review also forced a sharper rule than "refuse politely": a member device must never be handed USABLE-LOOKING dummy key material. The avatar key derivation initially returned a zero key on member devices so callers would not error; any caller that encrypts with it would silently write data no admin can decrypt. Refusals must be errors, not zero keys. Likewise the flip readiness gate now treats an absent wrap pubkey as unusable (a `None`-pubkey row with a stale wrap file on disk previously passed) — a wrap file without a pubkey is leftover mail, not readiness.
+
+**Boundaries**: member devices do not yet read or write ciphers — collection ciphers are still encrypted under SGK-derived item keys, so member listing degrades to an empty index and S3-7c owns the re-key of collection ciphers under CK-derived item keys plus member CRUD through grant wraps. Flat/personal ciphers remain admin-surface. A member pulling mid-flip (marker present, files not yet converged) sees meta read failures until the flipping admin's convergence commit lands — bounded, single-admin-window, and self-healing.
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

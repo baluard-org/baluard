@@ -141,6 +141,22 @@ pub fn derive_contacts_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError>
     Ok(key)
 }
 
+/// S3-7b: expand the 32-byte Space Meta Key into a 64-byte meta IKM.
+///
+/// After the team-shape flip, the seven member-visible meta derivations
+/// (index, folders, tags, profile, settings, contacts, events) take
+/// THIS value where they took the raw Root Key bytes pre-flip. Every
+/// `derive_*_key` keeps its signature and info constant; only the IKM
+/// source moves. Admins and members compute the identical value from
+/// the same SMK, so no file is re-encrypted per reader.
+pub fn meta_root_from_smk(smk: &[u8; 32]) -> [u8; 64] {
+    let hkdf = Hkdf::<Sha256>::new(None, smk);
+    let mut ikm = [0u8; 64];
+    hkdf.expand(b"baluard-meta-root-v1", &mut ikm)
+        .expect("meta root expand cannot fail (valid length)");
+    ikm
+}
+
 /// Derive a 32-byte Share Events Key from Root Key.
 ///
 /// Events Key encrypts the sharing activity log (meta/share-events.enc).
@@ -259,6 +275,19 @@ mod tests {
         assert_ne!(idx, fld);
         assert_ne!(idx, tag);
         assert_ne!(fld, tag);
+    }
+
+    #[test]
+    fn meta_root_binds_the_smk() {
+        let a = meta_root_from_smk(&[1u8; 32]);
+        let b = meta_root_from_smk(&[1u8; 32]);
+        let c = meta_root_from_smk(&[2u8; 32]);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        // Distinct from feeding the same bytes as a Root Key IKM.
+        let mut as_root = [0u8; 64];
+        as_root[..32].copy_from_slice(&[1u8; 32]);
+        assert_ne!(a, as_root);
     }
 
     #[test]

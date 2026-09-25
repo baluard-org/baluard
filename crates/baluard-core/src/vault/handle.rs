@@ -78,12 +78,22 @@ pub enum VaultState {
 }
 
 /// Key material held while vault is unlocked.
+///
+/// S3-7b: `root_key` and `space_group_key` are `None` on member devices
+/// of a flipped (team-shape) vault. Members hold only the SMK (from
+/// their identity-keyed space.wrap) and the meta IKM expanded from it;
+/// every Root-Key/SGK-consuming operation refuses via [`Self::root`]
+/// / [`Self::sgk`] instead of silently using absent material.
 pub struct UnlockedState {
-    /// Root Key (512-bit, per-epoch).
-    pub root_key: RootKey,
+    /// Root Key (512-bit, per-epoch). `None` for team members.
+    pub root_key: Option<RootKey>,
     /// Space Group Key (256-bit, per-space). DESIGN-3: intermediate layer.
     /// Derived from RootKey for single-user; random for multi-user/org.
-    pub space_group_key: crate::keys::hierarchy::SpaceGroupKey,
+    /// `None` for team members.
+    pub space_group_key: Option<crate::keys::hierarchy::SpaceGroupKey>,
+    /// S3-7b: the Space Meta Key, when the vault carries one (flipped
+    /// admin: from the sealed store; member: from the identity wrap).
+    pub smk: Option<zeroize::Zeroizing<[u8; 32]>>,
     /// Session Key (for local cache encryption).
     pub session_key: [u8; 32],
     /// Sync-Only Key (for locked background sync).
@@ -106,13 +116,71 @@ pub struct UnlockedState {
     pub identity_wrap_key: Option<zeroize::Zeroizing<[u8; 32]>>,
 }
 
+impl UnlockedState {
+    /// Root Key access. Refuses on team-member devices, which hold none.
+    pub fn root(&self) -> Result<&RootKey, BaluardError> {
+        self.root_key.as_ref().ok_or_else(|| {
+            VaultError::InvalidOperation(
+                "this operation requires a managing device (team members hold no Root Key)".into(),
+            )
+            .into()
+        })
+    }
+
+    /// Space Group Key access. Refuses on team-member devices.
+    pub fn sgk(&self) -> Result<&crate::keys::hierarchy::SpaceGroupKey, BaluardError> {
+        self.space_group_key.as_ref().ok_or_else(|| {
+            VaultError::InvalidOperation(
+                "this operation requires a managing device (team members hold no group key)".into(),
+            )
+            .into()
+        })
+    }
+
+    /// S3-7b: the IKM every member-visible meta derivation consumes:
+    /// HKDF(SMK) post-flip, the live Root Key bytes pre-flip. Computed
+    /// per call so a rotation that swaps the Root Key (pre-flip) never
+    /// leaves a stale derivation input behind.
+    pub fn meta_ikm(&self) -> zeroize::Zeroizing<[u8; 64]> {
+        match (&self.smk, &self.root_key) {
+            (Some(smk), _) => {
+                zeroize::Zeroizing::new(crate::crypto::hkdf_derive::meta_root_from_smk(smk))
+            }
+            (None, Some(rk)) => zeroize::Zeroizing::new(*rk.as_bytes()),
+            // Unreachable (locked handles never expose UnlockedState);
+            // a zeroed IKM fails every read closed instead of panicking.
+            (None, None) => zeroize::Zeroizing::new([0u8; 64]),
+        }
+    }
+
+    /// Whether this device holds the Root Key (admin/founding device).
+    pub fn holds_root(&self) -> bool {
+        self.root_key.is_some()
+    }
+}
+
 impl Drop for UnlockedState {
     fn drop(&mut self) {
-        self.root_key.zeroize();
-        self.space_group_key.zeroize();
+        if let Some(mut k) = self.root_key.take() {
+            k.zeroize();
+        }
+        if let Some(mut k) = self.space_group_key.take() {
+            k.zeroize();
+        }
         self.session_key.zeroize();
         self.sync_key.zeroize();
     }
+}
+
+/// Report for the S3-7b team-shape flip.
+#[derive(Debug, Clone)]
+pub struct SpaceFlipReport {
+    /// True when the vault was already in team shape (idempotent call).
+    pub already_flipped: bool,
+    /// Tracked meta files re-sealed under the SMK derivation.
+    pub files_reencrypted: usize,
+    /// Member-device keywraps removed (the Root Key exit).
+    pub keywraps_removed: usize,
 }
 
 /// Offboarding report for a batch member removal (S1a-6).
@@ -313,14 +381,11 @@ impl VaultHandle {
             Some(_) => {
                 let member_id =
                     crate::vault::members::member_id_for_device(&self.path, self.device_id);
+                let collections =
+                    crate::vault::collections::list_collections(&self.path, self.unlocked().sgk()?)
+                        .unwrap_or_default();
                 let manages = member_id.is_some_and(|m| {
-                    crate::vault::collections::list_collections(
-                        &self.path,
-                        &self.unlocked().space_group_key,
-                    )
-                    .unwrap_or_default()
-                    .into_iter()
-                    .any(|(f, _)| {
+                    collections.into_iter().any(|(f, _)| {
                         f.id == id
                             && f.grants.iter().any(|g| {
                                 g.member_id == m
@@ -352,7 +417,7 @@ impl VaultHandle {
     // ── S1a-3: contact cards + trust dial ──
 
     fn contacts_key(&self) -> Result<[u8; 32], BaluardError> {
-        crate::crypto::hkdf_derive::derive_contacts_key(self.unlocked().root_key.as_bytes())
+        crate::crypto::hkdf_derive::derive_contacts_key(&self.unlocked().meta_ikm())
             .map_err(BaluardError::from)
     }
 
@@ -708,7 +773,7 @@ impl VaultHandle {
     // ── S2 IS-4b: per-recipient outboxes (live mirror) ──
 
     fn outbox_key(&self) -> Result<[u8; 32], BaluardError> {
-        crate::crypto::hkdf_derive::derive_outbox_key(self.unlocked().root_key.as_bytes())
+        crate::crypto::hkdf_derive::derive_outbox_key(self.unlocked().root()?.as_bytes())
             .map_err(BaluardError::from)
     }
 
@@ -720,7 +785,7 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        crate::vault::templates::load_templates(&self.path, self.unlocked().root_key.as_bytes())
+        crate::vault::templates::load_templates(&self.path, self.unlocked().root()?.as_bytes())
     }
 
     /// Mint a role template (admin-gated). Names and grant structure
@@ -736,7 +801,7 @@ impl VaultHandle {
         }
         self.assert_can_manage_members()?;
         crate::vault::templates::validate_template(name, role, &grants)?;
-        let root_key = self.unlocked().root_key.as_bytes();
+        let root_key = self.unlocked().root()?.as_bytes();
         let mut all = crate::vault::templates::load_templates(&self.path, root_key)?;
         if all.len() >= crate::vault::templates::MAX_TEMPLATES {
             return Err(VaultError::InvalidOperation(
@@ -763,7 +828,7 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
-        let root_key = self.unlocked().root_key.as_bytes();
+        let root_key = self.unlocked().root()?.as_bytes();
         let mut all = crate::vault::templates::load_templates(&self.path, root_key)?;
         let before = all.len();
         all.retain(|t| t.id != template_id);
@@ -792,7 +857,7 @@ impl VaultHandle {
         self.assert_can_manage_members()?;
         let templates = crate::vault::templates::load_templates(
             &self.path,
-            self.unlocked().root_key.as_bytes(),
+            self.unlocked().root()?.as_bytes(),
         )?;
         let template = templates
             .into_iter()
@@ -1075,11 +1140,8 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
-        let file = crate::vault::collections::create_collection(
-            &self.path,
-            &self.unlocked().space_group_key,
-            name,
-        )?;
+        let file =
+            crate::vault::collections::create_collection(&self.path, self.unlocked().sgk()?, name)?;
 
         Ok(file.id)
     }
@@ -1098,13 +1160,12 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        Ok(crate::vault::collections::list_collections(
-            &self.path,
-            &self.unlocked().space_group_key,
-        )?
-        .into_iter()
-        .map(|(f, name)| (f.id, name, f.grants))
-        .collect())
+        Ok(
+            crate::vault::collections::list_collections(&self.path, self.unlocked().sgk()?)?
+                .into_iter()
+                .map(|(f, name)| (f.id, name, f.grants))
+                .collect(),
+        )
     }
 
     /// Rename a collection (admin, or the collection's delegated
@@ -1116,7 +1177,7 @@ impl VaultHandle {
         self.assert_can_manage_collection(id)?;
         crate::vault::collections::rename_collection(
             &self.path,
-            &self.unlocked().space_group_key,
+            self.unlocked().sgk()?,
             &id,
             name,
         )?;
@@ -1147,7 +1208,7 @@ impl VaultHandle {
         self.assert_can_manage_collection(id)?;
         crate::vault::collections::upsert_grant(
             &self.path,
-            &self.unlocked().space_group_key,
+            self.unlocked().sgk()?,
             &id,
             crate::vault::collections::CollectionGrant {
                 member_id,
@@ -1167,7 +1228,7 @@ impl VaultHandle {
         self.assert_can_manage_collection(id)?;
         crate::vault::collections::revoke_grant(
             &self.path,
-            &self.unlocked().space_group_key,
+            self.unlocked().sgk()?,
             &id,
             &member_id,
         )?;
@@ -1186,10 +1247,7 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
-        crate::vault::collections::sweep_expired_grants(
-            &self.path,
-            &self.unlocked().space_group_key,
-        )
+        crate::vault::collections::sweep_expired_grants(&self.path, self.unlocked().sgk()?)
     }
 
     // ── S3-7a: Space Meta Key groundwork ──
@@ -1205,7 +1263,7 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
-        crate::vault::space_meta::prepare(&self.path, &self.unlocked().root_key)
+        crate::vault::space_meta::prepare(&self.path, self.unlocked().root()?)
     }
 
     /// Readiness counts for the Team-shape flip. Admin-gated.
@@ -1214,7 +1272,171 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
-        crate::vault::space_meta::status(&self.path, &self.unlocked().root_key)
+        crate::vault::space_meta::status(&self.path, self.unlocked().root()?)
+    }
+
+    /// S3-7b: flip the vault to team shape. After this commit:
+    /// - the seven member-visible meta derivations take HKDF(SMK);
+    /// - member devices stop receiving the Root Key (their device
+    ///   keywraps are removed) and unlock via identity seed + space.wrap;
+    /// - future rotations stage Root Key wraps for admin devices only.
+    ///
+    /// Admin-gated. Readiness-gated: every live non-admin member must
+    /// carry a usable identity wrap pubkey AND a minted space.wrap, or
+    /// the flip refuses (they would be locked out at the next unlock).
+    /// Marker-first ordering keeps every crash window recoverable: the
+    /// next admin unlock converges any half-flipped files.
+    pub fn space_flip(&mut self) -> Result<SpaceFlipReport, BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        self.assert_can_manage_members()?;
+        let already = crate::vault::space_meta::shape_flipped(&self.path);
+        if already {
+            // Idempotent: report, converge leftovers, strip any re-grown
+            // member keywraps (e.g. from a pre-flip enrollment sync).
+            let removed = self.strip_member_keywraps();
+            return Ok(SpaceFlipReport {
+                already_flipped: true,
+                files_reencrypted: 0,
+                keywraps_removed: removed,
+            });
+        }
+
+        // Readiness: prepare is idempotent and closes mint/pending gaps.
+        let report = crate::vault::space_meta::prepare(&self.path, self.unlocked().root()?)?;
+        let mut blocked = Vec::new();
+        let members = crate::vault::members::list_members(&self.path)?;
+        for m in members
+            .iter()
+            .filter(|m| m.removed.is_none() && m.reset.is_none())
+        {
+            let is_admin = matches!(
+                m.role,
+                crate::vault::members::MemberRole::Owner | crate::vault::members::MemberRole::Admin
+            );
+            if is_admin {
+                continue;
+            }
+            let usable = m
+                .identity_wrap_pubkey
+                .as_deref()
+                .and_then(|k| crate::vault::collections::wrap_pubkey_bytes(k).ok())
+                .is_some();
+            if !usable || !crate::vault::space_meta::has_space_wrap(&self.path, &m.id) {
+                blocked.push(m.id);
+            }
+        }
+        if !blocked.is_empty() {
+            let _ = report;
+            return Err(VaultError::InvalidOperation(format!(
+                "cannot flip: {} member(s) have no usable identity wrap or space wrap yet; run prepare after they re-verify ({})",
+                blocked.len(),
+                blocked
+                    .iter()
+                    .map(|u| u.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+            .into());
+        }
+
+        // Snapshot the five tracked meta files under the CURRENT (Root
+        // Key) derivation, before the marker moves the IKM.
+        let folders = self.list_folders()?;
+        let tags = self.list_tags()?;
+        let profile = self.load_profile()?;
+        let settings = self.get_settings()?;
+        let contacts = self.load_contacts()?;
+
+        // Point of no return: the marker switches every device's unlock
+        // and meta derivation. Files converge after (crash-safe: the next
+        // admin unlock re-runs convergence).
+        crate::vault::space_meta::write_shape_marker(&self.path)?;
+        let smk = crate::vault::space_meta::open_store(&self.path, self.unlocked().root()?)?;
+        self.unlocked_mut().smk = Some(smk);
+
+        // Re-seal the tracked meta files under the new derivation.
+        let mut files = 0usize;
+        self.save_folders(&folders)?;
+        files += 1;
+        let index = crate::vault::manifest::TagIndex {
+            tags,
+            updated_at: crate::vault::templates::now_secs(),
+        };
+        self.save_tags_enc(&index)?;
+        files += 1;
+        self.save_profile(&profile)?;
+        files += 1;
+        self.save_settings(&settings)?;
+        files += 1;
+        self.save_contacts(&contacts)?;
+        files += 1;
+
+        // Team members stop receiving the Root Key, effective immediately.
+        let keywraps_removed = self.strip_member_keywraps();
+
+        self.emit_share_event(
+            crate::vault::events::ShareEventKind::AccessGranted,
+            "space switched to team shape; members now hold scoped keys only",
+        );
+        Ok(SpaceFlipReport {
+            already_flipped: false,
+            files_reencrypted: files,
+            keywraps_removed,
+        })
+    }
+
+    /// S3-7b: whether this device belongs to an Owner/Admin member (or
+    /// to no member row — legacy/founding devices are admin-equivalent).
+    fn device_maps_to_admin(&self, dev_id: Uuid) -> bool {
+        crate::vault::members::member_id_for_device(&self.path, dev_id)
+            .and_then(|m| {
+                crate::vault::members::list_members(&self.path)
+                    .ok()
+                    .and_then(|rows| {
+                        rows.iter().find(|r| r.id == m).map(|r| {
+                            matches!(
+                                r.role,
+                                crate::vault::members::MemberRole::Owner
+                                    | crate::vault::members::MemberRole::Admin
+                            )
+                        })
+                    })
+            })
+            .unwrap_or(true)
+    }
+
+    /// Delete the device keywraps of non-admin members' devices (S3-7b:
+    /// their unlock path no longer needs — and must no longer hold — the
+    /// Root Key). Devices that cannot be resolved to a member (legacy
+    /// solo vaults, founding devices) are left untouched.
+    fn strip_member_keywraps(&self) -> usize {
+        let keywrap_dir = self.path.join("meta/keywrap");
+        let Ok(entries) = std::fs::read_dir(&keywrap_dir) else {
+            return 0;
+        };
+        let mut removed = 0usize;
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Some(id_str) = name.strip_suffix(".json") else {
+                continue;
+            };
+            let Ok(dev_id) = Uuid::parse_str(id_str) else {
+                continue;
+            };
+            if dev_id == self.device_id {
+                continue; // never strip the acting device's own wrap
+            }
+            if !self.device_maps_to_admin(dev_id) {
+                // Best-effort; a leftover file is stripped on the next flip
+                // call and the unlock tail never uses it on a flipped vault.
+                if std::fs::remove_file(entry.path()).is_ok() {
+                    removed += 1;
+                }
+            }
+        }
+        removed
     }
 
     // ── S3-6: request-access JIT ──
@@ -1237,7 +1459,7 @@ impl VaultHandle {
             })?;
         let (collection, _) = crate::vault::collections::open_collection(
             &self.path,
-            &self.unlocked().space_group_key,
+            self.unlocked().sgk()?,
             &collection_id,
         )?;
         crate::vault::access_requests::submit_request(
@@ -1295,7 +1517,7 @@ impl VaultHandle {
             &self.path,
             approver,
             identity.wrapping_secret(),
-            &self.unlocked().space_group_key,
+            self.unlocked().sgk()?,
         )
     }
 
@@ -1328,7 +1550,7 @@ impl VaultHandle {
             request_id,
             approver,
             identity.wrapping_secret(),
-            &self.unlocked().space_group_key,
+            self.unlocked().sgk()?,
         )?;
         let final_access = access.unwrap_or(row.access);
         // The askable set is read/write (refused at submit); a crafted or
@@ -1342,7 +1564,7 @@ impl VaultHandle {
         }
         crate::vault::collections::upsert_grant(
             &self.path,
-            &self.unlocked().space_group_key,
+            self.unlocked().sgk()?,
             &row.collection_id,
             crate::vault::collections::CollectionGrant {
                 member_id: requester_member_id,
@@ -1410,11 +1632,7 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
-        crate::vault::access_requests::catalog_set(
-            &self.path,
-            &self.unlocked().space_group_key,
-            entries,
-        )
+        crate::vault::access_requests::catalog_set(&self.path, self.unlocked().sgk()?, entries)
     }
 
     /// The catalog as requesters see it (any unlocked member; empty when
@@ -1645,11 +1863,11 @@ impl VaultHandle {
         // it under the fresh root. Best-effort in this additive slice
         // (nothing is SMK-encrypted yet); status surfaces any gap and
         // the 7b flip makes this authoritative.
-        if crate::vault::space_meta::status(&self.path, &self.unlocked().root_key)
+        if crate::vault::space_meta::status(&self.path, self.unlocked().root()?)
             .map(|s| s.prepared)
             .unwrap_or(false)
         {
-            let _ = crate::vault::space_meta::rotate(&self.path, &self.unlocked().root_key);
+            let _ = crate::vault::space_meta::rotate(&self.path, self.unlocked().root()?);
         }
         let new_epoch = match &self.state {
             VaultState::Unlocked(u) => u.current_epoch,
@@ -1961,21 +2179,27 @@ impl VaultHandle {
 
         // Wrap the Root Key to the joiner's device key (their transport
         // seat: read until the approval ships this keywrap).
-        let root = &self.unlocked().root_key;
-        let recipient = x25519_dalek::PublicKey::from(enc_bytes);
-        let (eph, ct, tag) = hpke_wrap::wrap_key(root.as_bytes(), &recipient, "root-key-keywrap")?;
-        let keywrap = serde_json::json!({
-            "device_id": intro.device_id.to_string(),
-            "ephemeral_public": hex::encode(eph),
-            "encrypted_key": hex::encode(ct),
-            "tag": hex::encode(tag),
-        });
-        super::write_vault_file(
-            &self
-                .path
-                .join(format!("meta/keywrap/{}.json", intro.device_id)),
-            serde_json::to_string_pretty(&keywrap).unwrap().as_bytes(),
-        )?;
+        // S3-7b: skipped on team-shape vaults — the joiner's unlock path
+        // is identity seed + space.wrap (minted below); the Root Key must
+        // never reach a member device.
+        if !crate::vault::space_meta::shape_flipped(&self.path) {
+            let root = self.unlocked().root()?;
+            let recipient = x25519_dalek::PublicKey::from(enc_bytes);
+            let (eph, ct, tag) =
+                hpke_wrap::wrap_key(root.as_bytes(), &recipient, "root-key-keywrap")?;
+            let keywrap = serde_json::json!({
+                "device_id": intro.device_id.to_string(),
+                "ephemeral_public": hex::encode(eph),
+                "encrypted_key": hex::encode(ct),
+                "tag": hex::encode(tag),
+            });
+            super::write_vault_file(
+                &self
+                    .path
+                    .join(format!("meta/keywrap/{}.json", intro.device_id)),
+                serde_json::to_string_pretty(&keywrap).unwrap().as_bytes(),
+            )?;
+        }
 
         // Member record + binding, admin-authored, role from the invite.
         // Approval IS the trust act (Level 3 replaces the code check).
@@ -2071,7 +2295,7 @@ impl VaultHandle {
         // a store failure must not fail the approval).
         if let Some(wrap_hex) = member.identity_wrap_pubkey.as_deref() {
             if let Ok(smk) =
-                crate::vault::space_meta::open_store(&self.path, &self.unlocked().root_key)
+                crate::vault::space_meta::open_store(&self.path, self.unlocked().root()?)
             {
                 // Best-effort by design: the store exists but a wrap
                 // write failing must not fail the approval. status()
@@ -2101,7 +2325,7 @@ impl VaultHandle {
                 };
                 if let Err(e) = crate::vault::collections::upsert_grant(
                     &self.path,
-                    &self.unlocked().space_group_key,
+                    self.unlocked().sgk()?,
                     &collection_id,
                     grant,
                 ) {
@@ -2488,6 +2712,125 @@ impl VaultHandle {
     /// after `MAX_PIN_FAILURES` tries (Bitwarden-equivalent policy).
     ///
     /// No key material crosses IPC. `kek` is zeroized by the caller when done.
+    /// S3-7b: member unlock tail for flipped (team-shape) vaults. The
+    /// member's KEK opened their device-local sealed identity seed; their
+    /// identity wrapping secret opens the identity-keyed space.wrap; the
+    /// SMK expands to the meta IKM. No Root Key, no group key.
+    #[allow(clippy::too_many_arguments)]
+    fn unlock_tail_member(
+        &mut self,
+        member: &crate::vault::members::MemberUnlock,
+        session_key: [u8; 32],
+        sync_key: [u8; 32],
+        devkey_seal: [u8; 32],
+    ) -> Result<(), BaluardError> {
+        let sealed_hex = member.identity_seed_sealed.as_deref().ok_or_else(|| {
+            VaultError::InvalidOperation(
+                "this device has no sealed identity seed; re-approve this member".into(),
+            )
+        })?;
+        let sealed = hex::decode(sealed_hex)
+            .map_err(|_| VaultError::Corrupt("member identity seed".into()))?;
+        let keys = crate::vault::identity::open_identity(&devkey_seal, &sealed).map_err(|e| {
+            VaultError::InvalidOperation(format!(
+                "this device's identity seed did not open; re-approve this member ({e})"
+            ))
+        })?;
+        let member_id = crate::vault::members::member_id_for_device(&self.path, self.device_id)
+            .ok_or_else(|| {
+                VaultError::InvalidOperation(
+                    "this device is not bound to a member record; re-approve this member".into(),
+                )
+            })?;
+        let smk = crate::vault::space_meta::open_space_wrap(
+            &self.path,
+            &member_id,
+            keys.wrapping_secret(),
+        )
+        .map_err(|e| {
+            VaultError::InvalidOperation(format!(
+                "no readable space meta wrap for this member yet; sync and retry ({e})"
+            ))
+        })?;
+        let current_epoch = self.determine_current_epoch();
+        // The devkey seal doubles as the identity sealing wrap key on the
+        // member path (the seed is sealed under it), so identity rotation
+        // works after PIN/KEK unlocks too.
+        let identity_wrap_key = Zeroizing::new(devkey_seal);
+
+        self.state = VaultState::Unlocked(UnlockedState {
+            root_key: None,
+            space_group_key: None,
+            smk: Some(smk),
+            session_key,
+            sync_key,
+            devkey_seal,
+            item_keys: HashMap::new(),
+            current_epoch,
+            identity: Some(keys),
+            identity_wrap_key: Some(identity_wrap_key),
+        });
+        // C1: legacy plaintext re-seal + registry sync, same as the admin
+        // tail. The admin-only metadata migration is skipped on member
+        // devices (they cannot write meta/** tracked files).
+        {
+            let path = self.path.join("meta/device-privkey.json");
+            let _ = crate::vault::device_privkey::reseal_if_legacy(
+                &path,
+                &self.unlocked().devkey_seal,
+                Some(self.device_id),
+            );
+            let _ = crate::vault::device_privkey::write_device_id(&self.path, self.device_id);
+        }
+        self.sync_registry_to_device_manager();
+        Ok(())
+    }
+
+    /// S3-7b: admin-side convergence after the flip. A crash between the
+    /// marker write and the flip's re-encryption leaves files sealed under
+    /// the Root-Key-derived meta keys; read each with those keys (by
+    /// temporarily pointing the meta IKM back at the Root Key) and re-save
+    /// through the standard savers (meta-IKM-keyed). Best-effort per file:
+    /// every admin unlock re-converges until the vault is clean.
+    fn converge_meta_after_flip(&mut self) {
+        // Temporarily drop the SMK so the standard loaders read the
+        // old-keyed files with the live Root Key derivation.
+        let saved_smk = match &mut self.state {
+            VaultState::Unlocked(u) => u.smk.take(),
+            VaultState::Locked => None,
+        };
+        let folders = self.list_folders().ok();
+        let tags = self.list_tags().ok();
+        let profile = self.load_profile().ok();
+        let settings = self.get_settings().ok();
+        let contacts = self.load_contacts().ok();
+        if let VaultState::Unlocked(u) = &mut self.state {
+            u.smk = saved_smk;
+        }
+        if let Some(f) = folders {
+            let _ = self.save_folders(&f);
+        }
+        if let Some(names) = tags {
+            let index = crate::vault::manifest::TagIndex {
+                tags: names,
+                updated_at: crate::vault::templates::now_secs(),
+            };
+            let _ = self.save_tags_enc(&index);
+        }
+        if let Some(p) = profile {
+            let _ = self.save_profile(&p);
+        }
+        if let Some(s) = settings {
+            let _ = self.save_settings(&s);
+        }
+        if let Some(c) = contacts {
+            let _ = self.save_contacts(&c);
+        }
+        // A crash between the flip's marker write and its keywrap strip
+        // leaves member Root Key wraps on disk; convergence removes them.
+        self.strip_member_keywraps();
+    }
+
     pub fn unlock_with_kek(&mut self, kek: &[u8; 32]) -> Result<(), BaluardError> {
         self.unlock_tail(kek, None)
     }
@@ -2537,7 +2880,24 @@ impl VaultHandle {
             super::canary::verify_kek_canary(&session_key, &canary_data)?;
         }
 
-        // Step 4: HPKE-decapsulate Root Key using device private key (keyring or file).
+        // S3-7b: team-shape member devices hold no Root Key. Their unlock
+        // path is identity seed (device-local, KEK-sealed) → identity keys
+        // → the identity-keyed space.wrap → SMK → meta IKM. No keywrap
+        // unwrap, no SGK, no Root Key ever enters memory.
+        let flipped = crate::vault::space_meta::shape_flipped(&self.path);
+        if flipped {
+            if let Some(member) =
+                crate::vault::members::load_member_unlock(&self.path, self.device_id)?
+            {
+                return self.unlock_tail_member(&member, session_key, sync_key, devkey_seal);
+            }
+            // Founding/admin device: the Root Key path below still runs;
+            // the SMK comes from the sealed store so meta keys match the
+            // members' HKDF(SMK) derivation.
+        }
+
+        // Step 4 (cont.): admin/founding path — HPKE-decapsulate Root Key
+        // using device private key (keyring or file).
         // If unwrap fails on a fast-path resolved device_id, fall back through other
         // enrolled candidates to provide self-healing recovery against corrupted or
         // spoofed meta/device-id entries (F1 self-healing fix).
@@ -2615,12 +2975,22 @@ impl VaultHandle {
         // Step 7: Determine current epoch from any existing cipher or RK canary
         let current_epoch = self.determine_current_epoch();
 
+        // S3-7b: post-flip, the seven member-visible meta derivations take
+        // HKDF(SMK); the admin opens the SMK from the sealed store. Pre-flip
+        // the meta IKM derives from the live Root Key (identical behavior).
+        let smk = if flipped {
+            Some(crate::vault::space_meta::open_store(&self.path, &root_key)?)
+        } else {
+            None
+        };
+
         self.state = VaultState::Unlocked(UnlockedState {
-            root_key: root_key.clone(),
-            space_group_key: crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
+            root_key: Some(root_key.clone()),
+            space_group_key: Some(crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
                 &root_key,
                 current_epoch,
-            ),
+            )),
+            smk,
             session_key,
             sync_key,
             devkey_seal,
@@ -2629,6 +2999,14 @@ impl VaultHandle {
             identity: None,
             identity_wrap_key: None,
         });
+
+        if flipped {
+            // Convergence: a crash between the flip's marker write and its
+            // file re-encryption leaves old-keyed files behind. Heal them
+            // now (read with the Root Key derivation, re-save under the
+            // new one), so the post-unlock session never sees a mix.
+            self.converge_meta_after_flip();
+        }
 
         // P1a: cache the identity when its sealing key is device-local (OS
         // keystore mode). Passphrase-fallback mode caches in unlock() where
@@ -2706,7 +3084,7 @@ impl VaultHandle {
 
         // Step 3: Get current root key from unlocked state
         let root_key = match &self.state {
-            VaultState::Unlocked(u) => u.root_key.clone(),
+            VaultState::Unlocked(u) => u.root()?.clone(),
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
@@ -2772,6 +3150,14 @@ impl VaultHandle {
     /// Migrate plaintext metadata files to encrypted format.
     /// Called after successful unlock. Best-effort: logs errors but does not fail unlock.
     fn migrate_plaintext_metadata(&self) {
+        // S3-7b: the profile and activity legs write git-tracked meta/**
+        // files that only admins may commit. On team-member devices
+        // (no Root Key) the write would wedge the member's next push.
+        let may_commit_meta = match &self.state {
+            VaultState::Unlocked(u) => u.holds_root(),
+            VaultState::Locked => false,
+        };
+
         // Migrate folders.json -> folders.enc
         let folders_json = self.path.join("meta/folders.json");
         let folders_enc = self.path.join("meta/folders.enc");
@@ -2800,9 +3186,11 @@ impl VaultHandle {
             }
         }
 
-        // Migrate settings.json identity fields -> profile.enc
+        // Migrate settings.json identity fields -> profile.enc (admin
+        // commit surface: meta/profile.enc + meta/settings-pub.json are
+        // Admin rows — same wedge class as the activity leg).
         let profile_enc = self.path.join("meta/profile.enc");
-        if !profile_enc.exists() {
+        if may_commit_meta && !profile_enc.exists() {
             if let Ok(settings) = self.get_settings() {
                 let has_identity = settings.display_name.is_some()
                     || settings.subtitle.is_some()
@@ -2818,12 +3206,15 @@ impl VaultHandle {
             }
         }
 
-        // Migrate device_activity.json -> activity.enc
-        let activity_enc = self.path.join("meta/activity.enc");
-        if !activity_enc.exists() {
-            let plaintext = crate::device_manager::DeviceActivityIndex::read(&self.path);
-            if !plaintext.devices.is_empty() {
-                let _ = self.save_activity_enc(&plaintext);
+        // Migrate device_activity.json -> activity.enc (admin commit
+        // surface only — see the guard above).
+        if may_commit_meta {
+            let activity_enc = self.path.join("meta/activity.enc");
+            if !activity_enc.exists() {
+                let plaintext = crate::device_manager::DeviceActivityIndex::read(&self.path);
+                if !plaintext.devices.is_empty() {
+                    let _ = self.save_activity_enc(&plaintext);
+                }
             }
         }
     }
@@ -2930,11 +3321,12 @@ impl VaultHandle {
     /// M1 fix: Derive the avatar encryption key from the unlocked SGK.
     /// Domain-separated from item keys; epoch-bound so avatar is re-wrapped
     /// on root key rotation.
-    pub fn derive_avatar_key(&self) -> [u8; 32] {
+    pub fn derive_avatar_key(&self) -> Result<[u8; 32], BaluardError> {
         let unlocked = self.unlocked();
-        unlocked
-            .space_group_key
-            .derive_avatar_key(unlocked.space_group_key.epoch())
+        // Team-member devices hold no group key (S3-7b): refuse rather
+        // than hand back a dummy key a caller could encrypt with.
+        let sgk = unlocked.sgk()?;
+        Ok(sgk.derive_avatar_key(sgk.epoch()))
     }
 
     /// Encrypt metadata JSON and write to disk atomically.
@@ -3026,8 +3418,8 @@ impl VaultHandle {
         let encrypted = match &self.state {
             VaultState::Unlocked(unlocked) => {
                 if enc_path.exists() {
-                    let key = hkdf_derive::derive_settings_key(unlocked.root_key.as_bytes())
-                        .map_err(|e| {
+                    let key =
+                        hkdf_derive::derive_settings_key(&unlocked.meta_ikm()).map_err(|e| {
                             VaultError::Metadata(format!("settings key derivation: {e}"))
                         })?;
                     let data = std::fs::read(&enc_path)?;
@@ -3167,7 +3559,7 @@ impl VaultHandle {
             trusted_app_packages: settings.trusted_app_packages.clone(),
             rejected_app_packages: settings.rejected_app_packages.clone(),
         };
-        let key = hkdf_derive::derive_settings_key(unlocked.root_key.as_bytes())
+        let key = hkdf_derive::derive_settings_key(&unlocked.meta_ikm())
             .map_err(|e| VaultError::Metadata(format!("settings key derivation: {e}")))?;
         let json = serde_json::to_vec(&enc_settings)
             .map_err(|e| VaultError::Metadata(format!("settings.enc serialization: {e}")))?;
@@ -3196,7 +3588,7 @@ impl VaultHandle {
         if !enc_path.exists() {
             return std::collections::HashMap::new();
         }
-        let Ok(key) = hkdf_derive::derive_settings_key(unlocked.root_key.as_bytes()) else {
+        let Ok(key) = hkdf_derive::derive_settings_key(&unlocked.meta_ikm()) else {
             return std::collections::HashMap::new();
         };
         let Ok(data) = std::fs::read(&enc_path) else {
@@ -3269,7 +3661,7 @@ impl VaultHandle {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Ok(()),
         };
-        let key = hkdf_derive::derive_settings_key(unlocked.root_key.as_bytes())
+        let key = hkdf_derive::derive_settings_key(&unlocked.meta_ikm())
             .map_err(|e| VaultError::Metadata(format!("settings key derivation: {e}")))?;
         let json = serde_json::to_vec(&enc)
             .map_err(|e| VaultError::Metadata(format!("settings.enc serialization: {e}")))?;
@@ -3293,7 +3685,7 @@ impl VaultHandle {
                 VaultState::Unlocked(u) => u,
                 VaultState::Locked => return Err(VaultError::Locked.into()),
             };
-            let key = hkdf_derive::derive_profile_key(unlocked.root_key.as_bytes())
+            let key = hkdf_derive::derive_profile_key(&unlocked.meta_ikm())
                 .map_err(|e| VaultError::Metadata(format!("profile key derivation: {e}")))?;
             let data = std::fs::read(&enc_path)?;
             let envelope = crate::vault::envelope::deserialize(&data)?;
@@ -3344,7 +3736,7 @@ impl VaultHandle {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
-        let key = hkdf_derive::derive_profile_key(unlocked.root_key.as_bytes())
+        let key = hkdf_derive::derive_profile_key(&unlocked.meta_ikm())
             .map_err(|e| VaultError::Metadata(format!("profile key derivation: {e}")))?;
         let json = serde_json::to_vec(profile)
             .map_err(|e| VaultError::Metadata(format!("profile serialization: {e}")))?;
@@ -3424,7 +3816,7 @@ impl VaultHandle {
         let _ = crate::vault::events::append(
             &self.path,
             self.vault_id,
-            unlocked.root_key.as_bytes(),
+            &unlocked.meta_ikm(),
             unlocked.current_epoch,
             kind,
             detail,
@@ -3443,7 +3835,7 @@ impl VaultHandle {
         }
         let unlocked = self.unlocked();
         let mut events =
-            crate::vault::events::load(&self.path, self.vault_id, unlocked.root_key.as_bytes())?;
+            crate::vault::events::load(&self.path, self.vault_id, &unlocked.meta_ikm())?;
         if events.len() > limit {
             let drop = events.len() - limit;
             events.drain(..drop);
@@ -3491,7 +3883,7 @@ impl VaultHandle {
                 VaultState::Unlocked(u) => u,
                 VaultState::Locked => return Err(VaultError::Locked.into()),
             };
-            let key = hkdf_derive::derive_activity_key(unlocked.root_key.as_bytes())
+            let key = hkdf_derive::derive_activity_key(unlocked.root()?.as_bytes())
                 .map_err(|e| VaultError::Metadata(format!("activity key derivation: {e}")))?;
             let data = std::fs::read(&enc_path)?;
             let envelope = crate::vault::envelope::deserialize(&data)?;
@@ -3515,7 +3907,7 @@ impl VaultHandle {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
-        let key = hkdf_derive::derive_activity_key(unlocked.root_key.as_bytes())
+        let key = hkdf_derive::derive_activity_key(unlocked.root()?.as_bytes())
             .map_err(|e| VaultError::Metadata(format!("activity key derivation: {e}")))?;
         let json = serde_json::to_vec(index)
             .map_err(|e| VaultError::Metadata(format!("activity serialization: {e}")))?;
@@ -3549,7 +3941,7 @@ impl VaultHandle {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
-        let key = hkdf_derive::derive_generator_history_key(unlocked.root_key.as_bytes())
+        let key = hkdf_derive::derive_generator_history_key(unlocked.root()?.as_bytes())
             .map_err(|e| VaultError::Metadata(format!("generator history key derivation: {e}")))?;
         let data = std::fs::read(&enc_path)?;
         let envelope = crate::vault::envelope::deserialize(&data)?;
@@ -3636,7 +4028,7 @@ impl VaultHandle {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
-        let key = hkdf_derive::derive_generator_history_key(unlocked.root_key.as_bytes())
+        let key = hkdf_derive::derive_generator_history_key(unlocked.root()?.as_bytes())
             .map_err(|e| VaultError::Metadata(format!("generator history key derivation: {e}")))?;
         let json = serde_json::to_vec(entries)
             .map_err(|e| VaultError::Metadata(format!("generator history serialization: {e}")))?;
@@ -3668,7 +4060,7 @@ impl VaultHandle {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
-        let key = hkdf_derive::derive_folders_key(unlocked.root_key.as_bytes())
+        let key = hkdf_derive::derive_folders_key(&unlocked.meta_ikm())
             .map_err(|e| VaultError::Metadata(format!("folders key derivation: {e}")))?;
 
         // Per-fact layout: one file per folder, sorted by id for stable order.
@@ -3753,7 +4145,7 @@ impl VaultHandle {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
-        let key = hkdf_derive::derive_folders_key(unlocked.root_key.as_bytes())
+        let key = hkdf_derive::derive_folders_key(&unlocked.meta_ikm())
             .map_err(|e| VaultError::Metadata(format!("folders key derivation: {e}")))?;
         let dir = self.path.join("meta/folders");
         std::fs::create_dir_all(&dir)?;
@@ -3928,7 +4320,7 @@ impl VaultHandle {
                     VaultState::Unlocked(u) => u,
                     VaultState::Locked => return Err(VaultError::Locked.into()),
                 };
-                self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?
+                self.try_decrypt_cipher_with_root_key(unlocked.root()?, &existing_file)?
             };
 
             if existing_cipher
@@ -3992,10 +4384,7 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        let all = crate::vault::collections::list_collections(
-            &self.path,
-            &self.unlocked().space_group_key,
-        )?;
+        let all = crate::vault::collections::list_collections(&self.path, self.unlocked().sgk()?)?;
         let target_rel = match collection_id {
             Some(cid) => {
                 let file = all
@@ -4156,9 +4545,7 @@ impl VaultHandle {
 
         // Try reading from the (possibly sharded) index. Missing or corrupt
         // shards → None → auto-heal rebuild below.
-        if let Ok(index_key) =
-            crate::crypto::hkdf_derive::derive_index_key(unlocked.root_key.as_bytes())
-        {
+        if let Ok(index_key) = crate::crypto::hkdf_derive::derive_index_key(&unlocked.meta_ikm()) {
             if let Some((ciphers, skipped)) =
                 index::read_sharded(self.vault_id, &self.path.join("meta"), &index_key)
             {
@@ -4187,7 +4574,13 @@ impl VaultHandle {
             }
         }
 
-        // Auto-heal: rebuild index and save
+        // Auto-heal: rebuild index and save. S3-7b: team-member devices
+        // hold no Root Key, so the SGK-decryption heal is out of their
+        // reach — return an empty rebuild instead of a hard refusal (the
+        // 7c slice gives members collection-key decryption).
+        if !unlocked.holds_root() {
+            return Ok(Vec::new());
+        }
         let ids = self.list_cipher_ids()?;
         let mut metas = Vec::with_capacity(ids.len());
         let mut skipped: Vec<uuid::Uuid> = Vec::new();
@@ -4199,7 +4592,7 @@ impl VaultHandle {
             let envelope_bytes = std::fs::read(&file_path)?;
             let file = cipher::CipherFile { id, envelope_bytes };
 
-            let c = match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &file) {
+            let c = match self.try_decrypt_cipher_with_root_key(unlocked.root()?, &file) {
                 Ok(c) => c,
                 Err(crate::error::BaluardError::Vault(crate::error::VaultError::CrossEpoch {
                     envelope_epoch,
@@ -4250,9 +4643,7 @@ impl VaultHandle {
         }
 
         // Save healed index (P5b: sharded, like rebuild_index)
-        if let Ok(index_key) =
-            crate::crypto::hkdf_derive::derive_index_key(unlocked.root_key.as_bytes())
-        {
+        if let Ok(index_key) = crate::crypto::hkdf_derive::derive_index_key(&unlocked.meta_ikm()) {
             let index_dir = self.path.join("meta");
             let _ = index::write_sharded(
                 self.vault_id,
@@ -4279,6 +4670,13 @@ impl VaultHandle {
     fn adopt_rekey_txn_root(&self, devkey_seal: &[u8; 32]) -> Option<RootKey> {
         let epoch = self.determine_current_epoch();
         if epoch == 0 {
+            return None;
+        }
+        // S3-7b: on a team-shape vault a member device must never adopt
+        // Root Key material, even from a stale pre-flip transaction.
+        if crate::vault::space_meta::shape_flipped(&self.path)
+            && !self.device_maps_to_admin(self.device_id)
+        {
             return None;
         }
         let txn_path = self.path.join(format!("meta/rekey/{epoch}.txn"));
@@ -4421,7 +4819,9 @@ impl VaultHandle {
         key_epoch: u64,
     ) -> crate::keys::hierarchy::ItemKey {
         let sgk = match &self.state {
-            VaultState::Unlocked(u) => &u.space_group_key,
+            VaultState::Unlocked(u) => u.space_group_key.as_ref().expect(
+                "derive_item_key requires a managing device (team members use collection keys)",
+            ),
             VaultState::Locked => panic!("derive_item_key called on locked vault"),
         };
         // Routed through the checked derive so a genuine held-epoch mismatch
@@ -4468,7 +4868,7 @@ impl VaultHandle {
                 // Read epoch from envelope header for correct Item Key derivation
                 let envelope = crate::vault::envelope::deserialize(&file.envelope_bytes)?;
                 let item_key = Self::derive_item_key_from_sgk(
-                    &unlocked.space_group_key,
+                    unlocked.sgk()?,
                     cipher_id,
                     envelope.header.key_epoch,
                 )?;
@@ -4521,7 +4921,12 @@ impl VaultHandle {
         // crash the daemon on the exact safety path). Map None to a clean Err
         // the caller reports as `cross_epoch`.
         let sgk = match &self.state {
-            VaultState::Unlocked(u) => &u.space_group_key,
+            VaultState::Unlocked(u) => u.space_group_key.as_ref().ok_or_else(|| {
+                VaultError::InvalidOperation(
+                    "this operation requires a managing device (team members hold no group key)"
+                        .into(),
+                )
+            }),
             VaultState::Locked => {
                 return Err(VaultError::Corrupt(
                     "decrypt_cipher_bytes called on locked vault".into(),
@@ -4529,6 +4934,7 @@ impl VaultHandle {
                 .into());
             }
         };
+        let sgk = sgk?;
         let item_key = sgk
             .try_derive_item_key(cipher_id, envelope.header.key_epoch)
             .ok_or_else(|| {
@@ -4657,11 +5063,8 @@ impl VaultHandle {
         };
 
         let cipher_id = Uuid::new_v4();
-        let item_key = Self::derive_item_key_from_sgk(
-            &unlocked.space_group_key,
-            cipher_id,
-            unlocked.current_epoch,
-        )?;
+        let item_key =
+            Self::derive_item_key_from_sgk(unlocked.sgk()?, cipher_id, unlocked.current_epoch)?;
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -4716,7 +5119,7 @@ impl VaultHandle {
 
         // Read existing cipher to preserve created_at
         let existing_cipher =
-            self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
+            self.try_decrypt_cipher_with_root_key(unlocked.root()?, &existing_file)?;
 
         let mut input_owned = input.clone();
         input_owned.created_at = Some(existing_cipher.created_at);
@@ -4759,8 +5162,7 @@ impl VaultHandle {
             input_owned.password_history = existing_cipher.password_history.clone();
         }
 
-        let item_key =
-            Self::derive_item_key_from_sgk(&unlocked.space_group_key, cipher_id, key_epoch)?;
+        let item_key = Self::derive_item_key_from_sgk(unlocked.sgk()?, cipher_id, key_epoch)?;
 
         let file = cipher::encrypt_cipher(
             self.vault_id,
@@ -4796,7 +5198,7 @@ impl VaultHandle {
             id: cipher_id,
             envelope_bytes: std::fs::read(&file_path)?,
         };
-        let existing = self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
+        let existing = self.try_decrypt_cipher_with_root_key(unlocked.root()?, &existing_file)?;
 
         let input = CipherInput {
             name: existing.name,
@@ -4836,7 +5238,7 @@ impl VaultHandle {
             id: cipher_id,
             envelope_bytes: std::fs::read(&file_path)?,
         };
-        let existing = self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
+        let existing = self.try_decrypt_cipher_with_root_key(unlocked.root()?, &existing_file)?;
 
         if existing.archived {
             return Ok(()); // Already archived, idempotent
@@ -4877,7 +5279,7 @@ impl VaultHandle {
             id: cipher_id,
             envelope_bytes: std::fs::read(&file_path)?,
         };
-        let existing = self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &existing_file)?;
+        let existing = self.try_decrypt_cipher_with_root_key(unlocked.root()?, &existing_file)?;
 
         if !existing.archived {
             return Ok(()); // Already unarchived, idempotent
@@ -4951,7 +5353,7 @@ impl VaultHandle {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
-        let key = hkdf_derive::derive_tags_key(unlocked.root_key.as_bytes())
+        let key = hkdf_derive::derive_tags_key(&unlocked.meta_ikm())
             .map_err(|e| VaultError::Metadata(format!("tags key derivation: {e}")))?;
 
         // Per-fact layout. Foreign entries (temp files, dotfiles, junk) are
@@ -5086,7 +5488,7 @@ impl VaultHandle {
             VaultState::Unlocked(u) => u,
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
-        let key = hkdf_derive::derive_tags_key(unlocked.root_key.as_bytes())
+        let key = hkdf_derive::derive_tags_key(&unlocked.meta_ikm())
             .map_err(|e| VaultError::Metadata(format!("tags key derivation: {e}")))?;
         let dir = self.path.join("meta/tags");
         std::fs::create_dir_all(&dir)?;
@@ -5528,7 +5930,7 @@ impl VaultHandle {
             };
 
             let old_root = match &self.state {
-                VaultState::Unlocked(u) => u.root_key.clone(),
+                VaultState::Unlocked(u) => u.root()?.clone(),
                 VaultState::Locked => return Err(VaultError::Locked.into()),
             };
             let mut existing = self.try_decrypt_cipher_with_root_key(&old_root, &file)?;
@@ -5619,7 +6021,7 @@ impl VaultHandle {
         // avatar at the old epoch (avatar_get fails after rotation).
         let avatar_path = self.path.join("meta/avatar.enc");
         if avatar_path.exists() {
-            let old_avatar_key = zeroize::Zeroizing::new(self.derive_avatar_key());
+            let old_avatar_key = zeroize::Zeroizing::new(self.derive_avatar_key()?);
             let new_avatar_key = zeroize::Zeroizing::new(
                 crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
                     &new_root_key,
@@ -5680,17 +6082,34 @@ impl VaultHandle {
             serde_json::to_string_pretty(&keywrap_data).unwrap(),
         )?;
 
-        // P3: wrap the new Root Key for every OTHER enrolled device so
-        // survivors unlock on next pull. Without this, a routine rotation
-        // bricks every other device (their keywrap files still wrap the
-        // retired root key). Staged with the rest; failures propagate.
-        for (dev_id, dev_pub) in &self.device_manager.registry.encryption_public_keys() {
-            if *dev_id == self.device_id {
+        // P3: wrap the new Root Key for every OTHER enrolled ADMIN device
+        // so survivors unlock on next pull. S3-7b: team members are
+        // deliberately skipped — handing them the Root Key would silently
+        // revert the flip's core property. Their unlocks ride the SMK
+        // wrap, which the rotation does not touch (the SMK is
+        // root-rotation-invariant and their wraps are identity-keyed).
+        for (dev_id, dev_pub) in self
+            .device_manager
+            .registry
+            .encryption_public_keys()
+            .into_iter()
+            .filter(|(dev_id, _)| {
+                // S3-7b: pre-flip every device still holds the Root Key, so
+                // rotation must keep refreshing their wraps (the original
+                // P3 brick fix). Post-flip, team members are deliberately
+                // skipped: handing them the Root Key would silently revert
+                // the flip's core property. Their unlocks ride the SMK
+                // wrap, which the rotation does not touch.
+                let flipped = crate::vault::space_meta::shape_flipped(&self.path);
+                *dev_id == self.device_id || !flipped || self.device_maps_to_admin(*dev_id)
+            })
+        {
+            if dev_id == self.device_id {
                 continue;
             }
             let (dev_eph, dev_ct, dev_tag) = crate::crypto::hpke_wrap::wrap_key(
                 new_root_key.as_bytes(),
-                &x25519_dalek::PublicKey::from(*dev_pub),
+                &x25519_dalek::PublicKey::from(dev_pub),
                 "root-key-keywrap",
             )?;
             let dev_data = serde_json::json!({
@@ -5740,10 +6159,8 @@ impl VaultHandle {
         let old_templates = self.templates_list()?;
         // S3-1 rotation coverage: decrypt collection content keys with the
         // outgoing SGK before the swap (rewrapped post-swap).
-        let old_collection_keys = crate::vault::collections::collect_content_keys(
-            &self.path,
-            &self.unlocked().space_group_key,
-        )?;
+        let old_collection_keys =
+            crate::vault::collections::collect_content_keys(&self.path, self.unlocked().sgk()?)?;
         // S3-7a: open the SMK with the OUTGOING root (the store is sealed
         // under it). Any failure means no usable SMK rides this rotation:
         // unprepared (NotFound) or already-dead (damaged by a previous
@@ -5751,24 +6168,29 @@ impl VaultHandle {
         // prepare re-mints and re-wraps everyone, so skipping is the
         // convergent choice.
         let old_space_smk =
-            crate::vault::space_meta::open_store(&self.path, &self.unlocked().root_key).ok();
-        // S1b-1: the activity log is RootKey-derived — read pre-swap.
-        let old_events = crate::vault::events::load(
-            &self.path,
-            self.vault_id,
-            self.unlocked().root_key.as_bytes(),
-        )?;
+            crate::vault::space_meta::open_store(&self.path, self.unlocked().root()?).ok();
+        // S1b-1: the activity log rides the meta IKM — read pre-swap.
+        // Local-only per-device file: an unreadable log (key-source
+        // transition) reads as empty; the post-swap save re-seals it.
+        let old_events =
+            crate::vault::events::load(&self.path, self.vault_id, &self.unlocked().meta_ikm())
+                .unwrap_or_default();
 
         // Phase 5: Swap Root Key and update epoch via DeviceManager lifecycle
         match &mut self.state {
             VaultState::Unlocked(u) => {
-                u.root_key.zeroize();
-                u.root_key = new_root_key.clone();
-                u.space_group_key.zeroize();
-                u.space_group_key = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
-                    &new_root_key,
-                    new_epoch,
-                );
+                if let Some(mut k) = u.root_key.take() {
+                    k.zeroize();
+                }
+                u.root_key = Some(new_root_key.clone());
+                if let Some(mut k) = u.space_group_key.take() {
+                    k.zeroize();
+                }
+                u.space_group_key =
+                    Some(crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
+                        &new_root_key,
+                        new_epoch,
+                    ));
                 u.current_epoch = new_epoch;
                 u.item_keys.clear();
             }
@@ -5812,24 +6234,24 @@ impl VaultHandle {
         crate::vault::outbox::save_links(&self.path, &self.outbox_key()?, &old_links)?;
         crate::vault::templates::save_templates(
             &self.path,
-            self.unlocked().root_key.as_bytes(),
+            self.unlocked().root()?.as_bytes(),
             &old_templates,
         )?;
         crate::vault::collections::rewrap_from_plaintexts(
             &self.path,
-            &self.unlocked().space_group_key,
+            self.unlocked().sgk()?,
             &old_collection_keys,
         )?;
         // S3-7a: re-seal the space store under the new root. P4 rule:
         // failures propagate (a skipped reseal orphans the SMK).
         if let Some(smk) = &old_space_smk {
-            crate::vault::space_meta::reseal_store(&self.path, &self.unlocked().root_key, smk)?;
+            crate::vault::space_meta::reseal_store(&self.path, self.unlocked().root()?, smk)?;
         }
         // S1b-1: activity log re-encrypted under the new events key.
         crate::vault::events::save(
             &self.path,
             self.vault_id,
-            self.unlocked().root_key.as_bytes(),
+            &self.unlocked().meta_ikm(),
             self.unlocked().current_epoch,
             &old_events,
         )?;
@@ -6072,7 +6494,7 @@ impl VaultHandle {
 
         // ── Clone old root key once (borrow-safe for loop) ──
         let old_root = match &self.state {
-            VaultState::Unlocked(u) => u.root_key.clone(),
+            VaultState::Unlocked(u) => u.root()?.clone(),
             VaultState::Locked => return Err(VaultError::Locked.into()),
         };
 
@@ -6180,7 +6602,7 @@ impl VaultHandle {
         // avatar at the old epoch (avatar_get fails after rotation).
         let avatar_path = self.path.join("meta/avatar.enc");
         if avatar_path.exists() {
-            let old_avatar_key = zeroize::Zeroizing::new(self.derive_avatar_key());
+            let old_avatar_key = zeroize::Zeroizing::new(self.derive_avatar_key()?);
             let new_avatar_key = zeroize::Zeroizing::new(
                 crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
                     &new_root_key,
@@ -6258,10 +6680,8 @@ impl VaultHandle {
         let old_templates = self.templates_list()?;
         // S3-1 rotation coverage: decrypt collection content keys with the
         // outgoing SGK before the swap (rewrapped post-swap).
-        let old_collection_keys = crate::vault::collections::collect_content_keys(
-            &self.path,
-            &self.unlocked().space_group_key,
-        )?;
+        let old_collection_keys =
+            crate::vault::collections::collect_content_keys(&self.path, self.unlocked().sgk()?)?;
         // S3-7a: open the SMK with the OUTGOING root (the store is sealed
         // under it). Any failure means no usable SMK rides this rotation:
         // unprepared (NotFound) or already-dead (damaged by a previous
@@ -6269,24 +6689,29 @@ impl VaultHandle {
         // prepare re-mints and re-wraps everyone, so skipping is the
         // convergent choice.
         let old_space_smk =
-            crate::vault::space_meta::open_store(&self.path, &self.unlocked().root_key).ok();
-        // S1b-1: the activity log is RootKey-derived — read pre-swap.
-        let old_events = crate::vault::events::load(
-            &self.path,
-            self.vault_id,
-            self.unlocked().root_key.as_bytes(),
-        )?;
+            crate::vault::space_meta::open_store(&self.path, self.unlocked().root()?).ok();
+        // S1b-1: the activity log rides the meta IKM — read pre-swap.
+        // Local-only per-device file: an unreadable log (key-source
+        // transition) reads as empty; the post-swap save re-seals it.
+        let old_events =
+            crate::vault::events::load(&self.path, self.vault_id, &self.unlocked().meta_ikm())
+                .unwrap_or_default();
 
         // ── Update in-memory state ──
         match &mut self.state {
             VaultState::Unlocked(u) => {
-                u.root_key.zeroize();
-                u.root_key = new_root_key.clone();
-                u.space_group_key.zeroize();
-                u.space_group_key = crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
-                    &new_root_key,
-                    new_epoch,
-                );
+                if let Some(mut k) = u.root_key.take() {
+                    k.zeroize();
+                }
+                u.root_key = Some(new_root_key.clone());
+                if let Some(mut k) = u.space_group_key.take() {
+                    k.zeroize();
+                }
+                u.space_group_key =
+                    Some(crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
+                        &new_root_key,
+                        new_epoch,
+                    ));
                 u.current_epoch = new_epoch;
                 u.item_keys.clear();
             }
@@ -6329,24 +6754,24 @@ impl VaultHandle {
         crate::vault::outbox::save_links(&self.path, &self.outbox_key()?, &old_links)?;
         crate::vault::templates::save_templates(
             &self.path,
-            self.unlocked().root_key.as_bytes(),
+            self.unlocked().root()?.as_bytes(),
             &old_templates,
         )?;
         crate::vault::collections::rewrap_from_plaintexts(
             &self.path,
-            &self.unlocked().space_group_key,
+            self.unlocked().sgk()?,
             &old_collection_keys,
         )?;
         // S3-7a: re-seal the space store under the new root. P4 rule:
         // failures propagate (a skipped reseal orphans the SMK).
         if let Some(smk) = &old_space_smk {
-            crate::vault::space_meta::reseal_store(&self.path, &self.unlocked().root_key, smk)?;
+            crate::vault::space_meta::reseal_store(&self.path, self.unlocked().root()?, smk)?;
         }
         // S1b-1: activity log re-encrypted under the new events key.
         crate::vault::events::save(
             &self.path,
             self.vault_id,
-            self.unlocked().root_key.as_bytes(),
+            &self.unlocked().meta_ikm(),
             self.unlocked().current_epoch,
             &old_events,
         )?;
@@ -6515,7 +6940,7 @@ impl VaultHandle {
             let envelope_bytes = std::fs::read(&file_path)?;
             let file = cipher::CipherFile { id, envelope_bytes };
 
-            let c = match self.try_decrypt_cipher_with_root_key(&unlocked.root_key, &file) {
+            let c = match self.try_decrypt_cipher_with_root_key(unlocked.root()?, &file) {
                 Ok(c) => c,
                 Err(crate::error::BaluardError::Vault(crate::error::VaultError::CrossEpoch {
                     envelope_epoch,
@@ -6565,7 +6990,7 @@ impl VaultHandle {
             });
         }
 
-        let index_key = hkdf_derive::derive_index_key(unlocked.root_key.as_bytes())?;
+        let index_key = hkdf_derive::derive_index_key(&unlocked.meta_ikm())?;
         let index_dir = self.path.join("meta");
         std::fs::create_dir_all(&index_dir)?;
         // P5b: sharded write — deterministic shard boundaries, orphaned
@@ -6878,7 +7303,7 @@ mod tests {
                 .execute()
                 .unwrap();
         handle.unlock("owner-pass").unwrap();
-        let sgk = handle.unlocked().space_group_key.clone();
+        let sgk = handle.unlocked().sgk().expect("sgk in test").clone();
         let work = crate::vault::collections::create_collection(&owner_path, &sgk, "Work").unwrap();
         let template = handle
             .template_create(
@@ -6988,7 +7413,7 @@ mod tests {
         let mut row = crate::vault::members::member_file_by_id(dir.path(), member_id).unwrap();
         row.identity_wrap_pubkey = Some(card.card.identity_wrap_pubkey.clone());
         crate::vault::members::write_member(dir.path(), &row).unwrap();
-        let sgk = h.unlocked().space_group_key.clone();
+        let sgk = h.unlocked().sgk().expect("sgk in test").clone();
         let file =
             crate::vault::collections::create_collection(dir.path(), &sgk, "Shared").unwrap();
         crate::vault::collections::upsert_grant(
@@ -7393,7 +7818,7 @@ mod tests {
         h.assign_cipher_to_collection(cid, Some(col)).unwrap_err();
         // Grant write on the collection, directly on disk (the editor
         // session cannot call collection_grant).
-        let sgk = h.unlocked().space_group_key.clone();
+        let sgk = h.unlocked().sgk().expect("sgk in test").clone();
         crate::vault::collections::upsert_grant(
             dir.path(),
             &sgk,
@@ -8224,7 +8649,7 @@ mod tests {
     /// handle.
     fn handle_root_key_for_test(handle: &VaultHandle) -> Vec<u8> {
         match &handle.state {
-            VaultState::Unlocked(u) => u.root_key.as_bytes().to_vec(),
+            VaultState::Unlocked(u) => u.root().expect("root in test").as_bytes().to_vec(),
             VaultState::Locked => panic!("test handle must be unlocked"),
         }
     }
@@ -8889,7 +9314,7 @@ mod tests {
         dir: &std::path::Path,
     ) -> (Vec<u8>, Vec<u8>, [u8; 32]) {
         let plaintext = b"fake-png-image-bytes".to_vec();
-        let old_key = handle.derive_avatar_key();
+        let old_key = handle.derive_avatar_key().expect("avatar key in test");
         let blob = crate::vault::avatar::encrypt_avatar(&old_key, &plaintext).unwrap();
         std::fs::write(dir.join("meta/avatar.enc"), &blob).unwrap();
         (plaintext, blob, old_key)
@@ -8909,7 +9334,8 @@ mod tests {
         let stored = std::fs::read(dir.path().join("meta/avatar.enc")).unwrap();
         assert_ne!(stored, old_blob, "avatar blob must be re-encrypted");
         let roundtrip =
-            crate::vault::avatar::decrypt_avatar(&handle.derive_avatar_key(), &stored).unwrap();
+            crate::vault::avatar::decrypt_avatar(&handle.derive_avatar_key().unwrap(), &stored)
+                .unwrap();
         assert_eq!(roundtrip, plaintext);
         assert!(
             crate::vault::avatar::decrypt_avatar(&old_key, &stored).is_err(),
@@ -8931,7 +9357,8 @@ mod tests {
         let stored = std::fs::read(dir.path().join("meta/avatar.enc")).unwrap();
         assert_ne!(stored, old_blob, "avatar blob must be re-encrypted");
         let roundtrip =
-            crate::vault::avatar::decrypt_avatar(&handle.derive_avatar_key(), &stored).unwrap();
+            crate::vault::avatar::decrypt_avatar(&handle.derive_avatar_key().unwrap(), &stored)
+                .unwrap();
         assert_eq!(roundtrip, plaintext);
         assert!(crate::vault::avatar::decrypt_avatar(&old_key, &stored).is_err());
     }
@@ -9082,8 +9509,7 @@ mod tests {
         // Verify that index.enc was automatically rewritten and is now healthy again
         let envelope_bytes = std::fs::read(&index_path).unwrap();
         let unlocked = handle.unlocked();
-        let index_key =
-            crate::crypto::hkdf_derive::derive_index_key(unlocked.root_key.as_bytes()).unwrap();
+        let index_key = crate::crypto::hkdf_derive::derive_index_key(&unlocked.meta_ikm()).unwrap();
         let decoded = index::decrypt_index(handle.vault_id, &envelope_bytes, &index_key).unwrap();
         assert_eq!(decoded.len(), 2);
     }
@@ -9441,6 +9867,226 @@ mod tests {
     /// submits a sealed ask, the owner's inbox decrypts it, approval issues
     /// the grant + mints the per-member wrap + consumes the file, and a
     /// second ask dies by denial. Ship legs ride the real sync engine.
+    // S3-7b: the full team-shape flip ceremony. Owner + Editor joiner
+    // through the standard ceremony; prepare, flip, ship, pull, and both
+    // unlock paths must land on the same meta keys with the joiner
+    // holding no Root Key.
+    #[test]
+    fn team_shape_flip_two_devices() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // Owner row carries the identity wrap pubkey (deterministic in
+        // the keystore-less test environment).
+        let owner_member =
+            crate::vault::members::member_id_for_device(&owner_path, handle.device_id).unwrap();
+        let mut owner_row =
+            crate::vault::members::member_file_by_id(&owner_path, owner_member).unwrap();
+        let card = handle.contact_card_signed().unwrap();
+        owner_row.identity_wrap_pubkey = Some(card.card.identity_wrap_pubkey.clone());
+        crate::vault::members::write_member(&owner_path, &owner_row).unwrap();
+
+        // Standard join ceremony: one Editor member.
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve join").unwrap();
+
+        // Joiner pulls, unlocks (pre-flip: Root Key path), and the admin
+        // prepares the SMK. Ship the wrap + prepare state to the joiner.
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        assert!(joiner.unlocked().holds_root(), "pre-flip member holds root");
+        let joiner_device = joiner.device_id;
+        drop(repo_j);
+        drop(joiner);
+
+        let prep = handle.space_prepare().unwrap();
+        assert!(prep.smk_fresh);
+        engine_o.commit_all(&repo_o, "prepare").unwrap();
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+
+        // Flip. The joiner's device keywrap must leave the vault.
+        let joiner_kw = owner_path.join(format!("meta/keywrap/{joiner_device}.json"));
+        assert!(joiner_kw.exists());
+        let report = handle.space_flip().unwrap();
+        assert!(!report.already_flipped);
+        assert_eq!(report.files_reencrypted, 5);
+        assert_eq!(report.keywraps_removed, 1);
+        assert!(!joiner_kw.exists());
+        assert!(crate::vault::space_meta::shape_flipped(&owner_path));
+        // Idempotent re-run.
+        let again = handle.space_flip().unwrap();
+        assert!(again.already_flipped);
+
+        // Admin: same meta keys via the sealed store; folders readable.
+        assert!(handle.unlocked().holds_root());
+        assert!(handle.unlocked().smk.is_some());
+        assert!(handle.list_folders().is_ok());
+        assert!(handle.get_settings().is_ok());
+        engine_o.commit_all(&repo_o, "flip").unwrap();
+
+        // Joiner pulls the flip and unlocks on the member path: no Root
+        // Key, SMK in hand, meta readable.
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        assert!(
+            !joiner.unlocked().holds_root(),
+            "post-flip member holds no root"
+        );
+        assert!(joiner.unlocked().space_group_key.is_none());
+        assert!(joiner.unlocked().smk.is_some());
+        assert!(joiner.list_folders().is_ok());
+        assert!(joiner.get_settings().is_ok());
+        // Admin-only surfaces refuse cleanly on the member device.
+        assert!(joiner.rotate_root_key().is_err());
+        assert!(joiner.space_prepare().is_err());
+        drop(joiner);
+
+        // Post-flip rotation: the Root Key leaves to admins only, and the
+        // SMK (plus every member's access) rides through unchanged.
+        let smk_before =
+            crate::vault::space_meta::open_store(&owner_path, handle.unlocked().root().unwrap())
+                .unwrap();
+        handle.rotate_root_key().unwrap();
+        assert!(
+            !joiner_kw.exists(),
+            "rotation must not re-arm member keywraps"
+        );
+        let new_root = RootKey::from_bytes(
+            handle_root_key_for_test(&handle)
+                .try_into()
+                .expect("root 64 bytes"),
+        );
+        let smk_after = crate::vault::space_meta::open_store(&owner_path, &new_root).unwrap();
+        assert_eq!(*smk_after, *smk_before);
+        assert!(handle.list_folders().is_ok());
+        engine_o.commit_all(&repo_o, "post-flip rotation").unwrap();
+
+        // Joiner pulls the rotation and still unlocks (rootless).
+        engine_j.pull(&repo_j, "origin").unwrap();
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        assert!(!joiner.unlocked().holds_root());
+        assert!(joiner.list_folders().is_ok());
+        // Review F2: the activity log survives the post-flip rotation on
+        // the rotating device (read under the SMK derivation) and reads
+        // clean (empty but valid) on the member.
+        assert!(!handle.share_events(50).unwrap().is_empty());
+        assert!(joiner.share_events(50).unwrap().is_empty());
+        drop(joiner);
+
+        // Review F1: a SECOND join ceremony on the flipped vault — the
+        // approval ships no Root Key keywrap, yet join_status must
+        // report approved and the new member must unlock.
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Viewer, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite 2").unwrap();
+        let joiner2_path = temp.path().join("joiner2");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner2_path).unwrap();
+        let intro2 = crate::vault::members::create_introduction(
+            &joiner2_path,
+            &code,
+            "member2-pass",
+            "MemberDevice2",
+        )
+        .unwrap();
+        handle.approve_join(&intro2).unwrap();
+        engine_o.commit_all(&repo_o, "approve join 2").unwrap();
+        let engine_j2 = crate::sync::engine::SyncEngine::new(&joiner2_path, "joiner2", None);
+        let repo_j2 = engine_j2.open_repo().unwrap();
+        engine_j2.pull(&repo_j2, "origin").unwrap();
+        let (introduced, approved) = crate::vault::members::join_status(&joiner2_path);
+        assert!(introduced);
+        assert!(
+            approved,
+            "flipped-vault approval must not wait for a keywrap"
+        );
+        let mut joiner2 = VaultHandle::open(&joiner2_path).unwrap();
+        joiner2.unlock("member2-pass").unwrap();
+        assert!(!joiner2.unlocked().holds_root());
+        assert!(joiner2.unlocked().smk.is_some());
+    }
+
+    // S3-7b review F6: a live non-admin row with NO wrap pubkey but a
+    // stale space.wrap file on disk must be BLOCKED by the flip gate —
+    // the wrap file alone is not readiness.
+    #[test]
+    fn flip_refuses_member_with_stale_wrap_and_no_pubkey() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        handle.space_prepare().unwrap();
+
+        // Hostile/stale row: Editor, no wrap pubkey, but a wrap FILE.
+        let m = crate::vault::members::MemberFile {
+            id: uuid::Uuid::new_v4(),
+            display_name: "Stale".into(),
+            role: crate::vault::members::MemberRole::Editor,
+            trust: crate::vault::members::TrustLevel::Verified,
+            identity_signing_pubkey: Some(hex::encode([1u8; 32])),
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: None,
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        };
+        crate::vault::members::write_member(&owner_path, &m).unwrap();
+        let wrap_file = owner_path
+            .join("meta/members")
+            .join(m.id.to_string())
+            .join("space.wrap");
+        std::fs::create_dir_all(wrap_file.parent().unwrap()).unwrap();
+        std::fs::write(&wrap_file, b"stale").unwrap();
+
+        let err = handle.space_flip().unwrap_err();
+        assert!(
+            err.to_string().contains(&m.id.to_string()),
+            "flip must name the blocked member: {err}"
+        );
+        assert!(!crate::vault::space_meta::shape_flipped(&owner_path));
+    }
+
     #[test]
     fn jit_access_request_roundtrip_two_devices() {
         let temp = tempfile::tempdir().unwrap();
@@ -9472,7 +10118,7 @@ mod tests {
         crate::vault::members::write_member(&owner_path, &owner_row).unwrap();
 
         // Two collections: one gets granted, one gets denied.
-        let sgk = handle.unlocked().space_group_key.clone();
+        let sgk = handle.unlocked().sgk().expect("sgk in test").clone();
         let work = crate::vault::collections::create_collection(&owner_path, &sgk, "Work").unwrap();
         let finance =
             crate::vault::collections::create_collection(&owner_path, &sgk, "Finance").unwrap();
@@ -9602,7 +10248,7 @@ mod tests {
         .unwrap();
         let cks = crate::vault::collections::collect_content_keys(
             &joiner_path,
-            &joiner.unlocked().space_group_key,
+            joiner.unlocked().sgk().expect("sgk"),
         )
         .unwrap();
         let (_, ck) = cks.iter().find(|(id, _)| *id == work.id).unwrap();
@@ -10765,7 +11411,7 @@ mod tests {
             .unwrap();
         handle.sync_registry_from_device_manager();
 
-        let root = handle.unlocked().root_key.clone();
+        let root = handle.unlocked().root().expect("root in test").clone();
         let (eph, ct, tag) =
             crate::crypto::hpke_wrap::wrap_key(root.as_bytes(), &dev2_x_pub, "root-key-keywrap")
                 .unwrap();
@@ -10819,7 +11465,7 @@ mod tests {
             )
             .unwrap();
         handle.sync_registry_from_device_manager();
-        let root = handle.unlocked().root_key.clone();
+        let root = handle.unlocked().root().expect("root in test").clone();
         let (eph, ct, tag) =
             crate::crypto::hpke_wrap::wrap_key(root.as_bytes(), &dev3_x_pub, "root-key-keywrap")
                 .unwrap();
@@ -10968,7 +11614,7 @@ mod tests {
             "root-key-keywrap",
         )
         .unwrap();
-        let expected = handle.unlocked().root_key.as_bytes();
+        let expected = handle.unlocked().root().expect("root in test").as_bytes();
         assert_eq!(&unwrapped[..], &expected[..]);
     }
 
@@ -11039,7 +11685,7 @@ mod tests {
         // Write keywrap for dev2
         let unlocked = handle.unlocked();
         let (eph, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
-            unlocked.root_key.as_bytes(),
+            unlocked.root().expect("root in test").as_bytes(),
             &dev2_x_pub,
             "root-key-keywrap",
         )
@@ -11173,7 +11819,7 @@ mod tests {
         // Write keywrap for dev2
         let unlocked = handle.unlocked();
         let (eph, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
-            unlocked.root_key.as_bytes(),
+            unlocked.root().expect("root in test").as_bytes(),
             &dev2_x_pub,
             "root-key-keywrap",
         )

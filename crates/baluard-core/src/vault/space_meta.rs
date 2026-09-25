@@ -111,6 +111,64 @@ fn live_members(vault_path: &Path) -> Result<Vec<MemberFile>, BaluardError> {
         .collect())
 }
 
+// ── Shape marker (S3-7b) ──────────────────────────────────────────
+//
+// meta/space-shape.json is a tiny PLAINTEXT, git-tracked, admin-only
+// (meta/** policy row) marker. It holds no secrets: it only says the
+// vault's member-visible meta derivations moved from the Root Key to
+// meta_root(SMK) and member devices hold no Root Key. Every unlock
+// reads it locally to pick the unlock path; writing it is the flip's
+// point of no return (marker FIRST, files converge after).
+
+const SHAPE_PATH: &str = "meta/space-shape.json";
+
+/// Whether this vault has flipped to team shape. A damaged marker
+/// reads as false: admins keep the Root Key path and can re-run the
+/// flip; members get a clear unlock refusal instead of a crypto error.
+pub fn shape_flipped(vault_path: &Path) -> bool {
+    let path = vault_path.join(SHAPE_PATH);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v["mode"].as_str().map(str::to_string))
+        .as_deref()
+        == Some("team")
+}
+
+/// Write the team-shape marker (the flip's commit point). Fails when
+/// the file already exists with a different mode so a foreign marker
+/// never gets silently overwritten.
+pub fn write_shape_marker(vault_path: &Path) -> Result<(), BaluardError> {
+    let path = vault_path.join(SHAPE_PATH);
+    if path.exists() {
+        // Idempotent for an existing team marker.
+        if shape_flipped(vault_path) {
+            return Ok(());
+        }
+        return Err(VaultError::InvalidOperation(
+            "a conflicting space-shape marker already exists".into(),
+        )
+        .into());
+    }
+    let doc = serde_json::json!({
+        "mode": "team",
+        "flipped_at": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    });
+    super::write_vault_file(
+        &path,
+        serde_json::to_string_pretty(&doc)
+            .map_err(|e| VaultError::Metadata(format!("marker serialization: {e}")))?
+            .as_bytes(),
+    )
+    .map_err(|e| VaultError::Metadata(format!("writing shape marker: {e}")))?;
+    Ok(())
+}
+
 /// A wrap pubkey the wrap path can actually use: present and valid
 /// 32-byte hex. Invalid keys count as missing so one hostile or torn
 /// row can never abort prepare (review F2) and can never pass the 7b
@@ -684,6 +742,19 @@ mod tests {
         let st = status(&path, &root).unwrap();
         assert_eq!(st.missing_wrap_pubkey, 1);
         assert_eq!(st.pending_wrap, 0);
+    }
+
+    #[test]
+    fn shape_marker_read_write_and_damaged() {
+        let (_d, path) = temp_vault();
+        assert!(!shape_flipped(&path));
+        write_shape_marker(&path).unwrap();
+        assert!(shape_flipped(&path));
+        // Idempotent.
+        write_shape_marker(&path).unwrap();
+        // Damaged marker reads false (fail toward the legacy path).
+        std::fs::write(path.join(SHAPE_PATH), b"{not json").unwrap();
+        assert!(!shape_flipped(&path));
     }
 
     #[test]

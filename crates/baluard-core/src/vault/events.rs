@@ -152,7 +152,12 @@ pub fn append(
     kind: ShareEventKind,
     detail: impl Into<String>,
 ) -> Result<(), BaluardError> {
-    let mut events = load(vault_path, vault_id, root_key)?;
+    // The activity log is a local-only per-device file (gitignored). A
+    // load failure — a key-source transition like the S3-7b flip, or a
+    // damaged file — starts a fresh log rather than wedging every
+    // future append; the shared surfaces re-read via load() which still
+    // fails closed on genuine tamper.
+    let mut events = load(vault_path, vault_id, root_key).unwrap_or_default();
     let seq = events.last().map(|e| e.seq).unwrap_or(0).saturating_add(1);
     events.push(ShareEvent {
         seq,
