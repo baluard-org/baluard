@@ -240,6 +240,9 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "collections.delete",
         "collections.grant",
         "collections.revoke",
+        // S3-7a: space meta key groundwork.
+        "space.prepare",
+        "space.status",
         // S3-6: request-access JIT surfaces.
         "collections.request_access",
         "collections.requests_mine",

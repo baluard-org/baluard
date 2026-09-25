@@ -330,6 +330,27 @@ mod tests {
         authorize(DA, Some(MA), CommitRole::Admin, &other).unwrap();
     }
 
+    // S3-7a: the space meta files ride existing rows — pin the routing
+    // so a table reorder cannot expose the SMK.
+    #[test]
+    fn space_meta_files_routing() {
+        // The sealed store: Admin only (meta/** row).
+        authorize(DA, Some(MA), CommitRole::Admin, "meta/space.enc").unwrap();
+        assert!(authorize(DA, Some(MA), CommitRole::Editor, "meta/space.enc").is_err());
+        assert!(authorize(DA, Some(MA), CommitRole::Viewer, "meta/space.enc").is_err());
+
+        // Own space.wrap: self-service at ANY role (identity-rotation
+        // self-heal writes it).
+        let own_wrap = format!("meta/members/{MA}/space.wrap");
+        authorize(DA, Some(MA), CommitRole::Viewer, &own_wrap).unwrap();
+
+        // Another member's space.wrap: Admin only (prepare wraps others;
+        // a member transplanting a wrap must refuse at verification).
+        let other_wrap = format!("meta/members/{MB}/space.wrap");
+        assert!(authorize(DA, Some(MA), CommitRole::Editor, &other_wrap).is_err());
+        authorize(DA, Some(MA), CommitRole::Admin, &other_wrap).unwrap();
+    }
+
     fn scoped(dir: &str, cid: Uuid, writable: &[Uuid]) -> CollectionScope {
         CollectionScope {
             dirs: vec![(dir.to_string(), cid)],

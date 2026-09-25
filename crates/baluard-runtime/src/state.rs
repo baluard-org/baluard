@@ -3209,6 +3209,50 @@ impl VaultState {
         Ok(serde_json::json!({ "removed": removed.len() }).to_string())
     }
 
+    // ── S3-7a: Space Meta Key groundwork ──
+    // Both routes token-gated by the daemon's default-deny gate;
+    // space.prepare rides COVER_MUTATION_ACTIONS so autosync ships the
+    // store + wraps.
+
+    /// Mint (or idempotently refresh) the SMK store + per-member wraps.
+    /// Admin-gated at the core layer.
+    pub async fn space_prepare(&self) -> Result<String, String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let report = handle.space_prepare().map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "smk_fresh": report.smk_fresh,
+            "wrapped": report.wrapped,
+            "missing_wrap_pubkey": report
+                .missing_wrap_pubkey
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+        })
+        .to_string())
+    }
+
+    /// Readiness counts for the Team-shape flip. Admin-gated at the
+    /// core layer.
+    pub async fn space_status(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let st = handle.space_status().map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "prepared": st.prepared,
+            "wrapped": st.wrapped,
+            "missing_wrap_pubkey": st.missing_wrap_pubkey,
+            "pending_wrap": st.pending_wrap,
+        })
+        .to_string())
+    }
+
     // ── S3-6: request-access JIT ──
     // All routes token-gated by the daemon's default-deny gate; the
     // mutating ones ride COVER_MUTATION_ACTIONS so autosync ships the
