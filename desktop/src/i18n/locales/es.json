@@ -368,7 +368,12 @@
     "webOAuthWaiting": "Esperando autorización en tu navegador...",
     "webOAuthError": "Autenticación fallida. Intenta de nuevo.",
     "errorRepoCreatePartial": "Es posible que el repositorio se haya creado en el proveedor pero la configuración de sincronización falló. Si abandonas, puede que necesites eliminar el repositorio vacío en {provider} manualmente.",
-    "copyCode": "Copiar código"
+    "copyCode": "Copiar código",
+    "migrateTitle": "Mover la sincronización a otra dirección",
+    "migratePlaceholder": "https://github.com/tu/baluard-vault",
+    "migrateAction": "Mover sincronización",
+    "migrateConfirmBody": "Se avisará la nueva dirección a quien comparte el espacio y la seguirán en su próxima sincronización. ¿Mover ahora?",
+    "migratedToast": "Sincronización movida. Todos la seguirán en su próxima sincronización."
   },
   "autosync": {
     "upToDate": "Todos los cambios sincronizados",

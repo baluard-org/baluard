@@ -10,6 +10,7 @@ import GitExplainerModal from "./GitExplainerModal.jsx";
 import { normalizeSlug } from "../lib/slug.js";
 import { IconUpload, IconDownload, IconRefresh, IconAlert, IconSpinner } from "./Icon.jsx";
 import FocusTrap from "./FocusTrap.jsx";
+import ConfirmModal from "./ConfirmModal.jsx";
 import ExternalLink from "./ExternalLink.jsx";
 import { Button } from "./Primitives.jsx";
 import CopyButton from "./CopyButton.jsx";
@@ -51,6 +52,13 @@ export default function SyncTab() {
   const [deleteRemote, setDeleteRemote] = createSignal(false);
   const [confirmDeleteRemote, setConfirmDeleteRemote] = createSignal(false);
   const [showGitHelp, setShowGitHelp] = createSignal(false);
+  // S3-8: move the vault's sync to a new address (admin). The daemon
+  // commits a pointer file, pushes it to the old remote, re-points,
+  // and pushes the history; every device follows on its next sync.
+  const [migUrl, setMigUrl] = createSignal("");
+  const [migBusy, setMigBusy] = createSignal(false);
+  const [migConfirm, setMigConfirm] = createSignal(false);
+  const [isManager, setIsManager] = createSignal(false);
   // Advanced Options: power users override the OAuth client_id (independence
   // from Baluard's app) or point at a self-hosted instance. Blank = defaults.
   const [showAdvanced, setShowAdvanced] = createSignal(false);
@@ -126,14 +134,23 @@ export default function SyncTab() {
     setLoading(true);
     setError(null);
     try {
-      const [statusRaw, providersRaw] = await Promise.all([
+      const [statusRaw, providersRaw, remoteRaw] = await Promise.all([
         daemon("sync.status_json"),
         daemon("provider.list"),
+        daemon("space.remote").catch(() => null),
       ]);
       const status = JSON.parse(statusRaw);
       const providers = JSON.parse(providersRaw);
       setSyncStatus(status);
       setProviderList(providers);
+      if (remoteRaw) {
+        try {
+          const r = JSON.parse(remoteRaw);
+          setIsManager(Boolean(r?.is_manager));
+        } catch {
+          setIsManager(false);
+        }
+      }
 
       if (status.has_remote) {
         const inferredProvider = status.provider;
@@ -321,6 +338,26 @@ export default function SyncTab() {
   // Primary one-click sync: pull remote changes in first, then push local
   // changes up. Bidirectional, handles the common "edited on two devices"
   // case. Conflicts surface as an error the user can resolve from Advanced.
+  // S3-8: move sync to a new address. The daemon validates the URL,
+  // gates on admin, commits the pointer, and re-points; this just
+  // confirms intent and reports.
+  async function doMigrate() {
+    const url = migUrl().trim();
+    if (!url) return;
+    setMigBusy(true);
+    try {
+      await daemon("space.migrate", { clone_url: url });
+      toastSuccess(t("sync.migratedToast"));
+      setMigUrl("");
+      setMigConfirm(false);
+      await loadState();
+    } catch (e) {
+      setError(sanitizeError(e, t));
+    } finally {
+      setMigBusy(false);
+    }
+  }
+
   async function doSync() {
     setSubState("syncing");
     setError(null);
@@ -816,6 +853,24 @@ export default function SyncTab() {
                 </Show>
               </div>
 
+              {/* S3-8: move the sync address (admin; daemon validates) */}
+              <Show when={isManager()}>
+                <div class="border-t border-[var(--color-border)] pt-3 space-y-2">
+                  <p class="text-[10px] font-bold text-[var(--color-muted)]">{t("sync.migrateTitle")}</p>
+                  <input
+                    type="text"
+                    value={migUrl()}
+                    onInput={(e) => setMigUrl(e.currentTarget.value)}
+                    placeholder={t("sync.migratePlaceholder")}
+                    disabled={migBusy()}
+                    class="w-full text-xs bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-[var(--color-text)] placeholder-[var(--color-muted)] focus:outline-none focus:border-[var(--color-primary)] disabled:opacity-50"
+                  />
+                  <Button onClick={() => setMigConfirm(true)} disabled={migBusy() || !migUrl().trim()}>
+                    {t("sync.migrateAction")}
+                  </Button>
+                </div>
+              </Show>
+
               <button
                 onClick={() => setShowDisconnectModal(true)}
                 class="w-full py-2 rounded-xl border border-red-900/30 text-xs font-bold text-red-400 hover:bg-red-950/20 transition-all cursor-pointer"
@@ -966,6 +1021,16 @@ export default function SyncTab() {
         </Show>
       </Show>
       <GitExplainerModal open={showGitHelp()} onClose={() => setShowGitHelp(false)} />
+      <ConfirmModal
+        show={migConfirm()}
+        idPrefix="sync-migrate"
+        title={t("sync.migrateAction")}
+        body={t("sync.migrateConfirmBody")}
+        confirmLabel={t("sync.migrateAction")}
+        confirmClass="bg-[var(--color-primary)] text-[var(--color-primary-text)]"
+        onConfirm={() => void doMigrate()}
+        onClose={() => setMigConfirm(false)}
+      />
     </div>
   );
 }

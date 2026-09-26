@@ -244,6 +244,8 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "space.prepare",
         "space.status",
         "space.flip",
+        "space.migrate",
+        "space.remote",
         // S3-6: request-access JIT surfaces.
         "collections.request_access",
         "collections.requests_mine",

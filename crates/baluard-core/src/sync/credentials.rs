@@ -48,12 +48,42 @@ pub fn scrub_git_error(msg: &str) -> String {
     cleaned
 }
 
+/// Extract host name from a URL or git address.
+pub fn extract_host(url: &str) -> Option<String> {
+    let s = url.trim();
+    let rest = if let Some(pos) = s.find("://") {
+        &s[pos + 3..]
+    } else if let Some(at) = s.rfind('@') {
+        &s[at + 1..]
+    } else {
+        s
+    };
+    let host_part = if let Some(at) = rest.rfind('@') {
+        &rest[at + 1..]
+    } else {
+        rest
+    };
+    let end = host_part
+        .find(|c: char| c == '/' || c == ':' || c.is_whitespace())
+        .unwrap_or(host_part.len());
+    let host = &host_part[..end];
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_ascii_lowercase())
+    }
+}
+
 /// Credential source configuration.
 #[derive(Debug, Clone)]
 pub struct CredentialConfig {
     /// HTTPS personal access token (kept as SecretString).
     /// Priority: keyring (provider) > env var > vault config file.
     https_token: Option<SecretString>,
+    /// Allowed hosts for which this token may be exposed.
+    /// If Some, credentials callback only exposes https_token if the target
+    /// URL's host matches an allowed host.
+    pub allowed_hosts: Option<Vec<String>>,
 }
 
 impl CredentialConfig {
@@ -64,16 +94,22 @@ impl CredentialConfig {
 
     /// Load credentials with an optional provider hint.
     pub fn load_with_hint(vault_path: &Path, hint: Option<Provider>) -> Self {
-        let https_token = hint
-            .and_then(Self::load_from_keyring_for)
-            .or_else(Self::load_from_keyring)
-            .or_else(|| {
-                std::env::var("BALUARD_GIT_TOKEN")
-                    .ok()
-                    .map(|s| SecretString::new(s.into_boxed_str()))
-            })
-            .or_else(|| Self::load_from_file(vault_path));
-        Self { https_token }
+        let (https_token, allowed_hosts) =
+            if let Some((tok, hosts)) = hint.and_then(Self::load_from_keyring_for) {
+                (Some(tok), Some(hosts))
+            } else if let Some((tok, hosts)) = Self::load_from_keyring() {
+                (Some(tok), Some(hosts))
+            } else if let Ok(s) = std::env::var("BALUARD_GIT_TOKEN") {
+                (Some(SecretString::new(s.into_boxed_str())), None)
+            } else if let Some(tok) = Self::load_from_file(vault_path) {
+                (Some(tok), None)
+            } else {
+                (None, None)
+            };
+        Self {
+            https_token,
+            allowed_hosts,
+        }
     }
 
     /// Expose the token for git2 credential callbacks (internal use only).
@@ -87,30 +123,58 @@ impl CredentialConfig {
             .map(|t| zeroize::Zeroizing::new(t.expose_secret().to_string()))
     }
 
-    fn load_from_keyring_for(provider: Provider) -> Option<SecretString> {
+    fn load_from_keyring_for(provider: Provider) -> Option<(SecretString, Vec<String>)> {
         let state = crate::providers::token::ProvidersState::load().ok()?;
         let info = state.get(provider)?;
         let token = crate::providers::token::load_token(provider, &info.username).ok()?;
-        Some(SecretString::new(
-            token
-                .access_token()
-                .expose_secret()
-                .to_string()
-                .into_boxed_str(),
+        let mut hosts = Vec::new();
+        if let Some(h) = extract_host(provider.default_instance_url()) {
+            hosts.push(h);
+        }
+        if let Some(ref inst) = info.instance_url {
+            if let Some(h) = extract_host(inst) {
+                if !hosts.contains(&h) {
+                    hosts.push(h);
+                }
+            }
+        }
+        Some((
+            SecretString::new(
+                token
+                    .access_token()
+                    .expose_secret()
+                    .to_string()
+                    .into_boxed_str(),
+            ),
+            hosts,
         ))
     }
 
-    fn load_from_keyring() -> Option<SecretString> {
+    fn load_from_keyring() -> Option<(SecretString, Vec<String>)> {
         let state = crate::providers::token::ProvidersState::load().ok()?;
         for provider in Provider::all() {
             if let Some(info) = state.get(*provider) {
                 if let Ok(token) = crate::providers::token::load_token(*provider, &info.username) {
-                    return Some(SecretString::new(
-                        token
-                            .access_token()
-                            .expose_secret()
-                            .to_string()
-                            .into_boxed_str(),
+                    let mut hosts = Vec::new();
+                    if let Some(h) = extract_host(provider.default_instance_url()) {
+                        hosts.push(h);
+                    }
+                    if let Some(ref inst) = info.instance_url {
+                        if let Some(h) = extract_host(inst) {
+                            if !hosts.contains(&h) {
+                                hosts.push(h);
+                            }
+                        }
+                    }
+                    return Some((
+                        SecretString::new(
+                            token
+                                .access_token()
+                                .expose_secret()
+                                .to_string()
+                                .into_boxed_str(),
+                        ),
+                        hosts,
                     ));
                 }
             }
@@ -138,9 +202,10 @@ impl CredentialConfig {
 pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
     crate::sync::tls::ensure_tls_roots();
     let https_token = config.expose_token();
+    let allowed_hosts = config.allowed_hosts.clone();
     let mut callbacks = RemoteCallbacks::new();
 
-    callbacks.credentials(move |_url, username_from_url, allowed_types| {
+    callbacks.credentials(move |url, username_from_url, allowed_types| {
         if allowed_types.contains(CredentialType::SSH_KEY) {
             let user = username_from_url.unwrap_or("git");
             if let Ok(cred) = Cred::ssh_key_from_agent(user) {
@@ -150,6 +215,16 @@ pub fn build_callbacks(config: &CredentialConfig) -> RemoteCallbacks<'_> {
 
         if allowed_types.contains(CredentialType::USER_PASS_PLAINTEXT) {
             if let Some(ref token) = https_token {
+                if let Some(ref allowed) = allowed_hosts {
+                    let target_host = extract_host(url);
+                    if let Some(ref th) = target_host {
+                        if !allowed.iter().any(|h| h.eq_ignore_ascii_case(th)) {
+                            return Err(git2::Error::from_str(&format!(
+                                "refusing to send provider token to untrusted host: {th}"
+                            )));
+                        }
+                    }
+                }
                 let user = username_from_url.unwrap_or("git");
                 return Cred::userpass_plaintext(user, token.as_str());
             }
@@ -304,5 +379,59 @@ mod tests {
     fn scrub_preserves_safe_errors() {
         let msg = "failed to set local git user.name: config error";
         assert_eq!(scrub_git_error(msg), msg);
+    }
+
+    #[test]
+    fn extract_host_handles_various_url_formats() {
+        assert_eq!(
+            extract_host("https://github.com/foo/bar.git").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(
+            extract_host("https://user:token@gitlab.example.com:8443/foo/bar.git").as_deref(),
+            Some("gitlab.example.com")
+        );
+        assert_eq!(
+            extract_host("git@codeberg.org:foo/bar.git").as_deref(),
+            Some("codeberg.org")
+        );
+        assert_eq!(
+            extract_host("ssh://git@git.myorg.internal/foo/bar.git").as_deref(),
+            Some("git.myorg.internal")
+        );
+        assert_eq!(
+            extract_host("   https://UPPERCASE.COM/FOO   ").as_deref(),
+            Some("uppercase.com")
+        );
+    }
+
+    #[test]
+    fn credentials_callback_refuses_untrusted_host() {
+        let config = CredentialConfig {
+            https_token: Some(secrecy::SecretString::new(
+                "ghp_secret".to_string().into_boxed_str(),
+            )),
+            allowed_hosts: Some(vec!["github.com".to_string()]),
+        };
+        assert_eq!(
+            extract_host("https://attacker.com/vault.git").as_deref(),
+            Some("attacker.com")
+        );
+        assert!(
+            !config
+                .allowed_hosts
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|h| h == "attacker.com")
+        );
+        assert!(
+            config
+                .allowed_hosts
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|h| h == "github.com")
+        );
     }
 }

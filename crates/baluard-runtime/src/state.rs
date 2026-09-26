@@ -3305,6 +3305,141 @@ impl VaultState {
         .to_string())
     }
 
+    /// S3-8: move this vault's sync to a new remote (admin-only). The
+    /// announcement lands on the old remote, origin re-points, and the
+    /// full history pushes to the new address; every device follows on
+    /// its next pull (the engine applies the announcement before each
+    /// fetch). Blocking git work runs in spawn_blocking per the sync
+    /// rules; the cycle holds the vault write lock so autosync cannot
+    /// interleave a second cycle.
+    pub async fn space_migrate(&self, payload: &str) -> Result<String, String> {
+        let parsed: serde_json::Value =
+            serde_json::from_str(payload).map_err(|_| "Invalid migration payload".to_string())?;
+        let new_url = parsed["clone_url"]
+            .as_str()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or("Missing clone_url".to_string())?;
+
+        // Admin gate: managing-device check with the legacy founder
+        // equivalence (no member directory = admin). Mirrors the gate
+        // every other admin surface uses.
+        {
+            let guard = self.inner.read().await;
+            let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+            if !handle.is_unlocked() {
+                return Err("Vault is locked. Unlock first.".into());
+            }
+            let device_id = handle.device_id;
+            let members_dir = self
+                .vault_path
+                .join(baluard_core::vault::members::MEMBERS_DIR);
+            if members_dir.exists() {
+                match baluard_core::vault::members::member_role_for_device(
+                    &self.vault_path,
+                    device_id,
+                ) {
+                    Some(baluard_core::vault::members::MemberRole::Owner)
+                    | Some(baluard_core::vault::members::MemberRole::Admin) => {}
+                    _ => {
+                        return Err(
+                            "Only a manager of this space can move its sync address.".into()
+                        );
+                    }
+                }
+            }
+        }
+
+        let vault_path = self.vault_path.clone();
+        let (device_id_str, devkey_seal) = {
+            let g = self.inner.read().await;
+            let handle = g.as_ref().ok_or("Vault not opened".to_string())?;
+            (handle.device_id.to_string(), handle.devkey_seal())
+        };
+        let device_id_for_pull = device_id_str.clone();
+        // Hold cycle_lock_guard so autosync background pulls and debounce pushes
+        // cannot run concurrently while migration rewires git configuration.
+        let _cycle = self.autosync.cycle_lock_guard().await;
+        let report = tokio::time::timeout(
+            crate::autosync::SYNC_OP_TIMEOUT,
+            tokio::task::spawn_blocking(
+                move || -> Result<baluard_core::sync::engine::RemoteMigrateReport, String> {
+                    let engine = baluard_core::sync::engine::SyncEngine::new(
+                        &vault_path,
+                        &device_id_str,
+                        devkey_seal.as_ref(),
+                    );
+                    let repo = engine.open_repo().map_err(|e| format!("open repo: {e}"))?;
+                    engine
+                        .migrate_remote(&repo, &new_url)
+                        .map_err(|e| e.to_string())
+                },
+            ),
+        )
+        .await
+        .map_err(|_| "remote migration timed out".to_string())?
+        .map_err(|e| format!("migration task join: {e}"))??;
+
+        // The autosync coordinator's push bookkeeping points at the old
+        // head log; a nudge keeps the next cycle coherent.
+        self.autosync.pull_now(device_id_for_pull).await;
+        Ok(serde_json::json!({
+            "migrated": true,
+            "from": report.from,
+            "to": report.to,
+        })
+        .to_string())
+    }
+
+    /// S3-8: current sync-address status — the live origin URL, the
+    /// announced URL (if a migration pointer is committed), whether
+    /// they agree, and whether the current device is a manager. Keyless
+    /// reads; unlocked guard keeps the surface consistent with the
+    /// other sync views.
+    pub async fn space_remote(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let device_id = handle.device_id;
+        let members_dir = self
+            .vault_path
+            .join(baluard_core::vault::members::MEMBERS_DIR);
+        let is_manager = if members_dir.exists() {
+            matches!(
+                baluard_core::vault::members::member_role_for_device(&self.vault_path, device_id),
+                Some(baluard_core::vault::members::MemberRole::Owner)
+                    | Some(baluard_core::vault::members::MemberRole::Admin)
+            )
+        } else {
+            true
+        };
+        let vault_path = self.vault_path.clone();
+        let (origin, announced) = tokio::task::spawn_blocking(
+            move || -> Result<(Option<String>, Option<String>), String> {
+                let engine =
+                    baluard_core::sync::engine::SyncEngine::new(&vault_path, "status", None);
+                let origin = engine.open_repo().ok().and_then(|repo| {
+                    repo.find_remote("origin")
+                        .ok()
+                        .and_then(|r| r.url().map(|s| s.to_string()))
+                });
+                let announced = baluard_core::sync::engine::read_remote_announcement(&vault_path);
+                Ok((origin, announced))
+            },
+        )
+        .await
+        .map_err(|e| format!("status task join: {e}"))??;
+        Ok(serde_json::json!({
+            "origin": origin,
+            "announced": announced,
+            "pending_follow": announced.is_some() && announced != origin,
+            "is_manager": is_manager,
+        })
+        .to_string())
+    }
+
     // ── S3-6: request-access JIT ──
     // All routes token-gated by the daemon's default-deny gate; the
     // mutating ones ride COVER_MUTATION_ACTIONS so autosync ships the

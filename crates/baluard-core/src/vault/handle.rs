@@ -10626,6 +10626,168 @@ mod tests {
     // unlock paths must land on the same meta keys with the joiner
     // holding no Root Key.
     #[test]
+    fn space_migrate_moves_history_and_followers_adopt() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // Origin = bare A; ship the initial state.
+        let bare_a = tempfile::tempdir().unwrap();
+        git2::Repository::init_bare(bare_a.path()).unwrap();
+        repo_o
+            .remote("origin", bare_a.path().to_str().unwrap())
+            .unwrap();
+        // First-ever push: the bare remote has nothing to pull, so the
+        // canonical cycle's pull leg would fail — push directly.
+        engine_o.push(&repo_o, "origin").unwrap();
+
+        // A follower cloned from A before the migration.
+        let follower_path = temp.path().join("follower");
+        git2::Repository::clone(bare_a.path().to_str().unwrap(), &follower_path).unwrap();
+        let engine_f = crate::sync::engine::SyncEngine::new(&follower_path, "follower", None);
+
+        // Destination: bare B.
+        let bare_b = tempfile::tempdir().unwrap();
+        git2::Repository::init_bare(bare_b.path()).unwrap();
+        let to_url = bare_b.path().to_str().unwrap().to_string();
+
+        // Refusals first: same address, unsupported scheme, no origin.
+        let err = engine_o
+            .migrate_remote(&repo_o, bare_a.path().to_str().unwrap())
+            .unwrap_err();
+        assert!(err.to_string().contains("already the sync address"));
+        let err = engine_o.migrate_remote(&repo_o, "ftp://nope").unwrap_err();
+        assert!(err.to_string().contains("unsupported URL scheme"));
+        let bare_repo = git2::Repository::init_bare(temp.path().join("norepo")).unwrap();
+        let err = engine_o.migrate_remote(&bare_repo, &to_url).unwrap_err();
+        assert!(err.to_string().contains("no sync address"));
+
+        // Migrate: announcement on A, history on B, origin re-pointed.
+        let report = engine_o.migrate_remote(&repo_o, &to_url).unwrap();
+        assert_eq!(report.to, to_url);
+        let origin_url = repo_o
+            .find_remote("origin")
+            .unwrap()
+            .url()
+            .unwrap()
+            .to_string();
+        assert_eq!(origin_url, to_url);
+        assert_eq!(
+            crate::sync::engine::read_remote_announcement(&owner_path).as_deref(),
+            Some(to_url.as_str())
+        );
+
+        // B carries the vault head; A carries the announcement commit.
+        let vault_head = repo_o.head().unwrap().peel_to_commit().unwrap().id();
+        let bare_b_repo = git2::Repository::open_bare(bare_b.path()).unwrap();
+        assert_eq!(
+            bare_b_repo
+                .find_reference("refs/heads/main")
+                .unwrap()
+                .peel_to_commit()
+                .unwrap()
+                .id(),
+            vault_head
+        );
+        let bare_a_repo = git2::Repository::open_bare(bare_a.path()).unwrap();
+        let a_head = bare_a_repo
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let a_tree = a_head.tree().unwrap();
+        assert!(
+            a_tree
+                .get_path(std::path::Path::new("meta/remote.json"))
+                .is_ok(),
+            "announcement committed on the old remote"
+        );
+
+        // The follower adopts on its next two cycles: cycle 1 pulls the
+        // announcement from A.
+        let repo_f = engine_f.open_repo().unwrap();
+        engine_f.run_sync_cycle(&repo_f).unwrap();
+
+        // Post-migration write on B: owner creates an entry or commits a file
+        // and pushes directly to B (the active origin). This commit exists
+        // ONLY on B, never on A.
+        std::fs::write(owner_path.join("meta/notice.txt"), b"only on B").unwrap();
+        engine_o
+            .commit_all(&repo_o, "post-migration commit on new remote")
+            .unwrap();
+        engine_o.push(&repo_o, "origin").unwrap();
+        let new_head = repo_o.head().unwrap().peel_to_commit().unwrap().id();
+        assert_ne!(new_head, vault_head);
+
+        // Cycle 2: follower re-points to B and pulls the post-migration commit.
+        engine_f.run_sync_cycle(&repo_f).unwrap();
+        let follower_origin = repo_f
+            .find_remote("origin")
+            .unwrap()
+            .url()
+            .unwrap()
+            .to_string();
+        assert_eq!(follower_origin, to_url, "follower re-pointed itself");
+        assert_eq!(
+            repo_f.head().unwrap().peel_to_commit().unwrap().id(),
+            new_head,
+            "follower converged on the new remote with new commit"
+        );
+
+        // Idempotent follow: a third cycle changes nothing.
+        assert!(!engine_f.apply_remote_announcement(&repo_f).unwrap());
+
+        // Rollback test: migrate to an un-pushable remote aborts cleanly,
+        // leaving origin and HEAD on B untouched.
+        let bad_remote = temp.path().join("nonexistent_bare.git");
+        let pre_fail_head = repo_o.head().unwrap().peel_to_commit().unwrap().id();
+        assert!(
+            engine_o
+                .migrate_remote(&repo_o, bad_remote.to_str().unwrap())
+                .is_err()
+        );
+        assert_eq!(
+            repo_o.find_remote("origin").unwrap().url().unwrap(),
+            to_url,
+            "origin was rolled back after failed migration"
+        );
+        // No-reset rollback (review): the aborted attempt's pointer
+        // commit stays local and unpushed — a reset --hard would
+        // discard any user work commit_all had swept in. Re-running
+        // migrate converges on top of it.
+        assert_ne!(
+            repo_o.head().unwrap().peel_to_commit().unwrap().id(),
+            pre_fail_head,
+            "aborted migration leaves its commit local, origin restored"
+        );
+
+        // Manual repoint override: setting origin does not get reverted by apply_remote_announcement.
+        let bare_c = tempfile::tempdir().unwrap();
+        git2::Repository::init_bare(bare_c.path()).unwrap();
+        let c_url = bare_c.path().to_str().unwrap().to_string();
+        repo_f.remote_set_url("origin", &c_url).unwrap();
+        assert!(!engine_f.apply_remote_announcement(&repo_f).unwrap());
+        assert_eq!(
+            repo_f.find_remote("origin").unwrap().url().unwrap(),
+            c_url,
+            "manual repoint was not clobbered"
+        );
+    }
+
+    #[test]
     fn team_shape_flip_two_devices() {
         let temp = tempfile::tempdir().unwrap();
         let owner_path = temp.path().join("owner");

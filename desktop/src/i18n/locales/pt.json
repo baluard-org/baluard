@@ -398,7 +398,12 @@
     "webOAuthWaiting": "Aguardando autorização no seu navegador...",
     "webOAuthError": "Falha na autenticação. Tente novamente.",
     "errorRepoCreatePartial": "O repositório pode ter sido criado no provedor, mas a configuração da sincronização falhou. Se desistir, você pode precisar excluir manualmente o repositório vazio em {provider}.",
-    "copyCode": "Copiar código"
+    "copyCode": "Copiar código",
+    "migrateTitle": "Mover a sincronização para outro endereço",
+    "migratePlaceholder": "https://github.com/voce/baluard-vault",
+    "migrateAction": "Mover sincronização",
+    "migrateConfirmBody": "Todas as pessoas com quem você compartilha serão avisadas do novo endereço e seguirão na próxima sincronização. Mover agora?",
+    "migratedToast": "Sincronização movida. Todos seguirão na próxima sincronização."
   },
   "autosync": {
     "upToDate": "Todas as alterações sincronizadas",

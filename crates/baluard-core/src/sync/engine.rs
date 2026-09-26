@@ -13,7 +13,7 @@ use git2::{FetchOptions, Oid, PushOptions, Repository, Signature};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
-use crate::error::{BaluardError, SyncError};
+use crate::error::{BaluardError, SyncError, VaultError};
 use crate::sync::commit::COMMIT_MESSAGE;
 use crate::sync::credentials::CredentialConfig;
 use crate::sync::state_machine::{SyncState, SyncStateMachine};
@@ -81,6 +81,14 @@ pub struct CloneProgress {
 }
 
 #[cfg(feature = "git-sync")]
+/// Report for `migrate_remote` (S3-8): where the Space's sync moved
+/// from and to.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RemoteMigrateReport {
+    pub from: String,
+    pub to: String,
+}
+
 impl SyncEngine {
     /// Create a new SyncEngine for a vault at the given path.
     /// Loads persisted state machine from disk if available.
@@ -468,6 +476,141 @@ impl SyncEngine {
     }
 
     // ── Remote operations ──
+
+    /// Follow a remote announcement: if the committed pointer names a
+    /// different origin, re-point origin and report it. Called at the top
+    /// of every pull so members adopt a migration with no manual step.
+    /// Reads exclusively from committed HEAD so unpushed or dirty worktree
+    /// files cannot trigger premature origin re-pointing.
+    /// Idempotent.
+    pub fn apply_remote_announcement(&self, repo: &Repository) -> Result<bool, BaluardError> {
+        let Some(url) = read_remote_announcement_from_head(repo) else {
+            return Ok(false);
+        };
+        if let Ok(cfg) = repo.config() {
+            if let Ok(adopted) = cfg.get_string("baluard.adopted-remote") {
+                if adopted == url {
+                    return Ok(false);
+                }
+            }
+        }
+        let current = repo
+            .find_remote("origin")
+            .ok()
+            .and_then(|r| r.url().map(|s| s.to_string()));
+        if current.as_deref() == Some(url.as_str()) {
+            if let Ok(mut cfg) = repo.config() {
+                let _ = cfg.set_str("baluard.adopted-remote", &url);
+            }
+            return Ok(false);
+        }
+        // Review F3: auto-follow only within the forge the device
+        // already talks to, and never re-point over an explicit manual
+        // choice recorded by the adopted marker. A committed pointer can
+        // never move a device across hosts by itself — cross-host moves
+        // are an explicit `vaults repoint` with the new provider
+        // connected — so a hostile (or merely mistaken) cross-host
+        // pointer can at worst break availability for a device that
+        // follows it, never redirect credentials or history.
+        let current_host = current.as_deref().and_then(url_host);
+        let target_host = url_host(&url);
+        let same_host = match (current_host, target_host) {
+            (Some(a), Some(b)) => a == b,
+            // Local paths carry no host; allow only under test where
+            // bare-dir remotes are the harness.
+            (None, None) => cfg!(test),
+            _ => false,
+        };
+        if !same_host {
+            return Ok(false);
+        }
+        repo.remote_set_url("origin", &url)
+            .map_err(|e| SyncError::Git(format!("remote set-url: {e}")))?;
+        if let Ok(mut cfg) = repo.config() {
+            let _ = cfg.set_str("baluard.adopted-remote", &url);
+        }
+        Ok(true)
+    }
+
+    /// S3-8: move this vault's sync to a new remote. Admin-only at the
+    /// caller. Sequence: write announcement -> push full history to NEW
+    /// remote first (aborts cleanly with rollback if new remote push fails,
+    /// leaving old remote and peers completely untouched) -> push
+    /// announcement commit to OLD remote so peers follow -> swap origin to
+    /// new remote permanently.
+    pub fn migrate_remote(
+        &self,
+        repo: &Repository,
+        new_url: &str,
+    ) -> Result<RemoteMigrateReport, BaluardError> {
+        validate_git_url(new_url)?;
+        let old_url = repo
+            .find_remote("origin")
+            .ok()
+            .and_then(|r| r.url().map(|s| s.to_string()));
+        let Some(old_url) = old_url else {
+            return Err(SyncError::Git("this vault has no sync address to move".into()).into());
+        };
+        if old_url == new_url {
+            return Err(SyncError::Git("that is already the sync address".into()).into());
+        }
+
+        let set_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let payload = serde_json::json!({ "format": 1, "url": new_url, "set_at": set_at });
+        crate::vault::write_vault_file(
+            &self.vault_path.join(REMOTE_ANNOUNCEMENT_PATH),
+            payload.to_string().as_bytes(),
+        )
+        .map_err(|e| VaultError::Metadata(format!("write remote pointer: {e}")))?;
+
+        let status = self.status(repo)?;
+        if status.is_dirty() {
+            self.commit_all(repo, "move sync to a new address")?;
+        }
+
+        // Push to NEW remote first: verify that the destination can receive
+        // the full history (main + gossip announce) before notifying peers.
+        // If this push fails (e.g. 403 Forbidden, bad credentials, branch
+        // protections, network drop), roll back origin to old_url and reset
+        // the unpushed migration commit so the old remote and peers stay
+        // completely unaffected.
+        repo.remote_set_url("origin", new_url)
+            .map_err(|e| SyncError::Git(format!("remote set-url: {e}")))?;
+
+        if let Err(e) = self.push(repo, "origin") {
+            // Roll back WITHOUT reset --hard (review): the migration
+            // commit may carry pre-existing dirty worktree files swept
+            // in by commit_all, and a hard reset would discard them.
+            // Leave the commit local and unpushed instead: origin is
+            // back on the old remote, peers never saw the pointer, and
+            // re-running migrate converges (a fresh pointer commit
+            // rides on top).
+            let _ = repo.remote_set_url("origin", &old_url);
+            return Err(e);
+        }
+
+        // Push announcement commit to OLD remote: peers learn the new
+        // sync address on their next sync cycle. Best-effort: if old
+        // remote was already shut down, the new remote is already complete.
+        let _ = repo.remote_set_url("origin", &old_url);
+        let _ = self.push(repo, "origin");
+
+        // Swap origin to new_url permanently and mark it adopted.
+        repo.remote_set_url("origin", new_url)
+            .map_err(|e| SyncError::Git(format!("remote set-url: {e}")))?;
+
+        if let Ok(mut cfg) = repo.config() {
+            let _ = cfg.set_str("baluard.adopted-remote", new_url);
+        }
+
+        Ok(RemoteMigrateReport {
+            from: old_url,
+            to: new_url.to_string(),
+        })
+    }
 
     /// Add a remote URL.
     pub fn add_remote(
@@ -1189,6 +1332,12 @@ impl SyncEngine {
     /// Pull from remote: fetch + merge (with "ours" strategy for non-conflicting merges).
     /// Transitions state machine: Idle → Pulling → Merging → [Encrypting → Committing →] Idle.
     pub fn pull(&self, repo: &Repository, remote_name: &str) -> Result<PullResult, BaluardError> {
+        // S3-8: follow a remote-migration announcement before fetching,
+        // so members adopt an admin's migrate on their next sync. Sits
+        // above the state machine: a config-write failure here must not
+        // strand a transition.
+        self.apply_remote_announcement(repo)?;
+
         // State: Idle → Pulling
         self.transition_state(SyncState::Pulling)?;
 
@@ -2666,7 +2815,7 @@ struct RevocationTracker {
 /// Permits: https://, ssh://, git@ (SSH shorthand).
 /// In tests only: also permits file:// and absolute paths.
 /// Rejects: git://, and all other schemes.
-fn validate_git_url(url: &str) -> Result<(), BaluardError> {
+pub fn validate_git_url(url: &str) -> Result<(), BaluardError> {
     if url.starts_with("https://") || url.starts_with("ssh://") || url.starts_with("git@") {
         return Ok(());
     }
@@ -2678,6 +2827,71 @@ fn validate_git_url(url: &str) -> Result<(), BaluardError> {
         "unsupported URL scheme: {url}. Use https://, ssh://, or git@"
     ))
     .into())
+}
+
+/// Plaintext, git-tracked pointer to the Space's current sync remote
+/// (S3-8). An admin migrating the vault to a new remote commits this
+/// file and pushes it to the OLD remote — one last sync every peer
+/// still watches — then re-points origin and pushes the full history
+/// to the new address. Every device's pull reads the file (keyless)
+/// and follows on its next cycle. The file rides the meta/** Admin
+/// policy row: only admins write it; members read it locally.
+pub const REMOTE_ANNOUNCEMENT_PATH: &str = "meta/remote.json";
+
+/// Host extraction for the same-host follow gate (review F3).
+fn url_host(url: &str) -> Option<String> {
+    let after_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .or_else(|| url.strip_prefix("ssh://"))?;
+    let host = after_scheme
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .rsplit('@')
+        .next()
+        .unwrap_or("");
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_ascii_lowercase())
+    }
+}
+
+/// The announced remote URL read from committed HEAD.
+/// Keyless: reads the committed blob directly from git object storage.
+/// Returns None if missing, malformed, or if the repo has no commits.
+pub fn read_remote_announcement_from_head(repo: &Repository) -> Option<String> {
+    let head = repo.head().ok()?.peel_to_commit().ok()?;
+    let tree = head.tree().ok()?;
+    let entry = tree.get_path(Path::new(REMOTE_ANNOUNCEMENT_PATH)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    let data = std::str::from_utf8(blob.content()).ok()?;
+    let v: serde_json::Value = serde_json::from_str(data).ok()?;
+    let url = v["url"].as_str()?.to_string();
+    if validate_git_url(&url).is_err() {
+        return None;
+    }
+    Some(url)
+}
+
+/// The announced remote URL, if the file is present and well-formed.
+/// Keyless by design: members must read it without holding any vault
+/// key material. Malformed or missing reads as None — a damaged
+/// pointer must never break sync.
+pub fn read_remote_announcement(vault_path: &Path) -> Option<String> {
+    if let Ok(repo) = Repository::open(vault_path) {
+        if let Some(url) = read_remote_announcement_from_head(&repo) {
+            return Some(url);
+        }
+    }
+    let data = std::fs::read_to_string(vault_path.join(REMOTE_ANNOUNCEMENT_PATH)).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&data).ok()?;
+    let url = v["url"].as_str()?.to_string();
+    if validate_git_url(&url).is_err() {
+        return None;
+    }
+    Some(url)
 }
 
 impl SyncEngine {
