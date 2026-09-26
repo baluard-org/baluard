@@ -887,6 +887,20 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -940,6 +954,8 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_catalog_list(`ptr`: Pointer,
     ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_grant(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_request_access(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_requests_approve(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
@@ -951,6 +967,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_requests_mine(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_requests_withdraw(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_revoke(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collections_list(`ptr`: Pointer,
     ): Long
@@ -988,6 +1006,12 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_join_poll(`ptr`: Pointer,
     ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_approve(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_deny(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_list(`ptr`: Pointer,
+    ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_list_archived_ciphers(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_list_ciphers(`ptr`: Pointer,
@@ -1001,6 +1025,10 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_list_trash_ciphers(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_lock(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_member_invite(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_members_list(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_rename_folder(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
@@ -1252,6 +1280,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_catalog_list(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_grant(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_request_access(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_requests_approve(
@@ -1263,6 +1293,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_requests_mine(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_requests_withdraw(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_revoke(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collections_list(
     ): Short
@@ -1300,6 +1332,12 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_join_poll(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_join_requests_approve(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_join_requests_deny(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_join_requests_list(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_list_archived_ciphers(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_list_ciphers(
@@ -1313,6 +1351,10 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_list_trash_ciphers(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_lock(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_invite(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_members_list(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_rename_folder(
     ): Short
@@ -1461,6 +1503,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_catalog_list() != 10134.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_grant() != 15807.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_request_access() != 42130.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1477,6 +1522,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_requests_withdraw() != 18401.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_revoke() != 51221.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collections_list() != 41165.toShort()) {
@@ -1533,6 +1581,15 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_join_poll() != 43730.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_join_requests_approve() != 47142.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_join_requests_deny() != 27063.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_join_requests_list() != 37935.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_list_archived_ciphers() != 27383.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1552,6 +1609,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_lock() != 39822.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_invite() != 53433.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_members_list() != 29779.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_rename_folder() != 19757.toShort()) {
@@ -2577,6 +2640,13 @@ public interface MobileVaultInterface {
     suspend fun `collectionCatalogList`(): kotlin.String
     
     /**
+     * Grant collection access. Payload: `{id, member_id, access:
+     * "read"|"write"|"manage", expires_at?}` (expires_at is an absolute
+     * epoch second; absent = never).
+     */
+    suspend fun `collectionGrant`(`payload`: kotlin.String): kotlin.String
+    
+    /**
      * Ask for access to a collection (request-access JIT). Payload:
      * `{collection_id, access: "read"|"write", note?}`. Returns
      * `{request_id}`.
@@ -2610,6 +2680,11 @@ public interface MobileVaultInterface {
      * `{request_id}`.
      */
     suspend fun `collectionRequestsWithdraw`(`payload`: kotlin.String): kotlin.String
+    
+    /**
+     * Revoke a member's collection access. Payload: `{id, member_id}`.
+     */
+    suspend fun `collectionRevoke`(`payload`: kotlin.String): kotlin.String
     
     /**
      * List shared collections as JSON. Role-aware: managing devices get
@@ -2716,6 +2791,24 @@ public interface MobileVaultInterface {
     suspend fun `joinPoll`(): kotlin.String
     
     /**
+     * Approve a queued join. Payload: `{req_id}`. Runs the standard
+     * verification path; consumed only on success.
+     */
+    suspend fun `joinRequestsApprove`(`payload`: kotlin.String): kotlin.String
+    
+    /**
+     * Deny a queued join. Payload: `{req_id}`.
+     */
+    suspend fun `joinRequestsDeny`(`payload`: kotlin.String): kotlin.String
+    
+    /**
+     * Queued join introductions (S1a join queue).
+     * `{requests: [{req_id, invite_id, device_id, display_name,
+     * secret_ok}], malformed}`.
+     */
+    suspend fun `joinRequestsList`(): kotlin.String
+    
+    /**
      * List archived cipher metadata (Archive view).
      */
     suspend fun `listArchivedCiphers`(): List<MobileCipherMeta>
@@ -2751,6 +2844,19 @@ public interface MobileVaultInterface {
      * deactivates auto-sync. The on-disk vault is untouched.
      */
     suspend fun `lock`()
+    
+    /**
+     * Mint a one-time invite code. Payload: `{role: "viewer"|"editor"
+     * |"admin", transport_username?}` (role parsing fails closed).
+     * Returns `{code, seat_granted, seat_error}`.
+     */
+    suspend fun `memberInvite`(`payload`: kotlin.String): kotlin.String
+    
+    /**
+     * People list. `{members: [{id, display_name, role, trust, reset,
+     * removed, identity_rotated_at, is_self}], your_role}`.
+     */
+    suspend fun `membersList`(): kotlin.String
     
     /**
      * Rename an existing folder (JSON payload `{"id": "...", "name": "..."}`).
@@ -3124,6 +3230,32 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
+     * Grant collection access. Payload: `{id, member_id, access:
+     * "read"|"write"|"manage", expires_at?}` (expires_at is an absolute
+     * epoch second; absent = never).
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `collectionGrant`(`payload`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collection_grant(
+                thisPtr,
+                FfiConverterString.lower(`payload`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * Ask for access to a collection (request-access JIT). Payload:
      * `{collection_id, access: "read"|"write", note?}`. Returns
      * `{request_id}`.
@@ -3257,6 +3389,30 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collection_requests_withdraw(
+                thisPtr,
+                FfiConverterString.lower(`payload`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Revoke a member's collection access. Payload: `{id, member_id}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `collectionRevoke`(`payload`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collection_revoke(
                 thisPtr,
                 FfiConverterString.lower(`payload`),
             )
@@ -3719,6 +3875,81 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
+     * Approve a queued join. Payload: `{req_id}`. Runs the standard
+     * verification path; consumed only on success.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `joinRequestsApprove`(`payload`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_approve(
+                thisPtr,
+                FfiConverterString.lower(`payload`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Deny a queued join. Payload: `{req_id}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `joinRequestsDeny`(`payload`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_deny(
+                thisPtr,
+                FfiConverterString.lower(`payload`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Queued join introductions (S1a join queue).
+     * `{requests: [{req_id, invite_id, device_id, display_name,
+     * secret_ok}], malformed}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `joinRequestsList`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_join_requests_list(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * List archived cipher metadata (Archive view).
      */
     @Throws(BaluardException::class)
@@ -3883,6 +4114,57 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         // lift function
         { Unit },
         
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Mint a one-time invite code. Payload: `{role: "viewer"|"editor"
+     * |"admin", transport_username?}` (role parsing fails closed).
+     * Returns `{code, seat_granted, seat_error}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `memberInvite`(`payload`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_invite(
+                thisPtr,
+                FfiConverterString.lower(`payload`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * People list. `{members: [{id, display_name, role, trust, reset,
+     * removed, identity_rotated_at, is_self}], your_role}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `membersList`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_members_list(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
         // Error FFI converter
         BaluardException.ErrorHandler,
     )

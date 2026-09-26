@@ -106,6 +106,14 @@ open class StubVault(
     // §4.8-6 sharing surfaces: the stubs never exercise them; bodies
     // mirror the err() discipline so an accidental touch fails loudly.
     override suspend fun `collectionCatalogList`(): String = err()
+    // §4.8-7 admin surfaces: same err() discipline.
+    override suspend fun `collectionGrant`(payload: String): String = err()
+    override suspend fun `collectionRevoke`(payload: String): String = err()
+    override suspend fun `joinRequestsApprove`(payload: String): String = err()
+    override suspend fun `joinRequestsDeny`(payload: String): String = err()
+    override suspend fun `joinRequestsList`(): String = err()
+    override suspend fun `memberInvite`(payload: String): String = err()
+    override suspend fun `membersList`(): String = err()
     override suspend fun `collectionRequestAccess`(payload: String): String = err()
     override suspend fun `collectionRequestsApprove`(payload: String): String = err()
     override suspend fun `collectionRequestsDeny`(payload: String): String = err()

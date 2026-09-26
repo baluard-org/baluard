@@ -1221,6 +1221,14 @@ Two review findings generalized beyond this slice. (1) An entry point hidden beh
 
 **Boundaries**: admin surfaces (invite, approve, deny, flip, grants) remain desktop until a mobile admin wave; the joiner's chosen master password crosses the FFI as a String and lives in composable state for the ceremony's duration (the Rust side zeroizes before the introduction write — the same trust model as the desktop flow); iOS remains at its existing parity.
 
+### D46. Mobile Admin Surfaces over the Same Bridge (§4.8-7) (2026-09-26; S3 in progress)
+
+The thin-bridge rule from D45 extends upward: admin surfaces ride the same one-parser contract boundary, and the client-side admin signal (any collections row reporting access:"admin") matches the desktop's server-derived marker instead of inventing a second notion of who manages a space. What stayed desktop is as deliberate as what shipped: destructive member controls (reset/remove/transfer), the space flip, and collection create/rename/delete are exactly the surfaces where a mis-tap carries irreversible weight, and they deserve purpose-built confirmation flows rather than a small-screen port.
+
+Two review findings repeated earlier lessons in new costumes. The hand-built-JSON hazard returned as an escaping-ORDER bug: escaping quotes without first escaping backslashes lets a pasted `\` terminate the string early and inject keys into the payload — the fix order is backslash first, then quotes, every time, and the durable fix remains building JSON structurally instead of by interpolation. And the N+1 shape reappeared across the bridge boundary: the admin rows already carry each collection's grants inline, so a grants editor that re-fetches the collection list per collection pays N round-trips for data it was handed once — parse everything from one response and derive both views from it.
+
+**Boundaries**: destructive member controls, the flip, and collection CRUD remain desktop until a dedicated mobile wave; expiry days convert on the phone clock, and the daemon's own clock checks refuse a past expiry harmlessly; the join-queue secret-check warning is advisory by design (S1a: secret_ok false means verify out of band, not refuse).
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

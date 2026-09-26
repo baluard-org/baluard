@@ -101,6 +101,7 @@ fun SettingsScreen(
     authViewModel: AuthViewModel,
     onVaultRemoved: () -> Unit = {},
     repo: VaultRepository,
+    onOpenPeople: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
     val biometric = remember { Biometric() }
@@ -955,6 +956,30 @@ fun SettingsScreen(
             }
 
             // Vault Section: remove this device's copy (remote is kept).
+            // §4.8-7: People & access entry — admin devices only. The admin
+            // signal mirrors the desktop rule: any collections.list row
+            // carrying access:"admin" means this device manages the space.
+            var isAdminDevice by remember { mutableStateOf(false) }
+            LaunchedEffect(vault) {
+                runCatching { repo.listCollections(vault) }
+                    .onSuccess { rows -> isAdminDevice = rows.any { it.access == "admin" } }
+            }
+            if (isAdminDevice) {
+                SectionCard(title = t("people.title")) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenPeople() },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = t("people.entrySubtitle"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
             SectionCard(title = t("settings.vaultSection")) {
                 var confirmRemove by remember { mutableStateOf(false) }
                 var removeError by remember { mutableStateOf<String?>(null) }
