@@ -10,6 +10,7 @@ import { IconLock, IconFingerprint, IconSpinner, IconBaluardLogo } from "./Icon.
 import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 import VaultSwitcher from "./VaultSwitcher.jsx";
 import CopyButton from "./CopyButton.jsx";
+import OpenSharedModal from "./OpenSharedModal.jsx";
 
 export default function LoginScreen() {
   const auth = useAuth();
@@ -69,6 +70,7 @@ export default function LoginScreen() {
   // Slug captured at introduction time: polling must never float to
   // another vault if the user switches the active vault mid-wait.
   const [joinSlug, setJoinSlug] = createSignal("");
+  const [showOpenShared, setShowOpenShared] = createSignal(false);
   let joinTimer;
   let pollInFlight = false;
 
@@ -430,7 +432,16 @@ export default function LoginScreen() {
           >
             {t("login.useDifferent")}
           </button>
+          <button
+            onClick={() => setShowOpenShared(true)}
+            class="login-screen__create-btn text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+          >
+            {t("share.guestLink")}
+          </button>
         </div>
+        <Show when={showOpenShared()}>
+          <OpenSharedModal guest onClose={() => setShowOpenShared(false)} />
+        </Show>
       </div>
     </div>
   );

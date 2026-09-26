@@ -1237,6 +1237,14 @@ Two review lessons generalize. An empty-string confirm word equals an empty-stri
 
 **Boundaries**: flip/prepare stay off the phone until desktop grows its own flip surface (parity first); ownership transfer confirmation carries no extra secret, but the demotion is irreversible except by the new owner, so its dialog says so plainly; batch removal exists in the core API but the mobile UI removes one member at a time.
 
+### D48. Item-Sharing Surfaces over Finished Rails (S2 UI) (2026-09-26; S3 in progress)
+
+The S2 core and daemon layers shipped with no interface; this wave proves the rails pattern in reverse: when the daemon already validates every flavor with plain-language refusals, the client can auto-detect which kind of shared file it holds by trying the flavors in order and reading the failures, instead of asking the user to classify a file format they have no vocabulary for. The receive chain (package import, then contact reveal, then passphrase-guest open) works because the flavors are cryptographically domain-separated — a reveal file cannot succeed as a package import — so trying the wrong one first is always safe. That property is worth defending: any new shared-file flavor should stay mutually exclusive at the crypto layer so client-side detection never needs a magic-number header.
+
+Two small rules re-confirmed at UI layer. Secrets on the clipboard go through the shared auto-clear utility, never a raw write — the utility exists precisely so reviewers only have one clipboard path to audit. And a multi-stage file flow must reset its stage state when the file changes, or a retry silently routes the new file down the previous file's path.
+
+**Boundaries**: contact-key reveals and package send defer until an address-book surface exists (core contacts_list has zero routes today); outbox management UI (publish/revoke mirrors) remains unowned; the reveal view is transient by design and shows no TOTP countdown; the shared-file flavor list is open — new flavors plug into the detection chain in daemon refusal order.
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

@@ -10,6 +10,7 @@ import { selectSource, filterByCategory, filterByFolder, filterByTag, filterByCo
 import { sanitizeError } from "../lib/utils.js";
 import { EMPTY_CIPHER } from "../context/VaultContext.jsx";
 import AskAccessModal from "./AskAccessModal.jsx";
+import OpenSharedModal from "./OpenSharedModal.jsx";
 import { IconGrid, IconHeart, IconLock, IconCard, IconIdentity, IconNote, IconKey, IconBank, IconLicense, IconPassport, IconArchive, IconTrash, IconFingerprint, IconPlus, IconX, IconSearch, IconFolder, IconCog, IconShield, IconChevronDown, IconBolt, IconInbox, IconSwitch, IconBaluardLogo, IconUsers } from "./Icon.jsx";
 import ConflictBanner from "./ConflictBanner.jsx";
 import CipherRow from "./CipherRow.jsx";
@@ -43,6 +44,7 @@ export default function VaultView() {
   const [showNewFolder, setShowNewFolder] = createSignal(false);
   // S3-7c / 4.8: the ask-for-access dialog (member side).
   const [showAskAccess, setShowAskAccess] = createSignal(false);
+  const [showOpenShared, setShowOpenShared] = createSignal(false);
   const [deleteTagName, setDeleteTagName] = createSignal(null);
   // Phase 6: vault picked from the switcher that needs unlocking. When set,
   // SwitchUnlockModal renders over the current view. Cleared on success/cancel.
@@ -184,6 +186,9 @@ export default function VaultView() {
         onClose={() => setShowEmptyTrashConfirm(false)}
       />
       <AskAccessModal show={showAskAccess()} setShow={setShowAskAccess} />
+      <Show when={showOpenShared()}>
+        <OpenSharedModal onClose={() => setShowOpenShared(false)} onImported={() => void vault.refreshCiphers()} />
+      </Show>
       <GeneratorModal showGenerator={showGenerator()} setShowGenerator={setShowGenerator} />
       <RepromptModal />
       <SettingsModal />
@@ -458,6 +463,8 @@ export default function VaultView() {
                   <button onClick={() => startAdd("bankAccount")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.bankAccount")}</button>
                   <button onClick={() => startAdd("driversLicense")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.driversLicense")}</button>
                   <button onClick={() => startAdd("passport")} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("types.passport")}</button>
+                  <div class="border-t border-[var(--color-border)] my-1"></div>
+                  <button onClick={() => { setShowAddMenu(false); setShowOpenShared(true); }} class="w-full px-4 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-sidebar)] flex items-center gap-2 cursor-pointer">{t("share.openMenuEntry")}</button>
                 </div>
                 </Show>
               </div>
