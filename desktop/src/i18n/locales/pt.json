@@ -326,7 +326,8 @@
     "tabBridge": "Extensões do navegador",
     "themeSystem": "Sistema",
     "tabCollections": "Coleções compartilhadas",
-    "tabContacts": "Contatos"
+    "tabContacts": "Contatos",
+    "tabOutboxes": "Caixas de saída"
   },
   "sync": {
     "title": "Sincronização do Cofre",
@@ -838,5 +839,43 @@
     "cardCopied": "Código de contato copiado",
     "copyCard": "Copiar código de contato",
     "myCodeLabel": "Meu código de verificação"
+  },
+  "outbox": {
+    "sharedTitle": "Compartilhado em pastas",
+    "sharedHint": "Espelhos vivos: itens atualizam na pasta quando você os muda.",
+    "publishTitle": "Espelhar um item",
+    "itemLabel": "Item",
+    "contactLabel": "Destinatário",
+    "pathLabel": "Pasta",
+    "pathPlaceholder": "/caminho/para/pasta",
+    "publishAction": "Espelhar",
+    "publishedToast": "Espelhamento iniciado",
+    "empty": "Nada espelhado ainda.",
+    "itemsSuffix": "itens",
+    "resyncAction": "Sincronizar agora",
+    "resyncedToast": "{n} item(ns) atualizado(s)",
+    "revoke": "Parar",
+    "revokeTitle": "Parar espelho",
+    "revokeBody": "Parar o espelho nesta pasta? Cópias que quem recebe já tem ficam com ele.",
+    "revokedToast": "Espelho parado",
+    "receivedTitle": "Pastas recebidas",
+    "linkTitle": "Adicionar pasta compartilhada",
+    "linkAction": "Adicionar",
+    "linkedToast": "Pasta adicionada",
+    "linksEmpty": "Nenhuma pasta compartilhada ainda.",
+    "forget": "Remover",
+    "forgetTitle": "Remover pasta compartilhada",
+    "forgetBody": "Remover esta pasta da sua lista? Os arquivos ficam no disco.",
+    "forgotToast": "Pasta removida",
+    "viewItems": "Ver itens",
+    "hideItems": "Ocultar itens",
+    "entriesEmpty": "Nenhum item nesta pasta.",
+    "senderLabel": "De",
+    "usernameLabel": "Usuário",
+    "passwordLabel": "Senha",
+    "notesLabel": "Notas",
+    "copySecret": "Copiar",
+    "copiedToast": "Copiado",
+    "oneItem": "1 item"
   }
 }

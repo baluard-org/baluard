@@ -1245,6 +1245,14 @@ The second finding was a plumbing completeness check: the address book had no re
 
 **Boundaries**: trust is still binary Channel/Verified (the full dial is \u00a74.1); removal is local dial state and revokes nothing already received; contact cards travel out of band with no expiry \u2014 re-issue after identity rotation is the reconcile path; outbox management UI (publish/revoke mirrors) remains unowned.
 
+### D50. The Outbox Is a Folder, Not a Route (S2-4 owner + recipient surfaces) (2026-09-26)
+
+Ten outbox routes shipped with the core module and sat UI-less until this wave, which added only allowlist entries and one tab. The outbox's defining choice is its transport: a plain folder the recipient carries, mirroring items live through digest-driven resync instead of streaming through a route. That inverts the usual sharing posture \u2014 "revoke" stops future mirroring but cannot recall bytes already carried away, so the confirm dialogs say so plainly instead of implying retrieval. The recipient read path stays view-only with a masked password and the auto-clear clipboard utility; the outbox model deliberately has no write-back channel.
+
+Review lesson, self-inflicted: the locale script's dot-in-key branch was inverted, so the new tab label landed inside the `outbox` group while the component looked under `settings` \u2014 i18n parity tests count keys, not positions, so the tab rendered its raw key until the adversarial pass caught it. Scripted key inserts must assert the resolved lookup path (the exact `t()` key), not just that a key with that suffix exists somewhere.
+
+**Boundaries**: outbox entries carry no attachments/password-history/passkeys (stripped at export, handle-side); resync is global (all mirrors at once) rather than per-outbox; the entry viewer covers login items' core fields only \u2014 custom fields and non-login kinds render name/notes but not typed editors; folders are local paths, so this transport never crosses machines by itself.
+
 ### D48. Item-Sharing Surfaces over Finished Rails (S2 UI) (2026-09-26; S3 in progress)
 
 The S2 core and daemon layers shipped with no interface; this wave proves the rails pattern in reverse: when the daemon already validates every flavor with plain-language refusals, the client can auto-detect which kind of shared file it holds by trying the flavors in order and reading the failures, instead of asking the user to classify a file format they have no vocabulary for. The receive chain (package import, then contact reveal, then passphrase-guest open) works because the flavors are cryptographically domain-separated — a reveal file cannot succeed as a package import — so trying the wrong one first is always safe. That property is worth defending: any new shared-file flavor should stay mutually exclusive at the crypto layer so client-side detection never needs a magic-number header.

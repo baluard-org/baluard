@@ -296,7 +296,8 @@
     "tabBridge": "Extensiones de navegador",
     "themeSystem": "Sistema",
     "tabCollections": "Colecciones compartidas",
-    "tabContacts": "Contactos"
+    "tabContacts": "Contactos",
+    "tabOutboxes": "Buzones"
   },
   "sync": {
     "title": "Sincronización de bóveda",
@@ -838,5 +839,43 @@
     "cardCopied": "Código de contacto copiado",
     "copyCard": "Copiar código de contacto",
     "myCodeLabel": "Mi código de verificación"
+  },
+  "outbox": {
+    "sharedTitle": "Compartido a carpetas",
+    "sharedHint": "Espejos vivos: los elementos se actualizan en la carpeta cuando los cambias.",
+    "publishTitle": "Espejar un elemento",
+    "itemLabel": "Elemento",
+    "contactLabel": "Destinatario",
+    "pathLabel": "Carpeta",
+    "pathPlaceholder": "/ruta/a/la/carpeta",
+    "publishAction": "Espejar",
+    "publishedToast": "Espejo iniciado",
+    "empty": "Nada espejado todavía.",
+    "itemsSuffix": "elementos",
+    "resyncAction": "Sincronizar ahora",
+    "resyncedToast": "{n} elemento(s) actualizado(s)",
+    "revoke": "Parar",
+    "revokeTitle": "Parar espejo",
+    "revokeBody": "¿Parar el espejo en esta carpeta? Las copias que ya tiene quien recibe se quedan con él.",
+    "revokedToast": "Espejo parado",
+    "receivedTitle": "Carpetas recibidas",
+    "linkTitle": "Añadir carpeta compartida",
+    "linkAction": "Añadir",
+    "linkedToast": "Carpeta añadida",
+    "linksEmpty": "Aún no hay carpetas compartidas.",
+    "forget": "Quitar",
+    "forgetTitle": "Quitar carpeta compartida",
+    "forgetBody": "¿Quitar esta carpeta de tu lista? Los archivos se quedan en el disco.",
+    "forgotToast": "Carpeta quitada",
+    "viewItems": "Ver elementos",
+    "hideItems": "Ocultar elementos",
+    "entriesEmpty": "No hay elementos en esta carpeta.",
+    "senderLabel": "De",
+    "usernameLabel": "Usuario",
+    "passwordLabel": "Contraseña",
+    "notesLabel": "Notas",
+    "copySecret": "Copiar",
+    "copiedToast": "Copiado",
+    "oneItem": "1 elemento"
   }
 }

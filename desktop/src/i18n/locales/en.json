@@ -326,7 +326,8 @@
     "tabBridge": "Browser extensions",
     "themeSystem": "System",
     "tabCollections": "Shared collections",
-    "tabContacts": "Contacts"
+    "tabContacts": "Contacts",
+    "tabOutboxes": "Outboxes"
   },
   "sync": {
     "title": "Vault Sync",
@@ -838,5 +839,43 @@
     "cardCopied": "Contact code copied",
     "copyCard": "Copy contact code",
     "myCodeLabel": "My verification code"
+  },
+  "outbox": {
+    "sharedTitle": "Shared to folders",
+    "sharedHint": "Live mirrors: items update in the recipient’s folder when you change them.",
+    "publishTitle": "Mirror an item",
+    "itemLabel": "Item",
+    "contactLabel": "Recipient",
+    "pathLabel": "Folder",
+    "pathPlaceholder": "/path/to/shared-folder",
+    "publishAction": "Mirror",
+    "publishedToast": "Mirroring started",
+    "empty": "Nothing mirrored yet.",
+    "itemsSuffix": "items",
+    "resyncAction": "Sync mirrors now",
+    "resyncedToast": "{n} item(s) updated",
+    "revoke": "Stop",
+    "revokeTitle": "Stop mirroring",
+    "revokeBody": "Stop mirroring to this folder? Copies the recipient already has stay with them.",
+    "revokedToast": "Mirroring stopped",
+    "receivedTitle": "Received folders",
+    "linkTitle": "Add a shared folder",
+    "linkAction": "Add",
+    "linkedToast": "Folder added",
+    "linksEmpty": "No shared folders yet.",
+    "forget": "Remove",
+    "forgetTitle": "Remove shared folder",
+    "forgetBody": "Remove this folder from your list? The files stay on disk.",
+    "forgotToast": "Folder removed",
+    "viewItems": "View items",
+    "hideItems": "Hide items",
+    "entriesEmpty": "No items in this folder.",
+    "senderLabel": "From",
+    "usernameLabel": "Username",
+    "passwordLabel": "Password",
+    "notesLabel": "Notes",
+    "copySecret": "Copy",
+    "copiedToast": "Copied",
+    "oneItem": "1 item"
   }
 }
