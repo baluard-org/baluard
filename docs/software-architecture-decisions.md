@@ -1237,6 +1237,14 @@ Two review lessons generalize. An empty-string confirm word equals an empty-stri
 
 **Boundaries**: flip/prepare stay off the phone until desktop grows its own flip surface (parity first); ownership transfer confirmation carries no extra secret, but the demotion is irreversible except by the new owner, so its dialog says so plainly; batch removal exists in the core API but the mobile UI removes one member at a time.
 
+### D49. The Address Book Is Dial State, Not Access Control (S2 contact flavors) (2026-09-26; S3 in progress)
+
+The address book records identity, not permission: importing a card proves only that a signed card exists (HPKE base mode authenticates nobody), and Level 1 contacts can receive shared items by design because packages and reveals wrap no live keys. The thing the book actually guards is the verification code, and the wave's sharpest finding was that the code was too weak to guard anything: 32 bits of unilateral hash lets an active man-in-the-middle brute-force a colliding key offline. Out-of-band comparison is only as strong as the code is long \u2014 64 bits is the floor where brute force leaves hobby budgets. The durable rule: any human-comparison secret must be sized against OFFLINE attack by the person best resourced, not against ONCE-THEN-GONE guessing.
+
+The second finding was a plumbing completeness check: the address book had no removal primitive and the UI showed the verification code where the card code belonged, so the surface advertised sharing neither side could actually complete. When a UI exposes a primitive set, enumerate the CRUD gaps first \u2014 a list without remove and an export without display are both silent dead ends.
+
+**Boundaries**: trust is still binary Channel/Verified (the full dial is \u00a74.1); removal is local dial state and revokes nothing already received; contact cards travel out of band with no expiry \u2014 re-issue after identity rotation is the reconcile path; outbox management UI (publish/revoke mirrors) remains unowned.
+
 ### D48. Item-Sharing Surfaces over Finished Rails (S2 UI) (2026-09-26; S3 in progress)
 
 The S2 core and daemon layers shipped with no interface; this wave proves the rails pattern in reverse: when the daemon already validates every flavor with plain-language refusals, the client can auto-detect which kind of shared file it holds by trying the flavors in order and reading the failures, instead of asking the user to classify a file format they have no vocabulary for. The receive chain (package import, then contact reveal, then passphrase-guest open) works because the flavors are cryptographically domain-separated — a reveal file cannot succeed as a package import — so trying the wrong one first is always safe. That property is worth defending: any new shared-file flavor should stay mutually exclusive at the crypto layer so client-side detection never needs a magic-number header.

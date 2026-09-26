@@ -325,7 +325,8 @@
     "syncNotAvailable": "Sync is not available on this build.",
     "tabBridge": "Browser extensions",
     "themeSystem": "System",
-    "tabCollections": "Shared collections"
+    "tabCollections": "Shared collections",
+    "tabContacts": "Contacts"
   },
   "sync": {
     "title": "Vault Sync",
@@ -805,6 +806,37 @@
     "passwordLabel": "Password",
     "totpLabel": "One-time code",
     "expiresLabel": "Expires:",
-    "fileTooLarge": "That file is too large to be a shared item."
+    "fileTooLarge": "That file is too large to be a shared item.",
+    "flavorGuest": "Anyone (passphrase)",
+    "flavorContact": "A contact",
+    "contactLabel": "Contact",
+    "contactNote": "The recipient opens this in their app; no passphrase needed. Anyone with the file and their identity key could open it — treat the file as the secret.",
+    "noContactsHint": "No contacts yet — add one in Settings > Contacts first."
+  },
+  "contacts": {
+    "myCardTitle": "My card",
+    "myCardBody": "Share your contact code with someone so they can add you. Then compare verification codes out of band: you show yours, they show theirs, and both must match what the app displays.",
+    "importTitle": "Add a contact",
+    "importPlaceholder": "Paste the contact code you received",
+    "importAction": "Add",
+    "importedToast": "Contact added",
+    "listTitle": "Contacts",
+    "empty": "No contacts yet.",
+    "canReceive": "Can receive shared items",
+    "noWrapKey": "Old card: ask them to share it again to receive items",
+    "trustVerified": "Verified",
+    "trustChannel": "Channel",
+    "theirCode": "Their verification code",
+    "showCode": "Show code",
+    "hideCode": "Hide code",
+    "markVerified": "Codes match",
+    "verifiedToast": "Contact verified",
+    "remove": "Remove",
+    "removeTitle": "Remove contact",
+    "removeBody": "Remove {name} from your contacts? Items they already received are unaffected.",
+    "cardCodeLabel": "Contact code (share this)",
+    "cardCopied": "Contact code copied",
+    "copyCard": "Copy contact code",
+    "myCodeLabel": "My verification code"
   }
 }

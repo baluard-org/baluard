@@ -331,6 +331,10 @@ const COVER_MUTATION_ACTIONS: &[&str] = &[
     "collections.requests_approve",
     "collections.requests_deny",
     "collections.catalog_set",
+    // S2 UI: contact-book mutations write the git-tracked contacts.enc.
+    "contacts.import_card",
+    "contacts.mark_verified",
+    "contacts.remove",
     "tag.rebuild_index",
     "settings.set",
     "vault.avatar.set",
@@ -3455,6 +3459,66 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
 
+        "contacts.list" => match state.contacts_list().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "contacts.my_card" => match state.my_contact_card().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "contacts.import_card" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            if parsed["card"].as_str().unwrap_or("").is_empty() {
+                return err_response("Missing card in payload");
+            }
+            match state.contacts_import_card(&req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "contacts.mark_verified" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            if parsed["identity_signing_pubkey"]
+                .as_str()
+                .unwrap_or("")
+                .is_empty()
+            {
+                return err_response("Missing identity_signing_pubkey in payload");
+            }
+            match state.contacts_mark_verified(&req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
+        "contacts.remove" => {
+            let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            if parsed["identity_signing_pubkey"]
+                .as_str()
+                .unwrap_or("")
+                .is_empty()
+            {
+                return err_response("Missing identity_signing_pubkey in payload");
+            }
+            match state.contacts_remove(&req.payload).await {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
         "outbox.publish" => {
             let parsed: serde_json::Value = match serde_json::from_str(&req.payload) {
                 Ok(v) => v,
@@ -5761,6 +5825,9 @@ mod tests {
             "collections.requests_approve",
             "collections.requests_deny",
             "collections.catalog_set",
+            "contacts.import_card",
+            "contacts.mark_verified",
+            "contacts.remove",
             "templates.create",
             "templates.list",
             "templates.delete",

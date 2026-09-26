@@ -3050,6 +3050,119 @@ impl VaultState {
         serde_json::to_string(&opened).map_err(|e| format!("{e}"))
     }
 
+    // ── S2 UI wave: address book (contact cards + trust dial) ──
+
+    /// List the address book for the contacts manager. The verification
+    /// code rides along so the UI can run the Level 2 code check.
+    pub async fn contacts_list(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard
+            .as_ref()
+            .ok_or("Vault is locked. Unlock first.".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let rows: Vec<serde_json::Value> = handle
+            .contacts_list()
+            .map_err(|e| format!("{e}"))?
+            .into_iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "display_name": entry.card.display_name,
+                    "identity_signing_pubkey": entry.card.identity_signing_pubkey,
+                    "has_wrap_key": !entry.card.identity_wrap_pubkey.is_empty(),
+                    "trust": entry.trust,
+                    "verification_code": entry.card.verification_code(),
+                    "updated_at": entry.updated_at,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "contacts": rows }).to_string())
+    }
+
+    /// Export this device's signed contact card (URL-safe base64 code)
+    /// plus its verification code for the Level 2 check.
+    pub async fn my_contact_card(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard
+            .as_ref()
+            .ok_or("Vault is locked. Unlock first.".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let card = handle.contact_card_signed().map_err(|e| format!("{e}"))?;
+        let code = base64::engine::general_purpose::URL_SAFE
+            .encode(serde_json::to_vec(&card).map_err(|e| format!("{e}"))?);
+        Ok(serde_json::json!({
+            "card": code,
+            "verification_code": card.card.verification_code(),
+        })
+        .to_string())
+    }
+
+    /// Import an out-of-band contact card code. The signature is
+    /// verified against the card's own identity key; the entry lands at
+    /// Channel until the code check. Payload: `{card}`.
+    pub async fn contacts_import_card(&self, payload: &str) -> Result<String, String> {
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
+        let card = v["card"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or("Missing card in payload".to_string())?;
+        let mut guard = self.inner.write().await;
+        let handle = guard
+            .as_mut()
+            .ok_or("Vault is locked. Unlock first.".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let trust = handle
+            .contacts_import_card(card)
+            .map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({ "trust": trust }).to_string())
+    }
+
+    /// Record the Level 2 code check. Payload:
+    /// `{identity_signing_pubkey}`.
+    pub async fn contacts_mark_verified(&self, payload: &str) -> Result<String, String> {
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
+        let pubkey = v["identity_signing_pubkey"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or("Missing identity_signing_pubkey in payload".to_string())?;
+        let mut guard = self.inner.write().await;
+        let handle = guard
+            .as_mut()
+            .ok_or("Vault is locked. Unlock first.".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        handle
+            .contacts_mark_verified(pubkey)
+            .map_err(|e| format!("{e}"))?;
+        Ok("{}".to_string())
+    }
+
+    /// Remove a contact from the address book. Payload:
+    /// `{identity_signing_pubkey}`. Local dial state only — nothing the
+    /// contact already received is affected.
+    pub async fn contacts_remove(&self, payload: &str) -> Result<String, String> {
+        let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| format!("{e}"))?;
+        let pubkey = v["identity_signing_pubkey"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or("Missing identity_signing_pubkey in payload".to_string())?;
+        let mut guard = self.inner.write().await;
+        let handle = guard
+            .as_mut()
+            .ok_or("Vault is locked. Unlock first.".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        handle.contacts_remove(pubkey).map_err(|e| format!("{e}"))?;
+        Ok("{}".to_string())
+    }
+
     // ── S2 IS-4b: per-recipient outboxes (live mirror) ──
 
     /// Publish (or re-publish) a cipher into a recipient's outbox
