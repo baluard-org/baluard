@@ -66,6 +66,48 @@ data class MobileCatalogEntry(
     val name: String,
 )
 
+/** Member row for the People screen (from `members_list` JSON). */
+data class MobileMemberInfo(
+    val id: String,
+    val name: String,
+    val role: String = "editor",
+    val trust: String = "",
+    val reset: Boolean = false,
+    val removed: Boolean = false,
+    val isSelf: Boolean = false,
+)
+
+/** Queued join introduction (from `requests_list` JSON). */
+data class MobileJoinRequest(
+    val reqId: String,
+    val displayName: String,
+    val secretOk: Boolean = true,
+)
+
+/** Member access ask for the admin inbox (from `collections.requests_list`). */
+data class MobileAccessAsk(
+    val requestId: String,
+    val requesterMemberId: String,
+    val requesterName: String,
+    val collectionId: String,
+    val collectionName: String,
+    val access: String = "read",
+    val note: String = "",
+)
+
+/** Existing grant row inside an admin collection row. */
+data class MobileGrantInfo(
+    val memberId: String,
+    val access: String = "read",
+    val expiresAt: Long? = null,
+)
+
+/** Admin collection row with its grants inline (one parse per refresh). */
+data class MobileCollectionFull(
+    val info: MobileCollectionInfo,
+    val grants: List<MobileGrantInfo> = emptyList(),
+)
+
 class VaultRepository {
     suspend fun generatePassword(config: xyz.actitud.baluard.PasswordConfig): Result<String> =
         runCatching { xyz.actitud.baluard.generatePassword(config) }
@@ -186,6 +228,8 @@ class VaultRepository {
     /** The caller's own pending asks (raw JSON). */
     suspend fun collectionRequestsMine(vault: MobileVault): String =
         vault.collectionRequestsMine()
+    suspend fun collectionRequestsList(vault: MobileVault): String =
+        vault.collectionRequestsList()
 
     /** Withdraw a pending ask: {request_id}. */
     suspend fun collectionRequestsWithdraw(vault: MobileVault, payload: String): String =
@@ -257,6 +301,148 @@ class VaultRepository {
             val id = (o["collection_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
             val name = (o["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content
             if (id != null && name != null) MobileCatalogEntry(id = id, name = name) else null
+        }
+    }
+
+    // ── §4.8-7 admin surfaces: same wrappers the desktop daemon routes.
+
+    suspend fun membersList(vault: MobileVault): String = vault.membersList()
+    suspend fun memberInvite(vault: MobileVault, payload: String): String =
+        vault.memberInvite(payload)
+    suspend fun joinRequestsList(vault: MobileVault): String = vault.joinRequestsList()
+    suspend fun joinRequestsApprove(vault: MobileVault, reqId: String): String =
+        vault.joinRequestsApprove("{\"req_id\":\"$reqId\"}")
+    suspend fun joinRequestsDeny(vault: MobileVault, reqId: String): String =
+        vault.joinRequestsDeny("{\"req_id\":\"$reqId\"}")
+    suspend fun collectionGrant(vault: MobileVault, payload: String): String =
+        vault.collectionGrant(payload)
+    suspend fun collectionRevoke(vault: MobileVault, payload: String): String =
+        vault.collectionRevoke(payload)
+
+    /** Approve an access ask; access is the admin's final say (read or
+     * write preset). Payload contract per the runtime wrapper. */
+    suspend fun collectionRequestApprove(
+        vault: MobileVault,
+        requestId: String,
+        requesterMemberId: String,
+        access: String,
+    ): String = vault.collectionRequestsApprove(
+        "{\"request_id\":\"$requestId\",\"requester_member_id\":\"$requesterMemberId\",\"access\":\"$access\"}",
+    )
+
+    /** Deny an access ask; the payload contract requires the requester id. */
+    suspend fun collectionRequestDeny(
+        vault: MobileVault,
+        requestId: String,
+        requesterMemberId: String,
+    ): String = vault.collectionRequestsDeny(
+        "{\"request_id\":\"$requestId\",\"requester_member_id\":\"$requesterMemberId\"}",
+    )
+
+    /** Parsed member rows for the People screen; tombstoned rows kept so
+     * the UI can grey them out. */
+    suspend fun listMembers(vault: MobileVault): List<MobileMemberInfo> {
+        val raw = runCatching { membersList(vault) }.getOrNull() ?: return emptyList()
+        val obj = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        }.getOrNull() ?: return emptyList()
+        val arr = obj["members"] as? kotlinx.serialization.json.JsonArray
+            ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val o = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val id = (o["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val name = (o["display_name"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            if (id != null && name != null) MobileMemberInfo(
+                id = id,
+                name = name,
+                role = (o["role"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "editor",
+                trust = (o["trust"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+                reset = (o["reset"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+                removed = (o["removed"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+                isSelf = (o["is_self"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+            ) else null
+        }
+    }
+
+    /** Parsed queued join introductions for the People screen. */
+    suspend fun listJoinRequests(vault: MobileVault): List<MobileJoinRequest> {
+        val raw = runCatching { joinRequestsList(vault) }.getOrNull() ?: return emptyList()
+        val obj = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        }.getOrNull() ?: return emptyList()
+        val arr = obj["requests"] as? kotlinx.serialization.json.JsonArray
+            ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val o = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val reqId = (o["req_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val name = (o["display_name"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            if (reqId != null && name != null) MobileJoinRequest(
+                reqId = reqId,
+                displayName = name,
+                secretOk = (o["secret_ok"] as? kotlinx.serialization.json.JsonPrimitive)?.content != "false",
+            ) else null
+        }
+    }
+
+    /** Parsed access asks for the admin inbox; malformed count dropped —
+     * the desktop inbox surfaces it, mobile keeps the rows. */
+    suspend fun listAccessAsks(vault: MobileVault): List<MobileAccessAsk> {
+        val raw = runCatching { collectionRequestsList(vault) }.getOrNull() ?: return emptyList()
+        val obj = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        }.getOrNull() ?: return emptyList()
+        val arr = obj["requests"] as? kotlinx.serialization.json.JsonArray
+            ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val o = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val rid = (o["request_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val mid = (o["requester_member_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val cid = (o["collection_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            if (rid != null && mid != null && cid != null) MobileAccessAsk(
+                requestId = rid,
+                requesterMemberId = mid,
+                requesterName = (o["requester_name"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+                collectionId = cid,
+                collectionName = (o["collection_name"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+                access = (o["access"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "read",
+                note = (o["note"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+            ) else null
+        }
+    }
+
+    /** Admin rows with grants inline — ONE bridge call serves both the
+     * collection list and every grants editor (review F2: the grants
+     * array rides the same admin rows; re-fetching per collection was
+     * an N+1 bridge round-trip pattern). */
+    suspend fun listCollectionsFull(vault: MobileVault): List<MobileCollectionFull> {
+        val raw = runCatching { collectionsList(vault) }.getOrNull() ?: return emptyList()
+        val obj = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        }.getOrNull() ?: return emptyList()
+        val arr = obj["collections"] as? kotlinx.serialization.json.JsonArray
+            ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val o = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val id = (o["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@mapNotNull null
+            val name = (o["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@mapNotNull null
+            val grants = (o["grants"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { g ->
+                val go = g as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                val mid = (go["member_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    ?: return@mapNotNull null
+                MobileGrantInfo(
+                    memberId = mid,
+                    access = (go["access"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "read",
+                    expiresAt = (go["expires_at"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull(),
+                )
+            }.orEmpty()
+            MobileCollectionFull(
+                info = MobileCollectionInfo(
+                    id = id,
+                    name = name,
+                    access = (o["access"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "read",
+                ),
+                grants = grants,
+            )
         }
     }
 // ── Slice B: provider onboarding (plan §4) ──

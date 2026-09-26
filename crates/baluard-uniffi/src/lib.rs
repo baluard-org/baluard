@@ -722,6 +722,90 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    // ── Admin surfaces (§4.8-7): same runtime wrappers the desktop
+    // daemon routes through; the daemon layer stays the only validator.
+
+    /// People list. `{members: [{id, display_name, role, trust, reset,
+    /// removed, identity_rotated_at, is_self}], your_role}`.
+    pub async fn members_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .members_list()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Mint a one-time invite code. Payload: `{role: "viewer"|"editor"
+    /// |"admin", transport_username?}` (role parsing fails closed).
+    /// Returns `{code, seat_granted, seat_error}`.
+    pub async fn member_invite(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .members_invite(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Queued join introductions (S1a join queue).
+    /// `{requests: [{req_id, invite_id, device_id, display_name,
+    /// secret_ok}], malformed}`.
+    pub async fn join_requests_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .requests_list()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Approve a queued join. Payload: `{req_id}`. Runs the standard
+    /// verification path; consumed only on success.
+    pub async fn join_requests_approve(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .requests_approve(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Deny a queued join. Payload: `{req_id}`.
+    pub async fn join_requests_deny(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .requests_deny(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Grant collection access. Payload: `{id, member_id, access:
+    /// "read"|"write"|"manage", expires_at?}` (expires_at is an absolute
+    /// epoch second; absent = never).
+    pub async fn collection_grant(&self, payload: String) -> Result<String, BaluardError> {
+        let v: serde_json::Value =
+            serde_json::from_str(&payload).map_err(|e| BaluardError::Vault {
+                detail: e.to_string(),
+            })?;
+        let id = v["id"].as_str().ok_or_else(|| BaluardError::Vault {
+            detail: "missing id".into(),
+        })?;
+        self.state
+            .collection_grant(id, &v)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Revoke a member's collection access. Payload: `{id, member_id}`.
+    pub async fn collection_revoke(&self, payload: String) -> Result<String, BaluardError> {
+        let v: serde_json::Value =
+            serde_json::from_str(&payload).map_err(|e| BaluardError::Vault {
+                detail: e.to_string(),
+            })?;
+        let id = v["id"].as_str().ok_or_else(|| BaluardError::Vault {
+            detail: "missing id".into(),
+        })?;
+        let member_id = v["member_id"].as_str().ok_or_else(|| BaluardError::Vault {
+            detail: "missing member_id".into(),
+        })?;
+        self.state
+            .collection_revoke(id, member_id)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Join a shared space (member side of the join ceremony). The vault
     /// must already be cloned locally (see `clone_vault_start`). Payload
     /// fields: `code` (the invite code), `password` (the joiner's chosen
