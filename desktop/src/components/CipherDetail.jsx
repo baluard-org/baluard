@@ -12,6 +12,7 @@ import { SECTION_LABEL } from "../lib/helpers.js";
 import { buildAttachDownloadPayload } from "../lib/payload.js";
 import { IconX, IconCopy, IconCheck, IconLinkSimple, IconDownload, IconPencil, IconArchive, IconTrash, IconRefresh, IconFingerprint } from "./Icon.jsx";
 import CopyableField from "./CopyableField.jsx";
+import ShareDialog from "./ShareDialog.jsx";
 import { useCopyFeedback } from "../lib/useCopyFeedback.js";
 import FocusTrap from "./FocusTrap.jsx";
 import ExternalLink from "./ExternalLink.jsx";
@@ -96,6 +97,7 @@ export default function CipherDetail(props) {
   const [attachLoading, setAttachLoading] = createSignal(false);
   const [totpCopied, setTotpCopied] = createSignal(false);
   const [showPasskeyDelete, setShowPasskeyDelete] = createSignal(null); // { cipher_id, credential_id, name, isOnlyAuth }
+  const [showShare, setShowShare] = createSignal(false);
 
   async function deletePasskey() {
     const pk = showPasskeyDelete();
@@ -637,6 +639,15 @@ export default function CipherDetail(props) {
                 <IconArchive class="w-4 h-4" />
                 {t("entry.archive")}
               </button>
+              <Show when={cipher()?.type === "login" || !cipher()?.type}>
+                <button
+                  onClick={() => setShowShare(true)}
+                  class="py-3 px-4 rounded-xl bg-[var(--color-sidebar)] text-[var(--color-muted)] border border-[var(--color-border)] hover:bg-[var(--color-card)] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+                >
+                  <IconLinkSimple class="w-4 h-4" />
+                  {t("share.action")}
+                </button>
+              </Show>
               <button
                 onClick={() => props.onDelete?.(cipher().id)}
                 class="py-3 px-4 rounded-xl border font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] btn-active-red"
@@ -679,6 +690,9 @@ export default function CipherDetail(props) {
           </button>
         </Show>
       </div>
+      <Show when={showShare()}>
+        <ShareDialog cipher={cipher()} onClose={() => setShowShare(false)} />
+      </Show>
     </div>
   );
 }

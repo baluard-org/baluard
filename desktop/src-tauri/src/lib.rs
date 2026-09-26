@@ -246,6 +246,11 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "space.flip",
         "space.migrate",
         "space.remote",
+        // S2: item-sharing send/receive surfaces.
+        "reveals.export_guest",
+        "packages.import",
+        "reveals.open_contact",
+        "reveals.open_guest",
         // S3-6: request-access JIT surfaces.
         "collections.request_access",
         "collections.requests_mine",
