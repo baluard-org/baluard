@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Password
@@ -40,6 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -58,6 +61,7 @@ import xyz.actitud.baluard.detail.typeLabelKey
 import xyz.actitud.baluard.i18n.t
 import xyz.actitud.baluard.platform.BaluardBrandLock
 import xyz.actitud.baluard.ui.components.BaluardOutlinedButton
+import xyz.actitud.baluard.ui.components.BaluardTextField
 import xyz.actitud.baluard.ui.components.CipherRowCard
 import xyz.actitud.baluard.ui.components.SectionCard
 import xyz.actitud.baluard.ui.components.SyncIconButton
@@ -70,8 +74,12 @@ import xyz.actitud.baluard.platform.DiscoveredVault
 import xyz.actitud.baluard.platform.VaultRegistry
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+
+import kotlinx.coroutines.launch
 import xyz.actitud.baluard.ui.components.cipherTypeTheme
+import xyz.actitud.baluard.ui.toast.Toast
 
 /**
  * Hub screen (Bitwarden-style): instead of a flat entry list, the home page
@@ -106,8 +114,12 @@ fun VaultHomeScreen(
     val archived by listViewModel.archived.collectAsState()
     val trash by listViewModel.trash.collectAsState()
     val query by listViewModel.query.collectAsState()
+    val collections by listViewModel.collections.collectAsState()
+    val myAsks by listViewModel.myAsks.collectAsState()
 
     var switchOpen by remember { mutableStateOf(false) }
+    var showAsk by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     val favorites = ciphers.filter { it.favorite }
 
@@ -490,6 +502,51 @@ fun VaultHomeScreen(
 
             Spacer(Modifier.height(14.dp))
 
+            // ── Shared collections (§4.8-6) ── members see the rows they
+            // can open; managing devices see everything. The section always
+            // renders: a fresh member holds zero grants and needs the ask
+            // row to request access (review F2) — hiding it on empty would
+            // deadlock the JIT flow.
+            SectionCard(
+                title = "${t("home.shared")} (${collections.size})",
+                modifier = Modifier.padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
+            ) {
+                val sorted = collections.sortedBy { it.name.lowercase() }
+                sorted.forEachIndexed { index, col ->
+                    val count = ciphers.count { it.collectionId == col.id }
+                    SectionLinkRow(
+                        label = col.name,
+                        count = count,
+                        icon = Icons.Default.Group,
+                        iconColor = MaterialTheme.colorScheme.tertiary,
+                        onClick = { onOpenKind(EntryListKind.Collection(col.id, col.name)) },
+                    )
+                    if (index < sorted.size - 1) {
+                        BaluardDivider(
+                            modifier = Modifier.padding(start = 58.dp, end = 14.dp),
+                            thickness = 0.7.dp,
+                            alpha = 0.35f,
+                        )
+                    }
+                }
+                if (sorted.isNotEmpty()) {
+                    BaluardDivider(
+                        modifier = Modifier.padding(start = 58.dp, end = 14.dp),
+                        thickness = 0.7.dp,
+                        alpha = 0.35f,
+                    )
+                }
+                SectionLinkRow(
+                    label = t("shared.askForAccess"),
+                    count = myAsks.size,
+                    icon = Icons.Default.HelpOutline,
+                    iconColor = MaterialTheme.colorScheme.primary,
+                    onClick = { showAsk = true },
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+
             // ── Tags ── (single row: opens the tag list, like TOTP)
             SectionCard(
                 title = "${t("home.tags")} (${tagCounts.size})",
@@ -536,6 +593,14 @@ fun VaultHomeScreen(
 
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    if (showAsk) {
+        AskAccessDialog(
+            vault = vault,
+            listViewModel = listViewModel,
+            onDismiss = { showAsk = false },
+        )
     }
 }
 
@@ -736,4 +801,193 @@ fun TagListScreen(
             }
         }
     }
+}
+
+/**
+ * Ask-for-access dialog (§4.8-6, member side of request-access JIT):
+ * pick a collection from the admin-curated catalog or paste its id,
+ * choose read/write, add an optional note, submit. Pending asks list
+ * below with withdraw. The daemon is the validator — the dialog only
+ * requires a non-empty id.
+ */
+@Composable
+private fun AskAccessDialog(
+    vault: MobileVault,
+    listViewModel: VaultListViewModel,
+    onDismiss: () -> Unit,
+) {
+    val repo = remember { xyz.actitud.baluard.data.VaultRepository() }
+    val scope = rememberCoroutineScope()
+    val myAsks by listViewModel.myAsks.collectAsState()
+
+    var catalog by remember { mutableStateOf<List<xyz.actitud.baluard.data.MobileCatalogEntry>>(emptyList()) }
+    var pickedId by remember { mutableStateOf("") }
+    var pickedName by remember { mutableStateOf("") }
+    var access by remember { mutableStateOf("read") }
+    var note by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+
+    LaunchedEffect(vault) {
+        catalog = runCatching { repo.listCatalog(vault) }.getOrDefault(emptyList())
+    }
+
+    fun submit() {
+        if (pickedId.isBlank() || busy) return
+        busy = true
+        scope.launch {
+            val payload = buildString {
+                append("{\"collection_id\":\"").append(pickedId.trim()).append('"')
+                append(",\"access\":\"").append(access).append('"')
+                if (note.isNotBlank()) {
+                    append(",\"note\":\"")
+                    // Valid JSON needs control characters escaped too —
+                    // the note field is multi-line (review F1). The daemon
+                    // still refuses newline notes with its own message.
+                    append(
+                        note.trim()
+                            .replace("\\", "\\\\")
+                            .replace("\"", "\\\"")
+                            .replace("\n", "\\n")
+                            .replace("\r", "\\r")
+                            .replace("\t", "\\t"),
+                    )
+                    append('"')
+                }
+                append("}")
+            }
+            runCatching { repo.collectionRequestAccess(vault, payload) }
+                .onSuccess {
+                    Toast.success(t("shared.askSent"))
+                    note = ""
+                    listViewModel.refreshMyAsks(vault)
+                }
+                .onFailure { Toast.error(it.message ?: t("error.generic")) }
+            busy = false
+        }
+    }
+
+    fun withdraw(id: String) {
+        scope.launch {
+            runCatching {
+                repo.collectionRequestsWithdraw(vault, "{\"request_id\":\"$id\"}")
+            }
+                .onSuccess {
+                    Toast.info(t("shared.askWithdrawn"))
+                    listViewModel.refreshMyAsks(vault)
+                }
+                .onFailure { Toast.error(it.message ?: t("error.generic")) }
+        }
+    }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(t("shared.askTitle")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (catalog.isEmpty()) {
+                    BaluardTextField(
+                        value = pickedId,
+                        onValueChange = { pickedId = it; pickedName = "" },
+                        label = t("shared.pasteId"),
+                        singleLine = true,
+                    )
+                } else {
+                    catalog.forEach { entry ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { pickedId = entry.id; pickedName = entry.name }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = if (pickedId == entry.id) {
+                                    Icons.Default.Check
+                                } else {
+                                    Icons.Default.ChevronRight
+                                },
+                                contentDescription = null,
+                                tint = if (pickedId == entry.id) {
+                                    MaterialTheme.colorScheme.tertiary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = entry.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                    if (pickedId.isBlank()) {
+                        BaluardTextField(
+                            value = pickedId,
+                            onValueChange = { pickedId = it; pickedName = "" },
+                            label = t("shared.pasteId"),
+                            singleLine = true,
+                        )
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("read", "write").forEach { level ->
+                        androidx.compose.material3.FilterChip(
+                            selected = access == level,
+                            onClick = { access = level },
+                            label = {
+                                Text(if (level == "read") t("shared.read") else t("shared.write"))
+                            },
+                        )
+                    }
+                }
+
+                BaluardTextField(
+                    value = note,
+                    onValueChange = { if (it.length <= 500) note = it },
+                    label = t("shared.note"),
+                    placeholder = t("shared.noteHint"),
+                    singleLine = false,
+                    minLines = 2,
+                )
+
+                BaluardOutlinedButton(
+                    text = if (busy) t("common.sending") else t("shared.sendAsk"),
+                    onClick = { submit() },
+                    enabled = pickedId.isNotBlank() && !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                if (myAsks.isNotEmpty()) {
+                    Text(
+                        text = t("shared.myAsks"),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    myAsks.forEach { ask ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = catalog.firstOrNull { it.id == ask.collectionId }?.name
+                                    ?: ask.collectionId.take(8),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = { withdraw(ask.id) }) {
+                                Text(t("shared.withdraw"))
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(t("common.close")) }
+        },
+    )
 }

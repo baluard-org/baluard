@@ -44,6 +44,28 @@ data class MobileFolderInfo(
     val parentId: String? = null,
 )
 
+/** Shared-collection row for the home hub (from the role-aware
+ * `collections_list` JSON: members see only rows they can open). */
+data class MobileCollectionInfo(
+    val id: String,
+    val name: String,
+    /** "read" | "write" | "manage" for members; "admin" on managing devices. */
+    val access: String = "read",
+)
+
+/** The caller's own pending access ask (from `requests_mine` JSON). */
+data class MobileAskInfo(
+    val id: String,
+    val collectionId: String,
+    val access: String = "read",
+)
+
+/** Catalog row for the ask-dialog picker (admin-curated names). */
+data class MobileCatalogEntry(
+    val id: String,
+    val name: String,
+)
+
 class VaultRepository {
     suspend fun generatePassword(config: xyz.actitud.baluard.PasswordConfig): Result<String> =
         runCatching { xyz.actitud.baluard.generatePassword(config) }
@@ -144,6 +166,97 @@ class VaultRepository {
                 name = name,
                 parentId = o.str("parent_id"),
             ) else null
+        }
+    }
+
+    // ── Sharing surfaces (§4.8-6): thin wrappers over the uniffi
+    // methods, which delegate to the same runtime wrappers the desktop
+    // daemon routes through. JSON in / JSON out — the payload contracts
+    // live in baluard-runtime state.rs, never re-implemented here.
+
+    /** Role-aware shared-collections list (raw JSON: managing devices
+     * get grants arrays, members get openable rows only). */
+    suspend fun collectionsList(vault: MobileVault): String =
+        vault.collectionsList()
+
+    /** Ask for access: {collection_id, access, note?} → {request_id}. */
+    suspend fun collectionRequestAccess(vault: MobileVault, payload: String): String =
+        vault.collectionRequestAccess(payload)
+
+    /** The caller's own pending asks (raw JSON). */
+    suspend fun collectionRequestsMine(vault: MobileVault): String =
+        vault.collectionRequestsMine()
+
+    /** Withdraw a pending ask: {request_id}. */
+    suspend fun collectionRequestsWithdraw(vault: MobileVault, payload: String): String =
+        vault.collectionRequestsWithdraw(payload)
+
+    /** Optional plaintext catalog (raw JSON). */
+    suspend fun collectionCatalogList(vault: MobileVault): String =
+        vault.collectionCatalogList()
+
+    /** Member-side join: {code, password, device_name} → {intro_code}. */
+    suspend fun joinIntroduce(vault: MobileVault, code: String, password: String, deviceName: String): String =
+        vault.joinIntroduce(code, password, deviceName)
+
+    /** Join status poll: {introduced, approved}. */
+    suspend fun joinPoll(vault: MobileVault): String = vault.joinPoll()
+
+    /** Parsed shared-collection rows for the home hub: members see only
+     * rows they can open; names arrive decrypted. */
+    suspend fun listCollections(vault: MobileVault): List<MobileCollectionInfo> {
+        val raw = runCatching { collectionsList(vault) }.getOrNull() ?: return emptyList()
+        val obj = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        }.getOrNull() ?: return emptyList()
+        val arr = obj["collections"] as? kotlinx.serialization.json.JsonArray
+            ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val o = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val id = (o["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val name = (o["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            if (id != null && name != null) MobileCollectionInfo(
+                id = id,
+                name = name,
+                access = (o["access"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "read",
+            ) else null
+        }
+    }
+
+    /** Parsed own pending asks for the ask dialog: [{id, collection_id,
+    * access, created_at}]. */
+    suspend fun listMyAsks(vault: MobileVault): List<MobileAskInfo> {
+        val raw = runCatching { collectionRequestsMine(vault) }.getOrNull() ?: return emptyList()
+        val obj = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        }.getOrNull() ?: return emptyList()
+        val arr = obj["requests"] as? kotlinx.serialization.json.JsonArray
+            ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val o = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val id = (o["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val cid = (o["collection_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            if (id != null && cid != null) MobileAskInfo(
+                id = id,
+                collectionId = cid,
+                access = (o["access"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "read",
+            ) else null
+        }
+    }
+
+    /** Parsed catalog rows for the ask dialog picker. */
+    suspend fun listCatalog(vault: MobileVault): List<MobileCatalogEntry> {
+        val raw = runCatching { collectionCatalogList(vault) }.getOrNull() ?: return emptyList()
+        val obj = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        }.getOrNull() ?: return emptyList()
+        val arr = obj["catalog"] as? kotlinx.serialization.json.JsonArray
+            ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val o = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val id = (o["collection_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val name = (o["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            if (id != null && name != null) MobileCatalogEntry(id = id, name = name) else null
         }
     }
 // ── Slice B: provider onboarding (plan §4) ──

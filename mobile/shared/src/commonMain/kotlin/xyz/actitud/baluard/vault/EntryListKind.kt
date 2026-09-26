@@ -21,6 +21,10 @@ sealed interface EntryListKind {
     /** Entries carrying one tag. */
     data class Tag(val tag: String) : EntryListKind
 
+    /** Shared collection slice: filtered by the cipher's collection id.
+    * [name] rides along for the screen title. */
+    data class Collection(val id: String, val name: String) : EntryListKind
+
     /** Archived entries (hidden from main list, search, autofill). */
     data object Archive : EntryListKind
 

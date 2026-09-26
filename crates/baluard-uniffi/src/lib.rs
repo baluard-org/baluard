@@ -265,6 +265,9 @@ pub struct MobileCipherMeta {
     /// Folder id (if any) for folder filtering; resolved to a name via
     /// `list_folders` on the Kotlin side.
     pub folder_id: Option<String>,
+    /// Collection id (if any) — set for ciphers living inside a shared
+    /// collection directory; drives the Shared section filter.
+    pub collection_id: Option<String>,
     /// Archived entries are hidden from the mobile list.
     pub archived: bool,
 }
@@ -279,6 +282,7 @@ impl From<baluard_core::types::CipherMeta> for MobileCipherMeta {
             username: m.username,
             tags: m.tags,
             folder_id: m.folder_id.map(|u| u.to_string()),
+            collection_id: m.collection_id.map(|u| u.to_string()),
             archived: m.archived,
         }
     }
@@ -633,6 +637,146 @@ impl MobileVault {
     /// Clear all generator history entries.
     pub async fn generator_history_clear(&self) -> Result<(), BaluardError> {
         Ok(self.state.generator_history_clear().await?)
+    }
+
+    // ---- Sharing surfaces (§4.8-6). Thin delegation to the same
+    // VaultState wrappers the desktop daemon routes through, so the JSON
+    // payload contracts have ONE authoritative parser (baluard-runtime
+    // state.rs). Mobile never re-implements validation.
+
+    /// List shared collections as JSON. Role-aware: managing devices get
+    /// every collection with its grant table; members get only the rows
+    /// they can open (grant-wrapped names), no grants key.
+    pub async fn collections_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .collections_list()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Ask for access to a collection (request-access JIT). Payload:
+    /// `{collection_id, access: "read"|"write", note?}`. Returns
+    /// `{request_id}`.
+    pub async fn collection_request_access(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .collection_request_access(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// The caller's own pending asks: `{requests: [{id, collection_id,
+    /// access, created_at}]}`.
+    pub async fn collection_requests_mine(&self) -> Result<String, BaluardError> {
+        self.state
+            .collection_requests_mine()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Withdraw one of the caller's pending asks. Payload:
+    /// `{request_id}`.
+    pub async fn collection_requests_withdraw(
+        &self,
+        payload: String,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .collection_requests_withdraw(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Admin access-request inbox: `{requests: [...], malformed}`.
+    pub async fn collection_requests_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .collection_requests_list()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Admin approve. Payload: `{request_id, requester_member_id,
+    /// access, expires_at?}`. Returns the grant summary.
+    pub async fn collection_requests_approve(
+        &self,
+        payload: String,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .collection_requests_approve(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Admin deny. Payload: `{request_id, requester_member_id}`.
+    pub async fn collection_requests_deny(&self, payload: String) -> Result<String, BaluardError> {
+        self.state
+            .collection_requests_deny(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Optional plaintext catalog (admin-curated collection names):
+    /// `{catalog: [{collection_id, name}]}`.
+    pub async fn collection_catalog_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .collection_catalog_list()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Join a shared space (member side of the join ceremony). The vault
+    /// must already be cloned locally (see `clone_vault_start`). Payload
+    /// fields: `code` (the invite code), `password` (the joiner's chosen
+    /// master password, >= 8 chars), `device_name`. Returns
+    /// `{intro_code}` — an out-of-band code the admin consumes to
+    /// approve. The password seeds the joiner's local unlock material;
+    /// it is zeroized after the introduction is written.
+    pub async fn join_introduce(
+        &self,
+        code: String,
+        password: String,
+        device_name: String,
+    ) -> Result<String, BaluardError> {
+        let pw = zeroize::Zeroizing::new(password);
+        if device_name.contains(['\n', '\r']) {
+            return Err(BaluardError::Vault {
+                detail: "device name must not contain newlines".into(),
+            });
+        }
+        let intro_code = baluard_core::vault::members::create_introduction(
+            &self.state.vault_path,
+            &code,
+            &pw,
+            &device_name,
+        )
+        .map_err(|e| BaluardError::Vault {
+            detail: e.to_string(),
+        })?;
+        Ok(serde_json::json!({ "intro_code": intro_code }).to_string())
+    }
+
+    /// Poll the join status: `{introduced, approved}`. While introduced
+    /// but not approved and the vault is locked, this best-effort pulls
+    /// (the joiner has no signing seat yet — pull is fetch + verify +
+    /// checkout, which needs no keys), so the admin's approval arrives
+    /// without a manual sync.
+    pub async fn join_poll(&self) -> Result<String, BaluardError> {
+        let (introduced, approved) =
+            baluard_core::vault::members::join_status(&self.state.vault_path);
+        if introduced && !approved && !self.state.is_unlocked().await {
+            let engine = baluard_core::sync::engine::SyncEngine::new(
+                &self.state.vault_path,
+                "join-poll",
+                None,
+            );
+            if let Ok(repo) = engine.open_repo() {
+                let _ = engine.pull(&repo, "origin");
+            }
+            let (introduced, approved) =
+                baluard_core::vault::members::join_status(&self.state.vault_path);
+            return Ok(
+                serde_json::json!({ "introduced": introduced, "approved": approved }).to_string(),
+            );
+        }
+        Ok(serde_json::json!({ "introduced": introduced, "approved": approved }).to_string())
     }
 }
 

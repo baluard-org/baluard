@@ -14,6 +14,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import xyz.actitud.baluard.MobileCipherMeta
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.data.MobileFolderInfo
+import xyz.actitud.baluard.data.MobileAskInfo
+import xyz.actitud.baluard.data.MobileCollectionInfo
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.platform.platformLogE
 
@@ -38,6 +40,8 @@ class VaultListViewModel(private val repo: VaultRepository) {
     private val _archived = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
     private val _trash = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
     private val _totp = MutableStateFlow<List<MobileCipherMeta>>(emptyList())
+    private val _collections = MutableStateFlow<List<MobileCollectionInfo>>(emptyList())
+    private val _myAsks = MutableStateFlow<List<MobileAskInfo>>(emptyList())
 
     /** Entries with a TOTP seed (Authenticator card). */
     val totp: StateFlow<List<MobileCipherMeta>> = _totp.asStateFlow()
@@ -49,6 +53,8 @@ class VaultListViewModel(private val repo: VaultRepository) {
     val trash: StateFlow<List<MobileCipherMeta>> = _trash.asStateFlow()
 
     val folders: StateFlow<List<MobileFolderInfo>> = _folders.asStateFlow()
+    val collections: StateFlow<List<MobileCollectionInfo>> = _collections.asStateFlow()
+    val myAsks: StateFlow<List<MobileAskInfo>> = _myAsks.asStateFlow()
 
     /** id -> lowercase haystack over decryptable content (every content field
      * of every cipher type) so search matches inside entries, not just their
@@ -80,6 +86,8 @@ class VaultListViewModel(private val repo: VaultRepository) {
         _totp.value = runCatching { repo.listTotp(vault) }.getOrDefault(emptyList())
         _archived.value = runCatching { repo.listArchived(vault) }.getOrDefault(emptyList())
         _trash.value = runCatching { repo.listTrash(vault) }.getOrDefault(emptyList())
+        _collections.value = runCatching { repo.listCollections(vault) }.getOrDefault(emptyList())
+        _myAsks.value = runCatching { repo.listMyAsks(vault) }.getOrDefault(emptyList())
         invalidateContentIndex()
         // Rebuild while searching so content matches survive data changes.
         // Owned here (not by screen effects): Compose LaunchedEffects run
@@ -95,8 +103,14 @@ class VaultListViewModel(private val repo: VaultRepository) {
         is EntryListKind.Type -> _ciphers.value.filter { it.cipherType == kind.tag }
         is EntryListKind.Folder -> _ciphers.value.filter { it.folderId == kind.id }
         is EntryListKind.Tag -> _ciphers.value.filter { it.tags.contains(kind.tag) }
+        is EntryListKind.Collection -> _ciphers.value.filter { it.collectionId == kind.id }
         EntryListKind.Archive -> _archived.value
         EntryListKind.Trash -> _trash.value
+    }
+
+    /** Re-read own asks after a submit or withdraw inside the dialog. */
+    suspend fun refreshMyAsks(vault: MobileVault) {
+        _myAsks.value = runCatching { repo.listMyAsks(vault) }.getOrDefault(emptyList())
     }
 
     /** Serializes deep-search builds so a refresh-triggered rebuild and a

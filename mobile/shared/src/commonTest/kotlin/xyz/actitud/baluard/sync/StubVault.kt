@@ -103,4 +103,16 @@ open class StubVault(
     override suspend fun vaultId(): String = err()
 
     private fun err(): Nothing = error("StubVault: unexpected call")
+    // §4.8-6 sharing surfaces: the stubs never exercise them; bodies
+    // mirror the err() discipline so an accidental touch fails loudly.
+    override suspend fun `collectionCatalogList`(): String = err()
+    override suspend fun `collectionRequestAccess`(payload: String): String = err()
+    override suspend fun `collectionRequestsApprove`(payload: String): String = err()
+    override suspend fun `collectionRequestsDeny`(payload: String): String = err()
+    override suspend fun `collectionRequestsList`(): String = err()
+    override suspend fun `collectionRequestsMine`(): String = err()
+    override suspend fun `collectionRequestsWithdraw`(payload: String): String = err()
+    override suspend fun `collectionsList`(): String = err()
+    override suspend fun `joinIntroduce`(code: String, password: String, deviceName: String): String = err()
+    override suspend fun `joinPoll`(): String = err()
 }

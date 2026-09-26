@@ -1213,6 +1213,14 @@ Three rules generalize. (1) A pointer that moves devices must be committed and v
 
 **Boundaries**: cross-provider migrations need the new provider connected before followers can fetch (provider checklist slice); a pointer to a repo the admin cannot push to strands followers until a newer pointer or a manual repoint (availability only — signature verification still gates every commit); org settings/readiness remain deferred.
 
+### D45. Mobile Member Surfaces over a Thin Bridge (§4.8-6) (2026-09-26; S3 in progress)
+
+A second UI platform should not fork the contract surface. The mobile bridge exposes sharing and join as thin delegation to the same runtime wrappers the desktop daemon routes through — one authoritative parser per payload contract, zero re-implemented validation on the Kotlin side. When a platform re-implements validation, the platforms drift: an earlier desktop wave shipped inbox payloads the daemon refused, and every re-implementation of a parse rule is a new place to be wrong. The member join flow mirrors the daemon's join-poll ordering exactly (status first; the best-effort pull runs only in the locked, introduced-but-not-approved window), because that window is the only state in which touching the repo from an unsynchronized engine cannot race the sync cycle lock.
+
+Two review findings generalized beyond this slice. (1) An entry point hidden behind the state it produces is a deadlock: the ask-for-access control lived inside a section that rendered only when the member already had collections — but asking is how a member gets collections in the first place. Render controls that create state unconditionally; gate their success, not their visibility. (2) Hand-built JSON must escape control characters the moment an input allows multi-line text; the daemon's own newline refusal remains the clear-language backstop.
+
+**Boundaries**: admin surfaces (invite, approve, deny, flip, grants) remain desktop until a mobile admin wave; the joiner's chosen master password crosses the FFI as a String and lives in composable state for the ceremony's duration (the Rust side zeroizes before the introduction write — the same trust model as the desktop flow); iOS remains at its existing parity.
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

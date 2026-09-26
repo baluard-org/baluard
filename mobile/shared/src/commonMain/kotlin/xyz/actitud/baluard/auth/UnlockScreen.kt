@@ -62,6 +62,7 @@ fun UnlockScreen(
     var password by remember { mutableStateOf("") }
     var state by remember { mutableStateOf<AuthState>(AuthState.Init) }
     var phase by remember { mutableStateOf(UnlockPhase.Input) }
+    var showJoin by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val biometric = remember { Biometric() }
     var biometricEnrolled by remember(vaultPath) { mutableStateOf(biometric.isEnrolled(vaultPath)) }
@@ -188,6 +189,25 @@ fun UnlockScreen(
                         leadingIcon = Icons.Default.Fingerprint,
                     )
                 }
+
+                // Member-side join (§4.8-6): a cloned vault awaiting approval
+                // cannot unlock yet — this is the only way in.
+                Spacer(Modifier.height(12.dp))
+                androidx.compose.material3.TextButton(onClick = { showJoin = true }) {
+                    Text(t("join.entry"))
+                }
+            }
+
+            if (showJoin) {
+                JoinSpaceDialog(
+                    vaultPath = vaultPath,
+                    authViewModel = authViewModel,
+                    onApproved = {
+                        showJoin = false
+                        finishUnlock()
+                    },
+                    onDismiss = { showJoin = false },
+                )
             }
 
             // One-time quick-unlock enrollment offer (B5). The KDF runs once
