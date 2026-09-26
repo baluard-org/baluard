@@ -136,6 +136,7 @@ fun EntryListScreen(
         is EntryListKind.Folder -> folders.firstOrNull { it.id == kind.id }?.name
             ?: t("home.noFolder")
         is EntryListKind.Tag -> kind.tag
+        is EntryListKind.Collection -> kind.name
         EntryListKind.Archive -> t("home.archive")
         EntryListKind.Trash -> t("home.trash")
     }
