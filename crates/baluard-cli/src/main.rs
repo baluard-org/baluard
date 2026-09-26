@@ -311,6 +311,16 @@ enum VaultAction {
         #[arg(long)]
         delete_from_disk: bool,
     },
+    /// Re-point a registered vault's sync origin to a new URL without
+    /// announcing (S3-8 power-user escape hatch; the admin migrate in
+    /// the app is the normal path and every device follows it
+    /// automatically). Keyless: no unlock, no key material touched.
+    Repoint {
+        /// Vault slug.
+        slug: String,
+        /// New sync address (https://, ssh://, or git@).
+        url: String,
+    },
 }
 
 #[derive(Subcommand)]

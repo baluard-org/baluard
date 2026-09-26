@@ -398,7 +398,12 @@
     "webOAuthWaiting": "Waiting for authorization in your browser...",
     "webOAuthError": "Authentication failed. Please try again.",
     "errorRepoCreatePartial": "Repository may have been created on the provider but sync setup failed. If you give up, you may need to delete the empty repo on {provider} manually.",
-    "copyCode": "Copy code"
+    "copyCode": "Copy code",
+    "migrateTitle": "Move sync to a new address",
+    "migratePlaceholder": "https://github.com/you/baluard-vault",
+    "migrateAction": "Move sync",
+    "migrateConfirmBody": "Everyone you share with is told about the new address and follows on their next sync. Move now?",
+    "migratedToast": "Sync moved. Everyone follows on their next sync."
   },
   "autosync": {
     "upToDate": "All changes synced",

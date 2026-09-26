@@ -1205,6 +1205,14 @@ Trash rows now carry their origin collection end to end, resolved from the on-di
 
 **Boundaries**: collection-aware extension routes and mobile admin surfaces remain the S3 tail; org settings/readiness and the provider checklist stay deferred.
 
+### D44. Remote Migration and Auto-Adopt (S3-8) (2026-09-26; S3 in progress)
+
+A Space's git remote is transport, and transport dies. The admin moves it: the full history ships to the new remote FIRST, then a plaintext pointer commit goes to the old remote — one last sync every peer still watches — then origin re-points and the pointer lands on the new address. Every device reads the pointer from verified committed HEAD on its next pull and follows within the same forge host. Ordering is the safety mechanism: a follower only ever re-points to a remote that already holds the referenced history, so the classic migration wedge (announced address missing the history) is closed by construction, not by cleanup.
+
+Three rules generalize. (1) A pointer that moves devices must be committed and verified — never read from a worktree that its own author may not have shipped. (2) Automatic re-pointing stays within the forge already in use; cross-host moves are explicit (`vaults repoint`). Paired with this, provider tokens are now host-gated at the credential callback itself — a token is refused to any host outside its provider's enrolled instances — closing a latent exfil path where a pointer to a hostile git server could have collected a member's stored token on an auth challenge (env-var and file tokens, which carry no enrolled hosts, are covered only by the same-host follow gate and remain an explicit-choice residual). (3) Rollback never uses reset --hard on a commit that commit_all may have swept user work into — a failed migration leaves its commit local and unpushed, and re-running converges on top of it. The review round for this slice was unusual: the reviewer timed out mid-remediation and its half-applied fixes were audited, kept where sound, and completed by hand — records of what landed are claims; the tree is the evidence, in both directions.
+
+**Boundaries**: cross-provider migrations need the new provider connected before followers can fetch (provider checklist slice); a pointer to a repo the admin cannot push to strands followers until a newer pointer or a manual repoint (availability only — signature verification still gates every commit); org settings/readiness remain deferred.
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

@@ -2973,7 +2973,34 @@ pub fn handle_vaults(action: &VaultAction, cli: &Cli) -> Result<(), Box<dyn std:
             slug,
             delete_from_disk,
         } => vaults_detach(slug, *delete_from_disk, cli),
+        VaultAction::Repoint { slug, url } => vaults_repoint(slug, url),
     }
+}
+
+/// `baluard vaults repoint <slug> <url>`: re-point a registered vault's
+/// sync origin to a new URL without announcing. The S3-8 escape hatch
+/// for missed migrations and manual moves; the in-app migrate is the
+/// normal path (it announces, so every device follows automatically).
+/// Keyless: the repo config is plain git state, no unlock needed.
+fn vaults_repoint(slug: &str, url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    baluard_core::sync::engine::validate_git_url(url)?;
+    let reg = baluard_core::vault::registry::VaultRegistry::load_locked()?;
+    let entry = reg
+        .get(slug)
+        .ok_or_else(|| format!("vault '{slug}' not found in registry"))?;
+    let vault_path = std::path::PathBuf::from(&entry.path);
+    if !vault_path.is_dir() {
+        return Err(format!("vault directory missing: {}", entry.path.display()).into());
+    }
+    let engine = baluard_core::sync::engine::SyncEngine::new(&vault_path, "cli", None);
+    let repo = engine.open_repo()?;
+    repo.remote_set_url("origin", url)
+        .map_err(|e| format!("repoint failed: {e}"))?;
+    if let Ok(mut cfg) = repo.config() {
+        let _ = cfg.set_str("baluard.adopted-remote", url);
+    }
+    println!("Sync address for '{slug}' is now {url}");
+    Ok(())
 }
 
 /// `baluard vaults add <path>`: register an already-existing vault
