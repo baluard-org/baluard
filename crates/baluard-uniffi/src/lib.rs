@@ -806,6 +806,47 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Reset a member: their identity is tombstoned and a successor row
+    /// is minted; the member re-joins with the returned one-time code.
+    /// Returns `{successor_id, reset_code}`.
+    pub async fn member_reset(&self, member_id: String) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "member_id": member_id }).to_string();
+        self.state
+            .members_reset(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Transfer ownership to a member (owner-only; core-gated). The
+    /// caller is demoted to Admin. Returns `{}`.
+    pub async fn member_transfer(&self, member_id: String) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "member_id": member_id }).to_string();
+        self.state
+            .members_transfer(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Remove members and rotate the root key so their key material is
+    /// dead. Provider seats are struck first; a strike failure refuses
+    /// the removal unless `offline_override` is explicit. Returns
+    /// `{removed, new_epoch, seats_struck, unstruck_seats}`.
+    pub async fn member_remove(
+        &self,
+        member_ids: Vec<String>,
+        offline_override: bool,
+    ) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({
+            "member_ids": member_ids,
+            "offline_override": offline_override,
+        })
+        .to_string();
+        self.state
+            .members_remove(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Join a shared space (member side of the join ceremony). The vault
     /// must already be cloned locally (see `clone_vault_start`). Payload
     /// fields: `code` (the invite code), `password` (the joiner's chosen
