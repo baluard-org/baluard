@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -82,6 +83,18 @@ fun PeopleScreen(
     var grantExpiryDays by remember { mutableStateOf("") }
     var grantBusy by remember { mutableStateOf(false) }
 
+    // §4.8-8 offboarding: one typed-confirm dialog at a time. The confirm
+    // word is the member's name, mirroring the desktop TypedConfirmModal;
+    // a failed provider seat strike keeps the dialog open with the
+    // override switch UNCHECKED — explicit consent, never pre-ticked.
+    var pendingKind by remember { mutableStateOf<String?>(null) }
+    var pendingMember by remember { mutableStateOf<MobileMemberInfo?>(null) }
+    var confirmWord by remember { mutableStateOf("") }
+    var removeOverride by remember { mutableStateOf(false) }
+    var lastRemoveError by remember { mutableStateOf<String?>(null) }
+    var offboardBusy by remember { mutableStateOf(false) }
+    var resetResult by remember { mutableStateOf<VaultRepository.MobileResetResult?>(null) }
+
     suspend fun refreshAll() {
         runCatching {
             members = repo.listMembers(vault)
@@ -92,6 +105,84 @@ fun PeopleScreen(
     }
 
     LaunchedEffect(vault) { refreshAll() }
+
+    val myRole = members.firstOrNull { it.isSelf }?.role
+    val canOffboard = myRole == "owner" || myRole == "admin"
+    val canTransfer = myRole == "owner"
+
+    fun openOffboard(kind: String, m: MobileMemberInfo) {
+        pendingKind = kind
+        pendingMember = m
+        confirmWord = ""
+        removeOverride = false
+        lastRemoveError = null
+    }
+
+    fun closeOffboard() {
+        pendingKind = null
+        pendingMember = null
+        confirmWord = ""
+        removeOverride = false
+        lastRemoveError = null
+    }
+
+    suspend fun runConfirmedOffboard() {
+        val m = pendingMember ?: return
+        val kind = pendingKind ?: return
+        offboardBusy = true
+        try {
+            when (kind) {
+                "remove" -> {
+                    val raw = repo.memberRemove(vault, listOf(m.id), removeOverride)
+                    val report = repo.parseRemoveReport(raw)
+                    if (report == null) {
+                        // Malformed payload: never dress it up as success.
+                        Toast.error(t("error.generic"))
+                    } else {
+                        val unstruck = report.unstruckSeats
+                        if (unstruck.isNotEmpty()) {
+                            Toast.error(t("people.seatUnstruck") + " " + unstruck.joinToString(", "))
+                        } else {
+                            Toast.success(t("people.removedToast"))
+                        }
+                    }
+                    closeOffboard()
+                }
+                "reset" -> {
+                    val raw = repo.memberReset(vault, m.id)
+                    val parsed = repo.parseResetResult(raw)
+                    if (parsed == null || parsed.resetCode.isEmpty()) {
+                        // The reset already happened core-side; a lost code
+                        // would lock the successor out, so a bad payload
+                        // must never read as success.
+                        Toast.error(t("error.generic"))
+                    } else {
+                        resetResult = parsed
+                        Toast.success(t("people.resetDone"))
+                    }
+                    closeOffboard()
+                }
+                "transfer" -> {
+                    repo.memberTransfer(vault, m.id)
+                    Toast.success(t("people.transferDone"))
+                    closeOffboard()
+                }
+            }
+            refreshAll()
+        } catch (e: Exception) {
+            val msg = e.message ?: t("error.generic")
+            // A failed seat strike is not a dead end: the dialog stays
+            // open so the admin can read why and opt into the override.
+            if (kind == "remove" && msg.contains("provider seat removal failed")) {
+                lastRemoveError = msg
+                removeOverride = false
+            } else {
+                Toast.error(msg)
+            }
+        } finally {
+            offboardBusy = false
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -260,6 +351,30 @@ fun PeopleScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                            }
+                            // §4.8-8: never on the viewer's own row.
+                            // Transfer sits on the TARGET row (owner makes
+                            // someone else the owner); reset/remove for
+                            // owner and admins.
+                            if (!m.isSelf) {
+                                Row {
+                                    if (canTransfer && m.role != "owner") {
+                                        TextButton(onClick = { openOffboard("transfer", m) }) {
+                                            Text(t("people.actionTransfer"))
+                                        }
+                                    }
+                                    if (canOffboard && m.role != "owner") {
+                                        TextButton(onClick = { openOffboard("reset", m) }) {
+                                            Text(t("people.actionReset"))
+                                        }
+                                        TextButton(onClick = { openOffboard("remove", m) }) {
+                                            Text(
+                                                t("people.actionRemove"),
+                                                color = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -493,6 +608,104 @@ fun PeopleScreen(
             },
             dismissButton = {
                 TextButton(onClick = { inviteCode = null }) { Text(t("common.close")) }
+            },
+        )
+    }
+
+    // §4.8-8: typed confirmation for destructive member actions. The
+    // confirm button stays disabled until the typed word matches the
+    // member's name exactly — a mis-tap cannot destroy access.
+    val pm = pendingMember
+    if (pendingKind != null && pm != null) {
+        val body = when (pendingKind) {
+            "remove" -> t("people.removeBody").replace("{name}", pm.name)
+            "reset" -> t("people.resetBody").replace("{name}", pm.name)
+            else -> t("people.transferBody").replace("{name}", pm.name)
+        }
+        AlertDialog(
+            onDismissRequest = { if (!offboardBusy) closeOffboard() },
+            title = { Text(t("people." + pendingKind + "Title")) },
+            text = {
+                Column {
+                    Text(body, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    BaluardTextField(
+                        value = confirmWord,
+                        onValueChange = { confirmWord = it },
+                        label = t("people.confirmWordLabel"),
+                        singleLine = true,
+                    )
+                    if (pendingKind == "remove" && lastRemoveError != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            lastRemoveError.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = removeOverride,
+                                onCheckedChange = { removeOverride = it },
+                            )
+                            Text(t("people.overrideLabel"), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    // Desktop TypedConfirmModal parity: the word must be
+                    // non-empty AND trim-match the member name, so an
+                    // empty-name row or keyboard whitespace cannot
+                    // pre-enable or lock out the confirm.
+                    enabled = !offboardBusy &&
+                        pm.name.isNotEmpty() &&
+                        confirmWord.trim() == pm.name,
+                    onClick = { scope.launch { runConfirmedOffboard() } },
+                ) {
+                    Text(
+                        when (pendingKind) {
+                            "remove" -> t("people.confirmRemove")
+                            "reset" -> t("people.confirmReset")
+                            else -> t("people.confirmTransfer")
+                        },
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !offboardBusy,
+                    onClick = { closeOffboard() },
+                ) { Text(t("common.close")) }
+            },
+        )
+    }
+
+    // One-time reset code: hand back to the member out of band.
+    resetResult?.let { r ->
+        AlertDialog(
+            onDismissRequest = { resetResult = null },
+            title = { Text(t("people.resetCodeTitle")) },
+            text = {
+                Column {
+                    Text(t("people.resetCodeBody"), style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        r.resetCode,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 14.sp,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    copyToClipboard(r.resetCode)
+                    Toast.success(t("people.codeCopied"))
+                    resetResult = null
+                }) { Text(t("people.copyCode")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetResult = null }) { Text(t("common.close")) }
             },
         )
     }

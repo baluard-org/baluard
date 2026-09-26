@@ -901,6 +901,12 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1027,6 +1033,12 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_lock(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_invite(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_member_remove(`ptr`: Pointer,`memberIds`: RustBuffer.ByValue,`offlineOverride`: Byte,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_member_reset(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_member_transfer(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_members_list(`ptr`: Pointer,
     ): Long
@@ -1354,6 +1366,12 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_invite(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_remove(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_reset(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_transfer(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_members_list(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_rename_folder(
@@ -1612,6 +1630,15 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_invite() != 53433.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_remove() != 46301.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_reset() != 8510.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_member_transfer() != 445.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_members_list() != 29779.toShort()) {
@@ -2851,6 +2878,27 @@ public interface MobileVaultInterface {
      * Returns `{code, seat_granted, seat_error}`.
      */
     suspend fun `memberInvite`(`payload`: kotlin.String): kotlin.String
+    
+    /**
+     * Remove members and rotate the root key so their key material is
+     * dead. Provider seats are struck first; a strike failure refuses
+     * the removal unless `offline_override` is explicit. Returns
+     * `{removed, new_epoch, seats_struck, unstruck_seats}`.
+     */
+    suspend fun `memberRemove`(`memberIds`: List<kotlin.String>, `offlineOverride`: kotlin.Boolean): kotlin.String
+    
+    /**
+     * Reset a member: their identity is tombstoned and a successor row
+     * is minted; the member re-joins with the returned one-time code.
+     * Returns `{successor_id, reset_code}`.
+     */
+    suspend fun `memberReset`(`memberId`: kotlin.String): kotlin.String
+    
+    /**
+     * Transfer ownership to a member (owner-only; core-gated). The
+     * caller is demoted to Admin. Returns `{}`.
+     */
+    suspend fun `memberTransfer`(`memberId`: kotlin.String): kotlin.String
     
     /**
      * People list. `{members: [{id, display_name, role, trust, reset,
@@ -4133,6 +4181,84 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_invite(
                 thisPtr,
                 FfiConverterString.lower(`payload`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Remove members and rotate the root key so their key material is
+     * dead. Provider seats are struck first; a strike failure refuses
+     * the removal unless `offline_override` is explicit. Returns
+     * `{removed, new_epoch, seats_struck, unstruck_seats}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `memberRemove`(`memberIds`: List<kotlin.String>, `offlineOverride`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_remove(
+                thisPtr,
+                FfiConverterSequenceString.lower(`memberIds`),FfiConverterBoolean.lower(`offlineOverride`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Reset a member: their identity is tombstoned and a successor row
+     * is minted; the member re-joins with the returned one-time code.
+     * Returns `{successor_id, reset_code}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `memberReset`(`memberId`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_reset(
+                thisPtr,
+                FfiConverterString.lower(`memberId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Transfer ownership to a member (owner-only; core-gated). The
+     * caller is demoted to Admin. Returns `{}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `memberTransfer`(`memberId`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_member_transfer(
+                thisPtr,
+                FfiConverterString.lower(`memberId`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },

@@ -1229,6 +1229,14 @@ Two review findings repeated earlier lessons in new costumes. The hand-built-JSO
 
 **Boundaries**: destructive member controls, the flip, and collection CRUD remain desktop until a dedicated mobile wave; expiry days convert on the phone clock, and the daemon's own clock checks refuse a past expiry harmlessly; the join-queue secret-check warning is advisory by design (S1a: secret_ok false means verify out of band, not refuse).
 
+### D47. Fail-Loud Offboarding on a Small Screen (§4.8-8) (2026-09-26; S3 in progress)
+
+Destructive controls travel with their confirmation machinery, not just their routes: the typed-confirm word is the member's name with desktop parity guards (non-empty name AND trim-matched input), the strike-failure path keeps the dialog open with the override switch UNCHECKED, and the offboarding report is parsed fail-loud. The reset code is the sharpest edge in the wave: the reset has already happened core-side when the response arrives, so a malformed payload that read as success would silently destroy the one artifact the successor needs. Every parse in this surface therefore fails toward a visible error, never toward an empty success.
+
+Two review lessons generalize. An empty-string confirm word equals an empty-string member name: any typed-confirm guard must require a non-empty typed value, or a display name the system failed to record becomes a zero-friction destruction path. And a dismiss button is part of the failure surface: closing the dialog while the strike network call is in flight would swallow the only report of why the removal did not happen, so dismiss is disabled for the duration of the call.
+
+**Boundaries**: flip/prepare stay off the phone until desktop grows its own flip surface (parity first); ownership transfer confirmation carries no extra secret, but the demotion is irreversible except by the new owner, so its dialog says so plainly; batch removal exists in the core API but the mobile UI removes one member at a time.
+
 ## Staged Implementation Roadmap
 
 - **Phase 1: Cryptographic Core & Padding Engine**: Rust baluard-core (crypto, keys, vault, padding). Protobuf schemas. DONE.

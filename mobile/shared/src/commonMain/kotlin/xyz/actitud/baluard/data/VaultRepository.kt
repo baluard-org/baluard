@@ -318,6 +318,17 @@ class VaultRepository {
         vault.collectionGrant(payload)
     suspend fun collectionRevoke(vault: MobileVault, payload: String): String =
         vault.collectionRevoke(payload)
+    // §4.8-8 offboarding: the bridge builds the JSON payloads from typed
+    // args, so the app never hand-escapes member ids.
+    suspend fun memberReset(vault: MobileVault, memberId: String): String =
+        vault.memberReset(memberId)
+    suspend fun memberTransfer(vault: MobileVault, memberId: String): String =
+        vault.memberTransfer(memberId)
+    suspend fun memberRemove(
+        vault: MobileVault,
+        memberIds: List<String>,
+        offlineOverride: Boolean,
+    ): String = vault.memberRemove(memberIds, offlineOverride)
 
     /** Approve an access ask; access is the admin's final say (read or
      * write preset). Payload contract per the runtime wrapper. */
@@ -363,6 +374,44 @@ class VaultRepository {
             ) else null
         }
     }
+
+    /** One-time reset code handed back to the member (members.reset). */
+    data class MobileResetResult(val successorId: String, val resetCode: String)
+
+    /** Offboarding report (members.remove): what was struck and what
+     *  could not be — the UI surfaces unstruck seats prominently. */
+    data class MobileRemoveReport(
+        val removedCount: Int,
+        val newEpoch: Long,
+        val seatsStruck: List<String>,
+        val unstruckSeats: List<String>,
+    )
+
+    /** Parse the members.reset response; null on malformed input. */
+    fun parseResetResult(raw: String): MobileResetResult? = runCatching {
+        val o = kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        MobileResetResult(
+            successorId = (o["successor_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+            resetCode = (o["reset_code"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "",
+        )
+    }.getOrNull()
+
+    /** Parse the members.remove report; null on malformed input. */
+    fun parseRemoveReport(raw: String): MobileRemoveReport? = runCatching {
+        val o = kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject
+        fun strList(key: String): List<String> =
+            (o[key] as? kotlinx.serialization.json.JsonArray)
+                ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                .orEmpty()
+        MobileRemoveReport(
+            removedCount = (o["removed"] as? kotlinx.serialization.json.JsonArray)?.size
+                ?: (o["removed"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
+                ?: 0,
+            newEpoch = (o["new_epoch"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
+            seatsStruck = strList("seats_struck"),
+            unstruckSeats = strList("unstruck_seats"),
+        )
+    }.getOrNull()
 
     /** Parsed queued join introductions for the People screen. */
     suspend fun listJoinRequests(vault: MobileVault): List<MobileJoinRequest> {
