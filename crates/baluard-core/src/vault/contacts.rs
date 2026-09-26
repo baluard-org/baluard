@@ -68,15 +68,16 @@ impl ContactCard {
     }
 
     /// The human-comparison code for the Level 2 check: both apps derive
-    /// it from the card's identity key and compare out-of-band. First 8
-    /// hex chars of a domain-separated hash — 32 bits, enough to make a
-    /// pubkey-swap collision infeasible for a manual check.
+    /// it from the card's identity key and compare out-of-band. First 16
+    /// hex chars of a domain-separated hash. 64 bits: an active MITM who
+    /// swaps cards must brute-force a key whose code matches the real
+    /// contact's, and 2^64 is out of reach offline (32 bits was not).
     pub fn verification_code(&self) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"baluard-contact-verify-v1");
         hasher.update(self.identity_signing_pubkey.as_bytes());
-        hex::encode(&hasher.finalize()[..4])
+        hex::encode(&hasher.finalize()[..8])
     }
 }
 
@@ -324,6 +325,25 @@ pub fn mark_verified(
     save_contacts(vault_path, contacts_key, &entries)
 }
 
+/// Remove a contact from the address book by signing pubkey. Fails
+/// with NotFound when the pubkey is not in the book, so a stale UI
+/// row cannot look like a successful removal.
+pub fn remove_contact(
+    vault_path: &Path,
+    contacts_key: &[u8; 32],
+    identity_signing_pubkey: &str,
+) -> Result<(), BaluardError> {
+    let mut entries = load_contacts(vault_path, contacts_key)?;
+    let before = entries.len();
+    entries.retain(|e| e.card.identity_signing_pubkey != identity_signing_pubkey);
+    if entries.len() == before {
+        return Err(BaluardError::from(VaultError::Metadata(
+            "contact not found".into(),
+        )));
+    }
+    save_contacts(vault_path, contacts_key, &entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,6 +404,9 @@ mod tests {
             card_a.card.verification_code(),
             card_b.card.verification_code()
         );
+        // 64-bit comparison code: short enough to read aloud, long
+        // enough that offline pubkey-swap preimage search is infeasible.
+        assert_eq!(card_a.card.verification_code().len(), 16);
     }
 
     #[test]

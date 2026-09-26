@@ -565,6 +565,20 @@ impl VaultHandle {
         )
     }
 
+    /// Remove a contact from the address book. The dial position is
+    /// local state; removing a contact never revokes anything the
+    /// contact already received.
+    pub fn contacts_remove(&mut self, identity_signing_pubkey: &str) -> Result<(), BaluardError> {
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked.into());
+        }
+        crate::vault::contacts::remove_contact(
+            &self.path,
+            &self.contacts_key()?,
+            identity_signing_pubkey,
+        )
+    }
+
     /// S2 IS-3: export a cipher as a one-shot item package, HPKE-wrapped
     /// to the recipient contact's identity wrap pubkey. The copy is
     /// inert: no live link, cannot be un-shared (the pre-send UI states

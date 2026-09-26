@@ -325,7 +325,8 @@
     "syncNotAvailable": "A sincronização não está disponível nesta versão.",
     "tabBridge": "Extensões do navegador",
     "themeSystem": "Sistema",
-    "tabCollections": "Coleções compartilhadas"
+    "tabCollections": "Coleções compartilhadas",
+    "tabContacts": "Contatos"
   },
   "sync": {
     "title": "Sincronização do Cofre",
@@ -805,6 +806,37 @@
     "passwordLabel": "Senha",
     "totpLabel": "Código de uso único",
     "expiresLabel": "Expira:",
-    "fileTooLarge": "Esse arquivo é grande demais para ser um item compartilhado."
+    "fileTooLarge": "Esse arquivo é grande demais para ser um item compartilhado.",
+    "flavorGuest": "Qualquer um (frase)",
+    "flavorContact": "Um contato",
+    "contactLabel": "Contato",
+    "contactNote": "Quem recebe abre no app dele; sem frase-senha. Qualquer um com o arquivo e a chave de identidade dele poderia abrir: trate o arquivo como o segredo.",
+    "noContactsHint": "Nenhum contato ainda — adicione um em Ajustes > Contatos primeiro."
+  },
+  "contacts": {
+    "myCardTitle": "Meu cartão",
+    "myCardBody": "Compartilhe seu código de contato para que te adicionem. Depois comparem os códigos de verificação fora do app: você mostra o seu, eles mostram o deles, e ambos devem bater com o que o app exibe.",
+    "importTitle": "Adicionar contato",
+    "importPlaceholder": "Cole o código de contato que você recebeu",
+    "importAction": "Adicionar",
+    "importedToast": "Contato adicionado",
+    "listTitle": "Contatos",
+    "empty": "Nenhum contato ainda.",
+    "canReceive": "Pode receber itens compartilhados",
+    "noWrapKey": "Cartão antigo: peça para compartilhar de novo para receber",
+    "trustVerified": "Verificado",
+    "trustChannel": "Canal",
+    "theirCode": "Código de verificação dele",
+    "showCode": "Mostrar código",
+    "hideCode": "Ocultar código",
+    "markVerified": "Os códigos coincidem",
+    "verifiedToast": "Contato verificado",
+    "remove": "Remover",
+    "removeTitle": "Remover contato",
+    "removeBody": "Remover {name} dos seus contatos? Itens que já recebeu não são afetados.",
+    "cardCodeLabel": "Código de contato (compartilhe este)",
+    "cardCopied": "Código de contato copiado",
+    "copyCard": "Copiar código de contato",
+    "myCodeLabel": "Meu código de verificação"
   }
 }

@@ -251,6 +251,14 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "packages.import",
         "reveals.open_contact",
         "reveals.open_guest",
+        // S2 UI: address book + contact-flavor send.
+        "contacts.list",
+        "contacts.my_card",
+        "contacts.import_card",
+        "contacts.mark_verified",
+        "contacts.remove",
+        "reveals.export_contact",
+        "packages.export",
         // S3-6: request-access JIT surfaces.
         "collections.request_access",
         "collections.requests_mine",
