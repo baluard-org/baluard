@@ -109,6 +109,13 @@ data class MobileCollectionFull(
     val grants: List<MobileGrantInfo> = emptyList(),
 )
 
+/** §6.5 Space policy knobs as read from the daemon. */
+data class MobileSpaceSettings(
+    val inviteAuthority: String,
+    val allowViewerExport: Boolean,
+    val guestEnabled: Boolean,
+)
+
 class VaultRepository {
     suspend fun generatePassword(config: xyz.actitud.baluard.PasswordConfig): Result<String> =
         runCatching { xyz.actitud.baluard.generatePassword(config) }
@@ -332,6 +339,30 @@ class VaultRepository {
      * even for zero-collection vaults where counting admin rows fails. */
     suspend fun isAdminDevice(vault: MobileVault): Boolean =
         runCatching { vault.isAdminDevice() }.getOrDefault(false)
+
+    /** §6.5 Space policy: {space_invite_authority, allow_viewer_export,
+     * guest_enabled}. Null on failure — the caller toasts. */
+    suspend fun spaceSettingsGet(vault: MobileVault): MobileSpaceSettings? =
+        runCatching {
+            val o = Json.parseToJsonElement(vault.spaceSettingsGet()).jsonObject
+            MobileSpaceSettings(
+                inviteAuthority =
+                    (o["space_invite_authority"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "admins",
+                allowViewerExport = (o["allow_viewer_export"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+                guestEnabled = (o["guest_enabled"] as? kotlinx.serialization.json.JsonPrimitive)?.content != "false",
+            )
+        }.getOrNull()
+
+    /** Set Space policy knobs (partial). One call per changed knob; the
+     * typed args reach the bridge, which builds the JSON payload. */
+    suspend fun spaceSettingsSet(
+        vault: MobileVault,
+        inviteAuthority: String? = null,
+        allowViewerExport: Boolean? = null,
+        guestEnabled: Boolean? = null,
+    ) {
+        vault.spaceSettingsSet(inviteAuthority, allowViewerExport, guestEnabled)
+    }
 
     /** Mint a collection → {id}. */
     suspend fun collectionCreate(vault: MobileVault, name: String): String =

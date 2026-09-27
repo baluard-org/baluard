@@ -125,6 +125,12 @@ open class StubVault(
     override suspend fun `collectionDelete`(id: String): String = err()
     override suspend fun `collectionCatalogSet`(entries: List<MobileCatalogInput>): String = err()
     override suspend fun `isAdminDevice`(): Boolean = err()
+    override suspend fun `spaceSettingsGet`(): String = err()
+    override suspend fun `spaceSettingsSet`(
+        `inviteAuthority`: String?,
+        `allowViewerExport`: Boolean?,
+        `guestEnabled`: Boolean?,
+    ): Unit = err()
     override suspend fun `collectionRequestAccess`(payload: String): String = err()
     override suspend fun `collectionRequestsApprove`(payload: String): String = err()
     override suspend fun `collectionRequestsDeny`(payload: String): String = err()

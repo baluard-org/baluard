@@ -327,7 +327,8 @@
     "themeSystem": "System",
     "tabCollections": "Shared collections",
     "tabContacts": "Contacts",
-    "tabOutboxes": "Outboxes"
+    "tabOutboxes": "Outboxes",
+    "tabSpace": "Space"
   },
   "sync": {
     "title": "Vault Sync",
@@ -877,5 +878,15 @@
     "copySecret": "Copy",
     "copiedToast": "Copied",
     "oneItem": "1 item"
+  },
+  "space": {
+    "inviteAuthorityLabel": "Who may invite members",
+    "inviteAuthorityDesc": "Admins and owners, or owners only. Does not affect reset invitations.",
+    "authorityAdmins": "Admins + owner",
+    "authorityOwners": "Owner only",
+    "viewerExportLabel": "Let viewers export",
+    "viewerExportDesc": "Viewers can download a copy of the vault. Off by default.",
+    "guestLabel": "Guest sharing",
+    "guestDesc": "Create share links that open without an account. Already-created links keep working until they expire."
   }
 }

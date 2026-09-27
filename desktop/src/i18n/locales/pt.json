@@ -327,7 +327,8 @@
     "themeSystem": "Sistema",
     "tabCollections": "Coleções compartilhadas",
     "tabContacts": "Contatos",
-    "tabOutboxes": "Caixas de saída"
+    "tabOutboxes": "Caixas de saída",
+    "tabSpace": "Espaço"
   },
   "sync": {
     "title": "Sincronização do Cofre",
@@ -877,5 +878,15 @@
     "copySecret": "Copiar",
     "copiedToast": "Copiado",
     "oneItem": "1 item"
+  },
+  "space": {
+    "inviteAuthorityLabel": "Quem pode convidar membros",
+    "inviteAuthorityDesc": "Administradores e proprietário, ou apenas o proprietário. Não afeta convites de redefinição.",
+    "authorityAdmins": "Admins. + proprietário",
+    "authorityOwners": "Somente proprietário",
+    "viewerExportLabel": "Permitir exportação a leitores",
+    "viewerExportDesc": "Leitores podem baixar uma cópia do cofre. Desativado por padrão.",
+    "guestLabel": "Compartilhamento com convidados",
+    "guestDesc": "Criar links que abrem sem conta. Links já criados continuam funcionando até expirar."
   }
 }

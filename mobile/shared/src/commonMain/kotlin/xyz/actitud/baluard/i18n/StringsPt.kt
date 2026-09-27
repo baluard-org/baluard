@@ -555,4 +555,14 @@ internal val PT: Map<String, String> = mapOf(
         "collections.catalogClearBody" to "Ocultar todos os nomes no diálogo de pedidos?",
         "collections.catalogPublishedToast" to "Catálogo atualizado",
 
+    // S3-9b: Space policy (admin card on Settings).
+    "space.title" to "Espaço",
+    "space.inviteAuthorityLabel" to "Quem pode convidar membros",
+    "space.inviteAuthorityDesc" to "Administradores e proprietário, ou apenas o proprietário. Não afeta convites de redefinição.",
+    "space.authorityAdmins" to "Admins. + proprietário",
+    "space.authorityOwners" to "Somente proprietário",
+    "space.viewerExportLabel" to "Permitir exportação a leitores",
+    "space.viewerExportDesc" to "Leitores podem baixar uma cópia do cofre. Desativado por padrão.",
+    "space.guestLabel" to "Compartilhamento com convidados",
+    "space.guestDesc" to "Links que abrem sem conta. Links existentes continuam funcionando até expirar.",
 )

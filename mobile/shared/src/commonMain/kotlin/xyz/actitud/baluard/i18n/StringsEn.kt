@@ -584,4 +584,14 @@ internal val EN: Map<String, String> = mapOf(
         "collections.catalogClearBody" to "Hide all collection names from the ask dialog?",
         "collections.catalogPublishedToast" to "Ask catalog updated",
 
+    // S3-9b: Space policy (admin card on Settings).
+    "space.title" to "Space",
+    "space.inviteAuthorityLabel" to "Who may invite members",
+    "space.inviteAuthorityDesc" to "Admins and owner, or the owner only. Does not affect reset invitations.",
+    "space.authorityAdmins" to "Admins + owner",
+    "space.authorityOwners" to "Owner only",
+    "space.viewerExportLabel" to "Let viewers export",
+    "space.viewerExportDesc" to "Viewers can download a copy of the vault. Off by default.",
+    "space.guestLabel" to "Guest sharing",
+    "space.guestDesc" to "Share links that open without an account. Existing links keep working until they expire.",
 )

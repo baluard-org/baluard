@@ -815,6 +815,42 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Space policy knobs (§6.5). Returns the JSON the runtime wrapper
+    /// emits: {space_invite_authority, allow_viewer_export, guest_enabled}.
+    pub async fn space_settings_get(&self) -> Result<String, BaluardError> {
+        self.state
+            .space_settings_get()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Set Space policy knobs (partial, admin-gated). Typed args so the
+    /// app never hand-builds JSON; the bridge constructs the payload.
+    pub async fn space_settings_set(
+        &self,
+        invite_authority: Option<String>,
+        allow_viewer_export: Option<bool>,
+        guest_enabled: Option<bool>,
+    ) -> Result<(), BaluardError> {
+        // Present fields only: the runtime parser treats a present-null
+        // key as a mistyped value, so None args must stay absent.
+        let mut map = serde_json::Map::new();
+        if let Some(ia) = invite_authority {
+            map.insert("space_invite_authority".into(), ia.into());
+        }
+        if let Some(ave) = allow_viewer_export {
+            map.insert("allow_viewer_export".into(), ave.into());
+        }
+        if let Some(ge) = guest_enabled {
+            map.insert("guest_enabled".into(), ge.into());
+        }
+        let payload = serde_json::Value::Object(map);
+        self.state
+            .space_settings_set(&payload.to_string())
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Mint a collection (admin-gated core). Returns `{id}`.
     pub async fn collection_create(&self, name: String) -> Result<String, BaluardError> {
         self.state
