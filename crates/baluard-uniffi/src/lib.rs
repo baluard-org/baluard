@@ -806,6 +806,64 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Whether this device manages the space (holds the Root Key) —
+    /// the admin marker that stays true for zero-collection vaults.
+    pub async fn is_admin_device(&self) -> Result<bool, BaluardError> {
+        self.state
+            .is_admin_device()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Mint a collection (admin-gated core). Returns `{id}`.
+    pub async fn collection_create(&self, name: String) -> Result<String, BaluardError> {
+        self.state
+            .collection_create(&name)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Rename a collection (admin-gated core). Returns `{ok: true}`.
+    pub async fn collection_rename(
+        &self,
+        id: String,
+        name: String,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .collection_rename(&id, &name)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Delete a collection (admin-gated core; grants die with it,
+    /// entries are preserved). Returns `{ok: true}`.
+    pub async fn collection_delete(&self, id: String) -> Result<String, BaluardError> {
+        self.state
+            .collection_delete(&id)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Publish the request catalog (admin-gated): the entries requesters
+    /// may ask for by name. An empty list clears the catalog (opt-out).
+    /// Returns `{published: true}`.
+    pub async fn collection_catalog_set(
+        &self,
+        entries: Vec<MobileCatalogInput>,
+    ) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({
+            "entries": entries.iter().map(|e| serde_json::json!({
+                "collection_id": e.collection_id,
+                "name": e.name,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string();
+        self.state
+            .collection_catalog_set(&payload)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Reset a member: their identity is tombstoned and a successor row
     /// is minted; the member re-joins with the returned one-time code.
     /// Returns `{successor_id, reset_code}`.
@@ -979,6 +1037,14 @@ pub async fn create_vault_with_recovery(
 // at the boundary; usize is platform-dependent.
 
 /// Options for [`generate_password`]. Mirrors `baluard_core::generator::PasswordOptions`.
+/// One request-catalog entry the admin publishes: the collection id
+/// plus the plaintext display name requesters see when asking.
+#[derive(uniffi::Record)]
+pub struct MobileCatalogInput {
+    pub collection_id: String,
+    pub name: String,
+}
+
 #[derive(uniffi::Record)]
 pub struct PasswordConfig {
     /// Password length (>= 1). Default 16.

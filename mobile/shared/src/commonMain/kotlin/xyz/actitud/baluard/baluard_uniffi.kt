@@ -907,6 +907,16 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -960,7 +970,15 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_catalog_list(`ptr`: Pointer,
     ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_catalog_set(`ptr`: Pointer,`entries`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_create(`ptr`: Pointer,`name`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_delete(`ptr`: Pointer,`id`: RustBuffer.ByValue,
+    ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_grant(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_rename(`ptr`: Pointer,`id`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_collection_request_access(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
@@ -1005,6 +1023,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_get_pending_conflict_details(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_get_settings(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_is_admin_device(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_is_unlocked(`ptr`: Pointer,
     ): Long
@@ -1292,7 +1312,15 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_catalog_list(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_catalog_set(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_create(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_delete(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_grant(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_rename(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_collection_request_access(
     ): Short
@@ -1337,6 +1365,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_get_pending_conflict_details(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_get_settings(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_is_admin_device(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_is_unlocked(
     ): Short
@@ -1521,7 +1551,19 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_catalog_list() != 10134.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_catalog_set() != 10467.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_create() != 10302.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_delete() != 29516.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_grant() != 15807.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_rename() != 53466.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_collection_request_access() != 42130.toShort()) {
@@ -1588,6 +1630,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_get_settings() != 44276.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_is_admin_device() != 20077.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_is_unlocked() != 31920.toShort()) {
@@ -2667,11 +2712,34 @@ public interface MobileVaultInterface {
     suspend fun `collectionCatalogList`(): kotlin.String
     
     /**
+     * Publish the request catalog (admin-gated): the entries requesters
+     * may ask for by name. An empty list clears the catalog (opt-out).
+     * Returns `{published: true}`.
+     */
+    suspend fun `collectionCatalogSet`(`entries`: List<MobileCatalogInput>): kotlin.String
+    
+    /**
+     * Mint a collection (admin-gated core). Returns `{id}`.
+     */
+    suspend fun `collectionCreate`(`name`: kotlin.String): kotlin.String
+    
+    /**
+     * Delete a collection (admin-gated core; grants die with it,
+     * entries are preserved). Returns `{ok: true}`.
+     */
+    suspend fun `collectionDelete`(`id`: kotlin.String): kotlin.String
+    
+    /**
      * Grant collection access. Payload: `{id, member_id, access:
      * "read"|"write"|"manage", expires_at?}` (expires_at is an absolute
      * epoch second; absent = never).
      */
     suspend fun `collectionGrant`(`payload`: kotlin.String): kotlin.String
+    
+    /**
+     * Rename a collection (admin-gated core). Returns `{ok: true}`.
+     */
+    suspend fun `collectionRename`(`id`: kotlin.String, `name`: kotlin.String): kotlin.String
     
     /**
      * Ask for access to a collection (request-access JIT). Payload:
@@ -2791,6 +2859,12 @@ public interface MobileVaultInterface {
      * Get current vault settings as JSON string.
      */
     suspend fun `getSettings`(): kotlin.String
+    
+    /**
+     * Whether this device manages the space (holds the Root Key) —
+     * the admin marker that stays true for zero-collection vaults.
+     */
+    suspend fun `isAdminDevice`(): kotlin.Boolean
     
     /**
      * Whether the vault currently holds an unlocked handle in memory.
@@ -3278,6 +3352,81 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
+     * Publish the request catalog (admin-gated): the entries requesters
+     * may ask for by name. An empty list clears the catalog (opt-out).
+     * Returns `{published: true}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `collectionCatalogSet`(`entries`: List<MobileCatalogInput>) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collection_catalog_set(
+                thisPtr,
+                FfiConverterSequenceTypeMobileCatalogInput.lower(`entries`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Mint a collection (admin-gated core). Returns `{id}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `collectionCreate`(`name`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collection_create(
+                thisPtr,
+                FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Delete a collection (admin-gated core; grants die with it,
+     * entries are preserved). Returns `{ok: true}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `collectionDelete`(`id`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collection_delete(
+                thisPtr,
+                FfiConverterString.lower(`id`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * Grant collection access. Payload: `{id, member_id, access:
      * "read"|"write"|"manage", expires_at?}` (expires_at is an absolute
      * epoch second; absent = never).
@@ -3290,6 +3439,30 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collection_grant(
                 thisPtr,
                 FfiConverterString.lower(`payload`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Rename a collection (admin-gated core). Returns `{ok: true}`.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `collectionRename`(`id`: kotlin.String, `name`: kotlin.String) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_collection_rename(
+                thisPtr,
+                FfiConverterString.lower(`id`),FfiConverterString.lower(`name`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -3835,6 +4008,31 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Whether this device manages the space (holds the Root Key) —
+     * the admin marker that stays true for zero-collection vaults.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `isAdminDevice`() : kotlin.Boolean {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_is_admin_device(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_i8(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_i8(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_i8(future) },
+        // lift function
+        { FfiConverterBoolean.lift(it) },
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
@@ -4843,6 +5041,43 @@ public object FfiConverterTypeMobileVault: FfiConverter<MobileVault, Pointer> {
 
 
 /**
+ * Options for [`generate_password`]. Mirrors `baluard_core::generator::PasswordOptions`.
+ * One request-catalog entry the admin publishes: the collection id
+ * plus the plaintext display name requesters see when asking.
+ */
+data class MobileCatalogInput (
+    var `collectionId`: kotlin.String, 
+    var `name`: kotlin.String
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeMobileCatalogInput: FfiConverterRustBuffer<MobileCatalogInput> {
+    override fun read(buf: ByteBuffer): MobileCatalogInput {
+        return MobileCatalogInput(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: MobileCatalogInput) = (
+            FfiConverterString.allocationSize(value.`collectionId`) +
+            FfiConverterString.allocationSize(value.`name`)
+    )
+
+    override fun write(value: MobileCatalogInput, buf: ByteBuffer) {
+            FfiConverterString.write(value.`collectionId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+    }
+}
+
+
+
+/**
  * Lightweight cipher metadata for the vault list. Primitive fields only (no
  * core types cross the FFI) so core stays free of UniFFI annotations. The
  * full typed `CipherKind` enum (plan §3.3) lands before the §10 security
@@ -5188,9 +5423,6 @@ public object FfiConverterTypePassphraseConfig: FfiConverterRustBuffer<Passphras
 
 
 
-/**
- * Options for [`generate_password`]. Mirrors `baluard_core::generator::PasswordOptions`.
- */
 data class PasswordConfig (
     /**
      * Password length (>= 1). Default 16.
@@ -5634,6 +5866,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeMobileCatalogInput: FfiConverterRustBuffer<List<MobileCatalogInput>> {
+    override fun read(buf: ByteBuffer): List<MobileCatalogInput> {
+        val len = buf.getInt()
+        return List<MobileCatalogInput>(len) {
+            FfiConverterTypeMobileCatalogInput.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<MobileCatalogInput>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeMobileCatalogInput.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<MobileCatalogInput>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeMobileCatalogInput.write(it, buf)
         }
     }
 }

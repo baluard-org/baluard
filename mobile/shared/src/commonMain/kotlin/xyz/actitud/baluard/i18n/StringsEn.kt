@@ -560,4 +560,28 @@ internal val EN: Map<String, String> = mapOf(
         "people.resetCodeTitle" to "One-time reset code",
         "people.resetCodeBody" to "Give this code to the member. They re-join with it and set a new password.",
 
+
+        // §4.8-9 collection CRUD.
+        "collections.title" to "Collections",
+        "collections.entrySubtitle" to "Create, rename, or remove shared collections",
+        "collections.listTitle" to "Your collections",
+        "collections.empty" to "No collections yet.",
+        "collections.grantCount" to "{0} grant(s)",
+        "collections.createAction" to "New collection",
+        "collections.nameLabel" to "Name",
+        "collections.createToast" to "Collection created",
+        "collections.rename" to "Rename",
+        "collections.renameTitle" to "Rename collection",
+        "collections.renameToast" to "Collection renamed",
+        "collections.deleteAction" to "Delete",
+        "collections.deleteTitle" to "Delete collection",
+        "collections.deleteBody" to "Delete \"{0}\"? Access grants die with it; entries are kept.",
+        "collections.deleteToast" to "Collection deleted",
+        "collections.catalogTitle" to "Ask catalog",
+        "collections.catalogHint" to "Members see these names when asking for access. Clearing the catalog hides names; they can paste an id instead.",
+        "collections.catalogPublish" to "Publish",
+        "collections.catalogClear" to "Clear",
+        "collections.catalogClearBody" to "Hide all collection names from the ask dialog?",
+        "collections.catalogPublishedToast" to "Ask catalog updated",
+
 )
