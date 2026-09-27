@@ -3613,6 +3613,7 @@ impl VaultHandle {
                         guest_enabled: None,
                         trash_policy: Default::default(),
                         restore_policy: Default::default(),
+                        join_approval: Default::default(),
                         // These post-date the legacy settings.json split: a
                         // legacy file never carries them.
                         custom_equivalent_domains: None,
@@ -3676,6 +3677,10 @@ impl VaultHandle {
                 .as_ref()
                 .map(|e| e.restore_policy)
                 .unwrap_or_default(),
+            join_approval: enc_fields
+                .as_ref()
+                .map(|e| e.join_approval)
+                .unwrap_or_default(),
         })
     }
 
@@ -3728,6 +3733,7 @@ impl VaultHandle {
             guest_enabled: settings.guest_enabled,
             trash_policy: settings.trash_policy,
             restore_policy: settings.restore_policy,
+            join_approval: settings.join_approval,
             custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
@@ -3831,6 +3837,7 @@ impl VaultHandle {
             guest_enabled: settings.guest_enabled,
             trash_policy: settings.trash_policy,
             restore_policy: settings.restore_policy,
+            join_approval: settings.join_approval,
             custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
@@ -13858,6 +13865,7 @@ mod tests {
             guest_enabled: None,
             trash_policy: Default::default(),
             restore_policy: Default::default(),
+            join_approval: Default::default(),
         };
         handle.save_settings(&settings).unwrap();
 

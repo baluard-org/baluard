@@ -832,6 +832,7 @@ impl MobileVault {
         allow_viewer_export: Option<bool>,
         guest_enabled: Option<bool>,
         trash_policy: Option<String>,
+        join_approval: Option<String>,
     ) -> Result<(), BaluardError> {
         // Present fields only: the runtime parser treats a present-null
         // key as a mistyped value, so None args must stay absent.
@@ -847,6 +848,9 @@ impl MobileVault {
         }
         if let Some(tp) = trash_policy {
             map.insert("trash_policy".into(), tp.into());
+        }
+        if let Some(ja) = join_approval {
+            map.insert("join_approval".into(), ja.into());
         }
         let payload = serde_json::Value::Object(map);
         self.state

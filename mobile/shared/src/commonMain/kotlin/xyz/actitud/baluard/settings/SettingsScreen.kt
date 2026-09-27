@@ -1089,6 +1089,7 @@ fun SettingsScreen(
                         allowViewerExport: Boolean? = null,
                         guestEnabled: Boolean? = null,
                         trashPolicy: String? = null,
+                        joinApproval: String? = null,
                     ) {
                         // Synchronous guard: launch dispatches, so a flag
                         // set inside the coroutine lets two rapid taps
@@ -1096,10 +1097,11 @@ fun SettingsScreen(
                         if (spaceBusy) return
                         if (inviteAuthority != null && spaceSettings?.inviteAuthority == inviteAuthority) return
                         if (trashPolicy != null && spaceSettings?.trashPolicy == trashPolicy) return
+                        if (joinApproval != null && spaceSettings?.joinApproval == joinApproval) return
                         spaceBusy = true
                         scope.launch {
                             try {
-                                repo.spaceSettingsSet(vault, inviteAuthority, allowViewerExport, guestEnabled, trashPolicy)
+                                repo.spaceSettingsSet(vault, inviteAuthority, allowViewerExport, guestEnabled, trashPolicy, joinApproval)
                                 spaceSettings = repo.spaceSettingsGet(vault)
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
@@ -1290,6 +1292,41 @@ fun SettingsScreen(
                                     "space.trashAdminsOnly"
                                 } else {
                                     "space.trashWriteScope"
+                                }
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    // How join asks are approved (§6.5 join_approval).
+                    Text(t("space.joinApprovalLabel"), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = t("space.joinApprovalDesc"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            enabled = !spaceBusy,
+                            onClick = { setSpace(joinApproval = "manual") },
+                        ) {
+                            Text(t("space.joinManual"))
+                        }
+                        OutlinedButton(
+                            enabled = !spaceBusy,
+                            onClick = { setSpace(joinApproval = "code") },
+                        ) {
+                            Text(t("space.joinCode"))
+                        }
+                    }
+                    if (spaceSettings != null) {
+                        Text(
+                            text = t(
+                                if (spaceSettings!!.joinApproval == "code") {
+                                    "space.joinCode"
+                                } else {
+                                    "space.joinManual"
                                 }
                             ),
                             style = MaterialTheme.typography.bodySmall,

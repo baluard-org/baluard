@@ -134,6 +134,7 @@ open class StubVault(
         `allowViewerExport`: Boolean?,
         `guestEnabled`: Boolean?,
         `trashPolicy`: String?,
+        `joinApproval`: String?,
     ): Unit = err()
     override suspend fun `spaceStatus`(): String = err()
     override suspend fun `spacePrepare`(): String = err()

@@ -906,6 +906,10 @@
     "teamDone": "O modo equipe está ativado.",
     "teamConfirmTitle": "Ativar o modo equipe?",
     "teamConfirmBody": "Isto é em um sentido. Os membros mantêm acesso às entradas compartilhadas com eles e deixam de ver todo o resto, a partir do próximo desbloqueio. Digite “team” para confirmar.",
-    "teamConfirmWord": "Digite “team” para confirmar"
+    "teamConfirmWord": "Digite “team” para confirmar",
+    "joinApprovalLabel": "Aprovação de entrada",
+    "joinApprovalDesc": "Aprove novos membros manualmente ou deixe um código de convite válido se autoaprovar.",
+    "joinManual": "Revisão manual",
+    "joinCode": "Código de convite"
   }
 }

@@ -634,4 +634,9 @@ internal val ES: Map<String, String> = mapOf(
     "space.teamConfirmBody" to "Esto es en una sola dirección. Los miembros conservan el acceso a las entradas compartidas con ellos y dejan de ver todo lo demás, a partir de su próximo desbloqueo. Escribe \"team\" para confirmar.",
     "space.teamConfirmWord" to "Escribe \"team\" para confirmar",
     "space.teamOnBadge" to "Activado",
+    "space.joinApprovalLabel" to "Aprobación de ingresos",
+    "space.joinApprovalDesc" to "Aprueba nuevos miembros manualmente o deja que un código de invitación válido se apruebe solo.",
+    "space.joinManual" to "Revisión manual",
+    "space.joinCode" to "Código de invitación",
+
 )

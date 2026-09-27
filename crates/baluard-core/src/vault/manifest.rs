@@ -229,6 +229,23 @@ pub enum InviteAuthority {
     Owners,
 }
 
+/// Space policy (§6.5): how queued join introductions are approved.
+/// `Manual` (default) keeps the admin review step in the People
+/// surface. `Code` makes a valid invite code the approval itself: the
+/// admin device's post-pull sweep auto-approves every queued
+/// introduction whose one-time-code secret check passes, through the
+/// exact path the manual button uses — every gate (pair-Space cap,
+/// readiness, role floor, template snapshot) still applies. Possession
+/// of the code is the trust; a leaked code grants membership, which is
+/// why the default stays Manual.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum JoinApproval {
+    #[default]
+    Manual,
+    Code,
+}
+
 /// Space policy (§6.5): who may move entries to trash. Default: anyone
 /// holding a live Write (or Manage) grant on the collection. `AdminsOnly`
 /// restricts trashing to Owner/Admin devices.
@@ -337,6 +354,9 @@ pub struct VaultSettings {
     /// Space policy (§6.5): who may restore entries from trash.
     #[serde(default)]
     pub restore_policy: RestorePolicy,
+    /// Space policy (§6.5): how join introductions are approved.
+    #[serde(default)]
+    pub join_approval: JoinApproval,
 }
 /// These fields leak vault identity or policy if plaintext on the remote.
 /// Display prefs (theme, lang) live separately in plaintext settings-pub.json
@@ -380,6 +400,9 @@ pub struct EncryptedSettings {
     /// Space policy: restore authority (mirrors VaultSettings).
     #[serde(default)]
     pub restore_policy: RestorePolicy,
+    /// Space policy: join approval mode (mirrors VaultSettings).
+    #[serde(default)]
+    pub join_approval: JoinApproval,
     /// User-defined equivalent domain groups (Bitwarden parity). Each inner
     /// vec is one group of registrable domains the user declares equivalent
     /// for autofill matching.
@@ -657,6 +680,7 @@ mod tests {
         assert!(settings.guest_enabled != Some(false));
         assert_eq!(settings.trash_policy, TrashPolicy::WriteScopeCanTrash);
         assert_eq!(settings.restore_policy, RestorePolicy::AdminsOnly);
+        assert_eq!(settings.join_approval, JoinApproval::Manual);
     }
 
     #[test]
@@ -670,6 +694,7 @@ mod tests {
         assert!(settings.guest_enabled != Some(false));
         assert_eq!(settings.trash_policy, TrashPolicy::WriteScopeCanTrash);
         assert_eq!(settings.restore_policy, RestorePolicy::AdminsOnly);
+        assert_eq!(settings.join_approval, JoinApproval::Manual);
     }
 
     #[test]
@@ -679,6 +704,7 @@ mod tests {
             allow_viewer_export: true,
             guest_enabled: Some(false),
             trash_policy: TrashPolicy::AdminsOnly,
+            join_approval: JoinApproval::Code,
             ..Default::default()
         };
         let json = serde_json::to_string(&settings).unwrap();
@@ -687,6 +713,7 @@ mod tests {
         assert!(back.allow_viewer_export);
         assert_eq!(back.guest_enabled, Some(false));
         assert_eq!(back.trash_policy, TrashPolicy::AdminsOnly);
+        assert_eq!(back.join_approval, JoinApproval::Code);
     }
 
     #[test]
