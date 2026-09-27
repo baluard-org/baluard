@@ -135,6 +135,9 @@ open class StubVault(
         `guestEnabled`: Boolean?,
         `trashPolicy`: String?,
     ): Unit = err()
+    override suspend fun `spaceStatus`(): String = err()
+    override suspend fun `spacePrepare`(): String = err()
+    override suspend fun `spaceFlip`(): String = err()
     override suspend fun `collectionRequestAccess`(payload: String): String = err()
     override suspend fun `collectionRequestsApprove`(payload: String): String = err()
     override suspend fun `collectionRequestsDeny`(payload: String): String = err()

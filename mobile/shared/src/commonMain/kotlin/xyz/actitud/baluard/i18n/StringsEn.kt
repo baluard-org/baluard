@@ -616,4 +616,17 @@ internal val EN: Map<String, String> = mapOf(
     "space.restorePolicyLabel" to "Restoring entries",
     "space.restorePolicyDesc" to "Bringing a trashed entry back is reserved for admins in this version.",
     "space.restoreAdminsOnly" to "Admins only",
+    // Team mode (S3-7b): one-way upgrade, prepare then flip.
+    "space.teamLabel" to "Team mode",
+    "space.teamOn" to "On. Members see only what is shared with them.",
+    "space.teamOff" to "Right now every device in this space holds every key. Team mode keeps personal entries on admin devices private.",
+    "space.teamMissing" to "{0} member(s) need to open Baluard and sign in once before you can turn this on.",
+    "space.teamPrepare" to "Prepare members",
+    "space.teamUpgrade" to "Turn on team mode",
+    "space.teamPrepared" to "Members are prepared.",
+    "space.teamDone" to "Team mode is on.",
+    "space.teamConfirmTitle" to "Turn on team mode?",
+    "space.teamConfirmBody" to "This is one-way. Members keep access to entries shared with them and lose sight of everything else, starting from their next unlock. Type \"team\" to confirm.",
+    "space.teamConfirmWord" to "Type \"team\" to confirm",
+    "space.teamOnBadge" to "On",
 )

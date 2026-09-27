@@ -894,6 +894,18 @@
     "trashAdminsOnly": "Solo administradores",
     "restorePolicyLabel": "Restaurar entradas",
     "restorePolicyDesc": "Recuperar una entrada de la papelera queda reservado a los administradores en esta versión.",
-    "restoreAdminsOnly": "Solo administradores"
+    "restoreAdminsOnly": "Solo administradores",
+    "teamLabel": "Modo equipo",
+    "teamOn": "Activado. Los miembros solo ven lo que se comparte con ellos.",
+    "teamOff": "Ahora mismo cada dispositivo de este espacio tiene todas las claves. El modo equipo mantiene privadas las entradas personales de los dispositivos de administración.",
+    "teamOnBadge": "Activado",
+    "teamMissing": "{n} miembro(s) deben abrir Baluard e iniciar sesión una vez antes de activarlo.",
+    "teamPrepare": "Preparar miembros",
+    "teamUpgrade": "Activar modo equipo",
+    "teamPrepared": "Miembros preparados.",
+    "teamDone": "El modo equipo está activado.",
+    "teamConfirmTitle": "¿Activar el modo equipo?",
+    "teamConfirmBody": "Esto es en una sola dirección. Los miembros conservan el acceso a las entradas compartidas con ellos y dejan de ver todo lo demás, a partir de su próximo desbloqueo. Escribe “team” para confirmar.",
+    "teamConfirmWord": "Escribe “team” para confirmar"
   }
 }

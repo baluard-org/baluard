@@ -1,8 +1,9 @@
-import { createSignal, onSettled } from "solid-js";
+import { createSignal, onSettled, Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { sanitizeError } from "../lib/utils.js";
 import { toastError } from "../context/toastSignal.js";
+import TypedConfirmModal from "./TypedConfirmModal.jsx";
 
 /**
  * S3-9 UI: Space policy. The three §6.5 knobs landed routes-first; this
@@ -17,8 +18,14 @@ export default function SpaceTab() {
   const [guestSharing, setGuestSharing] = createSignal(true);
   const [trashPolicy, setTrashPolicy] = createSignal("write_scope_can_trash");
   const [busy, setBusy] = createSignal(false);
+  const [spaceTeam, setSpaceTeam] = createSignal(null);
+  const [teamBusy, setTeamBusy] = createSignal(false);
+  const [showFlipConfirm, setShowFlipConfirm] = createSignal(false);
 
-  onSettled(() => void loadSettings());
+  onSettled(() => {
+    void loadSettings();
+    void loadTeam();
+  });
 
   async function loadSettings() {
     try {
@@ -57,6 +64,46 @@ export default function SpaceTab() {
     void apply({ trash_policy: next });
   }
 
+  async function loadTeam() {
+    try {
+      setSpaceTeam(JSON.parse(await daemon("space.status", {})));
+    } catch {
+      setSpaceTeam(null); // locked, refused (member device), or unavailable
+    }
+  }
+
+  async function runPrepare() {
+    if (teamBusy()) return;
+    setTeamBusy(true);
+    try {
+      const r = JSON.parse(await daemon("space.prepare", {}));
+      await loadTeam();
+      if ((r.missing_wrap_pubkey?.length ?? 0) > 0) {
+        toastError(t("space.teamMissing", { n: r.missing_wrap_pubkey.length }));
+      }
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+      await loadTeam();
+    } finally {
+      setTeamBusy(false);
+    }
+  }
+
+  async function runFlip() {
+    if (teamBusy()) return;
+    setTeamBusy(true);
+    try {
+      await daemon("space.flip", {});
+      setShowFlipConfirm(false); // TypedConfirmModal does not auto-close
+      await loadTeam();
+    } catch (e) {
+      toastError(sanitizeError(e, t));
+      await loadTeam();
+    } finally {
+      setTeamBusy(false);
+    }
+  }
+
   function toggleViewerExport() {
     if (busy()) return;
     const next = !viewerExport();
@@ -80,6 +127,47 @@ export default function SpaceTab() {
 
   return (
     <div class="space-y-3">
+      {/* Team mode (S3-7b): the one-way upgrade. Rendered
+          unconditionally — the daemon is the validator, and gating the
+          state-creating control on its own state deadlocks fresh
+          vaults. */}
+      <div class="flex items-center justify-between">
+        <div class="flex flex-col flex-1 pr-4">
+          <span class={rowLabel}>{t("space.teamLabel")}</span>
+          <span class={rowDesc}>
+            {spaceTeam() == null ? "\u2026" : spaceTeam().flipped ? t("space.teamOn") : t("space.teamOff")}
+          </span>
+          <Show when={spaceTeam() && !spaceTeam().flipped && spaceTeam().missing_wrap_pubkey > 0}>
+            <span class="text-[10px] text-[var(--color-danger)] mt-0.5">
+              {t("space.teamMissing", { n: spaceTeam().missing_wrap_pubkey })}
+            </span>
+          </Show>
+        </div>
+        <Show
+          when={spaceTeam()?.flipped}
+          fallback={
+            <div class="flex gap-2">
+              <button disabled={teamBusy() || !spaceTeam()} class={chip(false)} onClick={runPrepare}>
+                {t("space.teamPrepare")}
+              </button>
+              <button
+                disabled={
+                  teamBusy() || !spaceTeam()?.prepared || (spaceTeam()?.missing_wrap_pubkey ?? 0) > 0
+                }
+                class={chip(spaceTeam()?.prepared === true && (spaceTeam()?.missing_wrap_pubkey ?? 0) === 0)}
+                onClick={() => setShowFlipConfirm(true)}
+              >
+                {t("space.teamUpgrade")}
+              </button>
+            </div>
+          }
+        >
+          <span class="px-4 py-2 rounded-xl border text-xs font-bold btn-active-green">
+            {t("space.teamOnBadge")}
+          </span>
+        </Show>
+      </div>
+
       {/* Who may invite members */}
       <div class="flex items-center justify-between">
         <div class="flex flex-col flex-1 pr-4">
@@ -152,6 +240,17 @@ export default function SpaceTab() {
           {t("space.restoreAdminsOnly")}
         </span>
       </div>
+
+      <TypedConfirmModal
+        show={showFlipConfirm()}
+        idPrefix="space-flip"
+        title={t("space.teamConfirmTitle")}
+        body={t("space.teamConfirmBody")}
+        confirmLabel={t("space.teamUpgrade")}
+        confirmWord="team"
+        onConfirm={runFlip}
+        onClose={() => setShowFlipConfirm(false)}
+      />
     </div>
   );
 }
