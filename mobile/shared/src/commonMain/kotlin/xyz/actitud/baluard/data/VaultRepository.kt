@@ -116,6 +116,7 @@ data class MobileSpaceSettings(
     val allowViewerExport: Boolean,
     val guestEnabled: Boolean,
     val trashPolicy: String,
+    val joinApproval: String,
 )
 
 /** Team-shape readiness + state (S3-7b). */
@@ -393,6 +394,8 @@ class VaultRepository {
                 guestEnabled = (o["guest_enabled"] as? kotlinx.serialization.json.JsonPrimitive)?.content != "false",
                 trashPolicy =
                     (o["trash_policy"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "write_scope_can_trash",
+                joinApproval =
+                    (o["join_approval"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "manual",
             )
         }.getOrNull()
 
@@ -405,8 +408,9 @@ class VaultRepository {
         allowViewerExport: Boolean? = null,
         guestEnabled: Boolean? = null,
         trashPolicy: String? = null,
+        joinApproval: String? = null,
     ) {
-        vault.spaceSettingsSet(inviteAuthority, allowViewerExport, guestEnabled, trashPolicy)
+        vault.spaceSettingsSet(inviteAuthority, allowViewerExport, guestEnabled, trashPolicy, joinApproval)
     }
 
     /** Team-shape readiness + state (S3-7b). Null on failure — the

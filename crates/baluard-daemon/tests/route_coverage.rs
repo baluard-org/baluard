@@ -1409,6 +1409,118 @@ async fn member_meta_writes_refuse_on_team_vaults() {
 /// S3-9: the Space settings surfaces — locked refusals, the §6.5
 /// defaults on a fresh vault, a partial set round trip, and fail-closed
 /// parses (bad authority string, non-boolean flags).
+/// Recursive copy for the throwaway joiner dir (the introduction
+/// writes the device keystore into its vault dir, which must never
+/// clobber the owner device identity).
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let ty = entry.file_type().unwrap();
+        let target = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn join_approval_code_auto_approves_manual_queues() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_path_buf();
+    // Owner mints the invite and flips the knob to code BEFORE anything
+    // stages, so the unlock-tail sweep sees the queued ask.
+    let (mut handle, _secrets) = VaultCreator::new(&path, MASTER, "auto-join")
+        .execute()
+        .expect("vault creation");
+    handle.unlock(MASTER).unwrap();
+    let code = handle
+        .invite_create(baluard_core::vault::members::MemberRole::Editor, None)
+        .expect("invite");
+    let mut s = handle.get_settings().unwrap();
+    s.join_approval = baluard_core::vault::manifest::JoinApproval::Code;
+    handle.save_settings(&s).unwrap();
+    // Member rows are the <uuid>.json files beside each member dir.
+    let member_rows = |p: &std::path::Path| {
+        std::fs::read_dir(p.join("meta/members"))
+            .unwrap()
+            .filter_map(|e| {
+                let name = e.unwrap().file_name().to_string_lossy().to_string();
+                name.ends_with(".json").then_some(name)
+            })
+            .collect::<Vec<_>>()
+    };
+    let members_before = member_rows(&path).len();
+    drop(handle);
+
+    // The joiner introduces in a throwaway copy of the vault (a
+    // sibling tempdir: the copy must live OUTSIDE the source tree).
+    let clone_dir = tempfile::tempdir().unwrap();
+    let clone = clone_dir.path().join("v");
+    copy_dir_recursive(&path, &clone);
+    let intro_code =
+        baluard_core::vault::members::create_introduction(&clone, &code, "member-pass-1", "phone")
+            .expect("introduction");
+
+    // The admin stages the received intro code into the repo-backed
+    // join queue.
+    let mut admin = baluard_core::vault::handle::VaultHandle::open(&path).expect("reopen");
+    admin.unlock(MASTER).unwrap();
+    let req_id = admin.join_queue_submit(&intro_code).expect("stage");
+    drop(admin);
+
+    // The unlock tail runs the inline (no-remote) sweep: the staged ask
+    // is approved with no admin click.
+    let state = Arc::new(VaultState::new(path.clone()));
+    state.open().await.expect("vault open");
+    state.unlock(MASTER).await.expect("vault unlock");
+
+    // The request was consumed and the member row minted.
+    let list = state.requests_list().await.unwrap();
+    assert!(
+        !list.contains(&req_id.to_string()),
+        "auto-approved row must be consumed: {list}"
+    );
+    let members_after = member_rows(&path);
+    assert_eq!(
+        members_after.len(),
+        members_before + 1,
+        "code mode must mint the member row; rows: {members_after:?}"
+    );
+
+    // Manual leg: with the knob back at manual, a staged ask stays
+    // queued across unlock cycles.
+    state
+        .space_settings_set(r#"{"join_approval": "manual"}"#)
+        .await
+        .expect("set manual");
+    let code2 = {
+        let mut h = baluard_core::vault::handle::VaultHandle::open(&path).expect("reopen");
+        h.unlock(MASTER).unwrap();
+        h.invite_create(baluard_core::vault::members::MemberRole::Viewer, None)
+            .expect("invite2")
+    };
+    let clone_dir2 = tempfile::tempdir().unwrap();
+    let clone2 = clone_dir2.path().join("v");
+    copy_dir_recursive(&path, &clone2);
+    let intro2 =
+        baluard_core::vault::members::create_introduction(&clone2, &code2, "member-pass-2", "tab")
+            .expect("introduction2");
+    let mut admin2 = baluard_core::vault::handle::VaultHandle::open(&path).expect("reopen");
+    admin2.unlock(MASTER).unwrap();
+    let req2 = admin2.join_queue_submit(&intro2).expect("stage2");
+    drop(admin2);
+    state.lock().await.expect("lock");
+    state.unlock(MASTER).await.expect("re-unlock");
+    let list2 = state.requests_list().await.unwrap();
+    assert!(
+        list2.contains(&req2.to_string()),
+        "manual mode must leave the ask queued: {list2}"
+    );
+}
+
 #[tokio::test]
 async fn space_settings_lifecycle_and_locked_rejection() {
     let (_dir, vault_path) = make_vault("space-settings");
@@ -1431,6 +1543,7 @@ async fn space_settings_lifecycle_and_locked_rejection() {
     assert_eq!(get["guest_enabled"], true);
     assert_eq!(get["trash_policy"], "write_scope_can_trash");
     assert_eq!(get["restore_policy"], "admins_only");
+    assert_eq!(get["join_approval"], "manual");
 
     // Partial set: one knob at a time, the others untouched.
     state
@@ -1472,6 +1585,25 @@ async fn space_settings_lifecycle_and_locked_rejection() {
             .await
             .is_err()
     );
+
+    // §6.5 join_approval: set to code, fail-closed parse, round trip.
+    state
+        .space_settings_set(r#"{"join_approval":"code"}"#)
+        .await
+        .unwrap();
+    assert!(
+        state
+            .space_settings_set(r#"{"join_approval":"auto"}"#)
+            .await
+            .is_err()
+    );
+    let get: serde_json::Value =
+        serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
+    assert_eq!(get["join_approval"], "code");
+    state
+        .space_settings_set(r#"{"join_approval":"manual"}"#)
+        .await
+        .unwrap();
 
     // §6.5 policy knobs: set, fail-closed parse, lock-cycle persistence.
     state

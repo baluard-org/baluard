@@ -906,6 +906,10 @@
     "teamDone": "Team mode is on.",
     "teamConfirmTitle": "Turn on team mode?",
     "teamConfirmBody": "This is one-way. Members keep access to entries shared with them and lose sight of everything else, starting from their next unlock. Type “team” to confirm.",
-    "teamConfirmWord": "Type “team” to confirm"
+    "teamConfirmWord": "Type “team” to confirm",
+    "joinApprovalLabel": "Join approval",
+    "joinApprovalDesc": "Approve new members manually, or let a valid invite code approve itself.",
+    "joinManual": "Manual review",
+    "joinCode": "Invite code"
   }
 }

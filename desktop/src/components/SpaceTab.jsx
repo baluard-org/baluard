@@ -17,6 +17,7 @@ export default function SpaceTab() {
   const [viewerExport, setViewerExport] = createSignal(false);
   const [guestSharing, setGuestSharing] = createSignal(true);
   const [trashPolicy, setTrashPolicy] = createSignal("write_scope_can_trash");
+  const [joinApproval, setJoinApproval] = createSignal("manual");
   const [busy, setBusy] = createSignal(false);
   const [spaceTeam, setSpaceTeam] = createSignal(null);
   const [teamBusy, setTeamBusy] = createSignal(false);
@@ -34,6 +35,7 @@ export default function SpaceTab() {
       setViewerExport(s.allow_viewer_export === true);
       setGuestSharing(s.guest_enabled !== false);
       setTrashPolicy(s.trash_policy === "admins_only" ? "admins_only" : "write_scope_can_trash");
+      setJoinApproval(s.join_approval === "code" ? "code" : "manual");
     } catch (e) {
       toastError(sanitizeError(e, t));
     }
@@ -62,6 +64,12 @@ export default function SpaceTab() {
     if (busy() || next === trashPolicy()) return;
     setTrashPolicy(next);
     void apply({ trash_policy: next });
+  }
+
+  function changeJoinApproval(next) {
+    if (busy() || next === joinApproval()) return;
+    setJoinApproval(next);
+    void apply({ join_approval: next });
   }
 
   async function loadTeam() {
@@ -225,6 +233,30 @@ export default function SpaceTab() {
             onClick={() => changeTrashPolicy("admins_only")}
           >
             {t("space.trashAdminsOnly")}
+          </button>
+        </div>
+      </div>
+
+      {/* Join approval */}
+      <div class="flex items-center justify-between pt-4 border-t border-[var(--color-border)]">
+        <div class="flex flex-col flex-1 pr-4">
+          <span class={rowLabel}>{t("space.joinApprovalLabel")}</span>
+          <span class={rowDesc}>{t("space.joinApprovalDesc")}</span>
+        </div>
+        <div class="flex gap-2">
+          <button
+            disabled={busy()}
+            class={chip(joinApproval() === "manual")}
+            onClick={() => changeJoinApproval("manual")}
+          >
+            {t("space.joinManual")}
+          </button>
+          <button
+            disabled={busy()}
+            class={chip(joinApproval() === "code")}
+            onClick={() => changeJoinApproval("code")}
+          >
+            {t("space.joinCode")}
           </button>
         </div>
       </div>

@@ -629,4 +629,9 @@ internal val EN: Map<String, String> = mapOf(
     "space.teamConfirmBody" to "This is one-way. Members keep access to entries shared with them and lose sight of everything else, starting from their next unlock. Type \"team\" to confirm.",
     "space.teamConfirmWord" to "Type \"team\" to confirm",
     "space.teamOnBadge" to "On",
+    "space.joinApprovalLabel" to "Join approval",
+    "space.joinApprovalDesc" to "Approve new members manually, or let a valid invite code approve itself.",
+    "space.joinManual" to "Manual review",
+    "space.joinCode" to "Invite code",
+
 )

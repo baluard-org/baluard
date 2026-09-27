@@ -906,6 +906,10 @@
     "teamDone": "El modo equipo está activado.",
     "teamConfirmTitle": "¿Activar el modo equipo?",
     "teamConfirmBody": "Esto es en una sola dirección. Los miembros conservan el acceso a las entradas compartidas con ellos y dejan de ver todo lo demás, a partir de su próximo desbloqueo. Escribe “team” para confirmar.",
-    "teamConfirmWord": "Escribe “team” para confirmar"
+    "teamConfirmWord": "Escribe “team” para confirmar",
+    "joinApprovalLabel": "Aprobación de ingresos",
+    "joinApprovalDesc": "Aprueba nuevos miembros manualmente o deja que un código de invitación válido se apruebe solo.",
+    "joinManual": "Revisión manual",
+    "joinCode": "Código de invitación"
   }
 }

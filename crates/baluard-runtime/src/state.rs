@@ -442,14 +442,68 @@ impl VaultState {
                     tokio::spawn(async move {
                         handle.pull_only(device_id.clone()).await;
                         let removed = state.sweep_grants_if_admin_inner().await;
-                        if removed > 0 {
+                        let (vault_id, seats) = state.sweep_join_approvals_if_admin_inner().await;
+                        if removed > 0 || !seats.is_empty() {
                             handle.on_mutation(device_id).await;
+                        }
+                        // P8c seat upgrades run outside the vault lock.
+                        for (username, role) in seats {
+                            // Fail toward no seat change: an unresolvable
+                            // role upgrades nothing (manual-path parity).
+                            let Some(role) = role else {
+                                continue;
+                            };
+                            let permission =
+                                if matches!(role, baluard_core::vault::members::MemberRole::Viewer)
+                                {
+                                    baluard_core::providers::types::CollaboratorPermission::ReadOnly
+                                } else {
+                                    baluard_core::providers::types::CollaboratorPermission::Write
+                                };
+                            if let Some(username) = username.filter(|u| !u.trim().is_empty()) {
+                                if let Some(vault_id) = vault_id {
+                                    if let Some((provider, owner, repo)) =
+                                        state.vault_transport_coords(vault_id)
+                                    {
+                                        let _ = crate::providers::add_collaborator(
+                                            provider, &owner, &repo, &username, permission,
+                                        )
+                                        .await;
+                                    }
+                                }
+                            }
                         }
                     });
                 } else {
                     // No remote: no pull can race, so sweep inline.
-                    if self.sweep_grants_if_admin_inner().await > 0 {
+                    let removed = self.sweep_grants_if_admin_inner().await;
+                    let (vault_id, seats) = self.sweep_join_approvals_if_admin_inner().await;
+                    if removed > 0 {
                         log::warn!("[state] grant expiry sweep removed expired grants");
+                    }
+                    for (username, role) in seats {
+                        // Fail toward no seat change (manual-path parity).
+                        let Some(role) = role else {
+                            continue;
+                        };
+                        let permission =
+                            if matches!(role, baluard_core::vault::members::MemberRole::Viewer) {
+                                baluard_core::providers::types::CollaboratorPermission::ReadOnly
+                            } else {
+                                baluard_core::providers::types::CollaboratorPermission::Write
+                            };
+                        if let Some(username) = username.filter(|u| !u.trim().is_empty()) {
+                            if let Some(vault_id) = vault_id {
+                                if let Some((provider, owner, repo)) =
+                                    self.vault_transport_coords(vault_id)
+                                {
+                                    let _ = crate::providers::add_collaborator(
+                                        provider, &owner, &repo, &username, permission,
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -493,6 +547,86 @@ impl VaultState {
                 0
             }
         }
+    }
+
+    /// §6.5 join_approval=code executor: approve queued join
+    /// introductions whose one-time-code secret check passes. Possession
+    /// of the code IS the approval; every gate inside
+    /// approve_queued_join (pair-Space cap, readiness, role floor,
+    /// template snapshot) still applies. Only `secret_ok` rows are
+    /// candidates — a hostile or stale row is never approved and stays
+    /// queued for admin visibility; a refused approval also stays
+    /// queued. Runs on the same admin gate as the grant sweep: a member
+    /// device must never mint the approval commit. Returns (transport
+    /// username, invite role) pairs for the P8c seat upgrades.
+    async fn sweep_join_approvals_if_admin_inner(
+        &self,
+    ) -> (
+        Option<uuid::Uuid>,
+        Vec<(
+            Option<String>,
+            Option<baluard_core::vault::members::MemberRole>,
+        )>,
+    ) {
+        let mut guard = self.inner.write().await;
+        let Some(handle) = guard.as_mut() else {
+            return (None, Vec::new());
+        };
+        if !handle.is_unlocked() {
+            return (None, Vec::new());
+        }
+        // Captured under the lock: reading it after release races the
+        // vault locking and would silently drop every seat upgrade.
+        let vault_id = handle.vault_id;
+        let admin_equivalent = !self.vault_path.join("meta/members").is_dir();
+        let is_admin = matches!(
+            baluard_core::vault::members::member_role_for_device(
+                &self.vault_path,
+                handle.device_id,
+            ),
+            Some(baluard_core::vault::members::MemberRole::Owner)
+                | Some(baluard_core::vault::members::MemberRole::Admin)
+        );
+        if !(is_admin || admin_equivalent) {
+            return (Some(vault_id), Vec::new());
+        }
+        match handle.get_settings().map(|s| s.join_approval) {
+            Ok(baluard_core::vault::manifest::JoinApproval::Code) => {}
+            _ => return (Some(vault_id), Vec::new()),
+        }
+        let (rows, _malformed) = match baluard_core::vault::members::list_requests(&handle.path) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("[state] join queue walk failed: {e}");
+                return (Some(vault_id), Vec::new());
+            }
+        };
+        let mut seats = Vec::new();
+        for row in rows {
+            if !row.secret_ok {
+                continue;
+            }
+            // P8c parity: read username + role BEFORE the approval
+            // consumes the invite.
+            let mut username = None;
+            let mut role = None;
+            if let Ok(intro) = baluard_core::vault::members::read_request(&handle.path, row.req_id)
+            {
+                if let Ok(pending) =
+                    baluard_core::vault::members::read_pending_invite(&handle.path, intro.invite_id)
+                {
+                    username = pending.transport_username;
+                    role = Some(pending.role);
+                }
+            }
+            match handle.approve_queued_join(row.req_id) {
+                Ok(_) => seats.push((username, role)),
+                Err(e) => {
+                    log::warn!("[state] join auto-approve refused {}: {e}", row.req_id);
+                }
+            }
+        }
+        (Some(vault_id), seats)
     }
 
     /// Lock the vault, zeroizing keys in memory. Clears the session token.
@@ -3634,6 +3768,10 @@ impl VaultState {
             "restore_policy": match s.restore_policy {
                 baluard_core::vault::manifest::RestorePolicy::AdminsOnly => "admins_only",
             },
+            "join_approval": match s.join_approval {
+                baluard_core::vault::manifest::JoinApproval::Manual => "manual",
+                baluard_core::vault::manifest::JoinApproval::Code => "code",
+            },
         })
         .to_string())
     }
@@ -3700,6 +3838,14 @@ impl VaultState {
             settings.restore_policy = match s {
                 "admins_only" => baluard_core::vault::manifest::RestorePolicy::AdminsOnly,
                 _ => return Err("restore_policy must be admins_only".into()),
+            };
+        }
+        if let Some(v) = partial.get("join_approval") {
+            let s = v.as_str().ok_or("join_approval must be a string")?;
+            settings.join_approval = match s {
+                "manual" => baluard_core::vault::manifest::JoinApproval::Manual,
+                "code" => baluard_core::vault::manifest::JoinApproval::Code,
+                _ => return Err("join_approval must be manual or code".into()),
             };
         }
         handle.save_settings(&settings).map_err(|e| format!("{e}"))

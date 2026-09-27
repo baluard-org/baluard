@@ -1102,7 +1102,7 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_get(`ptr`: Pointer,
     ): Long
-    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(`ptr`: Pointer,`inviteAuthority`: RustBuffer.ByValue,`allowViewerExport`: RustBuffer.ByValue,`guestEnabled`: RustBuffer.ByValue,`trashPolicy`: RustBuffer.ByValue,
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(`ptr`: Pointer,`inviteAuthority`: RustBuffer.ByValue,`allowViewerExport`: RustBuffer.ByValue,`guestEnabled`: RustBuffer.ByValue,`trashPolicy`: RustBuffer.ByValue,`joinApproval`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_space_status(`ptr`: Pointer,
     ): Long
@@ -1773,7 +1773,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_get() != 19637.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set() != 28060.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set() != 44425.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_status() != 58379.toShort()) {
@@ -3130,7 +3130,7 @@ public interface MobileVaultInterface {
      * Set Space policy knobs (partial, admin-gated). Typed args so the
      * app never hand-builds JSON; the bridge constructs the payload.
      */
-    suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?)
+    suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?, `joinApproval`: kotlin.String?)
     
     /**
      * Readiness counts for the Team-shape flip (S3-7b): {prepared,
@@ -4928,12 +4928,12 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
      */
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?) {
+    override suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?, `joinApproval`: kotlin.String?) {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(
                 thisPtr,
-                FfiConverterOptionalString.lower(`inviteAuthority`),FfiConverterOptionalBoolean.lower(`allowViewerExport`),FfiConverterOptionalBoolean.lower(`guestEnabled`),FfiConverterOptionalString.lower(`trashPolicy`),
+                FfiConverterOptionalString.lower(`inviteAuthority`),FfiConverterOptionalBoolean.lower(`allowViewerExport`),FfiConverterOptionalBoolean.lower(`guestEnabled`),FfiConverterOptionalString.lower(`trashPolicy`),FfiConverterOptionalString.lower(`joinApproval`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
