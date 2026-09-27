@@ -218,6 +218,17 @@ pub struct AppDomainTrust {
     pub domain: String,
 }
 
+/// Who may mint member invites (§6.5 invite_authority). Admins (default)
+/// keeps the shipped assert_can_manage_members floor; Owners restricts
+/// invite minting to the Owner row for high-scrutiny Spaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum InviteAuthority {
+    #[default]
+    Admins,
+    Owners,
+}
+
 /// Vault settings (stored encrypted in meta/settings.enc, last-write-wins).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VaultSettings {
@@ -283,9 +294,22 @@ pub struct VaultSettings {
     /// before doing so.
     #[serde(default = "default_enrollment_policy")]
     pub enrollment_policy: EnrollmentPolicy,
+    /// Space policy (§6.5): who may mint invites. Admins by default; a
+    /// Space can ratchet to Owners-only. Legacy vaults load Admins.
+    #[serde(default)]
+    pub space_invite_authority: InviteAuthority,
+    /// Space policy (§6.5): whether Viewer-role devices may export vault
+    /// data. Default false — export tightens to Editor-and-above unless a
+    /// Space explicitly opts its viewers in.
+    #[serde(default)]
+    pub allow_viewer_export: bool,
+    /// Space policy (§6.5): whether passphrase-guest reveals may be
+    /// created. `None`/`Some(true)` = enabled (default); `Some(false)`
+    /// blocks new guest shares (already created reveal files stay openable
+    /// until expiry — they are self-contained, carried by the recipient).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_enabled: Option<bool>,
 }
-
-/// Post-unlock settings stored encrypted under the root key in settings.enc.
 /// These fields leak vault identity or policy if plaintext on the remote.
 /// Display prefs (theme, lang) live separately in plaintext settings-pub.json
 /// because the login screen needs them before unlock.
@@ -310,8 +334,18 @@ pub struct EncryptedSettings {
     /// enrollment (pre-unlock) and the first unlock.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_names: Option<std::collections::HashMap<String, String>>,
-    /// Enrollment policy controls how a new device joins this vault.
+    /// Device enrollment policy for this vault.
+    #[serde(default = "default_enrollment_policy")]
     pub enrollment_policy: EnrollmentPolicy,
+    /// Space policy: invite authority (mirrors VaultSettings; persisted).
+    #[serde(default)]
+    pub space_invite_authority: InviteAuthority,
+    /// Space policy: viewer export permission (mirrors VaultSettings).
+    #[serde(default)]
+    pub allow_viewer_export: bool,
+    /// Space policy: guest reveal creation (mirrors VaultSettings).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_enabled: Option<bool>,
     /// User-defined equivalent domain groups (Bitwarden parity). Each inner
     /// vec is one group of registrable domains the user declares equivalent
     /// for autofill matching.
@@ -576,6 +610,42 @@ mod tests {
         // New vaults default to Personal — phrase OR device approval accepted.
         // M4 product-intent: solo users should not need a second device to recover.
         assert_eq!(EnrollmentPolicy::default(), EnrollmentPolicy::Personal);
+    }
+
+    #[test]
+    fn space_settings_defaults_match_plan_table() {
+        // §6.5: invite_authority admins, viewer export off, guests on.
+        let settings = VaultSettings::default();
+        assert_eq!(settings.space_invite_authority, InviteAuthority::Admins);
+        assert!(!settings.allow_viewer_export);
+        // None = enabled (the Option-toggle convention).
+        assert!(settings.guest_enabled != Some(false));
+    }
+
+    #[test]
+    fn space_settings_backward_compat_absent_fields_get_defaults() {
+        // Pre-S3-9 settings.enc carries none of the knobs; the serde
+        // defaults must fill them so legacy vaults keep today's behavior.
+        let json = r#"{"vault_timeout": "10m"}"#;
+        let settings: VaultSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(settings.space_invite_authority, InviteAuthority::Admins);
+        assert!(!settings.allow_viewer_export);
+        assert!(settings.guest_enabled != Some(false));
+    }
+
+    #[test]
+    fn space_settings_roundtrip() {
+        let settings = VaultSettings {
+            space_invite_authority: InviteAuthority::Owners,
+            allow_viewer_export: true,
+            guest_enabled: Some(false),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: VaultSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.space_invite_authority, InviteAuthority::Owners);
+        assert!(back.allow_viewer_export);
+        assert_eq!(back.guest_enabled, Some(false));
     }
 
     #[test]

@@ -3553,6 +3553,80 @@ impl VaultState {
         .to_string())
     }
 
+    // ── S3-9: Space settings (§6.5 foundation knobs) ──
+
+    /// Read the Space policy knobs. Unlocked-gated: settings.enc.
+    pub async fn space_settings_get(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let s = handle.get_settings().map_err(|e| format!("{e}"))?;
+        Ok(serde_json::json!({
+            "space_invite_authority": if s.space_invite_authority
+                == baluard_core::vault::manifest::InviteAuthority::Owners
+            {
+                "owners"
+            } else {
+                "admins"
+            },
+            "allow_viewer_export": s.allow_viewer_export,
+            "guest_enabled": s.guest_enabled != Some(false),
+        })
+        .to_string())
+    }
+
+    /// Write Space policy knobs (partial). Admin-gated: owner/admin, with
+    /// the legacy no-member-directory founder equivalence. Unknown payload
+    /// keys are ignored (settings.set convention).
+    pub async fn space_settings_set(&self, payload: &str) -> Result<(), String> {
+        let mut guard = self.inner.write().await;
+        let handle = guard.as_mut().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let members_dir = self
+            .vault_path
+            .join(baluard_core::vault::members::MEMBERS_DIR);
+        let allowed = if !members_dir.exists() {
+            true // legacy personal vault: the founder manages
+        } else {
+            matches!(
+                baluard_core::vault::members::member_role_for_device(
+                    &self.vault_path,
+                    handle.device_id
+                ),
+                Some(baluard_core::vault::members::MemberRole::Owner)
+                    | Some(baluard_core::vault::members::MemberRole::Admin)
+            )
+        };
+        if !allowed {
+            return Err("Only the owner or an admin can change space settings.".into());
+        }
+        let partial: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let mut settings = handle.get_settings().map_err(|e| format!("{e}"))?;
+        if let Some(v) = partial.get("space_invite_authority") {
+            let s = v
+                .as_str()
+                .ok_or("space_invite_authority must be a string")?;
+            settings.space_invite_authority = match s {
+                "admins" => baluard_core::vault::manifest::InviteAuthority::Admins,
+                "owners" => baluard_core::vault::manifest::InviteAuthority::Owners,
+                _ => return Err("space_invite_authority must be admins or owners".into()),
+            };
+        }
+        if let Some(v) = partial.get("allow_viewer_export") {
+            settings.allow_viewer_export =
+                v.as_bool().ok_or("allow_viewer_export must be a boolean")?;
+        }
+        if let Some(v) = partial.get("guest_enabled") {
+            settings.guest_enabled = Some(v.as_bool().ok_or("guest_enabled must be a boolean")?);
+        }
+        handle.save_settings(&settings).map_err(|e| format!("{e}"))
+    }
+
     // ── S3-6: request-access JIT ──
     // All routes token-gated by the daemon's default-deny gate; the
     // mutating ones ride COVER_MUTATION_ACTIONS so autosync ships the
@@ -4335,6 +4409,38 @@ impl VaultState {
     }
 
     /// Export all ciphers as BW-compatible JSON.
+    /// Space policy (§6.5 allow_viewer_export, default false): export is
+    /// Editor-and-above unless the Space opts its viewers in. Legacy
+    /// founders (no member directory) pass. On a strict vault a None
+    /// resolution REFUSES: member_role_for_device skips tombstoned rows,
+    /// so a removed/reset member's still-open session would otherwise
+    /// fall through the catch-all and export (review finding, S3-9).
+    fn assert_export_allowed(&self, handle: &VaultHandle) -> Result<(), String> {
+        if handle
+            .get_settings()
+            .map_err(|e| format!("{e}"))?
+            .allow_viewer_export
+        {
+            return Ok(());
+        }
+        let members_dir = self
+            .vault_path
+            .join(baluard_core::vault::members::MEMBERS_DIR);
+        if !members_dir.exists() {
+            return Ok(()); // legacy personal vault: the founder exports
+        }
+        match baluard_core::vault::members::member_role_for_device(
+            &self.vault_path,
+            handle.device_id,
+        ) {
+            Some(baluard_core::vault::members::MemberRole::Viewer) => {
+                Err("View-only access cannot export this vault's data.".into())
+            }
+            Some(_) => Ok(()),
+            None => Err("This device can no longer export this vault's data.".into()),
+        }
+    }
+
     pub async fn export_bw_json(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
@@ -4342,6 +4448,7 @@ impl VaultState {
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
         }
+        self.assert_export_allowed(handle)?;
 
         let metas = handle.list_cipher_meta_full().map_err(|e| format!("{e}"))?;
         let mut ciphers = Vec::new();
@@ -4369,6 +4476,7 @@ impl VaultState {
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
         }
+        self.assert_export_allowed(handle)?;
 
         let metas = handle.list_cipher_meta_full().map_err(|e| format!("{e}"))?;
         let mut ciphers = Vec::new();
