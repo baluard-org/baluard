@@ -1253,6 +1253,14 @@ Review lesson, self-inflicted: the locale script's dot-in-key branch was inverte
 
 **Boundaries**: outbox entries carry no attachments/password-history/passkeys (stripped at export, handle-side); resync is global (all mirrors at once) rather than per-outbox; the entry viewer covers login items' core fields only \u2014 custom fields and non-login kinds render name/notes but not typed editors; folders are local paths, so this transport never crosses machines by itself.
 
+### D51. The Admin Marker Must Survive the Empty Set (§4.8-9 mobile collection CRUD) (2026-09-26)
+
+Mobile settings entries gate on an admin marker, and the marker the desktop used — any collections row carrying access admin — has a hole: a vault with zero collections returns an empty list, so a real administrator saw neither the People nor the Collections entry and could not create the first collection from the phone. The fix is not a better row count; it is asking the right question. holds_root is what collections_list actually branches on, and it is true exactly for managing devices regardless of how many collections exist. The rule: an entry-point marker must be derived from the capability itself, never counted from the artifacts the capability produces. A proxy that works for populated states silently fails exactly when a surface is newest.
+
+The wave also followed D47's typed-args rule for every new bridge method: the app passes strings and a record list, the Rust bridge builds the JSON, and Kotlin never escapes an id. Re-verified en route: the mid-wave repository edit that accidentally dropped collectionGrant was caught by the Kotlin gate (unresolved reference in PeopleScreen), not by review — the gate earned its keep.
+
+**Boundaries**: catalog publish sends all current collections (no per-item curation on mobile); delete keeps entries but grants die with the collection, and the dialog says so; the screen remains admin-reachable only via the Settings gate — the daemon stays the validator for every call.
+
 ### D48. Item-Sharing Surfaces over Finished Rails (S2 UI) (2026-09-26; S3 in progress)
 
 The S2 core and daemon layers shipped with no interface; this wave proves the rails pattern in reverse: when the daemon already validates every flavor with plain-language refusals, the client can auto-detect which kind of shared file it holds by trying the flavors in order and reading the failures, instead of asking the user to classify a file format they have no vocabulary for. The receive chain (package import, then contact reveal, then passphrase-guest open) works because the flavors are cryptographically domain-separated — a reveal file cannot succeed as a package import — so trying the wrong one first is always safe. That property is worth defending: any new shared-file flavor should stay mutually exclusive at the crypto layer so client-side detection never needs a magic-number header.

@@ -3788,6 +3788,15 @@ impl VaultState {
         Ok(serde_json::json!({ "catalog": rows }).to_string())
     }
 
+    /// Whether this device manages the space (holds the Root Key).
+    /// The precise admin marker: collections_list branches on it, and
+    /// unlike counting admin rows it holds for zero-collection vaults.
+    pub async fn is_admin_device(&self) -> Result<bool, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened".to_string())?;
+        Ok(handle.holds_root())
+    }
+
     /// Mint a collection (admin-gated).
     pub async fn collection_create(&self, name: &str) -> Result<String, String> {
         let mut guard = self.inner.write().await;

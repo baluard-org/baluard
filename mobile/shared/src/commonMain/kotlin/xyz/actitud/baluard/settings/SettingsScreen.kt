@@ -102,6 +102,7 @@ fun SettingsScreen(
     onVaultRemoved: () -> Unit = {},
     repo: VaultRepository,
     onOpenPeople: () -> Unit = {},
+    onOpenCollections: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
     val biometric = remember { Biometric() }
@@ -961,8 +962,7 @@ fun SettingsScreen(
             // carrying access:"admin" means this device manages the space.
             var isAdminDevice by remember { mutableStateOf(false) }
             LaunchedEffect(vault) {
-                runCatching { repo.listCollections(vault) }
-                    .onSuccess { rows -> isAdminDevice = rows.any { it.access == "admin" } }
+                isAdminDevice = repo.isAdminDevice(vault)
             }
             if (isAdminDevice) {
                 SectionCard(title = t("people.title")) {
@@ -974,6 +974,22 @@ fun SettingsScreen(
                     ) {
                         Text(
                             text = t("people.entrySubtitle"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+            if (isAdminDevice) {
+                SectionCard(title = t("collections.title")) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenCollections() },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = t("collections.entrySubtitle"),
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f),
                         )

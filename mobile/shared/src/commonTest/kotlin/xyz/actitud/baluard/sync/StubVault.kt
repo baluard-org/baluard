@@ -1,6 +1,7 @@
 package xyz.actitud.baluard.sync
 
 import xyz.actitud.baluard.MobileCipherMeta
+import xyz.actitud.baluard.MobileCatalogInput
 import xyz.actitud.baluard.MobileSyncStatus
 import xyz.actitud.baluard.MobileVaultInterface
 
@@ -118,6 +119,12 @@ open class StubVault(
     override suspend fun `memberReset`(memberId: String): String = err()
     override suspend fun `memberTransfer`(memberId: String): String = err()
     override suspend fun `memberRemove`(memberIds: List<String>, offlineOverride: Boolean): String = err()
+    // §4.8-9 collection CRUD: same err() discipline.
+    override suspend fun `collectionCreate`(name: String): String = err()
+    override suspend fun `collectionRename`(id: String, name: String): String = err()
+    override suspend fun `collectionDelete`(id: String): String = err()
+    override suspend fun `collectionCatalogSet`(entries: List<MobileCatalogInput>): String = err()
+    override suspend fun `isAdminDevice`(): Boolean = err()
     override suspend fun `collectionRequestAccess`(payload: String): String = err()
     override suspend fun `collectionRequestsApprove`(payload: String): String = err()
     override suspend fun `collectionRequestsDeny`(payload: String): String = err()

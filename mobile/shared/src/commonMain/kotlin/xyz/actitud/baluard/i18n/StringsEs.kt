@@ -565,4 +565,28 @@ internal val ES: Map<String, String> = mapOf(
         "people.resetCodeTitle" to "Código de restablecimiento de un solo uso",
         "people.resetCodeBody" to "Entrega este código al miembro. Vuelve a unirse con él y define una nueva contraseña.",
 
+
+        // §4.8-9 CRUD de colecciones.
+        "collections.title" to "Colecciones",
+        "collections.entrySubtitle" to "Crea, renombra o elimina colecciones compartidas",
+        "collections.listTitle" to "Tus colecciones",
+        "collections.empty" to "Aún no hay colecciones.",
+        "collections.grantCount" to "{0} acceso(s)",
+        "collections.createAction" to "Nueva colección",
+        "collections.nameLabel" to "Nombre",
+        "collections.createToast" to "Colección creada",
+        "collections.rename" to "Renombrar",
+        "collections.renameTitle" to "Renombrar colección",
+        "collections.renameToast" to "Colección renombrada",
+        "collections.deleteAction" to "Eliminar",
+        "collections.deleteTitle" to "Eliminar colección",
+        "collections.deleteBody" to "¿Eliminar \"{0}\"? Los accesos mueren con ella; los elementos se conservan.",
+        "collections.deleteToast" to "Colección eliminada",
+        "collections.catalogTitle" to "Catálogo de peticiones",
+        "collections.catalogHint" to "Quien pide acceso ve estos nombres. Al vaciar el catálogo se ocultan; pueden pegar un id.",
+        "collections.catalogPublish" to "Publicar",
+        "collections.catalogClear" to "Vaciar",
+        "collections.catalogClearBody" to "¿Ocultar todos los nombres en el diálogo de peticiones?",
+        "collections.catalogPublishedToast" to "Catálogo actualizado",
+
 )

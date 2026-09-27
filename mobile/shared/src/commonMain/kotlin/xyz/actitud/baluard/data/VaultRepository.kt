@@ -1,6 +1,7 @@
 package xyz.actitud.baluard.data
 
 import xyz.actitud.baluard.MobileCipherMeta
+import xyz.actitud.baluard.MobileCatalogInput
 import xyz.actitud.baluard.MobileSyncStatus
 import xyz.actitud.baluard.MobileCreateResult
 import xyz.actitud.baluard.MobileVault
@@ -314,10 +315,40 @@ class VaultRepository {
         vault.joinRequestsApprove("{\"req_id\":\"$reqId\"}")
     suspend fun joinRequestsDeny(vault: MobileVault, reqId: String): String =
         vault.joinRequestsDeny("{\"req_id\":\"$reqId\"}")
+    /** Grant collection access: {id, member_id, access, expires_at?}.
+     * expires_at is an absolute epoch second (client clock conversion,
+     * desktop F4 parity); absent = never. */
     suspend fun collectionGrant(vault: MobileVault, payload: String): String =
         vault.collectionGrant(payload)
+
+    /** Revoke a member's collection access: {id, member_id}. */
     suspend fun collectionRevoke(vault: MobileVault, payload: String): String =
         vault.collectionRevoke(payload)
+
+    // ── §4.8-9 collection CRUD (admin): typed args at the FFI, the
+    // bridge builds the payload JSON, the app never hand-escapes ids.
+
+    /** The precise admin marker: this device holds the Root Key. True
+     * even for zero-collection vaults where counting admin rows fails. */
+    suspend fun isAdminDevice(vault: MobileVault): Boolean =
+        runCatching { vault.isAdminDevice() }.getOrDefault(false)
+
+    /** Mint a collection → {id}. */
+    suspend fun collectionCreate(vault: MobileVault, name: String): String =
+        vault.collectionCreate(name)
+
+    /** Rename a collection → {ok: true}. */
+    suspend fun collectionRename(vault: MobileVault, id: String, name: String): String =
+        vault.collectionRename(id, name)
+
+    /** Delete a collection (grants die with it; entries preserved). */
+    suspend fun collectionDelete(vault: MobileVault, id: String): String =
+        vault.collectionDelete(id)
+
+    /** Publish the request catalog: the given rows become askable by
+     * name. An empty list clears the catalog (opt-out). */
+    suspend fun collectionCatalogSet(vault: MobileVault, entries: List<MobileCatalogInput>): String =
+        vault.collectionCatalogSet(entries)
     // §4.8-8 offboarding: the bridge builds the JSON payloads from typed
     // args, so the app never hand-escapes member ids.
     suspend fun memberReset(vault: MobileVault, memberId: String): String =

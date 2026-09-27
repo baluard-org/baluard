@@ -531,4 +531,28 @@ internal val PT: Map<String, String> = mapOf(
         "people.resetCodeTitle" to "Código de redefinição de uso único",
         "people.resetCodeBody" to "Entregue este código ao membro. Ele entra novamente com ele e define uma nova senha.",
 
+
+        // §4.8-9 CRUD de coleções.
+        "collections.title" to "Coleções",
+        "collections.entrySubtitle" to "Crie, renomeie ou remova coleções compartilhadas",
+        "collections.listTitle" to "Suas coleções",
+        "collections.empty" to "Nenhuma coleção ainda.",
+        "collections.grantCount" to "{0} acesso(s)",
+        "collections.createAction" to "Nova coleção",
+        "collections.nameLabel" to "Nome",
+        "collections.createToast" to "Coleção criada",
+        "collections.rename" to "Renomear",
+        "collections.renameTitle" to "Renomear coleção",
+        "collections.renameToast" to "Coleção renomeada",
+        "collections.deleteAction" to "Excluir",
+        "collections.deleteTitle" to "Excluir coleção",
+        "collections.deleteBody" to "Excluir \"{0}\"? Os acessos morrem com ela; itens são mantidos.",
+        "collections.deleteToast" to "Coleção excluída",
+        "collections.catalogTitle" to "Catálogo de pedidos",
+        "collections.catalogHint" to "Quem pede acesso vê estes nomes. Limpar o catálogo os oculta; dá para colar um id.",
+        "collections.catalogPublish" to "Publicar",
+        "collections.catalogClear" to "Limpar",
+        "collections.catalogClearBody" to "Ocultar todos os nomes no diálogo de pedidos?",
+        "collections.catalogPublishedToast" to "Catálogo atualizado",
+
 )
