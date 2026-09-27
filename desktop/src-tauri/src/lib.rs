@@ -246,6 +246,8 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "space.flip",
         "space.migrate",
         "space.remote",
+        "space.settings",
+        "space.settings_set",
         // S2: item-sharing send/receive surfaces.
         "reveals.export_guest",
         "packages.import",

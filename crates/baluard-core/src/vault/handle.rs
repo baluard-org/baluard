@@ -370,6 +370,25 @@ impl VaultHandle {
         }
     }
 
+    /// Space policy (§6.5 invite_authority): after the manage floor, an
+    /// Owners-only Space additionally requires the actor's member row to
+    /// BE the Owner. Legacy founders (no member directory) pass — they
+    /// ARE the owner. Reset invites bypass this by design: they are
+    /// offboarding machinery, not membership growth.
+    fn assert_invite_authority(&self) -> Result<(), BaluardError> {
+        if self.get_settings()?.space_invite_authority
+            != crate::vault::manifest::InviteAuthority::Owners
+        {
+            return Ok(());
+        }
+        match crate::vault::members::member_role_for_device(&self.path, self.device_id) {
+            Some(crate::vault::members::MemberRole::Owner) | None => Ok(()),
+            _ => Err(BaluardError::from(VaultError::InvalidOperation(
+                "this space only allows the owner to send invites".into(),
+            ))),
+        }
+    }
+
     /// Delegated manage (S3-5): Owner/Admin pass structurally; a legacy
     /// vault (no member directory) is admin-equivalent; otherwise the
     /// device's member must hold a LIVE `manage` grant on this exact
@@ -761,6 +780,14 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
+        // §6.5 guest_enabled: a Space can close the guest-sharing door for
+        // NEW reveals. Already-created reveal files stay openable until
+        // expiry — they are self-contained and carried by the recipient.
+        if self.get_settings()?.guest_enabled == Some(false) {
+            return Err(BaluardError::from(VaultError::InvalidOperation(
+                "Guest sharing is turned off for this space.".into(),
+            )));
+        }
         Self::checked_reveal_expiry(expires_at)?;
         let cipher = match self.get_cipher(cipher_id)? {
             crate::vault::handle::CipherRead::Decrypted(c) => *c,
@@ -884,6 +911,7 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
+        self.assert_invite_authority()?;
         let templates = crate::vault::templates::load_templates(
             &self.path,
             self.unlocked().root()?.as_bytes(),
@@ -1739,6 +1767,7 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
+        self.assert_invite_authority()?;
         crate::vault::members::create_invite(
             &self.path,
             self.vault_id,
@@ -3524,6 +3553,11 @@ impl VaultHandle {
                         device_names: None,
                         enrollment_policy: serde_json::from_value(v["enrollment_policy"].clone())
                             .unwrap_or(crate::vault::manifest::EnrollmentPolicy::Strict),
+                        // Space policy post-dates the legacy split: legacy
+                        // files never carry it, so defaults apply.
+                        space_invite_authority: Default::default(),
+                        allow_viewer_export: false,
+                        guest_enabled: None,
                         // These post-date the legacy settings.json split: a
                         // legacy file never carries them.
                         custom_equivalent_domains: None,
@@ -3570,6 +3604,15 @@ impl VaultHandle {
                 .as_ref()
                 .map(|e| e.enrollment_policy)
                 .unwrap_or(crate::vault::manifest::EnrollmentPolicy::Strict),
+            space_invite_authority: enc_fields
+                .as_ref()
+                .map(|e| e.space_invite_authority)
+                .unwrap_or_default(),
+            allow_viewer_export: enc_fields
+                .as_ref()
+                .map(|e| e.allow_viewer_export)
+                .unwrap_or(false),
+            guest_enabled: enc_fields.as_ref().and_then(|e| e.guest_enabled),
         })
     }
 
@@ -3617,6 +3660,9 @@ impl VaultHandle {
                 if names.is_empty() { None } else { Some(names) }
             },
             enrollment_policy: settings.enrollment_policy,
+            space_invite_authority: settings.space_invite_authority,
+            allow_viewer_export: settings.allow_viewer_export,
+            guest_enabled: settings.guest_enabled,
             custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
@@ -3715,6 +3761,9 @@ impl VaultHandle {
             // The fold rewrite must carry every encrypted field or the
             // migration would silently wipe them (settings.enc is the
             // only store for these).
+            space_invite_authority: settings.space_invite_authority,
+            allow_viewer_export: settings.allow_viewer_export,
+            guest_enabled: settings.guest_enabled,
             custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
@@ -8915,6 +8964,83 @@ mod tests {
     /// joined the pre-existing folders/tags/profile/activity coverage. After
     /// rotation, all of them must be readable at the new epoch, and the
     /// emergency escrow must unwrap to the NEW root key.
+    /// S3-9 (§6.5): Space settings roundtrip through the encrypted store
+    /// and the guest_enabled gate on new guest reveals. The flip is a
+    /// policy door, not a revocation: a reveal created before the flip
+    /// still opens (the file is self-contained, carried by the recipient).
+    #[test]
+    fn space_settings_roundtrip_and_guest_gate() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Defaults from the §6.5 table.
+        let settings = handle.get_settings().unwrap();
+        assert_eq!(
+            settings.space_invite_authority,
+            crate::vault::manifest::InviteAuthority::Admins
+        );
+        assert!(!settings.allow_viewer_export);
+        assert!(settings.guest_enabled != Some(false));
+
+        let source_id = handle
+            .add_cipher(&crate::types::CipherInput {
+                name: "Team login".into(),
+                kind: serde_json::from_str(
+                    r#"{"type":"login","data":{"username":"ada",
+                        "password":"hunter2",
+                        "uris":[{"uri":"https://app.example.com"}]}}"#,
+                )
+                .unwrap(),
+                ..Default::default()
+            })
+            .unwrap();
+        let expires = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 86_400;
+
+        // Default: guests on — a reveal exports.
+        let (guest_bytes, _passphrase) = handle
+            .export_guest_reveal(source_id, expires, false)
+            .unwrap();
+
+        // Flip the door closed; new reveals refuse in plain language.
+        let mut settings = handle.get_settings().unwrap();
+        settings.guest_enabled = Some(false);
+        settings.space_invite_authority = crate::vault::manifest::InviteAuthority::Owners;
+        settings.allow_viewer_export = true;
+        handle.save_settings(&settings).unwrap();
+        let err = handle
+            .export_guest_reveal(source_id, expires, false)
+            .unwrap_err();
+        assert!(format!("{err}").contains("Guest sharing is turned off"));
+
+        // The pre-flip reveal still opens: the file is self-contained.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let opened =
+            crate::vault::reveals::open_guest_reveal(&guest_bytes, &_passphrase, now).unwrap();
+        assert_eq!(opened.item_name, "Team login");
+
+        // The settings survive the save/load cycle (settings.enc), and a
+        // solo vault's founder passes the Owners invite-authority gate.
+        let reloaded = handle.get_settings().unwrap();
+        assert_eq!(reloaded.guest_enabled, Some(false));
+        assert_eq!(
+            reloaded.space_invite_authority,
+            crate::vault::manifest::InviteAuthority::Owners
+        );
+        assert!(reloaded.allow_viewer_export);
+        assert_eq!(reloaded.guest_enabled, Some(false));
+        handle
+            .invite_create(crate::vault::members::MemberRole::Viewer, None)
+            .expect("founder invites under owners-only");
+    }
+
     #[test]
     fn rotation_reseals_space_meta_store() {
         let (dir, password) = create_test_vault();
@@ -13399,6 +13525,9 @@ mod tests {
             trusted_app_packages: None,
             rejected_app_packages: None,
             enrollment_policy: crate::vault::manifest::EnrollmentPolicy::Personal,
+            space_invite_authority: Default::default(),
+            allow_viewer_export: false,
+            guest_enabled: None,
         };
         handle.save_settings(&settings).unwrap();
 

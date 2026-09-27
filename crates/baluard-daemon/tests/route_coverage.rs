@@ -1360,6 +1360,163 @@ async fn space_meta_prepare_status_and_locked_rejection() {
     assert_eq!(st2["flipped"], true);
 }
 
+/// S3-9: the Space settings surfaces — locked refusals, the §6.5
+/// defaults on a fresh vault, a partial set round trip, and fail-closed
+/// parses (bad authority string, non-boolean flags).
+#[tokio::test]
+async fn space_settings_lifecycle_and_locked_rejection() {
+    let (_dir, vault_path) = make_vault("space-settings");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    // NOT unlocked: both surfaces refuse.
+    assert!(state.space_settings_get().await.is_err());
+    assert!(
+        state
+            .space_settings_set(r#"{"guest_enabled":false}"#)
+            .await
+            .is_err()
+    );
+
+    state.unlock(MASTER).await.expect("vault unlock");
+    let get: serde_json::Value =
+        serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
+    assert_eq!(get["space_invite_authority"], "admins");
+    assert_eq!(get["allow_viewer_export"], false);
+    assert_eq!(get["guest_enabled"], true);
+
+    // Partial set: one knob at a time, the others untouched.
+    state
+        .space_settings_set(r#"{"space_invite_authority":"owners"}"#)
+        .await
+        .unwrap();
+    let get: serde_json::Value =
+        serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
+    assert_eq!(get["space_invite_authority"], "owners");
+    assert_eq!(get["guest_enabled"], true);
+
+    state
+        .space_settings_set(r#"{"guest_enabled":false,"allow_viewer_export":true}"#)
+        .await
+        .unwrap();
+    let get: serde_json::Value =
+        serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
+    assert_eq!(get["guest_enabled"], false);
+    assert_eq!(get["allow_viewer_export"], true);
+    assert_eq!(get["space_invite_authority"], "owners");
+
+    // Fail-closed parses: an unknown authority and a non-boolean flag
+    // refuse instead of silently meaning something.
+    assert!(
+        state
+            .space_settings_set(r#"{"space_invite_authority":"council"}"#)
+            .await
+            .is_err()
+    );
+    assert!(
+        state
+            .space_settings_set(r#"{"guest_enabled":"no"}"#)
+            .await
+            .is_err()
+    );
+    assert!(
+        state
+            .space_settings_set(r#"{"allow_viewer_export":1}"#)
+            .await
+            .is_err()
+    );
+
+    // Settings persist in the encrypted store: lock + unlock keeps them.
+    state.lock().await.expect("vault lock");
+    state.unlock(MASTER).await.expect("re-unlock");
+    let get: serde_json::Value =
+        serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
+    assert_eq!(get["space_invite_authority"], "owners");
+    assert_eq!(get["guest_enabled"], false);
+    assert_eq!(get["allow_viewer_export"], true);
+
+    // Review round (S3-9): role-driven gates on a strict vault. Rebind
+    // the acting device to planted rows and walk the matrix. The flag is
+    // ON here (set earlier), so the admin first turns it OFF to arm the
+    // role check.
+    let device_id: uuid::Uuid = state.device_id().await.parse().expect("device uuid");
+    let vault_path = state.vault_path.clone();
+
+    // Editor: settings set refuses (only owner/admin change space policy).
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Editor,
+        device_id,
+        None,
+    );
+    assert!(
+        state
+            .space_settings_set(r#"{"guest_enabled":true}"#)
+            .await
+            .is_err()
+    );
+
+    // Admin: settings set passes; owners-only invite authority refuses
+    // admin-minted invites.
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Admin,
+        device_id,
+        None,
+    );
+    state
+        .space_settings_set(r#"{"allow_viewer_export":false}"#)
+        .await
+        .expect("admin sets space settings");
+    assert!(state.members_invite(r#"{"role":"viewer"}"#).await.is_err());
+
+    // Viewer (flag off): export refuses; the viewer cannot flip the flag
+    // back on.
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Viewer,
+        device_id,
+        None,
+    );
+    assert!(state.export_bw_json().await.is_err());
+    assert!(
+        state
+            .space_settings_set(r#"{"allow_viewer_export":true}"#)
+            .await
+            .is_err()
+    );
+
+    // Tombstoned viewer (removed): member_role_for_device resolves None
+    // and the gate refuses anyway — a struck member's still-open session
+    // must not fall through the catch-all (the review-round fix).
+    {
+        use baluard_core::vault::members::{MemberFile, TrustLevel, write_member};
+        let member = MemberFile {
+            id: uuid::Uuid::new_v4(),
+            display_name: "Struck viewer".into(),
+            role: baluard_core::vault::members::MemberRole::Viewer,
+            trust: TrustLevel::Channel,
+            identity_signing_pubkey: None,
+            identity_signing_pubkey_previous: None,
+            identity_rotation_signature: None,
+            identity_rotated_at: None,
+            reset: None,
+            removed: Some(1),
+            transport_username: None,
+            identity_wrap_pubkey: None,
+        };
+        write_member(&vault_path, &member).unwrap();
+        baluard_core::vault::members::write_device_binding(
+            &vault_path,
+            &baluard_core::vault::members::DeviceBinding {
+                device_id,
+                member_id: member.id,
+            },
+        )
+        .unwrap();
+    }
+    assert!(state.export_bw_json().await.is_err());
+}
+
 #[tokio::test]
 async fn templates_state_lifecycle_and_fail_closed_parses() {
     let (_dir, vault_path) = make_vault("templates-state");
