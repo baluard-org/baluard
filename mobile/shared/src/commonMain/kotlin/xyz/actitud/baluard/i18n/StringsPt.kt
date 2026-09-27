@@ -565,4 +565,18 @@ internal val PT: Map<String, String> = mapOf(
     "space.viewerExportDesc" to "Leitores podem baixar uma cópia do cofre. Desativado por padrão.",
     "space.guestLabel" to "Compartilhamento com convidados",
     "space.guestDesc" to "Links que abrem sem conta. Links existentes continuam funcionando até expirar.",
+    // S1b surfaces: notices + per-device activity.
+    "activity.title" to "Atividade",
+    "activity.entrySubtitle" to "Avisos, atividade de itens compartilhados e recusas de sincronização neste dispositivo",
+    "activity.noticesTitle" to "Precisa de atenção",
+    "activity.noNotices" to "Nada precisa de atenção.",
+    "activity.eventsTitle" to "Atividade recente",
+    "activity.noEvents" to "Ainda não há atividade neste dispositivo.",
+    "activity.refusalsTitle" to "Atualizações recusadas",
+    "activity.noRefusals" to "Nenhuma atualização recusada.",
+    "activity.noticeResetPending" to "{0} foi redefinido e ainda não retornou.",
+    "activity.noticeStaleInvite" to "{0} convite(s) esperam há mais de 7 dias e podem ter expirado.",
+    "activity.noticeMalformed" to "Não foi possível ler {0} solicitação(ões) de acesso.",
+    "activity.noticeGrantExpiring" to "{0} permissão(ões) de acesso expiram em até 7 dias.",
+    "activity.noticeGrantExpired" to "{0} permissão(ões) de acesso expiraram e serão removidas na próxima sincronização de um administrador.",
 )

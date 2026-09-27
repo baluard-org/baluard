@@ -61,6 +61,7 @@ import xyz.actitud.baluard.vault.TagListScreen
 import xyz.actitud.baluard.vault.VaultHomeScreen
 import xyz.actitud.baluard.vault.VaultListViewModel
 import xyz.actitud.baluard.settings.PeopleScreen
+import xyz.actitud.baluard.settings.ActivityScreen
 import xyz.actitud.baluard.settings.CollectionsScreen
 import xyz.actitud.baluard.settings.SettingsScreen
 import xyz.actitud.baluard.settings.SettingsViewModel
@@ -84,13 +85,14 @@ private sealed interface Nav {
     data object Settings : Nav
     data object People : Nav
     data object Collections : Nav
+    data object Activity : Nav
     data class EntryList(val kind: EntryListKind) : Nav
     data object TagList : Nav
 }
 
 private fun navDepth(nav: Nav): Int = when (nav) {
     is Nav.List -> 0
-    is Nav.Detail, Nav.Generator, Nav.Settings, Nav.People, Nav.Collections, is Nav.EntryList, Nav.TagList -> 1
+    is Nav.Detail, Nav.Generator, Nav.Settings, Nav.People, Nav.Collections, Nav.Activity, is Nav.EntryList, Nav.TagList -> 1
     is Nav.Edit -> 2
 }
 
@@ -530,6 +532,7 @@ fun App(
                                     repo = repo,
                                     onOpenPeople = { nav = Nav.People },
                                     onOpenCollections = { nav = Nav.Collections },
+                                    onOpenActivity = { nav = Nav.Activity },
                                     onVaultTimeoutChange = { token ->
                                         autoLockToken = token
                                         scope.launch {
@@ -547,6 +550,11 @@ fun App(
                                     onBack = { nav = Nav.Settings },
                                 )
                                 Nav.Collections -> CollectionsScreen(
+                                    vault = vault,
+                                    repo = repo,
+                                    onBack = { nav = Nav.Settings },
+                                )
+                                Nav.Activity -> ActivityScreen(
                                     vault = vault,
                                     repo = repo,
                                     onBack = { nav = Nav.Settings },

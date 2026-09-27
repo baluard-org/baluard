@@ -851,6 +851,37 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Needs-attention notices (S1b-4). refresh_transport triggers the
+    /// optional best-effort forge seat check; the phone passes false.
+    pub async fn notices_list(&self, refresh_transport: bool) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "refresh_transport": refresh_transport });
+        self.state
+            .notices_list(&payload.to_string())
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// This device's local share-event log (S1b-1), in chronological
+    /// order (oldest first, per the core contract; the client reverses
+    /// for display). The wrapper clamps the limit (max 500).
+    pub async fn activity_events(&self, limit: u64) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "limit": limit });
+        self.state
+            .activity_events(&payload.to_string())
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// This device's local refusal log lines (S1b-1). The wrapper
+    /// clamps the limit (max 200).
+    pub async fn activity_refusals(&self, limit: u64) -> Result<String, BaluardError> {
+        let payload = serde_json::json!({ "limit": limit });
+        self.state
+            .activity_refusals(&payload.to_string())
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Mint a collection (admin-gated core). Returns `{id}`.
     pub async fn collection_create(&self, name: String) -> Result<String, BaluardError> {
         self.state

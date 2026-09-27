@@ -594,4 +594,18 @@ internal val EN: Map<String, String> = mapOf(
     "space.viewerExportDesc" to "Viewers can download a copy of the vault. Off by default.",
     "space.guestLabel" to "Guest sharing",
     "space.guestDesc" to "Share links that open without an account. Existing links keep working until they expire.",
+    // S1b surfaces: notices + per-device activity.
+    "activity.title" to "Activity",
+    "activity.entrySubtitle" to "Notices, shared-item activity, and sync refusals on this device",
+    "activity.noticesTitle" to "Needs attention",
+    "activity.noNotices" to "Nothing needs attention.",
+    "activity.eventsTitle" to "Recent activity",
+    "activity.noEvents" to "No activity on this device yet.",
+    "activity.refusalsTitle" to "Refused updates",
+    "activity.noRefusals" to "No refused updates.",
+    "activity.noticeResetPending" to "{0} was reset and has not rejoined yet.",
+    "activity.noticeStaleInvite" to "{0} invite(s) have been waiting more than 7 days and may have expired.",
+    "activity.noticeMalformed" to "{0} join request(s) could not be read.",
+    "activity.noticeGrantExpiring" to "{0} access grant(s) expire within 7 days.",
+    "activity.noticeGrantExpired" to "{0} access grant(s) have expired and will be removed at the next admin sync.",
 )

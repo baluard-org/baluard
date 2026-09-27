@@ -105,6 +105,7 @@ fun SettingsScreen(
     repo: VaultRepository,
     onOpenPeople: () -> Unit = {},
     onOpenCollections: () -> Unit = {},
+    onOpenActivity: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
     val biometric = remember { Biometric() }
@@ -996,6 +997,21 @@ fun SettingsScreen(
                             modifier = Modifier.weight(1f),
                         )
                     }
+                }
+            }
+            // Activity is per-device local data — every member gets it.
+            SectionCard(title = t("activity.title")) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenActivity() },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = t("activity.entrySubtitle"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
             if (isAdminDevice) {

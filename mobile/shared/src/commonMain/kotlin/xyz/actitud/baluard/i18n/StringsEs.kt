@@ -599,4 +599,18 @@ internal val ES: Map<String, String> = mapOf(
     "space.viewerExportDesc" to "Los lectores pueden descargar una copia de la bóveda. Desactivado por defecto.",
     "space.guestLabel" to "Compartir con invitados",
     "space.guestDesc" to "Enlaces que se abren sin cuenta. Los enlaces existentes siguen funcionando hasta caducar.",
+    // S1b surfaces: notices + per-device activity.
+    "activity.title" to "Actividad",
+    "activity.entrySubtitle" to "Avisos, actividad de elementos compartidos y rechazos de sincronización en este dispositivo",
+    "activity.noticesTitle" to "Requiere atención",
+    "activity.noNotices" to "Nada requiere atención.",
+    "activity.eventsTitle" to "Actividad reciente",
+    "activity.noEvents" to "Aún no hay actividad en este dispositivo.",
+    "activity.refusalsTitle" to "Actualizaciones rechazadas",
+    "activity.noRefusals" to "No hay actualizaciones rechazadas.",
+    "activity.noticeResetPending" to "{0} fue restablecido y aún no se ha reincorporado.",
+    "activity.noticeStaleInvite" to "{0} invitación(es) llevan más de 7 días esperando y pueden haber caducado.",
+    "activity.noticeMalformed" to "No se pudieron leer {0} solicitud(es) de acceso.",
+    "activity.noticeGrantExpiring" to "{0} permiso(s) de acceso caducan en menos de 7 días.",
+    "activity.noticeGrantExpired" to "{0} permiso(s) de acceso han caducado y se eliminarán en la próxima sincronización de un administrador.",
 )

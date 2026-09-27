@@ -7,6 +7,7 @@ import xyz.actitud.baluard.MobileCreateResult
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.detail.str
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import xyz.actitud.baluard.MobileRecoveryPhrase
@@ -114,6 +115,22 @@ data class MobileSpaceSettings(
     val inviteAuthority: String,
     val allowViewerExport: Boolean,
     val guestEnabled: Boolean,
+)
+
+/** A needs-attention notice: name-carrying (reset_pending) or
+ * count-carrying (stale_invite, malformed_requests, grant_*). */
+data class MobileNotice(
+    val kind: String,
+    val name: String?,
+    val count: Long?,
+)
+
+/** One local share-event row: {seq, at, kind, detail}. */
+data class MobileActivityRow(
+    val seq: Long,
+    val at: Long,
+    val kind: String,
+    val detail: String,
 )
 
 class VaultRepository {
@@ -363,6 +380,49 @@ class VaultRepository {
     ) {
         vault.spaceSettingsSet(inviteAuthority, allowViewerExport, guestEnabled)
     }
+
+    // ── S1b: notices + activity (this device's local data; the phone
+    // passes refresh_transport=false so no forge network runs).
+
+    /** Needs-attention notices. Null on failure — the caller toasts. */
+    suspend fun noticesList(vault: MobileVault): List<MobileNotice> =
+        runCatching {
+            val o = Json.parseToJsonElement(vault.noticesList(false)).jsonObject
+            val arr = o["notices"]?.jsonArray ?: emptyList()
+            arr.mapNotNull { el ->
+                val n = el.jsonObject
+                MobileNotice(
+                    kind = n.str("kind") ?: return@mapNotNull null,
+                    name = n.str("name"),
+                    count = n.str("count")?.toLongOrNull(),
+                )
+            }
+        }.getOrDefault(emptyList())
+
+    /** This device's share events. The core emits chronological
+     * (oldest-first); reversed here so the UI contract is newest-first.
+     * Empty on failure. */
+    suspend fun activityEvents(vault: MobileVault, limit: ULong = 100u): List<MobileActivityRow> =
+        runCatching {
+            Json.parseToJsonElement(vault.activityEvents(limit)).jsonArray.mapNotNull { el ->
+                val r = el.jsonObject
+                MobileActivityRow(
+                    seq = (r["seq"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull()
+                        ?: return@mapNotNull null,
+                    at = (r["at"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() ?: 0,
+                    kind = r.str("kind").orEmpty(),
+                    detail = r.str("detail").orEmpty(),
+                )
+            }
+        }.getOrDefault(emptyList()).reversed()
+
+    /** This device's refusal log lines. Empty on failure. */
+    suspend fun activityRefusals(vault: MobileVault, limit: ULong = 50u): List<String> =
+        runCatching {
+            Json.parseToJsonElement(vault.activityRefusals(limit)).jsonArray.mapNotNull { el ->
+                (el as? kotlinx.serialization.json.JsonPrimitive)?.content
+            }
+        }.getOrDefault(emptyList())
 
     /** Mint a collection → {id}. */
     suspend fun collectionCreate(vault: MobileVault, name: String): String =
