@@ -60,6 +60,8 @@ import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.data.MobileSpaceSettings
+import xyz.actitud.baluard.data.MobileSpaceStatus
+import xyz.actitud.baluard.ui.components.BaluardTextField
 import xyz.actitud.baluard.ui.toast.Toast
 import xyz.actitud.baluard.data.vaultTimeoutLabel
 import xyz.actitud.baluard.detail.str
@@ -1023,6 +1025,65 @@ fun SettingsScreen(
                         spaceSettings = repo.spaceSettingsGet(vault)
                     }
 
+                    // Team mode (S3-7b): one-way upgrade. The daemon
+                    // gates and re-checks everything; the UI only paves
+                    // the path.
+                    var spaceTeam by remember(vault) { mutableStateOf<MobileSpaceStatus?>(null) }
+                    var teamBusy by remember(vault) { mutableStateOf(false) }
+                    var showFlipConfirm by remember(vault) { mutableStateOf(false) }
+                    var flipWord by remember(vault) { mutableStateOf("") }
+                    LaunchedEffect(vault) {
+                        spaceTeam = repo.spaceStatus(vault)
+                    }
+
+                    fun runPrepare() {
+                        if (teamBusy) return
+                        teamBusy = true
+                        scope.launch {
+                            try {
+                                val r = repo.spacePrepare(vault)
+                                spaceTeam = repo.spaceStatus(vault)
+                                when {
+                                    r == null -> Toast.error(t("error.generic"))
+                                    r.missing > 0 -> Toast.error(t("space.teamMissing", r.missing.toString()))
+                                    else -> Toast.success(t("space.teamPrepared"))
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Toast.error(t("error.generic"))
+                            } finally {
+                                teamBusy = false
+                            }
+                        }
+                    }
+
+                    fun runFlip() {
+                        // D47: a typed-confirm guard needs a non-empty
+                        // typed value, and the dialog stays open through
+                        // the call so a failure is visible in place.
+                        if (teamBusy || flipWord.trim() != "team") return
+                        teamBusy = true
+                        scope.launch {
+                            try {
+                                repo.spaceFlip(vault)
+                                spaceTeam = repo.spaceStatus(vault)
+                                Toast.success(t("space.teamDone"))
+                                showFlipConfirm = false
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                // The core refusal is plain language;
+                                // surface it instead of a generic error.
+                                val raw = e.message ?: ""
+                                val detail = if (raw.startsWith("detail=")) raw.removePrefix("detail=") else raw
+                                Toast.error(detail.ifBlank { t("error.generic") })
+                            } finally {
+                                teamBusy = false
+                            }
+                        }
+                    }
+
                     fun setSpace(
                         inviteAuthority: String? = null,
                         allowViewerExport: Boolean? = null,
@@ -1050,6 +1111,78 @@ fun SettingsScreen(
                         }
                     }
 
+                    // Team mode status + upgrade path. Rendered
+                    // unconditionally inside the admin card; gating the
+                    // state-creating control on its own state deadlocks
+                    // fresh vaults (the wave-23 lesson).
+                    Text(t("space.teamLabel"), style = MaterialTheme.typography.bodyMedium)
+                    if (spaceTeam?.flipped == true) {
+                        Text(
+                            text = t("space.teamOn"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Text(
+                            text = t("space.teamOff"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        val missing = spaceTeam?.missingWrapPubkey ?: 0
+                        if (missing > 0) {
+                            Text(
+                                text = t("space.teamMissing", missing.toString()),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                enabled = !teamBusy && spaceTeam != null,
+                                onClick = { runPrepare() },
+                            ) {
+                                Text(t("space.teamPrepare"))
+                            }
+                            OutlinedButton(
+                                enabled = !teamBusy && spaceTeam?.prepared == true && missing == 0,
+                                onClick = {
+                                    flipWord = "" // no leak across dialog opens
+                                    showFlipConfirm = true
+                                },
+                            ) {
+                                Text(t("space.teamUpgrade"))
+                            }
+                        }
+                    }
+                    if (showFlipConfirm) {
+                        AlertDialog(
+                            onDismissRequest = { if (!teamBusy) showFlipConfirm = false },
+                            title = { Text(t("space.teamConfirmTitle")) },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(t("space.teamConfirmBody"))
+                                    BaluardTextField(
+                                        value = flipWord,
+                                        onValueChange = { flipWord = it },
+                                        label = t("space.teamConfirmWord"),
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    enabled = !teamBusy && flipWord.trim() == "team",
+                                    onClick = { runFlip() },
+                                ) { Text(t("space.teamUpgrade")) }
+                            },
+                            dismissButton = {
+                                TextButton(enabled = !teamBusy, onClick = { showFlipConfirm = false }) {
+                                    Text(t("common.cancel"))
+                                }
+                            },
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
                     // Who may invite members (admins+owner, or owner only).
                     Text(
                         text = t("space.inviteAuthorityLabel"),

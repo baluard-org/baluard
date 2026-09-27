@@ -855,6 +855,35 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Readiness counts for the Team-shape flip (S3-7b): {prepared,
+    /// wrapped, missing_wrap_pubkey, pending_wrap, flipped}.
+    pub async fn space_status(&self) -> Result<String, BaluardError> {
+        self.state
+            .space_status()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Mint or refresh the shared-space key wraps for every live
+    /// member (S3-7a). Run before flipping; the report lists members
+    /// that still need to sign in with a current app version.
+    pub async fn space_prepare(&self) -> Result<String, BaluardError> {
+        self.state
+            .space_prepare()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Flip the vault to team shape (S3-7b, one-way). Afterwards
+    /// members keep access only to entries shared with them, starting
+    /// from their next unlock. Admin-gated at the core layer.
+    pub async fn space_flip(&self) -> Result<String, BaluardError> {
+        self.state
+            .space_flip()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Needs-attention notices (S1b-4). refresh_transport triggers the
     /// optional best-effort forge seat check; the phone passes false.
     pub async fn notices_list(&self, refresh_transport: bool) -> Result<String, BaluardError> {

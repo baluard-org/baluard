@@ -894,6 +894,18 @@
     "trashAdminsOnly": "Só administradores",
     "restorePolicyLabel": "Restaurar entradas",
     "restorePolicyDesc": "Recuperar uma entrada do lixo fica reservado aos administradores nesta versão.",
-    "restoreAdminsOnly": "Só administradores"
+    "restoreAdminsOnly": "Só administradores",
+    "teamLabel": "Modo equipe",
+    "teamOn": "Ativado. Os membros veem apenas o que é compartilhado com eles.",
+    "teamOff": "Neste momento, cada dispositivo deste espaço tem todas as chaves. O modo equipe mantém privadas as entradas pessoais dos dispositivos de administração.",
+    "teamOnBadge": "Ativado",
+    "teamMissing": "{n} membro(s) precisam abrir o Baluard e entrar uma vez antes de você ativar.",
+    "teamPrepare": "Preparar membros",
+    "teamUpgrade": "Ativar modo equipe",
+    "teamPrepared": "Membros preparados.",
+    "teamDone": "O modo equipe está ativado.",
+    "teamConfirmTitle": "Ativar o modo equipe?",
+    "teamConfirmBody": "Isto é em um sentido. Os membros mantêm acesso às entradas compartilhadas com eles e deixam de ver todo o resto, a partir do próximo desbloqueio. Digite “team” para confirmar.",
+    "teamConfirmWord": "Digite “team” para confirmar"
   }
 }

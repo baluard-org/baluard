@@ -621,4 +621,17 @@ internal val ES: Map<String, String> = mapOf(
     "space.restorePolicyLabel" to "Restaurar entradas",
     "space.restorePolicyDesc" to "Recuperar una entrada de la papelera queda reservado a los administradores en esta versión.",
     "space.restoreAdminsOnly" to "Solo administradores",
+    // Team mode (S3-7b): one-way upgrade, prepare then flip.
+    "space.teamLabel" to "Modo equipo",
+    "space.teamOn" to "Activado. Los miembros solo ven lo que se comparte con ellos.",
+    "space.teamOff" to "Ahora mismo cada dispositivo de este espacio tiene todas las claves. El modo equipo mantiene privadas las entradas personales de los dispositivos de administración.",
+    "space.teamMissing" to "{0} miembro(s) deben abrir Baluard e iniciar sesión una vez antes de activarlo.",
+    "space.teamPrepare" to "Preparar miembros",
+    "space.teamUpgrade" to "Activar modo equipo",
+    "space.teamPrepared" to "Miembros preparados.",
+    "space.teamDone" to "El modo equipo está activado.",
+    "space.teamConfirmTitle" to "¿Activar el modo equipo?",
+    "space.teamConfirmBody" to "Esto es en una sola dirección. Los miembros conservan el acceso a las entradas compartidas con ellos y dejan de ver todo lo demás, a partir de su próximo desbloqueo. Escribe \"team\" para confirmar.",
+    "space.teamConfirmWord" to "Escribe \"team\" para confirmar",
+    "space.teamOnBadge" to "Activado",
 )

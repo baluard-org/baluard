@@ -118,6 +118,28 @@ data class MobileSpaceSettings(
     val trashPolicy: String,
 )
 
+/** Team-shape readiness + state (S3-7b). */
+data class MobileSpaceStatus(
+    val prepared: Boolean,
+    val wrapped: Int,
+    val missingWrapPubkey: Int,
+    val flipped: Boolean,
+)
+
+/** Prepare report: wraps minted, members still to sign in. */
+data class MobileSpacePrepare(
+    val smkFresh: Boolean,
+    val wrapped: Int,
+    val missing: Int,
+)
+
+/** Flip report. */
+data class MobileSpaceFlip(
+    val alreadyFlipped: Boolean,
+    val filesReencrypted: Int,
+    val keywrapsRemoved: Int,
+)
+
 /** A needs-attention notice: name-carrying (reset_pending) or
  * count-carrying (stale_invite, malformed_requests, grant_*). */
 data class MobileNotice(
@@ -385,6 +407,47 @@ class VaultRepository {
         trashPolicy: String? = null,
     ) {
         vault.spaceSettingsSet(inviteAuthority, allowViewerExport, guestEnabled, trashPolicy)
+    }
+
+    /** Team-shape readiness + state (S3-7b). Null on failure — the
+     * caller toasts rather than rendering a half-card. */
+    suspend fun spaceStatus(vault: MobileVault): MobileSpaceStatus? =
+        runCatching {
+            val o = Json.parseToJsonElement(vault.spaceStatus()).jsonObject
+            MobileSpaceStatus(
+                prepared = (o["prepared"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+                wrapped = ((o["wrapped"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "0").toIntOrNull() ?: 0,
+                // SpaceStatus.missing_wrap_pubkey is a COUNT (usize);
+                // only the prepare report carries the id array.
+                missingWrapPubkey =
+                    ((o["missing_wrap_pubkey"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "0").toIntOrNull() ?: 0,
+                flipped = (o["flipped"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+            )
+        }.getOrNull()
+
+    /** Mint/refresh member key wraps ahead of the flip. Null on
+     * failure; the report lists members that still must sign in. */
+    suspend fun spacePrepare(vault: MobileVault): MobileSpacePrepare? =
+        runCatching {
+            val o = Json.parseToJsonElement(vault.spacePrepare()).jsonObject
+            MobileSpacePrepare(
+                smkFresh = (o["smk_fresh"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+                wrapped = ((o["wrapped"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "0").toIntOrNull() ?: 0,
+                missing = (o["missing_wrap_pubkey"] as? kotlinx.serialization.json.JsonArray)?.size ?: 0,
+            )
+        }.getOrNull()
+
+    /** One-way flip to team shape. Throws on refusal — the caller
+     * shows the daemon's plain-language error. */
+    suspend fun spaceFlip(vault: MobileVault): MobileSpaceFlip {
+        val o = Json.parseToJsonElement(vault.spaceFlip()).jsonObject
+        return MobileSpaceFlip(
+            alreadyFlipped = (o["already_flipped"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+            filesReencrypted =
+                ((o["files_reencrypted"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "0").toIntOrNull() ?: 0,
+            keywrapsRemoved =
+                ((o["keywraps_removed"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "0").toIntOrNull() ?: 0,
+        )
     }
 
     // ── S1b: notices + activity (this device's local data; the phone

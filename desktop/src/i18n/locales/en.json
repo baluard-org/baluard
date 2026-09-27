@@ -894,6 +894,18 @@
     "trashAdminsOnly": "Admins only",
     "restorePolicyLabel": "Restoring entries",
     "restorePolicyDesc": "Bringing a trashed entry back is reserved for admins in this version.",
-    "restoreAdminsOnly": "Admins only"
+    "restoreAdminsOnly": "Admins only",
+    "teamLabel": "Team mode",
+    "teamOn": "On. Members see only what is shared with them.",
+    "teamOff": "Right now every device in this space holds every key. Team mode keeps personal entries on admin devices private.",
+    "teamOnBadge": "On",
+    "teamMissing": "{n} member(s) need to open Baluard and sign in once before you can turn this on.",
+    "teamPrepare": "Prepare members",
+    "teamUpgrade": "Turn on team mode",
+    "teamPrepared": "Members are prepared.",
+    "teamDone": "Team mode is on.",
+    "teamConfirmTitle": "Turn on team mode?",
+    "teamConfirmBody": "This is one-way. Members keep access to entries shared with them and lose sight of everything else, starting from their next unlock. Type “team” to confirm.",
+    "teamConfirmWord": "Type “team” to confirm"
   }
 }

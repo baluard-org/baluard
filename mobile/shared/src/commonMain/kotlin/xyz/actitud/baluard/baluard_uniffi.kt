@@ -927,6 +927,12 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1090,9 +1096,15 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_should_auto_lock(`ptr`: Pointer,
     ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_flip(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_prepare(`ptr`: Pointer,
+    ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_get(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(`ptr`: Pointer,`inviteAuthority`: RustBuffer.ByValue,`allowViewerExport`: RustBuffer.ByValue,`guestEnabled`: RustBuffer.ByValue,`trashPolicy`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_status(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_ssh_generate_key(`ptr`: Pointer,`keyType`: RustBuffer.ByValue,
     ): Long
@@ -1442,9 +1454,15 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_flip(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_prepare(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_get(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_status(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_ssh_generate_key(
     ): Short
@@ -1746,10 +1764,19 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock() != 5891.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_flip() != 43702.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_prepare() != 48404.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_get() != 19637.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set() != 28060.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_status() != 58379.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_ssh_generate_key() != 42401.toShort()) {
@@ -3080,6 +3107,20 @@ public interface MobileVaultInterface {
     suspend fun `shouldAutoLock`(): kotlin.Boolean
     
     /**
+     * Flip the vault to team shape (S3-7b, one-way). Afterwards
+     * members keep access only to entries shared with them, starting
+     * from their next unlock. Admin-gated at the core layer.
+     */
+    suspend fun `spaceFlip`(): kotlin.String
+    
+    /**
+     * Mint or refresh the shared-space key wraps for every live
+     * member (S3-7a). Run before flipping; the report lists members
+     * that still need to sign in with a current app version.
+     */
+    suspend fun `spacePrepare`(): kotlin.String
+    
+    /**
      * Space policy knobs (§6.5). Returns the JSON the runtime wrapper
      * emits: {space_invite_authority, allow_viewer_export, guest_enabled}.
      */
@@ -3090,6 +3131,12 @@ public interface MobileVaultInterface {
      * app never hand-builds JSON; the bridge constructs the payload.
      */
     suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?)
+    
+    /**
+     * Readiness counts for the Team-shape flip (S3-7b): {prepared,
+     * wrapped, missing_wrap_pubkey, pending_wrap, flipped}.
+     */
+    suspend fun `spaceStatus`(): kotlin.String
     
     /**
      * Generate an SSH keypair. `keyType`: "ed25519" (default) | "ecdsa256".
@@ -4799,6 +4846,58 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
+     * Flip the vault to team shape (S3-7b, one-way). Afterwards
+     * members keep access only to entries shared with them, starting
+     * from their next unlock. Admin-gated at the core layer.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `spaceFlip`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_flip(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Mint or refresh the shared-space key wraps for every live
+     * member (S3-7a). Run before flipping; the report lists members
+     * that still need to sign in with a current app version.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `spacePrepare`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_prepare(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * Space policy knobs (§6.5). Returns the JSON the runtime wrapper
      * emits: {space_invite_authority, allow_viewer_export, guest_enabled}.
      */
@@ -4843,6 +4942,31 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         // lift function
         { Unit },
         
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Readiness counts for the Team-shape flip (S3-7b): {prepared,
+     * wrapped, missing_wrap_pubkey, pending_wrap, flipped}.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `spaceStatus`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_status(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
         // Error FFI converter
         BaluardException.ErrorHandler,
     )
