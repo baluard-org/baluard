@@ -59,6 +59,8 @@ import kotlinx.serialization.json.JsonObject
 import xyz.actitud.baluard.MobileVault
 import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.data.VaultRepository
+import xyz.actitud.baluard.data.MobileSpaceSettings
+import xyz.actitud.baluard.ui.toast.Toast
 import xyz.actitud.baluard.data.vaultTimeoutLabel
 import xyz.actitud.baluard.detail.str
 import xyz.actitud.baluard.i18n.t
@@ -992,6 +994,119 @@ fun SettingsScreen(
                             text = t("collections.entrySubtitle"),
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+            if (isAdminDevice) {
+                SectionCard(title = t("space.title")) {
+                    val scope = rememberCoroutineScope()
+                    var spaceSettings by remember(vault) { mutableStateOf<MobileSpaceSettings?>(null) }
+                    var spaceBusy by remember(vault) { mutableStateOf(false) }
+                    LaunchedEffect(vault) {
+                        spaceSettings = repo.spaceSettingsGet(vault)
+                    }
+
+                    fun setSpace(
+                        inviteAuthority: String? = null,
+                        allowViewerExport: Boolean? = null,
+                        guestEnabled: Boolean? = null,
+                    ) {
+                        // Synchronous guard: launch dispatches, so a flag
+                        // set inside the coroutine lets two rapid taps
+                        // both through.
+                        if (spaceBusy) return
+                        if (inviteAuthority != null && spaceSettings?.inviteAuthority == inviteAuthority) return
+                        spaceBusy = true
+                        scope.launch {
+                            try {
+                                repo.spaceSettingsSet(vault, inviteAuthority, allowViewerExport, guestEnabled)
+                                spaceSettings = repo.spaceSettingsGet(vault)
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Toast.error(t("error.generic"))
+                            } finally {
+                                spaceBusy = false
+                            }
+                        }
+                    }
+
+                    // Who may invite members (admins+owner, or owner only).
+                    Text(
+                        text = t("space.inviteAuthorityLabel"),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = t("space.inviteAuthorityDesc"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            enabled = !spaceBusy,
+                            onClick = { setSpace(inviteAuthority = "admins") },
+                        ) {
+                            Text(t("space.authorityAdmins"))
+                        }
+                        OutlinedButton(
+                            enabled = !spaceBusy,
+                            onClick = { setSpace(inviteAuthority = "owners") },
+                        ) {
+                            Text(t("space.authorityOwners"))
+                        }
+                    }
+                    if (spaceSettings != null) {
+                        Text(
+                            text = t(
+                                if (spaceSettings!!.inviteAuthority == "owners") {
+                                    "space.authorityOwners"
+                                } else {
+                                    "space.authorityAdmins"
+                                }
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(t("space.viewerExportLabel"), style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = t("space.viewerExportDesc"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            enabled = !spaceBusy && spaceSettings != null,
+                            checked = spaceSettings?.allowViewerExport == true,
+                            onCheckedChange = { setSpace(allowViewerExport = it) },
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(t("space.guestLabel"), style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = t("space.guestDesc"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            enabled = !spaceBusy && spaceSettings != null,
+                            checked = spaceSettings?.guestEnabled == true,
+                            onCheckedChange = { setSpace(guestEnabled = it) },
                         )
                     }
                 }

@@ -15,6 +15,7 @@ import FocusTrap from "./FocusTrap.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 import SyncTab from "./SyncTab.jsx";
 import PeopleTab from "./PeopleTab.jsx";
+import SpaceTab from "./SpaceTab.jsx";
 import CollectionsTab from "./CollectionsTab.jsx";
 import ContactsTab from "./ContactsTab.jsx";
 import OutboxesTab from "./OutboxesTab.jsx";
@@ -474,6 +475,7 @@ export default function SettingsModal() {
               <TabButton id="data" label={t("settings.tabData")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="sync" label={t("settings.tabSync")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="people" label={t("settings.tabPeople")} active={activeTab()} setActiveTab={setActiveTab} />
+              <TabButton id="space" label={t("settings.tabSpace")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="collections" label={t("settings.tabCollections")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="contacts" label={t("settings.tabContacts")} active={activeTab()} setActiveTab={setActiveTab} />
               <TabButton id="outboxes" label={t("settings.tabOutboxes")} active={activeTab()} setActiveTab={setActiveTab} />
@@ -864,6 +866,9 @@ export default function SettingsModal() {
 
               <Show when={activeTab() === "people"}>
                 <PeopleTab />
+              </Show>
+              <Show when={activeTab() === "space"}>
+                <SpaceTab />
               </Show>
               <Show when={activeTab() === "collections"}>
                 <CollectionsTab />

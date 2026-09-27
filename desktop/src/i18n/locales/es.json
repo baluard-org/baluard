@@ -297,7 +297,8 @@
     "themeSystem": "Sistema",
     "tabCollections": "Colecciones compartidas",
     "tabContacts": "Contactos",
-    "tabOutboxes": "Buzones"
+    "tabOutboxes": "Buzones",
+    "tabSpace": "Espacio"
   },
   "sync": {
     "title": "Sincronización de bóveda",
@@ -877,5 +878,15 @@
     "copySecret": "Copiar",
     "copiedToast": "Copiado",
     "oneItem": "1 elemento"
+  },
+  "space": {
+    "inviteAuthorityLabel": "Quién puede invitar miembros",
+    "inviteAuthorityDesc": "Administradores y propietario, o solo el propietario. No afecta las invitaciones de restablecimiento.",
+    "authorityAdmins": "Admins. + propietario",
+    "authorityOwners": "Solo propietario",
+    "viewerExportLabel": "Permitir exportar a lectores",
+    "viewerExportDesc": "Los lectores pueden descargar una copia de la bóveda. Desactivado por defecto.",
+    "guestLabel": "Compartir con invitados",
+    "guestDesc": "Crear enlaces que se abren sin cuenta. Los enlaces ya creados siguen funcionando hasta que caduquen."
   }
 }

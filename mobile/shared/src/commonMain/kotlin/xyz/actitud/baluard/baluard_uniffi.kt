@@ -917,6 +917,10 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1073,6 +1077,10 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_set_settings(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_should_auto_lock(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_get(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(`ptr`: Pointer,`inviteAuthority`: RustBuffer.ByValue,`allowViewerExport`: RustBuffer.ByValue,`guestEnabled`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_ssh_generate_key(`ptr`: Pointer,`keyType`: RustBuffer.ByValue,
     ): Long
@@ -1416,6 +1424,10 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_get(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_ssh_generate_key(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_sync_offline_tick(
@@ -1705,6 +1717,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock() != 5891.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_get() != 19637.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set() != 52719.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_ssh_generate_key() != 42401.toShort()) {
@@ -3014,6 +3032,18 @@ public interface MobileVaultInterface {
      * true. Foreground-lifecycle driven on mobile (no background walker).
      */
     suspend fun `shouldAutoLock`(): kotlin.Boolean
+    
+    /**
+     * Space policy knobs (§6.5). Returns the JSON the runtime wrapper
+     * emits: {space_invite_authority, allow_viewer_export, guest_enabled}.
+     */
+    suspend fun `spaceSettingsGet`(): kotlin.String
+    
+    /**
+     * Set Space policy knobs (partial, admin-gated). Typed args so the
+     * app never hand-builds JSON; the bridge constructs the payload.
+     */
+    suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?)
     
     /**
      * Generate an SSH keypair. `keyType`: "ed25519" (default) | "ecdsa256".
@@ -4647,6 +4677,57 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
+     * Space policy knobs (§6.5). Returns the JSON the runtime wrapper
+     * emits: {space_invite_authority, allow_viewer_export, guest_enabled}.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `spaceSettingsGet`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_get(
+                thisPtr,
+                
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Set Space policy knobs (partial, admin-gated). Typed args so the
+     * app never hand-builds JSON; the bridge constructs the payload.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?) {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(
+                thisPtr,
+                FfiConverterOptionalString.lower(`inviteAuthority`),FfiConverterOptionalBoolean.lower(`allowViewerExport`),FfiConverterOptionalBoolean.lower(`guestEnabled`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+        
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * Generate an SSH keypair. `keyType`: "ed25519" (default) | "ecdsa256".
      * Returns JSON {public_key, fingerprint, private_key}; formatted OpenSSH
      * strings only, matching the desktop generator (RSA removed, L7).
@@ -5806,6 +5887,38 @@ public object FfiConverterOptionalULong: FfiConverterRustBuffer<kotlin.ULong?> {
         } else {
             buf.put(1)
             FfiConverterULong.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalBoolean: FfiConverterRustBuffer<kotlin.Boolean?> {
+    override fun read(buf: ByteBuffer): kotlin.Boolean? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterBoolean.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.Boolean?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterBoolean.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.Boolean?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterBoolean.write(value, buf)
         }
     }
 }

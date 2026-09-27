@@ -589,4 +589,14 @@ internal val ES: Map<String, String> = mapOf(
         "collections.catalogClearBody" to "¿Ocultar todos los nombres en el diálogo de peticiones?",
         "collections.catalogPublishedToast" to "Catálogo actualizado",
 
+    // S3-9b: Space policy (admin card on Settings).
+    "space.title" to "Espacio",
+    "space.inviteAuthorityLabel" to "Quién puede invitar miembros",
+    "space.inviteAuthorityDesc" to "Administradores y propietario, o solo el propietario. No afecta las invitaciones de restablecimiento.",
+    "space.authorityAdmins" to "Admins. + propietario",
+    "space.authorityOwners" to "Solo propietario",
+    "space.viewerExportLabel" to "Permitir exportar a lectores",
+    "space.viewerExportDesc" to "Los lectores pueden descargar una copia de la bóveda. Desactivado por defecto.",
+    "space.guestLabel" to "Compartir con invitados",
+    "space.guestDesc" to "Enlaces que se abren sin cuenta. Los enlaces existentes siguen funcionando hasta caducar.",
 )
