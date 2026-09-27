@@ -921,6 +921,12 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -962,6 +968,10 @@ internal interface UniffiLib : Library {
     ): Pointer
     fun uniffi_baluard_uniffi_fn_free_mobilevault(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_activity_events(`ptr`: Pointer,`limit`: Long,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_activity_refusals(`ptr`: Pointer,`limit`: Long,
+    ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_add_cipher(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_archive_cipher(`ptr`: Pointer,`id`: RustBuffer.ByValue,
@@ -1065,6 +1075,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_member_transfer(`ptr`: Pointer,`memberId`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_members_list(`ptr`: Pointer,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_notices_list(`ptr`: Pointer,`refreshTransport`: Byte,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_rename_folder(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
     ): Long
@@ -1308,6 +1320,10 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobiledeviceflow_verification_uri(
     ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_activity_events(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_activity_refusals(
+    ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_add_cipher(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher(
@@ -1411,6 +1427,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_member_transfer(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_members_list(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_notices_list(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_rename_folder(
     ): Short
@@ -1543,6 +1561,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobiledeviceflow_verification_uri() != 32094.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_activity_events() != 4976.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_activity_refusals() != 26698.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_add_cipher() != 57931.toShort()) {
@@ -1699,6 +1723,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_members_list() != 29779.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_notices_list() != 44938.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_rename_folder() != 19757.toShort()) {
@@ -2689,6 +2716,18 @@ public object FfiConverterTypeMobileDeviceFlow: FfiConverter<MobileDeviceFlow, P
 public interface MobileVaultInterface {
     
     /**
+     * This device's local share-event log (S1b-1), newest-first rows
+     * {seq, at, kind, detail}. The wrapper clamps the limit (max 500).
+     */
+    suspend fun `activityEvents`(`limit`: kotlin.ULong): kotlin.String
+    
+    /**
+     * This device's local refusal log lines (S1b-1). The wrapper
+     * clamps the limit (max 200).
+     */
+    suspend fun `activityRefusals`(`limit`: kotlin.ULong): kotlin.String
+    
+    /**
      * Add a new cipher (JSON payload per the daemon wire format). Returns the
      * new cipher's JSON (with generated id, tier, epoch).
      */
@@ -2999,6 +3038,12 @@ public interface MobileVaultInterface {
     suspend fun `membersList`(): kotlin.String
     
     /**
+     * Needs-attention notices (S1b-4). refresh_transport triggers the
+     * optional best-effort forge seat check; the phone passes false.
+     */
+    suspend fun `noticesList`(`refreshTransport`: kotlin.Boolean): kotlin.String
+    
+    /**
      * Rename an existing folder (JSON payload `{"id": "...", "name": "..."}`).
      */
     suspend fun `renameFolder`(`payload`: kotlin.String)
@@ -3220,6 +3265,56 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
         return uniffiRustCall() { status ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_clone_mobilevault(pointer!!, status)
         }
+    }
+
+    
+    /**
+     * This device's local share-event log (S1b-1), newest-first rows
+     * {seq, at, kind, detail}. The wrapper clamps the limit (max 500).
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `activityEvents`(`limit`: kotlin.ULong) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_activity_events(
+                thisPtr,
+                FfiConverterULong.lower(`limit`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * This device's local refusal log lines (S1b-1). The wrapper
+     * clamps the limit (max 200).
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `activityRefusals`(`limit`: kotlin.ULong) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_activity_refusals(
+                thisPtr,
+                FfiConverterULong.lower(`limit`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
     }
 
     
@@ -4512,6 +4607,31 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_members_list(
                 thisPtr,
                 
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Needs-attention notices (S1b-4). refresh_transport triggers the
+     * optional best-effort forge seat check; the phone passes false.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `noticesList`(`refreshTransport`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_notices_list(
+                thisPtr,
+                FfiConverterBoolean.lower(`refreshTransport`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },

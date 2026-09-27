@@ -125,6 +125,9 @@ open class StubVault(
     override suspend fun `collectionDelete`(id: String): String = err()
     override suspend fun `collectionCatalogSet`(entries: List<MobileCatalogInput>): String = err()
     override suspend fun `isAdminDevice`(): Boolean = err()
+    override suspend fun `noticesList`(`refreshTransport`: Boolean): String = err()
+    override suspend fun `activityEvents`(`limit`: ULong): String = err()
+    override suspend fun `activityRefusals`(`limit`: ULong): String = err()
     override suspend fun `spaceSettingsGet`(): String = err()
     override suspend fun `spaceSettingsSet`(
         `inviteAuthority`: String?,
