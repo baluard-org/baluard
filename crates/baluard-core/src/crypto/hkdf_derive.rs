@@ -20,6 +20,7 @@ const FOLDERS_INFO: &[u8] = b"baluard-folders-v1";
 const TAGS_INFO: &[u8] = b"baluard-tags-v1";
 const PROFILE_INFO: &[u8] = b"baluard-profile-v1";
 const SETTINGS_INFO: &[u8] = b"baluard-settings-v1";
+const AVATAR_INFO: &[u8] = b"baluard-avatar-meta-v1";
 const ACTIVITY_INFO: &[u8] = b"baluard-activity-v1";
 const GENERATOR_HISTORY_INFO: &[u8] = b"baluard-generator-history-v1";
 const CONTACTS_INFO: &[u8] = b"baluard-contacts-v1";
@@ -100,6 +101,19 @@ pub fn derive_profile_key(root_key: &[u8; 64]) -> Result<[u8; 32], CryptoError> 
     let hkdf = Hkdf::<Sha256>::new(None, root_key);
     let mut key = [0u8; 32];
     hkdf.expand(PROFILE_INFO, &mut key)
+        .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
+    Ok(key)
+}
+
+/// Derive a 32-byte Avatar Key from the meta IKM (raw root bytes
+/// pre-flip, HKDF-expanded SMK post-flip — see UnlockedState::meta_ikm).
+/// Domain-separated from the legacy epoch-bound SGK avatar derivation
+/// (SpaceGroupKey::derive_avatar_key) so pre-re-home avatars stay
+/// readable through the explicit fallback path.
+pub fn derive_avatar_key(meta_ikm: &[u8; 64]) -> Result<[u8; 32], CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(None, meta_ikm);
+    let mut key = [0u8; 32];
+    hkdf.expand(AVATAR_INFO, &mut key)
         .map_err(|e| CryptoError::KdfFailed(format!("HKDF expand failed: {e}")))?;
     Ok(key)
 }
