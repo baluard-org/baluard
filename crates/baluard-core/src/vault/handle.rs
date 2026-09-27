@@ -1427,12 +1427,19 @@ impl VaultHandle {
         }
 
         // Snapshot the five tracked meta files under the CURRENT (Root
-        // Key) derivation, before the marker moves the IKM.
+        // Key) derivation, before the marker moves the IKM. The avatar
+        // rides the same domain; snapshot its bytes too when present.
         let folders = self.list_folders()?;
         let tags = self.list_tags()?;
         let profile = self.load_profile()?;
         let settings = self.get_settings()?;
         let contacts = self.load_contacts()?;
+        let avatar_path = self.path.join("meta/avatar.enc");
+        let avatar_bytes = avatar_path
+            .exists()
+            .then(|| std::fs::read(&avatar_path).ok())
+            .flatten()
+            .and_then(|blob| self.decrypt_avatar_blob(&blob).ok());
 
         // Point of no return: the marker switches every device's unlock
         // and meta derivation. Files converge after (crash-safe: the next
@@ -1457,6 +1464,15 @@ impl VaultHandle {
         files += 1;
         self.save_contacts(&contacts)?;
         files += 1;
+
+        // The avatar joins the member-visible domain so members can
+        // actually see it; counted only when one exists.
+        if let Some(bytes) = avatar_bytes {
+            let key = zeroize::Zeroizing::new(self.derive_avatar_key()?);
+            let new_blob = crate::vault::avatar::encrypt_avatar(&key, &bytes)?;
+            super::write_vault_file(&avatar_path, &new_blob)?;
+            files += 1;
+        }
 
         // Team members stop receiving the Root Key, effective immediately.
         let keywraps_removed = self.strip_member_keywraps();
@@ -2890,6 +2906,16 @@ impl VaultHandle {
         let profile = self.load_profile().ok();
         let settings = self.get_settings().ok();
         let contacts = self.load_contacts().ok();
+        // The avatar read must happen INSIDE the dropped-SMK window:
+        // post-marker crash bytes are root-domain, which neither the
+        // SMK key nor the legacy SGK fallback can open once the SMK is
+        // restored.
+        let avatar_path = self.path.join("meta/avatar.enc");
+        let avatar_bytes = avatar_path
+            .exists()
+            .then(|| std::fs::read(&avatar_path).ok())
+            .flatten()
+            .and_then(|blob| self.decrypt_avatar_blob(&blob).ok());
         if let VaultState::Unlocked(u) = &mut self.state {
             u.smk = saved_smk;
         }
@@ -2911,6 +2937,18 @@ impl VaultHandle {
         }
         if let Some(c) = contacts {
             let _ = self.save_contacts(&c);
+        }
+        // The avatar rides the same member-visible domain; migrate the
+        // bytes snapshotted under the pre-flip key (best-effort, like
+        // the five above).
+        if let Some(bytes) = avatar_bytes {
+            if let Ok(key) = self.derive_avatar_key() {
+                if let Ok(new_blob) =
+                    crate::vault::avatar::encrypt_avatar(&zeroize::Zeroizing::new(key), &bytes)
+                {
+                    let _ = super::write_vault_file(&avatar_path, &new_blob);
+                }
+            }
         }
         // A crash between the flip's marker write and its keywrap strip
         // leaves member Root Key wraps on disk; convergence removes them.
@@ -3410,15 +3448,30 @@ impl VaultHandle {
         }
     }
 
-    /// M1 fix: Derive the avatar encryption key from the unlocked SGK.
-    /// Domain-separated from item keys; epoch-bound so avatar is re-wrapped
-    /// on root key rotation.
+    /// Derive the avatar encryption key from the member-visible meta
+    /// domain (raw root bytes pre-flip, HKDF-expanded SMK post-flip).
+    /// Domain-separated from the legacy epoch-bound SGK derivation; on
+    /// member devices this works wherever the profile does.
     pub fn derive_avatar_key(&self) -> Result<[u8; 32], BaluardError> {
-        let unlocked = self.unlocked();
-        // Team-member devices hold no group key (S3-7b): refuse rather
-        // than hand back a dummy key a caller could encrypt with.
-        let sgk = unlocked.sgk()?;
-        Ok(sgk.derive_avatar_key(sgk.epoch()))
+        crate::crypto::hkdf_derive::derive_avatar_key(&self.unlocked().meta_ikm())
+            .map_err(BaluardError::from)
+    }
+
+    /// Decrypt an avatar blob, trying the meta-domain key first and
+    /// falling back to the legacy epoch-bound SGK derivation for blobs
+    /// written before the re-home. Convergent: any rewrite migrates the
+    /// blob; a rotation migrates the rest.
+    pub fn decrypt_avatar_blob(&self, blob: &[u8]) -> Result<Vec<u8>, BaluardError> {
+        match crate::vault::avatar::decrypt_avatar(&self.derive_avatar_key()?, blob) {
+            Ok(bytes) => Ok(bytes),
+            Err(_) => match self.unlocked().sgk() {
+                Ok(sgk) => {
+                    crate::vault::avatar::decrypt_avatar(&sgk.derive_avatar_key(sgk.epoch()), blob)
+                        .map_err(BaluardError::from)
+                }
+                Err(_) => Err(VaultError::Metadata("avatar could not be decrypted".into()).into()),
+            },
+        }
     }
 
     /// Encrypt metadata JSON and write to disk atomically.
@@ -6803,21 +6856,18 @@ impl VaultHandle {
             staged_renames.push((tmp_path, file_path));
         }
 
-        // P4 remainder: re-encrypt the avatar. meta/avatar.enc is AES-GCM
-        // under the SGK-derived epoch-bound key; skipping it strands the
-        // avatar at the old epoch (avatar_get fails after rotation).
+        // P4 remainder: re-encrypt the avatar. Post-flip the avatar
+        // rides the SMK, which rotation does not touch — nothing to
+        // re-key. Pre-flip it migrates from the outgoing root domain to
+        // the incoming one (decrypt_avatar_blob falls back to the
+        // legacy SGK derivation for blobs written before the re-home).
         let avatar_path = self.path.join("meta/avatar.enc");
-        if avatar_path.exists() {
-            let old_avatar_key = zeroize::Zeroizing::new(self.derive_avatar_key()?);
-            let new_avatar_key = zeroize::Zeroizing::new(
-                crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
-                    &new_root_key,
-                    new_epoch,
-                )
-                .derive_avatar_key(new_epoch),
-            );
+        if avatar_path.exists() && self.unlocked().smk.is_none() {
             let blob = std::fs::read(&avatar_path)?;
-            let mut plaintext = crate::vault::avatar::decrypt_avatar(&old_avatar_key, &blob)?;
+            let mut plaintext = self.decrypt_avatar_blob(&blob)?;
+            let new_avatar_key = zeroize::Zeroizing::new(
+                crate::crypto::hkdf_derive::derive_avatar_key(new_root_key.as_bytes())?,
+            );
             let new_blob = crate::vault::avatar::encrypt_avatar(&new_avatar_key, &plaintext)?;
             plaintext.zeroize();
             let avatar_tmp = avatar_path.with_extension("enc.tmp");
@@ -7399,21 +7449,18 @@ impl VaultHandle {
         }
         drop(old_root);
 
-        // P4 remainder: re-encrypt the avatar. meta/avatar.enc is AES-GCM
-        // under the SGK-derived epoch-bound key; skipping it strands the
-        // avatar at the old epoch (avatar_get fails after rotation).
+        // P4 remainder: re-encrypt the avatar. Post-flip the avatar
+        // rides the SMK, which rotation does not touch — nothing to
+        // re-key. Pre-flip it migrates from the outgoing root domain to
+        // the incoming one (decrypt_avatar_blob falls back to the
+        // legacy SGK derivation for blobs written before the re-home).
         let avatar_path = self.path.join("meta/avatar.enc");
-        if avatar_path.exists() {
-            let old_avatar_key = zeroize::Zeroizing::new(self.derive_avatar_key()?);
-            let new_avatar_key = zeroize::Zeroizing::new(
-                crate::keys::hierarchy::SpaceGroupKey::derive_from_root_key(
-                    &new_root_key,
-                    new_epoch,
-                )
-                .derive_avatar_key(new_epoch),
-            );
+        if avatar_path.exists() && self.unlocked().smk.is_none() {
             let blob = std::fs::read(&avatar_path)?;
-            let mut plaintext = crate::vault::avatar::decrypt_avatar(&old_avatar_key, &blob)?;
+            let mut plaintext = self.decrypt_avatar_blob(&blob)?;
+            let new_avatar_key = zeroize::Zeroizing::new(
+                crate::crypto::hkdf_derive::derive_avatar_key(new_root_key.as_bytes())?,
+            );
             let new_blob = crate::vault::avatar::encrypt_avatar(&new_avatar_key, &plaintext)?;
             plaintext.zeroize();
             let avatar_tmp = avatar_path.with_extension("enc.tmp");
@@ -10498,6 +10545,23 @@ mod tests {
     }
 
     #[test]
+    fn avatar_reads_legacy_sgk_blobs() {
+        // Pre-re-home vaults carry avatars encrypted under the legacy
+        // SGK epoch-bound derivation; the flexible read must open them
+        // until a rotation or avatar write migrates the blob.
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+        let sgk = handle.unlocked().sgk().expect("founder holds sgk").clone();
+        let legacy_key = sgk.derive_avatar_key(sgk.epoch());
+        let plaintext = b"legacy-avatar".to_vec();
+        let blob = crate::vault::avatar::encrypt_avatar(&legacy_key, &plaintext).unwrap();
+        std::fs::write(dir.path().join("meta/avatar.enc"), &blob).unwrap();
+        let opened = handle.decrypt_avatar_blob(&blob).unwrap();
+        assert_eq!(opened, plaintext);
+    }
+
+    #[test]
     fn rotate_root_key_re_encrypts_ciphers() {
         let (dir, password) = create_test_vault();
         let mut handle = VaultHandle::open(dir.path()).unwrap();
@@ -11230,6 +11294,18 @@ mod tests {
 
         let prep = handle.space_prepare().unwrap();
         assert!(prep.smk_fresh);
+        // Plant an avatar so the flip converges it into the
+        // member-visible domain (files_reencrypted 5 -> 6).
+        let mut prof = handle.load_profile().unwrap();
+        prof.avatar_ext = Some("png".into());
+        handle.save_profile(&prof).unwrap();
+        let avatar_plain = b"fake-png-image-bytes".to_vec();
+        let avatar_blob = crate::vault::avatar::encrypt_avatar(
+            &zeroize::Zeroizing::new(handle.derive_avatar_key().unwrap()),
+            &avatar_plain,
+        )
+        .unwrap();
+        crate::vault::write_vault_file(&owner_path.join("meta/avatar.enc"), &avatar_blob).unwrap();
         engine_o.commit_all(&repo_o, "prepare").unwrap();
         let repo_j = engine_j.open_repo().unwrap();
         engine_j.pull(&repo_j, "origin").unwrap();
@@ -11240,7 +11316,7 @@ mod tests {
         assert!(joiner_kw.exists());
         let report = handle.space_flip().unwrap();
         assert!(!report.already_flipped);
-        assert_eq!(report.files_reencrypted, 5);
+        assert_eq!(report.files_reencrypted, 6);
         assert_eq!(report.keywraps_removed, 1);
         assert!(!joiner_kw.exists());
         assert!(crate::vault::space_meta::shape_flipped(&owner_path));
@@ -11269,6 +11345,13 @@ mod tests {
         assert!(joiner.unlocked().smk.is_some());
         assert!(joiner.list_folders().is_ok());
         assert!(joiner.get_settings().is_ok());
+        // The avatar rode the flip into the member-visible domain: a
+        // rootless member device decrypts it with the SMK-derived key.
+        let avatar_stored = std::fs::read(joiner_path.join("meta/avatar.enc")).unwrap();
+        assert_eq!(
+            joiner.decrypt_avatar_blob(&avatar_stored).unwrap(),
+            avatar_plain
+        );
         // Admin-only surfaces refuse cleanly on the member device.
         assert!(joiner.rotate_root_key().is_err());
         assert!(joiner.space_prepare().is_err());

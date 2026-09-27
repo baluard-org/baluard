@@ -1360,6 +1360,52 @@ async fn space_meta_prepare_status_and_locked_rejection() {
     assert_eq!(st2["flipped"], true);
 }
 
+/// The avatar/settings member-write gates: a member device writing
+/// git-tracked meta (profile.enc, avatar.enc, settings.enc) would commit
+/// locally and be refused at every peer pull — wedging the space. On a
+/// members-dir vault the writes refuse; the founder/owner passes.
+#[tokio::test]
+async fn member_meta_writes_refuse_on_team_vaults() {
+    let (_dir, vault_path) = make_vault("member-meta-writes");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    state.unlock(MASTER).await.expect("vault unlock");
+
+    // Owner genesis manages a solo vault: the writes pass.
+    state
+        .settings_set(r#"{"theme":"dark"}"#)
+        .await
+        .expect("owner settings set");
+    state.locale_save("es").await.expect("owner locale save");
+
+    // Rebind the device to an Editor: the same writes refuse.
+    let device: uuid::Uuid = state.device_id().await.parse().expect("device uuid");
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Editor,
+        device,
+        None,
+    );
+    let err = state.settings_set(r#"{"theme":"dark"}"#).await.unwrap_err();
+    assert!(err.contains("managing device"), "err: {err}");
+    let err = state
+        .avatar_set(r#"{"data":"aGk=","ext":"png"}"#)
+        .await
+        .unwrap_err();
+    assert!(err.contains("managing device"), "err: {err}");
+    let err = state.locale_save("pt").await.unwrap_err();
+    assert!(err.contains("managing device"), "err: {err}");
+    // Same wedge class: contacts mutations and generator-history writes
+    // touch git-tracked meta too.
+    let err = state
+        .contacts_remove(r#"{"identity_signing_pubkey":"aabb"}"#)
+        .await
+        .unwrap_err();
+    assert!(err.contains("managing device"), "err: {err}");
+    let err = state.generator_history_clear().await.unwrap_err();
+    assert!(err.contains("managing device"), "err: {err}");
+}
+
 /// S3-9: the Space settings surfaces — locked refusals, the §6.5
 /// defaults on a fresh vault, a partial set round trip, and fail-closed
 /// parses (bad authority string, non-boolean flags).

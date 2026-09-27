@@ -936,9 +936,40 @@ impl VaultState {
     }
 
     /// Update vault settings from partial JSON.
+    /// Shared gate for writes to git-tracked vault meta (settings,
+    /// profile, avatar): legacy personal vaults pass (the founder
+    /// manages); team vaults require Owner/Admin. A member writing
+    /// tracked meta would commit fine locally and be refused at every
+    /// peer pull, wedging the whole space — refuse here instead.
+    async fn is_managing_device(vault_path: &std::path::Path, device_id: uuid::Uuid) -> bool {
+        let members_dir = vault_path.join(baluard_core::vault::members::MEMBERS_DIR);
+        if !members_dir.exists() {
+            return true; // legacy personal vault: the founder manages
+        }
+        matches!(
+            baluard_core::vault::members::member_role_for_device(vault_path, device_id),
+            Some(baluard_core::vault::members::MemberRole::Owner)
+                | Some(baluard_core::vault::members::MemberRole::Admin)
+        )
+    }
+
+    async fn ensure_managing_device(
+        vault_path: &std::path::Path,
+        device_id: uuid::Uuid,
+    ) -> Result<(), String> {
+        if !Self::is_managing_device(vault_path, device_id).await {
+            return Err("This change can only be made on a managing device.".into());
+        }
+        Ok(())
+    }
+
     pub async fn settings_set(&self, payload: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        Self::ensure_managing_device(self.vault_path.as_path(), handle.device_id).await?;
 
         let partial: serde_json::Value =
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
@@ -1048,10 +1079,8 @@ impl VaultState {
         let enc_path = handle.path.join("meta/avatar.enc");
         if enc_path.exists() {
             let blob = std::fs::read(&enc_path).map_err(|e| format!("read avatar: {e}"))?;
-            let key = handle
-                .derive_avatar_key()
-                .map_err(|e| format!("avatar key: {e}"))?;
-            let bytes = baluard_core::vault::avatar::decrypt_avatar(&key, &blob)
+            let bytes = handle
+                .decrypt_avatar_blob(&blob)
                 .map_err(|e| format!("{e}"))?;
             use base64::Engine;
             return Ok(base64::engine::general_purpose::STANDARD.encode(&bytes));
@@ -1064,6 +1093,12 @@ impl VaultState {
             return Ok(String::new());
         }
         let data = std::fs::read(&avatar_path).map_err(|e| format!("read avatar: {e}"))?;
+        // The migration writes git-tracked meta; a member device reads
+        // the legacy bytes without migrating (the admin migrates).
+        if !Self::is_managing_device(self.vault_path.as_path(), handle.device_id).await {
+            use base64::Engine;
+            return Ok(base64::engine::general_purpose::STANDARD.encode(&data));
+        }
         // Migrate: encrypt and write to avatar.enc
         let key = handle
             .derive_avatar_key()
@@ -1085,6 +1120,10 @@ impl VaultState {
     pub async fn avatar_set(&self, payload: &str) -> Result<(), String> {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        Self::ensure_managing_device(self.vault_path.as_path(), handle.device_id).await?;
         let v: serde_json::Value =
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
         let b64 = v["data"].as_str().unwrap_or("");
@@ -1157,6 +1196,11 @@ impl VaultState {
     pub async fn locale_save(&self, lang: &str) -> Result<(), String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
+        // Gated at every state: a pre-unlock member device writing
+        // settings-pub.json would see the change committed by its first
+        // post-unlock sync and wedge the space. Per-member language
+        // preferences are a future local-store item.
+        Self::ensure_managing_device(self.vault_path.as_path(), handle.device_id).await?;
         handle.save_locale(lang).map_err(|e| format!("{e}"))
     }
 
@@ -1258,6 +1302,7 @@ impl VaultState {
     pub async fn generator_history_add(&self, payload: &str) -> Result<String, String> {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened")?;
+        Self::ensure_managing_device(self.vault_path.as_path(), handle.device_id).await?;
 
         let v: serde_json::Value =
             serde_json::from_str(payload).map_err(|e| format!("Invalid JSON: {e}"))?;
@@ -1317,6 +1362,7 @@ impl VaultState {
     pub async fn generator_history_clear(&self) -> Result<(), String> {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened")?;
+        Self::ensure_managing_device(self.vault_path.as_path(), handle.device_id).await?;
         handle.clear_generator_history().map_err(|e| format!("{e}"))
     }
 
@@ -3116,6 +3162,7 @@ impl VaultState {
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
         }
+        Self::ensure_managing_device(self.vault_path.as_path(), handle.device_id).await?;
         let trust = handle
             .contacts_import_card(card)
             .map_err(|e| format!("{e}"))?;
@@ -3137,6 +3184,7 @@ impl VaultState {
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
         }
+        Self::ensure_managing_device(self.vault_path.as_path(), handle.device_id).await?;
         handle
             .contacts_mark_verified(pubkey)
             .map_err(|e| format!("{e}"))?;
@@ -3159,6 +3207,7 @@ impl VaultState {
         if !handle.is_unlocked() {
             return Err("Vault is locked. Unlock first.".into());
         }
+        Self::ensure_managing_device(self.vault_path.as_path(), handle.device_id).await?;
         handle.contacts_remove(pubkey).map_err(|e| format!("{e}"))?;
         Ok("{}".to_string())
     }
