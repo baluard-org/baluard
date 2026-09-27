@@ -3573,6 +3573,18 @@ impl VaultState {
             },
             "allow_viewer_export": s.allow_viewer_export,
             "guest_enabled": s.guest_enabled != Some(false),
+            "trash_policy": if s.trash_policy
+                == baluard_core::vault::manifest::TrashPolicy::AdminsOnly
+            {
+                "admins_only"
+            } else {
+                "write_scope_can_trash"
+            },
+            // Exhaustive on purpose: a future variant must be rendered
+            // here, never silently stringified as the default.
+            "restore_policy": match s.restore_policy {
+                baluard_core::vault::manifest::RestorePolicy::AdminsOnly => "admins_only",
+            },
         })
         .to_string())
     }
@@ -3623,6 +3635,23 @@ impl VaultState {
         }
         if let Some(v) = partial.get("guest_enabled") {
             settings.guest_enabled = Some(v.as_bool().ok_or("guest_enabled must be a boolean")?);
+        }
+        if let Some(v) = partial.get("trash_policy") {
+            let s = v.as_str().ok_or("trash_policy must be a string")?;
+            settings.trash_policy = match s {
+                "write_scope_can_trash" => {
+                    baluard_core::vault::manifest::TrashPolicy::WriteScopeCanTrash
+                }
+                "admins_only" => baluard_core::vault::manifest::TrashPolicy::AdminsOnly,
+                _ => return Err("trash_policy must be write_scope_can_trash or admins_only".into()),
+            };
+        }
+        if let Some(v) = partial.get("restore_policy") {
+            let s = v.as_str().ok_or("restore_policy must be a string")?;
+            settings.restore_policy = match s {
+                "admins_only" => baluard_core::vault::manifest::RestorePolicy::AdminsOnly,
+                _ => return Err("restore_policy must be admins_only".into()),
+            };
         }
         handle.save_settings(&settings).map_err(|e| format!("{e}"))
     }

@@ -1027,16 +1027,18 @@ fun SettingsScreen(
                         inviteAuthority: String? = null,
                         allowViewerExport: Boolean? = null,
                         guestEnabled: Boolean? = null,
+                        trashPolicy: String? = null,
                     ) {
                         // Synchronous guard: launch dispatches, so a flag
                         // set inside the coroutine lets two rapid taps
                         // both through.
                         if (spaceBusy) return
                         if (inviteAuthority != null && spaceSettings?.inviteAuthority == inviteAuthority) return
+                        if (trashPolicy != null && spaceSettings?.trashPolicy == trashPolicy) return
                         spaceBusy = true
                         scope.launch {
                             try {
-                                repo.spaceSettingsSet(vault, inviteAuthority, allowViewerExport, guestEnabled)
+                                repo.spaceSettingsSet(vault, inviteAuthority, allowViewerExport, guestEnabled, trashPolicy)
                                 spaceSettings = repo.spaceSettingsGet(vault)
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
@@ -1125,6 +1127,55 @@ fun SettingsScreen(
                             onCheckedChange = { setSpace(guestEnabled = it) },
                         )
                     }
+
+                    Spacer(Modifier.height(8.dp))
+                    // Who may trash entries (§6.5 trash_policy).
+                    Text(t("space.trashPolicyLabel"), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = t("space.trashPolicyDesc"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            enabled = !spaceBusy,
+                            onClick = { setSpace(trashPolicy = "write_scope_can_trash") },
+                        ) {
+                            Text(t("space.trashWriteScope"))
+                        }
+                        OutlinedButton(
+                            enabled = !spaceBusy,
+                            onClick = { setSpace(trashPolicy = "admins_only") },
+                        ) {
+                            Text(t("space.trashAdminsOnly"))
+                        }
+                    }
+                    if (spaceSettings != null) {
+                        Text(
+                            text = t(
+                                if (spaceSettings!!.trashPolicy == "admins_only") {
+                                    "space.trashAdminsOnly"
+                                } else {
+                                    "space.trashWriteScope"
+                                }
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    // Restore is admin-only in v1 — single-valued, shown
+                    // read-only so the surface tells the whole truth.
+                    Text(t("space.restorePolicyLabel"), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = t("space.restorePolicyDesc"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = t("space.restoreAdminsOnly"),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
             SectionCard(title = t("settings.vaultSection")) {

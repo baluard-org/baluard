@@ -579,4 +579,12 @@ internal val PT: Map<String, String> = mapOf(
     "activity.noticeMalformed" to "Não foi possível ler {0} solicitação(ões) de acesso.",
     "activity.noticeGrantExpiring" to "{0} permissão(ões) de acesso expiram em até 7 dias.",
     "activity.noticeGrantExpired" to "{0} permissão(ões) de acesso expiraram e serão removidas na próxima sincronização de um administrador.",
+    // §6.5 policy knobs: trash + restore.
+    "space.trashPolicyLabel" to "Enviar entradas para o lixo",
+    "space.trashPolicyDesc" to "Quem pode mover entradas para o lixo. Restaurar é sempre só para administradores.",
+    "space.trashWriteScope" to "Qualquer pessoa com acesso",
+    "space.trashAdminsOnly" to "Só administradores",
+    "space.restorePolicyLabel" to "Restaurar entradas",
+    "space.restorePolicyDesc" to "Recuperar uma entrada do lixo fica reservado aos administradores nesta versão.",
+    "space.restoreAdminsOnly" to "Só administradores",
 )

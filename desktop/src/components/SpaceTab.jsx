@@ -15,6 +15,7 @@ export default function SpaceTab() {
   const [authority, setAuthority] = createSignal("admins");
   const [viewerExport, setViewerExport] = createSignal(false);
   const [guestSharing, setGuestSharing] = createSignal(true);
+  const [trashPolicy, setTrashPolicy] = createSignal("write_scope_can_trash");
   const [busy, setBusy] = createSignal(false);
 
   onSettled(() => void loadSettings());
@@ -25,6 +26,7 @@ export default function SpaceTab() {
       setAuthority(s.space_invite_authority === "owners" ? "owners" : "admins");
       setViewerExport(s.allow_viewer_export === true);
       setGuestSharing(s.guest_enabled !== false);
+      setTrashPolicy(s.trash_policy === "admins_only" ? "admins_only" : "write_scope_can_trash");
     } catch (e) {
       toastError(sanitizeError(e, t));
     }
@@ -47,6 +49,12 @@ export default function SpaceTab() {
     if (busy() || next === authority()) return;
     setAuthority(next);
     void apply({ space_invite_authority: next });
+  }
+
+  function changeTrashPolicy(next) {
+    if (busy() || next === trashPolicy()) return;
+    setTrashPolicy(next);
+    void apply({ trash_policy: next });
   }
 
   function toggleViewerExport() {
@@ -108,6 +116,41 @@ export default function SpaceTab() {
         <button disabled={busy()} class={toggle(guestSharing())} onClick={toggleGuestSharing}>
           {guestSharing() ? t("settings.enabled") : t("settings.disabled")}
         </button>
+      </div>
+      {/* Trash policy */}
+      <div class="flex items-center justify-between pt-4 border-t border-[var(--color-border)]">
+        <div class="flex flex-col flex-1 pr-4">
+          <span class={rowLabel}>{t("space.trashPolicyLabel")}</span>
+          <span class={rowDesc}>{t("space.trashPolicyDesc")}</span>
+        </div>
+        <div class="flex gap-2">
+          <button
+            disabled={busy()}
+            class={chip(trashPolicy() === "write_scope_can_trash")}
+            onClick={() => changeTrashPolicy("write_scope_can_trash")}
+          >
+            {t("space.trashWriteScope")}
+          </button>
+          <button
+            disabled={busy()}
+            class={chip(trashPolicy() === "admins_only")}
+            onClick={() => changeTrashPolicy("admins_only")}
+          >
+            {t("space.trashAdminsOnly")}
+          </button>
+        </div>
+      </div>
+
+      {/* Restore policy — v1 is single-valued (admins only); rendered
+          read-only so the surface shows the full state honestly. */}
+      <div class="flex items-center justify-between pt-4 border-t border-[var(--color-border)]">
+        <div class="flex flex-col flex-1 pr-4">
+          <span class={rowLabel}>{t("space.restorePolicyLabel")}</span>
+          <span class={rowDesc}>{t("space.restorePolicyDesc")}</span>
+        </div>
+        <span class="px-4 py-2 rounded-xl border text-xs font-bold text-[var(--color-muted)]">
+          {t("space.restoreAdminsOnly")}
+        </span>
       </div>
     </div>
   );

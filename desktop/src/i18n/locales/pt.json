@@ -887,6 +887,13 @@
     "viewerExportLabel": "Permitir exportação a leitores",
     "viewerExportDesc": "Leitores podem baixar uma cópia do cofre. Desativado por padrão.",
     "guestLabel": "Compartilhamento com convidados",
-    "guestDesc": "Criar links que abrem sem conta. Links já criados continuam funcionando até expirar."
+    "guestDesc": "Criar links que abrem sem conta. Links já criados continuam funcionando até expirar.",
+    "trashPolicyLabel": "Enviar entradas para o lixo",
+    "trashPolicyDesc": "Quem pode mover entradas para o lixo. Restaurar é sempre só para administradores.",
+    "trashWriteScope": "Qualquer pessoa com acesso",
+    "trashAdminsOnly": "Só administradores",
+    "restorePolicyLabel": "Restaurar entradas",
+    "restorePolicyDesc": "Recuperar uma entrada do lixo fica reservado aos administradores nesta versão.",
+    "restoreAdminsOnly": "Só administradores"
   }
 }

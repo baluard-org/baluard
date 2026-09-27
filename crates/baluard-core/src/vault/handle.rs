@@ -3558,6 +3558,8 @@ impl VaultHandle {
                         space_invite_authority: Default::default(),
                         allow_viewer_export: false,
                         guest_enabled: None,
+                        trash_policy: Default::default(),
+                        restore_policy: Default::default(),
                         // These post-date the legacy settings.json split: a
                         // legacy file never carries them.
                         custom_equivalent_domains: None,
@@ -3613,6 +3615,14 @@ impl VaultHandle {
                 .map(|e| e.allow_viewer_export)
                 .unwrap_or(false),
             guest_enabled: enc_fields.as_ref().and_then(|e| e.guest_enabled),
+            trash_policy: enc_fields
+                .as_ref()
+                .map(|e| e.trash_policy)
+                .unwrap_or_default(),
+            restore_policy: enc_fields
+                .as_ref()
+                .map(|e| e.restore_policy)
+                .unwrap_or_default(),
         })
     }
 
@@ -3663,6 +3673,8 @@ impl VaultHandle {
             space_invite_authority: settings.space_invite_authority,
             allow_viewer_export: settings.allow_viewer_export,
             guest_enabled: settings.guest_enabled,
+            trash_policy: settings.trash_policy,
+            restore_policy: settings.restore_policy,
             custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
@@ -3764,6 +3776,8 @@ impl VaultHandle {
             space_invite_authority: settings.space_invite_authority,
             allow_viewer_export: settings.allow_viewer_export,
             guest_enabled: settings.guest_enabled,
+            trash_policy: settings.trash_policy,
+            restore_policy: settings.restore_policy,
             custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
@@ -5417,6 +5431,16 @@ impl VaultHandle {
                             "That entry's collection no longer exists.".into(),
                         )));
                     };
+                    // §6.5 trash_policy: a Space can restrict trashing to
+                    // admins. Default keeps write-scope trashing.
+                    if self.get_settings()?.trash_policy
+                        == crate::vault::manifest::TrashPolicy::AdminsOnly
+                        && !is_admin
+                    {
+                        return Err(BaluardError::from(VaultError::InvalidOperation(
+                            "Trashing is limited to admins in this space.".into(),
+                        )));
+                    }
                     self.assert_collection_write(&cid)?;
                 }
                 CipherDomain::Flat if !is_admin => {
@@ -5447,6 +5471,36 @@ impl VaultHandle {
             self.rebuild_index()?;
             Ok(())
         } else if let Some(trash_path) = self.trash_file_path(cipher_id) {
+            // §4.4 "restore/purge admin": permanent deletion of a trashed
+            // entry is admin-surface — collection trash and flat trash
+            // alike. A member purging flat trash would also wedge its own
+            // sync (flat_admin_only refuses the commit at every peer).
+            let is_admin = matches!(
+                crate::vault::members::member_role_for_device(&self.path, self.device_id),
+                Some(crate::vault::members::MemberRole::Owner)
+                    | Some(crate::vault::members::MemberRole::Admin)
+            );
+            match self.cipher_domain(&trash_path) {
+                CipherDomain::TrashCollection(dir) => {
+                    if self.collection_id_for_dir(&dir).is_none() {
+                        return Err(BaluardError::from(VaultError::InvalidOperation(
+                            "That entry's collection no longer exists.".into(),
+                        )));
+                    }
+                    if !is_admin {
+                        return Err(BaluardError::from(VaultError::InvalidOperation(
+                            "Purging entries is limited to admins in this space.".into(),
+                        )));
+                    }
+                }
+                CipherDomain::TrashFlat if !is_admin => {
+                    return Err(BaluardError::from(VaultError::InvalidOperation(
+                        "this operation requires a managing device (team members hold no group key)"
+                            .into(),
+                    )));
+                }
+                _ => {}
+            }
             std::fs::remove_file(&trash_path)?;
             self.remove_integrity(&cipher_id.to_string());
             self.rebuild_index()?;
@@ -5606,12 +5660,32 @@ impl VaultHandle {
             let parent_str = parent_name.to_string_lossy().to_string();
             if parent_str != "trash" {
                 active_rel.push(&parent_str);
-                let Some(cid) = self.collection_id_for_dir(&parent_str) else {
+                let Some(_cid) = self.collection_id_for_dir(&parent_str) else {
                     return Err(BaluardError::from(VaultError::InvalidOperation(
                         "That entry's collection no longer exists.".into(),
                     )));
                 };
-                self.assert_collection_write(&cid)?;
+                // §6.5 restore_policy: restoring is admin-only in v1 (the
+                // §6.5 table lists no member-facing value; purge is admin
+                // by the §4.4 row). A future write-scope variant must add
+                // its arm here — the match stays exhaustive on purpose.
+                match self.get_settings()?.restore_policy {
+                    crate::vault::manifest::RestorePolicy::AdminsOnly => {
+                        let is_admin = matches!(
+                            crate::vault::members::member_role_for_device(
+                                &self.path,
+                                self.device_id
+                            ),
+                            Some(crate::vault::members::MemberRole::Owner)
+                                | Some(crate::vault::members::MemberRole::Admin)
+                        );
+                        if !is_admin {
+                            return Err(BaluardError::from(VaultError::InvalidOperation(
+                                "Restoring is limited to admins in this space.".into(),
+                            )));
+                        }
+                    }
+                }
             } else {
                 // Review F6: flat trash restores are admin-surface.
                 let is_admin = matches!(
@@ -5641,6 +5715,21 @@ impl VaultHandle {
 
     /// Purge deleted entries from trash that were deleted more than `days` ago.
     pub fn purge_old_trash(&self, days: u32) -> Result<usize, BaluardError> {
+        // §4.4 "restore/purge admin": time-based purge is admin-surface on
+        // team vaults. The daemon's best-effort unlock-time call swallows
+        // the member refusal, so member devices simply no-op.
+        if self.path.join("meta/members").is_dir() {
+            let is_admin = matches!(
+                crate::vault::members::member_role_for_device(&self.path, self.device_id),
+                Some(crate::vault::members::MemberRole::Owner)
+                    | Some(crate::vault::members::MemberRole::Admin)
+            );
+            if !is_admin {
+                return Err(BaluardError::from(VaultError::InvalidOperation(
+                    "Purging entries is limited to admins in this space.".into(),
+                )));
+            }
+        }
         let trash_dir = self.path.join("trash");
         if !trash_dir.exists() {
             return Ok(0);
@@ -9041,6 +9130,160 @@ mod tests {
             .expect("founder invites under owners-only");
     }
 
+    /// §6.5 trash_policy + restore_policy: the knob matrix. An Editor
+    /// with a live Write grant trashes under the default
+    /// (write_scope_can_trash) but restore refuses (restore_policy is
+    /// admin-only by default). Flipping trash_policy to admins_only
+    /// refuses the member's trash; the owner trashes and restores
+    /// throughout. Bindings are swapped on one device (the rebind
+    /// pattern) so role resolution is deterministic.
+    #[test]
+    fn trash_and_restore_policies_gate_members() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        // Defaults from the §6.5 table.
+        let settings = handle.get_settings().unwrap();
+        assert_eq!(
+            settings.trash_policy,
+            crate::vault::manifest::TrashPolicy::WriteScopeCanTrash
+        );
+        assert_eq!(
+            settings.restore_policy,
+            crate::vault::manifest::RestorePolicy::AdminsOnly
+        );
+
+        let work = handle.collection_create("Work").unwrap();
+        let mk_login = |name: &str| crate::types::CipherInput {
+            name: name.into(),
+            kind: serde_json::from_str(
+                r#"{"type":"login","data":{"username":"ada","password":"pw"}}"#,
+            )
+            .unwrap(),
+            ..Default::default()
+        };
+        let t1 = handle
+            .add_cipher_in_collection(&mk_login("One"), Some(work))
+            .unwrap();
+        let t2 = handle
+            .add_cipher_in_collection(&mk_login("Two"), Some(work))
+            .unwrap();
+
+        // Plant the member row and grant Write while this device is
+        // still the owner (the grant needs the SGK).
+        let member_id = uuid::Uuid::new_v4();
+        crate::vault::members::write_member(
+            dir.path(),
+            &crate::vault::members::MemberFile {
+                id: member_id,
+                display_name: "Ed".into(),
+                role: crate::vault::members::MemberRole::Editor,
+                trust: crate::vault::members::TrustLevel::Channel,
+                identity_signing_pubkey: Some(hex::encode([1u8; 32])),
+                identity_signing_pubkey_previous: None,
+                identity_rotation_signature: None,
+                identity_rotated_at: None,
+                reset: None,
+                removed: None,
+                transport_username: None,
+                identity_wrap_pubkey: None,
+            },
+        )
+        .unwrap();
+        handle
+            .collection_grant(
+                work,
+                member_id,
+                crate::vault::collections::CollectionAccess::Write,
+                None,
+            )
+            .unwrap();
+
+        // Rebind this device to the Editor row (strip the genesis
+        // binding first so role resolution is deterministic).
+        let device_id = handle.device_id;
+        let members_dir = dir.path().join("meta/members");
+        let mut owner_member_id = None;
+        for entry in std::fs::read_dir(&members_dir).unwrap().flatten() {
+            let devices = entry.path().join("devices");
+            let binding = devices.join(format!("{device_id}.json"));
+            if binding.exists() {
+                owner_member_id = Some(
+                    entry
+                        .path()
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string(),
+                );
+                std::fs::remove_file(binding).unwrap();
+            }
+        }
+        let owner_member_id =
+            uuid::Uuid::parse_str(&owner_member_id.expect("genesis binding for this device"))
+                .unwrap();
+        crate::vault::members::write_device_binding(
+            dir.path(),
+            &crate::vault::members::DeviceBinding {
+                device_id,
+                member_id,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            crate::vault::members::member_role_for_device(dir.path(), device_id),
+            Some(crate::vault::members::MemberRole::Editor)
+        );
+
+        // Default trash_policy: an Editor with a live Write grant trashes.
+        handle.delete_cipher(t1).unwrap();
+
+        // Default restore_policy: the same member's restore refuses.
+        let err = handle.restore_cipher(t1).unwrap_err().to_string();
+        assert!(err.contains("Restoring is limited to admins"), "err: {err}");
+
+        // Flip trash_policy to admins_only; the member's trash refuses.
+        let mut settings = handle.get_settings().unwrap();
+        settings.trash_policy = crate::vault::manifest::TrashPolicy::AdminsOnly;
+        handle.save_settings(&settings).unwrap();
+        let err = handle.delete_cipher(t2).unwrap_err().to_string();
+        assert!(err.contains("Trashing is limited to admins"), "err: {err}");
+        assert!(handle.restore_cipher(t1).is_err());
+        // §4.4: permanent deletion of trashed entries is admin-surface —
+        // the editor cannot purge t1 from trash either.
+        let err = handle.delete_cipher(t1).unwrap_err().to_string();
+        assert!(
+            err.contains("Purging entries is limited to admins"),
+            "err: {err}"
+        );
+
+        // Back to the owner: settings persist across the rebind, the
+        // owner trashes under admins_only and restores (restore_policy).
+        std::fs::remove_file(
+            members_dir
+                .join(member_id.to_string())
+                .join("devices")
+                .join(format!("{device_id}.json")),
+        )
+        .unwrap();
+        crate::vault::members::write_device_binding(
+            dir.path(),
+            &crate::vault::members::DeviceBinding {
+                device_id,
+                member_id: owner_member_id,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            handle.get_settings().unwrap().trash_policy,
+            crate::vault::manifest::TrashPolicy::AdminsOnly
+        );
+        handle.delete_cipher(t2).unwrap();
+        handle.restore_cipher(t1).unwrap();
+        assert!(handle.get_cipher(t1).is_ok());
+    }
+
     #[test]
     fn rotation_reseals_space_meta_store() {
         let (dir, password) = create_test_vault();
@@ -11309,12 +11552,11 @@ mod tests {
                 .join(format!("trash/{work_dir}/{own_id}.enc"))
                 .exists()
         );
-        joiner.restore_cipher(own_id).unwrap();
-        assert!(
-            joiner_path
-                .join(format!("ciphers/{work_dir}/{own_id}.enc"))
-                .exists()
-        );
+        // §6.5 restore_policy: restoring is admin-only by default — the
+        // member's restore refuses even with a live Write grant (trash
+        // itself stays write-scope under the default trash_policy).
+        let err = joiner.restore_cipher(own_id).unwrap_err().to_string();
+        assert!(err.contains("Restoring is limited to admins"), "err: {err}");
         drop(joiner);
 
         // Joiner commits its writes; the owner pulls from the joiner
@@ -11327,6 +11569,9 @@ mod tests {
             .map_err(|e| e.message().to_string())
             .ok();
         engine_o.pull(&repo_o, "joiner").unwrap();
+        // The member's restore was refused core-side; the owner (admin)
+        // restores the entry from the pulled trash commit.
+        handle.restore_cipher(own_id).unwrap();
         for (cid, want) in [(own_id, "mine-pass"), (seed_id, "rotated-pass")] {
             match handle.get_cipher(cid).unwrap() {
                 CipherRead::Decrypted(c) => {
@@ -13528,6 +13773,8 @@ mod tests {
             space_invite_authority: Default::default(),
             allow_viewer_export: false,
             guest_enabled: None,
+            trash_policy: Default::default(),
+            restore_policy: Default::default(),
         };
         handle.save_settings(&settings).unwrap();
 

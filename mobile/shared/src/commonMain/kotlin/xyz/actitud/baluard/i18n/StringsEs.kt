@@ -613,4 +613,12 @@ internal val ES: Map<String, String> = mapOf(
     "activity.noticeMalformed" to "No se pudieron leer {0} solicitud(es) de acceso.",
     "activity.noticeGrantExpiring" to "{0} permiso(s) de acceso caducan en menos de 7 días.",
     "activity.noticeGrantExpired" to "{0} permiso(s) de acceso han caducado y se eliminarán en la próxima sincronización de un administrador.",
+    // §6.5 policy knobs: trash + restore.
+    "space.trashPolicyLabel" to "Enviar entradas a la papelera",
+    "space.trashPolicyDesc" to "Quién puede mover entradas a la papelera. Restaurar siempre es solo para administradores.",
+    "space.trashWriteScope" to "Cualquier persona con acceso",
+    "space.trashAdminsOnly" to "Solo administradores",
+    "space.restorePolicyLabel" to "Restaurar entradas",
+    "space.restorePolicyDesc" to "Recuperar una entrada de la papelera queda reservado a los administradores en esta versión.",
+    "space.restoreAdminsOnly" to "Solo administradores",
 )

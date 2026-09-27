@@ -608,4 +608,12 @@ internal val EN: Map<String, String> = mapOf(
     "activity.noticeMalformed" to "{0} join request(s) could not be read.",
     "activity.noticeGrantExpiring" to "{0} access grant(s) expire within 7 days.",
     "activity.noticeGrantExpired" to "{0} access grant(s) have expired and will be removed at the next admin sync.",
+    // §6.5 policy knobs: trash + restore.
+    "space.trashPolicyLabel" to "Trashing entries",
+    "space.trashPolicyDesc" to "Who can move entries to the trash. Restore is always admin-only.",
+    "space.trashWriteScope" to "Anyone with access",
+    "space.trashAdminsOnly" to "Admins only",
+    "space.restorePolicyLabel" to "Restoring entries",
+    "space.restorePolicyDesc" to "Bringing a trashed entry back is reserved for admins in this version.",
+    "space.restoreAdminsOnly" to "Admins only",
 )
