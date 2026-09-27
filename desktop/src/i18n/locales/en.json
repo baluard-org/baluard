@@ -887,6 +887,13 @@
     "viewerExportLabel": "Let viewers export",
     "viewerExportDesc": "Viewers can download a copy of the vault. Off by default.",
     "guestLabel": "Guest sharing",
-    "guestDesc": "Create share links that open without an account. Already-created links keep working until they expire."
+    "guestDesc": "Create share links that open without an account. Already-created links keep working until they expire.",
+    "trashPolicyLabel": "Trashing entries",
+    "trashPolicyDesc": "Who can move entries to the trash. Restore is always admin-only.",
+    "trashWriteScope": "Anyone with access",
+    "trashAdminsOnly": "Admins only",
+    "restorePolicyLabel": "Restoring entries",
+    "restorePolicyDesc": "Bringing a trashed entry back is reserved for admins in this version.",
+    "restoreAdminsOnly": "Admins only"
   }
 }

@@ -229,6 +229,28 @@ pub enum InviteAuthority {
     Owners,
 }
 
+/// Space policy (§6.5): who may move entries to trash. Default: anyone
+/// holding a live Write (or Manage) grant on the collection. `AdminsOnly`
+/// restricts trashing to Owner/Admin devices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TrashPolicy {
+    #[default]
+    WriteScopeCanTrash,
+    AdminsOnly,
+}
+
+/// Space policy (§6.5): who may restore entries from trash. v1 ships
+/// single-valued (the §6.5 table lists only `admins_only`; purge is
+/// admin by the §4.4 row) — the persisted knob exists so surfaces can
+/// display the state and a future `write_scope` value lands without a
+/// migration. Enforced locally; the keyless sync walker cannot read
+/// `settings.enc`, so peer admission stays grant-scoped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RestorePolicy {
+    #[default]
+    AdminsOnly,
+}
+
 /// Vault settings (stored encrypted in meta/settings.enc, last-write-wins).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VaultSettings {
@@ -309,6 +331,12 @@ pub struct VaultSettings {
     /// until expiry — they are self-contained, carried by the recipient).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest_enabled: Option<bool>,
+    /// Space policy (§6.5): who may move entries to trash.
+    #[serde(default)]
+    pub trash_policy: TrashPolicy,
+    /// Space policy (§6.5): who may restore entries from trash.
+    #[serde(default)]
+    pub restore_policy: RestorePolicy,
 }
 /// These fields leak vault identity or policy if plaintext on the remote.
 /// Display prefs (theme, lang) live separately in plaintext settings-pub.json
@@ -346,6 +374,12 @@ pub struct EncryptedSettings {
     /// Space policy: guest reveal creation (mirrors VaultSettings).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest_enabled: Option<bool>,
+    /// Space policy: trash authority (mirrors VaultSettings).
+    #[serde(default)]
+    pub trash_policy: TrashPolicy,
+    /// Space policy: restore authority (mirrors VaultSettings).
+    #[serde(default)]
+    pub restore_policy: RestorePolicy,
     /// User-defined equivalent domain groups (Bitwarden parity). Each inner
     /// vec is one group of registrable domains the user declares equivalent
     /// for autofill matching.
@@ -614,12 +648,15 @@ mod tests {
 
     #[test]
     fn space_settings_defaults_match_plan_table() {
-        // §6.5: invite_authority admins, viewer export off, guests on.
+        // §6.5: invite_authority admins, viewer export off, guests on,
+        // trash write-scope, restore admin-only.
         let settings = VaultSettings::default();
         assert_eq!(settings.space_invite_authority, InviteAuthority::Admins);
         assert!(!settings.allow_viewer_export);
         // None = enabled (the Option-toggle convention).
         assert!(settings.guest_enabled != Some(false));
+        assert_eq!(settings.trash_policy, TrashPolicy::WriteScopeCanTrash);
+        assert_eq!(settings.restore_policy, RestorePolicy::AdminsOnly);
     }
 
     #[test]
@@ -631,6 +668,8 @@ mod tests {
         assert_eq!(settings.space_invite_authority, InviteAuthority::Admins);
         assert!(!settings.allow_viewer_export);
         assert!(settings.guest_enabled != Some(false));
+        assert_eq!(settings.trash_policy, TrashPolicy::WriteScopeCanTrash);
+        assert_eq!(settings.restore_policy, RestorePolicy::AdminsOnly);
     }
 
     #[test]
@@ -639,6 +678,7 @@ mod tests {
             space_invite_authority: InviteAuthority::Owners,
             allow_viewer_export: true,
             guest_enabled: Some(false),
+            trash_policy: TrashPolicy::AdminsOnly,
             ..Default::default()
         };
         let json = serde_json::to_string(&settings).unwrap();
@@ -646,6 +686,7 @@ mod tests {
         assert_eq!(back.space_invite_authority, InviteAuthority::Owners);
         assert!(back.allow_viewer_export);
         assert_eq!(back.guest_enabled, Some(false));
+        assert_eq!(back.trash_policy, TrashPolicy::AdminsOnly);
     }
 
     #[test]

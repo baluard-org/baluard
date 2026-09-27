@@ -1092,7 +1092,7 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_get(`ptr`: Pointer,
     ): Long
-    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(`ptr`: Pointer,`inviteAuthority`: RustBuffer.ByValue,`allowViewerExport`: RustBuffer.ByValue,`guestEnabled`: RustBuffer.ByValue,
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(`ptr`: Pointer,`inviteAuthority`: RustBuffer.ByValue,`allowViewerExport`: RustBuffer.ByValue,`guestEnabled`: RustBuffer.ByValue,`trashPolicy`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_ssh_generate_key(`ptr`: Pointer,`keyType`: RustBuffer.ByValue,
     ): Long
@@ -1563,7 +1563,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobiledeviceflow_verification_uri() != 32094.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_activity_events() != 4976.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_activity_events() != 26452.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_activity_refusals() != 26698.toShort()) {
@@ -1749,7 +1749,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_get() != 19637.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set() != 52719.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set() != 28060.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_ssh_generate_key() != 42401.toShort()) {
@@ -2716,8 +2716,9 @@ public object FfiConverterTypeMobileDeviceFlow: FfiConverter<MobileDeviceFlow, P
 public interface MobileVaultInterface {
     
     /**
-     * This device's local share-event log (S1b-1), newest-first rows
-     * {seq, at, kind, detail}. The wrapper clamps the limit (max 500).
+     * This device's local share-event log (S1b-1), in chronological
+     * order (oldest first, per the core contract; the client reverses
+     * for display). The wrapper clamps the limit (max 500).
      */
     suspend fun `activityEvents`(`limit`: kotlin.ULong): kotlin.String
     
@@ -3088,7 +3089,7 @@ public interface MobileVaultInterface {
      * Set Space policy knobs (partial, admin-gated). Typed args so the
      * app never hand-builds JSON; the bridge constructs the payload.
      */
-    suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?)
+    suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?)
     
     /**
      * Generate an SSH keypair. `keyType`: "ed25519" (default) | "ecdsa256".
@@ -3269,8 +3270,9 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
 
     
     /**
-     * This device's local share-event log (S1b-1), newest-first rows
-     * {seq, at, kind, detail}. The wrapper clamps the limit (max 500).
+     * This device's local share-event log (S1b-1), in chronological
+     * order (oldest first, per the core contract; the client reverses
+     * for display). The wrapper clamps the limit (max 500).
      */
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -4827,12 +4829,12 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
      */
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?) {
+    override suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?) {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(
                 thisPtr,
-                FfiConverterOptionalString.lower(`inviteAuthority`),FfiConverterOptionalBoolean.lower(`allowViewerExport`),FfiConverterOptionalBoolean.lower(`guestEnabled`),
+                FfiConverterOptionalString.lower(`inviteAuthority`),FfiConverterOptionalBoolean.lower(`allowViewerExport`),FfiConverterOptionalBoolean.lower(`guestEnabled`),FfiConverterOptionalString.lower(`trashPolicy`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },

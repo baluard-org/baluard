@@ -115,6 +115,7 @@ data class MobileSpaceSettings(
     val inviteAuthority: String,
     val allowViewerExport: Boolean,
     val guestEnabled: Boolean,
+    val trashPolicy: String,
 )
 
 /** A needs-attention notice: name-carrying (reset_pending) or
@@ -358,7 +359,8 @@ class VaultRepository {
         runCatching { vault.isAdminDevice() }.getOrDefault(false)
 
     /** §6.5 Space policy: {space_invite_authority, allow_viewer_export,
-     * guest_enabled}. Null on failure — the caller toasts. */
+     * guest_enabled, trash_policy, restore_policy}. Null on failure —
+     * the caller toasts. */
     suspend fun spaceSettingsGet(vault: MobileVault): MobileSpaceSettings? =
         runCatching {
             val o = Json.parseToJsonElement(vault.spaceSettingsGet()).jsonObject
@@ -367,18 +369,22 @@ class VaultRepository {
                     (o["space_invite_authority"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "admins",
                 allowViewerExport = (o["allow_viewer_export"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
                 guestEnabled = (o["guest_enabled"] as? kotlinx.serialization.json.JsonPrimitive)?.content != "false",
+                trashPolicy =
+                    (o["trash_policy"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "write_scope_can_trash",
             )
         }.getOrNull()
 
     /** Set Space policy knobs (partial). One call per changed knob; the
-     * typed args reach the bridge, which builds the JSON payload. */
+     * typed args reach the bridge, which builds the JSON payload.
+     * restore_policy has no setter — v1 is single-valued (admins only). */
     suspend fun spaceSettingsSet(
         vault: MobileVault,
         inviteAuthority: String? = null,
         allowViewerExport: Boolean? = null,
         guestEnabled: Boolean? = null,
+        trashPolicy: String? = null,
     ) {
-        vault.spaceSettingsSet(inviteAuthority, allowViewerExport, guestEnabled)
+        vault.spaceSettingsSet(inviteAuthority, allowViewerExport, guestEnabled, trashPolicy)
     }
 
     // ── S1b: notices + activity (this device's local data; the phone

@@ -1383,6 +1383,8 @@ async fn space_settings_lifecycle_and_locked_rejection() {
     assert_eq!(get["space_invite_authority"], "admins");
     assert_eq!(get["allow_viewer_export"], false);
     assert_eq!(get["guest_enabled"], true);
+    assert_eq!(get["trash_policy"], "write_scope_can_trash");
+    assert_eq!(get["restore_policy"], "admins_only");
 
     // Partial set: one knob at a time, the others untouched.
     state
@@ -1424,6 +1426,34 @@ async fn space_settings_lifecycle_and_locked_rejection() {
             .await
             .is_err()
     );
+
+    // §6.5 policy knobs: set, fail-closed parse, lock-cycle persistence.
+    state
+        .space_settings_set(r#"{"trash_policy":"admins_only"}"#)
+        .await
+        .unwrap();
+    assert!(
+        state
+            .space_settings_set(r#"{"trash_policy":"nobody"}"#)
+            .await
+            .is_err()
+    );
+    assert!(
+        state
+            .space_settings_set(r#"{"restore_policy":"write_scope"}"#)
+            .await
+            .is_err()
+    );
+    state.lock().await.expect("vault lock");
+    state.unlock(MASTER).await.expect("re-unlock");
+    let get: serde_json::Value =
+        serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
+    assert_eq!(get["trash_policy"], "admins_only");
+    assert_eq!(get["restore_policy"], "admins_only");
+    state
+        .space_settings_set(r#"{"trash_policy":"write_scope_can_trash"}"#)
+        .await
+        .unwrap();
 
     // Settings persist in the encrypted store: lock + unlock keeps them.
     state.lock().await.expect("vault lock");

@@ -133,6 +133,7 @@ open class StubVault(
         `inviteAuthority`: String?,
         `allowViewerExport`: Boolean?,
         `guestEnabled`: Boolean?,
+        `trashPolicy`: String?,
     ): Unit = err()
     override suspend fun `collectionRequestAccess`(payload: String): String = err()
     override suspend fun `collectionRequestsApprove`(payload: String): String = err()

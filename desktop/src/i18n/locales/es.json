@@ -887,6 +887,13 @@
     "viewerExportLabel": "Permitir exportar a lectores",
     "viewerExportDesc": "Los lectores pueden descargar una copia de la bóveda. Desactivado por defecto.",
     "guestLabel": "Compartir con invitados",
-    "guestDesc": "Crear enlaces que se abren sin cuenta. Los enlaces ya creados siguen funcionando hasta que caduquen."
+    "guestDesc": "Crear enlaces que se abren sin cuenta. Los enlaces ya creados siguen funcionando hasta que caduquen.",
+    "trashPolicyLabel": "Enviar entradas a la papelera",
+    "trashPolicyDesc": "Quién puede mover entradas a la papelera. Restaurar siempre es solo para administradores.",
+    "trashWriteScope": "Cualquier persona con acceso",
+    "trashAdminsOnly": "Solo administradores",
+    "restorePolicyLabel": "Restaurar entradas",
+    "restorePolicyDesc": "Recuperar una entrada de la papelera queda reservado a los administradores en esta versión.",
+    "restoreAdminsOnly": "Solo administradores"
   }
 }
