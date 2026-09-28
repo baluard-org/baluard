@@ -219,10 +219,14 @@ the out-of-band adopt link + cold mirror (§5.F-7; the re-bind itself
 shipped as S3-8 remote migration, what remains is the link-style UX and
 the mirror).
 
-**P5 plumbing remainder**: explicit staged path sets (the sync layer
-admits paths by pattern rows today; the planned hardening pins what a
-commit may stage ahead of time; the last open P item, sharing plan §4.0
-P5 row).
+**P5 plumbing remainder**: SHIPPED (2026-09-28, tracer; see D60 in
+`docs/software-architecture-decisions.md`) — explicit staged path sets
+landed: the writer stages only what its policy admits, admission context
+resolves from the HEAD tree via the verification walks' own helpers,
+merge commits stage the authenticated merge output (the P8a residue
+check governs), skipped paths revert in the worktree, and genesis admits
+all. This closes the last open P item; the sharing plan carries nothing
+pending.
 
 **Parked past 1.0 (tracked in progress.md, listed for completeness)**:
 iOS Phase 7 + sharing parity, recovery-key export (TXT/MD/PDF), browser

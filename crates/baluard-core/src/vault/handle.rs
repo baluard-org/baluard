@@ -11123,8 +11123,14 @@ mod tests {
         // Role refusal: the member's meta write is refused ON PULL
         // (meta catch-all is Admin) — the owner fetches the commit and
         // the verification walk rejects it before any merge/checkout.
+        // Hostile-author bypass: the staged-path-set filter would leave
+        // this write unstaged (pinned by
+        // staged_path_set_filters_unwritable_member_writes); this test
+        // pins the walk itself.
         std::fs::write(joiner_path.join("meta/epoch.json"), b"{\"epoch\":9}").unwrap();
-        engine_j2.commit_all(&repo_j, "member meta").unwrap();
+        engine_j2
+            .commit_all_unfiltered(&repo_j, "member meta")
+            .unwrap();
         let head_before = repo_o.head().unwrap().peel_to_commit().unwrap().id();
         let pulled_meta = engine_o.pull(&repo_o, "joiner");
         assert!(
@@ -11802,7 +11808,160 @@ mod tests {
     }
 
     /// S3-7c wave centerpiece: after the flip, a granted member reads and
-    /// writes collection ciphers via grant wraps (no Root Key, no SGK),
+    /// P5 explicit staged path sets, the wedge-class regression: a
+    /// member device with a stray dirty write to a git-tracked Admin-row
+    /// file commits WITHOUT it (the filter leaves it unstaged), so the
+    /// owner's pull of the member's legit change succeeds. Pre-filter,
+    /// add_all swept the stray file into the commit and every peer's
+    /// pull refused it — the unpushable-commit wedge.
+    #[test]
+    fn staged_path_set_filters_unwritable_member_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        handle.approve_join(&intro_code).unwrap();
+        engine_o.commit_all(&repo_o, "approve join").unwrap();
+
+        let probe = VaultHandle::open(&joiner_path).unwrap();
+        let joiner_device = probe.device_id;
+        drop(probe);
+        let engine_j =
+            crate::sync::engine::SyncEngine::new(&joiner_path, &joiner_device.to_string(), None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        let joiner_seal = joiner.devkey_seal();
+        let joiner_member =
+            crate::vault::members::member_id_for_device(&joiner_path, joiner_device).unwrap();
+        drop(joiner);
+
+        // The stray write: a git-tracked Admin-row file this Editor may
+        // never author.
+        let stray = joiner_path.join("meta/epoch.json");
+        assert!(stray.exists(), "epoch.json must exist in the clone");
+        let stray_original = std::fs::read(&stray).unwrap();
+        std::fs::write(&stray, b"stray-member-write").unwrap();
+
+        // The legitimate write: the member's own subtree (any-role row).
+        let own_dir = joiner_path
+            .join("meta/members")
+            .join(joiner_member.to_string());
+        std::fs::create_dir_all(&own_dir).unwrap();
+        let probe_file = own_dir.join("probe.enc");
+        std::fs::write(&probe_file, b"member-authored").unwrap();
+
+        let engine_j = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner_device.to_string(),
+            joiner_seal.as_ref(),
+        );
+        let repo_j = engine_j.open_repo().unwrap();
+        let before = repo_j.head().unwrap().peel_to_commit().unwrap();
+        let stray_before = before
+            .tree()
+            .unwrap()
+            .get_path(std::path::Path::new("meta/epoch.json"))
+            .unwrap()
+            .id();
+        let before_id = before.id();
+        drop(before);
+        engine_j.commit_all(&repo_j, "member change").unwrap();
+        let after = repo_j.head().unwrap().peel_to_commit().unwrap();
+        assert_ne!(before_id, after.id(), "the member commit must land");
+        let tree_after = after.tree().unwrap();
+        let stray_after = tree_after
+            .get_path(std::path::Path::new("meta/epoch.json"))
+            .unwrap()
+            .id();
+        let members_in_tree = tree_after
+            .get_path(std::path::Path::new("meta/members"))
+            .is_ok();
+        drop(tree_after);
+        drop(after);
+        // The stray rewrite stayed out of the commit: epoch.json still
+        // carries its pre-stray blob, the probe rides.
+        assert_eq!(
+            stray_after, stray_before,
+            "the stray epoch.json rewrite must not ride the commit"
+        );
+        assert!(members_in_tree);
+        // Review F4 hygiene: the skipped stray is REVERTED in the
+        // worktree, not left dirty — a permanently-dirty file would
+        // wedge the sync badge and push an empty commit on every
+        // autosync tick.
+        let stray_now = std::fs::read(&stray).unwrap();
+        assert_eq!(
+            stray_now, stray_original,
+            "the skipped stray must be reverted to its committed content"
+        );
+        drop(repo_j);
+
+        // The owner's pull SUCCEEDS — pre-filter this refused with a
+        // PolicyViolation on meta/epoch.json.
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .unwrap();
+        engine_o.pull(&repo_o, "joiner").unwrap();
+        assert!(
+            owner_path
+                .join("meta/members")
+                .join(joiner_member.to_string())
+                .join("probe.enc")
+                .exists()
+        );
+        let owner_epoch = std::fs::read(owner_path.join("meta/epoch.json")).unwrap();
+        assert_ne!(owner_epoch, b"stray-member-write");
+
+        // Idempotence: the next member commit skips the stray again.
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.commit_all(&repo_j, "second change").unwrap();
+        let tree = repo_j
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        assert_eq!(
+            tree.get_path(std::path::Path::new("meta/epoch.json"))
+                .unwrap()
+                .id(),
+            stray_before,
+        );
+    }
+
+    /// The S3-7c member-access ceremony: a flipped joiner (no Root Key,
+    /// no SGK) reads and writes collection ciphers via grant wraps,
     /// personal-flat ciphers stay invisible, trash/restore is
     /// same-domain, and root rotation keeps member access alive.
     #[test]
