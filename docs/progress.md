@@ -3,7 +3,7 @@
 > Single source of truth for project state. Update after every work session.
 > Last updated: 2026-09-28 (Sharing plan COMPLETED and closed: all planned phases shipped through S4-1; the wave log lives in git history and the D-records. iOS (Phase 7 AutoFill extension + sharing parity) is parked past 1.0 per Esteban's 2026-09-27 call. S2 closed, S1b closed 2026-09-22. Mobile: Android Phases 0-6 complete; iOS parked past 1.0. Test infra: daemon test-harness leak fixed (Drop guards + BALUARD_DAEMON_DIE_WITH_PARENT die-with-parent watchdog) after the 1816-orphan crash of 2026-09-23.)
 >
-> Next up: the **S4 power pack**, tracked in `docs/plan-power-pack.md` (Rev 1.0): groups as a key layer (S4-2), dual-control resolution (S4-3, needs an Esteban call), access review report (S4-4), full Activity timeline (S4-5, needs the shared-ledger-versus-derived call), advisory org policies (S4-6), emergency × org × identity doc (S4-7), synthesized neutralization restatement (S4-8), and the mobile multi-Space host (S4-9). Suggested order and open questions live in that doc. S5 and parked items stay deferred in `docs/plan-sharing.md`.
+> Next up: the **S4 power pack**, tracked in `docs/plan-power-pack.md` (Rev 1.0): groups as a key layer (S4-2), dual-control resolution (S4-3, needs an Esteban call), access review report (S4-4), full Activity timeline (S4-5, needs the shared-ledger-versus-derived call), advisory org policies (S4-6), emergency × org × identity doc (S4-7), synthesized neutralization restatement (S4-8), and the mobile multi-Space host (S4-9). Suggested order and open questions live in that doc; the deferred personal-space items (S5), the parked scenario items, and the P5 staged-path-set remainder moved there too (§11).
 
 ---
 

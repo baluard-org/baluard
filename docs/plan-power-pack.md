@@ -3,10 +3,10 @@
 Rev 1.0 (2026-09-28). Owner: Esteban. Status: **open, S4-1 already shipped**.
 
 The sharing plan (`docs/plan-sharing.md`) is closed as of 2026-09-28: everything
-up to and including S4-1 ships. This document owns all remaining organization
-work. It carries the S4 remainder out of the sharing plan so the closed plan
-stays a design record. S5 (personal areas) and the parked scenario items stay
-deferred in the sharing plan; they are not org scope.
+up to and including S4-1 ships. This document owns all remaining sharing
+work: the org power pack (S4-2 onward) plus the deferred personal-space
+and parked items moved here (section 11), so the closed sharing plan
+carries nothing pending.
 
 Foundations this builds on (all shipped, see D-records in
 `docs/software-architecture-decisions.md`):
@@ -205,13 +205,28 @@ Size L; independent of every other item; can go any time.
 4. S4-5 timeline story (section 4).
 5. S4-8 neutralization meaning (section 7).
 
-## 11. Out of scope (stays in the sharing plan)
+## 11. Deferred and parked (not org scope; tracked here so the closed plan carries nothing pending)
 
-S5 in full (personal areas, per-item ACL exception, IS-4 revisit, travel
-mode, P2P send, provider discovery, per-member theme/language) and the
-parked items (space.export / space.sever, the adopt link + cold mirror,
-iOS past 1.0, extension Phase 2, 2FA tiers 2-5, recovery-key export) stay
-deferred in `docs/plan-sharing.md` §7.
+**S5, personal-space scope, deferred in full**: personal areas (a member's
+private corner of a shared vault; today personal means admin-only flat
+ciphers), per-item ACL exception (one item shared outside its collection),
+IS-4 inline item keys (cut; revisit only if users ask by name), travel
+mode, P2P send, provider discovery, per-member theme/language preferences.
+
+**Parked scenario items (no phase)**: `space.export` / `space.sever`
+(clean split of a Space into or out of a vault; sharing plan §5.F-2) and
+the out-of-band adopt link + cold mirror (§5.F-7; the re-bind itself
+shipped as S3-8 remote migration, what remains is the link-style UX and
+the mirror).
+
+**P5 plumbing remainder**: explicit staged path sets (the sync layer
+admits paths by pattern rows today; the planned hardening pins what a
+commit may stage ahead of time; the last open P item, sharing plan §4.0
+P5 row).
+
+**Parked past 1.0 (tracked in progress.md, listed for completeness)**:
+iOS Phase 7 + sharing parity, recovery-key export (TXT/MD/PDF), browser
+extension Phase 2, 2FA tiers 2-5.
 
 ## 12. Suggested build order
 
