@@ -225,7 +225,10 @@ against source before adoption. Decisions:
    and claim ownership, both riding the existing quorum gate (default 1
    = instant; threshold 2 = a second admin co-approves). Opt-in Space
    Recovery Kit: Root Key escrowed to an offline phrase for the physical
-   safe, covering sole-admin total loss.
+   safe, covering sole-admin total loss. Implementation design LOCKED
+   (§13): reset serves owner-returns; a dedicated `ownership_claim` over
+   a shared commit helper serves owner-gone; the transfer gate stays
+   untouched.
 2. **Q6a identity pivot — CONFIRMED permanent.** One personal vault per
    human holds the identity; Spaces carry zero master passwords. A
    departing member keeps personal data; company data locks.
@@ -286,7 +289,7 @@ extension Phase 2, 2FA tiers 2-5.
 
 1. **S4-3 ratchet + Q5 owner-reset fix** (S) — closes two real holes
    (threshold downgrade, incapacitated-Owner freeze); builds on the
-   shipped quorum engine.
+   shipped quorum engine. Spec: §13.
 2. **S4-4 access review report** (M) — no new crypto, immediate admin
    value; carries the S4-8 exposure/rotation filter.
 3. **S4-6 advisory org policies** (S).
@@ -296,3 +299,21 @@ extension Phase 2, 2FA tiers 2-5.
    design leans on the collection pattern).
 7. **S4-5 derived timeline** (M/L) — last; the synthesis engine over
    commit history.
+
+## 13. First-wave build spec: Q5 owner recovery + S4-3 ratchet (locked 2026-09-28)
+
+The reviewed design for §12 item 1, settled by a second adversarial
+review round whose code claims were source-verified. Two separate ops,
+no widening of the voluntary transfer gate.
+
+**Two ops, two scenarios.** `member_reset` gains Owner targets for admin actors (the owner-row refusal in `members.rs` lifts for Owner/Admin callers; the quorum gate is already on the op): the successor row inherits the Owner role, so an owner who returns rejoins as self — the family path. A NEW `ownership_claim` core op covers owner-gone-forever: ownership moves to the claiming admin's EXISTING row, old owner demoted. `transfer_ownership` stays untouched (Owner-actor-only, S1a-7 gate intact).
+
+**Shared helper.** `commit_ownership_swap(vault_path, old_id, new_id)` is a pure record mutator with zero authorization inside: validate old ≠ new, old row is a live Owner, new row exists and is live; promote FIRST (role Owner + trust SelfTrust), demote SECOND (Editor on pair Spaces per S2 IS-5 — pair Spaces have no admins and a demoted Admin would wedge later resets; otherwise Admin; SelfTrust resets to Verified). Promote-first is load-bearing: a crash between the writes leaves two owners (recoverable by re-run), demote-first bricks the vault. The single-Owner invariant lives here only, tested once.
+
+**ownership_claim ordering and params.** Unlocked → `assert_can_manage_members` → disk-backed actor check `Some(Admin)` ("only an admin can claim ownership") → `owner_member_id` present → refuse self-claim → `quorum_gate("ownership_claim", json!({"old_owner_id", "new_owner_id"}))` → helper → new `ShareEventKind::OwnershipClaimed`. The digest binds BOTH ids so an approval cannot replay across a changed owner. No provider seat work: Owner and Admin both map to Write, and no offboarding happens, so no strikes, no pre-flight.
+
+**Surfaces and semantics.** Contextual single button per actor: an owner sees Transfer; an admin viewing the owner row sees Take Over Ownership; nobody sees both (desktop PeopleTab + mobile PeopleScreen, new `members.claim` route arm, state wrapper, allowlist, uniffi bridge for mobile parity). Threshold 1 means the claim is instant — the family floor; raising the knob is the org's dual control. A contest window (owner-device notice + cancel) is an ADVANCED opt-in for a later wave; no mandatory notice period in v1. Demoted-owner devices keep old keys: a theft-shaped displacement must be followed by `member_remove` (seat strike + rotation). Reset and claim stay fully separate ops.
+
+**S4-3 ratchet (same wave).** Lowering `quorum_admin_ops` requires approvals under the CURRENT threshold; the ratchet is intrinsic to the knob, no separate lock knob. Threshold-1 lowering is the actor's own approval — the default floor unchanged.
+
+**Test plan.** Helper unit tests (pair-Space Editor demotion, tombstone refusals, promote-before-demote invariant); a two-vault claim ceremony at threshold 2 (ask, co-approval, commit, peer pull, demoted-owner unlock); owner-reset rejoin-inherits-Owner; replay-digest refusal when the owner changed between ask and approval; route test for `members.claim` plus the owner-reset legs.
