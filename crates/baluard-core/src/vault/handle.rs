@@ -7304,16 +7304,11 @@ impl VaultHandle {
                     VaultError::Corrupt("invalid emergency contact pubkey length".into())
                 })?;
                 let contact = x25519_dalek::PublicKey::from(contact_bytes);
-                let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+                config.wrapped_root_key = crate::orgs::wrap_to_bundle(
                     new_root_key.as_bytes(),
                     &contact,
                     "emergency-escrow",
                 )?;
-                config.wrapped_root_key = crate::orgs::WrappedKeyBundle {
-                    ephemeral_pub: hex::encode(eph_pub),
-                    ciphertext: hex::encode(ct),
-                    tag: hex::encode(tag),
-                };
                 let seal = self.devkey_seal();
                 let privkeys = load_device_privkeys(&self.path, self.device_id, seal.as_ref())?;
                 crate::emergency::sign_status(
@@ -7840,16 +7835,11 @@ impl VaultHandle {
                     VaultError::Corrupt("invalid emergency contact pubkey length".into())
                 })?;
                 let contact = x25519_dalek::PublicKey::from(contact_bytes);
-                let (eph_pub, ct, tag) = crate::crypto::hpke_wrap::wrap_key(
+                config.wrapped_root_key = crate::orgs::wrap_to_bundle(
                     new_root_key.as_bytes(),
                     &contact,
                     "emergency-escrow",
                 )?;
-                config.wrapped_root_key = crate::orgs::WrappedKeyBundle {
-                    ephemeral_pub: hex::encode(eph_pub),
-                    ciphertext: hex::encode(ct),
-                    tag: hex::encode(tag),
-                };
                 let seal = self.devkey_seal();
                 let privkeys = load_device_privkeys(&self.path, self.device_id, seal.as_ref())?;
                 crate::emergency::sign_status(

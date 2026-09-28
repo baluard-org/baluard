@@ -80,7 +80,6 @@ baluard/
 │   └── androidApp/             # Android host app (BaluardAutofillService, BaluardAccessibilityService, BaluardA11yTileService, AutofillActivity)
 ├── proto/                      # Protobuf schemas (compiled via prost)
 │   ├── vault.proto
-│   ├── space.proto
 │   └── auth.proto
 ├── docs/                       # Architecture & design docs
 └── justfile                    # Build system
@@ -126,7 +125,7 @@ Implications:
 
 ## CODING STANDARDS
 * **Compatibility**: Pre-1.0 WIP (see STATUS). Backwards compatibility is NOT a goal yet. Break vault format, IPC routes/payloads, CLI flags, protobuf, and config freely; update all call sites in the same change. Crypto/security invariants below stay load-bearing.
-* **Rust**: Edition 2024, MSRV 1.85. Feature flags: `full` (default) = `git-sync` + `org` + `emergency`. `thiserror` for library errors, `anyhow` for CLI. `proptest` for property-based tests.
+* **Rust**: Edition 2024, MSRV 1.85. Feature flags: `full` (default) = `git-sync` + `passkey-ceremony` + `uri-match` (the `org`/`emergency` flags gated nothing and are gone). `thiserror` for library errors, `anyhow` for CLI. `proptest` for property-based tests.
 * **JS/TS**: ES modules, SolidJS, Vite. Tailwind for layout. `crypto.getRandomValues` only (never `Math.random`).
 * **Protobuf**: proto3, `baluard.vault` package. Compiled via prost in daemon + CLI.
 * **Security**: AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket 0600. Zeroize on drop for key material, TOTP secrets, and passkey private keys.
@@ -310,7 +309,7 @@ System autofill provider (`BaluardAutofillService`) runs in an isolated `:autofi
 * **Rotation coverage (P4, complete 2026-09-19)**: `settings.enc`, generator history, attachments, the emergency escrow, and the avatar (`meta/avatar.enc` re-encrypted under the new SGK-epoch key, staged with the atomic rename) are covered in both rotation fns with propagated failures. Known boundary: a crash between the keywrap commit and the metadata re-saves leaves the marker + a warned mixed-epoch state (P8 manifests harden).
 * **One master password per vault**: a single `meta/kek-canary.enc` + one KDF salt; `change_master_password` rewrites the shared canary. Multi-member Spaces require the identity-rooted pivot (sharing plan P1).
 * **Sync is single-writer today**: the conflict resolver rejects multi-file conflicts; `commit_all` stages everything dirty via `add_all("*")` and rewrites `meta/devices.json` on every commit. Sharing plan P5.
-* **`orgs.rs` is a library island**: zero callers anywhere. It becomes the Space-key-wrap engine in sharing plan P1.
+* **`orgs.rs` is an envelope only**: `WrappedKeyBundle` + `wrap_to_bundle` feed the emergency escrow (`EmergencyConfig.wrapped_root_key`, rebuilt by both rotation paths). The Space-wrap engine shipped as `vault/space_meta.rs`; the old org member/access-list code is deleted. No routes, CLI, or UI.
 * **`vaults.*` daemon routes are not token-gated**, and `vaults.list` cannot be (login screen, pre-token). A shared OS account is not a security boundary (same UID, shared biometric enrollment).
 * **AES runs in software**: no hardware-AES feature flag is set (`aes 0.8.4` fixslice; ~25–40 MB/s class on mid-range mobile). Sharing plan P5 enables it.
 * **The index key derives from RootKey** (`derive_index_key`), not SGK — older docs say SGK. Index read failures are swallowed and the list silently degrades to a full scan. Spaces without a RootKey must generalize the derivation (sharing plan §4.3).

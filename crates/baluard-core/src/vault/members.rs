@@ -46,8 +46,9 @@ pub enum TrustLevel {
     AdminUnverified,
 }
 
-/// One member of the vault (plan-sharing §4.2). Encrypted portions
-/// (per-provider handles, optional email) arrive with later S1a slices.
+/// One member of the vault (plan-sharing §4.2). S1a shipped without the
+/// planned per-provider handle and optional email; add them here only when
+/// a feature needs them (they ride this file's serde defaults).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemberFile {
     pub id: Uuid,
