@@ -71,6 +71,10 @@ the two-vault ceremony proves it across devices.
 
 ## 2. S4-3 Dual control resolution
 
+> **RESOLVED 2026-09-28 (see section 10): option (b) with an intrinsic
+> ratchet — lowering the threshold requires approvals under the current
+> threshold. First build item together with the Q5 owner-reset fix.**
+
 The plan's entire dual-control spec is one line: "Dual control 2-of-2 XOR
 (S4)". S4-1's N-distinct-admin approvals already express 2-of-2 (threshold 2)
 and N-of-M. Options:
@@ -80,7 +84,8 @@ and N-of-M. Options:
 2. Keep a "locked" variant: an org pins threshold 2 and surfaces forbid
    lowering it (a policy lock on the knob).
 
-Needed from Esteban: pick 1 or 2. Nothing else blocks.
+Needed from Esteban: pick 1 or 2. Nothing else blocks. → RESOLVED: 2, with
+the ratchet intrinsic (no lock knob).
 
 ## 3. S4-4 Access review report
 
@@ -106,6 +111,10 @@ access + expiry, pending asks, outbox mirrors; tombstoned rows greyed with
 
 ## 4. S4-5 Full Activity timeline
 
+> **RESOLVED 2026-09-28 (see section 10): derived-only v1 — synthesized
+> from verified signed git history; no shared event files, no read
+> tracking. Builds last.**
+
 Goal: one space-wide feed of who did what, instead of per-device logs.
 
 Exists today: `meta/share-events.enc` is deliberately per-device and
@@ -126,7 +135,8 @@ timing as a metadata channel, T14; event volume in git history). Options:
    changed a grant" shows; "member X viewed an entry" never will).
 3. Hybrid: derived-only v1, shared ledger as a later add-on.
 
-Needed from Esteban: which story does 1.0 tell. Option 3 is the safe
+Needed from Esteban: which story does 1.0 tell. Option 3 is the safe → RESOLVED: option 3
+(derived-only v1).
 default.
 
 ## 5. S4-6 Advisory org policies
@@ -157,8 +167,14 @@ admin and converges). Doc-only deliverable; route decision deferred.
 
 ## 7. S4-8 Synthesized neutralization (revisit)
 
+> **RESOLVED 2026-09-28 (see section 10): dropped as an independent
+> item. Its operational purpose folds into S4-4 as the offboarding
+> exposure summary (flag credentials a removed member could read for
+> rotation).**
+
 The plan carries this as a bare one-liner with no design, no scenario, and
-no code reference anywhere. Needed from Esteban: restate what it meant
+no code reference anywhere. Needed from Esteban: restate what it meant → RESOLVED: dropped as a
+crypto item; the purpose folds into S4-4 (see section 10).
 (suspected origin: neutralizing a compromised member's knowledge via
 rotation, "synthesized" from the recovery path), or drop the line.
 
@@ -194,16 +210,49 @@ Size L; independent of every other item; can go any time.
 3. Mobile pending-approvals card: the uniffi `approvals_list()` bridge
    method shipped (wave-37); no UI row renders it.
 
-## 10. Open questions (moved from sharing plan §10)
+## 10. Open questions (moved from sharing plan §10) — RESOLVED 2026-09-28
 
-1. Q5: recovery, ownership transfer, member reset as designed: confirm.
-2. Q6a: identity-rooted Spaces with the layered identity
-   (keystore/recovery-sealed identity; emergency content-key split):
-   confirm the pivot. Groups (S4-2) lean on member identity wraps either
-   way; this confirms the framing.
-3. S4-3 dual control fate (section 2).
-4. S4-5 timeline story (section 4).
-5. S4-8 neutralization meaning (section 7).
+All five were resolved 2026-09-28 by an adversarial design review under
+Esteban's directive: resolve them in the most secure way that stays easy
+for end users; anything heavier exists but is disabled by default,
+configured by the primary admin. Code claims in the review were verified
+against source before adoption. Decisions:
+
+1. **Q5 recovery — CONFIRMED with a fix.** The shipped reset/transfer
+   flow stands, but the Owner lockout in `members.rs` ("the owner row
+   cannot be reset") closes: an Admin can reset an incapacitated Owner
+   and claim ownership, both riding the existing quorum gate (default 1
+   = instant; threshold 2 = a second admin co-approves). Opt-in Space
+   Recovery Kit: Root Key escrowed to an offline phrase for the physical
+   safe, covering sole-admin total loss.
+2. **Q6a identity pivot — CONFIRMED permanent.** One personal vault per
+   human holds the identity; Spaces carry zero master passwords. A
+   departing member keeps personal data; company data locks.
+3. **S4-3 dual control — RESOLVED (b), ratchet intrinsic.** Quorum
+   threshold 2 IS dual control (shipped, S4-1/D59). Lowering the
+   threshold requires approvals under the CURRENT threshold, so a rogue
+   admin cannot drop 2 back to 1 alone. No separate lock knob: with
+   quorum 1 the lock is meaningless and the knob would only add a state.
+4. **S4-5 timeline — derived-only v1.** The space-wide feed synthesizes
+   from verified signed git commit history (topological order primary,
+   timestamps display-only). Zero new git-tracked event files, zero read
+   tracking ("reads leave no trace" preserved). Audit export rides S4-4.
+5. **S4-8 neutralization — DROPPED as a crypto item; folded into S4-4**
+   as the offboarding exposure summary: after removal, admins see every
+   credential the departing member could read, flagged for rotation.
+   Read data cannot be un-read; the passwords themselves get changed.
+
+**Default doctrine (the family preset decision)**: no new `family` vault
+shape — the shape drives the unlock path and Root Key distribution, and a
+third shape is invasive. A family is a Space created through a **Family
+preset**: `join_approval` set to `code` at creation (invite code
+auto-approves; nobody waits on a sofa; the serde default stays `manual`),
+adults admin, kids editor/viewer, guests on, zero settings screens.
+Organizations use today's shipped defaults (quorum 1, manual approval,
+admins invite, admins create collections, viewer export off, editors
+trash, admins restore) with zero configuration. The advanced tier
+(quorum 2..5, owners-only invites, Recovery Kit) lives in Space settings,
+off by default, flipped by the primary admin.
 
 ## 11. Deferred and parked (not org scope; tracked here so the closed plan carries nothing pending)
 
@@ -232,12 +281,17 @@ pending.
 iOS Phase 7 + sharing parity, recovery-key export (TXT/MD/PDF), browser
 extension Phase 2, 2FA tiers 2-5.
 
-## 12. Suggested build order
+## 12. Suggested build order (updated for the 2026-09-28 resolutions)
 
-1. S4-3 + S4-8 decisions, Q5/Q6a confirms (costs one conversation).
-2. S4-4 access review (M, no new crypto, immediate admin value).
-3. S4-6 advisory policies (S).
-4. S4-7 emergency doc (S).
-5. S4-9 mobile host (L, parallelizable).
-6. S4-2 groups (L, the headline item; designs after Q6a).
-7. S4-5 timeline (last; biggest open design call).
+1. **S4-3 ratchet + Q5 owner-reset fix** (S) — closes two real holes
+   (threshold downgrade, incapacitated-Owner freeze); builds on the
+   shipped quorum engine.
+2. **S4-4 access review report** (M) — no new crypto, immediate admin
+   value; carries the S4-8 exposure/rotation filter.
+3. **S4-6 advisory org policies** (S).
+4. **S4-7 emergency × org doc + Space Recovery Kit** (S).
+5. **S4-9 mobile multi-Space host** (L, parallelizable).
+6. **S4-2 groups as a key layer** (L, the headline item; Q6a confirmed,
+   design leans on the collection pattern).
+7. **S4-5 derived timeline** (M/L) — last; the synthesis engine over
+   commit history.
