@@ -135,7 +135,10 @@ open class StubVault(
         `guestEnabled`: Boolean?,
         `trashPolicy`: String?,
         `joinApproval`: String?,
+        `quorumAdminOps`: ULong?,
+        `collectionCreateAuthority`: String?,
     ): Unit = err()
+    override suspend fun `approvalsList`(): String = err()
     override suspend fun `spaceStatus`(): String = err()
     override suspend fun `spacePrepare`(): String = err()
     override suspend fun `spaceFlip`(): String = err()

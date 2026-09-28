@@ -910,6 +910,20 @@
     "joinApprovalLabel": "Aprovação de entrada",
     "joinApprovalDesc": "Aprove novos membros manualmente ou deixe um código de convite válido se autoaprovar.",
     "joinManual": "Revisão manual",
-    "joinCode": "Código de convite"
+    "joinCode": "Código de convite",
+    "quorumLabel": "Aprovações para mudanças importantes",
+    "quorumDesc": "Quantos administradores devem confirmar ações sensíveis: remoções, redefinições, transferências, rotação de chaves, mudança do endereço de sincronização.",
+    "quorumCurrent": "Atual: {n} administrador(es) devem confirmar",
+    "createAuthLabel": "Quem pode criar coleções",
+    "createAuthDesc": "Por padrão, apenas administradores criam coleções compartilhadas.",
+    "createAdmins": "Apenas administradores",
+    "createEditors": "Editores também",
+    "pendingTitle": "Aguardando aprovação",
+    "pendingItem": "{have} de {need} aprovações",
+    "opRotate": "Rotação de chave",
+    "opRemove": "Remoção de membro",
+    "opTransfer": "Transferência de propriedade",
+    "opReset": "Redefinição de membro",
+    "opMigrate": "Mudar endereço de sincronização"
   }
 }

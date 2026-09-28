@@ -117,6 +117,15 @@ data class MobileSpaceSettings(
     val guestEnabled: Boolean,
     val trashPolicy: String,
     val joinApproval: String,
+    val quorumAdminOps: Int,
+    val collectionCreateAuthority: String,
+)
+
+/** A pending sensitive-op ask (§6.5 quorum_admin_ops). */
+data class MobilePendingOp(
+    val kind: String,
+    val required: Int,
+    val approvals: Int,
 )
 
 /** Team-shape readiness + state (S3-7b). */
@@ -396,6 +405,10 @@ class VaultRepository {
                     (o["trash_policy"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "write_scope_can_trash",
                 joinApproval =
                     (o["join_approval"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "manual",
+                quorumAdminOps =
+                    (o["quorum_admin_ops"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: 1,
+                collectionCreateAuthority =
+                    (o["collection_create_authority"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "admins",
             )
         }.getOrNull()
 
@@ -409,9 +422,31 @@ class VaultRepository {
         guestEnabled: Boolean? = null,
         trashPolicy: String? = null,
         joinApproval: String? = null,
+        quorumAdminOps: ULong? = null,
+        collectionCreateAuthority: String? = null,
     ) {
-        vault.spaceSettingsSet(inviteAuthority, allowViewerExport, guestEnabled, trashPolicy, joinApproval)
+        vault.spaceSettingsSet(
+            inviteAuthority, allowViewerExport, guestEnabled,
+            trashPolicy, joinApproval, quorumAdminOps, collectionCreateAuthority,
+        )
     }
+
+    /** Pending sensitive-op asks (quorum knob). Fail toward empty:
+     * a malformed read degrades to an empty list. */
+    suspend fun approvalsPending(vault: MobileVault): List<MobilePendingOp> =
+        runCatching {
+            val o = Json.parseToJsonElement(vault.approvalsList()).jsonObject
+            (o["pending"]?.jsonArray ?: return@runCatching emptyList())
+                .mapNotNull { el ->
+                    val row = runCatching { el.jsonObject }.getOrNull() ?: return@mapNotNull null
+                    val kind = row.str("kind") ?: return@mapNotNull null
+                    MobilePendingOp(
+                        kind = kind,
+                        required = row.str("required")?.toIntOrNull() ?: 1,
+                        approvals = row["approvals"]?.jsonArray?.size ?: 0,
+                    )
+                }
+        }.getOrDefault(emptyList())
 
     /** Team-shape readiness + state (S3-7b). Null on failure — the
      * caller toasts rather than rendering a half-card. */

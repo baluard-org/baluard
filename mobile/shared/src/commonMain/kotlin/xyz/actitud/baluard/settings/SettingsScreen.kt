@@ -61,6 +61,7 @@ import xyz.actitud.baluard.auth.AuthViewModel
 import xyz.actitud.baluard.data.VaultRepository
 import xyz.actitud.baluard.data.MobileSpaceSettings
 import xyz.actitud.baluard.data.MobileSpaceStatus
+import xyz.actitud.baluard.data.MobilePendingOp
 import xyz.actitud.baluard.ui.components.BaluardTextField
 import xyz.actitud.baluard.ui.toast.Toast
 import xyz.actitud.baluard.data.vaultTimeoutLabel
@@ -89,6 +90,17 @@ import xyz.actitud.baluard.ui.components.LabeledPreset
 import xyz.actitud.baluard.ui.components.PresetDropdown
 import xyz.actitud.baluard.ui.components.SectionCard
 import xyz.actitud.baluard.ui.components.ToggleRow
+
+/** i18n key for a pending sensitive-op kind; unknown kinds fall
+ * through to the raw identifier (t() renders unknown keys verbatim). */
+internal fun s4OpLabel(kind: String): String = when (kind) {
+    "rotate_root_key" -> "space.opRotate"
+    "member_remove" -> "space.opRemove"
+    "transfer_ownership" -> "space.opTransfer"
+    "member_reset" -> "space.opReset"
+    "space_migrate" -> "space.opMigrate"
+    else -> kind
+}
 
 /**
  * Settings screen styled after Baluard design language.
@@ -1021,8 +1033,10 @@ fun SettingsScreen(
                     val scope = rememberCoroutineScope()
                     var spaceSettings by remember(vault) { mutableStateOf<MobileSpaceSettings?>(null) }
                     var spaceBusy by remember(vault) { mutableStateOf(false) }
+                    var pendingOps by remember(vault) { mutableStateOf(listOf<MobilePendingOp>()) }
                     LaunchedEffect(vault) {
                         spaceSettings = repo.spaceSettingsGet(vault)
+                        pendingOps = repo.approvalsPending(vault)
                     }
 
                     // Team mode (S3-7b): one-way upgrade. The daemon
@@ -1090,6 +1104,8 @@ fun SettingsScreen(
                         guestEnabled: Boolean? = null,
                         trashPolicy: String? = null,
                         joinApproval: String? = null,
+                        quorumAdminOps: ULong? = null,
+                        collectionCreateAuthority: String? = null,
                     ) {
                         // Synchronous guard: launch dispatches, so a flag
                         // set inside the coroutine lets two rapid taps
@@ -1098,11 +1114,14 @@ fun SettingsScreen(
                         if (inviteAuthority != null && spaceSettings?.inviteAuthority == inviteAuthority) return
                         if (trashPolicy != null && spaceSettings?.trashPolicy == trashPolicy) return
                         if (joinApproval != null && spaceSettings?.joinApproval == joinApproval) return
+                        if (quorumAdminOps != null && spaceSettings?.quorumAdminOps == quorumAdminOps.toInt()) return
+                        if (collectionCreateAuthority != null && spaceSettings?.collectionCreateAuthority == collectionCreateAuthority) return
                         spaceBusy = true
                         scope.launch {
                             try {
-                                repo.spaceSettingsSet(vault, inviteAuthority, allowViewerExport, guestEnabled, trashPolicy, joinApproval)
+                                repo.spaceSettingsSet(vault, inviteAuthority, allowViewerExport, guestEnabled, trashPolicy, joinApproval, quorumAdminOps, collectionCreateAuthority)
                                 spaceSettings = repo.spaceSettingsGet(vault)
+                                pendingOps = repo.approvalsPending(vault)
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (e: Exception) {
@@ -1331,6 +1350,87 @@ fun SettingsScreen(
                             ),
                             style = MaterialTheme.typography.bodySmall,
                         )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    // How many admins must confirm sensitive ops
+                    // (§6.5 quorum_admin_ops, decided 2026-09-27).
+                    Text(t("space.quorumLabel"), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = t("space.quorumDesc"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(1UL, 2UL, 3UL).forEach { n ->
+                            OutlinedButton(
+                                enabled = !spaceBusy,
+                                onClick = { setSpace(quorumAdminOps = n) },
+                            ) {
+                                Text(n.toString())
+                            }
+                        }
+                    }
+                    if (spaceSettings != null) {
+                        Text(
+                            text = t("space.quorumCurrent", spaceSettings!!.quorumAdminOps),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    // Who may create collections (§6.5, decided
+                    // 2026-09-27): admins by default, editors optional.
+                    Text(t("space.createAuthLabel"), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = t("space.createAuthDesc"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            enabled = !spaceBusy,
+                            onClick = { setSpace(collectionCreateAuthority = "admins") },
+                        ) {
+                            Text(t("space.createAdmins"))
+                        }
+                        OutlinedButton(
+                            enabled = !spaceBusy,
+                            onClick = { setSpace(collectionCreateAuthority = "editors") },
+                        ) {
+                            Text(t("space.createEditors"))
+                        }
+                    }
+                    if (spaceSettings != null) {
+                        Text(
+                            text = t(
+                                if (spaceSettings!!.collectionCreateAuthority == "editors") {
+                                    "space.createEditors"
+                                } else {
+                                    "space.createAdmins"
+                                }
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+
+                    // Pending sensitive-op asks (visible when quorum > 1).
+                    if (pendingOps.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(t("space.pendingTitle"), style = MaterialTheme.typography.bodyMedium)
+                        pendingOps.forEach { op ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(t(s4OpLabel(op.kind)), style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    text = t("space.pendingItem", op.approvals, op.required),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
 
                     Spacer(Modifier.height(8.dp))

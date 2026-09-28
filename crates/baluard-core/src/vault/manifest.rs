@@ -246,6 +246,17 @@ pub enum JoinApproval {
     Code,
 }
 
+/// Space policy (§6.5, decided 2026-09-27): who may create collections.
+/// Default `admins` (the plan's original answer); `editors` lets any
+/// Editor-or-above device create collections for the Space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CollectionCreateAuthority {
+    #[default]
+    Admins,
+    Editors,
+}
+
 /// Space policy (§6.5): who may move entries to trash. Default: anyone
 /// holding a live Write (or Manage) grant on the collection. `AdminsOnly`
 /// restricts trashing to Owner/Admin devices.
@@ -357,6 +368,14 @@ pub struct VaultSettings {
     /// Space policy (§6.5): how join introductions are approved.
     #[serde(default)]
     pub join_approval: JoinApproval,
+    /// Space policy (§6.5, decided 2026-09-27): how many DISTINCT admin
+    /// approvals a sensitive op needs. `None` and `Some(1)` both mean the
+    /// default — one admin acts alone. The set parser clamps 1..=5.
+    #[serde(default)]
+    pub quorum_admin_ops: Option<u8>,
+    /// Space policy (§6.5, decided 2026-09-27): who may create collections.
+    #[serde(default)]
+    pub collection_create_authority: CollectionCreateAuthority,
 }
 /// These fields leak vault identity or policy if plaintext on the remote.
 /// Display prefs (theme, lang) live separately in plaintext settings-pub.json
@@ -403,6 +422,12 @@ pub struct EncryptedSettings {
     /// Space policy: join approval mode (mirrors VaultSettings).
     #[serde(default)]
     pub join_approval: JoinApproval,
+    /// Sensitive-op approval threshold (mirrors VaultSettings).
+    #[serde(default)]
+    pub quorum_admin_ops: Option<u8>,
+    /// Who may create collections (mirrors VaultSettings).
+    #[serde(default)]
+    pub collection_create_authority: CollectionCreateAuthority,
     /// User-defined equivalent domain groups (Bitwarden parity). Each inner
     /// vec is one group of registrable domains the user declares equivalent
     /// for autofill matching.
@@ -681,6 +706,13 @@ mod tests {
         assert_eq!(settings.trash_policy, TrashPolicy::WriteScopeCanTrash);
         assert_eq!(settings.restore_policy, RestorePolicy::AdminsOnly);
         assert_eq!(settings.join_approval, JoinApproval::Manual);
+        // §10 decided 2026-09-27: one admin by default; admins create
+        // collections.
+        assert_eq!(settings.quorum_admin_ops, None);
+        assert_eq!(
+            settings.collection_create_authority,
+            CollectionCreateAuthority::Admins
+        );
     }
 
     #[test]
@@ -695,6 +727,11 @@ mod tests {
         assert_eq!(settings.trash_policy, TrashPolicy::WriteScopeCanTrash);
         assert_eq!(settings.restore_policy, RestorePolicy::AdminsOnly);
         assert_eq!(settings.join_approval, JoinApproval::Manual);
+        assert_eq!(settings.quorum_admin_ops, None);
+        assert_eq!(
+            settings.collection_create_authority,
+            CollectionCreateAuthority::Admins
+        );
     }
 
     #[test]
@@ -705,6 +742,8 @@ mod tests {
             guest_enabled: Some(false),
             trash_policy: TrashPolicy::AdminsOnly,
             join_approval: JoinApproval::Code,
+            quorum_admin_ops: Some(3),
+            collection_create_authority: CollectionCreateAuthority::Editors,
             ..Default::default()
         };
         let json = serde_json::to_string(&settings).unwrap();
@@ -714,6 +753,11 @@ mod tests {
         assert_eq!(back.guest_enabled, Some(false));
         assert_eq!(back.trash_policy, TrashPolicy::AdminsOnly);
         assert_eq!(back.join_approval, JoinApproval::Code);
+        assert_eq!(back.quorum_admin_ops, Some(3));
+        assert_eq!(
+            back.collection_create_authority,
+            CollectionCreateAuthority::Editors
+        );
     }
 
     #[test]

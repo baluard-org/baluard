@@ -61,6 +61,13 @@ pub struct VaultHandle {
     /// Device lifecycle coordinator (MISS-2).
     /// Loaded on open, manages epoch state, enrollment, and rotation.
     pub device_manager: DeviceManager,
+    /// The (kind, params digest) whose quorum THIS handle already
+    /// satisfied via a precheck, consumed by the op that follows.
+    /// Bridges the runtime's strike-ordering precheck to member_remove's
+    /// internal re-validation so the gate runs exactly once per chain.
+    /// Mutex (not RefCell) so VaultState stays Sync across the spawned
+    /// sync tasks.
+    pub quorum_satisfied: std::sync::Mutex<Option<(String, String)>>,
     /// Session state.
     pub state: VaultState,
 }
@@ -336,6 +343,7 @@ impl VaultHandle {
             device_id,
             device_manager,
             state: VaultState::Locked,
+            quorum_satisfied: std::sync::Mutex::new(None),
         })
     }
 
@@ -387,6 +395,81 @@ impl VaultHandle {
                 "this space only allows the owner to send invites".into(),
             ))),
         }
+    }
+
+    /// Sensitive-op quorum (§6.5 `quorum_admin_ops`, decided 2026-09-27).
+    /// Threshold 1 (the default): one admin acts alone, pass. Above 1,
+    /// the op must collect DISTINCT admin approvals — see
+    /// `vault::approvals`. Only Owner/Admin devices participate; a
+    /// legacy vault (no member directory) has a single admin by
+    /// construction, so the gate passes there. Enforcement is
+    /// local-only like every §6.5 knob (the keyless sync walker cannot
+    /// read the encrypted threshold); the pending record itself is
+    /// plaintext under `meta/approvals/` and rides the meta/** Admin
+    /// sync row, so every admin device sees the ask on its next pull.
+    fn quorum_gate(&self, kind: &str, params: &serde_json::Value) -> Result<(), BaluardError> {
+        let required = self.get_settings()?.quorum_admin_ops.unwrap_or(1).max(1);
+        if required <= 1 {
+            // The knob dropped below the ask: nothing stays pending.
+            crate::vault::approvals::consume_matching(&self.path, kind, params);
+            return Ok(());
+        }
+        if !self.path.join(crate::vault::members::MEMBERS_DIR).exists() {
+            return Ok(());
+        }
+        let is_admin = matches!(
+            crate::vault::members::member_role_for_device(&self.path, self.device_id),
+            Some(crate::vault::members::MemberRole::Owner)
+                | Some(crate::vault::members::MemberRole::Admin)
+        );
+        if !is_admin {
+            return Err(
+                VaultError::InvalidOperation("only admins can approve this change".into()).into(),
+            );
+        }
+        let Some(member_id) =
+            crate::vault::members::member_id_for_device(&self.path, self.device_id)
+        else {
+            return Err(
+                VaultError::InvalidOperation("only admins can approve this change".into()).into(),
+            );
+        };
+        match crate::vault::approvals::present(
+            &self.path,
+            kind,
+            params,
+            member_id,
+            required,
+            crate::vault::collections::now_secs_pub(),
+        ) {
+            crate::vault::approvals::ApprovalOutcome::Approved => Ok(()),
+            crate::vault::approvals::ApprovalOutcome::Pending => {
+                Err(VaultError::InvalidOperation(format!(
+                    "this change needs {required} admin approvals before it runs — ask another admin to confirm the same change"
+                ))
+                .into())
+            }
+            crate::vault::approvals::ApprovalOutcome::AlreadyApproved => {
+                Err(VaultError::InvalidOperation(
+                    "you already approved this change — a different admin must confirm it".into(),
+                )
+                .into())
+            }
+        }
+    }
+
+    /// Public gate for runtime callers (e.g. `space.migrate`).
+    pub fn assert_op_quorum(
+        &self,
+        kind: &str,
+        params: &serde_json::Value,
+    ) -> Result<(), BaluardError> {
+        self.quorum_gate(kind, params)
+    }
+
+    /// Pending sensitive-op asks, for the admin surface.
+    pub fn pending_op_approvals(&self) -> Vec<crate::vault::approvals::PendingOp> {
+        crate::vault::approvals::list_pending(&self.path)
     }
 
     /// Delegated manage (S3-5): Owner/Admin pass structurally; a legacy
@@ -1196,7 +1279,34 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
-        self.assert_can_manage_members()?;
+        // §6.5 collection_create_authority (decided 2026-09-27): admins
+        // only by default; `editors` lets any bound live Editor-or-above
+        // create. Viewer and unbound devices refuse either way.
+        match self.get_settings()?.collection_create_authority {
+            crate::vault::manifest::CollectionCreateAuthority::Admins => {
+                self.assert_can_manage_members()?
+            }
+            crate::vault::manifest::CollectionCreateAuthority::Editors => {
+                if self.path.join(crate::vault::members::MEMBERS_DIR).exists() {
+                    match crate::vault::members::member_role_for_device(&self.path, self.device_id)
+                    {
+                        Some(crate::vault::members::MemberRole::Viewer) => {
+                            return Err(VaultError::InvalidOperation(
+                                "creating collections is limited to admins in this space.".into(),
+                            )
+                            .into());
+                        }
+                        Some(_) => {}
+                        None => {
+                            return Err(VaultError::InvalidOperation(
+                                "This change can only be made on a managing device.".into(),
+                            )
+                            .into());
+                        }
+                    }
+                }
+            }
+        }
         let file =
             crate::vault::collections::create_collection(&self.path, self.unlocked().sgk()?, name)?;
 
@@ -1809,6 +1919,10 @@ impl VaultHandle {
             return Err(VaultError::Locked.into());
         }
         self.assert_can_manage_members()?;
+        self.quorum_gate(
+            "member_reset",
+            &serde_json::json!({ "member_id": member_id }),
+        )?;
         if crate::vault::members::member_id_for_device(&self.path, self.device_id)
             == Some(member_id)
         {
@@ -1850,6 +1964,14 @@ impl VaultHandle {
         &self,
         member_ids: &[uuid::Uuid],
     ) -> Result<Vec<String>, BaluardError> {
+        self.member_remove_precheck_inner(member_ids, true)
+    }
+
+    fn member_remove_precheck_inner(
+        &self,
+        member_ids: &[uuid::Uuid],
+        check_quorum: bool,
+    ) -> Result<Vec<String>, BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
@@ -1858,6 +1980,25 @@ impl VaultHandle {
                 "member_remove needs at least one member".into(),
             )
             .into());
+        }
+        // Quorum first: a refusal must land BEFORE any seat strike.
+        // check_quorum is false ONLY for member_remove's internal
+        // re-validation — the approval was already consumed by the
+        // caller's precheck, and re-entering the gate here would raise
+        // a fresh ask after the seats were struck.
+        if check_quorum {
+            // Digest over the SORTED ids: two admins listing the same
+            // batch in different orders must approve the same ask.
+            let mut sorted = member_ids.to_vec();
+            sorted.sort();
+            let params = serde_json::json!({ "member_ids": sorted });
+            self.quorum_gate("member_remove", &params)?;
+            // Mark the chain: member_remove's internal re-validation
+            // must not re-enter the gate (the approval is consumed).
+            *self.quorum_satisfied.lock().expect("quorum flag") = Some((
+                "member_remove".to_string(),
+                crate::vault::approvals::op_digest("member_remove", &params),
+            ));
         }
         self.assert_can_manage_members()?;
         let actor_member = crate::vault::members::member_id_for_device(&self.path, self.device_id);
@@ -1926,12 +2067,33 @@ impl VaultHandle {
         &mut self,
         member_ids: &[uuid::Uuid],
     ) -> Result<MemberRemovalReport, BaluardError> {
+        // Quorum: satisfied when THIS handle's precheck already consumed
+        // the approval (the strike-ordering chain); a direct core caller
+        // without that chain gates here. Either way exactly one gate.
+        {
+            let mut sorted = member_ids.to_vec();
+            sorted.sort();
+            let digest = crate::vault::approvals::op_digest(
+                "member_remove",
+                &serde_json::json!({ "member_ids": sorted }),
+            );
+            if self.quorum_satisfied.lock().expect("quorum flag").as_ref()
+                == Some(&("member_remove".to_string(), digest.clone()))
+            {
+                *self.quorum_satisfied.lock().expect("quorum flag") = None;
+            } else {
+                self.quorum_gate(
+                    "member_remove",
+                    &serde_json::json!({ "member_ids": sorted }),
+                )?;
+            }
+        }
         // P8c-2: the pre-flight is the single source of truth for removal
         // authorization + validation, and it returns the transport seats
         // to strike. The daemon route calls THIS SAME fn before its
         // provider strikes, so seat ops can never run for an
         // unauthorized caller or an invalid batch.
-        let transport_usernames = self.member_remove_precheck(member_ids)?;
+        let transport_usernames = self.member_remove_precheck_inner(member_ids, false)?;
 
         // ── Offboard: tombstone rows, strike seats, rotate once ──
         let mut removed_members = Vec::new();
@@ -1960,7 +2122,7 @@ impl VaultHandle {
         self.save_activity_enc(&activity)?;
         self.sync_registry_from_device_manager();
         self.device_manager.auto_save_result()?;
-        self.rotate_root_key()?;
+        self.rotate_root_key_internal()?;
         // S3-7a (review F4): the removed member knew the SMK, so retire
         // it under the fresh root. Best-effort in this additive slice
         // (nothing is SMK-encrypted yet); status surfaces any gap and
@@ -2003,6 +2165,10 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
+        self.quorum_gate(
+            "transfer_ownership",
+            &serde_json::json!({ "new_member_id": new_member_id }),
+        )?;
         // S1a-7 review: gate on the ACTOR'S OWN role (disk-backed), not
         // on owner_member_id equality — in the abnormal two-owner state
         // (crash between the transfer's two writes) owner_member_id
@@ -3614,6 +3780,8 @@ impl VaultHandle {
                         trash_policy: Default::default(),
                         restore_policy: Default::default(),
                         join_approval: Default::default(),
+                        quorum_admin_ops: None,
+                        collection_create_authority: Default::default(),
                         // These post-date the legacy settings.json split: a
                         // legacy file never carries them.
                         custom_equivalent_domains: None,
@@ -3681,6 +3849,11 @@ impl VaultHandle {
                 .as_ref()
                 .map(|e| e.join_approval)
                 .unwrap_or_default(),
+            quorum_admin_ops: enc_fields.as_ref().and_then(|e| e.quorum_admin_ops),
+            collection_create_authority: enc_fields
+                .as_ref()
+                .map(|e| e.collection_create_authority)
+                .unwrap_or_default(),
         })
     }
 
@@ -3734,6 +3907,8 @@ impl VaultHandle {
             trash_policy: settings.trash_policy,
             restore_policy: settings.restore_policy,
             join_approval: settings.join_approval,
+            quorum_admin_ops: settings.quorum_admin_ops,
+            collection_create_authority: settings.collection_create_authority,
             custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
@@ -3838,6 +4013,8 @@ impl VaultHandle {
             trash_policy: settings.trash_policy,
             restore_policy: settings.restore_policy,
             join_approval: settings.join_approval,
+            quorum_admin_ops: settings.quorum_admin_ops,
+            collection_create_authority: settings.collection_create_authority,
             custom_equivalent_domains: settings.custom_equivalent_domains.clone(),
             suggest_app_logins: settings.suggest_app_logins,
             trusted_app_packages: settings.trusted_app_packages.clone(),
@@ -6709,6 +6886,15 @@ impl VaultHandle {
     ///
     /// Requires unlocked vault.
     pub fn rotate_root_key(&mut self) -> Result<(), BaluardError> {
+        self.quorum_gate("rotate_root_key", &serde_json::json!({}))?;
+        self.rotate_root_key_internal()
+    }
+
+    /// The un-gated rotation worker. Internal callers that run under a
+    /// DIFFERENT op's already-approved quorum (member removal's
+    /// offboarding rotation) call this directly — re-entering the gate
+    /// here would demand a second, unrelated approval mid-offboarding.
+    pub(crate) fn rotate_root_key_internal(&mut self) -> Result<(), BaluardError> {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
@@ -7297,6 +7483,12 @@ impl VaultHandle {
         if !self.is_unlocked() {
             return Err(VaultError::Locked.into());
         }
+        // Same quorum class as removal: revoking a device rotates the
+        // Root Key, so it must not become the threshold bypass.
+        self.quorum_gate(
+            "device_revoke",
+            &serde_json::json!({ "device_id": target_device_id }),
+        )?;
         if target_device_id == self.device_id {
             return Err(VaultError::InvalidOperation(
                 "cannot revoke the current device. Use force-evict from another device.".into(),
@@ -11242,6 +11434,149 @@ mod tests {
     }
 
     #[test]
+    fn quorum_two_admin_rotation_needs_distinct_approvers() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner_path = temp.path().join("owner");
+        let (mut handle, _secrets) =
+            crate::vault::creation::VaultCreator::new(&owner_path, "owner-pass", "OwnerDevice")
+                .kdf_profile(crate::types::KdfProfile::MobileLow)
+                .initialize_git(true)
+                .execute()
+                .unwrap();
+        handle.unlock("owner-pass").unwrap();
+        let owner_seal = handle.devkey_seal();
+        let engine_o = crate::sync::engine::SyncEngine::new(
+            &owner_path,
+            &handle.device_id.to_string(),
+            owner_seal.as_ref(),
+        );
+        let repo_o = engine_o.open_repo().unwrap();
+
+        // Standard join ceremony with an ADMIN member (the second
+        // approver). The invite reaches the clone because it commits
+        // before the clone.
+        let code = handle
+            .invite_create(crate::vault::members::MemberRole::Admin, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite").unwrap();
+        let joiner_path = temp.path().join("joiner");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &joiner_path).unwrap();
+        let intro_code = crate::vault::members::create_introduction(
+            &joiner_path,
+            &code,
+            "member-pass",
+            "MemberDevice",
+        )
+        .unwrap();
+        // S1a: elevated roles require a Verified contact — import the
+        // joiner's card from the intro and run the Level 2 upgrade.
+        handle.contacts_import_intro(&intro_code).unwrap();
+        let contacts = handle.contacts_list().unwrap();
+        let joiner_card = contacts
+            .iter()
+            .find(|c| c.trust == crate::vault::contacts::ContactTrust::Channel)
+            .expect("imported joiner card");
+        handle
+            .contacts_mark_verified(&joiner_card.card.identity_signing_pubkey)
+            .unwrap();
+        handle.approve_join(&intro_code).unwrap();
+        // Raise the threshold BEFORE the joiner's first pull so both
+        // devices read the same setting.
+        let mut settings = handle.get_settings().unwrap();
+        settings.quorum_admin_ops = Some(2);
+        handle.save_settings(&settings).unwrap();
+        engine_o.commit_all(&repo_o, "approve + quorum").unwrap();
+
+        let engine_j = crate::sync::engine::SyncEngine::new(&joiner_path, "joiner", None);
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+        let mut joiner = VaultHandle::open(&joiner_path).unwrap();
+        joiner.unlock("member-pass").unwrap();
+        assert_eq!(joiner.get_settings().unwrap().quorum_admin_ops, Some(2));
+        let joiner_seal = joiner.devkey_seal();
+        let joiner_device = joiner.device_id;
+
+        // First admin raises the ask: refused, record on file.
+        let err = handle
+            .rotate_root_key()
+            .expect_err("solo rotation must wait for quorum");
+        assert!(err.to_string().contains("admin approvals"), "{err}");
+        let pending = handle.pending_op_approvals();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].kind, "rotate_root_key");
+        assert_eq!(pending[0].required, 2);
+        // Same admin again: cannot self-confirm.
+        let err = handle.rotate_root_key().expect_err("self-confirm");
+        assert!(err.to_string().contains("different admin"), "{err}");
+
+        // The record rides git: ship it, the second admin pulls, and
+        // their confirming call runs the rotation on their device.
+        engine_o.commit_all(&repo_o, "pending ask").unwrap();
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+        joiner.rotate_root_key().expect("second admin confirms");
+        assert!(joiner.pending_op_approvals().is_empty());
+
+        // The confirming rotation mutated the JOINER's clone; ship it
+        // back so the two devices converge before anything else (the
+        // owner must re-unlock: its handle holds the pre-rotation root).
+        let engine_js = crate::sync::engine::SyncEngine::new(
+            &joiner_path,
+            &joiner_device.to_string(),
+            joiner_seal.as_ref(),
+        );
+        let repo_js = engine_js.open_repo().unwrap();
+        engine_js.commit_all(&repo_js, "joiner rotation").unwrap();
+        drop(repo_js);
+        repo_o
+            .remote("joiner", joiner_path.to_str().unwrap())
+            .unwrap();
+        engine_o.pull(&repo_o, "joiner").unwrap();
+        drop(handle);
+        let mut handle = VaultHandle::open(&owner_path).unwrap();
+        handle.unlock("owner-pass").unwrap();
+
+        // Threshold-2 member_remove end to end (the double-precheck and
+        // internal-rotation regression legs): the extra Editor is the
+        // removal target.
+        let code_e = handle
+            .invite_create(crate::vault::members::MemberRole::Editor, None)
+            .unwrap();
+        engine_o.commit_all(&repo_o, "invite extra").unwrap();
+        let extra_path = temp.path().join("extra");
+        git2::Repository::clone(owner_path.to_str().unwrap(), &extra_path).unwrap();
+        let intro_e = crate::vault::members::create_introduction(
+            &extra_path,
+            &code_e,
+            "extra-pass",
+            "ExtraDevice",
+        )
+        .unwrap();
+        let extra_id = handle.approve_join(&intro_e).unwrap();
+        engine_o.commit_all(&repo_o, "approve extra").unwrap();
+
+        // Owner initiates the removal: refused, ask on file.
+        let err = handle
+            .member_remove(&[extra_id])
+            .expect_err("solo removal must wait for quorum");
+        assert!(err.to_string().contains("admin approvals"), "{err}");
+        engine_o.commit_all(&repo_o, "pending removal ask").unwrap();
+
+        // The second admin pulls and confirms: the removal completes —
+        // the internal precheck re-validation must NOT re-enter the
+        // gate, and the offboarding rotation must run ungated.
+        let repo_j = engine_j.open_repo().unwrap();
+        engine_j.pull(&repo_j, "origin").unwrap();
+        drop(repo_j);
+        joiner.member_remove(&[extra_id]).expect("removal confirms");
+        assert!(joiner.pending_op_approvals().is_empty());
+        let extra_row = crate::vault::members::member_file_by_id(&joiner_path, extra_id).unwrap();
+        assert!(extra_row.removed.is_some(), "target tombstoned");
+    }
+
+    #[test]
     fn team_shape_flip_two_devices() {
         let temp = tempfile::tempdir().unwrap();
         let owner_path = temp.path().join("owner");
@@ -12649,6 +12984,13 @@ mod tests {
         let engine_c = crate::sync::engine::SyncEngine::new(&c_path, "memberc", None);
         let repo_c = engine_c.open_repo().unwrap();
         engine_c.pull(&repo_c, "origin").unwrap();
+        drop(repo_c);
+        // The pull carried the removal rotation: this handle's root is
+        // stale until re-unlock (P3 adoption runs at unlock, exactly as
+        // production devices re-lock and re-unlock).
+        drop(c_handle);
+        let mut c_handle = VaultHandle::open(&c_path).unwrap();
+        c_handle.unlock(c_pass).unwrap();
         c_handle.transfer_ownership(old_owner_id).unwrap();
         assert_eq!(
             crate::vault::members::owner_member_id(&c_path),
@@ -12658,6 +13000,7 @@ mod tests {
         drop(c_handle);
         let engine_c_signed =
             crate::sync::engine::SyncEngine::new(&c_path, &c_device.to_string(), c_seal.as_ref());
+        let repo_c = engine_c_signed.open_repo().unwrap();
         engine_c_signed
             .commit_all(&repo_c, "transfer back")
             .unwrap();
@@ -13866,6 +14209,8 @@ mod tests {
             trash_policy: Default::default(),
             restore_policy: Default::default(),
             join_approval: Default::default(),
+            quorum_admin_ops: None,
+            collection_create_authority: Default::default(),
         };
         handle.save_settings(&settings).unwrap();
 
