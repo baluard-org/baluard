@@ -262,12 +262,33 @@ impl SyncEngine {
         }
     }
 
-    /// Stage all changes and commit with static message (D9).
+    /// Stage admitted changes and commit with static message (D9).
     /// Returns the new commit OID.
     pub fn commit_all(
         &self,
         repo: &Repository,
+        message_override: &str,
+    ) -> Result<Oid, BaluardError> {
+        self.commit_all_inner(repo, message_override, true)
+    }
+
+    /// Test-only hostile-author path: stage everything, skipping the
+    /// staged-path-set filter, so the pull-time walk's refusals stay
+    /// pinned against commits that DO carry violating paths.
+    #[cfg(test)]
+    pub(crate) fn commit_all_unfiltered(
+        &self,
+        repo: &Repository,
+        message_override: &str,
+    ) -> Result<Oid, BaluardError> {
+        self.commit_all_inner(repo, message_override, false)
+    }
+
+    fn commit_all_inner(
+        &self,
+        repo: &Repository,
         _message_override: &str,
+        admit_all: bool,
     ) -> Result<Oid, BaluardError> {
         // Bump this device's last_seen_epoch on `meta/devices.json` BEFORE
         // staging. devices.json is git-tracked, so rewriting it after the tree
@@ -276,17 +297,26 @@ impl SyncEngine {
         // commit and keeps the tree clean.
         self.bump_device_epoch();
 
+        if admit_all {
+            // P5 explicit staged path sets: stage only the changed paths
+            // this device's policy admits; anything else stays dirty in
+            // the worktree instead of poisoning the commit into an
+            // unpushable wedge.
+            self.stage_admitted(repo)?;
+        } else {
+            let mut index = repo
+                .index()
+                .map_err(|e| SyncError::Git(format!("index: {e}")))?;
+            index
+                .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+                .map_err(|e| SyncError::Git(format!("add_all: {e}")))?;
+            index
+                .write()
+                .map_err(|e| SyncError::Git(format!("index write: {e}")))?;
+        }
         let mut index = repo
             .index()
             .map_err(|e| SyncError::Git(format!("index: {e}")))?;
-
-        // Stage everything
-        index
-            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
-            .map_err(|e| SyncError::Git(format!("add_all: {e}")))?;
-        index
-            .write()
-            .map_err(|e| SyncError::Git(format!("index write: {e}")))?;
 
         let tree_id = index
             .write_tree()
@@ -349,6 +379,372 @@ impl SyncEngine {
             .map_err(|e| SyncError::Git(format!("set head: {e}")))?;
 
         Ok(commit_id)
+    }
+
+    /// The collection scope as the commit ABOUT TO BE STAGED will
+    /// present it: dirs, own writable grants (Manage implies write,
+    /// matching the walk), and the flip marker read from the worktree
+    /// meta files — the prospective own-tree of this commit.
+    fn staging_scope_from_worktree(
+        &self,
+        member_id: Option<&str>,
+    ) -> crate::sync::policy::CollectionScope {
+        let mut scope = crate::sync::policy::CollectionScope::none();
+        let member = member_id.and_then(|m| uuid::Uuid::parse_str(m).ok());
+        let coll_dir = self.vault_path.join("meta/collections");
+        if let Ok(entries) = std::fs::read_dir(&coll_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !name.ends_with(".json") {
+                    continue;
+                }
+                let Ok(bytes) = std::fs::read(entry.path()) else {
+                    continue;
+                };
+                let Ok(file) =
+                    serde_json::from_slice::<crate::vault::collections::CollectionFile>(&bytes)
+                else {
+                    continue;
+                };
+                // Same stem pin as the walks: a misnamed file
+                // contributes no scope.
+                if file.format != 1 || name != format!("{}.json", file.id) {
+                    continue;
+                }
+                if let Some(d) = crate::vault::collections::collection_dir(&file) {
+                    scope.dirs.push((d, file.id));
+                }
+                let Some(m) = member else { continue };
+                for g in &file.grants {
+                    if g.member_id != m {
+                        continue;
+                    }
+                    match g.access {
+                        crate::vault::collections::CollectionAccess::Write => {
+                            if !scope.writable.contains(&file.id) {
+                                scope.writable.push(file.id);
+                            }
+                        }
+                        crate::vault::collections::CollectionAccess::Manage => {
+                            if !scope.writable.contains(&file.id) {
+                                scope.writable.push(file.id);
+                            }
+                        }
+                        crate::vault::collections::CollectionAccess::Read => {}
+                    }
+                }
+            }
+        }
+        scope.flat_admin_only = crate::vault::space_meta::shape_flipped(&self.vault_path);
+        scope
+    }
+
+    /// P5 explicit staged path sets: stage ONLY the changed paths this
+    /// device's policy admits, evaluated with the same per-path logic
+    /// the peer verification walks apply (authorize_scoped plus the
+    /// structural member-record, integrity, and registry predicates).
+    /// The admission context (role, member, collection scope, flip
+    /// shape) resolves from the HEAD TREE through the same helpers the
+    /// walks use — never the worktree — so editing meta files on disk
+    /// cannot widen what this device stages. Anything not admitted is
+    /// reverted in the worktree (tracked files restored to their
+    /// committed content, untracked files removed): a file this device
+    /// may not author cannot sit dirty forever (stuck badge, empty-
+    /// commit autosync loop), and peers never see it either way.
+    fn stage_admitted(&self, repo: &Repository) -> Result<(), BaluardError> {
+        let mut status_opts = git2::StatusOptions::new();
+        status_opts
+            .include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .exclude_submodules(true);
+        let statuses = repo
+            .statuses(Some(&mut status_opts))
+            .map_err(|e| SyncError::Git(format!("status: {e}")))?;
+
+        // Reset the index to HEAD first so the staged set is exactly
+        // what this call admits — no residue from earlier staging.
+        let mut index = repo
+            .index()
+            .map_err(|e| SyncError::Git(format!("index: {e}")))?;
+        let head_commit = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+        let Some(head_commit) = head_commit else {
+            // No HEAD: the genesis commit DEFINES the policy state (the
+            // founder's initial commit at creation, made before any
+            // member state exists to admit or deny — the creator engine
+            // even signs with the device NAME, not a member id). Peers
+            // grandfather the root commit; stage everything.
+            index
+                .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+                .map_err(|e| SyncError::Git(format!("add_all: {e}")))?;
+            index
+                .write()
+                .map_err(|e| SyncError::Git(format!("index write: {e}")))?;
+            return Ok(());
+        };
+        let head_tree = head_commit
+            .tree()
+            .map_err(|e| SyncError::Git(format!("head tree: {e}")))?;
+        index
+            .read_tree(&head_tree)
+            .map_err(|e| SyncError::Git(format!("index reset: {e}")))?;
+
+        // Admission context resolves from the HEAD TREE, never the
+        // worktree: the same members snapshot and collection-scope
+        // helpers the peer walks use, so editing meta files on disk
+        // (role self-promotion, forged collection grants) cannot widen
+        // what this device stages. A commit can only ever carry paths
+        // the committed authority already allows.
+        let mut snapshot_cache: std::collections::HashMap<git2::Oid, Option<MemberSnapshot>> =
+            std::collections::HashMap::new();
+        let (role, member_id, tombstoned) =
+            match Self::members_tree_lookup(repo, &head_commit, &mut snapshot_cache)? {
+                Some(snapshot) => {
+                    let role = snapshot
+                        .roles
+                        .get(&self.device_id)
+                        .copied()
+                        .unwrap_or(crate::sync::policy::CommitRole::PendingJoiner);
+                    let member = snapshot.member_of.get(&self.device_id).cloned();
+                    let tombstoned = member
+                        .as_deref()
+                        .map(|m| snapshot.tombstoned.contains(m))
+                        .unwrap_or(false);
+                    (role, member, tombstoned)
+                }
+                // Legacy/personal vault: no member directory in the
+                // tree, founder device.
+                None => (crate::sync::policy::CommitRole::Admin, None, false),
+            };
+        // Scope resolution mirrors the walk's tree choice: dirs,
+        // writable grants, and the flip marker come from the commit's
+        // OWN tree at walk time — for staging that is the worktree copy
+        // (exactly what these files will commit as), so an admin can
+        // seed a collection and its first cipher in one commit. Managed
+        // authority reads from the HEAD tree (the walk reads the
+        // parent), so a manager cannot self-grant in this commit.
+        let scope = self.staging_scope_from_worktree(member_id.as_deref());
+        let head_scope = Self::collection_scope_for_tree(
+            repo,
+            &head_tree,
+            Some(&head_tree),
+            member_id.as_deref(),
+        )?;
+        let scope = crate::sync::policy::CollectionScope {
+            managed: head_scope.managed,
+            ..scope
+        };
+
+        let roster = self.staging_roster(repo, Some(&head_tree));
+
+        let mut skipped: Vec<(String, git2::Status)> = Vec::new();
+        for entry in statuses.iter() {
+            // A non-UTF-8 path can never be authorized; leave it dirty.
+            let Some(path) = entry.path() else { continue };
+            let s = entry.status();
+            if s.contains(git2::Status::CONFLICTED) {
+                continue;
+            }
+            let deletion = s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED);
+            let written = s.intersects(
+                git2::Status::WT_NEW
+                    | git2::Status::WT_MODIFIED
+                    | git2::Status::WT_RENAMED
+                    | git2::Status::WT_TYPECHANGE
+                    | git2::Status::INDEX_NEW
+                    | git2::Status::INDEX_MODIFIED
+                    | git2::Status::INDEX_RENAMED
+                    | git2::Status::INDEX_TYPECHANGE,
+            );
+            if !deletion && !written {
+                continue;
+            }
+            let admitted = !tombstoned
+                && self.path_admitted(
+                    repo,
+                    Some(&head_tree),
+                    path,
+                    deletion,
+                    role,
+                    member_id.as_deref(),
+                    &scope,
+                    &roster,
+                );
+            if admitted {
+                self.stage_one(&mut index, path, deletion)?;
+            } else {
+                skipped.push((path.to_string(), s));
+            }
+        }
+        // A file this device may not author cannot sit in the vault's
+        // worktree: it would stay dirty forever (stuck sync badge, an
+        // empty commit pushed on every autosync tick). Tracked files
+        // are restored to their committed content — exactly what the
+        // next pull's force-checkout would do — and untracked files are
+        // removed. Peers never see them either way.
+        for (path, s) in &skipped {
+            eprintln!("staged-path-set: reverted (not admitted for this device): {path}");
+            if s.contains(git2::Status::WT_NEW) {
+                let _ = std::fs::remove_file(self.vault_path.join(path));
+                continue;
+            }
+            if let Ok(entry) = head_tree.get_path(std::path::Path::new(path)) {
+                if let Ok(blob) = repo.find_blob(entry.id()) {
+                    let full = self.vault_path.join(path);
+                    if let Some(p) = full.parent() {
+                        let _ = std::fs::create_dir_all(p);
+                    }
+                    let _ = std::fs::write(&full, blob.content());
+                }
+            }
+        }
+        index
+            .write()
+            .map_err(|e| SyncError::Git(format!("index write: {e}")))?;
+        Ok(())
+    }
+
+    /// Admission for one changed path, mirroring the peer walks:
+    /// structural rules first (member records, integrity manifest,
+    /// registry bumps), then the policy table with the signer's
+    /// collection scope.
+    #[allow(clippy::too_many_arguments)]
+    fn path_admitted(
+        &self,
+        repo: &Repository,
+        head_tree: Option<&git2::Tree<'_>>,
+        path: &str,
+        deletion: bool,
+        role: crate::sync::policy::CommitRole,
+        member_id: Option<&str>,
+        scope: &crate::sync::policy::CollectionScope,
+        roster: &DeviceRoster,
+    ) -> bool {
+        let head_blob = |p: &str| -> Option<Vec<u8>> {
+            let tree = head_tree?;
+            let entry = tree.get_path(std::path::Path::new(p)).ok()?;
+            repo.find_blob(entry.id())
+                .ok()
+                .map(|b| b.content().to_vec())
+        };
+        let disk_bytes =
+            |p: &str| -> Option<Vec<u8>> { std::fs::read(self.vault_path.join(p)).ok() };
+        // Structural rule 1: member records (flat meta/members/<id>.json)
+        // written by a non-admin signer — own record, identity fields
+        // only. Admins fall through to the table's meta/** row.
+        if let Some(stem) = path
+            .strip_prefix("meta/members/")
+            .filter(|p| p.ends_with(".json") && !p[..p.len() - 5].contains('/'))
+            .map(|p| &p[..p.len() - 5])
+        {
+            if role.rank() < crate::sync::policy::CommitRole::Admin.rank() {
+                let file = uuid::Uuid::parse_str(stem).ok();
+                let own = member_id.and_then(|m| uuid::Uuid::parse_str(m).ok());
+                match (own, file) {
+                    (Some(own), Some(file)) if own == file => {
+                        let (Some(old), Some(new)) = (head_blob(path), disk_bytes(path)) else {
+                            return false;
+                        };
+                        return Self::member_record_delta_ok(
+                            &old,
+                            &new,
+                            Some(own),
+                            &self.device_id,
+                        )
+                        .is_ok();
+                    }
+                    _ => return false,
+                }
+            }
+        }
+        // Structural rule 2: the integrity manifest is
+        // self-authenticating (role-irrelevant).
+        if path == "meta/integrity.json" {
+            return Self::integrity_delta_ok(
+                head_blob(path).as_deref(),
+                disk_bytes(path).as_deref(),
+                roster,
+                &self.device_id,
+            )
+            .is_ok();
+        }
+        // Structural rule 3: non-admin registry deltas must be this
+        // device's own last_seen_epoch bump.
+        if path == "meta/devices.json"
+            && role.rank() < crate::sync::policy::CommitRole::Admin.rank()
+        {
+            return Self::registry_delta_is_own_bump(
+                head_blob(path).as_deref(),
+                disk_bytes(path).as_deref(),
+                &self.device_id,
+            );
+        }
+        crate::sync::policy::authorize_scoped(
+            &self.device_id,
+            member_id,
+            role,
+            path,
+            scope,
+            deletion,
+        )
+        .is_ok()
+    }
+
+    /// Roster in force for the commit this staging feeds: the peer
+    /// walks resolve it from the new commit's parent (= our HEAD), or
+    /// from the commit itself when it introduces the registry.
+    fn staging_roster(
+        &self,
+        repo: &Repository,
+        head_tree: Option<&git2::Tree<'_>>,
+    ) -> DeviceRoster {
+        let from_bytes = |data: &str| -> Option<DeviceRoster> {
+            let reg = serde_json::from_str::<crate::devices::DeviceRegistry>(data).ok()?;
+            let mut roster = DeviceRoster::new();
+            for (id, entry) in &reg.devices {
+                if let Ok(bytes) = hex::decode(&entry.signing_public_key) {
+                    if let Ok(arr) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                        roster.insert(id.to_string(), arr);
+                    }
+                }
+            }
+            Some(roster)
+        };
+        if let Some(tree) = head_tree {
+            if let Ok(entry) = tree.get_path(std::path::Path::new("meta/devices.json")) {
+                if let Ok(blob) = repo.find_blob(entry.id()) {
+                    if let Ok(data) = std::str::from_utf8(blob.content()) {
+                        if let Some(r) = from_bytes(data) {
+                            return r;
+                        }
+                    }
+                }
+            }
+        }
+        // No registry at HEAD (pre-enrollment or the initial commit):
+        // the commit about to be created introduces it from the
+        // worktree.
+        std::fs::read_to_string(self.vault_path.join("meta/devices.json"))
+            .ok()
+            .and_then(|s| from_bytes(&s))
+            .unwrap_or_default()
+    }
+
+    fn stage_one(
+        &self,
+        index: &mut git2::Index,
+        path: &str,
+        deletion: bool,
+    ) -> Result<(), BaluardError> {
+        if deletion {
+            index
+                .remove_path(std::path::Path::new(path))
+                .map_err(|e| SyncError::Git(format!("remove_path '{path}': {e}")))?;
+        } else {
+            index
+                .add_path(std::path::Path::new(path))
+                .map_err(|e| SyncError::Git(format!("add_path '{path}': {e}")))?;
+        }
+        Ok(())
     }
 
     /// Create a cover commit (no-op) to mask real usage patterns.
@@ -2357,16 +2753,18 @@ impl SyncEngine {
                 .map_err(|e| SyncError::Git(format!("write resolved: {e}")))?;
         }
 
-        // Stage all and create merge commit
+        // Stage all and create merge commit. The index already holds
+        // the authenticated merge result (repo.merge placed every
+        // unconflicted remote entry there; the resolved files are on
+        // disk) — resetting or filtering here would silently DROP the
+        // remote half of the merge. The P8a residue check at peers is
+        // the governing control for merge commits.
         let mut index = repo
             .index()
             .map_err(|e| SyncError::Git(format!("index: {e}")))?;
         index
             .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
             .map_err(|e| SyncError::Git(format!("add_all: {e}")))?;
-        index
-            .write()
-            .map_err(|e| SyncError::Git(format!("index write: {e}")))?;
 
         let tree_id = index
             .write_tree()
@@ -3817,60 +4215,18 @@ impl SyncEngine {
         // updating their own signed checkpoints is legitimate, and a
         // forged or deleted manifest refuses.
         if path == "meta/integrity.json" {
-            let deny = || {
-                SyncError::PolicyViolation {
-                    device: signer.to_string(),
-                    path: path.clone(),
+            let blob_bytes = |oid: git2::Oid| -> Option<Vec<u8>> {
+                if oid.is_zero() {
+                    return None;
                 }
-                .into()
+                repo.find_blob(oid).ok().map(|b| b.content().to_vec())
             };
-            let new_id = delta.new_file().id();
-            if new_id.is_zero() {
-                return Err(deny());
-            }
-            let blob = repo.find_blob(new_id).map_err(|_| deny())?;
-            let manifest: crate::integrity::IntegrityManifest =
-                serde_json::from_slice(blob.content()).map_err(|_| deny())?;
-            for (object_id, cp) in &manifest.checkpoints {
-                let Some(vk) = roster.get(&cp.device_id) else {
-                    return Err(deny());
-                };
-                manifest
-                    .verify_checkpoint(object_id, vk)
-                    .map_err(|_| deny())?;
-            }
-            // Containment: an honest update never drops or downgrades a
-            // known checkpoint (an empty manifest would neuter rollback
-            // detection).
-            let old_id = delta.old_file().id();
-            if !old_id.is_zero() {
-                if let Ok(old_blob) = repo.find_blob(old_id) {
-                    if let Ok(old_manifest) = serde_json::from_slice::<
-                        crate::integrity::IntegrityManifest,
-                    >(old_blob.content())
-                    {
-                        for (object_id, old_cp) in &old_manifest.checkpoints {
-                            match manifest.checkpoints.get(object_id) {
-                                // S3-7c review F1: seq is the envelope's
-                                // update_seq and rises on every edit
-                                // regardless of which device makes it, so
-                                // the floor is unconditional — a device
-                                // change may never launder a higher seq
-                                // (the checkpoint itself already verified
-                                // against the roster above).
-                                Some(cp) if cp.seq < old_cp.seq => {
-                                    return Err(deny());
-                                }
-                                Some(_) => {}
-                                None => return Err(deny()),
-                            }
-                        }
-                    }
-                    // An unparseable OLD manifest: the new one is fully
-                    // verified above on its own merits; keep going.
-                }
-            }
-            return Ok(());
+            return Self::integrity_delta_ok(
+                blob_bytes(delta.old_file().id()).as_deref(),
+                blob_bytes(delta.new_file().id()).as_deref(),
+                roster,
+                signer,
+            );
         }
         if path == "meta/devices.json"
             && role.rank() < crate::sync::policy::CommitRole::Admin.rank()
@@ -3898,6 +4254,63 @@ impl SyncEngine {
         let is_deletion = delta.status() == git2::Delta::Deleted;
         crate::sync::policy::authorize_scoped(signer, member, role, &path, scope, is_deletion)
             .map_err(BaluardError::from)
+    }
+
+    /// Pure integrity-manifest delta predicate (P5 explicit staged path
+    /// sets): shared by the verification walk (blob-resolved) and the
+    /// staging filter (worktree bytes). The new manifest must parse,
+    /// every checkpoint must verify against the roster in force, and an
+    /// honest update never drops or downgrades a known checkpoint.
+    fn integrity_delta_ok(
+        old: Option<&[u8]>,
+        new: Option<&[u8]>,
+        roster: &DeviceRoster,
+        signer: &str,
+    ) -> Result<(), BaluardError> {
+        let deny = || {
+            SyncError::PolicyViolation {
+                device: signer.to_string(),
+                path: "meta/integrity.json".to_string(),
+            }
+            .into()
+        };
+        let Some(new) = new else {
+            return Err(deny());
+        };
+        let manifest: crate::integrity::IntegrityManifest =
+            serde_json::from_slice(new).map_err(|_| deny())?;
+        for (object_id, cp) in &manifest.checkpoints {
+            let Some(vk) = roster.get(&cp.device_id) else {
+                return Err(deny());
+            };
+            manifest
+                .verify_checkpoint(object_id, vk)
+                .map_err(|_| deny())?;
+        }
+        if let Some(old) = old {
+            if let Ok(old_manifest) =
+                serde_json::from_slice::<crate::integrity::IntegrityManifest>(old)
+            {
+                for (object_id, old_cp) in &old_manifest.checkpoints {
+                    match manifest.checkpoints.get(object_id) {
+                        // S3-7c review F1: seq is the envelope's
+                        // update_seq and rises on every edit regardless
+                        // of which device makes it, so the floor is
+                        // unconditional — a device change may never
+                        // launder a higher seq (the checkpoint itself
+                        // already verified against the roster above).
+                        Some(cp) if cp.seq < old_cp.seq => {
+                            return Err(deny());
+                        }
+                        Some(_) => {}
+                        None => return Err(deny()),
+                    }
+                }
+            }
+            // An unparseable OLD manifest: the new one is fully verified
+            // above on its own merits; keep going.
+        }
+        Ok(())
     }
 
     /// P5/S3: the collection write scope in force at `tree` — the
@@ -4058,10 +4471,33 @@ impl SyncEngine {
         else {
             return Err(deny());
         };
+        let own = member.and_then(|m| uuid::Uuid::parse_str(m).ok());
+        Self::member_record_delta_ok(&old, &new, own, signer)
+    }
+
+    /// Pure member-record delta predicate (P5 explicit staged path
+    /// sets): shared verbatim by the verification walk (blob-resolved)
+    /// and the staging filter (worktree bytes). A non-admin may change
+    /// only the identity-rotation fields of their OWN record; role,
+    /// display name, and trust are admin-owned; tombstoned rows are
+    /// dead and admit nothing.
+    fn member_record_delta_ok(
+        old: &[u8],
+        new: &[u8],
+        own: Option<uuid::Uuid>,
+        signer: &str,
+    ) -> Result<(), BaluardError> {
+        let deny = || {
+            SyncError::PolicyViolation {
+                device: signer.to_string(),
+                path: "meta/members".to_string(),
+            }
+            .into()
+        };
         let parse = |bytes: &[u8]| -> Option<crate::vault::members::MemberFile> {
             serde_json::from_str(std::str::from_utf8(bytes).ok()?).ok()
         };
-        let (Some(old_member), Some(new_member)) = (parse(&old), parse(&new)) else {
+        let (Some(old_member), Some(new_member)) = (parse(old), parse(new)) else {
             return Err(deny());
         };
         // S1a-5/S1a-6: a tombstoned row (reset OR removal) is dead — no
@@ -4074,7 +4510,6 @@ impl SyncEngine {
         {
             return Err(deny());
         }
-        let own = member.and_then(|m| uuid::Uuid::parse_str(m).ok());
         if old_member.id != new_member.id
             || Some(new_member.id) != own
             || old_member.display_name != new_member.display_name
@@ -4730,6 +5165,35 @@ mod tests {
     /// rewrote the git-tracked `meta/devices.json` (last_seen_epoch bump)
     /// AFTER snapshotting the commit tree, so every commit immediately
     /// re-dirtied the tree and the sync badge stayed on "Changes pending".
+    /// P5 explicit staged path sets: admitted DELETIONS stage too —
+    /// remove_path rides the same filter as add_path (the S2-4 outbox
+    /// deletion precedent).
+    #[test]
+    fn commit_all_stages_admitted_deletions() {
+        let (dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+
+        std::fs::write(dir.path().join("probe.txt"), b"v1").unwrap();
+        engine.commit_all(&repo, "add").unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert!(
+            head.tree()
+                .unwrap()
+                .get_path(Path::new("probe.txt"))
+                .is_ok()
+        );
+
+        std::fs::remove_file(dir.path().join("probe.txt")).unwrap();
+        engine.commit_all(&repo, "delete").unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert!(
+            head.tree()
+                .unwrap()
+                .get_path(Path::new("probe.txt"))
+                .is_err()
+        );
+    }
+
     #[test]
     fn commit_all_leaves_tree_clean() {
         let (dir, engine) = make_test_repo();
@@ -5086,9 +5550,15 @@ mod tests {
             "editor cipher write must verify: {verified_cipher:?}"
         );
 
-        // Editor writes meta/: refused (meta catch-all is Admin).
+        // Editor writes meta/: refused (meta catch-all is Admin). The
+        // hostile-author bypass stages it anyway; the pull-time walk is
+        // the defense under test (the staging filter would have left it
+        // unstaged — that behavior is pinned by
+        // staged_path_set_filters_unwritable_member_writes).
         std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":2}").unwrap();
-        engine_editor.commit_all(&repo, "editor meta").unwrap();
+        engine_editor
+            .commit_all_unfiltered(&repo, "editor meta")
+            .unwrap();
         let oid_meta = repo.head().unwrap().peel_to_commit().unwrap().id();
         let verified = engine_owner.verify_commit_signatures(&repo, &[oid_meta]);
         assert!(
@@ -5136,10 +5606,14 @@ mod tests {
         enroll_device(clone_dir.path(), &id_b, &key_b);
         let engine_b = SyncEngine::new(clone_dir.path(), &id_b.to_string(), None);
 
-        // Device A commits a file in a directory no policy row covers.
+        // Device A commits a file in a directory no policy row covers
+        // (hostile-author bypass: the staging filter would leave it
+        // unstaged; this pins the pull-time walk).
         std::fs::create_dir_all(dir.path().join("unknown")).unwrap();
         std::fs::write(dir.path().join("unknown/x.enc"), b"\x01").unwrap();
-        engine_a.commit_all(&repo_a, "smuggled path").unwrap();
+        engine_a
+            .commit_all_unfiltered(&repo_a, "smuggled path")
+            .unwrap();
         engine_a.push(&repo_a, "origin").unwrap();
 
         let result = engine_b.pull(&cloned, "origin");
