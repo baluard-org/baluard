@@ -207,8 +207,9 @@ Size L; independent of every other item; can go any time.
    proxy; should read `is_admin_device` like mobile does (wave-29 fix).
 2. Thin quorum-rotation test coverage on a flipped vault (threshold 2 +
    rotation + member unlock in one ceremony).
-3. Mobile pending-approvals card: the uniffi `approvals_list()` bridge
-   method shipped (wave-37); no UI row renders it.
+3. Mobile pending-approvals card: SHIPPED — wave-37 renders the pending
+   list in mobile Settings beside the quorum knob (the `approvals_list()`
+   bridge has a UI row); nothing pending.
 
 ## 10. Open questions (moved from sharing plan §10) — RESOLVED 2026-09-28
 
