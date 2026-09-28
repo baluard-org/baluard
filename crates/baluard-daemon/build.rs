@@ -2,7 +2,6 @@ fn main() {
     let proto_dir = "../../proto";
     let proto_files = [
         format!("{proto_dir}/vault.proto"),
-        format!("{proto_dir}/space.proto"),
         format!("{proto_dir}/auth.proto"),
     ];
 

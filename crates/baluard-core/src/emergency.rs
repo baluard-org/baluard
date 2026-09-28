@@ -31,7 +31,7 @@ pub struct EmergencyConfig {
     pub trusted_contact_email: String,
     pub trusted_contact_pubkey: Vec<u8>, // X25519 public key
     pub delay_seconds: u64,
-    pub wrapped_root_key: crate::orgs::WrappedKeyBundle, // HPKE wrapped Root Key
+    pub wrapped_root_key: crate::orgs::WrappedKeyBundle, // HPKE-wrapped Root Key for the contact
     pub status: EmergencyStatus,
     /// Vault ID this config belongs to (prevents cross-vault replay).
     pub vault_id: Option<String>,
@@ -97,13 +97,7 @@ pub fn setup_emergency_access(
     pub_key_bytes.copy_from_slice(contact_pubkey_bytes);
     let pub_key = PublicKey::from(pub_key_bytes);
 
-    let (eph_pub, ct, tag) = hpke_wrap::wrap_key(root_key, &pub_key, "emergency-escrow")?;
-
-    let wrapped_root_key = crate::orgs::WrappedKeyBundle {
-        ephemeral_pub: hex::encode(eph_pub),
-        ciphertext: hex::encode(ct),
-        tag: hex::encode(tag),
-    };
+    let wrapped_root_key = crate::orgs::wrap_to_bundle(root_key, &pub_key, "emergency-escrow")?;
 
     let mut config = EmergencyConfig {
         trusted_contact_email: email.to_string(),

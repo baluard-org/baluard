@@ -2,8 +2,9 @@
 //!
 //! Handles: repo init, commit, push, pull, clone, commit signing.
 //! D9: Static "vault update" commit messages.
-//! D12: Transactional 8-state machine.
-//! D11: Shallow clone by default, auto-unshallow on conflict.
+//! D12: Transactional 8-state machine. Clones are always full: commit
+//! signing verification walks the entire first-parent history, so a
+//! shallow clone could not verify signatures.
 
 #[cfg(feature = "git-sync")]
 use git2::build::RepoBuilder;
@@ -45,8 +46,6 @@ pub struct SyncEngine {
     /// Callers without a device id pass a placeholder; the bump is
     /// best-effort and silently no-ops on a non-UUID string.
     pub device_id: String,
-    /// Whether this is a shallow clone.
-    pub shallow: bool,
     /// Last-known remote HEAD OID (for pull verification).
     /// Stored in meta/sync-head.json outside the repo.
     pub last_remote_head: Option<String>,
@@ -125,7 +124,6 @@ impl SyncEngine {
         Self {
             vault_path: vault_path.to_path_buf(),
             device_id: device_id.to_string(),
-            shallow: true,
             last_remote_head,
             credential_config,
             state_machine,
@@ -2583,17 +2581,10 @@ impl SyncEngine {
         }
     }
 
-    /// Clone a remote vault repo to a local directory.
-    /// Only HTTPS and SSH URLs are allowed.
-    pub fn clone(url: &str, target: &Path, _shallow: bool) -> Result<Repository, BaluardError> {
-        validate_git_url(url)?;
-        Self::clone_unchecked(url, target)
-    }
-
-    /// Clone without URL validation (for local testing/development).
-    /// M5 fix: `pub(crate)` so external callers cannot bypass scheme validation.
-    #[doc(hidden)]
-    pub(crate) fn clone_unchecked(url: &str, target: &Path) -> Result<Repository, BaluardError> {
+    /// Clone a local/test remote without scheme validation (the file://
+    /// paths are for local testing and development only).
+    #[cfg(test)]
+    fn clone_unchecked(url: &str, target: &Path) -> Result<Repository, BaluardError> {
         crate::sync::tls::ensure_tls_roots();
         let mut builder = RepoBuilder::new();
         // Wire credential callbacks for clone operations
@@ -7403,10 +7394,10 @@ mod tests {
             )
             .unwrap();
 
-        // Production clone must refuse and clean up.
+        // Clone must refuse and clean up.
         let vdir = tempfile::tempdir().unwrap();
         let vpath = vdir.path().join("victim");
-        let err = SyncEngine::clone(&remote_url, &vpath, true)
+        let err = SyncEngine::clone_unchecked(&remote_url, &vpath)
             .map(|_| ())
             .unwrap_err();
         assert!(

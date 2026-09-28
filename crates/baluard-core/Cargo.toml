@@ -73,7 +73,7 @@ public-suffix = "0.1"
 
 [features]
 default = ["full"]
-full = ["git-sync", "org", "emergency", "passkey-ceremony", "uri-match"]
+full = ["git-sync", "passkey-ceremony", "uri-match"]
 passkey-ceremony = ["dep:passkey", "dep:url", "dep:public-suffix", "dep:coset", "dep:tokio"]
 # Autofill URI matching (Phase 6): reuses the url + public-suffix deps already
 # pulled by passkey-ceremony; regex-lite is matcher-only.

@@ -24,5 +24,4 @@ pub mod proto {
     #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/baluard.auth.rs"));
     include!(concat!(env!("OUT_DIR"), "/baluard.vault.rs"));
-    include!(concat!(env!("OUT_DIR"), "/baluard.space.rs"));
 }
