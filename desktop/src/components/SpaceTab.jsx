@@ -18,6 +18,9 @@ export default function SpaceTab() {
   const [guestSharing, setGuestSharing] = createSignal(true);
   const [trashPolicy, setTrashPolicy] = createSignal("write_scope_can_trash");
   const [joinApproval, setJoinApproval] = createSignal("manual");
+  const [quorum, setQuorum] = createSignal(1);
+  const [createAuth, setCreateAuth] = createSignal("admins");
+  const [pendingOps, setPendingOps] = createSignal([]);
   const [busy, setBusy] = createSignal(false);
   const [spaceTeam, setSpaceTeam] = createSignal(null);
   const [teamBusy, setTeamBusy] = createSignal(false);
@@ -26,7 +29,17 @@ export default function SpaceTab() {
   onSettled(() => {
     void loadSettings();
     void loadTeam();
+    void loadPending();
   });
+
+  async function loadPending() {
+    try {
+      const r = JSON.parse(await daemon("approvals.list", {}));
+      setPendingOps(Array.isArray(r.pending) ? r.pending : []);
+    } catch {
+      setPendingOps([]); // locked or refused — no asks to show
+    }
+  }
 
   async function loadSettings() {
     try {
@@ -36,6 +49,8 @@ export default function SpaceTab() {
       setGuestSharing(s.guest_enabled !== false);
       setTrashPolicy(s.trash_policy === "admins_only" ? "admins_only" : "write_scope_can_trash");
       setJoinApproval(s.join_approval === "code" ? "code" : "manual");
+      setQuorum(Math.min(5, Math.max(1, Number(s.quorum_admin_ops) || 1)));
+      setCreateAuth(s.collection_create_authority === "editors" ? "editors" : "admins");
     } catch (e) {
       toastError(sanitizeError(e, t));
     }
@@ -70,6 +85,29 @@ export default function SpaceTab() {
     if (busy() || next === joinApproval()) return;
     setJoinApproval(next);
     void apply({ join_approval: next });
+  }
+
+  function changeQuorum(next) {
+    if (busy() || next === quorum()) return;
+    setQuorum(next);
+    void apply({ quorum_admin_ops: next });
+  }
+
+  function changeCreateAuth(next) {
+    if (busy() || next === createAuth()) return;
+    setCreateAuth(next);
+    void apply({ collection_create_authority: next });
+  }
+
+  function opLabel(kind) {
+    const map = {
+      rotate_root_key: "space.opRotate",
+      member_remove: "space.opRemove",
+      transfer_ownership: "space.opTransfer",
+      member_reset: "space.opReset",
+      space_migrate: "space.opMigrate",
+    };
+    return map[kind] ? t(map[kind]) : kind;
   }
 
   async function loadTeam() {
@@ -260,6 +298,57 @@ export default function SpaceTab() {
           </button>
         </div>
       </div>
+
+      {/* Quorum for sensitive ops (§6.5, decided 2026-09-27) */}
+      <div class="flex items-center justify-between pt-4 border-t border-[var(--color-border)]">
+        <div class="flex flex-col flex-1 pr-4">
+          <span class={rowLabel}>{t("space.quorumLabel")}</span>
+          <span class={rowDesc}>{t("space.quorumDesc")}</span>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <div class="flex gap-2">
+            {[1, 2, 3].map((n) => (
+              <button disabled={busy()} class={chip(quorum() === n)} onClick={() => changeQuorum(n)}>
+                {n}
+              </button>
+            ))}
+          </div>
+          <span class={rowDesc}>{t("space.quorumCurrent", { n: quorum() })}</span>
+        </div>
+      </div>
+
+      {/* Who may create collections */}
+      <div class="flex items-center justify-between pt-4 border-t border-[var(--color-border)]">
+        <div class="flex flex-col flex-1 pr-4">
+          <span class={rowLabel}>{t("space.createAuthLabel")}</span>
+          <span class={rowDesc}>{t("space.createAuthDesc")}</span>
+        </div>
+        <div class="flex gap-2">
+          <button disabled={busy()} class={chip(createAuth() === "admins")} onClick={() => changeCreateAuth("admins")}>
+            {t("space.createAdmins")}
+          </button>
+          <button disabled={busy()} class={chip(createAuth() === "editors")} onClick={() => changeCreateAuth("editors")}>
+            {t("space.createEditors")}
+          </button>
+        </div>
+      </div>
+
+      {/* Pending sensitive-op asks (visible when quorum > 1) */}
+      <Show when={pendingOps().length > 0}>
+        <div class="mt-4 pt-4 border-t border-[var(--color-border)]">
+          <span class={rowLabel}>{t("space.pendingTitle")}</span>
+          <div class="flex flex-col gap-1 mt-2">
+            {pendingOps().map((op) => (
+              <div class="flex items-center justify-between text-[11px]">
+                <span class="text-[var(--color-text)]">{opLabel(op.kind)}</span>
+                <span class="text-[var(--color-muted)]">
+                  {t("space.pendingItem", { have: op.approvals?.length ?? 0, need: op.required })}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Show>
 
       {/* Restore policy — v1 is single-valued (admins only); rendered
           read-only so the surface shows the full state honestly. */}

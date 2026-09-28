@@ -248,6 +248,8 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
         "space.remote",
         "space.settings",
         "space.settings_set",
+        // S4-1: sensitive-op approvals (quorum knob).
+        "approvals.list",
         // S2: item-sharing send/receive surfaces.
         "reveals.export_guest",
         "packages.import",

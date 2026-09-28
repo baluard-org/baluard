@@ -933,6 +933,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -979,6 +981,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_fn_method_mobilevault_activity_refusals(`ptr`: Pointer,`limit`: Long,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_add_cipher(`ptr`: Pointer,`payload`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_approvals_list(`ptr`: Pointer,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_archive_cipher(`ptr`: Pointer,`id`: RustBuffer.ByValue,
     ): Long
@@ -1102,7 +1106,7 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_get(`ptr`: Pointer,
     ): Long
-    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(`ptr`: Pointer,`inviteAuthority`: RustBuffer.ByValue,`allowViewerExport`: RustBuffer.ByValue,`guestEnabled`: RustBuffer.ByValue,`trashPolicy`: RustBuffer.ByValue,`joinApproval`: RustBuffer.ByValue,
+    fun uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(`ptr`: Pointer,`inviteAuthority`: RustBuffer.ByValue,`allowViewerExport`: RustBuffer.ByValue,`guestEnabled`: RustBuffer.ByValue,`trashPolicy`: RustBuffer.ByValue,`joinApproval`: RustBuffer.ByValue,`quorumAdminOps`: RustBuffer.ByValue,`collectionCreateAuthority`: RustBuffer.ByValue,
     ): Long
     fun uniffi_baluard_uniffi_fn_method_mobilevault_space_status(`ptr`: Pointer,
     ): Long
@@ -1337,6 +1341,8 @@ internal interface UniffiLib : Library {
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_activity_refusals(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_add_cipher(
+    ): Short
+    fun uniffi_baluard_uniffi_checksum_method_mobilevault_approvals_list(
     ): Short
     fun uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher(
     ): Short
@@ -1590,6 +1596,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_add_cipher() != 57931.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_approvals_list() != 25750.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_archive_cipher() != 4306.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1773,7 +1782,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_get() != 19637.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set() != 44425.toShort()) {
+    if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_settings_set() != 44577.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_space_status() != 58379.toShort()) {
@@ -2762,6 +2771,13 @@ public interface MobileVaultInterface {
     suspend fun `addCipher`(`payload`: kotlin.String): kotlin.String
     
     /**
+     * Pending sensitive-op asks (§6.5 quorum_admin_ops): {pending:
+     * [{kind, params_digest, initiated_by, initiated_at, required,
+     * approvals}]}. Read-only, unlocked-gated.
+     */
+    suspend fun `approvalsList`(): kotlin.String
+    
+    /**
      * Archive a cipher: hide from the main list, search, and suggestions.
      */
     suspend fun `archiveCipher`(`id`: kotlin.String)
@@ -3130,7 +3146,7 @@ public interface MobileVaultInterface {
      * Set Space policy knobs (partial, admin-gated). Typed args so the
      * app never hand-builds JSON; the bridge constructs the payload.
      */
-    suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?, `joinApproval`: kotlin.String?)
+    suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?, `joinApproval`: kotlin.String?, `quorumAdminOps`: kotlin.ULong?, `collectionCreateAuthority`: kotlin.String?)
     
     /**
      * Readiness counts for the Team-shape flip (S3-7b): {prepared,
@@ -3379,6 +3395,32 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_add_cipher(
                 thisPtr,
                 FfiConverterString.lower(`payload`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BaluardException.ErrorHandler,
+    )
+    }
+
+    
+    /**
+     * Pending sensitive-op asks (§6.5 quorum_admin_ops): {pending:
+     * [{kind, params_digest, initiated_by, initiated_at, required,
+     * approvals}]}. Read-only, unlocked-gated.
+     */
+    @Throws(BaluardException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `approvalsList`() : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_approvals_list(
+                thisPtr,
+                
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -4928,12 +4970,12 @@ open class MobileVault: Disposable, AutoCloseable, MobileVaultInterface {
      */
     @Throws(BaluardException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?, `joinApproval`: kotlin.String?) {
+    override suspend fun `spaceSettingsSet`(`inviteAuthority`: kotlin.String?, `allowViewerExport`: kotlin.Boolean?, `guestEnabled`: kotlin.Boolean?, `trashPolicy`: kotlin.String?, `joinApproval`: kotlin.String?, `quorumAdminOps`: kotlin.ULong?, `collectionCreateAuthority`: kotlin.String?) {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_space_settings_set(
                 thisPtr,
-                FfiConverterOptionalString.lower(`inviteAuthority`),FfiConverterOptionalBoolean.lower(`allowViewerExport`),FfiConverterOptionalBoolean.lower(`guestEnabled`),FfiConverterOptionalString.lower(`trashPolicy`),FfiConverterOptionalString.lower(`joinApproval`),
+                FfiConverterOptionalString.lower(`inviteAuthority`),FfiConverterOptionalBoolean.lower(`allowViewerExport`),FfiConverterOptionalBoolean.lower(`guestEnabled`),FfiConverterOptionalString.lower(`trashPolicy`),FfiConverterOptionalString.lower(`joinApproval`),FfiConverterOptionalULong.lower(`quorumAdminOps`),FfiConverterOptionalString.lower(`collectionCreateAuthority`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },

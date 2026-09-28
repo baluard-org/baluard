@@ -634,4 +634,19 @@ internal val EN: Map<String, String> = mapOf(
     "space.joinManual" to "Manual review",
     "space.joinCode" to "Invite code",
 
+    "space.quorumLabel" to "Approvals for big changes",
+    "space.quorumDesc" to "How many admins must confirm sensitive actions: removals, resets, transfers, key rotation, moving the sync address.",
+    "space.quorumCurrent" to "Current: {0} admin(s) must confirm",
+    "space.createAuthLabel" to "Who can create collections",
+    "space.createAuthDesc" to "By default only admins create shared collections.",
+    "space.createAdmins" to "Admins only",
+    "space.createEditors" to "Editors too",
+    "space.pendingTitle" to "Waiting for approval",
+    "space.pendingItem" to "{0} of {1} approvals",
+    "space.opRotate" to "Key rotation",
+    "space.opRemove" to "Member removal",
+    "space.opTransfer" to "Ownership transfer",
+    "space.opReset" to "Member reset",
+    "space.opMigrate" to "Move sync address",
+
 )

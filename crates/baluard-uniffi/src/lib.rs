@@ -826,6 +826,11 @@ impl MobileVault {
 
     /// Set Space policy knobs (partial, admin-gated). Typed args so the
     /// app never hand-builds JSON; the bridge constructs the payload.
+    /// Set Space policy knobs (partial). Present-fields-only: the
+    /// runtime parser treats a present-null key as a mistyped value, so
+    /// None args must stay absent. The typed-args rule (D53) makes the
+    /// width deliberate.
+    #[allow(clippy::too_many_arguments)]
     pub async fn space_settings_set(
         &self,
         invite_authority: Option<String>,
@@ -833,6 +838,8 @@ impl MobileVault {
         guest_enabled: Option<bool>,
         trash_policy: Option<String>,
         join_approval: Option<String>,
+        quorum_admin_ops: Option<u64>,
+        collection_create_authority: Option<String>,
     ) -> Result<(), BaluardError> {
         // Present fields only: the runtime parser treats a present-null
         // key as a mistyped value, so None args must stay absent.
@@ -852,6 +859,12 @@ impl MobileVault {
         if let Some(ja) = join_approval {
             map.insert("join_approval".into(), ja.into());
         }
+        if let Some(q) = quorum_admin_ops {
+            map.insert("quorum_admin_ops".into(), q.into());
+        }
+        if let Some(cca) = collection_create_authority {
+            map.insert("collection_create_authority".into(), cca.into());
+        }
         let payload = serde_json::Value::Object(map);
         self.state
             .space_settings_set(&payload.to_string())
@@ -864,6 +877,16 @@ impl MobileVault {
     pub async fn space_status(&self) -> Result<String, BaluardError> {
         self.state
             .space_status()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Pending sensitive-op asks (§6.5 quorum_admin_ops): {pending:
+    /// [{kind, params_digest, initiated_by, initiated_at, required,
+    /// approvals}]}. Read-only, unlocked-gated.
+    pub async fn approvals_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .approvals_pending()
             .await
             .map_err(|e| BaluardError::Vault { detail: e })
     }

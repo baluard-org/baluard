@@ -672,6 +672,7 @@ impl<'a> VaultCreator<'a> {
                     registry,
                     device_id,
                     device_manager,
+                    quorum_satisfied: std::sync::Mutex::new(None),
                     state: VaultState::Unlocked(UnlockedState {
                         root_key: Some(root_key.clone()),
                         space_group_key: Some(
@@ -931,6 +932,7 @@ impl<'a> VaultCreator<'a> {
                     registry,
                     device_id,
                     device_manager,
+                    quorum_satisfied: std::sync::Mutex::new(None),
                     state: VaultState::Unlocked(UnlockedState {
                         root_key: Some(root_key.clone()),
                         space_group_key: Some(

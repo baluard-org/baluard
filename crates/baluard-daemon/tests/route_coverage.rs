@@ -1605,6 +1605,56 @@ async fn space_settings_lifecycle_and_locked_rejection() {
         .await
         .unwrap();
 
+    // §6.5 quorum_admin_ops (S4-1): default renders 1; set 2; parses
+    // fail closed on 0, 6, and strings.
+    let get: serde_json::Value =
+        serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
+    assert_eq!(get["quorum_admin_ops"], 1);
+    assert_eq!(get["collection_create_authority"], "admins");
+    state
+        .space_settings_set(r#"{"quorum_admin_ops":2}"#)
+        .await
+        .unwrap();
+    assert!(
+        state
+            .space_settings_set(r#"{"quorum_admin_ops":0}"#)
+            .await
+            .is_err()
+    );
+    assert!(
+        state
+            .space_settings_set(r#"{"quorum_admin_ops":6}"#)
+            .await
+            .is_err()
+    );
+    assert!(
+        state
+            .space_settings_set(r#"{"quorum_admin_ops":"two"}"#)
+            .await
+            .is_err()
+    );
+    state
+        .space_settings_set(r#"{"collection_create_authority":"editors"}"#)
+        .await
+        .unwrap();
+    assert!(
+        state
+            .space_settings_set(r#"{"collection_create_authority":"anyone"}"#)
+            .await
+            .is_err()
+    );
+    // Both knobs survive a lock-unlock cycle.
+    state.lock().await.expect("lock");
+    state.unlock(MASTER).await.expect("relock");
+    let get: serde_json::Value =
+        serde_json::from_str(&state.space_settings_get().await.unwrap()).unwrap();
+    assert_eq!(get["quorum_admin_ops"], 2);
+    assert_eq!(get["collection_create_authority"], "editors");
+    state
+        .space_settings_set(r#"{"quorum_admin_ops":1,"collection_create_authority":"admins"}"#)
+        .await
+        .unwrap();
+
     // §6.5 policy knobs: set, fail-closed parse, lock-cycle persistence.
     state
         .space_settings_set(r#"{"trash_policy":"admins_only"}"#)
@@ -1723,6 +1773,92 @@ async fn space_settings_lifecycle_and_locked_rejection() {
         .unwrap();
     }
     assert!(state.export_bw_json().await.is_err());
+}
+
+#[tokio::test]
+async fn collection_create_authority_and_approvals_gate() {
+    let (_dir, vault_path) = make_vault("s41-knobs");
+    let state = Arc::new(VaultState::new(vault_path.clone()));
+    state.open().await.expect("vault open");
+    // NOT unlocked: the approvals surface refuses.
+    assert!(state.approvals_pending().await.is_err());
+    state.unlock(MASTER).await.expect("vault unlock");
+    let device_id: uuid::Uuid = state.device_id().await.parse().expect("device uuid");
+
+    // Default authority (admins): an Editor cannot create collections.
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Editor,
+        device_id,
+        None,
+    );
+    assert!(state.collection_create("Nope").await.is_err());
+
+    // editors authority: the same Editor creates.
+    state
+        .space_settings_set(r#"{"collection_create_authority":"editors"}"#)
+        .await
+        .is_err()
+        .then_some(())
+        .expect("settings set must FAIL for an editor");
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Admin,
+        device_id,
+        None,
+    );
+    state
+        .space_settings_set(r#"{"collection_create_authority":"editors"}"#)
+        .await
+        .expect("set editors authority");
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Editor,
+        device_id,
+        None,
+    );
+    let created = state
+        .collection_create("Editors can")
+        .await
+        .expect("editor creates");
+    assert!(created.contains("id"));
+
+    // Quorum gate (§6.5 quorum_admin_ops): threshold 2 turns the solo
+    // migrate call into a pending ask; the same admin cannot self-confirm.
+    rebind_device(
+        &vault_path,
+        baluard_core::vault::members::MemberRole::Admin,
+        device_id,
+        None,
+    );
+    state
+        .space_settings_set(r#"{"quorum_admin_ops":2}"#)
+        .await
+        .expect("set quorum 2");
+    let err = state
+        .space_migrate(r#"{"clone_url":"https://example.com/baluard-x.git"}"#)
+        .await
+        .unwrap_err();
+    assert!(err.contains("admin approvals"), "pending refusal: {err}");
+    let pending: serde_json::Value =
+        serde_json::from_str(&state.approvals_pending().await.unwrap()).unwrap();
+    assert_eq!(pending["pending"].as_array().unwrap().len(), 1);
+    assert_eq!(pending["pending"][0]["kind"], "space_migrate");
+    assert_eq!(pending["pending"][0]["required"], 2);
+    // Same admin again: already on the record, still refused.
+    let err = state
+        .space_migrate(r#"{"clone_url":"https://example.com/baluard-x.git"}"#)
+        .await
+        .unwrap_err();
+    assert!(
+        err.contains("different admin"),
+        "self-confirm refusal: {err}"
+    );
+    // Threshold back to 1: the gate passes and the ask is ignored.
+    state
+        .space_settings_set(r#"{"quorum_admin_ops":1}"#)
+        .await
+        .expect("quorum back to 1");
 }
 
 #[tokio::test]

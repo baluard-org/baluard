@@ -910,6 +910,20 @@
     "joinApprovalLabel": "Join approval",
     "joinApprovalDesc": "Approve new members manually, or let a valid invite code approve itself.",
     "joinManual": "Manual review",
-    "joinCode": "Invite code"
+    "joinCode": "Invite code",
+    "quorumLabel": "Approvals for big changes",
+    "quorumDesc": "How many admins must confirm sensitive actions: removals, resets, transfers, key rotation, moving the sync address.",
+    "quorumCurrent": "Current: {n} admin(s) must confirm",
+    "createAuthLabel": "Who can create collections",
+    "createAuthDesc": "By default only admins create shared collections.",
+    "createAdmins": "Admins only",
+    "createEditors": "Editors too",
+    "pendingTitle": "Waiting for approval",
+    "pendingItem": "{have} of {need} approvals",
+    "opRotate": "Key rotation",
+    "opRemove": "Member removal",
+    "opTransfer": "Ownership transfer",
+    "opReset": "Member reset",
+    "opMigrate": "Move sync address"
   }
 }

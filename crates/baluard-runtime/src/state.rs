@@ -2574,8 +2574,14 @@ impl VaultState {
         let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
         let member_id = uuid::Uuid::parse_str(v["member_id"].as_str().ok_or("missing member_id")?)
             .map_err(|e| e.to_string())?;
-        let (successor_id, reset_code) =
-            handle.member_reset(member_id).map_err(|e| e.to_string())?;
+        let outcome = handle.member_reset(member_id).map_err(|e| e.to_string());
+        drop(guard);
+        if let Err(e) = &outcome {
+            // A quorum refusal leaves a pending ask on disk — ship it.
+            self.ship_pending_approval().await;
+            return Err(e.clone());
+        }
+        let (successor_id, reset_code) = outcome.unwrap();
         Ok(serde_json::json!({
             "successor_id": successor_id.to_string(),
             "reset_code": reset_code,
@@ -2593,9 +2599,14 @@ impl VaultState {
         let v: serde_json::Value = serde_json::from_str(payload).map_err(|e| e.to_string())?;
         let member_id = uuid::Uuid::parse_str(v["member_id"].as_str().ok_or("missing member_id")?)
             .map_err(|e| e.to_string())?;
-        handle
+        let outcome = handle
             .transfer_ownership(member_id)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string());
+        drop(guard);
+        if let Err(e) = &outcome {
+            self.ship_pending_approval().await;
+            return Err(e.clone());
+        }
         Ok("{}".into())
     }
 
@@ -2965,10 +2976,18 @@ impl VaultState {
             if !handle.is_unlocked() {
                 return Err("Vault is locked. Unlock first.".into());
             }
-            let usernames = handle
+            let outcome = handle
                 .member_remove_precheck(&ids)
-                .map_err(|e| e.to_string())?;
-            (handle.vault_id, usernames)
+                .map_err(|e| e.to_string());
+            let vault_id = handle.vault_id;
+            drop(guard);
+            if let Err(e) = &outcome {
+                // Quorum refusal: the pending ask must reach the other
+                // admins before anything else can happen.
+                self.ship_pending_approval().await;
+                return Err(e.clone());
+            }
+            (vault_id, outcome.unwrap())
         };
 
         // Strike seats before the rotation. A failure refuses the whole
@@ -3644,6 +3663,19 @@ impl VaultState {
                     }
                 }
             }
+            // §6.5 quorum_admin_ops: above the default threshold, moving
+            // the sync address needs a second admin's confirmation. The
+            // digest binds the TRIMMED url only, so two admins spelling
+            // the same move differently still approve one ask.
+            let gate = handle.assert_op_quorum(
+                "space_migrate",
+                &serde_json::json!({ "clone_url": new_url }),
+            );
+            if let Err(e) = gate {
+                drop(guard);
+                self.ship_pending_approval().await;
+                return Err(e.to_string());
+            }
         }
 
         let vault_path = self.vault_path.clone();
@@ -3772,6 +3804,12 @@ impl VaultState {
                 baluard_core::vault::manifest::JoinApproval::Manual => "manual",
                 baluard_core::vault::manifest::JoinApproval::Code => "code",
             },
+            // None and Some(1) both render as the default: one admin.
+            "quorum_admin_ops": s.quorum_admin_ops.unwrap_or(1).max(1),
+            "collection_create_authority": match s.collection_create_authority {
+                baluard_core::vault::manifest::CollectionCreateAuthority::Admins => "admins",
+                baluard_core::vault::manifest::CollectionCreateAuthority::Editors => "editors",
+            },
         })
         .to_string())
     }
@@ -3848,6 +3886,25 @@ impl VaultState {
                 _ => return Err("join_approval must be manual or code".into()),
             };
         }
+        if let Some(v) = partial.get("quorum_admin_ops") {
+            // A number below the JSON parse; bools/strings refuse. 1 and
+            // absent both mean the default; 2..=5 raise the threshold.
+            let n = v.as_u64().ok_or("quorum_admin_ops must be a number")?;
+            if !(1..=5).contains(&n) {
+                return Err("quorum_admin_ops must be between 1 and 5".into());
+            }
+            settings.quorum_admin_ops = Some(n as u8);
+        }
+        if let Some(v) = partial.get("collection_create_authority") {
+            let s = v
+                .as_str()
+                .ok_or("collection_create_authority must be a string")?;
+            settings.collection_create_authority = match s {
+                "admins" => baluard_core::vault::manifest::CollectionCreateAuthority::Admins,
+                "editors" => baluard_core::vault::manifest::CollectionCreateAuthority::Editors,
+                _ => return Err("collection_create_authority must be admins or editors".into()),
+            };
+        }
         handle.save_settings(&settings).map_err(|e| format!("{e}"))
     }
 
@@ -3855,6 +3912,51 @@ impl VaultState {
     // All routes token-gated by the daemon's default-deny gate; the
     // mutating ones ride COVER_MUTATION_ACTIONS so autosync ships the
     // artifacts.
+
+    /// Pending sensitive-op approvals (§6.5 quorum_admin_ops). Admin
+    /// surface: every admin device sees the asks awaiting confirmation.
+    pub async fn approvals_pending(&self) -> Result<String, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+        let rows = handle.pending_op_approvals();
+        Ok(serde_json::json!({ "pending": rows }).to_string())
+    }
+
+    /// A quorum refusal just wrote (or matched) a pending record on
+    /// THIS device. The ask only matters if the other admins ever see
+    /// it, so ship it with a best-effort signed sync cycle (commit →
+    /// pull → push). Silent on failure: the record stays on disk and
+    /// the next successful sync carries it.
+    async fn ship_pending_approval(&self) {
+        if baluard_core::vault::approvals::list_pending(&self.vault_path).is_empty() {
+            return;
+        }
+        let vault_path = self.vault_path.clone();
+        let (device_id, seal) = {
+            let g = self.inner.read().await;
+            match g.as_ref() {
+                Some(h) if h.is_unlocked() => (h.device_id.to_string(), h.devkey_seal()),
+                _ => return,
+            }
+        };
+        let _ = tokio::time::timeout(
+            crate::autosync::SYNC_OP_TIMEOUT,
+            tokio::task::spawn_blocking(move || {
+                let engine = baluard_core::sync::engine::SyncEngine::new(
+                    &vault_path,
+                    &device_id,
+                    seal.as_ref(),
+                );
+                if let Ok(repo) = engine.open_repo() {
+                    let _ = engine.run_sync_cycle(&repo);
+                }
+            }),
+        )
+        .await;
+    }
 
     /// Member side: submit a JIT ask for collection access.
     pub async fn collection_request_access(&self, payload: &str) -> Result<String, String> {
