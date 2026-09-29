@@ -25,6 +25,7 @@ pub mod outbox;
 pub mod packages;
 pub mod padding;
 pub mod policies;
+pub mod recovery_kit;
 pub mod registry;
 pub mod reveals;
 pub mod slug;
